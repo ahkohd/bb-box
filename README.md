@@ -13,7 +13,8 @@ own environment for real computer, browser and app development work.
 
 Requirements, from the operator on 30 September 2026:
 
-- A BB thread can have up to 10 boxes at a time.
+- A BB thread can have as many boxes as it needs; Moonstead's capacity is the
+  only limit (an optional per-thread limit setting is off by default).
 - Crazy fast startup.
 - A box has access to everything its thread has.
 - A **desktop** box where the agent does real computer-use and browser-use
@@ -99,8 +100,13 @@ desktop, and the agent's Cua input pauses until they hand back.
 3. Thread access: Git credentials, machine variables, BB machine enrolment for
    child threads, network reach both ways.
 4. Speed: warm pool, and anything else between request and ready.
-5. Retire Stead: switch the operator's threads to bb-box, then remove Stead,
-   its Crabbox services in LXC 116 and the guest gateway, with the operator's
-   approval.
+5. Windows desktop boxes, as Proxmox QEMU VMs (a container cannot run
+   Windows).
+6. macOS boxes, last: a real Mac mini, or macOS VMs on one (Apple allows macOS
+   VMs only on Apple hardware, so not on Proxmox).
 
-Stead stays in production until bb-box replaces it.
+The plugin's driver is a small backend interface; Proxmox LXC implements it
+now, and Windows and macOS backends plug in later without reworking the
+registry, tools or panel.
+
+Stead was removed on 30 September 2026, with the operator's approval.
