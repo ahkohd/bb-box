@@ -79,13 +79,17 @@ const NOTHING = Buffer.alloc(0);
 /**
  * Runs `script` in a child of the login shell, then writes `mark` and its
  * exit status to stdout and stderr. Without stdin, the script reads
- * /dev/null, so nothing it starts holds the session's input either.
+ * /dev/null, so nothing it starts holds the session's input either. The mark
+ * goes into the command line in two halves, so a script that prints command
+ * lines, as `ps aux` does, never prints it whole.
  */
 export function endMarked(script: string, mark: string, stdin: boolean): string {
   const input = stdin ? "" : " </dev/null";
+  const half = Math.ceil(mark.length / 2);
+  const pieces = `${quote(mark.slice(0, half))} ${quote(mark.slice(half))}`;
   return (
     `"\${SHELL:-/bin/sh}" -c ${quote(script)}${input}; bb_box_status=$?; ` +
-    `printf '%s%s\\n' ${quote(mark)} "$bb_box_status"; printf '%s%s\\n' ${quote(mark)} "$bb_box_status" >&2; exit "$bb_box_status"`
+    `printf '%s%s%s\\n' ${pieces} "$bb_box_status"; printf '%s%s%s\\n' ${pieces} "$bb_box_status" >&2; exit "$bb_box_status"`
   );
 }
 

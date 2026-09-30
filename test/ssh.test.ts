@@ -219,6 +219,13 @@ test("output a background process writes after the script's shell exits is not w
   assert.ok(result.durationMs < 2_500, "run returned before the background process wrote");
 });
 
+test("a script that prints the command lines in the box, as ps aux does, runs to its end", async () => {
+  const line = new CommandLine({ argv: (script) => ["sh", "-c", script] });
+  const result = await line.run('echo one; ps -o args= -p "$PPID"; echo two; exit 3', { timeoutMs: 10_000 });
+  assert.match(result.stdout, /^one\n.*bb_box_status.*\ntwo\n$/s, "the wrapper's own command line is output, not its end");
+  assert.equal(result.exitCode, 3);
+});
+
 test("a timeout ends a run whose command line exited while something it started holds the output", async () => {
   // Without an end mark, as for PowerShell, a run waits for its output to close.
   const line = new CommandLine({ argv: (script) => ["sh", "-c", script], posix: false });
