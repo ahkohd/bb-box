@@ -85,6 +85,9 @@ make_template() { # vmid description
 
 if [ "$kind" = copy-desktop ]; then
   pct config "$from" | grep -q '^template: 1' || die "$from is not a template"
+  # A CPU-only template has no NVIDIA driver in it, so it cannot use a GPU.
+  pct config "$from" | grep -q '^dev[0-9]*: /dev/nvidia' \
+    || die "$from is not a GPU desktop template; copy a GPU desktop template to another GPU, or build a new desktop with build.sh desktop"
   lines=$(gpu_lines "$gpu")
   # shellcheck disable=SC2046
   pct clone "$from" "$vmid" --full --pool "$BBBOX_POOL" --hostname "bb-box-desktop-$vmid" --storage "$BBBOX_STORAGE"
