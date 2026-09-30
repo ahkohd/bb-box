@@ -28,6 +28,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     stop: ({ threadId, box }) => change("Stopping the box", () => boxes.stop(threadId, box)),
     start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box)),
     refresh: ({ threadId, box }) => change("Checking the box", () => boxes.refresh(threadId, box)),
+    backends: () => app.backendViews(),
     doctor: () => app.doctor(),
   });
 }

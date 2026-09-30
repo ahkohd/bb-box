@@ -28,6 +28,7 @@ export const contract = defineRpcContract({
   stop: { input: oneBox, output: boxResult },
   start: { input: oneBox, output: boxResult },
   refresh: { input: oneBox, output: boxResult },
+  backends: { input: z.null(), output: z.custom<BackendView[]>() },
   doctor: { input: z.null(), output: z.custom<DoctorView>() },
 });
 

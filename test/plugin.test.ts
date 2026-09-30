@@ -364,6 +364,8 @@ test("the panel lists, acquires, stops, starts and releases boxes over RPC", asy
   assert.match(missing.error, /no box "nope"/);
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
 
+  const backends = (await harness.behavior.callRpc("backends")) as { type: string; state: string }[];
+  assert.deepEqual(backends.map((backend) => [backend.type, backend.state]), [["fake", "active"]]);
   const doctor = (await harness.behavior.callRpc("doctor")) as { ok: boolean; sections: { title: string }[] };
   assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host"]]);
 });
