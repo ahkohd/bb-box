@@ -4,6 +4,8 @@
 import type { BackendStatus, OfferedKind } from "../backends/index.ts";
 import type { DoctorReport } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
+import type { ControlView } from "../core/control.ts";
+import type { DisplayProtocol } from "../transports/types.ts";
 
 export interface BoxView {
   readonly id: string;
@@ -24,6 +26,10 @@ export interface BoxView {
   /** Features beyond what the kind promises. */
   readonly extras: readonly string[];
   readonly desktop: boolean;
+  /** The desktop the viewer shows, when the box has one. */
+  readonly display: { readonly protocol: DisplayProtocol; readonly resizable: boolean } | null;
+  /** Who controls the desktop's input, when the box has one. */
+  readonly control: ControlView | null;
   readonly computerUse: boolean;
   readonly address: string | null;
   readonly facts: readonly { readonly label: string; readonly value: string }[];
@@ -32,7 +38,8 @@ export interface BoxView {
   readonly canStopStart: boolean;
 }
 
-export function boxView(box: BoxRecord, canStopStart: boolean): BoxView {
+export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView): BoxView {
+  const [display] = box.capabilities.displays;
   return {
     id: box.id,
     name: box.name,
@@ -51,6 +58,8 @@ export function boxView(box: BoxRecord, canStopStart: boolean): BoxView {
     requires: box.requires,
     extras: extraFeatures(box),
     desktop: box.capabilities.displays.length > 0,
+    display: display ? { protocol: display.protocol, resizable: display.resizable } : null,
+    control: display ? control : null,
     computerUse: box.capabilities.computerUse !== null,
     address: box.guest?.address ?? null,
     facts: box.guest?.facts ?? [],
@@ -131,8 +140,14 @@ export function boxLine(box: BoxRecord): string {
   return `- ${parts.join("; ")}`;
 }
 
+const CONTROL_WORDS: Record<ControlView["owner"], string> = {
+  agent: "the agent",
+  human: "the user, in bb-box's panel. Leave the desktop's windows alone until they hand control back",
+  none: "changing hands",
+};
+
 /** Everything an agent may want to know about one box. */
-export function boxDetail(box: BoxRecord): string {
+export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const capabilities = box.capabilities;
   const lines = [
     `Box ${box.name} (${box.id})`,
@@ -145,6 +160,7 @@ export function boxDetail(box: BoxRecord): string {
   if (extras.length) lines.push(`Also has: ${extras.join(", ")}`);
   if (box.guest?.address) lines.push(`Address: ${box.guest.address}`);
   for (const fact of box.guest?.facts ?? []) lines.push(`${fact.label}: ${fact.value}`);
+  if (control && capabilities.displays.length) lines.push(`Desktop control: ${CONTROL_WORDS[control.owner]}`);
   const enrol: Record<EnrolState, string> = {
     off: "not enrolled",
     enrolling: "being added, which takes a few seconds. box_run waits for it, so commands have the thread's access",

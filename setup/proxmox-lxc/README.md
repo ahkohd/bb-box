@@ -340,7 +340,14 @@ The example reads the API URL, node, token and fingerprint from the token
 file, and the key from `ssh/id_ed25519`, both next to the settings file.
 Change the other values to match your settings. It acquires a
 `linux-headless` box, runs `uname -a`, releases the box and prints each
-step's time. `--kind` and `--command` pick another kind or command.
+step's time. `--kind` and `--command` pick another kind or command. For a
+desktop kind it also prints the box's GPU, display mode and the reason, and
+opens the desktop as the viewer's relay does, answering its VNC password,
+and prints the desktop's size:
+
+```sh
+node scripts/smoke.ts /root/bb-box/smoke.json --kind linux-desktop
+```
 
 Smoke runs are an install of their own, with the ID `smoke`, so they can
 share the pool with a BB server's bb-box: neither touches the other's boxes,
@@ -426,9 +433,12 @@ goes to the GPU with the fewest desktops, and is refused when every GPU runs
 7. For a GPU desktop, read `/run/bb-box/display-mode` once SSH works. If it
    says `cpu`, the box did not get the GPU (`display-reason` says why), so it
    does not meet the `linux-desktop` kind: release it and try another GPU's
-   template. `linux-desktop-cpu` boxes come only from CPU-only templates.
-   Counting desktops per GPU before cloning avoids most of these. Show the
-   mode and the reason as the box's facts.
+   template, while the kind's 30 s allows. New desktops avoid that GPU for
+   10 minutes while another GPU has a template. When none is left, refuse
+   and suggest `linux-desktop-cpu`. `linux-desktop-cpu` boxes come only from
+   CPU-only templates. Counting desktops per GPU before cloning avoids most
+   of these. Show the GPU, the mode and the reason as the box's facts. A
+   warm desktop is checked the same way before it is kept.
 8. To delete: `POST .../status/stop` if it is running, then
    `DELETE /nodes/{node}/lxc/{vmid}?purge=1&destroy-unreferenced-disks=1`.
 
@@ -447,6 +457,13 @@ exists", try the next free VMID in the range.
   run `systemctl status bb-box-nvidia-devices` on the host.
 - **A desktop shows the CPU path**: read `/run/bb-box/display-reason` in the
   box. After a host driver upgrade, rebuild the desktop templates.
+- **A `linux-desktop` acquire fails naming each GPU**: every GPU's desktop
+  started on the CPU path, for the reasons given. `bb plugin logs bb-box`
+  shows each box released. Fix the reason, or ask for `linux-desktop-cpu`.
+- **The desktop viewer says the box refused its VNC password**: the plugin
+  reads `/var/lib/bb-box/vnc-password` over SSH for each viewer, so VNC is
+  running with another password. Restart `bb-box-display` in the box, or
+  release the box.
 - **Boxes cannot reach a name that resolves to the host**: see
   [Names that resolve to the host](#names-that-resolve-to-the-host).
 - **Box network missing after changes on the host**: `bb-box-network check`

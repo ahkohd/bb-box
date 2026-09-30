@@ -7,6 +7,7 @@ import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
 import type { BackendDriver } from "../src/backends/types.ts";
 import { readSettings, smoke, timingTable } from "../scripts/smoke.ts";
+import { FakeBackend } from "./fake-backend.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, KEY, VALID, fakeSsh, tempDir } from "./helpers.ts";
 
@@ -119,4 +120,23 @@ test("a smoke run first releases what an earlier smoke run left, and leaves othe
   assert.deepEqual(result.problems, []);
   assert.deepEqual([...proxmox.guests.keys()].sort(), [9000, 9901], "the earlier run's box went, and the other install's stayed");
   assert.match(lines.join("\n"), /Releasing a box an earlier smoke run left in Proxmox LXC/);
+});
+
+test("the smoke test opens a desktop box's desktop as the relay does", async () => {
+  const root = tempDir("smoke-desktop");
+  const driver: BackendDriver<Record<string, never>> = {
+    type: "fake",
+    label: "Fake host",
+    nature: "virtual",
+    settings: { "fake-enabled": { type: "boolean", label: "Fake host", description: "Use the fake host.", default: false } },
+    setup: { guide: "setup/fake/README.md", scripts: [] },
+    parse: (values) => (values["fake-enabled"] === true ? { enabled: true, ok: true, config: {} } : { enabled: false }),
+    create: (_config, context) => new FakeBackend({ root, storage: context.storage, installId: context.installId }),
+  };
+  const lines: string[] = [];
+  const result = await smoke({ "fake-enabled": true }, { kind: "linux-desktop", command: "true", drivers: [driver], log: (line) => lines.push(line) });
+  assert.deepEqual(result.problems, []);
+  assert.deepEqual(result.desktop, { width: 1280, height: 800 }, "the relay's handshake answered the desktop's VNC password");
+  assert.ok("desktop" in result.timings);
+  assert.match(lines.join("\n"), /The desktop answered: 1280 by 800\./);
 });
