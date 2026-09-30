@@ -1,6 +1,8 @@
 # 009: A conformance suite and a doctor check for every backend
 
-Status: accepted, 30 September 2026.
+Status: accepted, 30 September 2026. Partly superseded by
+[016](016-changes-from-building-v1.md): a backend's setup is a guide and the
+scripts it runs.
 
 ## Context
 

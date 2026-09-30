@@ -1,6 +1,10 @@
 # 014: Boxes enrol through BB's machine provider API, when claimed
 
-Status: accepted, 30 September 2026.
+Status: accepted, 30 September 2026. Extended by
+[017](017-boxes-clear-bb-daemon-state-at-boot.md): templates and images clear
+BB's daemon lock and PID file at boot. Enrolment was measured at 1.7 to
+2.5 s with the template, under the 3 s set in the consequences, so boxes
+still enrol when claimed.
 
 ## Context
 

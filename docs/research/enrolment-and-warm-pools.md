@@ -3,9 +3,9 @@
 How a box becomes a BB machine, how long that takes, and whether a warm box
 can be enrolled before a thread claims it.
 
-Status: a recommendation from BB's source and local measurements. The full
-timing needs one experiment on a real host. Checked against BB 0.44.0
-(server protocol 219) on 30 September 2026.
+Status: a recommendation from BB's source, measured on a real Proxmox LXC
+host and in Docker containers. Checked against BB 0.44.0 (server protocol
+219) on 30 September 2026.
 
 ## Recommendation
 
@@ -20,18 +20,21 @@ timing needs one experiment on a real host. Checked against BB 0.44.0
      it.
 2. **Templates carry what the installer needs.** That is Node.js 22.19 or
    newer, npm and curl. bb-app is pre-installed with its digest file, so the
-   installer skips the download and `npm install`, which saves about 2 s.
+   installer skips the download and `npm install`, which saves 1.7 to 4.7 s.
 3. **Templates with systemd enable linger for the box user.** Without it, the
-   host daemon stops within 15 s of the SSH session that installed it
-   (measured). An SSH pool machine turns linger on at claim, since its reset
+   host daemon stops with the SSH session that installed it (measured on a
+   real host). An SSH pool machine turns linger on at claim, since its reset
    turns it off.
-4. **Boxes without systemd need nothing more.** The installer keeps its
-   daemon running. After a restart, bb-box calls `bootstrap` again with the
-   same key, which starts the daemon without enrolling again.
-5. **Enrol when a box is claimed, not before.** A box runs commands while it
-   enrols, and nothing BB sends is fixed at enrolment. Pre-enrolled warm boxes
-   would show in BB's machine list, where anyone could start a thread on them.
-   Revisit this if the experiment below shows enrolment takes more than 3 s.
+4. **Every template and image clears BB's daemon lock and PID file at boot**
+   ([017](../decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). After a
+   hard stop, the lock makes a restarted daemon wait up to 10 s, and where
+   there is no service manager the old PID can make the installer's start
+   fail on every attempt. After a restart, bb-box calls `bootstrap` again
+   with the same key, which starts the daemon without enrolling again.
+5. **Enrol when a box is claimed, not before.** Enrolment takes 1.7 to 2.5 s
+   with the template, and a box runs commands meanwhile. Nothing BB sends is
+   fixed at enrolment. Pre-enrolled warm boxes would show in BB's machine
+   list, where anyone could start a thread on them.
 
 ## How enrolment works
 
@@ -57,23 +60,71 @@ BB's machine providers are the way a plugin adds machines. A provider has
 
 ## What was measured
 
-On a Linux devbox with 64 CPUs, close to its BB server on the network, with
-`npm install` in fresh `node:24-bookworm-slim` containers:
+Each enrolment used BB's manual machine command, fed to `sh -s` in the box
+as the box user, with a timestamp on each installer line. "Connected" is
+when BB first reported the machine connected and active.
+
+**On a real host**, with systemd: boxes linked-cloned from the headless
+template on Proxmox VE 9.2 (Ubuntu 24.04, Node 24.21), with the BB server on
+the same LAN.
+
+| Box | Installer finished | Connected |
+| --- | --- | --- |
+| bb-app removed | 6.93 s | 7.12 s |
+| template as built, bb-app pre-installed | 2.25 s | 2.45 s |
+| as above, linger off | 2.57 s | 2.76 s |
 
 | Step | Time |
 | --- | --- |
-| Download bb-app (1.2 MB) from the BB server | 0.012 s |
-| The same request with the installed digest (304) | 0.008 s |
-| `npm install` of bb-app (66 MB installed) | 1.61 to 1.86 s |
-| `node -e 0` | 0.010 s |
-| Start `bb-app` to print its help | 0.050 to 0.064 s |
+| fetch the installer, check Node, npm, the data directory and a port | 0.5 s |
+| ask for bb-app with the installed digest | 0.06 s |
+| download and `npm install` bb-app, when not pre-installed | 4.8 s |
+| join as the new machine | 0.33 s |
+| install the systemd user service and wait for it to connect | 1.1 to 1.3 s |
+| BB sees the machine, after the installer exits | 0.2 s |
 
-The installer has 34 small `node -e` calls, though no single run makes all
-of them. Pre-installing bb-app saves about 2 s. The rest is the 1 s polls,
-one or two connection waits and the service handover. We estimate 4 to 7 s
-with a service and 2 to 4 s without, which the experiment below will check.
+With the template, a box is enrolled about 2.5 s after bb-box starts the
+installer, on top of about 2.2 s from request to SSH: about 5 s from request
+to an enrolled machine. What is left is the installer's fixed steps and its
+1 s polls.
 
-Linger, in a Debian 12 container with systemd, run over SSH as root:
+**In Docker**, without systemd: `node:24-bookworm-slim` containers with
+`--init`, on a Linux devbox close to its BB server.
+
+| Box | Installer finished | Connected |
+| --- | --- | --- |
+| bb-app not installed | 3.35 to 3.98 s | same |
+| bb-app pre-installed | 1.65 to 1.77 s | same |
+
+Without a service manager, the installer keeps its first daemon and exits
+once it connects, which its 1 s poll sees about 1.07 s after the daemon
+starts. The daemon keeps running after `docker exec` ends, under the
+container's init.
+
+**Restarts.** A `docker restart` of an enrolled container, then the start
+that `bootstrap` runs for a known machine (`sh -s -- --start --host-id`):
+
+| Before the start | Start finished | Connected |
+| --- | --- | --- |
+| nothing | 7.5 to 8.8 s, waiting for the daemon lock to go stale | 0.04 s after the start |
+| nothing, the old PID now used by another process | fails: "Recorded daemon PID belongs to another process" | never |
+| daemon lock and PID file removed | 0.46 to 0.47 s | 0.50 to 0.51 s after the restart |
+
+- The daemon's lock is a directory, `daemon.lock.lock`, refreshed every 5 s
+  and stale after 10 s. A hard stop leaves it behind.
+- `install-daemon.pid` is written only where there is no service manager.
+  PIDs in a container repeat from boot to boot, so once the old PID is one
+  the installer's own processes take, the start fails every time: 4 of 5
+  restarts in a row.
+- A `systemd-tmpfiles` rule removes both at boot, tested in a Debian 12
+  container with systemd, and keeps `auth.json`.
+
+**Linger**, 30 s after the SSH session that ran the installer ended, on the
+real host: with linger, the service was active and the machine connected.
+Without it, the user manager stopped with the session and took the daemon
+with it. It came back only when a new SSH session started the manager again.
+
+Earlier, in a Debian 12 container with systemd, run over SSH as root:
 
 | Case | 15 s after the SSH session ended |
 | --- | --- |
@@ -121,37 +172,12 @@ for boxes that threads acquire.
 | Node.js 22.19 or newer, npm, curl | the installer and bootstrap use them |
 | bb-app in `~/.bb-machines/<server host>/npm`, and `host-artifact.sha256` beside it | the installer skips the download and npm |
 | linger for the box user, where systemd runs | the daemon survives the SSH session |
+| BB's daemon lock and PID file removed at boot | a restarted box reconnects in 0.5 s |
 | no `auth.json` in the data directory | the box enrols as a new machine |
 
+`<server host>` is the host of BB's URL, with its port if it has one, and
+any character other than a letter, digit, `.` or `-` replaced by `-`.
+
 A template built for an older BB still works: the digest differs, so the
-installer downloads and installs bb-app again, adding about 2 s. The setup
-script rebuilds templates when BB updates.
-
-## Experiment for a real host
-
-Time a real enrolment in a box made from the current template. This enrols
-three machines, so remove them afterwards.
-
-1. Get a machine enrolment command from BB's machine settings: the
-   `curl ... | sh` line.
-2. In a new box, run it with a timestamp on each line:
-
-   ```sh
-   sh -c '<the command>' 2>&1 | while IFS= read -r l; do
-     printf '%s %s\n' "$(date +%T.%3N)" "$l"; done
-   ```
-
-3. Repeat in a second box after pre-installing bb-app:
-
-   ```sh
-   S=<server URL>; H=$(printf '%s' "${S#*://}" | tr -c 'a-zA-Z0-9.-' '-')
-   D=$HOME/.bb-machines/$H; mkdir -p "$D"
-   curl -fsS -D /tmp/h -o /tmp/bb-app.tgz "$S/install/bb-app.tgz"
-   npm install -g --allow-scripts=better-sqlite3,node-pty,@parcel/watcher --prefix "$D/npm" /tmp/bb-app.tgz
-   sed -n 's/^x-bb-artifact-sha256: *\([a-f0-9]*\).*/\1/Ip' /tmp/h > "$D/host-artifact.sha256"
-   ```
-
-4. In a third box, pre-install, run `loginctl enable-linger root`, enrol,
-   log out, wait 30 s, and check the machine is still connected with
-   `bb machine show <name>`. Do the same check on the first box, which has no
-   linger.
+installer downloads and installs bb-app again, adding 2 to 5 s. The setup
+scripts rebuild templates when BB updates.
