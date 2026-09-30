@@ -198,12 +198,10 @@ export class RfbRelay {
   async #forward(messages: ClientMessage[]): Promise<void> {
     const connection = this.#connection;
     if (!connection || this.#ended) return;
-    let last: Promise<void> | null = null;
-    for (const message of messages) {
-      if (!this.#passes(message)) continue;
-      last = connection.writer.write(message.bytes);
-    }
-    if (last) await last;
+    // One write, awaited: a write left unawaited to a box that has gone
+    // rejects with nobody to catch it, which ends the plugin's process.
+    const passing = messages.filter((message) => this.#passes(message));
+    if (passing.length) await connection.writer.write(passing.map((message) => message.bytes).reduce(concat));
   }
 
   /** Whether a message goes to the box, tracking what the viewer holds down. */

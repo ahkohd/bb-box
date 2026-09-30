@@ -105,12 +105,12 @@ test("kinds lists only kinds with a template", () => {
   assert.equal(kinds[0]!.readyTimeoutMs, 30_000);
   assert.equal(kinds[0]!.size, "2 cores, 4 GiB memory, the template's disk");
   const desktop = setup().backend.kinds().find((kind) => kind.id === "linux-desktop")!;
-  assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }]);
+  assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: false }], "the GPU's screen keeps its size");
   assert.equal(desktop.capabilities.gpu, true);
   assert.equal(desktop.size, "4 cores, 8 GiB memory, the template's disk");
   const cpu = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.kinds().find((kind) => kind.id === "linux-desktop-cpu")!;
   assert.equal(cpu.capabilities.gpu, false);
-  assert.deepEqual(cpu.capabilities.displays, desktop.capabilities.displays);
+  assert.deepEqual(cpu.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "Xtigervnc resizes");
   assert.deepEqual(cpu.capabilities.computerUse, desktop.capabilities.computerUse);
 });
 
@@ -660,7 +660,7 @@ test("transports reach the box over SSH, and desktops over VNC", async () => {
   const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   const [display, ...others] = (await backend.transports(desktop, "linux-desktop")).displays;
   assert.equal(others.length, 0);
-  assert.deepEqual([display!.id, display!.label, display!.protocol, display!.resizable], ["desktop", "Desktop", "rfb", true]);
+  assert.deepEqual([display!.id, display!.label, display!.protocol, display!.resizable], ["desktop", "Desktop", "rfb", false]);
   assert.deepEqual(await display!.open(), { route: { type: "tcp", host: "192.0.2.101", port: 5900 }, auth: { type: "none" } });
 });
 

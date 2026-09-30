@@ -126,6 +126,10 @@ and `start` and `stop` throw `gone`.
   `linux-desktop-cpu` boxes come only from CPU-only templates or images,
   which have no GPU device nodes or driver. Every desktop shows its display
   mode and the reason as facts.
+- On Proxmox LXC a `linux-desktop` screen keeps the size it started with,
+  since Xorg on the GPU has no RandR outputs, so its display is not
+  `resizable` ([006](decisions/006-gpu-desktop-on-xorg.md)). A
+  `linux-desktop-cpu` desktop resizes to the viewer while you hold control.
 - A box user in the `docker` group is root on the machine, so an SSH pool
   offers `linux-headless-docker` only if its reset restores the whole machine
   (`restores: "machine"`). Rootless Docker kept in the box user's home may
