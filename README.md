@@ -86,9 +86,10 @@ machine variables from BB, and child threads cannot run on them.
 ### Proxmox LXC
 
 The first backend creates unprivileged LXC containers on a Proxmox VE host by
-linked clone from two CT templates, one headless and one desktop. Measured on
-a Proxmox VE 9.2 host: clone 1 s, start 1 s, boot 0.8 s, SSH ready about 1.2 s
-after start.
+linked clone from CT templates, one headless and one desktop per GPU. Measured
+on a Proxmox VE 9.2 host through the plugin's API token: clone 0.75 s, start
+1.0 s, SSH ready about 0.45 s after start, so about 2.2 s from request to a
+working box.
 
 - **Headless**: Ubuntu 24.04 with common development tools and agent CLIs, and
   Docker with compose and buildx (the container has `nesting=1`).
