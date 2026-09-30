@@ -159,9 +159,11 @@ export class Control {
       if (!this.connected(boxId, viewer)) {
         throw new ControlError("This viewer is not connected to the box's desktop, so it cannot take control. Wait for the desktop to show, then try again.");
       }
-      // Another viewer of yours had it: what it holds down is let go first.
-      if (state.owner === "human" && state.holder) await this.#release(state, state.holder);
+      // Another viewer of yours had it: its input stops, then what it holds
+      // down is let go, so no key goes down after its release.
+      const previous = state.owner === "human" ? state.holder : null;
       this.#set(boxId, state, "none", null);
+      if (previous) await this.#release(state, previous);
       try {
         await this.#deps.pause?.(boxId);
       } catch (error) {

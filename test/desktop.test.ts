@@ -196,6 +196,36 @@ test("release lets go of held keys and buttons without closing", async () => {
   await relay.relay.close();
 });
 
+test("input the box can no longer take ends the relay, and no write is left unawaited", async () => {
+  const server = new FakeRfb();
+  let broken = false;
+  const relay = relayTo(server, {
+    open: async () => {
+      const channel = server.channel();
+      const writer = channel.writable.getWriter();
+      const writable = new WritableStream<Uint8Array>({
+        write: (chunk) => (broken ? Promise.reject(new Error("The box's socket closed.")) : writer.write(chunk)),
+      });
+      return { channel: { ...channel, writable }, auth: { type: "none" } };
+    },
+  });
+  await relay.init();
+  relay.give(true);
+  const unhandled: unknown[] = [];
+  const record = (reason: unknown) => void unhandled.push(reason);
+  process.on("unhandledRejection", record);
+  try {
+    broken = true;
+    await relay.relay.receive([keyEvent(true, 0x61), keyEvent(false, 0x61), pointerEvent(1, 5, 5)].reduce(concat));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    process.off("unhandledRejection", record);
+  }
+  assert.deepEqual(unhandled, [], "an unhandled rejection ends the plugin's process");
+  assert.deepEqual(relay.ends, ["box: The box's socket closed."]);
+  assert.equal(relay.viewer.closed?.code, 1011);
+});
+
 test("a wrong password reaches the viewer as a security failure with the reason", async () => {
   const relay = relayTo(new FakeRfb({ password: "secret12" }), { password: "wrong" });
   const result = await relay.handshake();
@@ -286,13 +316,20 @@ test("a person takes control from the agent in one viewer, and hands it back", a
   assert.equal(value.mayInput("box1", "viewer-a"), false);
 });
 
-test("another viewer taking control lets go of the first viewer's input", async () => {
+test("another viewer taking control stops the first viewer's input, then lets go of it", async () => {
   const { value, connect } = control();
   const a = connect("viewer-a");
   connect("viewer-b");
   await value.take("box1", "viewer-a");
+  const release = a.release;
+  let inputWhileReleasing: boolean | null = null;
+  a.release = async () => {
+    inputWhileReleasing = value.mayInput("box1", "viewer-a");
+    await release();
+  };
   await value.take("box1", "viewer-b");
   assert.equal(a.releases, 1);
+  assert.equal(inputWhileReleasing, false, "a key the first viewer presses while it is let go would stay down");
   assert.deepEqual(value.view("box1"), { owner: "human", holder: "viewer-b" });
 });
 
