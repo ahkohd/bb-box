@@ -33,7 +33,7 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     computerUse: false,
     address: "192.0.2.10",
     facts: [{ label: "Template", value: "9000" }],
-    timings: { clone: 700, total: 2100 },
+    timings: { clone: 700, total: 2100, enrol: 5300 },
     enrol: { state: "enrolled", hostId: "host_1", error: null },
     canStopStart: true,
     ...overrides,
@@ -127,6 +127,8 @@ test("the panel lists the thread's boxes, with a placeholder for a desktop", asy
   expect(slot.getAllByText("Enrolled").length).toBe(2);
   expect(slot.getByText(/The desktop viewer comes in a later version/)).toBeTruthy();
   expect(slot.getAllByText("2.1 s").length).toBe(2);
+  expect(slot.getAllByText("BB enrolment").length).toBe(2);
+  expect(slot.getAllByText("5.3 s").length).toBe(2);
 });
 
 test("the panel makes a box of the chosen kind", async () => {

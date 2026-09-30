@@ -181,7 +181,11 @@ export class Enrolment {
         const phase = host.lifecycle.phase;
         if (phase === "active" && host.status === "connected") {
           await this.#setUpAccess(current);
-          await this.#deps.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId, error: null } }));
+          // Enrolment starts once the box is ready, so its time counts from then.
+          await this.#deps.boxes.update(box, (latest) => ({
+            enrol: { state: "enrolled", hostId, error: null },
+            ...(latest.readyAt === null ? {} : { timings: { ...latest.timings, enrol: Date.now() - latest.readyAt } }),
+          }));
           return;
         }
         if (phase === "destroyed" || phase === "removing") {

@@ -115,6 +115,9 @@ const STATE_WORDS: Record<BoxState, string> = {
   releasing: "being released",
 };
 
+/** Words for timings bb-box adds after the start-up steps. */
+const STEP_WORDS: Readonly<Record<string, string>> = { enrol: "BB enrolment" };
+
 function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
@@ -123,7 +126,7 @@ function seconds(ms: number): string {
 export function boxLine(box: BoxRecord): string {
   const parts = [`${box.name}: ${box.kindLabel} (${box.kind}), ${STATE_WORDS[box.state]}`];
   if (box.state === "ready" && box.timings.total !== undefined) parts.push(`ready in ${seconds(box.timings.total)}`);
-  if (box.enrol.state === "enrolled") parts.push("enrolled as a BB machine");
+  if (box.enrol.state === "enrolled") parts.push(`enrolled as a BB machine${box.timings.enrol !== undefined ? ` in ${seconds(box.timings.enrol)}` : ""}`);
   if (box.error) parts.push(box.error);
   return `- ${parts.join("; ")}`;
 }
@@ -150,7 +153,7 @@ export function boxDetail(box: BoxRecord): string {
   };
   lines.push(`BB machine: ${enrol[box.enrol.state]}`);
   const timings = Object.entries(box.timings);
-  if (timings.length) lines.push(`Timings: ${timings.map(([step, ms]) => `${step} ${seconds(ms)}`).join(", ")}`);
+  if (timings.length) lines.push(`Timings: ${timings.map(([step, ms]) => `${STEP_WORDS[step] ?? step} ${seconds(ms)}`).join(", ")}`);
   return lines.join("\n");
 }
 

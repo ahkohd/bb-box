@@ -283,20 +283,26 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent });
   t.after(() => harness.lifecycle.dispose());
 
-  await tool("box_acquire", { kind: "linux-headless" });
+  // box_acquire waits for enrolment, as box_run would, and says how long it took.
+  const acquired = text(await tool("box_acquire", { kind: "linux-headless" }));
+  assert.match(acquired, /BB machine: enrolled/);
+  assert.match(acquired, /Timings: .*total \d+\.\d s, BB enrolment \d+\.\d s/);
   const box = await only(app);
   const enrolled = await until("enrolment", async () => {
     const current = await app.boxes.find(box.id);
     return current?.enrol.state === "enrolled" ? current : null;
   });
   assert.equal(enrolled.enrol.hostId, `host-${box.id}`);
+  assert.equal(enrolled.timings.enrol, Object.values(enrolled.timings).at(-1), "enrolment is timed after the start-up steps");
+  assert.ok(enrolled.timings.enrol! >= 0);
   assert.deepEqual(world.bootstraps, [box.id], "BB's bootstrap runs once, keyed by the box ID");
   assert.equal(world.hosts.get(`host-${box.id}`)?.name, box.name);
 
   // BB's installer ran in the box, and commands see the box's identity.
   const installed = await tool("box_run", { box: box.name, command: 'cat bb-installed; echo "$BB_BOX_NAME $BB_THREAD_ID $BB_HOST_ID"' });
   assert.match(text(installed), new RegExp(`installed\n${box.name} ${THREAD} host-${box.id}`));
-  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolled/);
+  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolled\n.*BB enrolment \d+\.\d s/);
+  assert.match(text(await tool("box_list", {})), /enrolled as a BB machine in \d+\.\d s/);
 
   // Commands take the listed variables from BB's daemon, and nothing else.
   const access = await tool("box_run", { box: box.name, command: 'printf "%s|" "${GH_TOKEN:+token}" "$MACHINE_VAR" "$PROJECT_VAR" "${UNLISTED-unset}"' });

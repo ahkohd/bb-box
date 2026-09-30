@@ -110,7 +110,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .min(1)
         .optional()
         .describe(`The kind of box, for example linux-headless or linux-headless-docker. Defaults to ${DEFAULT_KIND}. box_list shows every kind.`),
-      wait: z.boolean().optional().describe("Wait until the box answers. Defaults to true."),
+      wait: z.boolean().optional().describe("Wait until the box answers, and up to 10 s more while it becomes a BB machine. Defaults to true."),
     }),
     async execute({ kind, wait }, { threadId, projectId, signal }) {
       try {
@@ -128,7 +128,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
             isError: true,
           };
         }
-        return `${boxDetail(settled)}${next(...using(settled))}`;
+        // box_run would wait for enrolment anyway, so the result can say how it went.
+        const enrolled = await boxes.enrolled(settled, signal);
+        return `${boxDetail(enrolled)}${next(...using(enrolled))}`;
       } catch (error) {
         return failure(error, "Acquiring a box");
       }
@@ -160,7 +162,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
 
   bb.agents.registerTool({
     name: "box_status",
-    description: "Show one box: its state, kind, address, whether it is a BB machine, and how long it took to start.",
+    description: "Show one box: its state, kind, address, whether it is a BB machine, and how long it took to start and to become one.",
     presentation: { label: { pending: "Checking a box", completed: "Checked a box" } },
     parameters: z.object({ box: boxParam }),
     async execute({ box: ref }, { threadId, signal }) {

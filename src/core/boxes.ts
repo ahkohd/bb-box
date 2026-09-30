@@ -741,7 +741,7 @@ export class Boxes {
     } = {},
   ): Promise<{ box: BoxRecord; result: RunResult }> {
     const found = await this.get(threadId, ref);
-    const box = options.waitForEnrolment === false ? found : await this.#enrolled(found, options.signal);
+    const box = options.waitForEnrolment === false ? found : await this.enrolled(found, options.signal);
     const capabilities = box.capabilities;
     if (options.session === "desktop" && !capabilities.displays.length) {
       throw new BoxError("unsupported", `Box ${box.name} has no desktop. Run the command without session "desktop", or use a desktop box.`);
@@ -768,8 +768,8 @@ export class Boxes {
     return { box, result: stopped ? { ...result, timedOut: true } : result };
   }
 
-  /** Waits a few seconds for a box that is enrolling to finish. */
-  async #enrolled(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
+  /** Waits a few seconds for a box that is enrolling to finish, and returns it as it is then. */
+  async enrolled(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
     const deadline = this.#now() + (this.#deps.enrolWaitMs ?? 10_000);
     while (box.state === "ready" && box.enrol.state === "enrolling" && this.#now() < deadline && !signal?.aborted) {
       await new Promise((resolve) => setTimeout(resolve, ENROL_POLL_MS));

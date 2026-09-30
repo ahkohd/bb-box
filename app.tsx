@@ -134,6 +134,7 @@ function BoxCard({ box, act }: { box: BoxView; act: (method: "release" | "stop" 
         ))}
         <Row label="BB machine">{enrol}</Row>
         {box.timings.total !== undefined ? <Row label="Ready in">{seconds(box.timings.total)}</Row> : null}
+        {box.timings.enrol !== undefined ? <Row label="BB enrolment">{seconds(box.timings.enrol)}</Row> : null}
       </div>
       {box.desktop ? (
         <div className="flex h-32 items-center justify-center rounded-md border border-dashed border-border text-center text-xs text-muted-foreground">
