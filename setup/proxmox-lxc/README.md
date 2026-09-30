@@ -302,7 +302,9 @@ separation, and the role `BBBoxPlugin` with only what the plugin uses:
 
 The role applies on `/pool/<pool>`; the token also gets `PVEDatastoreUser`
 on the storage and `PVESDNUser` on the bridge, which cloning and setting the
-network need. With privilege separation the token has the intersection of
+network need, and `Sys.Audit` on `/nodes/<node>` (a role named after the API
+role with `-node` added), so the capacity guard and `doctor` can read the
+node's memory, disk and network. With privilege separation the token has the intersection of
 its own ACLs and its user's, so both get the same ones. The token cannot
 touch guests outside the pool, add devices, or set container features other
 than nesting.
