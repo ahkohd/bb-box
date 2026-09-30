@@ -1,7 +1,9 @@
 # 015: Computer use drives a pinned Cua Driver through bb-box's own tools
 
 Status: accepted, 30 September 2026. Partly supersedes
-[008](008-shared-control.md) and [011](011-interface-v1.md).
+[008](008-shared-control.md) and [011](011-interface-v1.md). Partly
+superseded by [022](022-references-follow-renames-not-rows.md): how an old
+reference is found again.
 
 ## Context
 

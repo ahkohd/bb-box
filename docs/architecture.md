@@ -725,7 +725,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
   element. When only an ancestor's name changed, as an editor's tab does when
   its document is edited, an element keeps the reference of the element in
   its place: the same role and name, under ancestors with the same roles, at
-  the same position among siblings of its role.
+  the same position among siblings of its role. A row among rows keeps its
+  name in the place, so a button in a list whose rows all changed gets a new
+  reference ([022](decisions/022-references-follow-renames-not-rows.md)).
 - **Pixels.** The agent sees only pixels of images the plugin returned, at or
   under 1568 pixels on the long edge. A pixel action is accepted only against
   the latest image of that window. Each image and pixel action states the
