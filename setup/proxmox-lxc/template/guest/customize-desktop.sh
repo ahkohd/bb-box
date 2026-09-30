@@ -2,8 +2,8 @@
 # bb-box desktop template, run as root inside the CT after customize-base.sh
 # and before finalize.sh: XFCE on :99 as the box user, Xorg with NVIDIA's
 # driver (or Xtigervnc on the CPU as fallback) served over VNC on port 5900,
-# Chrome, Cua Driver, NVIDIA userspace matching the host, VirtualGL, GPUI build
-# dependencies and Rust.
+# Chrome, Mousepad, Ristretto, Evince, Cua Driver, NVIDIA userspace matching
+# the host, VirtualGL, GPUI build dependencies and Rust.
 #
 # usage: customize-desktop.sh <build-dir>
 set -Eeuo pipefail
@@ -36,6 +36,9 @@ desktop_packages="xserver-xorg-core xfce4-session xfwm4 xfce4-panel xfdesktop4 x
   ffmpeg xdotool wmctrl xclip xsel xdg-utils fonts-dejavu-core fonts-liberation fonts-noto-color-emoji
   arc-theme at-spi2-core libvulkan1 vulkan-tools mesa-vulkan-drivers mesa-utils libegl1 libgl1 libgles2
   libglvnd0 libglx0 pciutils"
+# The small apps people and agents expect on a desktop: a text editor, an
+# image viewer, a PDF viewer and the panel's application finder (about 40 MiB).
+desktop_packages="$desktop_packages mousepad ristretto evince xfce4-appfinder"
 # What Zed's GPUI needs to build on Linux.
 gpui_packages="clang cmake libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
   libfontconfig-dev libfreetype-dev libssl-dev libzstd-dev libvulkan-dev libasound2-dev"
@@ -275,11 +278,19 @@ exec $bin.distrib --force-renderer-accessibility "\$@"
 EOF
 chmod 0755 "$bin.bb-box"
 mv -f "$bin.bb-box" "$bin"
+# Chrome also claims images and PDFs; they open in the viewers made for them.
 cat >/etc/xdg/mimeapps.list <<'EOF'
 [Default Applications]
 x-scheme-handler/http=google-chrome.desktop
 x-scheme-handler/https=google-chrome.desktop
 text/html=google-chrome.desktop
+text/plain=org.xfce.mousepad.desktop
+application/pdf=org.gnome.Evince.desktop
+image/png=org.xfce.ristretto.desktop
+image/jpeg=org.xfce.ristretto.desktop
+image/gif=org.xfce.ristretto.desktop
+image/bmp=org.xfce.ristretto.desktop
+image/tiff=org.xfce.ristretto.desktop
 EOF
 install -d -m 0755 /etc/xdg/xfce4
 printf 'WebBrowser=google-chrome\nTerminalEmulator=xfce4-terminal\nFileManager=thunar\n' >/etc/xdg/xfce4/helpers.rc

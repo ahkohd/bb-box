@@ -1,6 +1,6 @@
 #!/bin/bash
-# Checks a desktop box as the box user: the display, VNC, the GPU, Chrome and
-# Cua Driver. Prints one line per check.
+# Checks a desktop box as the box user: the display, VNC, the GPU, Chrome, the
+# desktop's apps and Cua Driver. Prints one line per check.
 # usage: bb-box-check-desktop [--gpui <binary>]
 set -u
 export DISPLAY=${DISPLAY:-:99} XAUTHORITY=${XAUTHORITY:-/run/bb-box/Xauthority}
@@ -31,6 +31,20 @@ kill "$chrome" 2>/dev/null
 wait "$chrome" 2>/dev/null
 sleep 1
 rm -rf "$profile" 2>/dev/null || true
+
+t "desktop apps" sh -c 'for c in mousepad ristretto evince xfce4-terminal thunar; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; for m in text/plain application/pdf image/png; do printf "%s " "$(xdg-mime query default $m)"; done'
+# A new Mousepad window opens on :99 (in a Mousepad already running, if any),
+# and is closed again.
+t "Mousepad opens a window" sh -c '
+  ids() { wmctrl -lx | awk "\$3 ~ /[Mm]ousepad/ { print \$1 }"; }
+  before=$(ids)
+  mousepad >/dev/null 2>&1 &
+  for _ in $(seq 1 100); do
+    new=$(ids | grep -vxF "$before" | head -1)
+    [ -n "$new" ] && break
+    sleep 0.1
+  done
+  [ -n "$new" ] && echo "$(wmctrl -l | awk -v w="$new" "\$1 == w { \$1 = \$2 = \$3 = \"\"; sub(/^ +/, \"\"); print }")" && wmctrl -ic "$new"'
 
 home=$(getent passwd "$(id -un)" | cut -d: -f6)
 t "Cua Driver daemon" sh -c 'systemctl --user is-active bb-box-cua-driver && cua-driver telemetry status | head -1'

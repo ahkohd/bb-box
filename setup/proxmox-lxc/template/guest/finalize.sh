@@ -1,7 +1,8 @@
 #!/bin/bash
 # Last stage of a bb-box template, run as root inside the CT: record what is in
-# it, then remove the build's apt pins, package lists, SSH host keys, logs,
-# caches, Docker state and the build directory.
+# it, remove the build's apt pins, fetch fresh package lists from the Ubuntu
+# archive, then remove SSH host keys, logs, caches, Docker state and the build
+# directory.
 #
 # usage: finalize.sh <build-dir> <kind>
 set -euo pipefail
@@ -31,8 +32,15 @@ systemctl stop docker.socket docker.service containerd.service 2>/dev/null || tr
 
 rm -f /etc/apt/apt.conf.d/50bb-box-build-snapshot /etc/apt/sources.list.d/zz-bb-box-build-fallback.sources \
   /etc/apt/preferences.d/bb-box-build-fallback
-apt-get clean
+# Package lists from the image's own sources (the Ubuntu archive, not the
+# build's snapshot), so `sudo apt-get install <package>` works on a new box
+# without an update first. Kept compressed: about 70 MiB instead of 190.
+# They are as old as the template; apt's 404 for a package updated since then
+# means `sudo apt-get update`.
+printf 'Acquire::GzipIndexes "true";\n' >/etc/apt/apt.conf.d/50bb-box-compressed-lists
 rm -rf /var/lib/apt/lists/*
+apt-get update --error-on=any
+apt-get clean
 rm -f /etc/ssh/ssh_host_*
 rm -rf /root/.cache /root/.npm /root/.local /root/.config /home/*/.cache /home/*/.npm /tmp/* /var/tmp/*
 find /var/log -type f \( -name '*.gz' -o -name '*.[0-9]' -o -name '*.old' \) -delete
