@@ -32,6 +32,7 @@ wait "$chrome" 2>/dev/null
 sleep 1
 rm -rf "$profile" 2>/dev/null || true
 
+t "CJK fonts" sh -c 'for l in zh-cn zh-tw ja ko; do f=$(fc-match "sans-serif:lang=$l" family); case "$f" in *CJK*) printf "%s: %s; " "$l" "${f%%,*}" ;; *) echo "no CJK font for $l: $f"; exit 1 ;; esac; done'
 t "desktop apps" sh -c 'for c in mousepad ristretto evince xfce4-terminal thunar; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; for m in text/plain application/pdf image/png; do printf "%s " "$(xdg-mime query default $m)"; done'
 # A new Mousepad window opens on :99 (in a Mousepad already running, if any),
 # and is closed again.
