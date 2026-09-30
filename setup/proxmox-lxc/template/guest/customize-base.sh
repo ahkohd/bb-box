@@ -39,6 +39,16 @@ bash "$build/guest/baseline.sh" "$build" $docker_packages $extra_packages
 node_prefix=$(dirname "$(dirname "$(readlink -f /usr/local/bin/node)")")
 install -d -m 0755 "$node_prefix/etc"
 printf 'prefix=/usr/local\nupdate-notifier=false\nfund=false\n' >"$node_prefix/etc/npmrc"
+# pnpm and Yarn through Corepack, which fetches the version a project's
+# packageManager field names on first use. It does not ask first: an agent's
+# terminal cannot answer.
+/usr/local/bin/node /usr/local/bin/corepack enable --install-directory /usr/local/bin
+grep -q '^COREPACK_ENABLE_DOWNLOAD_PROMPT=' /etc/environment ||
+  printf 'COREPACK_ENABLE_DOWNLOAD_PROMPT=0\n' >>/etc/environment
+install -d -m 0755 /etc/environment.d
+printf 'COREPACK_ENABLE_DOWNLOAD_PROMPT=0\n' >/etc/environment.d/50-bb-box-corepack.conf
+# Git LFS for every user and repository, as `git lfs install` does for one user.
+git lfs install --system --skip-repo >/dev/null
 
 # The container shares the host's kernel.
 if dpkg-query -W -f='${Package} ${Status}\n' | awk '$4 == "installed" { print $1 }' |
@@ -225,13 +235,20 @@ fi
 # A health check the plugin (or a person) can run as the box user.
 install -m 0755 "$build/guest/check-headless.sh" /usr/local/bin/bb-box-check-headless
 
+# What `uv tool install` and pipx put in ~/.local/bin runs by name, as it
+# does in a login shell.
+grep -q "^PATH=\"/home/$user/.local/bin:" /etc/environment ||
+  sed -i "s|^PATH=\"|PATH=\"/home/$user/.local/bin:|" /etc/environment
+
 # Every command BB and agents use must be on the box user's PATH over SSH,
 # where pam_env sets PATH from /etc/environment.
 box_path=$(sed -n 's/^PATH="\([^"]*\)"$/\1/p' /etc/environment)
 [[ ":$box_path:" == *:/usr/local/bin:* ]] || die "/etc/environment PATH lacks /usr/local/bin"
+[[ ":$box_path:" == *:/home/$user/.local/bin:* ]] || die "/etc/environment PATH lacks ~/.local/bin"
 # shellcheck disable=SC2016
-for command in git gh node npm npx python3 pip3 rg fd jj claude codex pi curl wget jq zip unzip rsync make gcc \
-  pkg-config sudo sshd runuser docker psql redis-cli sqlite3 tmux; do
+for command in git git-lfs gh node npm npx pnpm yarn python3 pip3 uv uvx rg fd jj claude codex pi curl wget jq \
+  zip unzip zstd rsync tree bc socat netstat make gcc pkg-config sudo sshd runuser docker psql redis-cli sqlite3 \
+  tmux; do
   runuser -u "$user" -- env PATH="$box_path" sh -c 'command -v "$1" >/dev/null' sh "$command" ||
     die "$command is not on $user's PATH"
 done

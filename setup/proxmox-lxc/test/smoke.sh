@@ -44,9 +44,6 @@ ssh_box() {
     -o BatchMode=yes -o ConnectTimeout=2 -o ConnectionAttempts=1 "box@$addr" "$@"
 }
 
-kind=headless
-call GET "/nodes/$node/lxc/$template/config" | jq -e '.data | has("dev0")' >/dev/null && kind=desktop
-
 t0=$(ms)
 upid=$(call POST "/nodes/$node/lxc/$template/clone" --data-urlencode "newid=$vmid" \
   --data-urlencode "hostname=bb-box-smoke-$vmid" --data-urlencode "pool=$BBBOX_POOL" --data-urlencode "full=0" | jq -er .data)
@@ -70,6 +67,10 @@ until timeout 0.3 bash -c "exec 3<>/dev/tcp/$addr/22" 2>/dev/null && ssh_box tru
   sleep 0.1
 done
 t4=$(ms)
+# A desktop template has the desktop's check; a CPU-only one has no device
+# nodes to tell it by.
+kind=headless
+ssh_box test -x /usr/local/bin/bb-box-check-desktop && kind=desktop
 echo "clone $((t1 - t0)) ms, configure $((t2 - t1)) ms, start $((t3 - t2)) ms, SSH ready $((t4 - t3)) ms after start"
 echo "config: $(call GET "/nodes/$node/lxc/$vmid/config" | jq -c '.data | with_entries(select(.key | test("^(features|dev[0-9]+|net0)$")))')"
 ssh_box "systemctl is-system-running --wait >/dev/null; bb-box-check-$kind" | tee /tmp/bb-box-smoke-$vmid.txt

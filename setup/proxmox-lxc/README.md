@@ -167,13 +167,29 @@ whose display always takes the CPU path; it is what a host without an
 NVIDIA driver gets, and a GPU host can offer CPU desktops with it without
 using GPU memory.
 
+To rebuild a template in place, for example with new pins, add `--replace`:
+
+```sh
+template/build.sh headless 9100 --replace
+template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0 --replace
+```
+
+The new template is built and checked in another CT, `BBBOX_BUILD_VMID` or
+else the next free VMID, and takes the old template's VMID only once it has
+passed its checks: the old template is removed and the new one copied into
+its place, which takes seconds. A failed build leaves the old template as it
+was. `--replace` replaces only a bb-box template of the same kind, and
+refuses while boxes are linked clones of it: release them first. Two builds
+at the same time each need their own `BBBOX_BUILD_ADDRESS` and
+`BBBOX_BUILD_VMID`.
+
 Everything a build downloads is checked against a pinned SHA-256 and kept in
 `/var/cache/bb-box/artifacts`:
 
 - `template/apt-snapshot`: the Ubuntu archive snapshot every build installs
   from, so builds are repeatable;
-- `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, Claude
-  Code, Codex and Pi;
+- `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, uv,
+  Claude Code, Codex and Pi;
 - `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Google Chrome, Cua
   Driver and rustup;
 - the NVIDIA installer for exactly the host's driver version, checked against
@@ -194,8 +210,17 @@ Both templates:
   BB machine (as `box`). At boot, `/etc/tmpfiles.d/bb-box.conf` removes the
   daemon lock and pid file a hard stop leaves behind, so a restarted box
   reconnects at once;
-- build tools, Python, Git, the pinned tools above, Docker with compose and
-  buildx, and the Postgres, Redis and SQLite clients;
+- build tools, Python, Git with Git LFS, the pinned tools above, Docker with
+  compose and buildx, the Postgres, Redis and SQLite clients, and everyday
+  tools such as `tree`, `bc`, `zstd`, `socat` and `netstat`;
+- pnpm and Yarn through Corepack, which fetches the version a project names
+  on first use without asking; `~/.local/bin` is on `box`'s PATH, for
+  `uv tool install` and pipx;
+- apt's package lists, from the image's own Ubuntu archive sources as they
+  were at the build (not the build's snapshot), stored compressed (about
+  70 MiB), so `sudo apt-get install <package>` works at once. They age with
+  the template: when apt answers 404 Not Found for a package updated since,
+  run `sudo apt-get update`, or rebuild the templates;
 - SSH with keys only; each box makes its own host keys on first boot;
 - systemd-networkd with the address Proxmox writes from the plugin's
   settings, systemd-resolved with `BBBOX_DNS`, IPv4 only;
@@ -213,9 +238,12 @@ The desktop template adds:
 - the NVIDIA userspace matching the host's driver, VirtualGL, Vulkan and
   Mesa's CPU renderers, Google Chrome, and Cua Driver running as a daemon in
   the desktop session (below);
+- Mousepad (text editor), Ristretto (image viewer), Evince (PDF viewer) and
+  XFCE's application finder, which open text files, images and PDFs; web
+  pages open in Chrome;
 - Rust (rustup, stable) and the libraries Zed's GPUI needs to build;
 - `bb-box-check-desktop`, which checks the display, VNC, the GPU, Chrome's
-  GPU status and Cua Driver.
+  GPU status, that Mousepad opens a window, and Cua Driver.
 
 ### Computer use (Cua Driver)
 

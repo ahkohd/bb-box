@@ -67,6 +67,19 @@
       "check": "jj"
     },
     {
+      "name": "uv",
+      "version": "0.12.21",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.21/uv-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "d69d543a55ec9cdf9d3d9f2648b0a161847e3dbddc477e3be6b5813a6d46f639",
+      "source": "GitHub release asset digest for astral-sh/uv 0.12.21",
+      "strip": 1,
+      "links": {
+        "uv": "uv",
+        "uvx": "uvx"
+      },
+      "check": "uv"
+    },
+    {
       "name": "claude-code",
       "version": "2.1.283",
       "url": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.283/linux-x64/claude",

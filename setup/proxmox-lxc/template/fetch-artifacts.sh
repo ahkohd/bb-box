@@ -16,9 +16,11 @@ fetch() { # url sha256 file
   if [ -f "$art/$name" ] && echo "$sha  $art/$name" | sha256sum -c --quiet - 2>/dev/null; then
     return 0
   fi
-  curl -fsSL --retry 3 -o "$art/$name.part" "$url"
-  echo "$sha  $art/$name.part" | sha256sum -c --quiet - || die "checksum mismatch: $name"
-  mv "$art/$name.part" "$art/$name"
+  # A download of its own, so builds running at the same time can fetch the
+  # same file.
+  curl -fsSL --retry 3 -o "$art/$name.part.$$" "$url"
+  echo "$sha  $art/$name.part.$$" | sha256sum -c --quiet - || die "checksum mismatch: $name"
+  mv "$art/$name.part.$$" "$art/$name"
   echo "fetched $name"
 }
 

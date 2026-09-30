@@ -13,38 +13,86 @@
 #       a copy of a desktop template for another GPU, so desktops can spread
 #       across cards
 #
-# Options: --keep  stop before finalizing and leave the build CT running.
+# Options: --keep     stop before finalizing and leave the build CT running.
+#          --replace  <vmid> may be a bb-box template of the same kind
+#                     already. The new one is built and checked in another CT
+#                     (BBBOX_BUILD_VMID, or the next free VMID) and only then
+#                     takes the old one's place, which boxes must not be
+#                     linked clones of.
 # Settings: /etc/bb-box/bb-box.env (see host/bb-box.env.example).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
 . "$here/../host/common.sh"
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 kind=${1:-}
 shift || usage
 case "$kind" in headless | desktop) [ $# -ge 1 ] || usage; from= vmid=$1; shift ;;
   copy-desktop) [ $# -ge 2 ] || usage; from=$1 vmid=$2; shift 2 ;;
   *) usage ;;
 esac
-gpu= keep= cpu=
+gpu= keep= cpu= replace=
 while [ $# -gt 0 ]; do
   case "$1" in
     --gpu) gpu=${2:?--gpu needs a PCI address}; shift 2 ;;
     --cpu) cpu=1; shift ;;
     --keep) keep=1; shift ;;
+    --replace) replace=1; shift ;;
     *) usage ;;
   esac
 done
 [[ "$vmid" =~ ^[0-9]+$ ]] || die "VMID must be a number"
+[ "$from" != "$vmid" ] || die "copy-desktop needs another VMID for the copy"
 [ -z "$cpu" ] || [ -z "$gpu" ] || die "--gpu and --cpu exclude each other"
 [ -z "$cpu" ] || [ "$kind" = desktop ] || die "--cpu is for desktop templates"
 if [ "$kind" = desktop ] && [ -z "$gpu" ] && [ -z "$cpu" ] && [ ! -d /proc/driver/nvidia/gpus ]; then
   echo "no NVIDIA driver on this host: building a CPU-only desktop template"
   cpu=1
 fi
-! pct config "$vmid" >/dev/null 2>&1 && ! qm config "$vmid" >/dev/null 2>&1 || die "VMID $vmid is already in use"
 command -v jq >/dev/null || die "jq is required (apt install jq)"
+in_use() { pct config "$1" >/dev/null 2>&1 || qm config "$1" >/dev/null 2>&1; }
+
+# Guests whose disks are linked clones of a template's: the template's boxes.
+# Most storages name a linked clone's volume after its base; LVM-thin names it
+# like any other volume (vm-<vmid>-disk-<n>) and records the base as its
+# origin, and Proxmox itself does not notice these clones.
+linked_clones() { # vmid
+  {
+    grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null |
+      sed 's|.*/||; s|\.conf$||' || true
+    lvs --noheadings -o lv_name,origin 2>/dev/null |
+      awk -v base="^base-$1-disk-[0-9]+\$" '$2 ~ base && $1 ~ /^vm-[0-9]+-/ { split($1, p, "-"); print p[2] }' || true
+  } | sort -nu | paste -sd ' ' -
+}
+# Removes a bb-box template that no box is a linked clone of any more.
+remove_template() { # vmid
+  local clones
+  clones=$(linked_clones "$1")
+  [ -z "$clones" ] || die "boxes are linked clones of template $1 ($clones); release them first"
+  pct set "$1" --protection 0
+  pct destroy "$1" || { pct set "$1" --protection 1; die "could not remove template $1"; }
+}
+
+# With --replace, an existing <vmid> must be a template this script made, of
+# the same kind, with no boxes on it. The build then runs in another CT ($ct)
+# and replaces <vmid> at the end, so a failed build leaves the old template.
+ct=$vmid
+if in_use "$vmid"; then
+  [ -n "$replace" ] || die "VMID $vmid is already in use (--replace replaces a bb-box template)"
+  word=$kind
+  [ "$kind" != copy-desktop ] || word=desktop
+  config=$(pct config "$vmid" 2>/dev/null || true)
+  grep -q '^template: 1' <<<"$config" && grep -q "^description: bb-box $word template" <<<"$config" ||
+    die "$vmid is not a bb-box $word template; --replace replaces only those"
+  clones=$(linked_clones "$vmid")
+  [ -z "$clones" ] || die "boxes are linked clones of template $vmid ($clones); release them first"
+  if [ "$kind" != copy-desktop ]; then
+    ct=${BBBOX_BUILD_VMID:-$(pvesh get /cluster/nextid)}
+    [[ "$ct" =~ ^[0-9]+$ ]] && [ "$ct" != "$vmid" ] || die "BBBOX_BUILD_VMID must be a VMID other than $vmid"
+    ! in_use "$ct" || die "VMID $ct for the build is already in use; set BBBOX_BUILD_VMID to a free one"
+  fi
+fi
 
 cache=/var/cache/bb-box/artifacts
 stage=/var/tmp/bb-box-build-$vmid
@@ -89,6 +137,7 @@ if [ "$kind" = copy-desktop ]; then
   pct config "$from" | grep -q '^dev[0-9]*: /dev/nvidia' \
     || die "$from is not a GPU desktop template; copy a GPU desktop template to another GPU, or build a new desktop with build.sh desktop"
   lines=$(gpu_lines "$gpu")
+  ! in_use "$vmid" || remove_template "$vmid"
   # shellcheck disable=SC2046
   pct clone "$from" "$vmid" --full --pool "$BBBOX_POOL" --hostname "bb-box-desktop-$vmid" --storage "$BBBOX_STORAGE"
   pct set "$vmid" --delete protection 2>/dev/null || true
@@ -140,48 +189,55 @@ size=16
 lines=
 if [ "$kind" = desktop ] && [ -z "$cpu" ]; then lines=$(gpu_lines "$gpu"); fi
 [ -z "$cpu" ] || lines="# cpu only"
-pct create "$vmid" "$BBBOX_OS_TEMPLATE" --hostname "bb-box-$kind" --pool "$BBBOX_POOL" --unprivileged 1 \
+pct create "$ct" "$BBBOX_OS_TEMPLATE" --hostname "bb-box-$kind" --pool "$BBBOX_POOL" --unprivileged 1 \
   --features nesting=1 --cores 16 --memory 16384 --swap 1024 --rootfs "$BBBOX_STORAGE:$size" \
   --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX,gw=$BBBOX_GATEWAY,type=veth" \
   --nameserver "$BBBOX_DNS" --ostype ubuntu --onboot 0
 # Device lines are root@pam only; the plugin's clones copy them.
 devices=$(grep -v '^#' <<<"$lines" || true)
 # shellcheck disable=SC2086
-[ -z "$devices" ] || pct set "$vmid" $devices
-pct start "$vmid"
+[ -z "$devices" ] || pct set "$ct" $devices
+pct start "$ct"
 for _ in $(seq 1 60); do
-  pct exec "$vmid" -- getent hosts archive.ubuntu.com >/dev/null 2>&1 && break
+  pct exec "$ct" -- getent hosts archive.ubuntu.com >/dev/null 2>&1 && break
   sleep 1
 done
-pct exec "$vmid" -- getent hosts archive.ubuntu.com >/dev/null || die "the build CT has no network"
+pct exec "$ct" -- getent hosts archive.ubuntu.com >/dev/null || die "the build CT has no network"
 
-push() { tar -C "$stage" "$@" -cf - . | pct exec "$vmid" -- sh -c "rm -rf $in_ct && mkdir -p $in_ct && tar -xf - -C $in_ct --no-same-owner"; }
+push() { tar -C "$stage" "$@" -cf - . | pct exec "$ct" -- sh -c "rm -rf $in_ct && mkdir -p $in_ct && tar -xf - -C $in_ct --no-same-owner"; }
 push
-pct exec "$vmid" -- bash "$in_ct/guest/customize-base.sh" "$in_ct"
-[ "$kind" = headless ] || pct exec "$vmid" -- bash "$in_ct/guest/customize-desktop.sh" "$in_ct"
+pct exec "$ct" -- bash "$in_ct/guest/customize-base.sh" "$in_ct"
+[ "$kind" = headless ] || pct exec "$ct" -- bash "$in_ct/guest/customize-desktop.sh" "$in_ct"
 
 # Boot it once as a box would, and check it as the box user.
-pct reboot "$vmid"
+pct reboot "$ct"
 sleep 1
-pct exec "$vmid" -- timeout 60 systemctl is-system-running --wait >/dev/null || true
+pct exec "$ct" -- timeout 60 systemctl is-system-running --wait >/dev/null || true
 check=bb-box-check-$kind
-pct exec "$vmid" -- runuser -u box -- env PATH=/home/box/.cargo/bin:/usr/local/bin:/usr/bin:/bin \
+pct exec "$ct" -- runuser -u box -- env PATH=/home/box/.cargo/bin:/usr/local/bin:/usr/bin:/bin \
   XDG_RUNTIME_DIR=/run/user/1000 "$check" | tee "$stage/check.txt"
 if grep -q '^[^ ].* FAIL ' "$stage/check.txt"; then
-  die "checks failed; the build CT $vmid is left running for a look"
+  die "checks failed; the build CT $ct is left running for a look"
 fi
 if [ -n "$keep" ]; then
-  echo "--keep: CT $vmid is left running, not finalized"
+  echo "--keep: CT $ct is left running, not finalized"
   exit 0
 fi
 
 push --exclude=./artifacts
-pct exec "$vmid" -- bash "$in_ct/guest/finalize.sh" "$in_ct" "$kind"
-pct shutdown "$vmid" --timeout 60
+pct exec "$ct" -- bash "$in_ct/guest/finalize.sh" "$in_ct" "$kind"
+pct shutdown "$ct" --timeout 60
 # Clones get their address from the plugin; without one they have none.
-pct set "$vmid" --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=manual,type=veth" --delete nameserver \
+pct set "$ct" --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=manual,type=veth" --delete nameserver \
   --cores 2 --memory 4096 --swap 512
 note=$(grep '^#' <<<"$lines" | cut -c3- || true)
+if [ "$ct" != "$vmid" ]; then
+  # The new template replaces the old one only now. A full copy takes seconds.
+  echo "replacing template $vmid with CT $ct (if this fails, CT $ct keeps the new template)"
+  remove_template "$vmid"
+  pct clone "$ct" "$vmid" --full --pool "$BBBOX_POOL" --hostname "bb-box-$kind" --storage "$BBBOX_STORAGE"
+  pct destroy "$ct"
+fi
 make_template "$vmid" "bb-box $kind template${note:+ ($note)}, built $(date -u +%F). See /usr/share/bb-box/template-release inside."
 rm -rf "$stage"
 echo "$kind template $vmid ready${note:+ ($note)}"
