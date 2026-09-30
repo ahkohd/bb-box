@@ -514,19 +514,30 @@ real backend's pool of free, reset machines is the same thing
   pool up after each claim and on every sweep, and never below the backend's
   memory and disk reserves.
 - A warm guest counts against capacity and always fits when claimed.
-- Warm guests are not enrolled, because enrolment ties a machine to a thread's
-  environment. Whether a warm guest can be enrolled ahead and handed over is
-  the subject of the enrolment research (in progress).
+- Warm guests are not enrolled. Nothing thread-specific is fixed at
+  enrolment, but BB has no way to hide a machine, so an enrolled warm guest
+  would show in BB's machine list for anyone to start a thread on
+  ([014](decisions/014-enrol-through-machine-providers.md)). A box enrols
+  when it is claimed, and runs commands meanwhile.
 
 ## Thread access
 
 A box is a resource of its thread and gets what the thread's own machine has.
 
-- **Enrolment.** A box whose kind can enrol becomes an ordinary BB machine.
-  The plan is to install BB's host app in the template, so enrolment skips
-  the download (enrolment research, in progress). The thread's Git
-  credentials and machine variables reach the box through BB, and bb-box's
-  in-box scripts write them where the box's commands load them.
+- **Enrolment.** A box whose kind can enrol becomes an ordinary BB machine
+  ([014](decisions/014-enrol-through-machine-providers.md),
+  [research](research/enrolment-and-warm-pools.md)).
+  - bb-box registers a machine provider. It creates a machine with the box ID
+    as the key, and the provider's `create` runs BB's `bootstrap` through the
+    box's command transport. BB issues the credential and runs its own
+    installer.
+  - Templates carry Node.js, npm, curl and a pre-installed bb-app, so the
+    installer skips the download. Where systemd runs, the box user has linger,
+    or the host daemon stops when the installing SSH session ends.
+  - The thread's Git credentials and machine variables reach the box through
+    BB, which resolves them each time they are used. bb-box's host entry,
+    which runs in every enrolled box, writes them to a file that the box's SSH
+    sessions load.
 - **Child threads.** A child thread can run on an enrolled box.
 - **Direct access.** The agent can also reach its boxes itself, for example
   with `ssh <box name>` or `DOCKER_HOST`, over the same network the BB server
@@ -599,7 +610,7 @@ Nothing expires, so a box must never be forgotten.
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |
 | bb-box's SSH key | plugin storage; its public key is installed by setup | core | |
-| The thread's Git credentials and variables | BB | BB | delivered to the box on enrolment, never stored by bb-box |
+| The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; copied to a file in the box for SSH sessions, never to bb-box's storage |
 | Work in the box: files, containers, running apps | the box's disk | the thread | deleted on release (virtual), or the home recreated (real); not backed up |
 | Templates and images | the provider | operator | built by the setup scripts |
 | Who holds each desktop's input | plugin memory | core | resets to the agent on restart |
@@ -698,7 +709,7 @@ Notes:
 
 | Question | Where it is answered |
 | --- | --- |
-| How fast enrolment can be, and whether warm guests can be enrolled ahead | enrolment and warm pools research |
+| How long a real enrolment takes, which decides whether warm guests are enrolled ahead | the experiment in [enrolment and warm pools](research/enrolment-and-warm-pools.md) |
 | Accessibility tree and input on each OS, and which computer-use tool to build on | computer use research |
 | Details of the Windows, Mac, Tart, Docker and SSH pool backends | later-backends research |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
