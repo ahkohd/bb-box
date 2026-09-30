@@ -187,7 +187,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [LXC_KEYS.tokenId]: {
     type: "string",
     label: "Proxmox LXC: API token ID",
-    description: "For example bb-box@pve!plugin. The setup guide lists the privileges it needs.",
+    description: "For example bbbox@pve!plugin. The setup guide lists the privileges it needs.",
     default: "",
   },
   [LXC_KEYS.tokenSecret]: { type: "string", label: "Proxmox LXC: API token secret", secret: true },
@@ -408,7 +408,7 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   }
   const tokenId = text(values, LXC_KEYS.tokenId);
   if (!tokenId) problems.push("Set the Proxmox API token ID.");
-  else if (!/^[^\s@!=]+@[^\s@!=]+![^\s@!=]+$/.test(tokenId)) problems.push("Use a token ID like bb-box@pve!plugin.");
+  else if (!/^[^\s@!=]+@[^\s@!=]+![^\s@!=]+$/.test(tokenId)) problems.push("Use a token ID like bbbox@pve!plugin.");
   const tokenSecret = text(values, LXC_KEYS.tokenSecret);
   if (!tokenSecret) problems.push("Set the Proxmox API token secret.");
   const fingerprintText = text(values, LXC_KEYS.tlsFingerprint);
@@ -421,7 +421,7 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   const node = text(values, LXC_KEYS.node) || null;
   if (node && !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(node)) problems.push("Use the node's name as Proxmox shows it.");
   const pool = text(values, LXC_KEYS.pool, LXC_DEFAULTS.pool);
-  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(pool)) problems.push("Use a Proxmox pool name such as bb-box.");
+  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(pool)) problems.push("Use a Proxmox pool name such as bbbox.");
 
   const flavours = {} as Record<LxcFlavour, LxcFlavourConfig>;
   for (const flavour of LXC_FLAVOURS) {
