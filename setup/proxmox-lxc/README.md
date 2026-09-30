@@ -34,7 +34,8 @@ This directory holds everything needed on the Proxmox side:
 - Internet access from the host during template builds.
 - For GPU desktops: an NVIDIA GPU with NVIDIA's driver loaded on the host,
   including `nvidia-modprobe` and `nvidia-smi`. Desktops share the GPU with
-  anything else on the host. Without a GPU, desktops render on the CPU.
+  anything else on the host. Without a GPU, build a CPU-only desktop
+  template instead; its desktops render on the CPU.
 - A route from the machine that runs your BB server to the boxes' subnet
   (see [Reaching boxes](#reaching-boxes)).
 
@@ -137,7 +138,7 @@ host's own addresses whose port forward only matches traffic from elsewhere
 (for example a VPN address), boxes get no answer. Add a DNAT rule for boxes:
 
 ```sh
-BBBOX_DNAT="100.64.0.1:443=192.0.2.20"   # the host's VPN address -> the real server
+BBBOX_DNAT="198.51.100.1:443=192.0.2.20"   # the host's VPN address -> the real server
 ```
 
 ## 4. Templates
@@ -149,6 +150,7 @@ desktops on. Each build takes about 5 to 10 minutes, mostly downloads.
 template/build.sh headless 9100
 template/build.sh desktop 9101 --gpu 0000:01:00.0
 template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
+template/build.sh desktop 9103 --cpu                          # no GPU
 ```
 
 `build.sh` creates a CT from Proxmox's Ubuntu 24.04 template (downloading it
@@ -157,7 +159,11 @@ runs its checks as the box user, then cleans it, turns it into a template in
 `BBBOX_POOL` and protects it. Only root can give a container device nodes or
 features, and a clone copies them, so the plugin's token never needs those
 rights. `copy-desktop` makes a full copy of a desktop template with another
-GPU's device nodes; use it to spread desktops across GPUs.
+GPU's device nodes; use it to spread desktops across GPUs. `desktop --cpu`
+makes a desktop template with no device nodes and no NVIDIA userspace,
+whose display always takes the CPU path; it is what a host without an
+NVIDIA driver gets, and a GPU host can offer CPU desktops with it without
+using GPU memory.
 
 Everything a build downloads is checked against a pinned SHA-256 and kept in
 `/var/cache/bb-box/artifacts`:
@@ -201,10 +207,32 @@ The desktop template adds:
   password each box makes on first boot (`/var/lib/bb-box/vnc-password`,
   readable by `box` and root);
 - the NVIDIA userspace matching the host's driver, VirtualGL, Vulkan and
-  Mesa's CPU renderers, Google Chrome and Cua Driver;
+  Mesa's CPU renderers, Google Chrome, and Cua Driver running as a daemon in
+  the desktop session (below);
 - Rust (rustup, stable) and the libraries Zed's GPUI needs to build;
 - `bb-box-check-desktop`, which checks the display, VNC, the GPU, Chrome's
   GPU status and Cua Driver.
+
+### Computer use (Cua Driver)
+
+The desktop template installs one pinned Cua Driver release (checked
+against both SHA-256 values in `template/desktop-pins.tsv`) and runs it as a
+daemon in the box user's systemd manager: `bb-box-cua-driver.service` runs
+`cua-driver serve` with the desktop's `DISPLAY` and `XAUTHORITY`, and
+`bb-box-session.service` starts it with the XFCE session and stops it with
+the session. It listens on `/home/box/.cache/cua-driver/cua-driver.sock`.
+
+The plugin keeps one SSH session per box running
+`cua-driver mcp --socket /home/box/.cache/cua-driver/cua-driver.sock` and
+speaks MCP over it, so element references live as long as the daemon. A
+person can use the same daemon from a shell, for example
+`cua-driver call get_screen_size`.
+
+Cua Driver's telemetry and its update check are off everywhere it runs:
+`CUA_DRIVER_RS_TELEMETRY_ENABLED=false` and `CUA_DRIVER_RS_UPDATE_CHECK=false`
+are set for every login and user service, and `~/.cua-driver/config.json`
+for `box` and root says the same. The template carries no Cua installation
+ID. Move the pin only after checking the new release on a box.
 
 Every login of `box`, including SSH commands and BB's services, gets
 `DISPLAY=:99` and `XAUTHORITY=/run/bb-box/Xauthority`.
@@ -302,8 +330,7 @@ how long each step took.
 | `proxmox.tokenSecret` | | from the token file |
 | `proxmox.tlsFingerprint` | | SHA-256 of the host's certificate, from the token file |
 | `proxmox.pool` | `bbbox` | |
-| `proxmox.templates.headless` | `9100` | |
-| `proxmox.templates.desktop` | `9101,9102` | one per GPU; pick the one with the most free GPU memory |
+| `proxmox.templates` | `linux-headless=9100, linux-headless-docker=9100, linux-desktop=9101 9102, linux-desktop-cpu=9103` | each kind's templates; for `linux-desktop`, one per GPU |
 | `proxmox.vmids` | `9900-9999` | a range only bb-box uses |
 | `network.bridge` | `vmbr200` | |
 | `network.subnet` | `10.200.0.0/24` | |
@@ -328,7 +355,12 @@ how long each step took.
 6. Wait for TCP port 22 with a connect timeout of about 250 ms, then SSH as
    `box`. An earlier attempt, made before the box has its address, waits out
    ARP resolution, which takes longer than the box's whole boot.
-7. To delete: `POST .../status/stop` if it is running, then
+7. For a GPU desktop, read `/run/bb-box/display-mode` once SSH works. If it
+   says `cpu`, the box did not get the GPU (`display-reason` says why), so it
+   does not meet the `linux-desktop` kind: release it and try another
+   template, or offer it as `linux-desktop-cpu`. Counting desktops per GPU
+   before cloning avoids most of these.
+8. To delete: `POST .../status/stop` if it is running, then
    `DELETE /nodes/{node}/lxc/{vmid}?purge=1&destroy-unreferenced-disks=1`.
 
 Hand out addresses round-robin rather than reusing the lowest free one.

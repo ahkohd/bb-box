@@ -14,7 +14,11 @@ t "display mode" sh -c 'echo "$(cat /run/bb-box/display-mode): $(cat /run/bb-box
 t "display :99" sh -c 'xdpyinfo | grep -m1 dimensions | tr -s " "; xdpyinfo -queryExtensions | grep -oE "NV-GLX|GLX|XTEST|RANDR" | sort -u | tr "\n" " "'
 t "XFCE running" sh -c 'pgrep -u "$(id -un)" -x xfwm4 >/dev/null && pgrep -u "$(id -un)" -x xfce4-panel >/dev/null && echo xfwm4 xfce4-panel'
 t "VNC on 5900" bash -c 'exec 3<>/dev/tcp/127.0.0.1/5900; head -c 12 <&3'
-t "nvidia-smi" nvidia-smi --query-gpu=name,driver_version,memory.used,memory.total --format=csv,noheader
+if [ -c /dev/nvidiactl ]; then
+  t "nvidia-smi" nvidia-smi --query-gpu=name,driver_version,memory.used,memory.total --format=csv,noheader
+else
+  t "nvidia-smi" echo "no GPU in this box"
+fi
 t "GL renderer" sh -c 'glxinfo -B | grep -E "OpenGL renderer|available dedicated" | tr -s " "'
 t "Vulkan present (vkcube)" sh -c 's=$(date +%s%N); timeout 20 vkcube --c 1000 >/dev/null 2>&1 && echo "1000 frames in $(( ($(date +%s%N) - s) / 1000000 )) ms"'
 
@@ -28,7 +32,9 @@ wait "$chrome" 2>/dev/null
 sleep 1
 rm -rf "$profile" 2>/dev/null || true
 
-t "Cua Driver" node /usr/local/libexec/bb-box/cua-probe.mjs
+home=$(getent passwd "$(id -un)" | cut -d: -f6)
+t "Cua Driver daemon" sh -c 'systemctl --user is-active bb-box-cua-driver && cua-driver telemetry status | head -1'
+t "Cua Driver over MCP" node /usr/local/libexec/bb-box/cua-probe.mjs --socket "$home/.cache/cua-driver/cua-driver.sock"
 
 if [ "${1:-}" = --gpui ] && [ -n "${2:-}" ]; then
   "$2" >/tmp/bb-box-gpui.log 2>&1 &

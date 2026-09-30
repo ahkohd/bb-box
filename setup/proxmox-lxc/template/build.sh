@@ -3,10 +3,12 @@
 #
 #   build.sh headless <vmid>
 #       the headless template: development tools, agent CLIs and Docker
-#   build.sh desktop <vmid> [--gpu <pci-address>]
-#       the desktop template on one NVIDIA GPU (the only one, if --gpu is
-#       left out): everything in headless, plus XFCE, Xorg on the GPU, VNC,
-#       Chrome and Cua Driver
+#   build.sh desktop <vmid> [--gpu <pci-address> | --cpu]
+#       the desktop template: everything in headless, plus XFCE, VNC, Chrome
+#       and Cua Driver, on one NVIDIA GPU (the only one, if --gpu is left
+#       out), or with --cpu on no GPU at all: no device nodes, no NVIDIA
+#       userspace, and the display always on the CPU. A host without an
+#       NVIDIA driver gets a CPU template without --cpu.
 #   build.sh copy-desktop <from-vmid> <vmid> --gpu <pci-address>
 #       a copy of a desktop template for another GPU, so desktops can spread
 #       across cards
@@ -25,15 +27,22 @@ case "$kind" in headless | desktop) [ $# -ge 1 ] || usage; from= vmid=$1; shift 
   copy-desktop) [ $# -ge 2 ] || usage; from=$1 vmid=$2; shift 2 ;;
   *) usage ;;
 esac
-gpu= keep=
+gpu= keep= cpu=
 while [ $# -gt 0 ]; do
   case "$1" in
     --gpu) gpu=${2:?--gpu needs a PCI address}; shift 2 ;;
+    --cpu) cpu=1; shift ;;
     --keep) keep=1; shift ;;
     *) usage ;;
   esac
 done
 [[ "$vmid" =~ ^[0-9]+$ ]] || die "VMID must be a number"
+[ -z "$cpu" ] || [ -z "$gpu" ] || die "--gpu and --cpu exclude each other"
+[ -z "$cpu" ] || [ "$kind" = desktop ] || die "--cpu is for desktop templates"
+if [ "$kind" = desktop ] && [ -z "$gpu" ] && [ -z "$cpu" ] && [ ! -d /proc/driver/nvidia/gpus ]; then
+  echo "no NVIDIA driver on this host: building a CPU-only desktop template"
+  cpu=1
+fi
 ! pct config "$vmid" >/dev/null 2>&1 && ! qm config "$vmid" >/dev/null 2>&1 || die "VMID $vmid is already in use"
 command -v jq >/dev/null || die "jq is required (apt install jq)"
 
@@ -94,15 +103,20 @@ fi
   ssh-keygen -q -t ed25519 -N '' -C "bb-box plugin" -f "$BBBOX_SSH_KEY"
   echo "created the plugin's SSH key $BBBOX_SSH_KEY"
 }
-bash "$here/fetch-artifacts.sh" "$cache" "$kind"
+artifacts=$kind
+[ -z "$cpu" ] || artifacts=desktop-cpu
+bash "$here/fetch-artifacts.sh" "$cache" "$artifacts"
 rm -rf "$stage"
 install -d -m 0700 "$stage" "$stage/artifacts"
 cp -r "$here/guest" "$here/pins.json" "$here/desktop-pins.tsv" "$here/baseline-packages.txt" "$here/apt-snapshot" "$stage/"
 cp "$BBBOX_SSH_KEY.pub" "$stage/plugin-key.pub"
+desktop_gpu=nvidia
+[ -z "$cpu" ] || desktop_gpu=none
 cat >"$stage/build.env" <<EOF
 BOX_USER=box
 BOX_DNS="$BBBOX_DNS"
 BB_URL="$BBBOX_BB_URL"
+DESKTOP_GPU=$desktop_gpu
 EOF
 for f in "$cache"/*; do
   case "${f##*/}" in
@@ -121,14 +135,16 @@ fi
 size=16
 [ "$kind" = headless ] || size=24
 lines=
-[ "$kind" = headless ] || lines=$(gpu_lines "$gpu")
+if [ "$kind" = desktop ] && [ -z "$cpu" ]; then lines=$(gpu_lines "$gpu"); fi
+[ -z "$cpu" ] || lines="# cpu only"
 pct create "$vmid" "$BBBOX_OS_TEMPLATE" --hostname "bb-box-$kind" --pool "$BBBOX_POOL" --unprivileged 1 \
   --features nesting=1 --cores 16 --memory 16384 --swap 1024 --rootfs "$BBBOX_STORAGE:$size" \
   --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX,gw=$BBBOX_GATEWAY,type=veth" \
   --nameserver "$BBBOX_DNS" --ostype ubuntu --onboot 0
 # Device lines are root@pam only; the plugin's clones copy them.
-# shellcheck disable=SC2046
-[ -z "$lines" ] || pct set "$vmid" $(grep -v '^#' <<<"$lines")
+devices=$(grep -v '^#' <<<"$lines" || true)
+# shellcheck disable=SC2086
+[ -z "$devices" ] || pct set "$vmid" $devices
 pct start "$vmid"
 for _ in $(seq 1 60); do
   pct exec "$vmid" -- getent hosts archive.ubuntu.com >/dev/null 2>&1 && break

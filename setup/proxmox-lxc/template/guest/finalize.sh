@@ -40,6 +40,10 @@ find /var/log -type f -exec truncate -s 0 {} +
 journalctl --rotate >/dev/null 2>&1 || true
 journalctl --vacuum-time=1s >/dev/null 2>&1 || true
 rm -f /root/.bash_history /home/*/.bash_history
+# Cua Driver's installation identity and markers; its config file (telemetry
+# and update check off) stays.
+find /root/.cua-driver /home/*/.cua-driver -mindepth 1 -maxdepth 1 ! -name config.json \
+  -exec rm -rf {} + 2>/dev/null || true
 # Desktop state that each box makes for itself: VNC password, X logs, profiles.
 rm -rf /var/lib/bb-box/vnc-password /var/lib/bb-box/vnc.passwd /home/*/.local/share/xorg \
   /home/*/.config/google-chrome /root/.config/google-chrome /home/*/.Xauthority

@@ -1,10 +1,13 @@
 // bb-box: check Cua Driver end to end over MCP (stdio, newline-delimited JSON-RPC):
-// initialize, list tools, and read the screen size of the desktop.
-// usage: node cua-probe.mjs
+// initialize, list tools, and read the screen size of the desktop. With a
+// socket, it goes through the running daemon (`cua-driver mcp --socket`), as
+// the bb-box plugin does.
+// usage: node cua-probe.mjs [--socket <path>]
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 
-const driver = spawn("cua-driver", ["mcp"], { stdio: ["pipe", "pipe", "ignore"] });
+const args = ["mcp", ...process.argv.slice(2)];
+const driver = spawn("cua-driver", args, { stdio: ["pipe", "pipe", "ignore"] });
 const pending = new Map();
 readline.createInterface({ input: driver.stdout }).on("line", (line) => {
   let message;

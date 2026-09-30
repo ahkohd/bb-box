@@ -2,7 +2,7 @@
 # Downloads every artifact a template build needs into <dir> and checks each
 # against its pinned SHA-256. Files already there and correct are kept.
 #
-# usage: fetch-artifacts.sh <dir> headless|desktop
+# usage: fetch-artifacts.sh <dir> headless|desktop|desktop-cpu
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
@@ -41,12 +41,13 @@ if [ -n "$BBBOX_BB_URL" ]; then
   echo "bb-app $digest"
 fi
 
-[ "$kind" = desktop ] || exit 0
+[ "$kind" != headless ] || exit 0
 
 while IFS=$'\t' read -r name file url sha; do
   case "$name" in '' | \#*) continue ;; esac
   [ "$url" = - ] || fetch "$url" "$sha" "$file"
 done <"$here/desktop-pins.tsv"
+[ "$kind" = desktop ] || exit 0
 
 # NVIDIA's installer for exactly the host's driver, checked against the
 # SHA-256 NVIDIA publishes next to it.

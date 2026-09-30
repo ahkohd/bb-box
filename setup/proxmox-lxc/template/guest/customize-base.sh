@@ -188,8 +188,12 @@ printf 'LANG=C.UTF-8\n' >/etc/default/locale
 # The installer then gets 304 for the same build and skips its download and
 # npm install. A newer server build just downloads as usual.
 if [ -n "${BB_URL:-}" ]; then
-  bb_host=${BB_URL#*://}
-  bb_host=${bb_host%%/*}
+  # The directory name BB's installer derives from the server URL (its
+  # `server_host`): the URL's host, port included, with anything outside
+  # [A-Za-z0-9.-] replaced by "-".
+  bb_host=$(/usr/local/bin/node -e \
+    'process.stdout.write(new URL(process.argv[1]).host.replace(/[^a-zA-Z0-9.-]/gu, "-"))' "$BB_URL")
+  [ -n "$bb_host" ] || die "cannot parse BB_URL $BB_URL"
   data_dir=/home/$user/.bb-machines/$bb_host
   digest=$(sed -n 's/^x-bb-artifact-sha256: *\([a-f0-9]\{64\}\).*/\1/Ip' "$build/artifacts/bb-app.headers" | tr -d '\r' | tail -1)
   [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || die "no bb-app digest"

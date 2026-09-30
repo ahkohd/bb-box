@@ -51,20 +51,25 @@ for package in $desktop_packages $gpui_packages tigervncserver virtualgl google-
 done
 
 # NVIDIA userspace: exactly the host's version, no kernel modules. The display
-# unit compares this record with the host's driver at every start.
-nvidia=$(cat /sys/module/nvidia/version 2>/dev/null) || die "the host has no NVIDIA driver loaded"
-run=$art/NVIDIA-Linux-x86_64-$nvidia.run
-[ -f "$run" ] || die "$run is missing (fetch-artifacts.sh downloads the host's version)"
-(cd "$art" && sha256sum -c --quiet "NVIDIA-Linux-x86_64-$nvidia.run.sha256sum") || die "NVIDIA installer checksum mismatch"
-sh "$run" --silent --no-kernel-modules --no-kernel-module-source --no-nouveau-check --no-nvidia-modprobe \
-  --no-systemd --no-rpms --no-backup --no-check-for-alternate-installs --no-x-check --no-distro-scripts \
-  --no-dkms --no-install-libglvnd --glvnd-egl-config-path=/usr/share/glvnd/egl_vendor.d --tmpdir /var/tmp
-for f in /usr/lib/xorg/modules/drivers/nvidia_drv.so /usr/lib/xorg/modules/extensions/libglxserver_nvidia.so \
-  /etc/vulkan/icd.d/nvidia_icd.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json /usr/bin/nvidia-smi; do
-  [ -e "$f" ] || die "the NVIDIA installer did not install $f"
-done
+# unit compares this record with the host's driver at every start. A CPU-only
+# template (DESKTOP_GPU=none) has none, and its display always takes the CPU.
 install -d -m 0755 /usr/share/bb-box
-echo "$nvidia" >/usr/share/bb-box/nvidia-version
+if [ "${DESKTOP_GPU:-nvidia}" = none ]; then
+  nvidia=none
+else
+  nvidia=$(cat /sys/module/nvidia/version 2>/dev/null) || die "the host has no NVIDIA driver loaded"
+  run=$art/NVIDIA-Linux-x86_64-$nvidia.run
+  [ -f "$run" ] || die "$run is missing (fetch-artifacts.sh downloads the host's version)"
+  (cd "$art" && sha256sum -c --quiet "NVIDIA-Linux-x86_64-$nvidia.run.sha256sum") || die "NVIDIA installer checksum mismatch"
+  sh "$run" --silent --no-kernel-modules --no-kernel-module-source --no-nouveau-check --no-nvidia-modprobe \
+    --no-systemd --no-rpms --no-backup --no-check-for-alternate-installs --no-x-check --no-distro-scripts \
+    --no-dkms --no-install-libglvnd --glvnd-egl-config-path=/usr/share/glvnd/egl_vendor.d --tmpdir /var/tmp
+  for f in /usr/lib/xorg/modules/drivers/nvidia_drv.so /usr/lib/xorg/modules/extensions/libglxserver_nvidia.so \
+    /etc/vulkan/icd.d/nvidia_icd.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json /usr/bin/nvidia-smi; do
+    [ -e "$f" ] || die "the NVIDIA installer did not install $f"
+  done
+  echo "$nvidia" >/usr/share/bb-box/nvidia-version
+fi
 {
   echo "nvidia=$nvidia"
   for name in tigervnc virtualgl chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
@@ -111,10 +116,12 @@ install -m 0755 "$build/guest/files/display" /usr/local/libexec/bb-box/display
 install -m 0755 "$build/guest/files/vnc-password" /usr/local/libexec/bb-box/vnc-password
 install -m 0644 "$build/guest/files/chrome-gpu.mjs" /usr/local/libexec/bb-box/chrome-gpu.mjs
 install -m 0644 "$build/guest/files/cua-probe.mjs" /usr/local/libexec/bb-box/cua-probe.mjs
-cat >/etc/bb-box/desktop.env <<'EOF'
+display_mode=auto
+[ "$nvidia" != none ] || display_mode=cpu
+cat >/etc/bb-box/desktop.env <<EOF
 # bb-box desktop settings, read by bb-box-display.service at each start.
 # DISPLAY_MODE: auto (the GPU if usable, else the CPU), gpu or cpu.
-DISPLAY_MODE=auto
+DISPLAY_MODE=$display_mode
 # auto picks the CPU when the GPU has less free memory than this: enough for
 # Xorg and Chrome's GPU process.
 MIN_FREE_VRAM_MIB=384
@@ -176,6 +183,9 @@ Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus XDG_SESSION_TY
 Environment=XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce
 EnvironmentFile=-/run/bb-box/display.env
 ExecStart=/usr/bin/xfce4-session
+# Cua Driver's daemon lives and dies with the session (and its X connection).
+ExecStartPost=-/usr/bin/systemctl --user restart bb-box-cua-driver.service
+ExecStopPost=-/usr/bin/systemctl --user stop bb-box-cua-driver.service
 Restart=always
 RestartSec=1
 
@@ -283,6 +293,36 @@ install -d -m 0755 /opt/cua-driver "$cua"
 tar -xzf "$cua_tarball" -C "$cua" --no-same-owner
 echo "$(pin cua-driver-binary)  $cua/cua-driver" | sha256sum -c --quiet - || die "cua-driver binary checksum mismatch"
 ln -sfn "$cua/cua-driver" /usr/local/bin/cua-driver
+# No telemetry and no update check, for every way it runs: the daemon, the
+# plugin's `cua-driver mcp --socket` proxy over SSH and a person's shell. The
+# environment covers SSH and user services; the config file covers the rest.
+# Both are in place before Cua first runs.
+grep -q '^CUA_DRIVER_RS_TELEMETRY_ENABLED=' /etc/environment ||
+  printf 'CUA_DRIVER_RS_TELEMETRY_ENABLED=false\nCUA_DRIVER_RS_UPDATE_CHECK=false\n' >>/etc/environment
+printf 'CUA_DRIVER_RS_TELEMETRY_ENABLED=false\nCUA_DRIVER_RS_UPDATE_CHECK=false\n' >/etc/environment.d/61-bb-box-cua-driver.conf
+for home in /root "/home/$user"; do
+  owner=root
+  [ "$home" = /root ] || owner=$user
+  install -d -m 0755 -o "$owner" -g "$owner" "$home/.cua-driver"
+  printf '{\n  "telemetry_enabled": false,\n  "update_check_enabled": false\n}\n' >"$home/.cua-driver/config.json"
+  chown "$owner:$owner" "$home/.cua-driver/config.json"
+done
+# One daemon per box in the box user's systemd manager, with the desktop's
+# display; bb-box-session starts and stops it. It listens on
+# ~/.cache/cua-driver/cua-driver.sock, and element references live as long
+# as it does.
+cat >/etc/systemd/user/bb-box-cua-driver.service <<'EOF'
+[Unit]
+Description=bb-box: Cua Driver daemon for the desktop on :99
+
+[Service]
+Environment=DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority
+Environment=CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false
+EnvironmentFile=-/run/bb-box/display.env
+ExecStart=/usr/local/bin/cua-driver serve
+Restart=always
+RestartSec=1
+EOF
 
 # Rust for the box user (GPUI and other native work). Projects'
 # rust-toolchain.toml files pull their own toolchains on first use.
