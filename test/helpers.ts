@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { parseLxcSettings, type LxcConfig } from "../src/backends/proxmox-lxc/config.ts";
 import type { BackendContext, BackendStorage } from "../src/backends/types.ts";
 import { Ssh } from "../src/transports/ssh.ts";
+import type { SshAccess } from "../src/transports/types.ts";
 
 export const KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----";
 
@@ -43,6 +44,11 @@ export function tempDir(prefix: string): string {
 
 export const FAKE_SSH_BINARY = new URL("./fake-ssh.mjs", import.meta.url).pathname;
 
+/** SSH access to a fresh box at `host`, as user box. */
+export function at(host: string): SshAccess {
+  return { host, port: 22, user: "box", hostKeys: [] };
+}
+
 /** Points the fake ssh at a fresh directory. Tests in one file run one at a time, so the environment variable is safe. */
 export function fakeSsh() {
   const dir = tempDir("fake-ssh");
@@ -50,7 +56,7 @@ export function fakeSsh() {
   mkdirSync(join(dir, "down"));
   mkdirSync(join(dir, "up-after"));
   writeFileSync(join(dir, "log"), "");
-  const ssh = new Ssh({ keyPath: "/nonexistent/key", user: "box", binary: FAKE_SSH_BINARY });
+  const ssh = new Ssh({ keyPath: "/nonexistent/key", binary: FAKE_SSH_BINARY });
   return {
     dir,
     ssh,

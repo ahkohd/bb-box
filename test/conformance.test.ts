@@ -40,6 +40,7 @@ await conformance({
   create: (storage) =>
     new ProxmoxLxcBackend(config, testContext(storage), { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, readyTimeoutMs: 0 }),
   skip: {
+    arch: "the fake SSH runs commands on the test machine",
     docker: "the fake SSH runs commands on the test machine",
     display: "the fake Proxmox has no desktop to stream",
   },

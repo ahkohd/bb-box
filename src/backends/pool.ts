@@ -2,21 +2,14 @@
 // pool, or a real backend's configured machines. ReadyPool picks a free
 // member that can serve a kind and makes sure one box holds a member at a
 // time. Where membership lives is the backend's choice, through a PoolStore:
-// Proxmox LXC keeps it in guest tags, and real backends use KvPoolStore.
+// Proxmox LXC keeps it in guest tags, and real backends use KvPoolStore. A
+// store must not assume a guest's labels or tags can change after creation;
+// Docker, for example, holds a warm container by renaming it.
 
-import type { BackendStorage } from "./types.ts";
-
-export interface PoolMember {
-  readonly ref: string;
-  readonly address: string | null;
-  /** The kinds this member can serve. */
-  readonly kinds: readonly string[];
-  /** False while the member is held, being prepared or reset, or out of service. */
-  readonly free: boolean;
-}
+import type { BackendStorage, PoolMember } from "./types.ts";
 
 export interface PoolStore<Holder> {
-  members(signal?: AbortSignal): Promise<PoolMember[]>;
+  members(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** Marks a free member as held. It is no longer free once this resolves. */
   hold(member: PoolMember, holder: Holder, signal?: AbortSignal): Promise<void>;
 }
@@ -41,10 +34,10 @@ export class ReadyPool<Holder> {
   ): Promise<PoolMember | null> {
     return this.exclusive(async () => {
       for (const member of await this.#store.members(options.signal)) {
-        if (!member.free || !member.kinds.includes(kind)) continue;
+        if (member.state !== "free" || !member.kinds.includes(kind)) continue;
         await options.before?.(member);
         await this.#store.hold(member, holder, options.signal);
-        return { ...member, free: false };
+        return { ...member, state: "held" };
       }
       return null;
     });
@@ -60,26 +53,30 @@ export class ReadyPool<Holder> {
   /** Free and total members that can serve `kind`. */
   async count(kind: string, signal?: AbortSignal): Promise<{ free: number; total: number }> {
     const members = (await this.#store.members(signal)).filter((member) => member.kinds.includes(kind));
-    return { free: members.filter((member) => member.free).length, total: members.length };
+    return { free: members.filter((member) => member.state === "free").length, total: members.length };
   }
 }
 
 /** A machine a real backend lends, as its settings describe it. */
 export interface PoolMachine {
   readonly ref: string;
+  readonly host: string | null;
   readonly address: string | null;
   readonly kinds: readonly string[];
 }
 
-export type MachineState<Holder> =
-  | { readonly state: "held"; readonly holder: Holder; readonly since: number }
-  | { readonly state: "resetting"; readonly since: number }
-  | { readonly state: "out-of-service"; readonly reason: string; readonly since: number };
+export type MachineState<Holder> = { readonly since: number; readonly generation: number } & (
+  | { readonly state: "free" }
+  | { readonly state: "held"; readonly holder: Holder }
+  | { readonly state: "resetting" }
+  | { readonly state: "out-of-service"; readonly reason: string }
+);
 
 /**
  * Membership of a fixed set of real machines, kept in backend storage. A
- * machine with no stored state is free. Release moves it through resetting
- * back to free, or out of service when the reset fails.
+ * machine with no stored state is free, at generation 0. Release moves it
+ * through resetting back to free with the next generation, or out of service
+ * when the reset fails.
  */
 export class KvPoolStore<Holder> implements PoolStore<Holder> {
   readonly #storage: BackendStorage;
@@ -96,30 +93,58 @@ export class KvPoolStore<Holder> implements PoolStore<Holder> {
     return `machine/${ref}`;
   }
 
-  state(ref: string): Promise<MachineState<Holder> | undefined> {
-    return this.#storage.get<MachineState<Holder>>(this.#key(ref));
+  async state(ref: string): Promise<MachineState<Holder>> {
+    return (await this.#storage.get<MachineState<Holder>>(this.#key(ref))) ?? { state: "free", since: 0, generation: 0 };
   }
 
   async members(): Promise<PoolMember[]> {
     return Promise.all(
-      this.#machines().map(async (machine) => ({ ...machine, free: !(await this.state(machine.ref)) })),
+      this.#machines().map(async (machine) => {
+        const state = await this.state(machine.ref);
+        return {
+          ref: machine.ref,
+          host: machine.host,
+          kinds: machine.kinds,
+          state: state.state,
+          reason: state.state === "out-of-service" ? state.reason : null,
+          since: state.since,
+          generation: state.generation,
+        };
+      }),
     );
   }
 
   async hold(member: PoolMember, holder: Holder): Promise<void> {
-    await this.#storage.set(this.#key(member.ref), { state: "held", holder, since: this.#now() });
+    await this.#set(member.ref, { state: "held", holder });
   }
 
   async resetting(ref: string): Promise<void> {
-    await this.#storage.set(this.#key(ref), { state: "resetting", since: this.#now() });
+    await this.#set(ref, { state: "resetting" });
   }
 
   async outOfService(ref: string, reason: string): Promise<void> {
-    await this.#storage.set(this.#key(ref), { state: "out-of-service", reason, since: this.#now() });
+    await this.#set(ref, { state: "out-of-service", reason });
   }
 
-  /** Returns a machine to the pool. */
-  async free(ref: string): Promise<void> {
-    await this.#storage.delete(this.#key(ref));
+  /** Returns a reset machine to the pool with the next generation, which it returns. */
+  async free(ref: string): Promise<number> {
+    const generation = (await this.state(ref)).generation + 1;
+    await this.#storage.set(this.#key(ref), { state: "free", since: this.#now(), generation } satisfies MachineState<Holder>);
+    return generation;
+  }
+
+  /** Puts back a machine the operator has fixed, keeping its generation. */
+  async returnToService(ref: string): Promise<void> {
+    const current = await this.state(ref);
+    if (current.state !== "out-of-service") return;
+    await this.#set(ref, { state: "free" });
+  }
+
+  async #set(
+    ref: string,
+    state: { state: "free" } | { state: "held"; holder: Holder } | { state: "resetting" } | { state: "out-of-service"; reason: string },
+  ): Promise<void> {
+    const { generation } = await this.state(ref);
+    await this.#storage.set(this.#key(ref), { ...state, since: this.#now(), generation });
   }
 }

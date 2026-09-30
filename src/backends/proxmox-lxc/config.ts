@@ -2,6 +2,9 @@
 // starts with "proxmox-lxc-". The plugin's settings page, the smoke script's
 // settings file and the tests all go through parseLxcSettings.
 //
+// There are two templates. Headless boxes of both headless kinds are clones
+// of one; desktop boxes are clones of the other.
+//
 // Each VMID in the owned range has a fixed address: the n-th VMID gets the
 // n-th address. Proxmox refuses a second guest with the same VMID, so two
 // boxes never share an address and no address is stored or leased.
@@ -9,14 +12,21 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { ParsedSettings } from "../types.ts";
 
-export const LXC_KINDS = ["linux-headless", "linux-desktop"] as const;
-export type LxcKind = (typeof LXC_KINDS)[number];
+export const LXC_TEMPLATES = ["headless", "desktop"] as const;
+export type LxcTemplate = (typeof LXC_TEMPLATES)[number];
 
-/** Setting key fragment of each kind. */
-const KIND_KEY: Record<LxcKind, "headless" | "desktop"> = { "linux-headless": "headless", "linux-desktop": "desktop" };
+/** The kinds each template's clones serve. */
+export const TEMPLATE_KINDS: Readonly<Record<LxcTemplate, readonly string[]>> = {
+  headless: ["linux-headless", "linux-headless-docker"],
+  desktop: ["linux-desktop"],
+};
 
-export interface LxcKindConfig {
-  /** CT template VMID, or null when this kind is not set up. */
+export function templateOf(kind: string): LxcTemplate | null {
+  return LXC_TEMPLATES.find((template) => TEMPLATE_KINDS[template].includes(kind)) ?? null;
+}
+
+export interface LxcTemplateConfig {
+  /** CT template VMID, or null when its kinds are not set up. */
   readonly template: number | null;
   readonly cores: number;
   readonly memoryMiB: number;
@@ -35,7 +45,13 @@ export interface LxcConfig {
     readonly node: string | null;
     readonly pool: string;
   };
-  readonly kinds: Readonly<Record<LxcKind, LxcKindConfig>>;
+  readonly templates: Readonly<Record<LxcTemplate, LxcTemplateConfig>>;
+  readonly desktop: {
+    /** The VNC password the desktop template sets, or null when it asks for none. */
+    readonly vncPassword: string | null;
+    /** The most desktop boxes the node's GPU runs at once, or null for no limit. */
+    readonly gpuDesktops: number | null;
+  };
   readonly vmids: { readonly first: number; readonly last: number };
   readonly network: {
     readonly bridge: string;
@@ -53,8 +69,8 @@ export const LXC_DEFAULTS = {
   pool: "bb-box",
   vmidFirst: 7000,
   vmidLast: 7099,
-  "linux-headless": { cores: 2, memoryMiB: 4096, diskGiB: 16 },
-  "linux-desktop": { cores: 4, memoryMiB: 8192, diskGiB: 32 },
+  headless: { cores: 2, memoryMiB: 4096, diskGiB: 16 },
+  desktop: { cores: 4, memoryMiB: 8192, diskGiB: 32 },
   sshUser: "box",
   reserveMemoryMiB: 4096,
   reserveDiskGiB: 50,
@@ -77,34 +93,37 @@ export const LXC_KEYS = {
   addresses: "proxmox-lxc-addresses",
   sshPrivateKey: "proxmox-lxc-ssh-private-key",
   sshUser: "proxmox-lxc-ssh-user",
+  vncPassword: "proxmox-lxc-desktop-vnc-password",
+  gpuDesktops: "proxmox-lxc-desktop-gpu-limit",
   reserveMemoryMiB: "proxmox-lxc-reserve-memory-mib",
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
 } as const;
 
-export function kindKey(kind: LxcKind, field: "template" | "cores" | "memory-mib" | "disk-gib" | "warm"): string {
-  return `proxmox-lxc-${KIND_KEY[kind]}-${field}`;
+export function templateKey(template: LxcTemplate, field: "template" | "cores" | "memory-mib" | "disk-gib" | "warm"): string {
+  return `proxmox-lxc-${template}-${field}`;
 }
 
-function kindSettings(kind: LxcKind): Record<string, PluginSettingDescriptor> {
-  const defaults = LXC_DEFAULTS[kind];
+function templateSettings(template: LxcTemplate): Record<string, PluginSettingDescriptor> {
+  const defaults = LXC_DEFAULTS[template];
+  const kinds = TEMPLATE_KINDS[template].join(" and ");
   return {
-    [kindKey(kind, "template")]: {
+    [templateKey(template, "template")]: {
       type: "number",
-      label: `Proxmox LXC: ${kind} template VMID`,
-      description: `The CT template ${kind} boxes are linked clones of. 0 turns the kind off.`,
+      label: `Proxmox LXC: ${template} template VMID`,
+      description: `The CT template ${kinds} boxes are linked clones of. 0 turns them off.`,
       default: 0,
     },
-    [kindKey(kind, "cores")]: { type: "number", label: `Proxmox LXC: ${kind} cores`, default: defaults.cores },
-    [kindKey(kind, "memory-mib")]: { type: "number", label: `Proxmox LXC: ${kind} memory (MiB)`, default: defaults.memoryMiB },
-    [kindKey(kind, "disk-gib")]: {
+    [templateKey(template, "cores")]: { type: "number", label: `Proxmox LXC: ${template} cores`, default: defaults.cores },
+    [templateKey(template, "memory-mib")]: { type: "number", label: `Proxmox LXC: ${template} memory (MiB)`, default: defaults.memoryMiB },
+    [templateKey(template, "disk-gib")]: {
       type: "number",
-      label: `Proxmox LXC: ${kind} disk (GiB)`,
+      label: `Proxmox LXC: ${template} disk (GiB)`,
       description: "The root disk grows to this size if the template's is smaller.",
       default: defaults.diskGiB,
     },
-    [kindKey(kind, "warm")]: {
+    [templateKey(template, "warm")]: {
       type: "number",
-      label: `Proxmox LXC: warm ${kind} boxes`,
+      label: `Proxmox LXC: warm ${template} boxes`,
       description: "Ready boxes kept started and waiting, so a new box is ready at once. 0 turns the warm pool off.",
       default: 0,
     },
@@ -150,8 +169,20 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "Boxes are made in this pool. The token needs rights on it.",
     default: LXC_DEFAULTS.pool,
   },
-  ...kindSettings("linux-headless"),
-  ...kindSettings("linux-desktop"),
+  ...templateSettings("headless"),
+  ...templateSettings("desktop"),
+  [LXC_KEYS.vncPassword]: {
+    type: "string",
+    label: "Proxmox LXC: desktop VNC password",
+    description: "The VNC password the desktop template sets. Leave empty when its VNC server asks for none. bb-box answers it; viewers never see it.",
+    secret: true,
+  },
+  [LXC_KEYS.gpuDesktops]: {
+    type: "number",
+    label: "Proxmox LXC: desktops on the GPU at once",
+    description: "A new desktop box is refused when this many are on the node. 0 means no limit.",
+    default: 0,
+  },
   [LXC_KEYS.vmidFirst]: {
     type: "number",
     label: "Proxmox LXC: first box VMID",
@@ -299,36 +330,36 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   const pool = text(values, LXC_KEYS.pool, LXC_DEFAULTS.pool);
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(pool)) problems.push("Use a Proxmox pool name such as bb-box.");
 
-  const kinds = {} as Record<LxcKind, LxcKindConfig>;
-  for (const kind of LXC_KINDS) {
-    const template = number(values, kindKey(kind, "template"), 0);
-    const config: LxcKindConfig = {
+  const templates = {} as Record<LxcTemplate, LxcTemplateConfig>;
+  for (const name of LXC_TEMPLATES) {
+    const template = number(values, templateKey(name, "template"), 0);
+    const config: LxcTemplateConfig = {
       template: template > 0 ? template : null,
-      cores: number(values, kindKey(kind, "cores"), LXC_DEFAULTS[kind].cores),
-      memoryMiB: number(values, kindKey(kind, "memory-mib"), LXC_DEFAULTS[kind].memoryMiB),
-      diskGiB: number(values, kindKey(kind, "disk-gib"), LXC_DEFAULTS[kind].diskGiB),
-      warm: number(values, kindKey(kind, "warm"), 0),
+      cores: number(values, templateKey(name, "cores"), LXC_DEFAULTS[name].cores),
+      memoryMiB: number(values, templateKey(name, "memory-mib"), LXC_DEFAULTS[name].memoryMiB),
+      diskGiB: number(values, templateKey(name, "disk-gib"), LXC_DEFAULTS[name].diskGiB),
+      warm: number(values, templateKey(name, "warm"), 0),
     };
     if (config.template !== null && !wholeInRange(config.template, 100, 999_999_999)) {
-      problems.push(`Use a VMID from 100 for the ${kind} template.`);
+      problems.push(`Use a VMID from 100 for the ${name} template.`);
     }
-    if (!wholeInRange(config.cores, 1, 128)) problems.push(`Use 1 to 128 ${kind} cores.`);
-    if (!wholeInRange(config.memoryMiB, 256, 1_048_576)) problems.push(`Use 256 MiB or more of ${kind} memory.`);
-    if (!wholeInRange(config.diskGiB, 1, 16_384)) problems.push(`Use a ${kind} disk of 1 GiB or more.`);
-    if (!wholeInRange(config.warm, 0, 20)) problems.push(`Keep 0 to 20 warm ${kind} boxes.`);
-    kinds[kind] = config;
+    if (!wholeInRange(config.cores, 1, 128)) problems.push(`Use 1 to 128 cores for ${name} boxes.`);
+    if (!wholeInRange(config.memoryMiB, 256, 1_048_576)) problems.push(`Use 256 MiB or more of memory for ${name} boxes.`);
+    if (!wholeInRange(config.diskGiB, 1, 16_384)) problems.push(`Use a disk of 1 GiB or more for ${name} boxes.`);
+    if (!wholeInRange(config.warm, 0, 20)) problems.push(`Keep 0 to 20 warm ${name} boxes.`);
+    templates[name] = config;
   }
-  if (!LXC_KINDS.some((kind) => kinds[kind].template !== null)) problems.push("Set the CT template VMID of at least one kind.");
+  if (!LXC_TEMPLATES.some((name) => templates[name].template !== null)) problems.push("Set the VMID of the headless or desktop CT template.");
 
   const first = number(values, LXC_KEYS.vmidFirst, LXC_DEFAULTS.vmidFirst);
   const last = number(values, LXC_KEYS.vmidLast, LXC_DEFAULTS.vmidLast);
   if (!wholeInRange(first, 100, 999_999_999) || !wholeInRange(last, first, 999_999_999)) {
     problems.push("Use a VMID range from 100 whose last VMID is not below its first.");
   }
-  for (const kind of LXC_KINDS) {
-    const template = kinds[kind].template;
+  for (const name of LXC_TEMPLATES) {
+    const template = templates[name].template;
     if (template !== null && template >= first && template <= last) {
-      problems.push(`Move the ${kind} template out of the box VMID range.`);
+      problems.push(`Move the ${name} template out of the box VMID range.`);
     }
   }
 
@@ -379,6 +410,11 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   const user = text(values, LXC_KEYS.sshUser) || LXC_DEFAULTS.sshUser;
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user)) problems.push("Use a Linux user name for SSH.");
 
+  const vncPassword = text(values, LXC_KEYS.vncPassword) || null;
+  if (vncPassword && vncPassword.length > 8) problems.push("Use a VNC password of 8 characters or fewer; VNC ignores the rest.");
+  const gpuDesktops = number(values, LXC_KEYS.gpuDesktops, 0);
+  if (!wholeInRange(gpuDesktops, 0, 1_000)) problems.push("Use 0 or more for the desktops on the GPU at once.");
+
   const reserveMemoryMiB = number(values, LXC_KEYS.reserveMemoryMiB, LXC_DEFAULTS.reserveMemoryMiB);
   const reserveDiskGiB = number(values, LXC_KEYS.reserveDiskGiB, LXC_DEFAULTS.reserveDiskGiB);
   if (!wholeInRange(reserveMemoryMiB, 0, 16_777_216)) problems.push("Keep 0 MiB or more of memory free.");
@@ -390,7 +426,8 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
     ok: true,
     config: {
       proxmox: { apiUrl, tokenId, tokenSecret, caCertificate, node, pool },
-      kinds,
+      templates,
+      desktop: { vncPassword, gpuDesktops: gpuDesktops > 0 ? gpuDesktops : null },
       vmids: { first, last },
       network: { bridge, prefix, gateway: gatewayText, addresses },
       ssh: { privateKey, user },

@@ -1,19 +1,24 @@
-// The SSH command transport, through the system `ssh` client. Boxes are
-// fresh machines with new host keys and a known address, so host keys are not
-// recorded. Every dial uses port 22 with a 2 s connect timeout and one
-// attempt; callers retry on their own 1 s loop.
+// The SSH command transport, through the system `ssh` client, built from a
+// box's SshAccess. A box with no pinned host keys is a fresh guest, so its
+// first key is accepted and not recorded; pinned keys are checked against a
+// known_hosts file the backend writes. A jump host is reached with the same
+// key and options. Every dial has a 2 s connect timeout and one attempt;
+// callers retry on their own 1 s loop.
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CommandLine } from "./process.ts";
+import { CommandLine, quote } from "./process.ts";
 import {
   TransportError,
   type CommandTransport,
   type GuestOs,
+  type Route,
   type RunOptions,
   type RunResult,
+  type SshAccess,
   type StreamOptions,
 } from "./types.ts";
 
@@ -22,9 +27,9 @@ export { quote } from "./process.ts";
 export interface SshOptions {
   /** Path to the private key file, mode 0600. */
   readonly keyPath: string;
-  readonly user: string;
+  /** A known_hosts file with every pinned key, needed when an access has host keys. */
+  readonly knownHostsPath?: string | null;
   readonly binary?: string;
-  readonly port?: number;
 }
 
 export class SshError extends Error {
@@ -34,6 +39,10 @@ export class SshError extends Error {
   }
 }
 
+function pinned(access: SshAccess): boolean {
+  return access.hostKeys.length > 0 || (access.jump ? pinned(access.jump) : false);
+}
+
 export class Ssh {
   readonly #options: SshOptions;
 
@@ -41,92 +50,122 @@ export class Ssh {
     this.#options = options;
   }
 
-  args(host: string, remoteCommand: string): string[] {
+  get binary(): string {
+    return this.#options.binary ?? "ssh";
+  }
+
+  /** Options for every dial to `access`, including the jump host. */
+  options(access: SshAccess): string[] {
+    const known = this.#options.knownHostsPath;
+    if (pinned(access) && !known) throw new SshError(`${access.host} has pinned host keys but no known_hosts file was given.`);
+    const hostKeys = access.hostKeys.length
+      ? ["-o", "StrictHostKeyChecking=yes", "-o", `UserKnownHostsFile=${known}`]
+      : ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"];
+    // ProxyJump would drop -i and these options for the jump host, so the
+    // jump is spelled out. ssh expands % in it, so only our own %h:%p is left
+    // bare; a nested jump's is escaped for the next ssh to expand.
+    const jump = access.jump
+      ? [
+          "-o",
+          `ProxyCommand=${[this.binary, ...this.options(access.jump), "-W", "%h:%p", `${access.jump.user}@${access.jump.host}`]
+            .map((part) => (part === "%h:%p" ? part : quote(part.replaceAll("%", "%%"))))
+            .join(" ")}`,
+        ]
+      : [];
     return [
-      "-p", String(this.#options.port ?? 22),
+      "-p", String(access.port),
       "-i", this.#options.keyPath,
       "-o", "IdentitiesOnly=yes",
       "-o", "BatchMode=yes",
       "-o", "ConnectTimeout=2",
       "-o", "ConnectionAttempts=1",
-      "-o", "StrictHostKeyChecking=no",
-      "-o", "UserKnownHostsFile=/dev/null",
+      ...hostKeys,
       "-o", "GlobalKnownHostsFile=/dev/null",
       "-o", "LogLevel=ERROR",
       "-o", "ServerAliveInterval=15",
       "-o", "ServerAliveCountMax=3",
-      "-T",
-      `${this.#options.user}@${host}`,
-      "--",
-      remoteCommand,
+      ...jump,
     ];
   }
 
-  #line(host: string): CommandLine {
+  args(access: SshAccess, remoteCommand: string): string[] {
+    return [...this.options(access), "-T", `${access.user}@${access.host}`, "--", remoteCommand];
+  }
+
+  /** A route to `port` inside the box, carried by `ssh -W`. */
+  route(access: SshAccess, port: number): Route {
+    return {
+      type: "command",
+      argv: [this.binary, ...this.options(access), "-o", "ExitOnForwardFailure=yes", "-W", `127.0.0.1:${port}`, `${access.user}@${access.host}`],
+    };
+  }
+
+  #line(access: SshAccess): CommandLine {
     return new CommandLine({
-      argv: (script) => [this.#options.binary ?? "ssh", ...this.args(host, script)],
+      argv: (script) => [this.binary, ...this.args(access, script)],
       error: (message) => new SshError(message),
     });
   }
 
   /** Runs `remoteCommand` in the box user's shell. */
-  run(host: string, remoteCommand: string, options: RunOptions = {}): Promise<RunResult> {
-    return this.#line(host).run(remoteCommand, options);
+  run(access: SshAccess, remoteCommand: string, options: RunOptions = {}): Promise<RunResult> {
+    return this.#line(access).run(remoteCommand, options);
   }
 
   /** Runs `remoteCommand` and passes its output on as it arrives. */
-  stream(host: string, remoteCommand: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {
-    return this.#line(host).stream(remoteCommand, options);
+  stream(access: SshAccess, remoteCommand: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {
+    return this.#line(access).stream(remoteCommand, options);
   }
 
   /** Writes `data` to `path` in the box, creating parent directories. */
-  writeFile(host: string, path: string, data: Uint8Array, options: { mode?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
-    return this.#line(host).writeFile(path, data, options);
+  writeFile(access: SshAccess, path: string, data: Uint8Array, options: { mode?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
+    return this.#line(access).writeFile(path, data, options);
   }
 
   /** Reads `path` from the box. Fails when it is larger than `maxBytes`. */
-  readFile(host: string, path: string, options: { maxBytes: number; timeoutMs?: number; signal?: AbortSignal }): Promise<Buffer> {
-    return this.#line(host).readFile(path, options);
+  readFile(access: SshAccess, path: string, options: { maxBytes: number; timeoutMs?: number; signal?: AbortSignal }): Promise<Buffer> {
+    return this.#line(access).readFile(path, options);
   }
 
   /** True when SSH answers and the shell runs. */
-  probe(host: string, signal?: AbortSignal): Promise<boolean> {
-    return this.#line(host).probe(signal);
+  probe(access: SshAccess, signal?: AbortSignal): Promise<boolean> {
+    return this.#line(access).probe(signal);
   }
 }
 
 /** A box's CommandTransport over SSH. File copies use POSIX tools, so Windows needs another transport for now. */
 export class SshTransport implements CommandTransport {
-  readonly kind = "ssh";
   readonly #ssh: Ssh;
-  readonly #host: string;
+  readonly #access: SshAccess;
   readonly #os: GuestOs;
 
-  constructor(ssh: Ssh, host: string, os: GuestOs) {
+  constructor(ssh: Ssh, access: SshAccess, os: GuestOs) {
     this.#ssh = ssh;
-    this.#host = host;
+    this.#access = access;
     this.#os = os;
   }
 
   probe(signal?: AbortSignal): Promise<boolean> {
-    return this.#ssh.probe(this.#host, signal);
+    return this.#ssh.probe(this.#access, signal);
+  }
+
+  #unreachable(): TransportError {
+    return new TransportError("unreachable", `The box at ${this.#access.host} did not answer on SSH.`);
   }
 
   /** Exit 255 is also SSH's own failure, so it is checked with a probe. */
   async #reachable(exitCode: number | null, signal?: AbortSignal): Promise<void> {
-    if (exitCode === 255 && !(await this.probe(signal))) {
-      throw new TransportError("unreachable", `The box at ${this.#host} did not answer on SSH.`);
-    }
+    if (exitCode === 255 && !(await this.probe(signal))) throw this.#unreachable();
   }
 
   async run(script: string, options: RunOptions = {}): Promise<RunResult> {
-    const result = await this.#ssh.run(this.#host, script, options);
+    const result = await this.#ssh.run(this.#access, script, options);
     await this.#reachable(result.exitCode, options.signal);
     return result;
   }
 
   async stream(script: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {
-    const result = await this.#ssh.stream(this.#host, script, options);
+    const result = await this.#ssh.stream(this.#access, script, options);
     await this.#reachable(result.exitCode, options.signal);
     return result;
   }
@@ -138,11 +177,9 @@ export class SshTransport implements CommandTransport {
   async writeFile(path: string, data: Uint8Array, options: { mode?: string; signal?: AbortSignal } = {}): Promise<void> {
     this.#posixOnly("write files");
     try {
-      await this.#ssh.writeFile(this.#host, path, data, options);
+      await this.#ssh.writeFile(this.#access, path, data, options);
     } catch (error) {
-      if (error instanceof SshError && !(await this.probe(options.signal))) {
-        throw new TransportError("unreachable", `The box at ${this.#host} did not answer on SSH.`);
-      }
+      if (error instanceof SshError && !(await this.probe(options.signal))) throw this.#unreachable();
       throw error;
     }
   }
@@ -150,17 +187,19 @@ export class SshTransport implements CommandTransport {
   async readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array> {
     this.#posixOnly("read files");
     try {
-      return await this.#ssh.readFile(this.#host, path, options);
+      return await this.#ssh.readFile(this.#access, path, options);
     } catch (error) {
-      if (error instanceof SshError && !/larger than/.test(error.message) && !(await this.probe(options.signal))) {
-        throw new TransportError("unreachable", `The box at ${this.#host} did not answer on SSH.`);
-      }
+      if (error instanceof SshError && !/larger than/.test(error.message) && !(await this.probe(options.signal))) throw this.#unreachable();
       throw error;
     }
   }
+
+  async route(port: number): Promise<Route> {
+    return this.#ssh.route(this.#access, port);
+  }
 }
 
-/** A private key written to a 0600 file for `ssh -i`. */
+/** A private key written to a 0600 file for `ssh -i`, and known_hosts files beside it. */
 export class KeyFile {
   #dir: string | null = null;
   #path: string | null = null;
@@ -174,6 +213,15 @@ export class KeyFile {
     await writeFile(path, key, { mode: 0o600 });
     this.#path = path;
     this.#key = key;
+    return path;
+  }
+
+  /** Writes known_hosts lines for pinned host keys, and returns the file's path. */
+  async knownHosts(lines: readonly string[]): Promise<string> {
+    const text = lines.map((line) => line.trim()).filter(Boolean).join("\n") + "\n";
+    if (!this.#dir) this.#dir = await mkdtemp(join(tmpdir(), "bb-box-ssh-"));
+    const path = join(this.#dir, `known_hosts-${createHash("sha256").update(text).digest("hex").slice(0, 16)}`);
+    await writeFile(path, text, { mode: 0o600 });
     return path;
   }
 

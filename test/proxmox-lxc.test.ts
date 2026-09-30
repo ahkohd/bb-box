@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { ProxmoxLxcBackend, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BoxIdentity, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "./helpers.ts";
 
@@ -65,19 +65,38 @@ function hooks() {
 
 const signal = () => new AbortController().signal;
 
+function releasing(): ReleaseHooks & { timings: Record<string, number> } {
+  const timings: Record<string, number> = {};
+  return {
+    timings,
+    resetting: async () => {
+      throw new Error("A virtual backend has nothing to reset.");
+    },
+    timing: (step, ms) => {
+      timings[step] = ms;
+    },
+  };
+}
+
 test("kinds lists only kinds with a template", () => {
   const { backend } = setup({ "proxmox-lxc-desktop-template": 0 });
   const kinds = backend.kinds();
   assert.deepEqual(
     kinds.map((kind) => kind.id),
-    ["linux-headless"],
+    ["linux-headless", "linux-headless-docker"],
   );
-  assert.equal(kinds[0]!.capabilities.command, "ssh");
-  assert.equal(kinds[0]!.capabilities.display, null);
+  assert.deepEqual(kinds[0]!.requires, []);
+  assert.deepEqual(kinds[1]!.requires, ["docker"]);
+  assert.deepEqual(kinds[0]!.capabilities.features, ["docker"]);
+  assert.deepEqual(kinds[0]!.capabilities.command, { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true });
+  assert.deepEqual(kinds[0]!.capabilities.displays, []);
+  assert.equal(kinds[0]!.capabilities.arch, "x86_64");
+  assert.equal(kinds[0]!.readyTimeoutMs, 30_000);
   assert.equal(kinds[0]!.size, "2 cores, 4 GiB memory, 16 GiB disk");
-  const both = setup().backend.kinds();
-  assert.equal(both[1]!.capabilities.display, "vnc");
-  assert.equal(both[1]!.capabilities.desktop, true);
+  const desktop = setup().backend.kinds().find((kind) => kind.id === "linux-desktop")!;
+  assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }]);
+  assert.equal(desktop.capabilities.gpu, true);
+  assert.equal(desktop.size, "4 cores, 8 GiB memory, 32 GiB disk");
 });
 
 test("the node is found when there is only one", async () => {
@@ -98,8 +117,14 @@ test("capacity keeps the memory and disk reserves", async () => {
   const { backend, proxmox } = setup();
   const ok = await backend.capacity("linux-headless", [], signal());
   assert.equal(ok.ok, true);
-  assert.equal(ok.nature, "virtual");
-  assert.ok(ok.nature === "virtual" && ok.memory.freeMiB === 48 * 1024);
+  assert.deepEqual(ok.warm, { ready: 0, target: 0 });
+  assert.equal(ok.hosts.length, 1);
+  assert.equal(ok.hosts[0]!.host, "pve");
+  assert.deepEqual(ok.hosts[0]!.limits, [
+    { resource: "memory", used: 16 * 1024, total: 64 * 1024, reserve: 4096, unit: "MiB" },
+    { resource: "disk", used: 300 * 1024, total: 900 * 1024, reserve: 50 * 1024, unit: "MiB" },
+    { resource: "guests", used: 0, total: 10, reserve: 0, unit: "count" },
+  ]);
 
   proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
   const pending = await backend.capacity("linux-headless", ["linux-headless"], signal());
@@ -111,6 +136,7 @@ test("capacity keeps the memory and disk reserves", async () => {
   proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 20 * GiB });
   const disk = await backend.capacity("linux-headless", [], signal());
   assert.equal(disk.ok, false);
+  assert.equal(disk.hosts[0]!.ok, false);
   assert.match(disk.message!, /local-lvm storage on pve has 20 GiB free, less than the 50 GiB kept free/);
 });
 
@@ -120,6 +146,38 @@ test("capacity refuses when the VMID range is full", async () => {
   const full = await backend.capacity("linux-headless", [], signal());
   assert.equal(full.ok, false);
   assert.match(full.message!, /Every VMID from 7000 to 7000 is in use/);
+});
+
+test("capacity counts desktops on the GPU against its limit", async () => {
+  const { backend } = setup({ "proxmox-lxc-desktop-gpu-limit": 2 });
+  const headless = await backend.capacity("linux-headless", [], signal());
+  assert.equal(headless.hosts[0]!.limits.find((limit) => limit.resource === "gpu-desktops"), undefined);
+
+  await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  const one = await backend.capacity("linux-desktop", [], signal());
+  assert.equal(one.ok, true);
+  assert.deepEqual(one.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 1, total: 2, reserve: 0, unit: "count" });
+
+  const full = await backend.capacity("linux-desktop", ["linux-desktop", "linux-headless"], signal());
+  assert.equal(full.ok, false);
+  assert.match(full.message!, /pve runs 2 desktop boxes on its GPU, the most bb-box's settings allow/);
+
+  const unlimited = await setup().backend.capacity("linux-desktop", [], signal());
+  assert.deepEqual(unlimited.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 0, total: null, reserve: 0, unit: "count" });
+});
+
+test("a desktop still being acquired counts once against the GPU limit", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-desktop-gpu-limit": 2 });
+  const box = identity("linux-desktop");
+  let during: number | undefined;
+  const hook = hooks();
+  const acquired = backend.acquire(box, null, { ...hook.value, starting: async () => {
+    const capacity = await backend.capacity("linux-desktop", ["linux-desktop"], signal());
+    during = capacity.hosts[0]!.limits.find((limit) => limit.resource === "gpu-desktops")?.used;
+  } }, signal());
+  await acquired;
+  assert.equal(during, 1, "the acquiring box is both pending and listed, and counts once");
+  assert.equal(proxmox.guests.size, 3);
 });
 
 test("an unknown kind is refused", async () => {
@@ -136,7 +194,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
     return undefined;
   };
   const guest = await backend.acquire(box, null, hook.value, signal());
-  assert.deepEqual(guest, { ref: "7000", address: "192.0.2.100" });
+  assert.deepEqual(guest, { ref: "7000", host: "pve", address: "192.0.2.100" });
   assert.deepEqual(hook.events, ["claim 7000", "clone 7000", "starting"]);
   assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "ready", "start", "warm"]);
 
@@ -198,11 +256,14 @@ test("acquire resumes the guest of an interrupted acquire", async () => {
 test("release deletes the guest, and a missing guest counts as released", async () => {
   const { backend, proxmox } = setup();
   const guest = await backend.acquire(identity(), null, hooks().value, signal());
-  await backend.release(guest);
+  assert.equal(guest.host, "pve");
+  const release = releasing();
+  await backend.release(guest, release);
+  assert.equal(typeof release.timings.delete, "number");
   assert.equal(proxmox.guests.has(7000), false);
   assert.equal(await backend.power(guest), null);
-  await backend.release(guest);
-  await assert.rejects(backend.release({ ref: "9000", address: null }), /outside bb-box's VMID range/);
+  await backend.release(guest, releasing());
+  await assert.rejects(backend.release({ ref: "9000", host: null, address: null }, releasing()), /outside bb-box's VMID range/);
   assert.equal(proxmox.guests.has(9000), true);
 });
 
@@ -214,7 +275,7 @@ test("power, stop and start", async () => {
   assert.equal(await backend.power(guest), "stopped");
   await backend.start(guest);
   assert.equal(await backend.power(guest), "running");
-  await backend.release(guest);
+  await backend.release(guest, releasing());
   await assert.rejects(backend.start(guest), (error: unknown) => error instanceof BackendError && error.code === "gone");
 });
 
@@ -255,7 +316,7 @@ test("a new instance finds the guests the last one held", async () => {
   const restarted = make();
   const held = await restarted.held();
   assert.equal(held.find((other) => other.ref === guest.ref)?.owner?.boxId, box.boxId);
-  await restarted.release(guest);
+  await restarted.release(guest, releasing());
   assert.deepEqual(await restarted.held(), []);
 });
 
@@ -263,15 +324,32 @@ test("transports reach the box over SSH, and desktops over VNC", async () => {
   const { backend, ssh } = setup();
   const headless = await backend.acquire(identity(), null, hooks().value, signal());
   const plain = await backend.transports(headless, "linux-headless");
-  assert.equal(plain.display, null);
-  assert.equal(plain.command?.kind, "ssh");
+  assert.deepEqual(plain.displays, []);
+  assert.deepEqual(plain.access, {
+    ssh: { host: "192.0.2.100", port: 22, user: "box", hostKeys: [] },
+    dockerHost: "ssh://box@192.0.2.100",
+  });
   const result = await plain.command!.run("echo hi; whoami 2>/dev/null || true", { stdin: "" });
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /^hi\n/);
   assert.ok(ssh.log().some((entry) => entry.target === "box@192.0.2.100"));
 
+  const route = await plain.command!.route!(5900);
+  assert.equal(route.type, "command");
+  assert.deepEqual(route.type === "command" && route.argv.slice(-3), ["-W", "127.0.0.1:5900", "box@192.0.2.100"]);
+
   const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
-  assert.deepEqual((await backend.transports(desktop, "linux-desktop")).display, { protocol: "vnc", host: "192.0.2.101", port: 5900 });
+  const [display, ...others] = (await backend.transports(desktop, "linux-desktop")).displays;
+  assert.equal(others.length, 0);
+  assert.deepEqual([display!.id, display!.label, display!.protocol, display!.resizable], ["desktop", "Desktop", "rfb", true]);
+  assert.deepEqual(await display!.open(), { route: { type: "tcp", host: "192.0.2.101", port: 5900 }, auth: { type: "none" } });
+});
+
+test("a desktop with a VNC password says so, and the relay answers it", async () => {
+  const { backend } = setup({ "proxmox-lxc-desktop-vnc-password": "hunter2" });
+  const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  const [display] = (await backend.transports(desktop, "linux-desktop")).displays;
+  assert.deepEqual((await display!.open()).auth, { type: "vnc-password", password: "hunter2" });
 });
 
 test("the warm pool fills, hands out a ready guest and refills", async () => {
@@ -279,7 +357,7 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   await backend.maintain();
   const warm = proxmox.guests.get(7000)!;
   assert.equal(warm.status, "running");
-  assert.deepEqual(parseTags(warm.config.tags), ["bb-box", "warm", "kind.linux-headless"]);
+  assert.deepEqual(parseTags(warm.config.tags), ["bb-box", "warm", "template.headless"]);
   assert.deepEqual(await backend.held(), [], "warm guests belong to no box");
 
   const box = identity();
@@ -292,9 +370,15 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
 
   // Claiming a warm guest starts a refill; maintain returns the one in flight.
   await backend.maintain();
-  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "warm", "kind.linux-headless"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "warm", "template.headless"]);
   const capacity = await backend.capacity("linux-headless", [], signal());
-  assert.ok(capacity.nature === "virtual" && capacity.warm === 1);
+  assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
+
+  // Both headless kinds are clones of one template, so the warm guest serves either.
+  const docker = identity("linux-headless-docker");
+  const second = await backend.acquire(docker, null, hooks().value, signal());
+  assert.equal(second.ref, "7001");
+  assert.equal(ownerFromTags(parseTags(proxmox.guests.get(7001)!.config.tags))?.kind, "linux-headless-docker");
 });
 
 test("a warm guest satisfies capacity even when memory is short", async () => {
@@ -340,8 +424,18 @@ test("doctor passes on a complete setup and shows the generated public key", asy
   assert.equal(report.ok, true, JSON.stringify(report, null, 2));
   assert.equal(report.summary, "Proxmox VE 9.2.0 on pve");
   assert.deepEqual(
-    report.checks.map((check) => check.name),
-    ["Proxmox API", "Node", "Node memory", "Resource pool", "linux-headless template", "linux-desktop template", "Network bridge", "VMID range", "SSH key"],
+    report.checks.map((check) => [check.id, check.name, check.status]),
+    [
+      ["proxmox.api", "Proxmox API", "ok"],
+      ["proxmox.node", "Node", "ok"],
+      ["proxmox.memory", "Node memory", "ok"],
+      ["proxmox.pool", "Resource pool", "ok"],
+      ["template.headless", "Headless template", "ok"],
+      ["template.desktop", "Desktop template", "ok"],
+      ["proxmox.bridge", "Network bridge", "ok"],
+      ["proxmox.vmids", "VMID range", "ok"],
+      ["ssh.key", "SSH key", "ok"],
+    ],
   );
   assert.match(report.notes.join("\n"), /user box .* accept this SSH key .*: ssh-ed25519 \S+ bb-box$/);
   const stored = await storage.get<{ privateKey: string; publicKey: string }>("ssh-key");
@@ -357,21 +451,32 @@ test("doctor says what is missing", async () => {
   proxmox.guests.delete(9001);
   const report = await backend.doctor();
   assert.equal(report.ok, false);
-  const byName = Object.fromEntries(report.checks.map((check) => [check.name, check]));
-  assert.match(byName["Resource pool"]!.fix!, /pveum pool add bb-box/);
-  assert.match(byName["linux-headless template"]!.fix!, /pct set 9000 --features nesting=1/);
-  assert.match(byName["linux-desktop template"]!.detail, /CT 9001 does not exist on pve/);
-  assert.match(byName["Network bridge"]!.detail, /pve has no vmbr1/);
+  const byId = Object.fromEntries(report.checks.map((check) => [check.id, check]));
+  assert.equal(byId["proxmox.pool"]!.status, "fail");
+  assert.match(byId["proxmox.pool"]!.fix!, /pveum pool add bb-box/);
+  assert.match(byId["template.headless"]!.fix!, /pct set 9000 --features nesting=1/);
+  assert.match(byId["template.desktop"]!.detail, /CT 9001 does not exist on pve/);
+  assert.match(byId["proxmox.bridge"]!.detail, /pve has no vmbr1/);
   assert.match(report.summary, /^Resource pool: /);
+});
+
+test("doctor warns, without failing, when every VMID is in use", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-vmid-last": 7000, "proxmox-lxc-ssh-private-key": "" });
+  proxmox.guests.set(7000, { vmid: 7000, name: "x", pool: "bb-box", status: "running", template: false, config: {} });
+  const report = await backend.doctor();
+  assert.equal(report.ok, true, JSON.stringify(report.checks.filter((check) => check.status === "fail")));
+  const vmids = report.checks.find((check) => check.id === "proxmox.vmids")!;
+  assert.equal(vmids.status, "warn");
+  assert.match(vmids.fix!, /widen the VMID range/);
 });
 
 test("doctor with a wrong token skips the rest and never shows the secret", async () => {
   const { backend } = setup({ "proxmox-lxc-token-secret": "wrong-secret-value" });
   const report = await backend.doctor();
   assert.equal(report.ok, false);
-  assert.equal(report.checks[0]!.ok, false);
+  assert.equal(report.checks[0]!.status, "fail");
   assert.match(report.checks[0]!.fix!, /token ID and secret/);
-  assert.ok(report.checks.slice(1, -1).every((check) => check.ok === null));
+  assert.ok(report.checks.slice(1, -1).every((check) => check.status === "skipped"));
   assert.doesNotMatch(JSON.stringify(report), /wrong-secret-value|s3cret-token-value/);
 });
 

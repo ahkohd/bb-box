@@ -96,8 +96,12 @@ export class CommandLine {
 
   /** Runs `script` and passes its output on as it arrives. */
   async stream(script: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {
-    const forward = (chunk: Buffer) => options.onOutput(chunk.toString("utf8"));
-    const result = await this.#spawn(script, options, forward, forward);
+    const result = await this.#spawn(
+      script,
+      options,
+      (chunk) => options.onOutput(chunk, "stdout"),
+      (chunk) => options.onOutput(chunk, "stderr"),
+    );
     return { exitCode: result.exitCode, timedOut: result.timedOut };
   }
 

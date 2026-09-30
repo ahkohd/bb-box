@@ -6,7 +6,7 @@
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
-import type { Backend, BackendDriver, BackendStorage, BoxKind } from "./types.ts";
+import type { Backend, BackendDriver, BackendStorage, BoxKind, DoctorCheck } from "./types.ts";
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver];
 
@@ -45,6 +45,53 @@ export interface BackendStatus {
 export interface OfferedKind {
   readonly kind: BoxKind;
   readonly backend: Backend;
+}
+
+/** What offers of one kind must agree on, in words for the doctor. */
+const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
+  ["OS", (kind) => kind.capabilities.os],
+  ["architecture", (kind) => kind.capabilities.arch],
+  ["GPU", (kind) => kind.capabilities.gpu],
+  ["computer use", (kind) => kind.capabilities.computerUse],
+  ["enrolment", (kind) => kind.capabilities.enrol],
+  ["having a desktop", (kind) => kind.capabilities.displays.length > 0],
+  ["required features", (kind) => [...kind.requires].sort().join(", ") || "none"],
+];
+
+/**
+ * Checks that the offers of each kind keep the kind's promise: every offer
+ * has the features the kind requires, and offers from several backends agree
+ * on what an agent relies on. Offers may differ in size, transports and extra
+ * features. A disagreement is a warning, since each box still works.
+ */
+export function offerChecks(offered: readonly OfferedKind[]): DoctorCheck[] {
+  const byKind = new Map<string, OfferedKind[]>();
+  for (const offer of offered) byKind.set(offer.kind.id, [...(byKind.get(offer.kind.id) ?? []), offer]);
+  const checks: DoctorCheck[] = [];
+  for (const [id, offers] of byKind) {
+    const problems: string[] = [];
+    for (const { kind, backend } of offers) {
+      const missing = kind.requires.filter((feature) => !kind.capabilities.features.includes(feature));
+      if (missing.length) problems.push(`${backend.label} offers ${id} without ${missing.join(", ")}, which the kind requires.`);
+    }
+    const [first, ...rest] = offers;
+    for (const other of rest) {
+      for (const [what, value] of PROMISES) {
+        const expected = String(value(first!.kind));
+        const actual = String(value(other.kind));
+        if (expected !== actual) problems.push(`${first!.backend.label} and ${other.backend.label} disagree on ${what} for ${id}: ${expected} and ${actual}.`);
+      }
+    }
+    if (offers.length < 2 && !problems.length) continue;
+    checks.push({
+      id: `offers.${id}`,
+      name: `Offers of ${id}`,
+      status: problems.length ? "warn" : "ok",
+      detail: problems.length ? problems.join(" ") : `${offers.map((offer) => offer.backend.label).join(" and ")} offer it and agree.`,
+      fix: problems.length ? `Make the offers of ${id} match, or switch off all but one of them.` : null,
+    });
+  }
+  return checks;
 }
 
 interface Entry {
@@ -118,9 +165,9 @@ export class Backends {
   }
 
   /**
-   * Every kind the active backends offer now. Kind IDs are meant to be
-   * unique across backends; if two offer the same kind, it is listed once per
-   * backend in driver order, and acquire uses the first with room.
+   * Every offer of every kind the active backends have now, in driver order.
+   * Several backends may offer the same kind; acquire uses the first with
+   * room, and `offerChecks` warns when their offers disagree.
    */
   kinds(): OfferedKind[] {
     const offered: OfferedKind[] = [];

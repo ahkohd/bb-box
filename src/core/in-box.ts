@@ -21,16 +21,38 @@ function ps(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-/** Wraps `command` so it runs with the thread's environment, in `cwd` when given. */
-export function command(os: GuestOs, script: string, cwd?: string): string {
+/** Where a command runs: as the transport runs it, or in the box's logged-in desktop session. */
+export type Session = "default" | "desktop";
+
+/**
+ * Puts a Linux command in the desktop session: the display and the session
+ * bus of the box user's login. Values the box already sets are kept.
+ */
+const LINUX_DESKTOP =
+  'export DISPLAY="${DISPLAY:-:0}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"; ' +
+  'export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"; ';
+
+/**
+ * Whether bb-box can put a command in the desktop session of a box with this
+ * OS, when its transport runs outside it. macOS needs a LaunchAgent and
+ * Windows a scheduled task with /IT, which bb-box does not have yet.
+ */
+export function canRunInDesktop(os: GuestOs): boolean {
+  return os === "linux";
+}
+
+/** Wraps `script` so it runs with the thread's environment, in `cwd` when given. */
+export function command(os: GuestOs, script: string, options: { cwd?: string; session?: Session } = {}): string {
+  if (options.session === "desktop" && !canRunInDesktop(os)) throw new Error(`bb-box cannot run commands in a ${os} desktop session yet.`);
   if (os === "windows") {
     const env = `$bbBoxEnv = Join-Path $HOME ${ps(envFile(os))}; if (Test-Path -LiteralPath $bbBoxEnv) { . $bbBoxEnv }; `;
-    const cd = cwd ? `Set-Location -LiteralPath ${ps(cwd)}; ` : "";
+    const cd = options.cwd ? `Set-Location -LiteralPath ${ps(options.cwd)}; ` : "";
     return `${env}${cd}${script}`;
   }
   const env = `if [ -r "$HOME/${envFile(os)}" ]; then . "$HOME/${envFile(os)}"; fi; `;
-  const cd = cwd ? `cd -- ${sh(cwd)} && ` : "";
-  return `${env}${cd}${script}`;
+  const desktop = options.session === "desktop" ? LINUX_DESKTOP : "";
+  const cd = options.cwd ? `cd -- ${sh(options.cwd)} && ` : "";
+  return `${env}${desktop}${cd}${script}`;
 }
 
 /**

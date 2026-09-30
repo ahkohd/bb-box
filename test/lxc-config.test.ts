@@ -14,11 +14,16 @@ test("valid settings parse with defaults", () => {
   assert.equal(config.proxmox.pool, "bb-box");
   assert.equal(config.ssh.user, "box");
   assert.deepEqual(config.vmids, { first: 7000, last: 7099 });
-  assert.equal(config.kinds["linux-headless"].template, 9000);
-  assert.equal(config.kinds["linux-desktop"].template, null);
-  assert.equal(lxcConfig({ "proxmox-lxc-desktop-template": 9001 }).kinds["linux-desktop"].template, 9001);
-  assert.equal(config.kinds["linux-headless"].memoryMiB, 4096);
-  assert.equal(config.kinds["linux-headless"].warm, 0);
+  assert.equal(config.templates.headless.template, 9000);
+  assert.equal(config.templates.desktop.template, null);
+  assert.equal(lxcConfig({ "proxmox-lxc-desktop-template": 9001 }).templates.desktop.template, 9001);
+  assert.equal(config.templates.headless.memoryMiB, 4096);
+  assert.equal(config.templates.headless.warm, 0);
+  assert.deepEqual(config.desktop, { vncPassword: null, gpuDesktops: null });
+  assert.deepEqual(lxcConfig({ "proxmox-lxc-desktop-vnc-password": "secret", "proxmox-lxc-desktop-gpu-limit": 3 }).desktop, {
+    vncPassword: "secret",
+    gpuDesktops: 3,
+  });
   assert.deepEqual(config.reserve, { memoryMiB: 4096, diskGiB: 50 });
 });
 

@@ -26,10 +26,11 @@ import {
   type KindCapabilities,
   type MachineNature,
   type PowerState,
+  type ReleaseHooks,
 } from "../backends/types.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
-import { command } from "./in-box.ts";
+import { canRunInDesktop, command, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
 
 export type BoxState =
@@ -59,7 +60,9 @@ export interface BoxRecord {
   readonly name: string;
   readonly kind: string;
   readonly kindLabel: string;
-  /** The kind's capabilities when the box was acquired. */
+  /** The features every offer of the kind has. */
+  readonly requires: readonly string[];
+  /** The offer's capabilities when the box was acquired. Its features may add to `requires`. */
   readonly capabilities: KindCapabilities;
   readonly backend: string;
   readonly backendLabel: string;
@@ -73,7 +76,9 @@ export interface BoxRecord {
   readonly createdAt: number;
   readonly readyAt: number | null;
   readonly releaseRequestedAt: number | null;
-  /** Milliseconds per acquire step, and "total" from request to ready. */
+  /** When a real backend began resetting the machine, during release. */
+  readonly resetAt: number | null;
+  /** Milliseconds per acquire step, "total" from request to ready, and "release.<step>" after a failed release. */
   readonly timings: Readonly<Record<string, number>>;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
 }
@@ -153,7 +158,24 @@ function sentence(text: string): string {
 }
 
 /** Capabilities for a guest whose kind no backend offers any more: it can only be released. */
-const UNKNOWN_KIND: KindCapabilities = { os: "linux", desktop: false, gpu: false, docker: false, command: null, display: null, enrol: false };
+const UNKNOWN_KIND: KindCapabilities = {
+  os: "linux",
+  arch: "x86_64",
+  gpu: false,
+  features: [],
+  command: null,
+  displays: [],
+  computerUse: false,
+  enrol: false,
+};
+
+/** For releases whose progress nobody watches: leftovers the sweep finds, and guests whose box was forgotten. */
+const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
+
+/** The features a box has beyond what its kind promises. */
+export function extraFeatures(box: Pick<BoxRecord, "requires" | "capabilities">): string[] {
+  return box.capabilities.features.filter((feature) => !box.requires.includes(feature));
+}
 
 const recordKey = (threadId: string, boxId: string) => `box/${threadId}/${boxId}`;
 const indexKey = (boxId: string) => `index/${boxId}`;
@@ -319,6 +341,7 @@ export class Boxes {
           name: generateName(new Set(existing.map((box) => box.name)), this.#random),
           kind: chosen.kind.id,
           kindLabel: chosen.kind.label,
+          requires: chosen.kind.requires,
           capabilities: chosen.kind.capabilities,
           backend: chosen.backend.id,
           backendLabel: chosen.backend.label,
@@ -330,6 +353,7 @@ export class Boxes {
           createdAt: this.#now(),
           readyAt: null,
           releaseRequestedAt: null,
+          resetAt: null,
           timings: {},
           enrol: { state: "off", hostId: null, error: null },
         };
@@ -418,7 +442,7 @@ export class Boxes {
         : { guest, state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt } },
     );
     if (!next) {
-      await backend.release(guest).catch((error) => this.#deps.logError("release", error));
+      await backend.release(guest, QUIET).catch((error) => this.#deps.logError("release", error));
       return;
     }
     // A release waiting behind this task releases the guest next.
@@ -485,12 +509,22 @@ export class Boxes {
     if (box.guest) {
       const backend = this.#deps.backends.get(box.backend);
       if (!backend) return this.update(box, () => ({ error: this.#backendOff(box) }));
+      const timings: Record<string, number> = {};
+      const hooks: ReleaseHooks = {
+        resetting: async () => {
+          await this.update(box, (current) => ({ resetAt: current.resetAt ?? this.#now() }));
+        },
+        timing: (step, ms) => {
+          timings[`release.${step}`] = ms;
+        },
+      };
       try {
-        await backend.release(box.guest);
+        await backend.release(box.guest, hooks);
       } catch (error) {
         this.#deps.logError("release", error);
-        return this.update(box, () => ({
+        return this.update(box, (current) => ({
           error: `${sentence(describeError(error, "Releasing the box"))} bb-box tries again in a few minutes.`,
+          timings: { ...current.timings, ...timings },
         }));
       }
     }
@@ -517,17 +551,31 @@ export class Boxes {
     return !box.guest && !isAcquiring(box) && box.state !== "releasing" && !this.#work.has(box.id);
   }
 
+  /** Whether the box's backend can stop and start it. The panel and tools offer stop and start only then. */
+  canStopStart(box: BoxRecord): boolean {
+    const backend = this.#deps.backends.get(box.backend);
+    return !!(backend?.stop && backend.start);
+  }
+
+  #stopStart(box: BoxRecord): { stop: NonNullable<Backend["stop"]>; start: NonNullable<Backend["start"]> } {
+    const backend = this.#backend(box);
+    if (!backend.stop || !backend.start) {
+      throw new BoxError("unsupported", `${box.backendLabel} cannot stop and start its boxes, so box ${box.name} keeps running until it is released.`);
+    }
+    return { stop: backend.stop.bind(backend), start: backend.start.bind(backend) };
+  }
+
   /** Stops a box to free memory while keeping its disk. */
   async stop(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
     return this.#chain(box.id, async () => {
       const current = (await this.#read(box.threadId, box.id)) ?? box;
+      const { stop } = this.#stopStart(current);
       if (current.state === "stopped") return current;
       this.#require(current, "ready");
-      const backend = this.#backend(current);
       await this.update(current, () => ({ state: "stopping", error: null }));
       try {
-        await backend.stop(current.guest!, signal);
+        await stop(current.guest!, signal);
       } catch (error) {
         await this.#observe(current, { signal, moving: true }).catch(() => null);
         throw error;
@@ -541,12 +589,12 @@ export class Boxes {
     const box = await this.get(threadId, ref);
     return this.#chain(box.id, async () => {
       const current = (await this.#read(box.threadId, box.id)) ?? box;
+      const { start } = this.#stopStart(current);
       if (current.state === "ready") return current;
       this.#require(current, "stopped");
-      const backend = this.#backend(current);
       await this.update(current, () => ({ state: "starting", error: null }));
       try {
-        await backend.start(current.guest!, signal);
+        await start(current.guest!, signal);
       } catch (error) {
         await this.#observe(current, { signal, moving: true }).catch(() => null);
         throw error;
@@ -595,6 +643,8 @@ export class Boxes {
       const moving = (current.state === "stopping" || current.state === "starting") && current.readyAt !== null;
       if (!settled && !(options.moving && moving)) return {};
       if (power === null) return { state: "gone", error: "The guest was deleted outside bb-box." };
+      // The provider cannot tell, for example a machine that does not answer: keep what we know.
+      if (power === "unknown") return {};
       const state = power === "running" ? "ready" : "stopped";
       return current.state === state ? {} : { state, error: null };
     });
@@ -630,13 +680,30 @@ export class Boxes {
     threadId: string,
     ref: string,
     script: string,
-    options: { stdin?: string | Uint8Array; timeoutMs?: number; cwd?: string; signal?: AbortSignal; maxOutputBytes?: number } = {},
+    options: {
+      stdin?: string | Uint8Array;
+      timeoutMs?: number;
+      cwd?: string;
+      /** "desktop" runs the command in the box's logged-in desktop session, so it can open windows. */
+      session?: Session;
+      signal?: AbortSignal;
+      maxOutputBytes?: number;
+    } = {},
   ): Promise<{ box: BoxRecord; result: RunResult }> {
     const box = await this.get(threadId, ref);
+    const capabilities = box.capabilities;
+    if (options.session === "desktop" && !capabilities.displays.length) {
+      throw new BoxError("unsupported", `Box ${box.name} has no desktop. Run the command without session "desktop", or use a desktop box.`);
+    }
+    // A transport that already runs commands in the desktop session needs no wrapper.
+    const session = options.session === "desktop" && !capabilities.command?.inDesktopSession ? "desktop" : "default";
+    if (session === "desktop" && !canRunInDesktop(capabilities.os)) {
+      throw new BoxError("unsupported", `bb-box cannot run commands in box ${box.name}'s desktop session yet: its OS is ${capabilities.os}.`);
+    }
     const result = await this.#reach(
       box,
       (transport) =>
-        transport.run(command(box.capabilities.os, script, options.cwd), {
+        transport.run(command(capabilities.os, script, { cwd: options.cwd, session }), {
           stdin: options.stdin,
           timeoutMs: options.timeoutMs,
           signal: options.signal,
@@ -742,7 +809,7 @@ export class Boxes {
           } else if (state === "ended") {
             // No box owns it: an acquire interrupted before its claim was
             // labelled, a box that moved to another guest, or an ended thread.
-            await backend.release(guest, signal);
+            await backend.release(guest, QUIET, signal);
             leftovers++;
           }
         } catch (error) {
@@ -779,17 +846,19 @@ export class Boxes {
         name,
         kind: owner.kind ?? "unknown",
         kindLabel: kind?.label ?? owner.kind ?? "Unknown kind",
+        requires: kind?.requires ?? [],
         capabilities: kind?.capabilities ?? UNKNOWN_KIND,
         backend: backend.id,
         backendLabel: backend.label,
         nature: backend.nature,
         role: "box",
-        guest: { ref: guest.ref, address: guest.address },
-        state: guest.power === "running" ? "ready" : "stopped",
+        guest: { ref: guest.ref, host: guest.host, address: guest.address, ...(guest.data ? { data: guest.data } : {}) },
+        state: guest.power === "stopped" ? "stopped" : "ready",
         error: null,
         createdAt: owner.createdAt ?? this.#now(),
         readyAt: owner.createdAt ?? this.#now(),
         releaseRequestedAt: null,
+        resetAt: null,
         timings: {},
         enrol: { state: "off", hostId: null, error: null },
       };

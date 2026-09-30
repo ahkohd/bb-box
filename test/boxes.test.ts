@@ -4,16 +4,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
-import { BackendError, type Backend, type MachineNature } from "../src/backends/types.ts";
-import { BoxError, Boxes, type BoxRecord, type ThreadLiveness } from "../src/core/boxes.ts";
+import { BackendError, type Backend, type ReleaseHooks } from "../src/backends/types.ts";
+import { BoxError, Boxes, extraFeatures, type BoxRecord, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { envScript } from "../src/core/in-box.ts";
-import { FakeBackend } from "./fake-backend.ts";
+import { FAKE_KINDS, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_one";
 
-function setup(options: { nature?: MachineNature; machines?: number; maxGuests?: number } = {}) {
+const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
+
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -229,7 +231,7 @@ test("stop and start, and a stopped box says so instead of timing out", async ()
 test("a box stopped behind bb-box's back is found when a command cannot reach it", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
-  await world.backend.stop(box.guest!);
+  await world.backend.stop!(box.guest!);
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /is stopped/);
   assert.equal((await world.boxes.get(THREAD, box.name)).state, "stopped");
 });
@@ -237,7 +239,7 @@ test("a box stopped behind bb-box's back is found when a command cannot reach it
 test("a guest deleted outside bb-box marks the box gone, and release still works", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
-  await world.backend.release(box.guest!);
+  await world.backend.release(box.guest!, QUIET);
   const refreshed = await world.boxes.refresh(THREAD, box.name);
   assert.equal(refreshed.state, "gone");
   assert.match(refreshed.error!, /deleted outside bb-box/);
@@ -341,8 +343,8 @@ test("the sweep notices power changes and deleted guests", async () => {
   const world = setup();
   const a = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
   const b = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
-  await world.backend.stop(a.guest!);
-  await world.backend.release(b.guest!);
+  await world.backend.stop!(a.guest!);
+  await world.backend.release(b.guest!, QUIET);
   await world.boxes.sweep();
   assert.equal((await world.boxes.find(a.id))?.state, "stopped");
   assert.equal((await world.boxes.find(b.id))?.state, "gone");
@@ -415,4 +417,85 @@ test("errors from a backend keep their message and never leak into other threads
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
   await assert.rejects(world.boxes.get("thr_two", box.name), /This thread has no box .* It has no boxes/);
   await assert.rejects(world.boxes.run("thr_two", box.id, "true"), /This thread has no box/);
+});
+
+test("a box whose backend cannot stop and start says so, and keeps running", async () => {
+  const world = setup({ stopStart: false });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  assert.equal(world.boxes.canStopStart(box), false);
+  await assert.rejects(world.boxes.stop(THREAD, box.name), (error: BoxError) => {
+    assert.equal(error.code, "unsupported");
+    assert.match(error.message, /Fake host cannot stop and start its boxes/);
+    return true;
+  });
+  await assert.rejects(world.boxes.start(THREAD, box.name), /cannot stop and start/);
+  assert.equal((await world.boxes.get(THREAD, box.name)).state, "ready");
+});
+
+test("a power the provider cannot tell leaves the box as it was", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  world.backend.power = async () => "unknown";
+  assert.equal((await world.boxes.refresh(THREAD, box.name)).state, "ready");
+  await world.boxes.sweep();
+  assert.equal((await world.boxes.get(THREAD, box.name)).state, "ready");
+});
+
+test("a box records its offer's features, and the ones beyond what its kind requires", async () => {
+  const [headless] = FAKE_KINDS;
+  const world = setup({
+    kinds: [{ ...headless!, id: "linux-headless-docker", requires: ["docker"], capabilities: { ...headless!.capabilities, features: ["docker", "systemd"] } }],
+  });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless-docker" }));
+  assert.deepEqual(box.requires, ["docker"]);
+  assert.deepEqual(box.capabilities.features, ["docker", "systemd"]);
+  assert.deepEqual(extraFeatures(box), ["systemd"]);
+});
+
+test("a desktop command runs in the desktop session, and a headless box has none", async () => {
+  const world = setup();
+  const desktop = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" }));
+  const inSession = await world.boxes.run(THREAD, desktop.name, 'echo "$DISPLAY $DBUS_SESSION_BUS_ADDRESS"', { session: "desktop" });
+  assert.match(inSession.result.stdout, /^:0 unix:path=\/run\/user\/\d+\/bus\n$/);
+  assert.equal((await world.boxes.run(THREAD, desktop.name, 'echo "[$DISPLAY]"')).result.stdout, "[]\n");
+  const headless = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await assert.rejects(world.boxes.run(THREAD, headless.name, "true", { session: "desktop" }), /has no desktop/);
+});
+
+test("a real backend's release records the reset, and a failed reset takes the machine out of service", async () => {
+  const world = setup({ nature: "real", machines: 1 });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const release = world.backend.release.bind(world.backend);
+  let seen: BoxRecord | null = null;
+  world.backend.release = (guest, hooks) =>
+    release(guest, {
+      ...hooks,
+      resetting: async () => {
+        await hooks.resetting();
+        seen = await world.boxes.find(box.id);
+      },
+    });
+  world.backend.faults.reset = "the box user's processes would not stop";
+  assert.equal(await world.boxes.release(THREAD, box.name), null);
+  assert.equal(seen!.state, "releasing");
+  assert.ok(seen!.resetAt);
+  const [member] = await world.backend.members!();
+  assert.equal(member?.state, "out-of-service");
+  assert.equal(member?.reason, "the box user's processes would not stop");
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }), /All 1 machines are in use/);
+  await world.backend.returnToService!(member!.ref);
+  assert.equal((await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }))).state, "ready");
+});
+
+test("a stale release of a real machine does not reset the next box's machine", async () => {
+  const world = setup({ nature: "real", machines: 1 });
+  const first = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await world.boxes.release(THREAD, first.name);
+  const second = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux-headless" }));
+  assert.equal(second.guest?.ref, first.guest?.ref);
+  await world.backend.release(first.guest!, QUIET);
+  assert.deepEqual(
+    (await world.backend.held()).map((guest) => guest.owner?.boxId),
+    [second.id],
+  );
 });

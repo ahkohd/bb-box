@@ -4,7 +4,7 @@
 // it) or a real one (a fixed set of machines, claimed through the shared ready
 // pool, reset and returned on release). State lives in backend storage, so a
 // new instance on the same storage and root finds the same guests, as after a
-// restart. Desktops stream from a local server that sends a VNC greeting.
+// restart. Desktops stream from a local server that sends an RFB greeting.
 
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type AddressInfo, type Server } from "node:net";
@@ -19,24 +19,40 @@ import {
   type BoxKind,
   type BoxTransports,
   type Capacity,
+  type CommandCapability,
   type DoctorReport,
   type Guest,
   type HeldGuest,
+  type Limit,
   type MachineNature,
+  type PoolMember,
   type PowerState,
+  type ReleaseHooks,
 } from "../src/backends/types.ts";
 import { CommandLine } from "../src/transports/process.ts";
-import { TransportError, type CommandTransport, type RunOptions, type RunResult, type StreamOptions } from "../src/transports/types.ts";
+import {
+  TransportError,
+  type CommandTransport,
+  type Display,
+  type Route,
+  type RunOptions,
+  type RunResult,
+  type StreamOptions,
+} from "../src/transports/types.ts";
 
 export interface FakeBackendOptions {
   readonly root: string;
   readonly storage: BackendStorage;
   readonly id?: string;
   readonly nature?: MachineNature;
+  /** The kinds it offers. FAKE_KINDS by default. */
+  readonly kinds?: readonly BoxKind[];
   /** Real: how many machines the pool has. */
   readonly machines?: number;
   /** Virtual: most guests at once. */
   readonly maxGuests?: number;
+  /** Whether it can stop and start guests. True by default. */
+  readonly stopStart?: boolean;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -44,6 +60,8 @@ export interface FakeFaults {
   /** Fails the acquire after the guest is claimed, or after it started. */
   acquire?: { at: "claimed" | "started"; error: Error };
   release?: Error;
+  /** Real: the reset fails, so the machine goes out of service with this reason. */
+  reset?: string;
   doctor?: string;
 }
 
@@ -52,20 +70,40 @@ interface GuestRecord {
   readonly power: PowerState;
 }
 
-const KINDS: readonly BoxKind[] = [
+const HOST = "fake";
+
+const COMMAND: CommandCapability = { transport: "local", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
+
+/** The test machine's architecture, since the fake box's commands run there. */
+const ARCH = process.arch === "arm64" ? "arm64" : "x86_64";
+
+export const FAKE_KINDS: readonly BoxKind[] = [
   {
     id: "linux-headless",
     label: "Linux headless",
     description: "A fake box: a directory on the test machine.",
     size: "1 core",
-    capabilities: { os: "linux", desktop: false, gpu: false, docker: false, command: "local", display: null, enrol: true },
+    requires: [],
+    capabilities: { os: "linux", arch: ARCH, gpu: false, features: [], command: COMMAND, displays: [], computerUse: false, enrol: true },
+    readyTimeoutMs: 10_000,
   },
   {
     id: "linux-desktop",
     label: "Linux desktop",
     description: "A fake box with a fake desktop stream.",
     size: "2 cores",
-    capabilities: { os: "linux", desktop: true, gpu: false, docker: false, command: "local", display: "vnc", enrol: true },
+    requires: [],
+    capabilities: {
+      os: "linux",
+      arch: ARCH,
+      gpu: false,
+      features: [],
+      command: COMMAND,
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+      computerUse: false,
+      enrol: true,
+    },
+    readyTimeoutMs: 10_000,
   },
 ];
 
@@ -73,11 +111,17 @@ export class FakeBackend implements Backend {
   readonly id: string;
   readonly label: string;
   readonly nature: MachineNature;
+  readonly restores?: "home" | "machine";
   readonly faults: FakeFaults = {};
   /** Acquires wait here after the claim while it is set. */
   gate: Promise<void> | null = null;
   readonly calls: string[] = [];
+  readonly start?: (guest: Guest) => Promise<void>;
+  readonly stop?: (guest: Guest) => Promise<void>;
+  readonly members?: () => Promise<readonly PoolMember[]>;
+  readonly returnToService?: (ref: string) => Promise<void>;
   readonly #options: FakeBackendOptions;
+  readonly #kinds: readonly BoxKind[];
   readonly #storage: BackendStorage;
   readonly #pool: KvPoolStore<BoxIdentity>;
   readonly #ready: ReadyPool<BoxIdentity>;
@@ -85,43 +129,59 @@ export class FakeBackend implements Backend {
 
   constructor(options: FakeBackendOptions) {
     this.#options = options;
+    this.#kinds = options.kinds ?? FAKE_KINDS;
     this.#storage = options.storage;
     this.id = options.id ?? "fake";
     this.nature = options.nature ?? "virtual";
     this.label = this.nature === "real" ? "Fake machine pool" : "Fake host";
     this.#pool = new KvPoolStore(this.#storage, () => this.machines());
     this.#ready = new ReadyPool(this.#pool);
+    if (options.stopStart ?? true) {
+      this.start = (guest) => this.#power(guest, "running");
+      this.stop = (guest) => this.#power(guest, "stopped");
+    }
+    if (this.nature === "real") {
+      this.restores = "home";
+      this.members = () => this.#pool.members();
+      this.returnToService = (ref) => this.#pool.returnToService(ref);
+    }
   }
 
   machines(): PoolMachine[] {
     return Array.from({ length: this.#options.machines ?? 2 }, (_, index) => ({
       ref: `m${index + 1}`,
+      host: HOST,
       address: `192.0.2.${index + 10}`,
-      kinds: KINDS.map((kind) => kind.id),
+      kinds: this.#kinds.map((kind) => kind.id),
     }));
   }
 
   kinds(): BoxKind[] {
-    return [...KINDS];
+    return [...this.#kinds];
   }
 
   async capacity(kind: string, pending: readonly string[]): Promise<Capacity> {
     this.#kind(kind);
     if (this.nature === "real") {
-      const { free, total } = await this.#ready.count(kind);
+      const members = (await this.#pool.members()).filter((member) => member.kinds.includes(kind));
+      const free = members.filter((member) => member.state === "free").length;
       const ok = free > pending.length;
-      return { nature: "real", ok, message: ok ? null : `All ${total} machines are in use.`, total, free };
+      const machines: Limit = { resource: "machines", used: members.length - free + pending.length, total: members.length, reserve: 0, unit: "count" };
+      return {
+        ok,
+        message: ok ? null : `All ${members.length} machines are in use. Release a box to free one.`,
+        warm: null,
+        hosts: [{ host: HOST, ok, limits: [machines] }],
+      };
     }
-    const count = (await this.#storage.list("guest/")).length + pending.length;
-    const ok = this.#options.maxGuests === undefined || count < this.#options.maxGuests;
+    const used = (await this.#storage.list("guest/")).length + pending.length;
+    const total = this.#options.maxGuests ?? null;
+    const ok = total === null || used < total;
     return {
-      nature: "virtual",
       ok,
-      message: ok ? null : `The fake host holds ${this.#options.maxGuests} guests at most.`,
-      host: "fake",
-      memory: { freeMiB: 65_536, reserveMiB: 0 },
-      disk: { freeGiB: 1_000, reserveGiB: 0 },
-      warm: 0,
+      message: ok ? null : `The fake host holds ${total} guests at most. Release a box to make room.`,
+      warm: { ready: 0, target: 0 },
+      hosts: [{ host: HOST, ok, limits: [{ resource: "guests", used, total, reserve: 0, unit: "count" }] }],
     };
   }
 
@@ -129,53 +189,53 @@ export class FakeBackend implements Backend {
     this.calls.push(`acquire ${box.boxId}`);
     this.#kind(box.kind);
     signal.throwIfAborted();
-    let ref: string | null = null;
+    let guest: Guest | null = null;
     const started = performance.now();
     try {
-      if (previous && (await this.#owner(previous.ref))?.boxId === box.boxId) ref = previous.ref;
-      if (!ref && this.nature === "real") {
+      if (previous && (await this.#owner(previous.ref))?.boxId === box.boxId) guest = previous;
+      if (!guest && this.nature === "real") {
         const member = await this.#ready.claim(box.kind, box, {
           before: async (candidate) => {
-            ref = candidate.ref;
-            await hooks.claim(this.#guest(candidate.ref));
+            guest = this.#guest(candidate.ref, candidate.generation);
+            await hooks.claim(guest);
           },
           signal,
         });
-        if (!member) throw new BackendError("no_capacity", "All machines are in use.");
+        if (!member) throw new BackendError("no_capacity", "All machines are in use. Release a box to free one.");
       }
-      if (!ref) {
+      if (!guest) {
         const counter = ((await this.#storage.get<number>("counter")) ?? 0) + 1;
         await this.#storage.set("counter", counter);
-        ref = `g${counter}`;
-        await hooks.claim(this.#guest(ref));
+        guest = this.#guest(`g${counter}`, null);
+        await hooks.claim(guest);
         signal.throwIfAborted();
-        await this.#storage.set(`guest/${ref}`, { owner: box, power: "stopped" } satisfies GuestRecord);
+        await this.#storage.set(`guest/${guest.ref}`, { owner: box, power: "stopped" } satisfies GuestRecord);
       }
-      await mkdir(this.#home(ref), { recursive: true });
+      await mkdir(this.#home(guest.ref), { recursive: true });
       hooks.timing("make", Math.round(performance.now() - started));
       await this.gate;
       this.#fault("claimed");
       signal.throwIfAborted();
       await hooks.starting();
       signal.throwIfAborted();
-      await this.#setPower(ref, "running");
+      await this.#setPower(guest.ref, "running");
       this.#fault("started");
       hooks.timing("start", Math.round(performance.now() - started));
-      return this.#guest(ref);
+      return guest;
     } catch (error) {
-      if (ref) await this.#discard(ref);
+      if (guest) await this.#discard(guest, null);
       throw error;
     }
   }
 
-  async release(guest: Guest): Promise<void> {
+  async release(guest: Guest, hooks: ReleaseHooks): Promise<void> {
     this.calls.push(`release ${guest.ref}`);
     const error = this.faults.release;
     if (error) {
       delete this.faults.release;
       throw error;
     }
-    await this.#discard(guest.ref);
+    await this.#discard(guest, hooks);
   }
 
   async power(guest: Guest): Promise<PowerState | null> {
@@ -183,29 +243,18 @@ export class FakeBackend implements Backend {
     return (await this.#storage.get<GuestRecord>(`guest/${guest.ref}`))?.power ?? null;
   }
 
-  async start(guest: Guest): Promise<void> {
-    if (!(await this.power(guest))) throw new BackendError("gone", `Guest ${guest.ref} no longer exists.`);
-    await this.#setPower(guest.ref, "running");
-  }
-
-  async stop(guest: Guest): Promise<void> {
-    if (!(await this.power(guest))) throw new BackendError("gone", `Guest ${guest.ref} no longer exists.`);
-    await this.#setPower(guest.ref, "stopped");
-  }
-
   async held(): Promise<HeldGuest[]> {
     const held: HeldGuest[] = [];
-    const refs =
+    const guests =
       this.nature === "real"
-        ? this.machines().map((machine) => machine.ref)
-        : (await this.#storage.list("guest/")).map((key) => key.slice("guest/".length));
-    for (const ref of refs) {
-      const power = await this.power({ ref, address: null });
+        ? (await this.#pool.members()).filter((member) => member.state === "held").map((member) => this.#guest(member.ref, member.generation))
+        : (await this.#storage.list("guest/")).map((key) => this.#guest(key.slice("guest/".length), null));
+    for (const guest of guests) {
+      const power = await this.power(guest);
       if (!power) continue;
-      if (this.nature === "real" && (await this.#pool.state(ref))?.state !== "held") continue;
-      const owner = await this.#owner(ref);
+      const owner = await this.#owner(guest.ref);
       held.push({
-        ...this.#guest(ref),
+        ...guest,
         owner: owner && { boxId: owner.boxId, threadId: owner.threadId, name: owner.name, kind: owner.kind, createdAt: owner.createdAt },
         power,
       });
@@ -214,16 +263,24 @@ export class FakeBackend implements Backend {
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
-    const display = this.#kind(kind).capabilities.display ? { protocol: "vnc" as const, host: "127.0.0.1", port: await this.#vncPort() } : null;
-    return { command: new FakeTransport(this.#home(guest.ref), () => this.power(guest)), display };
+    const displays = this.#kind(kind).capabilities.displays.map(
+      (display): Display => ({
+        id: display.id,
+        label: "Desktop",
+        protocol: display.protocol,
+        resizable: display.resizable,
+        open: async () => ({ route: { type: "tcp", host: "127.0.0.1", port: await this.#vncPort() }, auth: { type: "none" } }),
+      }),
+    );
+    return { command: new FakeTransport(this.#home(guest.ref), () => this.power(guest)), displays, access: null };
   }
 
   async doctor(): Promise<DoctorReport> {
     const problem = this.faults.doctor;
     const checks = [
       problem
-        ? { name: "Fake host", ok: false, detail: problem, fix: "Clear the fault." }
-        : { name: "Fake host", ok: true, detail: `Guests live under ${this.#options.root}.`, fix: null },
+        ? { id: "fake.host", name: "Fake host", status: "fail" as const, detail: problem, fix: "Clear the fault." }
+        : { id: "fake.host", name: "Fake host", status: "ok" as const, detail: `Guests live under ${this.#options.root}.`, fix: null },
     ];
     return { ok: !problem, summary: problem ? `Fake host: ${problem}` : this.label, checks, notes: [] };
   }
@@ -239,13 +296,15 @@ export class FakeBackend implements Backend {
   }
 
   #kind(kind: string): BoxKind {
-    const found = KINDS.find((candidate) => candidate.id === kind);
+    const found = this.#kinds.find((candidate) => candidate.id === kind);
     if (!found) throw new BackendError("unsupported", `${this.label} has no ${kind} boxes.`);
     return found;
   }
 
-  #guest(ref: string): Guest {
-    return { ref, address: this.machines().find((machine) => machine.ref === ref)?.address ?? null };
+  /** A real machine's guest carries the reset generation it was claimed at, so a stale release cannot reset the next box's machine. */
+  #guest(ref: string, generation: number | null): Guest {
+    const address = this.machines().find((machine) => machine.ref === ref)?.address ?? null;
+    return generation === null ? { ref, host: HOST, address } : { ref, host: HOST, address, data: { generation } };
   }
 
   #home(ref: string): string {
@@ -255,9 +314,14 @@ export class FakeBackend implements Backend {
   async #owner(ref: string): Promise<BoxIdentity | null> {
     if (this.nature === "real") {
       const state = await this.#pool.state(ref);
-      return state?.state === "held" ? state.holder : null;
+      return state.state === "held" ? state.holder : null;
     }
     return (await this.#storage.get<GuestRecord>(`guest/${ref}`))?.owner ?? null;
+  }
+
+  async #power(guest: Guest, power: PowerState): Promise<void> {
+    if (!(await this.power(guest))) throw new BackendError("gone", `Guest ${guest.ref} no longer exists.`);
+    await this.#setPower(guest.ref, power);
   }
 
   async #setPower(ref: string, power: PowerState): Promise<void> {
@@ -267,17 +331,29 @@ export class FakeBackend implements Backend {
   }
 
   /** Deletes a virtual guest, or resets a real machine and returns it to the pool. */
-  async #discard(ref: string): Promise<void> {
-    if (this.nature === "real") {
-      if (!(await this.#pool.state(ref))) return;
-      await this.#pool.resetting(ref);
-      await rm(this.#home(ref), { recursive: true, force: true });
-      await this.#storage.delete(`power/${ref}`);
-      await this.#pool.free(ref);
+  async #discard(guest: Guest, hooks: ReleaseHooks | null): Promise<void> {
+    const started = performance.now();
+    if (this.nature === "virtual") {
+      await this.#storage.delete(`guest/${guest.ref}`);
+      await rm(this.#home(guest.ref), { recursive: true, force: true });
+      hooks?.timing("delete", Math.round(performance.now() - started));
       return;
     }
-    await this.#storage.delete(`guest/${ref}`);
-    await rm(this.#home(ref), { recursive: true, force: true });
+    const state = await this.#pool.state(guest.ref);
+    if (state.state !== "held" && state.state !== "resetting") return;
+    if (typeof guest.data?.generation === "number" && guest.data.generation !== state.generation) return;
+    await hooks?.resetting();
+    await this.#pool.resetting(guest.ref);
+    const reason = this.faults.reset;
+    if (reason) {
+      delete this.faults.reset;
+      await this.#pool.outOfService(guest.ref, reason);
+      return;
+    }
+    await rm(this.#home(guest.ref), { recursive: true, force: true });
+    await this.#storage.delete(`power/${guest.ref}`);
+    hooks?.timing("reset", Math.round(performance.now() - started));
+    await this.#pool.free(guest.ref);
   }
 
   #fault(at: "claimed" | "started"): void {
@@ -299,7 +375,6 @@ export class FakeBackend implements Backend {
 
 /** Runs scripts in the guest's directory with sh. A stopped guest does not answer. */
 export class FakeTransport implements CommandTransport {
-  readonly kind = "local";
   readonly #line: CommandLine;
   readonly #power: () => Promise<PowerState | null>;
 
@@ -334,5 +409,11 @@ export class FakeTransport implements CommandTransport {
   async readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array> {
     await this.#answer();
     return this.#line.readFile(path, options);
+  }
+
+  /** A fake box's ports are the test machine's. */
+  async route(port: number): Promise<Route> {
+    await this.#answer();
+    return { type: "tcp", host: "127.0.0.1", port };
   }
 }
