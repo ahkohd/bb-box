@@ -322,6 +322,29 @@ test("a stopped box starts again and BB's daemon is started with the same key", 
   assert.deepEqual(world.bootstraps, [box.id, box.id]);
 });
 
+test("the sweep starts BB's daemon again in a ready box that BB shows disconnected", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+
+  await tool("box_acquire", {});
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  await app.enrolment.sweep();
+  assert.deepEqual(world.bootstraps, [box.id], "a connected machine is left alone");
+
+  // The box rebooted without bb-box: BB's daemon is not running.
+  const hostId = `host-${box.id}`;
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await app.enrolment.sweep();
+  assert.deepEqual(world.bootstraps, [box.id, box.id], "bootstrapped again with the box ID");
+
+  // BB no longer has the machine: the box is no longer enrolled.
+  world.hosts.delete(hostId);
+  await app.enrolment.sweep();
+  assert.equal((await app.boxes.find(box.id))?.enrol.state, "off");
+  assert.equal(world.bootstraps.length, 2);
+});
+
 test("when BB removes a box's machine, the box is no longer enrolled", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());

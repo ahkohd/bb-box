@@ -169,6 +169,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         await boxes.sweep(signal).catch((error) => {
           if (!signal.aborted) logError("sweep", error);
         });
+        await enrolment.sweep().catch((error) => logError("sweep enrolment", error));
         await sleep(SWEEP_EVERY_MS, signal);
       }
     },

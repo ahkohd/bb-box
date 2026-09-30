@@ -2,8 +2,9 @@
 // and enrols a ready box by creating a machine keyed by the box ID. The
 // provider's create runs BB's bootstrap through the box's command transport,
 // as the box user. Releasing a box removes its machine first. After bb-box
-// starts a stopped box, bootstrap runs again with the same key to start BB's
-// daemon (017).
+// starts a stopped box, or when the sweep finds a ready box's machine
+// disconnected, bootstrap runs again with the same key to start BB's daemon
+// (017).
 //
 // Plugins can read the names of BB's machine variables but not their values;
 // BB gives the values, and GH_TOKEN, to its daemon in the box. Commands in a
@@ -86,6 +87,8 @@ export class Enrolment {
   readonly #pollMs: number;
   /** Boxes whose enrolment this process is following. */
   readonly #following = new Set<string>();
+  /** Boxes whose BB daemon this process is starting again. */
+  readonly #reconnecting = new Set<string>();
 
   constructor(deps: EnrolmentDeps) {
     this.#deps = deps;
@@ -225,17 +228,44 @@ export class Enrolment {
 
   /** Starts BB's daemon again after bb-box started a stopped box: bootstrap with the same key. */
   async reconnect(box: BoxRecord): Promise<void> {
-    const transport = await this.#transport(box);
-    const signal = AbortSignal.timeout(this.#timeoutMs);
+    if (this.#reconnecting.has(box.id)) return;
+    this.#reconnecting.add(box.id);
     try {
-      await this.#deps.bootstrap({ key: box.id, executor: executor(transport), report: QUIET, signal });
-    } catch (error) {
-      await this.#deps.boxes.update(box, (current) => ({
-        enrol: { ...current.enrol, error: describeError(error, "Reconnecting the box's BB machine") },
-      }));
-      throw error;
+      const transport = await this.#transport(box);
+      const signal = AbortSignal.timeout(this.#timeoutMs);
+      try {
+        await this.#deps.bootstrap({ key: box.id, executor: executor(transport), report: QUIET, signal });
+      } catch (error) {
+        await this.#deps.boxes.update(box, (current) => ({
+          enrol: { ...current.enrol, error: describeError(error, "Reconnecting the box's BB machine") },
+        }));
+        throw error;
+      }
+      await this.#deps.boxes.update(box, (current) => ({ enrol: { ...current.enrol, state: "enrolled", error: null } }));
+    } finally {
+      this.#reconnecting.delete(box.id);
     }
-    await this.#deps.boxes.update(box, (current) => ({ enrol: { ...current.enrol, state: "enrolled", error: null } }));
+  }
+
+  /**
+   * Part of the sweep: starts BB's daemon again in each ready, enrolled box
+   * that BB shows disconnected, as after a reboot bb-box did not start, such
+   * as the host's (017). A machine BB no longer has leaves its box unenrolled.
+   */
+  async sweep(): Promise<void> {
+    const enrolled = (await this.#deps.boxes.all()).filter((box) => box.state === "ready" && box.enrol.state === "enrolled" && box.enrol.hostId);
+    await Promise.all(
+      enrolled.map(async (box) => {
+        try {
+          const host = await this.#deps.hosts().get({ hostId: box.enrol.hostId! });
+          if (host.status === "connected" || host.lifecycle.phase !== "active") return;
+          await this.reconnect(box);
+        } catch (error) {
+          if (isNotFound(error)) await this.forgetHost(box.enrol.hostId!);
+          else this.#deps.logError("reconnect", error);
+        }
+      }),
+    );
   }
 
   /** BB removed a machine, for example from its Machines page: its box is no longer enrolled. */
