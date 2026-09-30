@@ -19,10 +19,12 @@ export const RETURNED = "Control returned; the desktop may have changed. Observe
 
 /** The longest edge of an image the agent gets. */
 export const IMAGE_MAX_EDGE = 1568;
-/** Elements computer_observe shows unless the agent asks for more. */
+/** Tree lines computer_observe shows unless the agent asks for more. */
 export const TREE_LIMIT = 300;
 export const TREE_LIMIT_MAX = 2_000;
 const TREE_MAX_CHARS = 40_000;
+/** A tree longer than this is worth a query. */
+const TREE_LARGE = 100;
 const CHANGES_MAX_LINES = 60;
 const IDLE_MS = 10 * 60_000;
 const PAUSE_WAIT_MS = 3_000;
@@ -30,6 +32,12 @@ const OPEN_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 30_000;
 const LAUNCH_WAIT_MS = 10_000;
 const LAUNCH_POLL_MS = 250;
+/** How long a URL's window may keep a placeholder title while its page loads. */
+const PAGE_WAIT_MS = 5_000;
+/** How long an action on the desktop may take to open, close or retitle a window. */
+const DESKTOP_WAIT_MS = 1_000;
+/** Installed apps named when a launch fails. */
+const APPS_SHOWN = 40;
 /** How long Cua may walk a window's tree. */
 const WALK_MS = 3_000;
 /** References kept per box; the oldest go first. */
@@ -70,6 +78,8 @@ export interface ComputerDeps {
   readonly pauseWaitMs?: number;
   readonly callTimeoutMs?: number;
   readonly launchWaitMs?: number;
+  readonly pageWaitMs?: number;
+  readonly desktopWaitMs?: number;
 }
 
 /** A window ID from computer_windows, or the whole desktop. */
@@ -106,6 +116,10 @@ interface WindowInfo extends Size {
   readonly app: string;
   readonly title: string;
   readonly onScreen: boolean;
+  /** Where it is on the screen, and its place in the stack: higher is on top. */
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
 }
 
 interface Element {
@@ -118,6 +132,13 @@ interface Element {
   readonly fingerprint: string;
   /** No other element of its snapshot has its fingerprint. */
   readonly unique: boolean;
+  /**
+   * A hash of its role, its name and its place in the tree: its ancestors'
+   * roles and, for each, how many siblings of its role come before it. Not
+   * their names, which change when a document is edited. Null when another
+   * element of its snapshot has it too.
+   */
+  readonly place: string | null;
 }
 
 /** A line of the tree text. An element's line carries its reference. */
@@ -150,9 +171,25 @@ interface RefEntry {
   readonly describe: string;
 }
 
-/** An image the agent was given. The desktop's also has the screen's size, to turn its pixels into the screen's. */
+/** An image the agent was given, with the size of the screen or window it shows, in their own pixels. */
 interface Held extends Size {
-  readonly screen?: Size;
+  readonly source: Size;
+}
+
+interface Changes {
+  readonly text: string;
+  readonly hints: string[];
+  /** Whether anything was seen to change. */
+  readonly changed: boolean;
+}
+
+interface Target {
+  readonly args: Json;
+  readonly label: string;
+  readonly snapshot: Snapshot | null;
+  readonly element: Element | null;
+  readonly coordinates?: string;
+  readonly screen?: { readonly x: number; readonly y: number };
 }
 
 interface Image extends Size {
@@ -224,12 +261,32 @@ function sentence(text: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
+/** Advice in Cua's words: its own tools and arguments, which the agent does not have. */
+const CUA_ADVICE =
+  /\b(call|use|pass|refresh|retry|round-trip|try)\b[\s\S]*\b(list_apps|list_windows|launch_app|launch_path|get_window_state|get_desktop_state|bundle_id|element_index|element_token|snapshot_id|delivery_mode|capture_id|max_image_dimension)\b/i;
+
+/** Cua's text, without its advice. */
 function textOf(result: McpResult): string {
   const text = result.content
     .filter((part) => part.type === "text" && part.text)
     .map((part) => part.text!.trim())
-    .join(" ");
+    .join(" ")
+    .split(/(?<=[.;!?])\s+/)
+    .filter((clause) => !CUA_ADVICE.test(clause))
+    .join(" ")
+    .replace(/;$/, ".");
   return text.length > 500 ? `${text.slice(0, 500)}...` : text || "Cua Driver gave no reason.";
+}
+
+/** Chrome puts U+FFFC in text where an object such as a link sits; it tells the agent nothing. */
+function clean(text: string): string {
+  return text.replace(/ ?\uFFFC+/g, "");
+}
+
+/** How an image's pixels map to the screen's or the window's. */
+function coordinates(image: Size, source: Size, of: "screen" | "window"): string {
+  const scale = source.width > 0 ? Math.round((image.width / source.width) * 1000) / 1000 : 1;
+  return `Image ${image.width}x${image.height} of ${of} ${source.width}x${source.height}, scale ${scale}; x and y are image pixels.`;
 }
 
 /** The width and height in a PNG's header. */
@@ -275,7 +332,56 @@ function windowOf(value: unknown): WindowInfo | null {
     width: num(bounds.width) ?? num(raw.width) ?? 0,
     height: num(bounds.height) ?? num(raw.height) ?? 0,
     onScreen: raw.is_on_screen !== false,
+    x: num(bounds.x) ?? num(raw.x) ?? 0,
+    y: num(bounds.y) ?? num(raw.y) ?? 0,
+    z: num(raw.z_index) ?? 0,
   };
+}
+
+/** Windows that opened, closed, or changed title or size, between two window lists. */
+function windowChanges(before: ReadonlyMap<number, WindowInfo>, after: ReadonlyMap<number, WindowInfo>): string[] {
+  const shown = (window: WindowInfo) => window.width > 1 && window.height > 1;
+  const out: string[] = [];
+  for (const [id, window] of after) {
+    const old = before.get(id);
+    if (!old) {
+      if (shown(window)) out.push(`+ ${windowLine(window)}`);
+    } else if (old.title !== window.title || old.width !== window.width || old.height !== window.height || old.onScreen !== window.onScreen) {
+      out.push(`~ ${windowLine(window)}${old.title !== window.title ? `, was "${old.title}"` : ""}`);
+    }
+  }
+  for (const [id, window] of before) if (!after.has(id) && shown(window)) out.push(`- ${windowLine(window)}`);
+  return out;
+}
+
+/** The topmost window on screen at a point of the screen. */
+function windowAt(windows: ReadonlyMap<number, WindowInfo>, x: number, y: number): WindowInfo | null {
+  let found: WindowInfo | null = null;
+  for (const window of windows.values()) {
+    if (!window.onScreen || x < window.x || y < window.y || x >= window.x + window.width || y >= window.y + window.height) continue;
+    if (!found || window.z >= found.z) found = window;
+  }
+  return found;
+}
+
+/** A title a browser window shows before its page has one. */
+function placeholder(title: string): boolean {
+  return !title.trim() || /^(untitled|new tab|about:blank|loading)\b/i.test(title.trim());
+}
+
+/**
+ * Joins the pieces of one run of text: Chrome can give each word or each
+ * letter of a page its own static line. Pieces that carry their own spaces
+ * are joined as they are; words without them get one.
+ */
+function joinText(pieces: readonly string[]): string {
+  const letters = pieces.every((piece) => [...piece.trim()].length <= 1);
+  let out = "";
+  for (const piece of pieces) {
+    const tight = !out || letters || /\s$/.test(out) || /^\s/.test(piece) || /^[.,;:!?)\]}]/.test(piece) || /[(\[{]$/.test(out);
+    out += tight ? piece : ` ${piece}`;
+  }
+  return out;
 }
 
 export function windowLine(window: WindowInfo): string {
@@ -352,13 +458,16 @@ export class Computer {
   ): Promise<ComputerResult> {
     return this.#run(box, signal, async (use) => {
       const { snapshot, image, dropped } = await this.#read(use, input.window, input.screenshot === true);
-      const lines = [this.#tree(snapshot, input.query, input.limit ?? TREE_LIMIT)];
+      const tree = this.#tree(snapshot, input.query, input.limit ?? TREE_LIMIT);
+      const lines = [tree.text];
       if (dropped) lines.push(`Window ${input.window} changed size, so your last image of it no longer applies.`);
       if (image) {
-        use.state.images.set(input.window, { width: image.width, height: image.height });
-        lines.push(`The image is ${image.width} by ${image.height} pixels. x and y are pixels of this image.`);
+        const source = { width: snapshot.window.width, height: snapshot.window.height };
+        use.state.images.set(input.window, { width: image.width, height: image.height, source });
+        lines.push(coordinates(image, source, "window"));
       }
       const hints = ["Act on an element with computer_act or computer_type, giving its reference as ref."];
+      if (tree.large && !input.query?.trim()) hints.push("This tree is large: pass query to see only the lines you need.");
       if (snapshot.overlays.length) hints.push("Observe a dialog or popup by its window ID to act in it.");
       return { text: lines.join("\n\n"), image: image ? { data: image.data, mimeType: image.mimeType } : undefined, hints };
     });
@@ -378,18 +487,19 @@ export class Computer {
           if (found) use.state.windows.set(found.id, found);
         }
         const screen = { width: num(structured.screen_width) ?? image.width, height: num(structured.screen_height) ?? image.height };
-        use.state.images.set("desktop", { width: image.width, height: image.height, screen });
+        use.state.images.set("desktop", { width: image.width, height: image.height, source: screen });
         return {
-          text: `The desktop, ${image.width} by ${image.height} pixels. x and y are pixels of this image; give window "desktop" with them.`,
+          text: `The desktop. ${coordinates(image, screen, "screen")} Give window "desktop" with them.`,
           image: { data: image.data, mimeType: image.mimeType },
           hints: ["Prefer references from computer_observe: they do not depend on where things are drawn."],
         };
       }
       const { snapshot, image } = await this.#read(use, window, true);
       if (!image) throw new ComputerError("driver", `Cua Driver returned no image of window ${window}.`, "Try again in a few seconds.");
-      use.state.images.set(window, { width: image.width, height: image.height });
+      const source = { width: snapshot.window.width, height: snapshot.window.height };
+      use.state.images.set(window, { width: image.width, height: image.height, source });
       return {
-        text: `${windowLine(snapshot.window)}. The image is ${image.width} by ${image.height} pixels. x and y are pixels of this image.`,
+        text: `${windowLine(snapshot.window)}. ${coordinates(image, source, "window")}`,
         image: { data: image.data, mimeType: image.mimeType },
         hints: ["Prefer references from computer_observe: they do not depend on where things are drawn."],
       };
@@ -418,14 +528,24 @@ export class Computer {
         set_value: { tool: "set_value", args: { value: input.value }, done: "Set the value of" },
       };
       const step = steps[input.action];
-      const { result, foreground } = await this.#deliver(use, step.tool, { ...target.args, ...step.args }, input.action !== "set_value");
-      const lines = [`${step.done} ${target.label}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? FOREGROUND : ""}.`];
-      const popups = this.#popups(use, result, target.snapshot?.window.pid);
-      if (popups.length) lines.push(popups.join(" "));
-      if (!target.snapshot) {
-        return { text: lines.join("\n\n"), hints: ["Call computer_screenshot to see the desktop now, or computer_windows."] };
+      // On the desktop, the windows before, and the tree of the window under the pointer.
+      let desktop: { windows: Map<number, WindowInfo>; under: Snapshot | null } | null = null;
+      if (target.screen) {
+        const windows = await this.#listWindows(use);
+        const found = windowAt(windows, target.screen.x, target.screen.y);
+        const under = found ? await this.#read(use, found.id, false).then((read) => read.snapshot, () => null) : null;
+        desktop = { windows, under };
       }
-      const changed = await this.#changes(use, target.snapshot);
+      const { result, foreground } = await this.#deliver(use, step.tool, { ...target.args, ...step.args }, input.action !== "set_value");
+      const done = `${step.done} ${target.label}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? FOREGROUND : ""}.`;
+      const lines = [target.coordinates ? `${done} ${target.coordinates}` : done];
+      const popups = this.#popups(use, result, (target.snapshot ?? desktop?.under)?.window.pid);
+      if (popups.length) lines.push(popups.join(" "));
+      if (desktop) {
+        const seen = await this.#desktopChanges(use, desktop.windows, desktop.under);
+        return { text: [...lines, ...seen.parts].join("\n\n"), hints: seen.hints };
+      }
+      const changed = await this.#changes(use, target.snapshot!);
       lines.push(changed.text);
       return { text: lines.join("\n\n"), hints: changed.hints };
     });
@@ -489,25 +609,57 @@ export class Computer {
       const args = input.url !== undefined ? { urls: [input.url] } : input.app!.includes("/") ? { launch_path: input.app } : { name: input.app };
       const { result } = await this.#call(use, "launch_app", args, { readOnly: false });
       if (result.isError) {
-        throw new ComputerError("refused", `Cua Driver could not open ${what}: ${textOf(result)}`, "Check the app's name or path with box_run, for example command -v <name>.");
+        const reason = textOf(result).replace(/^failed to launch:\s*/i, "");
+        if (input.app === undefined) throw new ComputerError("refused", `bb-box could not open ${what}: ${reason}`, "Check the URL.");
+        const apps = await this.#apps(use);
+        if (!apps.length) {
+          throw new ComputerError("refused", `bb-box could not open ${what}: ${reason}`, "Check the app's name or path with box_run, for example command -v <name>.");
+        }
+        const shown = apps.slice(0, APPS_SHOWN).join(", ");
+        const more = apps.length > APPS_SHOWN ? `, and ${apps.length - APPS_SHOWN} more` : "";
+        throw new ComputerError(
+          "refused",
+          `bb-box could not open ${what}: ${reason} Apps installed in the box: ${shown}${more}.`,
+          "Give app as one of these names, or the path of a program in the box.",
+        );
       }
       let windows = arr(obj(result.structuredContent).windows)
         .map(windowOf)
-        .filter((window): window is WindowInfo => !!window);
+        .filter((window): window is WindowInfo => !!window && !before.has(window.id));
       for (const window of windows) use.state.windows.set(window.id, window);
-      const deadline = Date.now() + (this.#deps.launchWaitMs ?? LAUNCH_WAIT_MS);
-      while (!windows.length && Date.now() < deadline) {
+      // A URL can open in a browser window that was already open, which then changes its title.
+      let reused: WindowInfo | null = null;
+      const waited = this.#deps.launchWaitMs ?? LAUNCH_WAIT_MS;
+      const deadline = Date.now() + waited;
+      while (!windows.length && !reused && Date.now() < deadline) {
         await sleep(LAUNCH_POLL_MS, use.signal);
-        windows = [...(await this.#listWindows(use)).values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1);
+        const now = await this.#listWindows(use);
+        windows = [...now.values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1);
+        if (input.url !== undefined) reused = [...now.values()].find((window) => before.has(window.id) && before.get(window.id)!.title !== window.title) ?? null;
       }
-      if (!windows.length) {
+      if (!windows.length && !reused) {
         const where = input.url !== undefined ? " It may have opened in a browser window that was already open." : "";
-        return { text: `Opened ${what}, but no new window appeared within ${Math.round((this.#deps.launchWaitMs ?? LAUNCH_WAIT_MS) / 1000)} s.${where}`, hints: ["Call computer_windows to see the windows now."] };
+        return { text: `Opened ${what}, but no new window appeared within ${Math.round(waited / 1000)} s.${where}`, hints: ["Call computer_windows to see the windows now."] };
       }
-      return {
-        text: `Opened ${what}. Its window${windows.length === 1 ? "" : "s"}:\n${windows.map((window) => `- ${windowLine(window)}`).join("\n")}`,
-        hints: [`Call computer_observe with window ${windows[0]!.id} to read it.`],
-      };
+      // A browser names its window after the page once the page has a title.
+      let page = reused ?? windows[0]!;
+      if (input.url !== undefined) {
+        const until = Date.now() + (this.#deps.pageWaitMs ?? PAGE_WAIT_MS);
+        while (placeholder(page.title) && Date.now() < until) {
+          await sleep(LAUNCH_POLL_MS, use.signal);
+          const found = (await this.#listWindows(use)).get(page.id);
+          if (!found) break;
+          page = found;
+        }
+        windows = windows.map((window) => (window.id === page.id ? page : window));
+      }
+      const lines = reused
+        ? [`Opened ${what} in a window that was already open:\n- ${windowLine(page)}`]
+        : [`Opened ${what}. Its window${windows.length === 1 ? "" : "s"}:\n${windows.map((window) => `- ${windowLine(window)}`).join("\n")}`];
+      if (input.url !== undefined && placeholder(page.title)) {
+        lines.push(`The page is still loading: its window's title is still ${page.title ? `"${page.title}"` : "empty"}.`);
+      }
+      return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${page.id} to read it.`] };
     });
   }
 
@@ -766,6 +918,23 @@ export class Computer {
     return { result, foreground };
   }
 
+  /** The names of the apps installed in the box, as Cua Driver lists them; none when it cannot. */
+  async #apps(use: Use): Promise<string[]> {
+    try {
+      const { result } = await this.#call(use, "list_apps", {}, { readOnly: true });
+      if (result.isError) return [];
+      const names = arr(obj(result.structuredContent).apps)
+        .map(obj)
+        .filter((app) => app.kind === "desktop")
+        .map((app) => str(app.name)?.trim())
+        .filter((name): name is string => !!name);
+      return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+    } catch (error) {
+      if (error instanceof ComputerError && error.code !== "driver") throw error;
+      return [];
+    }
+  }
+
   async #listWindows(use: Use): Promise<Map<number, WindowInfo>> {
     const { result } = await this.#call(use, "list_windows", {}, { readOnly: true });
     if (result.isError) throw new ComputerError("driver", `Cua Driver could not list the windows: ${textOf(result)}`, "Try again in a few seconds.");
@@ -839,44 +1008,95 @@ export class Computer {
       const index = num(entry.element_index);
       if (index !== undefined) byIndex.set(index, entry);
     }
-    const prints = new Map<number, string>();
-    const chain = (index: number, seen: Set<number>): string => {
-      const known = prints.get(index);
-      if (known !== undefined) return known;
-      const entry = byIndex.get(index)!;
-      const parent = num(entry.parent_index);
-      const up = parent !== undefined && byIndex.has(parent) && !seen.has(parent) ? chain(parent, seen.add(index)) : "";
-      const print = createHash("sha256")
-        .update(JSON.stringify([str(entry.role) ?? "", str(entry.label) ?? "", up]))
-        .digest("base64url")
-        .slice(0, 22);
-      prints.set(index, print);
-      return print;
+    const roleOf = (index: number) => str(byIndex.get(index)!.role) ?? "";
+    const labelOf = (index: number) => clean(str(byIndex.get(index)!.label) ?? "");
+    const parentOf = (index: number) => {
+      const parent = num(byIndex.get(index)!.parent_index);
+      return parent !== undefined && byIndex.has(parent) ? parent : null;
     };
+    // How many earlier siblings share each element's role.
+    const before = new Map<number, number>();
+    const seen = new Map<string, number>();
+    for (const index of byIndex.keys()) {
+      const key = JSON.stringify([parentOf(index), roleOf(index)]);
+      before.set(index, seen.get(key) ?? 0);
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+    const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("base64url").slice(0, 22);
+    /** A hash of the element and its ancestors, each by `part`. */
+    const chained = (part: (index: number) => unknown) => {
+      const memo = new Map<number, string>();
+      const chain = (index: number, path: Set<number>): string => {
+        const known = memo.get(index);
+        if (known !== undefined) return known;
+        const parent = parentOf(index);
+        const up = parent !== null && !path.has(parent) ? chain(parent, path.add(index)) : "";
+        const print = hash([part(index), up]);
+        memo.set(index, print);
+        return print;
+      };
+      return (index: number) => chain(index, new Set());
+    };
+    const printOf = chained((index) => [roleOf(index), labelOf(index)]);
+    const spotOf = chained((index) => [roleOf(index), before.get(index)]);
+    const prints = new Map<number, { fingerprint: string; place: string }>();
     const counts = new Map<string, number>();
     for (const index of byIndex.keys()) {
-      const print = chain(index, new Set());
-      counts.set(print, (counts.get(print) ?? 0) + 1);
+      const print = { fingerprint: printOf(index), place: hash([spotOf(index), labelOf(index)]) };
+      prints.set(index, print);
+      for (const key of [`f${print.fingerprint}`, `p${print.place}`]) counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     let named = state.named.get(window.id);
     if (!named) {
       named = new Map();
       state.named.set(window.id, named);
     }
+    // An element keeps its reference while its role, its name and its ancestors' do. When only
+    // the ancestors' names changed, as a document's tab does when it is edited, it keeps the
+    // reference of the element in its place in the window's last snapshot.
+    const placed = new Map<string, string>();
+    for (const element of state.snapshots.get(window.id)?.elements ?? []) {
+      if (element.unique && element.place) placed.set(element.place, element.ref);
+    }
+    const refs = new Map<number, string>();
+    const taken = new Set<string>();
+    for (const index of byIndex.keys()) {
+      const { fingerprint } = prints.get(index)!;
+      const ref = counts.get(`f${fingerprint}`) === 1 ? named.get(fingerprint) : undefined;
+      if (ref && !taken.has(ref)) {
+        refs.set(index, ref);
+        taken.add(ref);
+      }
+    }
+    for (const index of byIndex.keys()) {
+      const { fingerprint, place } = prints.get(index)!;
+      if (refs.has(index) || counts.get(`f${fingerprint}`) !== 1 || counts.get(`p${place}`) !== 1) continue;
+      const ref = placed.get(place);
+      if (ref && !taken.has(ref)) {
+        refs.set(index, ref);
+        taken.add(ref);
+      }
+    }
     const elements: Element[] = [];
     const byRef = new Map<string, Element>();
     const elementAt = new Map<number, Element>();
     for (const [index, entry] of byIndex) {
-      const fingerprint = prints.get(index)!;
-      const unique = counts.get(fingerprint) === 1;
-      let ref = unique ? named.get(fingerprint) : undefined;
-      if (!ref) {
-        ref = `e${state.nextRef++}`;
-        if (unique) named.set(fingerprint, ref);
-      }
-      const role = str(entry.role) ?? "";
-      const label = str(entry.label) ?? "";
-      const element: Element = { index, ref, token: str(entry.element_token) ?? null, role, label, fingerprint, unique };
+      const { fingerprint, place } = prints.get(index)!;
+      const unique = counts.get(`f${fingerprint}`) === 1;
+      const ref = refs.get(index) ?? `e${state.nextRef++}`;
+      if (unique) named.set(fingerprint, ref);
+      const role = roleOf(index);
+      const label = labelOf(index);
+      const element: Element = {
+        index,
+        ref,
+        token: str(entry.element_token) ?? null,
+        role,
+        label,
+        fingerprint,
+        unique,
+        place: counts.get(`p${place}`) === 1 ? place : null,
+      };
       elements.push(element);
       byRef.set(ref, element);
       elementAt.set(index, element);
@@ -888,22 +1108,23 @@ export class Computer {
       state.refs.delete(ref);
     }
 
-    const lines: Line[] = [];
-    for (const text of (str(structured.tree_markdown) ?? "").split("\n")) {
+    const read: Line[] = [];
+    for (const text of clean(str(structured.tree_markdown) ?? "").split("\n")) {
       if (!text.trim()) continue;
       const indexed = /^(\s*)- \[(\d+)\] (.*)$/.exec(text);
       if (indexed) {
         const element = elementAt.get(Number(indexed[2])) ?? null;
         const rest = indexed[3]!.replace(" [actions=[]]", "");
-        lines.push({ text: `${indexed[1]}- ${element ? `[${element.ref}] ` : ""}${rest}`, depth: indexed[1]!.length / 2, element });
-      } else if (/^\s*- /.test(text) || !lines.length) {
-        lines.push({ text, depth: (/^\s*/.exec(text)![0].length) / 2, element: null });
+        read.push({ text: `${indexed[1]}- ${element ? `[${element.ref}] ` : ""}${rest}`, depth: indexed[1]!.length / 2, element });
+      } else if (/^\s*- /.test(text) || !read.length) {
+        read.push({ text, depth: (/^\s*/.exec(text)![0].length) / 2, element: null });
       } else {
         // A name with a line break goes on over several lines.
-        const last = lines[lines.length - 1]!;
-        lines[lines.length - 1] = { ...last, text: `${last.text}\n${text}` };
+        const last = read[read.length - 1]!;
+        read[read.length - 1] = { ...last, text: `${last.text}\n${text}` };
       }
     }
+    const lines = mergeText(read);
 
     const overlays: string[] = [];
     for (const dialog of arr(structured.dialogs).map(obj)) {
@@ -957,8 +1178,8 @@ export class Computer {
     return found;
   }
 
-  /** The tree text of a snapshot, cut to `limit` elements. */
-  #tree(snapshot: Snapshot, query: string | undefined, limit: number): string {
+  /** The tree text of a snapshot, cut to `limit` lines, and whether it is long enough, though whole, to be worth a query. */
+  #tree(snapshot: Snapshot, query: string | undefined, limit: number): { text: string; large: boolean } {
     const { lines } = snapshot;
     let chosen = lines.map((_line, index) => index);
     let matched = 0;
@@ -983,28 +1204,32 @@ export class Computer {
     const shown: string[] = [];
     let elements = 0;
     let chars = 0;
-    let cut = false;
     for (const index of chosen) {
       const line = lines[index]!;
-      if ((line.element && elements >= limit) || chars + line.text.length > TREE_MAX_CHARS) {
-        cut = true;
-        break;
-      }
+      if (shown.length >= limit || chars + line.text.length > TREE_MAX_CHARS) break;
       if (line.element) elements++;
       chars += line.text.length + 1;
       shown.push(line.text);
     }
+    const cut = chosen.length - shown.length;
     const { window } = snapshot;
-    const header = [`${windowLine(window)[0]!.toUpperCase()}${windowLine(window).slice(1)}. ${snapshot.elements.length} elements.`];
+    const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+    const header = [`${windowLine(window)[0]!.toUpperCase()}${windowLine(window).slice(1)}. ${plural(snapshot.elements.length, "element")}, ${plural(lines.length, "line")}.`];
     if (snapshot.partial) header.push(`Cua stopped reading the tree early (${snapshot.partial}), so some elements are missing.`);
     if (query?.trim()) {
-      header.push(matched ? `${matched} line${matched === 1 ? "" : "s"} match "${query.trim()}", shown with their ancestors.` : `Nothing matches "${query.trim()}".`);
+      header.push(matched ? `${plural(matched, "line")} ${matched === 1 ? "matches" : "match"} "${query.trim()}", shown with their ancestors.` : `Nothing matches "${query.trim()}".`);
     }
-    if (cut) header.push(`Partial: showing ${elements} of them. Pass query to find an element, or a larger limit.`);
+    if (cut) {
+      const of = chosen.filter((index) => lines[index]!.element).length;
+      header.push(
+        `Partial: showing ${shown.length} of ${plural(chosen.length, "line")} (${elements} of ${plural(of, "element")}); ${plural(cut, "line")} cut.` +
+          ` Pass ${query?.trim() ? "a narrower query" : "query to see only the lines you need"}, or a larger limit (at most ${TREE_LIMIT_MAX}).`,
+      );
+    }
     const parts = [header.join(" ")];
     if (shown.length) parts.push(shown.join("\n"));
     if (snapshot.overlays.length) parts.push(snapshot.overlays.join(" "));
-    return parts.join("\n\n");
+    return { text: parts.join("\n\n"), large: !cut && chosen.length > TREE_LARGE };
   }
 
   /** Finds a reference in the window's latest snapshot, reading the window again when its tokens are from an earlier session. */
@@ -1033,8 +1258,13 @@ export class Computer {
     return element.token ? { element_token: element.token } : { element_index: element.index, snapshot_id: snapshot.id };
   }
 
-  /** What an action aims at: an element, pixels of a window's latest image, or pixels of the desktop's. */
-  async #target(use: Use, input: ActInput): Promise<{ args: Json; label: string; snapshot: Snapshot | null; element: Element | null }> {
+  /**
+   * What an action aims at: an element, pixels of a window's latest image, or
+   * pixels of the desktop's. For pixels, `coordinates` says how the image maps
+   * to the window or screen; on the desktop, `screen` is the point in the
+   * screen's own pixels.
+   */
+  async #target(use: Use, input: ActInput): Promise<Target> {
     if (input.ref !== undefined) {
       if (input.x !== undefined || input.y !== undefined) throw new ComputerError("input", "Give ref, or x and y, not both.", null);
       const { snapshot, element } = await this.#element(use, input.ref);
@@ -1063,10 +1293,17 @@ export class Computer {
     }
     if (window === "desktop") {
       // Cua takes the desktop's pixels in the screen's own.
-      const screen = held.screen ?? held;
+      const screen = held.source;
       const sx = Math.round((x * screen.width) / held.width);
       const sy = Math.round((y * screen.height) / held.height);
-      return { args: { x: sx, y: sy, scope: "desktop" }, label: `(${x}, ${y}) on the desktop`, snapshot: null, element: null };
+      return {
+        args: { x: sx, y: sy, scope: "desktop" },
+        label: `(${x}, ${y}) on the desktop, (${sx}, ${sy}) on the screen`,
+        snapshot: null,
+        element: null,
+        coordinates: coordinates(held, screen, "screen"),
+        screen: { x: sx, y: sy },
+      };
     }
     let snapshot = use.state.snapshots.get(window);
     if (!snapshot || snapshot.generation !== use.state.live?.generation || !snapshot.screenshot) {
@@ -1080,24 +1317,34 @@ export class Computer {
       use.state.images.delete(window);
       throw new ComputerError("stale", `Window ${window} changed size since your image of it, so its pixels no longer match.`, `Take a new image with computer_screenshot, window ${window}.`);
     }
-    return { args: { pid: snapshot.window.pid, window_id: window, x, y }, label: `(${x}, ${y}) in window ${window}`, snapshot, element: null };
+    return {
+      args: { pid: snapshot.window.pid, window_id: window, x, y },
+      label: `(${x}, ${y}) in window ${window}`,
+      snapshot,
+      element: null,
+      coordinates: coordinates(held, held.source, "window"),
+    };
   }
 
   /** Reads the window again after an action and says what changed. */
-  async #changes(use: Use, before: Snapshot, readBack: string | null = null): Promise<{ text: string; hints: string[] }> {
+  async #changes(use: Use, before: Snapshot, readBack: string | null = null): Promise<Changes> {
     const id = before.window.id;
     let read: Read;
     try {
       read = await this.#read(use, id, false);
     } catch (error) {
       if (error instanceof ComputerError && error.code === "stale") {
-        return { text: `Window ${id} closed.`, hints: ["Call computer_windows to see the windows open now."] };
+        return { text: `Window ${id} closed.`, hints: ["Call computer_windows to see the windows open now."], changed: true };
       }
       if (error instanceof ComputerError && (error.code === "paused" || error.code === "interrupted")) {
-        return { text: "A person took control of the desktop before bb-box could read what changed.", hints: ["Wait until they hand control back, then call computer_observe."] };
+        return {
+          text: "A person took control of the desktop before bb-box could read what changed.",
+          hints: ["Wait until they hand control back, then call computer_observe."],
+          changed: true,
+        };
       }
       const message = error instanceof Error ? error.message : String(error);
-      return { text: `bb-box could not read what changed: ${message}`, hints: [`Call computer_observe with window ${id}.`] };
+      return { text: `bb-box could not read what changed: ${message}`, hints: [`Call computer_observe with window ${id}.`], changed: true };
     }
     const after = read.snapshot;
     const parts: string[] = [];
@@ -1118,11 +1365,80 @@ export class Computer {
     if (read.dropped) parts.push(`Window ${id} changed size, so your last image of it no longer applies.`);
     const hints = [`Call computer_observe with window ${id} for the whole tree.`];
     if (after.overlays.length) hints.push("Observe a dialog or popup by its window ID to act in it.");
-    return { text: parts.join("\n\n"), hints };
+    const changed = listed.length > 0 || after.window.title !== before.window.title || after.overlays.join() !== before.overlays.join() || read.dropped;
+    return { text: parts.join("\n\n"), hints, changed };
+  }
+
+  /**
+   * After an action on the desktop, which Cua cannot check itself: what
+   * changed in the window under the point, and which windows opened, closed
+   * or changed. Looks again for a moment while nothing has.
+   */
+  async #desktopChanges(use: Use, before: ReadonlyMap<number, WindowInfo>, under: Snapshot | null): Promise<{ parts: string[]; hints: string[] }> {
+    const deadline = Date.now() + (this.#deps.desktopWaitMs ?? DESKTOP_WAIT_MS);
+    let now: Map<number, WindowInfo>;
+    let listed: string[];
+    let inside: Changes | null = null;
+    for (let first = true; ; first = false) {
+      if (!first) await sleep(LAUNCH_POLL_MS, use.signal);
+      now = await this.#listWindows(use);
+      listed = windowChanges(before, now);
+      if (under && now.has(under.window.id)) inside = await this.#changes(use, under);
+      if (listed.length || inside?.changed || Date.now() >= deadline) break;
+    }
+    for (const id of before.keys()) if (!now.has(id)) this.#lost(use.state, id);
+    const parts: string[] = [];
+    const hints: string[] = [];
+    if (inside?.changed) {
+      parts.push(inside.text);
+      hints.push(...inside.hints);
+    }
+    if (listed.length) {
+      const shown = listed.slice(0, CHANGES_MAX_LINES);
+      const more = listed.length - shown.length;
+      parts.push(`Windows that changed (+ opened, - closed, ~ changed):\n${shown.join("\n")}${more ? `\n...and ${more} more. Call computer_windows to see them all.` : ""}`);
+      const opened = [...now.values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1).sort((a, b) => b.z - a.z);
+      if (opened.length) hints.push(`Call computer_observe with window ${opened[0]!.id} to read it.`);
+    }
+    if (!parts.length) {
+      const tree = under ? ` and nothing changed in the tree of window ${under.window.id}, which is under that point` : "";
+      parts.push(`No window opened, closed or changed${tree}. Anything else that changed shows only in pixels.`);
+      hints.push('Call computer_screenshot with window "desktop" to see the desktop now.');
+    }
+    return { parts, hints };
   }
 }
 
 const FOREGROUND = ", in the foreground because Cua could not do it in the background, so the pointer or focus may have moved";
+
+/** A line of text that cannot be acted on: `- static = "Hello"`. */
+const PASSIVE = /^(\s*)- ([^"\n]+?) = "([\s\S]*)"$/;
+
+/**
+ * Drops text lines with no name, such as those whose name was only U+FFFC,
+ * and makes each run of static text at one depth one line. A space inside a
+ * run is kept.
+ */
+function mergeText(lines: readonly Line[]): Line[] {
+  const out: Line[] = [];
+  const runs = new Map<Line, string[]>();
+  for (const line of lines) {
+    const passive = line.element ? null : PASSIVE.exec(line.text);
+    const last = out.at(-1);
+    const run = last && runs.get(last);
+    if (passive?.[2] === "static" && run && last.depth === line.depth) {
+      run.push(passive[3]!);
+      continue;
+    }
+    if (passive && !passive[3]!.trim()) continue;
+    out.push(line);
+    if (passive?.[2] === "static") runs.set(line, [passive[3]!]);
+  }
+  return out.map((line) => {
+    const pieces = runs.get(line);
+    return pieces && pieces.length > 1 ? { ...line, text: `${PASSIVE.exec(line.text)![1]}- static = "${joinText(pieces).trim()}"` } : line;
+  });
+}
 
 /**
  * Lines that appeared, went or changed between two snapshots of a window.

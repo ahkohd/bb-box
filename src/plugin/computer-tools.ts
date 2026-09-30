@@ -63,7 +63,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
         .positive()
         .max(TREE_LIMIT_MAX)
         .optional()
-        .describe(`How many elements to show. Defaults to ${TREE_LIMIT}.`),
+        .describe(`How many lines of the tree to show. Defaults to ${TREE_LIMIT}.`),
       screenshot: z.boolean().optional().describe("Also return an image of the window. Defaults to false."),
     }),
     async execute({ box: ref, window, query, limit, screenshot }, { threadId, signal }) {
@@ -79,7 +79,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     name: "computer_screenshot",
     description:
       "Take an image of a window on a desktop box, or of the whole desktop. Use it when appearance matters or the tree does not show what you need. " +
-      "Pixels you give computer_act are pixels of your latest image of that window.",
+      "Pixels you give computer_act are pixels of your latest image of that window, which may be smaller than the window or screen: the result says the scale.",
     presentation: { label: { pending: "Taking a screenshot", completed: "Took a screenshot" } },
     parameters: z.object({
       box: boxParam,
@@ -101,7 +101,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     name: "computer_act",
     description:
       "Click, double-click, right-click, scroll or set a value on a desktop box: on an element by its reference from computer_observe, " +
-      "or at x and y in your latest image of a window or the desktop. Says what changed in the window.",
+      "or at x and y in your latest image of a window or the desktop. Says what changed in the window, or on the desktop which windows opened, closed or changed.",
     presentation: { label: { pending: "Acting on the desktop", completed: "Acted on the desktop" } },
     parameters: z.object({
       box: boxParam,
@@ -152,7 +152,8 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
 
   bb.agents.registerTool({
     name: "computer_launch",
-    description: "Open an app on a desktop box by its name or path, or open a URL in the box's browser. Says which windows it opened.",
+    description:
+      "Open an app on a desktop box by its name or path, or open a URL in the box's browser. Says which windows it opened; for a URL, waits a few seconds for the page's title.",
     presentation: { label: { pending: "Opening an app", completed: "Opened an app" } },
     parameters: z.object({
       box: boxParam,

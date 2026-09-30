@@ -83,10 +83,17 @@ The `computer_` tools drive the apps on a desktop box. Read a window as text
 with `computer_observe` first, and act on its references. Take an image with
 `computer_screenshot` only when appearance matters.
 
-- A reference stays valid while its element is on screen. When the element
-  has gone, the tool says so; observe the window again.
+- A reference stays valid while its element is on screen, including after
+  you type into it. When the element has gone, the tool says so; observe the
+  window again.
+- `limit` counts lines of the tree. A web page can be long: pass `query` to
+  see only the lines you need.
 - Pixels count only in your latest image of that window, or of the desktop.
-  No image is longer than 1568 pixels on either edge.
+  No image is longer than 1568 pixels on either edge, so an image can be
+  smaller than the screen. Each image and pixel action states the image's
+  size, the window's or screen's size and the scale between them.
+- A pixel action on the desktop says which windows opened, closed or
+  changed. When it finds none, take a screenshot to see what happened.
 - Input goes in the background first. When the app refuses it there, it goes
   in the foreground, and the result says so.
 - While a person holds control, every computer tool refuses at once. After
