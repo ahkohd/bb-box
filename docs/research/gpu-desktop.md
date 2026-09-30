@@ -48,8 +48,11 @@ With Xorg and NVIDIA's driver:
 
 Its limits:
 
-- **No resize.** With no display device there are no RandR outputs, and
-  `x0vncserver` serves the screen at the size Xorg started with.
+- **No resize from the viewer.** With no display device there are no RandR
+  outputs, so `x0vncserver` refuses a viewer's SetDesktopSize. `xrandr --fb`
+  still resizes the screen, and `x0vncserver` follows it. Measured later on
+  30 September; see
+  [021](../decisions/021-desktop-resize-through-the-backend.md).
 - **One GPU visible per desktop.** With two GPUs passed in, Vulkan device 0
   could not present. The desktop template passes in one GPU's nodes only.
 - **CPU capture.** `x0vncserver` copies the screen from GPU memory for every
@@ -81,7 +84,7 @@ also lets Selkies capture and encode without the frame leaving the GPU
 | | Xorg with NVIDIA's driver | Patched Xvfb with glamor |
 | --- | --- | --- |
 | GL and Vulkan on the GPU | measured | documented by Selkies; to be measured here |
-| Resize | no | yes (RandR), checked on the CPU |
+| Resize | `xrandr --fb` only, not from the viewer | yes (RandR), checked on the CPU |
 | Desktops per GPU | measured 2 | limited by memory |
 | Needs | `nvidia_drv.so` from the `.run`, a GPU card node | `/dev/dri/renderD*`, `/dev/nvidia-modeset`, NVIDIA's GBM backend (in the `.run`) |
 | CPU fallback | a different server (Xtigervnc) | the same binary without `-glamor` |
