@@ -520,6 +520,89 @@ test("the sweep notices power changes and deleted guests", async () => {
   assert.equal((await world.boxes.find(b.id))?.state, "gone");
 });
 
+test("a reused reference is the new box's: the old box goes, and its release leaves the new box alone", async () => {
+  const world = setup();
+  const old = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  // Deleted outside bb-box, then the provider gives the reference to the next box.
+  await world.backend.release(old.guest!, QUIET);
+  await world.kv.set("backend/fake/counter", 0);
+  const next = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  assert.equal(next.guest!.ref, old.guest!.ref);
+  await world.boxes.sweep();
+  assert.equal((await world.boxes.find(old.id))?.state, "gone");
+  assert.equal((await world.boxes.find(next.id))?.state, "ready");
+  assert.equal(await world.boxes.release(THREAD, old.id), null);
+  assert.deepEqual(
+    (await world.backend.held()).map((guest) => guest.owner?.boxId),
+    [next.id],
+  );
+  assert.equal((await world.boxes.run(THREAD, next.name, "echo still")).result.stdout, "still\n");
+});
+
+/** Makes a box's guest and record as they were before install IDs (018). */
+async function fromBeforeInstallIds(world: ReturnType<typeof setup>, box: BoxRecord): Promise<string> {
+  const key = `backend/fake/guest/${box.guest!.ref}`;
+  const { install: _, ...record } = (await world.kv.get<Record<string, unknown>>(key))!;
+  await world.kv.set(key, record);
+  const { ref, host, address } = box.guest!;
+  await world.boxes.update(box, () => ({ guest: { ref, host, address } }));
+  return key;
+}
+
+test("the first sweep records this install on its boxes' guests from before install IDs, and leaves other guests alone", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const key = await fromBeforeInstallIds(world, box);
+  // An acquire the last process left after its claim.
+  world.backend.gate = new Promise(() => {});
+  const interrupted = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  await until(async () => !!(await world.boxes.find(interrupted.id))?.guest);
+  const claimed = (await world.boxes.find(interrupted.id))!;
+  await fromBeforeInstallIds(world, claimed);
+  // A guest with no install ID that no box of this install records.
+  const stranger = { boxId: "bx_stranger", threadId: "thr_else", name: "stranger", kind: "linux-headless", createdAt: 0 };
+  await world.kv.set("backend/fake/guest/g9", { owner: stranger, power: "running" });
+  assert.deepEqual(await world.backend.held(), [], "no guest names this install yet");
+
+  const boxes = world.restart();
+  const report = await boxes.sweep();
+  assert.equal(report.leftovers, 0);
+  assert.equal(report.resumed, 1);
+  const after = await boxes.find(box.id);
+  assert.equal(after?.state, "ready");
+  assert.deepEqual(after?.guest?.data, { box: box.id });
+  assert.equal((await world.kv.get<{ install?: string }>(key))?.install, "test");
+  const resumed = await ready(boxes, interrupted);
+  assert.equal(resumed.guest?.ref, claimed.guest!.ref, "the interrupted acquire resumes with its claimed guest");
+  assert.deepEqual(
+    (await world.backend.held()).map((guest) => guest.owner?.boxId),
+    [box.id, interrupted.id],
+  );
+  assert.deepEqual((await world.kv.list("backend/fake/guest/")).length, 3, "no guest is left behind or made twice");
+  assert.ok(await world.kv.get("backend/fake/guest/g9"), "the stranger's guest is left alone");
+  const stamps = world.backend.calls.filter((call) => call.startsWith("stamp"));
+  assert.deepEqual(stamps.sort(), [`stamp ${box.guest!.ref}`, `stamp ${claimed.guest!.ref}`].sort());
+  await boxes.sweep();
+  assert.equal(world.backend.calls.filter((call) => call.startsWith("stamp")).length, 2, "each box is stamped once");
+});
+
+test("stopping or releasing a box from before install IDs records the install first", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await fromBeforeInstallIds(world, box);
+  const stopped = await world.boxes.stop(THREAD, box.id);
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.guest?.data?.box, box.id);
+  const other = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await fromBeforeInstallIds(world, other);
+  assert.equal(await world.boxes.release(THREAD, other.id), null);
+  assert.deepEqual(world.backend.calls.slice(-2), [`stamp ${other.guest!.ref}`, `release ${other.guest!.ref}`]);
+  assert.deepEqual(
+    (await world.backend.held()).map((guest) => guest.owner?.boxId),
+    [box.id],
+  );
+});
+
 test("after a restart the sweep resumes an interrupted acquire with its claimed guest", async () => {
   const world = setup();
   world.backend.gate = new Promise(() => {});

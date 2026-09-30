@@ -535,7 +535,8 @@ export class Boxes {
         },
       };
       try {
-        await backend.release(box.guest, hooks);
+        const { guest } = await this.#stamped(box);
+        await backend.release(guest!, hooks);
       } catch (error) {
         this.#deps.logError("release", error);
         return this.update(box, (current) => ({
@@ -585,7 +586,7 @@ export class Boxes {
   async stop(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
     return this.#chain(box.id, async () => {
-      const current = (await this.#read(box.threadId, box.id)) ?? box;
+      const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
       const { stop } = this.#stopStart(current);
       if (current.state === "stopped") return current;
       this.#require(current, "ready");
@@ -604,7 +605,7 @@ export class Boxes {
   async start(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
     return this.#chain(box.id, async () => {
-      const current = (await this.#read(box.threadId, box.id)) ?? box;
+      const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
       const { start } = this.#stopStart(current);
       if (current.state === "ready") return current;
       this.#require(current, "stopped");
@@ -664,7 +665,8 @@ export class Boxes {
     if (!box.guest) return box;
     const backend = this.#deps.backends.get(box.backend);
     if (!backend) return box;
-    const power = options.power !== undefined ? options.power : await backend.power(box.guest, options.signal);
+    const power =
+      options.power !== undefined ? options.power : await backend.power((await this.#stamped(box, options.signal)).guest!, options.signal);
     return this.update(box, (current) => {
       const settled = current.state === "ready" || current.state === "stopped" || current.state === "gone";
       const moving = (current.state === "stopping" || current.state === "starting") && current.readyAt !== null;
@@ -675,6 +677,20 @@ export class Boxes {
       const state = power === "running" ? "ready" : "stopped";
       return current.state === state ? {} : { state, error: null };
     });
+  }
+
+  /**
+   * The box with its guest as its backend keeps it now. The guest of a box
+   * recorded before install IDs gets this install recorded on it first
+   * (018), so the backend's checks know the box.
+   */
+  async #stamped(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
+    const guest = box.guest;
+    const backend = this.#deps.backends.get(box.backend);
+    if (!guest || !backend?.stamp || guest.data?.box !== undefined) return box;
+    const stamped = await backend.stamp(box.id, guest, signal);
+    const updated = await this.update(box, (current) => (current.guest?.ref === guest.ref ? { guest: stamped } : {}));
+    return updated ?? { ...box, guest: stamped };
   }
 
   /** The transports that reach a ready box. */
@@ -832,6 +848,15 @@ export class Boxes {
     let adopted = 0;
     let resumed = 0;
 
+    // First, as at the first start after an upgrade: this install's ID goes on
+    // the guests of its boxes from before install IDs, which held() and the
+    // backends' checks look for (018).
+    for (const box of await this.all()) {
+      signal?.throwIfAborted();
+      if (!box.guest || box.guest.data?.box !== undefined || this.#work.has(box.id)) continue;
+      await this.#stamped(box, signal).catch((error) => this.#deps.logError("sweep", error));
+    }
+
     for (const box of await this.all()) {
       signal?.throwIfAborted();
       if (this.#work.has(box.id)) continue;
@@ -862,14 +887,17 @@ export class Boxes {
       }
       // Read after held(): a guest there was claimed, so recorded, before.
       const records = (await this.all()).filter((box) => box.backend === backend.id);
-      const byRef = new Map(records.filter((box) => box.guest).map((box) => [box.guest!.ref, box]));
+      const byRef = new Map<string, BoxRecord[]>();
+      for (const box of records) if (box.guest) byRef.set(box.guest.ref, [...(byRef.get(box.guest.ref) ?? []), box]);
+      /** Boxes whose guest held() listed. */
       const seen = new Set<string>();
       for (const guest of held) {
         signal?.throwIfAborted();
-        seen.add(guest.ref);
         try {
-          const record = byRef.get(guest.ref);
+          // A reused reference may hold another box's guest now. Only an acquire's guest may not name its box yet.
+          const record = byRef.get(guest.ref)?.find((box) => (guest.owner ? box.id === guest.owner.boxId : isAcquiring(box)));
           if (record) {
+            seen.add(record.id);
             if (!this.#work.has(record.id)) await this.#observe(record, { signal, power: guest.power });
             continue;
           }
@@ -889,7 +917,7 @@ export class Boxes {
         }
       }
       for (const box of records) {
-        if (!box.guest || seen.has(box.guest.ref) || this.#work.has(box.id)) continue;
+        if (!box.guest || seen.has(box.id) || this.#work.has(box.id)) continue;
         if (box.state !== "ready" && box.state !== "stopped") continue;
         await this.#observe(box, { signal }).catch((error) => this.#deps.logError("sweep", error));
       }
