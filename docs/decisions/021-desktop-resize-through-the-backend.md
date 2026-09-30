@@ -45,7 +45,7 @@ is the default desktop.
   otherwise over a connection of the relay's own (020).
 - Proxmox LXC gives `linux-desktop` a `resize` that runs
   `xrandr --fb <width>x<height>` on display `:99` as the box user over SSH,
-  kept within the screen's maximum, and sets `resizable: true` again.
+  with no size cap, and sets `resizable: true` again.
   `linux-desktop-cpu` keeps SetDesktopSize.
 - Until this is built, `linux-desktop` stays `resizable: false`.
 - The conformance suite checks `resize` where a display offers it: after it
@@ -63,6 +63,12 @@ is the default desktop.
   still restores the agent's size (008, 020).
 - The same hook serves any backend whose stream server shows a screen it did
   not make, such as `x0vncserver` on a real machine's display.
-- Before building, check on a real `linux-desktop` box: the screen's
-  maximum, growing past 1920x1080, an odd size such as 1233x677, XFCE's
-  panel following the new width, and Chrome keeping GPU compositing.
+- Checked on a real `linux-desktop` box on 30 September:
+
+  | Check | Result |
+  | --- | --- |
+  | `xrandr` limits | 8x8 to 32767x32767 |
+  | 2560x1440, past the configured 1920x1080 | works |
+  | 1233x677, an odd size | works |
+  | XFCE's panel | follows each width, and back on restore |
+  | Chrome after a resize | GPU compositing still on |

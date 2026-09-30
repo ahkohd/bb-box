@@ -50,8 +50,10 @@ Its limits:
 
 - **No resize from the viewer.** With no display device there are no RandR
   outputs, so `x0vncserver` refuses a viewer's SetDesktopSize. `xrandr --fb`
-  still resizes the screen, and `x0vncserver` follows it. Measured later on
-  30 September; see
+  still resizes the screen, from 8x8 to 32767x32767, odd sizes included,
+  and `x0vncserver` and XFCE's panel follow it, with Chrome still on GPU
+  compositing.
+  Measured later on 30 September; see
   [021](../decisions/021-desktop-resize-through-the-backend.md).
 - **One GPU visible per desktop.** With two GPUs passed in, Vulkan device 0
   could not present. The desktop template passes in one GPU's nodes only.
