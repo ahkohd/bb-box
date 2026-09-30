@@ -56,6 +56,22 @@ Moonstead:
   systemd, and is beta. Containers boot in under a second, and a warm pool
   hides even that.
 
+## Backends: the core of the design
+
+Every box comes from a backend. The registry, agent tools and panel talk only
+to the backend interface, never to Proxmox, LXC or SSH directly. Each backend
+declares its box kinds and what they can do: guest OS, desktop or headless,
+GPU, Docker, how to run commands and copy files, the desktop viewer protocol,
+whether the box enrols as a BB machine, and how to check capacity. Tools and
+the panel follow those declarations, so a new platform plugs in without
+reworking them. Several backends can be active at once.
+
+| Backend | Kinds | Status |
+| --- | --- | --- |
+| Proxmox LXC | Linux desktop (GPU), Linux headless (Docker) | first |
+| Proxmox QEMU | Windows desktop (RDP or VNC) | next |
+| Mac | macOS on a Mac mini, physical or as macOS VMs on it | last |
+
 ## Architecture
 
 ```
