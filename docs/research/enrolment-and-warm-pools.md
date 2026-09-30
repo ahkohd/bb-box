@@ -23,7 +23,8 @@ timing needs one experiment on a real host. Checked against BB 0.44.0
    installer skips the download and `npm install`, which saves about 2 s.
 3. **Templates with systemd enable linger for the box user.** Without it, the
    host daemon stops within 15 s of the SSH session that installed it
-   (measured).
+   (measured). An SSH pool machine turns linger on at claim, since its reset
+   turns it off.
 4. **Boxes without systemd need nothing more.** The installer keeps its
    daemon running. After a restart, bb-box calls `bootstrap` again with the
    same key, which starts the daemon without enrolling again.

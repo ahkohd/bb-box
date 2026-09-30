@@ -25,7 +25,9 @@ The [enrolment research](../research/enrolment-and-warm-pools.md) found:
   with the box ID as the key. The provider's `create` calls BB's `bootstrap`
   with an executor on the box's command transport.
 - Templates and images carry Node.js, npm, curl and a pre-installed bb-app
-  with its digest file. Where systemd runs, the box user has linger.
+  with its digest file. Where systemd runs, the box user has linger: a
+  template sets it, and an SSH pool machine turns it on at claim, since its
+  reset turns it off.
 - A box enrols when it is claimed. Warm boxes are not enrolled ahead.
 - Releasing a box removes its machine from BB before the backend releases the
   guest.

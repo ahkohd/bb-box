@@ -542,7 +542,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
     installer.
   - Templates carry Node.js, npm, curl and a pre-installed bb-app, so the
     installer skips the download. Where systemd runs, the box user has linger,
-    or the host daemon stops when the installing SSH session ends.
+    or the host daemon stops when the installing SSH session ends. A template
+    sets it; a pool machine turns it on at claim, since its reset turns it
+    off.
   - The thread's Git credentials and machine variables reach the box through
     BB, which resolves them each time they are used. bb-box's host entry,
     which runs in every enrolled box, writes them to a file that the box's SSH
