@@ -198,15 +198,16 @@ authentication the box expects (none, or a VNC password).
 
 **SSH access** gives host, port, user, the host keys, and an optional jump
 host (the Mac host for Tart, a bastion for a pool). The SSH transport is built
-from it and uses the jump host as `ProxyJump`.
+from it and reaches the target through the jump host with `ProxyCommand`
+(`ssh <options for the jump> -W %h:%p`), so each hop has its own key and
+known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
 
 - A real machine's host keys are pinned at setup.
-- A fresh virtual guest has no known key yet. The transport accepts its first
-  key, and the registry records it with the box.
-- With a jump host, both hops are checked. The transport writes one
-  known_hosts file with the jump host's pinned keys and the target's keys, or
-  accepts the target's first key when it has none yet, as for a fresh Tart VM
-  behind a pinned Mac.
+- A fresh virtual guest has no known key yet. The transport accepts any key
+  and does not record it.
+- With a jump host, pinned keys are checked on both hops. A fresh Tart VM
+  behind a pinned Mac is reached with the Mac's key checked and the VM's
+  accepted.
 
 **Output and the desktop session.**
 
@@ -254,7 +255,10 @@ Docker without a budget) and `reserve`, the part kept back for the host.
   generation. The panel shows them, and `returnToService(ref)` puts back a
   machine the operator has fixed.
 - A reset ends by writing a marker on the machine with a new generation
-  number, and recording the same number in the pool store. Before handing a
+  number, and recording the same number in the pool store. The box keeps its
+  machine's generation in `Guest.data.generation`, and `release` does
+  nothing when the stored generation has moved on, so a repeated release of
+  an old box never resets the machine the next box holds. Before handing a
   machine out, a claim checks that the numbers match, the box user has no
   processes, its home matches the skeleton, no BB machine is enrolled and no
   owner marker is left. For a desktop kind, the box user must also own the
@@ -272,8 +276,9 @@ Docker without a budget) and `reserve`, the part kept back for the host.
   status: `ok`, `warn`, `fail`, or `skipped` after an earlier failure.
 - The conformance suite runs `doctor()` first, and skips a backend whose
   checks fail, printing them.
-- Each driver names its setup script and guide, and the settings page links
-  to them.
+- Each driver names its setup guide and scripts. The guide is the entry
+  point: the settings page links it first, then the scripts in the order the
+  guide runs them ([016](decisions/016-changes-from-building-v1.md)).
 
 ### Types
 
@@ -390,6 +395,8 @@ export interface Guest {
   readonly address: string | null;
   /** Stored with the box and passed back. Never a secret. */
   readonly data?: Readonly<Record<string, string | number | boolean>>;
+  /** Shown in order by status and the panel, such as the display mode. Never a secret. */
+  readonly facts?: readonly { readonly label: string; readonly value: string }[];
 }
 
 export type PowerState = "running" | "stopped" | "unknown";
@@ -474,8 +481,8 @@ export interface DoctorCheck {
 
 export interface BackendDriver<C = unknown> {
   // type, label, nature, settings, parse and create as built, plus:
-  /** Paths in the repository, linked from the settings page. */
-  readonly setup: { readonly script: string; readonly guide: string };
+  /** Paths in the repository, linked from the settings page, the guide first. */
+  readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
 }
 
 // Unchanged: BoxIdentity, BoxOwner, HeldGuest, AcquireHooks, DoctorReport,
@@ -495,9 +502,9 @@ any state -> releasing -> released     (release, or the thread is archived or de
 ```
 
 1. **Requested.** The registry asks each backend that offers the kind for
-   `capacity`, in the order of settings, and uses the first one with room. If none has room you see the
-   backend's message, which says what is full and what to release. The
-   registry records the box and returns at once.
+   `capacity`, in the order of settings, and uses the first one with room.
+   If none has room you see the backend's message, which says what is full
+   and what to release. The registry records the box and returns at once.
 2. **Acquiring.** In the background, the backend claims a guest with
    `hooks.claim` before it makes or changes anything, so a restart can resume
    and the sweep can find it.
@@ -554,10 +561,15 @@ A box is a resource of its thread and gets what the thread's own machine has.
     box's command transport. BB issues the credential and runs its own
     installer.
   - Templates carry Node.js, npm, curl and a pre-installed bb-app, so the
-    installer skips the download. Where systemd runs, the box user has linger,
-    or the host daemon stops when the installing SSH session ends. A template
-    sets it; a pool machine turns it on at claim, since its reset turns it
-    off.
+    installer skips the download and `npm install`. As measured, a box is
+    enrolled 1.7 to 2.5 s after bb-box starts the installer. Where systemd
+    runs, the box user has linger, or the host daemon stops when the
+    installing SSH session ends. A template sets it; a pool machine turns it
+    on at claim, since its reset turns it off.
+  - Every template and image removes BB's daemon lock and PID file at boot,
+    so a box that restarts after a hard stop reconnects in about 0.5 s
+    ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). Without
+    that, it waits up to 10 s for the lock, or fails where PIDs repeat.
   - The thread's Git credentials and machine variables reach the box through
     BB, which resolves them each time they are used. bb-box's host entry,
     which runs in every enrolled box, writes them to a file that the box's SSH
@@ -710,9 +722,11 @@ Notes:
   ([013](decisions/013-docker-boxes-run-unprivileged.md)). systemd and Docker
   inside a box need a privileged kind, which the operator turns on because a
   privileged container is root on the Docker host. Without systemd, BB's
-  installer leaves its host daemon running in the background, and the start
-  script starts it again after a restart. `access.dockerHost` stays null
-  unless the operator opts in.
+  installer leaves its host daemon running in the background. After a
+  restart, the start script removes BB's daemon lock and PID file, and bb-box
+  calls `bootstrap` again, which starts the daemon
+  ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
+  `access.dockerHost` stays null unless the operator opts in.
 - **Windows** on Proxmox QEMU streams its console through Proxmox's API, so
   nothing is installed in the guest for the desktop. Commands need OpenSSH for
   Windows or the QEMU guest agent, whose calls Proxmox limits to 64 KiB of
@@ -760,17 +774,17 @@ Notes:
   from an env file. For each kind: capacity, acquire to ready with the hooks,
   run a command with 1 MiB of stdin, copy 32 MiB each way (so a transport with
   small limits, such as the QEMU guest agent's 64 KiB of stdin, proves it
-  splits the data), enrol, reconnect to BB after a restart, stream a frame,
-  computer use (the Chrome and GTK sequences from the research rig, also run
-  when the Cua pin moves), stop and start where supported, repeated release,
-  and crash recovery (an interrupted acquire is resumed or released, and
-  `held()` finds every guest). Steps a kind does not support are skipped by
-  its declared capabilities, never by backend name.
+  splits the data), enrol, stream a frame, computer use (the Chrome and GTK
+  sequences from the research rig, also run when the Cua pin moves), stop and
+  start where supported (connected to BB again within 3 s of being ready),
+  repeated release, and crash recovery (an interrupted acquire is resumed or
+  released, and `held()` finds every guest). Steps a kind does not support
+  are skipped by its declared capabilities, never by backend name.
 - **Fake backend.** An in-memory backend passes the suite and backs the core's
   own tests.
-- **Setup scripts**, one per backend, prepare the provider: templates or
-  images, the network, a restricted credential, and bb-box's public key. Each
-  has a short guide.
+- **Setup**, per backend: a short guide and the scripts it runs, which
+  prepare the provider: templates or images, the network, a restricted
+  credential, and bb-box's public key.
 - **Settings page.** Each backend has its own section with an enable switch.
   After you save, the page runs `doctor()` and shows each check with what to
   do when it fails.
@@ -781,7 +795,6 @@ Notes:
 
 | Question | Where it is answered |
 | --- | --- |
-| How long a real enrolment takes, which decides whether warm guests are enrolled ahead | the experiment in [enrolment and warm pools](research/enrolment-and-warm-pools.md) |
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
 | First boot of a Windows clone, Tart boot and resume, a physical Mac's reset; until then `readyTimeoutMs` values are estimates | [later backends](research/later-backends.md) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |

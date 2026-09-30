@@ -20,3 +20,5 @@ that changes gets a new record that supersedes the old one.
 | [013](013-docker-boxes-run-unprivileged.md) | Docker boxes run unprivileged, without systemd |
 | [014](014-enrol-through-machine-providers.md) | Boxes enrol through BB's machine provider API, when claimed |
 | [015](015-computer-use-through-cua-driver.md) | Computer use drives a pinned Cua Driver through bb-box's own tools |
+| [016](016-changes-from-building-v1.md) | Changes from building Interface v1: jump hosts, first keys, setup, stale releases, facts |
+| [017](017-boxes-clear-bb-daemon-state-at-boot.md) | Boxes clear BB's daemon lock and PID file at boot |

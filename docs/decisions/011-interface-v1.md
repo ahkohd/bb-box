@@ -5,7 +5,9 @@ Status: accepted, 30 September 2026. Partly supersedes
 [012](012-offers-may-add-features.md): offers agree on the features a kind
 requires and may add more, and Docker inside a box is a feature. Partly
 superseded by [015](015-computer-use-through-cua-driver.md): `computerUse`
-names the driver, and command transports gain `spawn`.
+names the driver, and command transports gain `spawn`. Partly superseded
+by [016](016-changes-from-building-v1.md): guests carry facts to show, and a
+driver's setup is a guide with a list of scripts.
 
 ## Context
 

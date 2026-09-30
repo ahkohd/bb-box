@@ -9,6 +9,7 @@ server protocol 219). They are drafts until filed with BB.
 | --- | --- | --- |
 | [BB's host app on Windows](#1-bbs-host-app-on-windows) | draft | Windows boxes cannot enrol |
 | [Send backlog on plugin WebSockets](#2-send-backlog-on-plugin-websockets) | draft | the desktop relay cannot slow down for a slow viewer |
+| [Start cleanly after a reboot](#3-start-cleanly-after-a-reboot) | draft | every template and image clears BB's daemon lock and PID file at boot |
 
 ## 1. BB's host app on Windows
 
@@ -66,6 +67,33 @@ RFB paces updates end to end, through the viewer's update requests or
 TigerVNC's congestion control, which keeps the backlog small. Selkies'
 WebSocket mode is not measured yet.
 
+## 3. Start cleanly after a reboot
+
+**What bb-box needs.** A box that restarts after a hard stop reconnects to BB
+as soon as it boots. bb-box's `stop` on Proxmox LXC is a hard stop, and a
+Docker box's daemon ends with its container.
+
+**What BB does now.** Measured in Docker containers with BB 0.44.0:
+
+- The host daemon's lock, `daemon.lock.lock` in the data directory, survives
+  a hard stop. A daemon started within 10 s waits for it to go stale: the
+  start took 7.5 to 8.8 s instead of 0.47 s.
+- Without a service manager, the installer records the daemon's PID in
+  `install-daemon.pid`. After a reboot, `--start` finds that PID used by
+  another process and stops with "Recorded daemon PID belongs to another
+  process." A container's PIDs repeat from boot to boot, so this happened on
+  4 of 5 restarts in a row.
+
+**What we ask.**
+
+1. `--start` ignores a PID file written before the last boot, for example by
+   recording the boot ID beside the PID.
+2. The daemon takes over a lock whose holder is not running, for example by
+   recording its PID and boot ID in the lock directory.
+
+**Until then.** Templates and images remove both files at boot
+([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
+
 ## Checked, no request needed
 
 - **Subprotocols.** BB's WebSocket server answers with the first subprotocol
@@ -74,11 +102,11 @@ WebSocket mode is not measured yet.
 ## Possible later
 
 - **One daemon at enrolment.** The installer starts a temporary daemon to
-  join, then installs the service and waits for it to connect again. If timing
-  a real enrolment shows that this handover is a large part of it, bb-box will
-  ask for the installer to start the service directly. The experiment in
-  [enrolment and warm pools](research/enrolment-and-warm-pools.md) measures
-  it first.
+  join, then installs the service and waits for it to connect again. On a
+  real host, the handover and its 1 s polls took 1.1 to 1.3 s of the 2.25 s
+  an enrolment took with the template
+  ([enrolment and warm pools](research/enrolment-and-warm-pools.md)). A box
+  runs commands meanwhile, so bb-box does not ask yet.
 - **Machines hidden from thread placement.** If warm boxes are enrolled ahead,
   bb-box would ask for a way to keep an unclaimed machine out of BB's machine
   list and thread placement until a thread claims it.
