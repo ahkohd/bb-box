@@ -958,6 +958,28 @@ test("a text area keeps its reference when typing into it renames its document",
   assert.match(text(await tool("computer_observe", { box: box.name, window: id })), new RegExp(`- \\[${area}\\] text "" value="Hello world"`));
 });
 
+test("a button in a list whose rows all changed does not keep the old row's reference", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.windows[0]!.plainButtons = true;
+  });
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const first = /list item "Task 1"\n\s+- \[(e\d+)\] push button "Delete"/.exec(tree)?.[1];
+  assert.ok(first, tree);
+  const field = refOf(tree, '"New task"');
+
+  // Another folder, say: the list's rows change, and another action reads the window again.
+  editDesktop(file, (desktop) => {
+    desktop.tasks["100"] = ["Invoice 7", "Invoice 8", "Invoice 9"];
+  });
+  await tool("computer_type", { box: box.name, ref: field, text: "x" });
+  const clicked = await tool("computer_act", { box: box.name, action: "click", ref: first });
+  assert.equal(isError(clicked), true);
+  assert.equal(text(clicked), `${first} (push button 'Delete') is no longer on screen. Call computer_observe again.`);
+  assert.deepEqual(readDesktop(file).tasks["100"], ["Invoice 7", "Invoice 8", "Invoice 9"]);
+});
+
 test("an action on the desktop says which windows opened, closed or changed, or suggests a screenshot", async (t) => {
   const { harness, box, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
@@ -1022,6 +1044,29 @@ test("while a person holds a desktop the computer tools wait, and afterwards the
   assert.equal(readDesktop(file).calls.length, calls + 1, "nothing reached the driver while the person held control");
   assert.doesNotMatch(text(await tool("computer_windows", { box: box.name })), /Control returned/, "the notice comes once");
   assert.match(text(await tool("computer_act", { box: box.name, action: "click", ref: add })), /^bb-box has no reference e\d+/, "references go when a person takes control");
+  await session.close();
+});
+
+test("a click on the desktop says it was done when a person takes control while bb-box looks for changes", async (t) => {
+  const { harness, app, box, file, tool } = await desktopBox({ computer: { desktopWaitMs: 5_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_screenshot", { box: box.name });
+
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await until("the viewer to join", async () => app.desktops.control.connected(box.id, viewer));
+
+  // Nothing is under (960, 540), and nothing changes, so bb-box keeps looking.
+  const click = tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 });
+  await until("the click to reach the driver", async () => readDesktop(file).calls.some((call) => call.tool === "click"));
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null };
+  assert.equal(took.error, null);
+  const clicked = await click;
+  assert.equal(isError(clicked), false, text(clicked));
+  assert.match(text(clicked), /^Clicked \(784, 441\) on the desktop, \(960, 540\) on the screen\. .*\n\nA person took control of the desktop before bb-box could read what changed\.\n\nNext: Wait until they hand control back, then call computer_observe\.$/);
   await session.close();
 });
 

@@ -26,3 +26,4 @@ that changes gets a new record that supersedes the old one.
 | [019](019-lost-records-are-restored-from-guests.md) | The sweep restores lost records, and only BB ends a thread |
 | [020](020-control-belongs-to-a-viewer.md) | Control belongs to one viewer, and a GPU desktop is retried on another GPU |
 | [021](021-desktop-resize-through-the-backend.md) | A desktop whose VNC server cannot resize is resized by its backend |
+| [022](022-references-follow-renames-not-rows.md) | A reference follows its element through a rename, not into another row |

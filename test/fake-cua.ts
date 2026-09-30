@@ -40,6 +40,8 @@ export interface FakeWindow {
   dialogOf?: number;
   /** The window a context menu belongs to. */
   menuOf?: number;
+  /** Every task's button is named "Delete", as rows' buttons often are. */
+  plainButtons?: boolean;
 }
 
 export interface FakeDesktop {
@@ -229,7 +231,7 @@ function tree(desktop: FakeDesktop, window: FakeWindow): Node {
           label: task,
           actions: [],
           frame: frame(0, 40 + at * 40, 800, 40),
-          children: [{ key: `delete:${task}`, role: "push button", label: `Delete ${task}`, actions: ["click"], frame: frame(700, 45 + at * 40, 90, 30), children: [] }],
+          children: [{ key: `delete:${task}`, role: "push button", label: window.plainButtons ? "Delete" : `Delete ${task}`, actions: ["click"], frame: frame(700, 45 + at * 40, 90, 30), children: [] }],
         })),
       },
       { key: "field", role: "text", label: "New task", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(0, 520, 600, 40), children: [] },

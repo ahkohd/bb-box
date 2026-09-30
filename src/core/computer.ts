@@ -135,8 +135,11 @@ interface Element {
   /**
    * A hash of its role, its name and its place in the tree: its ancestors'
    * roles and, for each, how many siblings of its role come before it. Not
-   * their names, which change when a document is edited. Null when another
-   * element of its snapshot has it too.
+   * the names of ancestors alone in their role among their siblings, such as
+   * a window or an editor's only tab, which change when a document is
+   * edited. A row's name stays, so a button in a list whose rows all changed
+   * is not the old row's. Null when another element of its snapshot has it
+   * too.
    */
   readonly place: string | null;
 }
@@ -609,7 +612,7 @@ export class Computer {
       const args = input.url !== undefined ? { urls: [input.url] } : input.app!.includes("/") ? { launch_path: input.app } : { name: input.app };
       const { result } = await this.#call(use, "launch_app", args, { readOnly: false });
       if (result.isError) {
-        const reason = textOf(result).replace(/^failed to launch:\s*/i, "");
+        const reason = sentence(textOf(result).replace(/^failed to launch:\s*/i, ""));
         if (input.app === undefined) throw new ComputerError("refused", `bb-box could not open ${what}: ${reason}`, "Check the URL.");
         const apps = await this.#apps(use);
         if (!apps.length) {
@@ -1014,11 +1017,12 @@ export class Computer {
       const parent = num(byIndex.get(index)!.parent_index);
       return parent !== undefined && byIndex.has(parent) ? parent : null;
     };
-    // How many earlier siblings share each element's role.
+    // How many earlier siblings share each element's role, and how many in all.
+    const siblingKey = (index: number) => JSON.stringify([parentOf(index), roleOf(index)]);
     const before = new Map<number, number>();
     const seen = new Map<string, number>();
     for (const index of byIndex.keys()) {
-      const key = JSON.stringify([parentOf(index), roleOf(index)]);
+      const key = siblingKey(index);
       before.set(index, seen.get(key) ?? 0);
       seen.set(key, (seen.get(key) ?? 0) + 1);
     }
@@ -1038,7 +1042,7 @@ export class Computer {
       return (index: number) => chain(index, new Set());
     };
     const printOf = chained((index) => [roleOf(index), labelOf(index)]);
-    const spotOf = chained((index) => [roleOf(index), before.get(index)]);
+    const spotOf = chained((index) => [roleOf(index), before.get(index), seen.get(siblingKey(index))! > 1 ? labelOf(index) : null]);
     const prints = new Map<number, { fingerprint: string; place: string }>();
     const counts = new Map<string, number>();
     for (const index of byIndex.keys()) {
@@ -1052,8 +1056,8 @@ export class Computer {
       state.named.set(window.id, named);
     }
     // An element keeps its reference while its role, its name and its ancestors' do. When only
-    // the ancestors' names changed, as a document's tab does when it is edited, it keeps the
-    // reference of the element in its place in the window's last snapshot.
+    // the names of ancestors alone in their role changed, as a document's tab does when it is
+    // edited, it keeps the reference of the element in its place in the window's last snapshot.
     const placed = new Map<string, string>();
     for (const element of state.snapshots.get(window.id)?.elements ?? []) {
       if (element.unique && element.place) placed.set(element.place, element.ref);
@@ -1336,15 +1340,7 @@ export class Computer {
       if (error instanceof ComputerError && error.code === "stale") {
         return { text: `Window ${id} closed.`, hints: ["Call computer_windows to see the windows open now."], changed: true };
       }
-      if (error instanceof ComputerError && (error.code === "paused" || error.code === "interrupted")) {
-        return {
-          text: "A person took control of the desktop before bb-box could read what changed.",
-          hints: ["Wait until they hand control back, then call computer_observe."],
-          changed: true,
-        };
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      return { text: `bb-box could not read what changed: ${message}`, hints: [`Call computer_observe with window ${id}.`], changed: true };
+      return unread(error, `Call computer_observe with window ${id}.`);
     }
     const after = read.snapshot;
     const parts: string[] = [];
@@ -1379,12 +1375,19 @@ export class Computer {
     let now: Map<number, WindowInfo>;
     let listed: string[];
     let inside: Changes | null = null;
-    for (let first = true; ; first = false) {
-      if (!first) await sleep(LAUNCH_POLL_MS, use.signal);
-      now = await this.#listWindows(use);
-      listed = windowChanges(before, now);
-      if (under && now.has(under.window.id)) inside = await this.#changes(use, under);
-      if (listed.length || inside?.changed || Date.now() >= deadline) break;
+    try {
+      for (let first = true; ; first = false) {
+        if (!first) await sleep(LAUNCH_POLL_MS, use.signal);
+        now = await this.#listWindows(use);
+        listed = windowChanges(before, now);
+        if (under && now.has(under.window.id)) inside = await this.#changes(use, under);
+        if (listed.length || inside?.changed || Date.now() >= deadline) break;
+      }
+    } catch (error) {
+      if (use.signal?.aborted) throw error;
+      // The action was done: say so, not that nothing was.
+      const failed = unread(error, 'Call computer_screenshot with window "desktop" to see the desktop now.');
+      return { parts: [failed.text], hints: failed.hints };
     }
     for (const id of before.keys()) if (!now.has(id)) this.#lost(use.state, id);
     const parts: string[] = [];
@@ -1407,6 +1410,15 @@ export class Computer {
     }
     return { parts, hints };
   }
+}
+
+/** What bb-box says when it cannot read what an action it did changed. */
+function unread(error: unknown, hint: string): Changes {
+  if (error instanceof ComputerError && (error.code === "paused" || error.code === "interrupted")) {
+    return { text: "A person took control of the desktop before bb-box could read what changed.", hints: ["Wait until they hand control back, then call computer_observe."], changed: true };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return { text: `bb-box could not read what changed: ${message}`, hints: [hint], changed: true };
 }
 
 const FOREGROUND = ", in the foreground because Cua could not do it in the background, so the pointer or focus may have moved";
