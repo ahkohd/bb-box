@@ -72,7 +72,7 @@ services and builds, so that work runs on a box and not on your own machine.
 | Proxmox LXC | virtual | Linux desktop with GPU, Linux headless with Docker | in development |
 | Proxmox QEMU | virtual | Windows desktop | planned |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
-| Apple Virtualization framework | virtual (macOS VMs on a Mac host) | macOS desktop, iOS Simulator | planned |
+| Apple Virtualization framework, for example [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS desktop, iOS Simulator | planned |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
 
