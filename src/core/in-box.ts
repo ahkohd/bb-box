@@ -172,3 +172,12 @@ if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
 fi
 `;
 }
+
+/**
+ * Runs the computer-use driver's MCP proxy (015), whose stdin and stdout
+ * carry the session. The driver's daemon listens on `socket` in the box's
+ * desktop session; the proxy needs nothing from that session.
+ */
+export function driverCommand(os: GuestOs, socket: string): string {
+  return os === "windows" ? `& cua-driver mcp --socket ${ps(socket)}` : `exec cua-driver mcp --socket ${sh(socket)}`;
+}

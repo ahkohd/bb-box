@@ -60,9 +60,10 @@ const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
 
 /**
  * Checks that the offers of each kind keep the kind's promise: every offer
- * has the features the kind requires, and offers from several backends agree
- * on what an agent relies on. Offers may differ in size, transports and extra
- * features. A disagreement is a warning, since each box still works.
+ * has the features the kind requires, can reach its computer-use driver, and
+ * offers from several backends agree on what an agent relies on. Offers may
+ * differ in size, transports and extra features. A problem is a warning,
+ * since each box still works.
  */
 export function offerChecks(offered: readonly OfferedKind[]): DoctorCheck[] {
   const byKind = new Map<string, OfferedKind[]>();
@@ -73,6 +74,9 @@ export function offerChecks(offered: readonly OfferedKind[]): DoctorCheck[] {
     for (const { kind, backend } of offers) {
       const missing = kind.requires.filter((feature) => !kind.capabilities.features.includes(feature));
       if (missing.length) problems.push(`${backend.label} offers ${id} without ${missing.join(", ")}, which the kind requires.`);
+      if (kind.capabilities.computerUse && !kind.capabilities.command) {
+        problems.push(`${backend.label} offers ${id} with a computer-use driver but no command transport, so the computer tools cannot reach the driver.`);
+      }
     }
     const [first, ...rest] = offers;
     for (const other of rest) {

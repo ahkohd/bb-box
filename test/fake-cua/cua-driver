@@ -1,0 +1,3 @@
+#!/bin/sh
+# The fake Cua Driver, as the cua-driver command a box has on its PATH.
+exec node "$(dirname "$0")/../fake-cua.ts" "$@"

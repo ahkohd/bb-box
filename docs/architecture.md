@@ -703,10 +703,10 @@ A box is a resource of its thread and gets what the thread's own machine has.
 
   | Tool | Does |
   | --- | --- |
-  | `computer_windows` | lists windows with ID, app, title, size and focus |
+  | `computer_windows` | lists windows with ID, app, title and size |
   | `computer_observe` | reads a window's tree, with an optional query, limit and screenshot |
   | `computer_screenshot` | returns an image of a window or the desktop |
-  | `computer_act` | clicks, scrolls, sets a value or runs an element action, by reference or by pixel |
+  | `computer_act` | clicks, double-clicks, right-clicks, scrolls or sets a value, by reference or by pixel |
   | `computer_type` | types text or a key chord, optionally into a reference |
   | `computer_launch` | opens an app or URL and returns its window ID |
 

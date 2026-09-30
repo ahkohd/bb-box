@@ -5,11 +5,13 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { Backends, DRIVERS, backendSettings, offerChecks } from "../backends/index.ts";
 import type { BackendDriver, DoctorReport } from "../backends/types.ts";
-import { Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
+import { BoxError, Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
+import { Computer, type ComputerDeps } from "../core/computer.ts";
 import { GENERAL_SETTINGS, parseGeneral, type GeneralConfig } from "../core/config.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import type { ControlView } from "../core/control.ts";
 import { registerCli } from "./cli.ts";
+import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
 import { registerRpc } from "./rpc.ts";
@@ -31,6 +33,8 @@ export interface BbBox {
   readonly enrolment: Enrolment;
   /** Desktop viewers and who controls each desktop's input. */
   readonly desktops: Desktops;
+  /** The agent's computer use of desktop boxes (015). */
+  readonly computer: Computer;
   general(): Promise<GeneralConfig>;
   view(box: BoxRecord): BoxView;
   /** Who controls a box's desktop. */
@@ -92,6 +96,8 @@ export interface SetupOptions {
   readonly daemonParent?: string;
   /** How long a viewer holding control may be gone before the agent has it again. */
   readonly controlStaleMs?: number;
+  /** Computer use's waits, shorter in tests. */
+  readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs">;
 }
 
 export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promise<BbBox> {
@@ -126,6 +132,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   let enrolment: Enrolment;
   let desktops: Desktops | undefined;
+  let computer: Computer | undefined;
   const boxes = new Boxes({
     kv: bb.storage.kv,
     backends,
@@ -133,7 +140,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     notify,
     // A desktop that stops, restarts or goes gives control back to the agent.
     recorded(box, deleted) {
-      if (deleted || box.state !== "ready") desktops?.control.forget(box.id);
+      if (deleted || box.state !== "ready") {
+        desktops?.control.forget(box.id);
+        computer?.forget(box.id);
+      }
     },
     async thread(threadId): Promise<ThreadLiveness> {
       try {
@@ -167,7 +177,18 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
   });
   bb.experimental_machines.register(enrolment.provider());
-  const desktop = registerDesktop(bb, { boxes, notify, logError, staleMs: options.controlStaleMs });
+  const computing = new Computer({
+    async spawn(box, script, signal) {
+      const { command } = await boxes.transports(box);
+      if (!command?.spawn) throw new BoxError("unsupported", `Box ${box.name}'s command transport cannot start the computer-use driver.`);
+      return command.spawn(script, signal);
+    },
+    owner: (boxId) => desktops?.control.view(boxId).owner ?? "agent",
+    logError,
+    ...options.computer,
+  });
+  computer = computing;
+  const desktop = registerDesktop(bb, { boxes, notify, logError, staleMs: options.controlStaleMs, pause: (boxId) => computing.pause(boxId) });
   desktops = desktop;
   const control = desktop.control;
 
@@ -175,6 +196,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.onDispose(() => backends.dispose());
   bb.onDispose(() => boxes.dispose());
   bb.onDispose(() => desktop.dispose());
+  bb.onDispose(() => computing.dispose());
 
   const problems = () =>
     backends
@@ -222,6 +244,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     backends,
     enrolment,
     desktops: desktop,
+    computer: computing,
     general,
     view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id)),
     control: (box) => control.view(box.id),
@@ -303,6 +326,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   };
 
   registerTools(bb, api);
+  registerComputerTools(bb, api);
   registerRpc(bb, api);
   registerCli(bb, api);
   return api;

@@ -1,7 +1,8 @@
 // A smoke test of a real backend, without BB: it acquires a box, runs a
 // command in it, releases it, and prints how long each step took. For a
 // desktop kind it also opens the desktop the way the viewer's relay does,
-// answering its VNC password, and shows the box's display facts.
+// answering its VNC password, shows the box's display facts, and asks the
+// computer-use driver for the desktop's windows as the computer tools do.
 //
 //   node scripts/smoke.ts <settings.json> [--kind <kind>] [--command <script>] [--doctor] [--json]
 //
@@ -27,6 +28,8 @@ import { parseArgs } from "node:util";
 import { Backends } from "../src/backends/index.ts";
 import type { BackendDriver, BackendStorage } from "../src/backends/types.ts";
 import { Boxes, describeError, type BoxRecord } from "../src/core/boxes.ts";
+import { driverCommand } from "../src/core/in-box.ts";
+import { McpSession } from "../src/core/mcp.ts";
 import { desktopSize, displayOpener } from "../src/core/relay.ts";
 import { doctorText } from "../src/plugin/views.ts";
 
@@ -50,6 +53,8 @@ export interface SmokeResult {
   readonly output: { readonly exitCode: number | null; readonly stdout: string; readonly stderr: string } | null;
   /** The desktop's size, for a desktop kind whose desktop answered. */
   readonly desktop: { readonly width: number; readonly height: number } | null;
+  /** How many windows the computer-use driver listed, for a kind with computer use whose driver answered. */
+  readonly computerUse: { readonly windows: number } | null;
   /** The box's facts, such as its GPU and display mode. */
   readonly facts: readonly { readonly label: string; readonly value: string }[];
   /** Milliseconds: the backend's acquire steps, then acquire, run and release as the caller saw them. */
@@ -109,6 +114,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
   let box: BoxRecord | null = null;
   let output: SmokeResult["output"] = null;
   let desktop: SmokeResult["desktop"] = null;
+  let computerUse: SmokeResult["computerUse"] = null;
   const boxes = new Boxes({
     kv: storage,
     backends,
@@ -122,6 +128,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
     box: box && { name: box.name, kind: box.kind, backend: box.backendLabel, address: box.guest?.address ?? null },
     output,
     desktop,
+    computerUse,
     facts: box?.guest?.facts ?? [],
     timings,
     problems,
@@ -201,6 +208,28 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
           log(`The desktop answered: ${desktop.width} by ${desktop.height}.`);
         } catch (error) {
           problems.push(describeError(error, "Opening the desktop"));
+        }
+      }
+      const driver = box.capabilities.computerUse;
+      if (driver && !options.signal?.aborted) {
+        log("Asking the computer-use driver for the desktop's windows...");
+        started = performance.now();
+        let session: McpSession | null = null;
+        try {
+          const { command } = await boxes.transports(box);
+          if (!command?.spawn) throw new Error("The box's command transport cannot start the computer-use driver.");
+          const channel = await command.spawn(driverCommand(box.capabilities.os, driver.socket), AbortSignal.timeout(15_000));
+          session = await McpSession.open(channel, { client: { name: "bb-box-smoke", version: "1" }, timeoutMs: 15_000 });
+          const listed = await session.call("list_windows", {}, { timeoutMs: 30_000 });
+          const windows = listed.structuredContent?.windows;
+          if (listed.isError || !Array.isArray(windows)) throw new Error(`The driver did not list the windows: ${listed.content.map((part) => part.text ?? "").join(" ")}`);
+          computerUse = { windows: windows.length };
+          timings["computer use"] = performance.now() - started;
+          log(`The computer-use driver answered: ${windows.length} ${windows.length === 1 ? "window" : "windows"}.`);
+        } catch (error) {
+          problems.push(describeError(error, "Reaching the computer-use driver"));
+        } finally {
+          await session?.close();
         }
       }
     }

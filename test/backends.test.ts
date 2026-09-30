@@ -37,3 +37,10 @@ test("offers that disagree on what the kind promises warn, and say how", () => {
   assert.match(check!.detail, /disagree on required features for linux-headless: none and docker/);
   assert.match(check!.fix!, /Make the offers of linux-headless match/);
 });
+
+test("an offer with a computer-use driver but no command transport warns, even alone", () => {
+  const unreachable = { ...DESKTOP, capabilities: { ...DESKTOP.capabilities, command: null } };
+  const [check] = offerChecks([offer("One", unreachable)]);
+  assert.equal(check?.status, "warn");
+  assert.equal(check?.detail, "One offers linux-desktop with a computer-use driver but no command transport, so the computer tools cannot reach the driver.");
+});
