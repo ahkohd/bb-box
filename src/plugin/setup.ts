@@ -1,0 +1,238 @@
+// Wires bb-box into BB: settings, the active backends, the box registry,
+// enrolment, thread events, the sweep, and the tools, RPC and CLI that use
+// them. server.ts calls setup with the built-in drivers; tests pass fakes.
+
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { Backends, DRIVERS, backendSettings, offerChecks } from "../backends/index.ts";
+import type { BackendDriver, DoctorReport } from "../backends/types.ts";
+import { Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
+import { GENERAL_SETTINGS, parseGeneral, type GeneralConfig } from "../core/config.ts";
+import { registerCli } from "./cli.ts";
+import { Enrolment, type HostApi } from "./enrol.ts";
+import { registerRpc } from "./rpc.ts";
+import { registerTools } from "./tools.ts";
+import { boxView, kindViews, type BackendView, type BoxView, type DoctorView, type KindView } from "./views.ts";
+
+/** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
+export const CHANGED = "changed";
+
+const SWEEP_EVERY_MS = 3 * 60_000;
+const DOCTOR_TIMEOUT_MS = 30_000;
+
+/** What the tools, RPC and CLI work with. */
+export interface BbBox {
+  readonly boxes: Boxes;
+  readonly backends: Backends;
+  readonly enrolment: Enrolment;
+  general(): Promise<GeneralConfig>;
+  view(box: BoxRecord): BoxView;
+  kinds(): KindView[];
+  backendViews(): BackendView[];
+  doctor(signal?: AbortSignal): Promise<DoctorView>;
+  /** The machine and directory a thread works in, for copying files to and from its boxes. */
+  workspace(threadId: string, signal?: AbortSignal): Promise<{ hostId: string; path: string | null }>;
+  /** A thread's project, for boxes the panel or the CLI acquires. */
+  projectOf(threadId: string): Promise<string | null>;
+}
+
+function status(error: unknown): { status?: unknown; code?: unknown } {
+  return (error ?? {}) as { status?: unknown; code?: unknown };
+}
+
+/** Only a clear "no such thread" counts: a thread that ended loses its boxes. */
+export function isMissingThread(error: unknown): boolean {
+  const { status: code, code: name } = status(error);
+  if (code === 404) return true;
+  if (typeof name === "string" && /(^|_)not_found$/.test(name)) return true;
+  return error instanceof Error && /thread\b.*\bnot found|not found.*\bthread/i.test(error.message);
+}
+
+function withTimeout(ms: number, signal?: AbortSignal): AbortSignal {
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+  });
+}
+
+export async function setup(bb: BbPluginApi, options: { drivers?: readonly BackendDriver<any>[] } = {}): Promise<BbBox> {
+  const drivers = options.drivers ?? DRIVERS;
+  const settings = bb.settings.define({ ...GENERAL_SETTINGS, ...backendSettings(drivers) });
+  const logError = (operation: string, error: unknown) => {
+    bb.log.error(`${operation}: ${error instanceof Error ? error.message : String(error)}`);
+  };
+  const notify = (threadId: string | null) => {
+    try {
+      bb.realtime.publish(CHANGED, { threadId });
+    } catch (error) {
+      logError("notify", error);
+    }
+  };
+
+  const backends = new Backends({ storage: bb.storage.kv, logError, drivers });
+  const initial = await settings.get();
+  await backends.configure(initial);
+  const general = async () => {
+    const parsed = parseGeneral(await settings.get());
+    return parsed.ok ? parsed.config : { perThreadLimit: null, enrol: true };
+  };
+
+  let enrolment: Enrolment;
+  const boxes = new Boxes({
+    kv: bb.storage.kv,
+    backends,
+    general,
+    notify,
+    async thread(threadId): Promise<ThreadLiveness> {
+      try {
+        const thread = await bb.sdk.threads.get({ threadId });
+        return thread.archivedAt !== null || thread.deletedAt !== null ? "ended" : "live";
+      } catch (error) {
+        return isMissingThread(error) ? "ended" : "unknown";
+      }
+    },
+    enrol: (box) => enrolment.enrol(box),
+    unenrol: (box) => enrolment.unenrol(box),
+    reconnect: (box) => enrolment.reconnect(box),
+    logError,
+  });
+  enrolment = new Enrolment({
+    boxes,
+    hosts: () => bb.sdk.hosts as unknown as HostApi,
+    bootstrap: (request) => bb.experimental_machines.bootstrap(request),
+    logError,
+  });
+  bb.experimental_machines.register(enrolment.provider());
+
+  // Disposed in reverse: boxes first, so acquires stop before their backends.
+  bb.onDispose(() => backends.dispose());
+  bb.onDispose(() => boxes.dispose());
+
+  const problems = () =>
+    backends
+      .statuses()
+      .filter((backend) => backend.state === "misconfigured")
+      .map((backend) => `${backend.label}: ${backend.problems.join(" ")}`);
+  const unconfigured = problems();
+  if (!backends.active().length) {
+    bb.status.needsConfiguration(
+      unconfigured.length ? unconfigured.join(" ") : "Turn on a backend in bb-box's settings, then fill in its settings.",
+    );
+  }
+  settings.onChange((next) => {
+    void backends
+      .configure(next)
+      .then(() => notify(null))
+      .catch((error) => logError("settings", error));
+  });
+
+  bb.events.on("thread.archived", ({ thread }) => {
+    void boxes.releaseThread(thread.id).catch((error) => logError("thread archived", error));
+  });
+  bb.events.on("thread.deleted", ({ thread }) => {
+    void boxes.releaseThread(thread.id).catch((error) => logError("thread deleted", error));
+  });
+  bb.events.on("experimental_host.deleted", ({ host }) => {
+    void enrolment.forgetHost(host.id).catch((error) => logError("host deleted", error));
+  });
+
+  bb.background.service("sweeper", {
+    async start(signal) {
+      await enrolment.resume().catch((error) => logError("resume enrolment", error));
+      while (!signal.aborted) {
+        await boxes.sweep(signal).catch((error) => {
+          if (!signal.aborted) logError("sweep", error);
+        });
+        await sleep(SWEEP_EVERY_MS, signal);
+      }
+    },
+  });
+
+  const api: BbBox = {
+    boxes,
+    backends,
+    enrolment,
+    general,
+    view: (box) => boxView(box, boxes.canStopStart(box)),
+    kinds: () => kindViews(backends.kinds()),
+    backendViews: () =>
+      backends.statuses().map((backend) => ({
+        ...backend,
+        setup: drivers.find((driver) => driver.type === backend.type)?.setup ?? { guide: "", scripts: [] },
+      })),
+    async doctor(signal) {
+      const sections: { title: string; report: DoctorReport }[] = [];
+      for (const backend of backends.statuses()) {
+        if (backend.state !== "misconfigured") continue;
+        sections.push({
+          title: backend.label,
+          report: {
+            ok: false,
+            summary: "Its settings need fixing.",
+            checks: backend.problems.map((problem, index) => ({
+              id: `settings.${index}`,
+              name: "Settings",
+              status: "fail" as const,
+              detail: problem,
+              fix: "Fix it in bb-box's settings.",
+            })),
+            notes: [],
+          },
+        });
+      }
+      const reports = await Promise.all(
+        backends.active().map(async (backend) => {
+          try {
+            return { title: backend.label, report: await backend.doctor(withTimeout(DOCTOR_TIMEOUT_MS, signal)) };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              title: backend.label,
+              report: {
+                ok: false,
+                summary: "The checks did not finish.",
+                checks: [{ id: "doctor", name: "Checks", status: "fail" as const, detail: message, fix: null }],
+                notes: [],
+              },
+            };
+          }
+        }),
+      );
+      sections.push(...reports);
+      const offers = offerChecks(backends.kinds());
+      if (offers.length) {
+        sections.push({
+          title: "Kinds",
+          report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
+        });
+      }
+      return { ok: sections.every((section) => section.report.ok), sections };
+    },
+    async workspace(threadId, signal) {
+      const thread = await bb.sdk.threads.get({ threadId, signal });
+      if (!thread.environmentId) throw new Error("This thread has no workspace yet, so there is nowhere to copy files to or from.");
+      const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId, signal });
+      return { hostId: environment.hostId, path: environment.path ?? null };
+    },
+    async projectOf(threadId) {
+      try {
+        return (await bb.sdk.threads.get({ threadId })).projectId;
+      } catch {
+        return null;
+      }
+    },
+  };
+
+  registerTools(bb, api);
+  registerRpc(bb, api);
+  registerCli(bb, api);
+  return api;
+}
