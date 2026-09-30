@@ -5,9 +5,8 @@ Status: accepted, 30 September 2026. Extends
 
 ## Context
 
-Reviewing the first build
-([review of #14](https://github.com/moonstead/bb-box/pull/14#pullrequestreview-5370800411))
-found three ways a box can act on a guest that is not its own:
+The review of the first build, pull request #14, found three ways a box
+can act on a guest that is not its own:
 
 | Case | What goes wrong |
 | --- | --- |

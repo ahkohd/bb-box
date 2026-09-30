@@ -234,9 +234,11 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   [src/transports/process.ts](../src/transports/process.ts) runs a POSIX
   script in a child shell, with stdin from `/dev/null` when none is given,
   then writes a random end mark and the exit status to stdout and stderr.
-  Once both marks arrive, the run returns and stops the local command, such
-  as `ssh`. Output written after the mark is dropped. PowerShell scripts are
-  not wrapped yet, so their runs end when the output closes.
+  The command line holds the mark in two halves, so a script that prints
+  command lines, as `ps aux` does, never ends its run early. Once both marks
+  arrive, the run returns and stops the local command, such as `ssh`.
+  Output written after the mark is dropped. PowerShell scripts are not
+  wrapped yet, so their runs end when the output closes.
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the

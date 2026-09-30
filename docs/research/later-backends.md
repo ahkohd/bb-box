@@ -592,9 +592,7 @@ The changes this research proposed, as they are now in
 
 ### Adopted after the review
 
-The review of Interface v1
-([comment on #4](https://github.com/moonstead/bb-box/pull/4#issuecomment-5916067525))
-is folded in by #5:
+The review of Interface v1, a comment on pull request #4, is folded in by #5:
 
 - A kind lists the features it requires (`BoxKind.requires`). An offer's
   `features` include them and may add more. `gpu` still agrees exactly

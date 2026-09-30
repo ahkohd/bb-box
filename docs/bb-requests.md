@@ -10,6 +10,7 @@ server protocol 219). They are drafts until filed with BB.
 | [BB's host app on Windows](#1-bbs-host-app-on-windows) | draft | Windows boxes cannot enrol |
 | [Send backlog on plugin WebSockets](#2-send-backlog-on-plugin-websockets) | draft | the desktop relay cannot slow down for a slow viewer |
 | [Start cleanly after a reboot](#3-start-cleanly-after-a-reboot) | draft | every template and image clears BB's daemon lock and PID file at boot |
+| [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | draft | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
 
 ## 1. BB's host app on Windows
 
@@ -93,6 +94,46 @@ Docker box's daemon ends with its container.
 
 **Until then.** Templates and images remove both files at boot
 ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
+
+## 4. Change a plugin's source and keep its state
+
+**What bb-box needs.** An operator moves bb-box from one source to another
+without losing anything: from a pinned commit to a branch to follow
+development, or from a branch to a release tag. Its settings, secrets,
+schedules and storage stay, and so do the boxes its storage records.
+
+**What BB does now.** Checked in BB 0.44.0:
+
+- Git tags and commits, and exact npm versions, are pinned.
+  `bb plugin update` skips a pinned plugin and says to remove it and install
+  it again.
+- A pinned `git:` or `npm:` source changes only through `bb plugin remove`
+  and a fresh install. The remove deletes the plugin's settings, secrets and
+  schedules, and the new install starts with empty storage.
+- Only a local path moves in place: `bb plugin install path:<new dir>` keeps
+  the plugin's configuration.
+
+Moving bb-box from a pinned commit to a branch this way on 30 September cost
+a running box: the new install had no box records, and its sweep released a
+box that a live thread was using.
+
+**What we ask.** Either of:
+
+1. `bb plugin install <source>` for an installed plugin moves it to the new
+   source and keeps its settings, secrets, schedules and storage, as a local
+   path install does now.
+2. `bb plugin update <id>` takes a new ref, for example `--ref <branch>`,
+   for a `git:` source.
+
+Either should show the old and new source and ask first, as an install does.
+
+**Until then.** The README says to install bb-box from a branch, which
+`bb plugin update` follows, and never to remove it to upgrade. If bb-box
+loses its storage anyway, its boxes keep running:
+`bb box install-id --set <id>` takes its install ID back, and the sweep
+restores the boxes of live threads from their guests
+([019](decisions/019-lost-records-are-restored-from-guests.md)). After a
+remove, its settings and secrets must still be entered again.
 
 ## Checked, no request needed
 
