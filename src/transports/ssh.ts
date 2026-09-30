@@ -102,10 +102,12 @@ export class Ssh {
     };
   }
 
-  #line(access: SshAccess): CommandLine {
+  /** Scripts for `os`: POSIX sh unless it is Windows. */
+  #line(access: SshAccess, os: GuestOs = "linux"): CommandLine {
     return new CommandLine({
       argv: (script) => [this.binary, ...this.args(access, script)],
       error: (message) => new SshError(message),
+      posix: os !== "windows",
     });
   }
 
@@ -114,14 +116,14 @@ export class Ssh {
     return openRoute({ type: "command", argv: [this.binary, ...this.args(access, remoteCommand)] }, signal);
   }
 
-  /** Runs `remoteCommand` in the box user's shell. */
-  run(access: SshAccess, remoteCommand: string, options: RunOptions = {}): Promise<RunResult> {
-    return this.#line(access).run(remoteCommand, options);
+  /** Runs `remoteCommand` in the box user's shell. It returns when that shell exits, even if it left something running. */
+  run(access: SshAccess, remoteCommand: string, options: RunOptions = {}, os?: GuestOs): Promise<RunResult> {
+    return this.#line(access, os).run(remoteCommand, options);
   }
 
   /** Runs `remoteCommand` and passes its output on as it arrives. */
-  stream(access: SshAccess, remoteCommand: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {
-    return this.#line(access).stream(remoteCommand, options);
+  stream(access: SshAccess, remoteCommand: string, options: StreamOptions, os?: GuestOs): Promise<{ exitCode: number | null; timedOut: boolean }> {
+    return this.#line(access, os).stream(remoteCommand, options);
   }
 
   /** Writes `data` to `path` in the box, creating parent directories. */
@@ -166,13 +168,13 @@ export class SshTransport implements CommandTransport {
   }
 
   async run(script: string, options: RunOptions = {}): Promise<RunResult> {
-    const result = await this.#ssh.run(this.#access, script, options);
+    const result = await this.#ssh.run(this.#access, script, options, this.#os);
     await this.#reachable(result.exitCode, options.signal);
     return result;
   }
 
   async stream(script: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {
-    const result = await this.#ssh.stream(this.#access, script, options);
+    const result = await this.#ssh.stream(this.#access, script, options, this.#os);
     await this.#reachable(result.exitCode, options.signal);
     return result;
   }

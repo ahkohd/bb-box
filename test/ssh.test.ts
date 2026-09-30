@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { CommandLine, EndMark } from "../src/transports/process.ts";
 import { waitUntilAnswers } from "../src/transports/ready.ts";
 import { KeyFile, Ssh, SshError, SshTransport, generateKeyPair, publicKey, quote } from "../src/transports/ssh.ts";
 import { TransportError } from "../src/transports/types.ts";
@@ -154,6 +155,77 @@ test("stream passes output on as it arrives", async () => {
   });
   assert.equal(result.exitCode, 4);
   assert.deepEqual(chunks, { stdout: "one\n", stderr: "two\n" });
+});
+
+test("the end mark is found across chunks, and output that only looks like it passes through", () => {
+  const text = (chunk: Buffer) => chunk.toString("utf8");
+  const split = new EndMark("<end>:");
+  assert.equal(text(split.push(Buffer.from("out"))), "out");
+  assert.equal(text(split.push(Buffer.from("put<e"))), "put", "a possible start of the mark is held back");
+  assert.equal(text(split.push(Buffer.from("nd>:1"))), "");
+  assert.equal(split.status, null, "the status is read up to its newline");
+  assert.equal(text(split.push(Buffer.from("7\nlate"))), "");
+  assert.equal(split.status, 17);
+  assert.equal(text(split.push(Buffer.from("later"))), "", "output after the mark is dropped");
+
+  const lookalike = new EndMark("<end>:");
+  assert.equal(text(lookalike.push(Buffer.from("a<en"))), "a");
+  assert.equal(text(lookalike.push(Buffer.from("d but not"))), "<end but not");
+  assert.equal(text(lookalike.push(Buffer.from("x<"))), "x");
+  assert.equal(text(lookalike.rest()), "<", "what was held back is output after all when the stream ends");
+  assert.equal(lookalike.status, null);
+});
+
+/** A web server that keeps running, and writes its pid and port in its working directory. */
+const SERVER = `import { writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+writeFileSync("server.pid", String(process.pid));
+const server = createServer((_, response) => response.end("still here"));
+server.listen(0, "127.0.0.1", () => writeFileSync("server.port", String(server.address().port)));
+`;
+
+test("run returns when the script's shell exits, and a server the script left in the background keeps running", async (t) => {
+  const { ssh, home } = fakeSsh();
+  const node = quote(process.execPath);
+  // Each shell holds the session's output open until the server stops: a
+  // subshell waiting for it, or bash's for a backgrounded list, as in the
+  // form box_run's hints recommend.
+  const forms = [`(nohup ${node} server.mjs >server.log 2>&1; echo stopped >>server.log) & echo started`];
+  if (existsSync("/bin/bash")) forms.push(`bash -c ${quote(`cd web && nohup ${node} server.mjs >server.log 2>&1 &`)}; echo started`);
+  for (const [index, form] of forms.entries()) {
+    const host = `192.0.2.${20 + index}`;
+    const web = join(home(host), "web");
+    mkdirSync(web, { recursive: true });
+    writeFileSync(join(web, "server.mjs"), SERVER);
+    const started = Date.now();
+    const result = await ssh.run(at(host), index ? form : `cd web && ${form}`, { timeoutMs: 20_000 });
+    const pid = join(web, "server.pid");
+    t.after(() => {
+      if (existsSync(pid)) process.kill(Number(readFileSync(pid, "utf8")));
+    });
+    assert.deepEqual({ exitCode: result.exitCode, stdout: result.stdout, timedOut: result.timedOut }, { exitCode: 0, stdout: "started\n", timedOut: false }, form);
+    assert.ok(Date.now() - started < 5_000, `run returned at once: ${form}`);
+    const port = join(web, "server.port");
+    for (let wait = 0; !existsSync(port) && wait < 100; wait++) await new Promise((resolve) => setTimeout(resolve, 50));
+    const response = await fetch(`http://127.0.0.1:${readFileSync(port, "utf8")}/`);
+    assert.equal(await response.text(), "still here", `the server answers after run returned: ${form}`);
+  }
+});
+
+test("output a background process writes after the script's shell exits is not waited for", async () => {
+  const { ssh } = fakeSsh();
+  const result = await ssh.run(at("192.0.2.30"), "(sleep 3; echo late) & echo now", { timeoutMs: 20_000 });
+  assert.equal(result.stdout, "now\n");
+  assert.ok(result.durationMs < 2_500, "run returned before the background process wrote");
+});
+
+test("a timeout ends a run whose command line exited while something it started holds the output", async () => {
+  // Without an end mark, as for PowerShell, a run waits for its output to close.
+  const line = new CommandLine({ argv: (script) => ["sh", "-c", script], posix: false });
+  const result = await line.run("(sleep 3; echo late) & echo now", { timeoutMs: 300 });
+  assert.equal(result.timedOut, true);
+  assert.equal(result.stdout, "now\n");
+  assert.ok(result.durationMs < 2_500, "the run did not wait for the background process");
 });
 
 test("generateKeyPair makes an ed25519 key", async () => {

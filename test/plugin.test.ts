@@ -213,13 +213,21 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   assert.match(text(ran), /stderr:\nerr/);
   assert.equal(isError(ran), false, "a command that fails is not a tool error");
 
-  // A server started as the hints say: box_run returns at once, and the server keeps running.
+  // A server started as the hints say, by a shell that waits for it with the
+  // session's output open, as bash does for `cd web && nohup server >log 2>&1 &`:
+  // box_run returns at once, and the server keeps running.
   const started = Date.now();
-  const server = await tool("box_run", { box: box.name, command: "nohup sleep 30 >server.log 2>&1 & echo $! > server.pid" });
+  const server = await tool("box_run", {
+    box: box.name,
+    command: "mkdir -p web && cd web && { nohup sh -c 'echo $$ > server.pid; exec sleep 30' >server.log 2>&1; echo stopped >>server.log; } & echo started",
+  });
   assert.match(text(server), /Exit code 0/);
+  assert.match(text(server), /stdout:\nstarted/);
   assert.ok(Date.now() - started < 3_000, "box_run returned at once");
-  const running = await tool("box_run", { box: box.name, command: 'kill "$(cat server.pid)" && echo stopped' });
-  assert.match(text(running), /stdout:\nstopped/);
+  const pid = 'kill -0 "$(cat web/server.pid)" && echo running';
+  await until("the server to run after box_run returned", async () => /stdout:\nrunning/.test(text(await tool("box_run", { box: box.name, command: pid }))));
+  const stopped = await tool("box_run", { box: box.name, command: 'kill "$(cat web/server.pid)" && echo stopped' });
+  assert.match(text(stopped), /stdout:\nstopped/);
 
   writeFileSync(join(world.workspace, "input.txt"), "from the workspace\n");
   const copiedIn = await tool("box_copy", { box: box.name, direction: "to_box", from: "input.txt" });

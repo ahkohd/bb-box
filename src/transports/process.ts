@@ -2,8 +2,19 @@
 // `docker exec -i container sh -c script`, or plain `sh -c script`. Output
 // capture, timeouts, cancellation and file copies are the same for all of
 // them. File copies use POSIX tools, so they suit Linux and macOS boxes.
+//
+// A run ends when the script's shell exits, even while something the script
+// left in the background still holds the session's output. bash, for one,
+// keeps a subshell for `cd web && nohup server >log 2>&1 &` that waits for the
+// server with the session's stdout and stderr open, so ssh would not return
+// until the server stopped. A POSIX script therefore runs in a child shell,
+// and after it exits the wrapper writes an end mark with its exit status to
+// both streams. Once both marks arrive, all the shell wrote has too: the run
+// returns and stops the local command line, and the box keeps what the
+// script started.
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import type { RunOptions, RunResult, StreamOptions } from "./types.ts";
 
 export class CommandError extends Error {
@@ -63,6 +74,75 @@ export class Capture {
 
 type Spawned = Omit<RunResult, "stdout" | "stderr" | "truncated">;
 
+const NOTHING = Buffer.alloc(0);
+
+/**
+ * Runs `script` in a child of the login shell, then writes `mark` and its
+ * exit status to stdout and stderr. Without stdin, the script reads
+ * /dev/null, so nothing it starts holds the session's input either.
+ */
+export function endMarked(script: string, mark: string, stdin: boolean): string {
+  const input = stdin ? "" : " </dev/null";
+  return (
+    `"\${SHELL:-/bin/sh}" -c ${quote(script)}${input}; bb_box_status=$?; ` +
+    `printf '%s%s\\n' ${quote(mark)} "$bb_box_status"; printf '%s%s\\n' ${quote(mark)} "$bb_box_status" >&2; exit "$bb_box_status"`
+  );
+}
+
+/** Finds the end mark in one stream: passes on the output before it, and reads the exit status after it. */
+export class EndMark {
+  readonly #mark: Buffer;
+  /** The end of the output so far, held back while it could be the start of the mark. */
+  #held: Buffer = NOTHING;
+  /** After the mark, the status read so far. */
+  #after: Buffer | null = null;
+  /** The script's exit status, once the whole mark has arrived. */
+  status: number | null = null;
+
+  constructor(mark: string) {
+    this.#mark = Buffer.from(mark);
+  }
+
+  /** The output in `chunk` before the mark. Anything after the mark is dropped. */
+  push(chunk: Buffer): Buffer {
+    if (this.status !== null) return NOTHING;
+    if (this.#after) {
+      this.#status(chunk);
+      return NOTHING;
+    }
+    const data = this.#held.length ? Buffer.concat([this.#held, chunk]) : chunk;
+    const at = data.indexOf(this.#mark);
+    if (at >= 0) {
+      this.#held = NOTHING;
+      this.#after = NOTHING;
+      this.#status(data.subarray(at + this.#mark.length));
+      return data.subarray(0, at);
+    }
+    let keep = Math.min(this.#mark.length - 1, data.length);
+    while (keep > 0 && !data.subarray(data.length - keep).equals(this.#mark.subarray(0, keep))) keep--;
+    this.#held = Buffer.from(data.subarray(data.length - keep));
+    return data.subarray(0, data.length - keep);
+  }
+
+  #status(chunk: Buffer): void {
+    const after = Buffer.concat([this.#after!, chunk]);
+    const end = after.indexOf(10);
+    if (end < 0) {
+      this.#after = after;
+      return;
+    }
+    const status = Number(after.subarray(0, end).toString("ascii"));
+    this.status = Number.isInteger(status) ? status : -1;
+  }
+
+  /** What was held back, when the stream ends without the mark. */
+  rest(): Buffer {
+    const rest = this.#held;
+    this.#held = NOTHING;
+    return rest;
+  }
+}
+
 export interface CommandLineOptions {
   /** The command line that runs `script`, for example ["ssh", ..., "--", script]. */
   readonly argv: (script: string) => readonly [string, ...string[]];
@@ -70,6 +150,11 @@ export interface CommandLineOptions {
   readonly error?: (message: string) => Error;
   readonly env?: NodeJS.ProcessEnv;
   readonly cwd?: string;
+  /**
+   * False when scripts run in a shell that is not POSIX, such as PowerShell.
+   * Their runs end only once nothing holds the output open.
+   */
+  readonly posix?: boolean;
 }
 
 export class CommandLine {
@@ -154,7 +239,9 @@ export class CommandLine {
 
   #spawn(script: string, options: RunOptions, onStdout: (chunk: Buffer) => void, onStderr: (chunk: Buffer) => void): Promise<Spawned> {
     const started = Date.now();
-    const [binary, ...args] = this.#options.argv(script);
+    const mark = this.#options.posix === false ? null : `bb-box-end-${randomBytes(12).toString("hex")}:`;
+    const marks = mark ? { stdout: new EndMark(mark), stderr: new EndMark(mark) } : null;
+    const [binary, ...args] = this.#options.argv(mark ? endMarked(script, mark, options.stdin !== undefined) : script);
     return new Promise((resolve, reject) => {
       options.signal?.throwIfAborted();
       const child = spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"], env: this.#options.env, cwd: this.#options.cwd });
@@ -162,10 +249,17 @@ export class CommandLine {
       let killed = false;
       let settled = false;
       // After a kill, anything that inherited the pipes could hold them open,
-      // so the result is settled on exit rather than on close.
+      // so the result is settled on exit rather than on close. A command line
+      // that has exited already is settled at once.
       const kill = () => {
         killed = true;
-        child.kill("SIGKILL");
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+          return;
+        }
+        child.stdout.destroy();
+        child.stderr.destroy();
+        ended(child.exitCode);
       };
       const timer = options.timeoutMs
         ? setTimeout(() => {
@@ -184,15 +278,39 @@ export class CommandLine {
         if (options.signal?.aborted && !timedOut) return reject(options.signal.reason);
         resolve({ exitCode, timedOut, durationMs: Date.now() - started });
       };
-      child.stdout.on("data", onStdout);
-      child.stderr.on("data", onStderr);
+      // Once both marks are in, the script's shell has exited and everything
+      // it wrote has arrived. What it left running keeps running in the box.
+      const marked = () => {
+        if (!marks || marks.stdout.status === null || marks.stderr.status === null) return;
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.kill();
+        finish(null, marks.stdout.status);
+      };
+      const pass = (from: EndMark | undefined, onOutput: (chunk: Buffer) => void) => (chunk: Buffer) => {
+        const output = from ? from.push(chunk) : chunk;
+        if (output.length) onOutput(output);
+        marked();
+      };
+      /** Ends a run without both marks: output held back as a possible mark was output after all. */
+      const ended = (code: number | null) => {
+        if (settled) return;
+        if (marks) {
+          const [out, err] = [marks.stdout.rest(), marks.stderr.rest()];
+          if (out.length) onStdout(out);
+          if (err.length) onStderr(err);
+        }
+        finish(null, marks?.stdout.status ?? marks?.stderr.status ?? code);
+      };
+      child.stdout.on("data", pass(marks?.stdout, onStdout));
+      child.stderr.on("data", pass(marks?.stderr, onStderr));
       child.on("error", (error) => finish(this.#error(`Cannot run ${binary}: ${error.message}`), null));
-      child.on("close", (code) => finish(null, code));
+      child.on("close", (code) => ended(code));
       child.on("exit", (code) => {
         if (!killed) return;
         child.stdout.destroy();
         child.stderr.destroy();
-        finish(null, code);
+        ended(code);
       });
       child.stdin.on("error", () => {
         // The other side may exit before reading all of stdin.
