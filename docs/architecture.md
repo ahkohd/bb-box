@@ -1,8 +1,7 @@
 # Architecture
 
 How bb-box fits together: its parts, the backend interface, a box's life, and
-how you and the agent use a box. The backend interface itself is in
-[backends.md](backends.md); the reasons behind each choice are in
+how you and the agent use a box. The reasons behind each choice are in
 [decisions](decisions/README.md).
 
 ## The rule
@@ -25,9 +24,9 @@ BB app (panel, desktop viewer)          BB server
 |------------------------------+-------------------------------------------|
 | Transports                   | Backends                                  |
 |  command: SSH (docker exec,  |  proxmox-lxc (built), proxmox-qemu,       |
-|    WinRM, in-box agent later)|  docker, ssh-pool, mac (physical),        |
-|  stream: RFB (Selkies, RDP   |  tart, clouds, ...                        |
-|    later)                    |                                           |
+|    guest agent later)        |  docker, ssh-pool, mac (physical),        |
+|  routes: tcp, command,       |  tart, clouds, ...                        |
+|    websocket                 |                                           |
 +------------------------------+-------------------------------------------+
           |                                 |
           v                                 v
@@ -37,8 +36,8 @@ BB app (panel, desktop viewer)          BB server
 | Part | Folder | Owns | Never |
 | --- | --- | --- | --- |
 | Core | `src/core/` | box records, lifecycle, sweep, tools, panel, relay, enrolment, computer use, in-box scripts | names a provider, hypervisor, container technology or transport |
-| Transports | `src/transports/` | running commands, copying files, opening a byte channel to a port in a box | knows which provider made the box |
-| Backends | `src/backends/<type>/` | acquire and release, address, capacity, ownership records, which transports reach each box, `doctor` | runs anything in a box for the core |
+| Transports | `src/transports/` | running commands, copying files, opening a route to a port in a box | knows which provider made the box |
+| Backends | `src/backends/<type>/` | acquire and release, address, capacity, ownership records, which transports and displays reach each box, `doctor` | runs anything in a box for the core |
 
 - bb-box is a BB plugin with no service of its own
   ([002](decisions/002-bb-is-the-coordinator.md)). The plugin calls each
@@ -47,82 +46,400 @@ BB app (panel, desktop viewer)          BB server
   written once per guest OS: POSIX sh for Linux and macOS, PowerShell for
   Windows. That covers enrolment, the thread's environment, `run`, file
   copies, computer use and the reset of a real machine's box user.
-- Several backends can be active at once. Kind IDs are unique across them.
+- Several backends can be active at once, and several can offer the same
+  kind (see [Kinds and offers](#kinds-and-offers)).
 
-## The backend interface
+## Interface v1
 
-A backend declares its nature (virtual or real) and its kinds, and implements
-the methods below. The full types are in
+The interface the core, transports and backends are built to. It came from
+reviewing the first draft against Docker, an SSH host pool, Tart, a physical
+Mac and Windows on Proxmox QEMU
+([011](decisions/011-interface-v1.md)). The types are in
 [src/backends/types.ts](../src/backends/types.ts) and
-[src/transports/types.ts](../src/transports/types.ts).
+[src/transports/types.ts](../src/transports/types.ts); the sketch at the end
+of this section is the reference.
+
+### Backend methods
+
+A backend declares its nature (virtual or real) and its kinds, and implements:
 
 | Method | Does |
 | --- | --- |
 | `kinds()` | the kinds it offers, with capabilities |
-| `capacity(kind, pending)` | whether one more box fits, and a message for the user when not |
-| `acquire(box, previous, hooks, signal)` | makes or claims a guest, starts it, returns when its command transport answers |
-| `release(guest)` | deletes a virtual guest, or resets a real machine and returns it to the pool |
-| `power`, `start`, `stop` | power state, and stop and start where the provider supports them |
+| `capacity(kind, pending)` | whether one more box fits, with the limits of each host, and a message saying what is full |
+| `acquire(box, previous, hooks, signal)` | makes or claims a guest, starts it, and returns when its command transport answers, within the kind's `readyTimeoutMs` |
+| `release(guest, hooks)` | deletes a virtual guest, or resets a real machine and returns it to the pool |
+| `power(guest)` | `running`, `stopped` or `unknown`; null when the guest is gone |
+| `start?`, `stop?` | only where the provider can; the panel and tools offer them only when present |
 | `held()` | every guest it holds for boxes, with the owner recorded at the provider |
-| `transports(guest, kind)` | the command transport and the desktop stream for a box |
+| `transports(guest, kind)` | the command transport, the displays, and how the thread reaches the box |
 | `doctor()` | checks the setup end to end and says what is missing |
-| `maintain()` | upkeep, such as topping up a warm pool |
+| `maintain?()` | upkeep, such as topping up a warm pool |
+| `members?()`, `returnToService?(ref)` | pool members and their state; puts back a machine the operator has fixed |
+
+A real backend also states what a release restores: `home` (the box user's
+home is recreated) or `machine` (reimaged or restored from a snapshot).
 
 Every method must be safe to repeat: the registry retries after a restart and
 the sweep repeats releases.
 
-### Kind capabilities
+### Kinds and offers
+
+- A kind ID is a shared word, such as `linux-headless`, `linux-desktop`,
+  `windows-desktop` or `macos-desktop`. Several backends may offer the same
+  kind.
+- An offer is a backend and a kind. The registry tries the offers of a kind
+  in the order the backends are listed in settings, and takes the first with
+  capacity. The box records both.
+- Offers of one kind must agree on what the agent relies on: `os`, `arch`,
+  `gpu`, `docker`, `features`, `computerUse`, `enrol`, and whether there is a
+  desktop display. Size and transports may differ. `doctor` warns when they
+  do not agree.
+- Each kind sets `readyTimeoutMs`, the longest an acquire may take: about
+  30 s for an LXC or Docker box, 5 min for a macOS VM, 10 min for a Windows
+  clone's first boot after sysprep.
+
+### Capabilities
 
 | Capability | Values | The core uses it to |
 | --- | --- | --- |
 | `os` | `linux`, `windows`, `macos` | pick the in-box scripts |
-| `desktop` | yes or no | offer the viewer and computer use |
+| `arch` | `x86_64`, `arm64` | tell the agent what runs there |
 | `gpu` | yes or no | show GPU status and count GPU capacity |
 | `docker` | yes or no | tell the agent Docker is there |
-| `command` | a transport name, or none | offer `run` and file copies |
-| `stream` | `{ type, resizable }`, or none | load the viewer client and allow resizing |
+| `features` | words such as `ios-simulator`, `xcode`, `systemd`, `docker-in-docker` | let the agent choose a kind |
+| `command` | the command capability below, or none | offer `run` and file copies |
+| `displays` | a list of `{id, protocol, resizable}`, empty when headless | load the viewer client before the box exists, and allow resizing |
+| `computerUse` | yes or no | offer the computer-use tools |
 | `enrol` | yes or no | enrol the box as a BB machine |
 
-A kind with no command transport can still be viewed and released. A kind that
-cannot enrol still runs commands through the transport.
+The command capability:
 
-### Changes proposed to the interface
+| Field | Meaning |
+| --- | --- |
+| `transport` | a name for people: `ssh`, `docker`, `guest-agent`. The core never branches on it |
+| `shell` | `sh` or `powershell`, the language of the in-box scripts |
+| `admin` | the box user can become root or Administrator |
+| `inDesktopSession` | commands already run in the logged-in desktop session. False for OpenSSH and WinRM on Windows, which run in session 0, and for SSH on macOS, which runs outside the login session and its Accessibility and Screen Recording permissions |
+| `streaming` | output arrives while the command runs. False for the QEMU guest agent, which returns output when the process exits |
 
-Reviewing the interface against Docker, an SSH host pool, Tart and Windows
-found these gaps. Each keeps provider details inside backends and transports.
+- A kind enrols only when its shell is `sh` and its OS is Linux or macOS. BB's
+  installer is a POSIX sh script, and its host app does not run on Windows
+  yet ([BB requests](bb-requests.md)).
+- A kind with no command transport can still be viewed and released. A kind
+  that cannot enrol still runs commands through the transport.
 
-| Gap | Who needs it | Change |
+### Reaching inside a box
+
+`transports(guest, kind)` returns three things:
+
+- `command`: the command transport, or none.
+- `displays`: the box's displays, one per stream (`desktop` now; a second
+  display or the iOS Simulator later).
+- `access`: how the thread's own machine reaches the box, for `ssh <box name>`
+  and `DOCKER_HOST`. Null when only the BB server can reach it.
+
+**Routes.** A route says how to reach one port inside a box, as plain data:
+
+| Route | Holds | For example |
 | --- | --- | --- |
-| A desktop endpoint is a host and port, which assumes the BB server can reach the box directly | Docker on another host, SSH pool machines with VNC on localhost, Tart VMs behind the Mac host's NAT, a QEMU console from the Proxmox API | Replace `DisplayEndpoint {host, port}` with a stream endpoint that opens a byte channel (below). A backend composes it from a direct TCP connection, an SSH tunnel, `docker exec`, or a provider's console API |
-| Boxes behind another host | Tart, SSH pool machines behind a bastion, remote Docker hosts | `SshTransport` takes an optional jump host |
-| `DisplayProtocol` is `vnc`, `rdp` or `webrtc` | the viewer | Rename to the stream type: `rfb`, `selkies`, `rdp`. Drop `webrtc`, which a plugin route cannot carry ([007](decisions/007-desktop-stream-is-a-typed-transport.md)). Add `resizable` |
-| Capacity has memory and disk only | Tart (two macOS VMs per Mac), Docker (a container limit), GPU desktops | Optional `slots: {used, total}` and `gpu: [{id, desktops, maxDesktops, freeMiB}]` on `VirtualCapacity` |
-| `start` and `stop` are required | SSH pool and physical machines, which cannot be stopped and started remotely | Make them optional, and let the panel and tools offer them only when present |
-| `PowerState` is running or stopped | real machines that do not answer | Add `unknown` |
-| `stream()` output is a string | binary output, and splitting stdout from stderr | `onOutput(chunk: Uint8Array, from: "stdout" \| "stderr")` |
-| What a real release restores is not stated | the panel, and people choosing a backend | A real backend states it: `home` (the box user's home is recreated) or `machine` (reimaged or restored from a snapshot) |
+| `tcp` | host and port | a box on a network the BB server reaches |
+| `command` | a command whose stdin and stdout carry the bytes | `ssh -W 127.0.0.1:5900 <host>`, `docker exec -i <container> socat - TCP:127.0.0.1:5900` |
+| `websocket` | URL, headers, and optionally a certificate fingerprint to pin | Proxmox's `vncwebsocket` with its ticket, Orchard's port-forward |
 
-The stream endpoint, as a sketch:
+- `openRoute(route)` in `src/transports/route.ts` is the only code that opens
+  a route. It returns a byte channel with backpressure.
+- A route is made for each connection, because it may hold a short-lived
+  secret such as a single-use console ticket. Routes are never logged or sent
+  to the browser.
+- A command transport may offer `route(port)`, a route to a TCP port inside
+  the box: SSH gives `ssh -W`, Docker gives `docker exec` with `socat`, so
+  `socat` is in every Docker image. A backend uses it to build a display that
+  is served inside the box.
+
+**Displays.** Each display has an ID, a label, a protocol (`rfb` or
+`selkies`), whether it can resize, and `open()`, which returns a route and the
+authentication the box expects (none, or a VNC password).
+
+- For RFB the relay does the security handshake with the box itself: it
+  answers VNC authentication (security type 2) with the password, then offers
+  the viewer RFB 3.8 with security type None only. Passwords and tickets never
+  reach the browser; BB has already authenticated the viewer.
+- macOS Screen Sharing offers VNC authentication only when "VNC viewers may
+  control screen with password" is on; otherwise it offers only Apple's own
+  type 30, which the relay cannot answer. Mac setup turns the option on.
+- Windows starts with RFB through Proxmox's console: nothing to install in the
+  guest, the same noVNC client, and it shows the console session the agent
+  uses. RDP is not planned. It needs a gateway and a second client, and an RDP
+  login moves the session off the console, so you and the agent could not
+  share one desktop.
+
+**SSH access** gives host, port, user, the host keys, and an optional jump
+host (the Mac host for Tart, a bastion for a pool). The SSH transport is built
+from it and uses the jump host as `ProxyJump`.
+
+- A real machine's host keys are pinned at setup.
+- A fresh virtual guest has no known key yet. The transport accepts its first
+  key, and the registry records it with the box.
+
+**Output and the desktop session.**
+
+- `onOutput(chunk, from)` gives bytes, and says whether they came from stdout
+  or stderr. A transport that cannot stream calls it once per stream when the
+  command exits.
+- The agent's `run` tool takes `session: "desktop"` to start something in the
+  desktop session, such as an app to test. The core wraps the script in its
+  helper for the OS unless the transport already runs there: `DISPLAY` and the
+  session bus on Linux, a LaunchAgent on macOS, a scheduled task with `/IT` on
+  Windows.
+
+### Guests
+
+A guest is the backend's handle on a box's machine: its own reference, the
+host it is on (a Proxmox node, a Docker host, a Mac), its address, and `data`,
+small values the backend needs later, such as a per-claim user or published
+ports. The registry stores `data` with the box and passes it back. It never
+holds a secret.
+
+### Capacity
+
+A box needs its memory, disk and slot on one host: two Macs with one free VM
+slot each, and 8 GiB free on only one of them, have no room for a 16 GiB VM.
+So `capacity` reports named limits per host, plus the warm pool for the kind.
+
+| Resource | Unit | Used by |
+| --- | --- | --- |
+| `memory`, `disk` | MiB | every virtual backend |
+| `cpu` | count | backends that reserve cores |
+| `guests` | count | Tart (two macOS VMs per Mac), a Docker container budget, Proxmox's guest ID range |
+| `gpu-desktops`, `gpu-memory` | count, MiB | GPU desktops, one limit per GPU |
+| `machines` | count | real pools: held, resetting and out of service, of the total |
+
+Each limit has `used`, `total` (none when there is no known ceiling, as for
+Docker without a budget) and `reserve`, the part kept back for the host.
+
+### Real pools and release
+
+- `release` gets hooks. `resetting()` records "being reset" before the
+  machine is touched, so a restart finishes the reset rather than handing out
+  a dirty machine. `timing()` reports each step.
+- `members()` lists each machine with its host, kinds, state (`free`, `held`,
+  `resetting` or `out-of-service`), the reason, since when, and its reset
+  generation. The panel shows them, and `returnToService(ref)` puts back a
+  machine the operator has fixed.
+- A reset ends by writing a marker on the machine with a new generation
+  number, and recording the same number in the pool store. Before handing a
+  machine out, a claim checks that the numbers match, the box user has no
+  processes, its home matches the skeleton, no BB machine is enrolled and no
+  owner marker is left. If any check fails, the machine goes out of service
+  with the reason, and the claim tries the next one.
+- A `PoolStore` must not assume a guest's labels or tags can change after
+  creation. Docker sets labels when it creates a container (backend, kind,
+  generation), so `held()` finds every container bb-box made, and claims a
+  warm container by renaming it.
+
+### Doctor and setup
+
+- `doctor()` returns a summary, checks and notes, as built. Each check has a
+  stable `id` (for example `docker.daemon` or `pool.<machine>.host-key`) and a
+  status: `ok`, `warn`, `fail`, or `skipped` after an earlier failure.
+- The conformance suite runs `doctor()` first, and skips a backend whose
+  checks fail, printing them.
+- Each driver names its setup script and guide, and the settings page links
+  to them.
+
+### Types
 
 ```ts
-/** A two-way byte stream to a port inside a box, with backpressure. */
-interface ByteChannel {
+// src/transports/types.ts
+export type GuestOs = "linux" | "windows" | "macos";
+export type Arch = "x86_64" | "arm64";
+export type DisplayProtocol = "rfb" | "selkies";
+
+/** A two-way byte stream with backpressure. */
+export interface ByteChannel {
   readonly readable: ReadableStream<Uint8Array>;
   readonly writable: WritableStream<Uint8Array>;
   close(): Promise<void>;
 }
 
-interface StreamEndpoint {
-  readonly type: "rfb" | "selkies" | "rdp";
+/** How to reach one port inside a box. May hold secrets: never log it or send it to the browser. */
+export type Route =
+  | { readonly type: "tcp"; readonly host: string; readonly port: number }
+  | { readonly type: "command"; readonly argv: readonly string[] }
+  | {
+      readonly type: "websocket";
+      readonly url: string;
+      readonly headers?: Readonly<Record<string, string>>;
+      /** SHA-256 of a self-signed certificate to pin. */
+      readonly fingerprint?: string;
+    };
+
+/** src/transports/route.ts, the only code that opens a route. */
+export declare function openRoute(route: Route, signal?: AbortSignal): Promise<ByteChannel>;
+
+export type DisplayAuth = { readonly type: "none" } | { readonly type: "vnc-password"; readonly password: string };
+
+export interface Display {
+  readonly id: string;
+  readonly label: string;
+  readonly protocol: DisplayProtocol;
   readonly resizable: boolean;
-  open(signal?: AbortSignal): Promise<ByteChannel>;
+  /** Called once per viewer connection: tickets can be single use. */
+  open(signal?: AbortSignal): Promise<{ readonly route: Route; readonly auth: DisplayAuth }>;
 }
 
-interface CommandTransport {
-  // ... as now, plus:
-  /** Opens a byte channel to a TCP port inside the box: SSH direct-tcpip, or socat through docker exec. */
-  connect?(port: number, signal?: AbortSignal): Promise<ByteChannel>;
+export interface SshAccess {
+  readonly host: string;
+  readonly port: number;
+  readonly user: string;
+  /** known_hosts lines. Pinned for a real machine; empty for a fresh virtual guest. */
+  readonly hostKeys: readonly string[];
+  readonly jump?: SshAccess;
 }
+
+export interface StreamOptions {
+  readonly stdin?: string | Uint8Array;
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+  onOutput(chunk: Uint8Array, from: "stdout" | "stderr"): void;
+}
+
+export interface CommandTransport {
+  // kind, probe, run, stream, writeFile and readFile as built, plus:
+  /** A route to a TCP port inside the box. */
+  route?(port: number, signal?: AbortSignal): Promise<Route>;
+}
+
+// src/backends/types.ts
+export interface CommandCapability {
+  readonly transport: string;
+  readonly shell: "sh" | "powershell";
+  readonly admin: boolean;
+  readonly inDesktopSession: boolean;
+  readonly streaming: boolean;
+}
+
+export interface KindCapabilities {
+  readonly os: GuestOs;
+  readonly arch: Arch;
+  readonly gpu: boolean;
+  readonly docker: boolean;
+  readonly features: readonly string[];
+  readonly command: CommandCapability | null;
+  readonly displays: readonly { readonly id: string; readonly protocol: DisplayProtocol; readonly resizable: boolean }[];
+  readonly computerUse: boolean;
+  /** Only when command.shell is "sh" and os is linux or macos. */
+  readonly enrol: boolean;
+}
+
+export interface BoxKind {
+  /** A shared word: several backends may offer the same kind. */
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly size: string;
+  readonly capabilities: KindCapabilities;
+  readonly readyTimeoutMs: number;
+}
+
+export interface Guest {
+  readonly ref: string;
+  /** Which host of the backend: a Proxmox node, a Docker host, a Mac. */
+  readonly host: string | null;
+  readonly address: string | null;
+  /** Stored with the box and passed back. Never a secret. */
+  readonly data?: Readonly<Record<string, string | number | boolean>>;
+}
+
+export type PowerState = "running" | "stopped" | "unknown";
+
+export interface BoxTransports {
+  readonly command: CommandTransport | null;
+  readonly displays: readonly Display[];
+  readonly access: { readonly ssh: SshAccess | null; readonly dockerHost: string | null } | null;
+}
+
+export interface Capacity {
+  readonly ok: boolean;
+  /** What is full and what to release, for the user. Null when ok. */
+  readonly message: string | null;
+  /** Null for a real backend, whose free machines are its `machines` limit. */
+  readonly warm: { readonly ready: number; readonly target: number } | null;
+  readonly hosts: readonly HostCapacity[];
+}
+
+export interface HostCapacity {
+  readonly host: string;
+  readonly ok: boolean;
+  readonly limits: readonly Limit[];
+}
+
+export interface Limit {
+  readonly resource: "memory" | "disk" | "cpu" | "guests" | "gpu-desktops" | "gpu-memory" | "machines";
+  /** Which one, where there are several: a GPU's index or UUID. */
+  readonly id?: string;
+  readonly used: number;
+  /** Null when there is no known ceiling. */
+  readonly total: number | null;
+  readonly reserve: number;
+  readonly unit: "MiB" | "count";
+}
+
+export interface ReleaseHooks {
+  resetting(): Promise<void>;
+  timing(step: string, ms: number): void;
+}
+
+export interface PoolMember {
+  readonly ref: string;
+  readonly host: string | null;
+  readonly kinds: readonly string[];
+  readonly state: "free" | "held" | "resetting" | "out-of-service";
+  readonly reason: string | null;
+  readonly since: number;
+  readonly generation: number;
+}
+
+export interface Backend {
+  readonly id: string;
+  readonly label: string;
+  readonly nature: "virtual" | "real";
+  /** Real backends: what a release restores. */
+  readonly restores?: "home" | "machine";
+  kinds(): readonly BoxKind[];
+  capacity(kind: string, pending: readonly string[], signal?: AbortSignal): Promise<Capacity>;
+  acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
+  release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void>;
+  power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null>;
+  start?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  held(signal?: AbortSignal): Promise<HeldGuest[]>;
+  transports(guest: Guest, kind: string): Promise<BoxTransports>;
+  doctor(signal?: AbortSignal): Promise<DoctorReport>;
+  maintain?(signal?: AbortSignal): Promise<void>;
+  members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
+  returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
+  dispose?(): Promise<void>;
+}
+
+export interface DoctorCheck {
+  /** Stable, for example "docker.daemon". */
+  readonly id: string;
+  readonly name: string;
+  readonly status: "ok" | "warn" | "fail" | "skipped";
+  readonly detail: string;
+  readonly fix: string | null;
+}
+
+export interface BackendDriver<C = unknown> {
+  // type, label, nature, settings, parse and create as built, plus:
+  /** Paths in the repository, linked from the settings page. */
+  readonly setup: { readonly script: string; readonly guide: string };
+}
+
+// Unchanged: BoxIdentity, BoxOwner, HeldGuest, AcquireHooks, DoctorReport,
+// BackendError, BackendStorage, BackendContext, ParsedSettings, RunOptions, RunResult.
 ```
 
 ## A box's life
@@ -138,7 +455,7 @@ any state -> releasing -> released     (release, or the thread is archived or de
 ```
 
 1. **Requested.** The registry asks each backend that offers the kind for
-   `capacity`, and uses the first one with room. If none has room you see the
+   `capacity`, in the order of settings, and uses the first one with room. If none has room you see the
    backend's message, which says what is full and what to release. The
    registry records the box and returns at once.
 2. **Acquiring.** In the background, the backend claims a guest with
@@ -196,9 +513,12 @@ A box is a resource of its thread and gets what the thread's own machine has.
 - **Direct access.** The agent can also reach its boxes itself, for example
   with `ssh <box name>` or `DOCKER_HOST`, over the same network the BB server
   uses.
-- **No enrolment.** A kind that cannot enrol (Windows until BB runs there)
-  still runs commands, copies files and streams its desktop through the
-  transports.
+- **No enrolment.** A kind that cannot enrol still runs commands, copies
+  files and streams its desktop through the transports. Windows boxes cannot
+  enrol until BB's host app runs on Windows
+  ([BB requests](bb-requests.md)), so they do not get the thread's Git
+  credentials and machine variables from BB, and child threads cannot run on
+  them.
 
 ## You and the agent
 
@@ -210,8 +530,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
 | Control | take and hand back | waits while you hold control |
 
 - **Desktop viewer.** The panel opens one WebSocket per viewer on the plugin's
-  `/desktop?box=<id>` route. The relay opens the box's stream endpoint and
-  copies bytes both ways without decoding them. The panel loads the client
+  `/desktop?box=<id>` route. The relay opens the display's route, answers
+  the box's RFB authentication itself, and copies bytes both ways without
+  decoding pixels. The panel loads the client
   for the stream type: noVNC for `rfb`
   ([007](decisions/007-desktop-stream-is-a-typed-transport.md)).
 - **Shared control.** One owner of input at a time, the agent by default,
@@ -255,7 +576,7 @@ Nothing expires, so a box must never be forgotten.
 
 | Data | Lives in | Owned by | Survives |
 | --- | --- | --- | --- |
-| Box records: ID, thread, kind, backend, guest, state, timings | plugin storage | core | rebuilt by the sweep from provider records if lost |
+| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | rebuilt by the sweep from provider records if lost |
 | Which guest belongs to which box and thread | the provider (tags, names), or a marker on a real machine | backend | the plugin's storage being lost |
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |
@@ -277,12 +598,12 @@ planned, and the later-backends research fills in the details.
 | Nature | virtual | virtual | virtual | real | real | virtual |
 | Acquire | linked clone, start | linked clone, start | create and start a container from the kind's image | claim a machine | claim a Mac, prepare the box user | `tart clone` (copy on write), `tart run` headless |
 | Release | delete | delete | remove the container | reset the box user | reset the box user | `tart delete` |
-| Command | SSH | OpenSSH for Windows with PowerShell, or WinRM | `docker exec`, or SSH if the image runs it | SSH | SSH | SSH through the Mac host |
-| Stream | RFB | RFB from the Proxmox console API, or RDP | RFB through `docker exec` | RFB through SSH | RFB (Screen Sharing) | RFB through the Mac host |
-| Ownership record | tags | tags | container name (labels cannot change after creation) | marker file and plugin storage | marker file and plugin storage | VM name with box and thread IDs |
-| Capacity | memory, disk, guest IDs, GPU | memory, disk, GPUs | memory, a container limit, GPU | free machines | free Macs | two VMs per Mac, memory, disk |
+| Command | SSH | OpenSSH for Windows with PowerShell, or the QEMU guest agent | `docker exec`, or SSH if the image runs it | SSH | SSH | SSH through the Mac host |
+| Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | RFB through SSH | RFB (Screen Sharing) through SSH | RFB through the Mac host |
+| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file and plugin storage | marker file and plugin storage | VM name with box and thread IDs |
+| Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), GPU | machines | machines | guests (two VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
-| Enrol | yes | not until BB runs on Windows | open question: containers usually run without an init system | yes | yes | yes |
+| Enrol | yes | not until BB's host app runs on Windows | open question: containers usually run without an init system | yes | yes | yes |
 
 Notes:
 
@@ -290,6 +611,10 @@ Notes:
   host. GPU desktops use NVIDIA's container toolkit. Docker inside a Docker box
   needs Docker-in-Docker or another runtime; the first Docker kinds may leave
   it out.
+- **Windows** on Proxmox QEMU streams its console through Proxmox's API, so
+  nothing is installed in the guest for the desktop. Commands need OpenSSH
+  for Windows or the QEMU guest agent. It cannot enrol in BB until BB's host
+  app runs on Windows.
 - **SSH host pool** needs nothing but SSH access to each machine. It is the
   simplest real backend, and the physical Mac backend may turn out to be the
   same driver with macOS machines and a desktop kind.
@@ -335,5 +660,5 @@ Notes:
 | Accessibility tree and input on each OS, and which computer-use tool to build on | computer use research |
 | Details and licences of the Windows, Mac, Tart, Docker and SSH pool backends | later-backends research |
 | Enrolment in a container without an init system | enrolment research, then the Docker backend |
-| Whether BB's plugin WebSocket gives `bufferedAmount` and echoes subprotocols | a BB feature request |
+| Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |

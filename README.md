@@ -48,10 +48,10 @@ services and builds, so that work runs on a box and not on your own machine.
   returned on release. The interface is acquire and release for both, and a
   warm pool of ready virtual boxes works like a pool of real machines.
 - **Transport**: how bb-box reaches inside a box, shared by backends: command
-  execution and file copy (SSH; WinRM or an in-box agent later) and the
-  desktop stream (VNC; RDP or WebRTC later). Everything that runs inside a box
-  (BB enrolment, computer use, the thread's access) goes through a transport
-  and is written once for every backend.
+  execution and file copy (SSH; `docker exec` or a guest agent later) and the
+  desktop stream (RFB, the VNC protocol, now; Selkies later). Everything that
+  runs inside a box (BB enrolment, computer use, the thread's access) goes
+  through a transport and is written once for every backend.
 - **Thread access**: a box enrols in BB as an ordinary machine. That is how it
   gets the thread's Git credentials and machine variables, and it lets child
   threads run on it. The agent can also reach its boxes directly, for example
@@ -77,6 +77,11 @@ services and builds, so that work runs on a box and not on your own machine.
 | SSH host pool | real | any machine reachable over SSH | planned, early |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
+
+Windows boxes cannot enrol in BB until BB's host app runs on Windows
+([BB requests](docs/bb-requests.md)). Until then they run commands, copy files
+and stream their desktop, but do not get the thread's Git credentials and
+machine variables from BB, and child threads cannot run on them.
 
 ### Proxmox LXC
 
