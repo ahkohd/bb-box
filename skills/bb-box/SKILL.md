@@ -30,9 +30,12 @@ Limits:
 
 - `box_run` waits 600 s by default and 3600 s at most, then stops the
   command and everything it started. It keeps 32 KiB of each stream: the
-  first 16 KiB and the last 16 KiB. Start a server in the background with
-  its output redirected, `nohup <cmd> >server.log 2>&1 &`, so `box_run`
-  returns at once. Without the redirect, `box_run` waits for the server.
+  first 16 KiB and the last 16 KiB.
+- `box_run` returns when the script's shell exits, even while something it
+  started keeps running. What that writes afterwards is not captured. Start
+  a server in the background with its output redirected,
+  `nohup <cmd> >server.log 2>&1 &`. Without the redirect, the server's
+  writes fail once `box_run` returns, and it may stop answering.
 - A command that exits with a non-zero code is not a tool error. A command
   that times out is.
 - `box_copy` moves one file of up to 16 MiB. Tar a directory first. A
@@ -60,7 +63,8 @@ A kind is on offer only when its templates are set.
 
 When `enrol-boxes` is on, a ready box is added to BB as a machine, so threads
 and terminals can use it and BB's own secrets and Git credentials reach it.
-This takes a few seconds after the box is ready; `box_run` waits for it.
+This takes a few seconds after the box is ready; `box_acquire` and `box_run`
+wait up to 10 s for it, and `box_status` shows how long it took.
 bb-box removes the machine before it releases the box.
 
 In a Linux box that is a BB machine, each command takes `GH_TOKEN` and BB's

@@ -228,6 +228,15 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
 - `onOutput(chunk, from)` gives bytes, and says whether they came from stdout
   or stderr. A transport that cannot stream calls it once per stream when the
   command exits.
+- A run ends when the script's shell exits, even while something it left in
+  the background holds the output open, as bash's subshell for
+  `cd web && nohup server >log 2>&1 &` does. `CommandLine` in
+  [src/transports/process.ts](../src/transports/process.ts) runs a POSIX
+  script in a child shell, with stdin from `/dev/null` when none is given,
+  then writes a random end mark and the exit status to stdout and stderr.
+  Once both marks arrive, the run returns and stops the local command, such
+  as `ssh`. Output written after the mark is dropped. PowerShell scripts are
+  not wrapped yet, so their runs end when the output closes.
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the
@@ -538,7 +547,8 @@ any state -> releasing -> released     (release, or the thread is archived or de
    step's time goes to `hooks.timing` and shows in the box's status.
 4. **Ready.** The command transport answers.
 5. **Enrolled.** If the kind can enrol, bb-box enrols the box as a BB machine
-   and the thread's environment reaches it (see Thread access).
+   and the thread's environment reaches it (see Thread access). The time from
+   ready to enrolled shows after the start-up steps' times, as BB enrolment.
 6. **Released.** You or the agent release the box, or its thread is archived
    or deleted ([003](decisions/003-boxes-live-until-released.md)). bb-box
    removes the machine from BB, then the backend releases the guest. A missing

@@ -203,7 +203,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .max(RUN_TIMEOUT_MAX_S)
         .optional()
         .describe(
-          `Seconds before the command, and everything it started, is stopped. Defaults to ${RUN_TIMEOUT_S}. Start a server in the background with its output redirected, so box_run returns at once: nohup <cmd> >server.log 2>&1 &`,
+          `Seconds before the command, and everything it started, is stopped. Defaults to ${RUN_TIMEOUT_S}. box_run returns when the script's shell exits. Start a server in the background with its output redirected, so it keeps working after that: nohup <cmd> >server.log 2>&1 &`,
         ),
       stdin: z.string().optional().describe("Text to send to the command's standard input."),
       desktop: z.boolean().optional().describe("Run in the box's desktop session so it can open windows. Desktop boxes only."),
