@@ -15,17 +15,18 @@
 #
 # Options: --keep     stop before finalizing and leave the build CT running.
 #          --replace  <vmid> may be a bb-box template of the same kind
-#                     already. The new one is built and checked in another CT
-#                     (BBBOX_BUILD_VMID, or the next free VMID) and only then
-#                     takes the old one's place, which boxes must not be
-#                     linked clones of.
+#                     already. The new one is built and checked (or copied)
+#                     in another CT (BBBOX_BUILD_VMID, or the next free VMID)
+#                     and only then takes the old one's place. Boxes cloned
+#                     from the old one keep running on LVM-thin; on storage
+#                     where they need it, it refuses until they are released.
 # Settings: /etc/bb-box/bb-box.env (see host/bb-box.env.example).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
 . "$here/../host/common.sh"
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 kind=${1:-}
 shift || usage
 case "$kind" in headless | desktop) [ $# -ge 1 ] || usage; from= vmid=$1; shift ;;
@@ -53,30 +54,33 @@ fi
 command -v jq >/dev/null || die "jq is required (apt install jq)"
 in_use() { pct config "$1" >/dev/null 2>&1 || qm config "$1" >/dev/null 2>&1; }
 
-# Guests whose disks are linked clones of a template's: the template's boxes.
-# Most storages name a linked clone's volume after its base; LVM-thin names it
-# like any other volume (vm-<vmid>-disk-<n>) and records the base as its
-# origin, and Proxmox itself does not notice these clones.
+# On LVM-thin a linked clone is a thin snapshot, which needs nothing of its
+# template's volume once made: "The origin thin LV can be removed without
+# affecting snapshots that reference it" (lvmthin(7)). Elsewhere, on ZFS or
+# Ceph RBD for example, a linked clone needs its template's base volume.
+thin=
+[ "$(pvesh get "/storage/$BBBOX_STORAGE" --output-format json 2>/dev/null | jq -r .type)" != lvmthin ] || thin=1
+# Guests whose disks need a template's base volume: storages other than
+# LVM-thin name a linked clone's volume base-<vmid>-disk-<n>/<volume>.
 linked_clones() { # vmid
-  {
-    grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null |
-      sed 's|.*/||; s|\.conf$||' || true
-    lvs --noheadings -o lv_name,origin 2>/dev/null |
-      awk -v base="^base-$1-disk-[0-9]+\$" '$2 ~ base && $1 ~ /^vm-[0-9]+-/ { split($1, p, "-"); print p[2] }' || true
-  } | sort -nu | paste -sd ' ' -
+  { grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null ||
+    true; } | sed 's|.*/||; s|\.conf$||' | sort -n | paste -sd ' ' -
 }
-# Removes a bb-box template that no box is a linked clone of any more.
-remove_template() { # vmid
-  local clones
-  clones=$(linked_clones "$1")
-  [ -z "$clones" ] || die "boxes are linked clones of template $1 ($clones); release them first"
-  pct set "$1" --protection 0
-  pct destroy "$1" || { pct set "$1" --protection 1; die "could not remove template $1"; }
+# A copy of CT <from> at <to>: on LVM-thin a linked clone, which takes about a
+# second and is as independent as a full copy (<from> is then a template);
+# otherwise a full copy.
+copy_ct() { # from to hostname
+  if [ -n "$thin" ]; then
+    pct clone "$1" "$2" --pool "$BBBOX_POOL" --hostname "$3"
+  else
+    pct clone "$1" "$2" --full --pool "$BBBOX_POOL" --hostname "$3" --storage "$BBBOX_STORAGE"
+  fi
 }
 
 # With --replace, an existing <vmid> must be a template this script made, of
-# the same kind, with no boxes on it. The build then runs in another CT ($ct)
-# and replaces <vmid> at the end, so a failed build leaves the old template.
+# the same kind, that no box needs. The build or copy then goes to another CT
+# ($ct), which replaces <vmid> at the end, so a failure leaves the old
+# template.
 ct=$vmid
 if in_use "$vmid"; then
   [ -n "$replace" ] || die "VMID $vmid is already in use (--replace replaces a bb-box template)"
@@ -86,12 +90,11 @@ if in_use "$vmid"; then
   grep -q '^template: 1' <<<"$config" && grep -q "^description: bb-box $word template" <<<"$config" ||
     die "$vmid is not a bb-box $word template; --replace replaces only those"
   clones=$(linked_clones "$vmid")
-  [ -z "$clones" ] || die "boxes are linked clones of template $vmid ($clones); release them first"
-  if [ "$kind" != copy-desktop ]; then
-    ct=${BBBOX_BUILD_VMID:-$(pvesh get /cluster/nextid)}
-    [[ "$ct" =~ ^[0-9]+$ ]] && [ "$ct" != "$vmid" ] || die "BBBOX_BUILD_VMID must be a VMID other than $vmid"
-    ! in_use "$ct" || die "VMID $ct for the build is already in use; set BBBOX_BUILD_VMID to a free one"
-  fi
+  [ -z "$clones" ] || die "boxes are linked clones of template $vmid and need it ($clones); release them first"
+  ct=${BBBOX_BUILD_VMID:-$(pvesh get /cluster/nextid)}
+  [[ "$ct" =~ ^[0-9]+$ ]] && [ "$ct" != "$vmid" ] && [ "$ct" != "$from" ] ||
+    die "BBBOX_BUILD_VMID must be a VMID other than $vmid${from:+ and $from}"
+  ! in_use "$ct" || die "VMID $ct for the build is already in use; set BBBOX_BUILD_VMID to a free one"
 fi
 
 cache=/var/cache/bb-box/artifacts
@@ -123,12 +126,31 @@ gpu_lines() {
 }
 
 make_template() { # vmid description
-  pct set "$1" --description "$2"
   pct template "$1"
   # The pool's ACL lets the plugin's token delete guests in it; protection
   # keeps it from deleting templates. Clones inherit the flag, so the plugin
   # clears it on each box (delete=protection) when it configures the box.
-  pct set "$1" --protection 1
+  pct set "$1" --description "$2" --protection 1
+}
+# Puts the finished, stopped CT <ct> in template <vmid>'s place, and says how
+# long no template had that VMID: from removing the old one to `pct template`
+# on the new one. On LVM-thin the new one is a linked clone of <ct>, made a
+# template first, which takes seconds; elsewhere it is a full copy. Boxes
+# cloned from the old template on LVM-thin keep running on their own, and keep
+# its blocks in the pool until they are released.
+replace_with() { # ct vmid hostname description
+  local clones start
+  [ -z "$thin" ] || pct template "$1"
+  clones=$(linked_clones "$2")
+  [ -z "$clones" ] || die "boxes are linked clones of template $2 and need it ($clones); release them first"
+  pct set "$2" --protection 0
+  start=$(date +%s%N)
+  pct destroy "$2" || { pct set "$2" --protection 1; die "could not remove template $2"; }
+  copy_ct "$1" "$2" "$3"
+  pct template "$2"
+  echo "template $2 was missing for $((($(date +%s%N) - start) / 1000000)) ms"
+  pct set "$2" --description "$4" --protection 1
+  pct destroy "$1"
 }
 
 if [ "$kind" = copy-desktop ]; then
@@ -137,14 +159,18 @@ if [ "$kind" = copy-desktop ]; then
   pct config "$from" | grep -q '^dev[0-9]*: /dev/nvidia' \
     || die "$from is not a GPU desktop template; copy a GPU desktop template to another GPU, or build a new desktop with build.sh desktop"
   lines=$(gpu_lines "$gpu")
-  ! in_use "$vmid" || remove_template "$vmid"
+  note=$(grep '^#' <<<"$lines" | cut -c3-)
+  description="bb-box desktop template ($note), copied from $from on $(date -u +%F)."
+  copy_ct "$from" "$ct" "bb-box-desktop-$vmid"
+  pct set "$ct" --delete protection 2>/dev/null || true
   # shellcheck disable=SC2046
-  pct clone "$from" "$vmid" --full --pool "$BBBOX_POOL" --hostname "bb-box-desktop-$vmid" --storage "$BBBOX_STORAGE"
-  pct set "$vmid" --delete protection 2>/dev/null || true
-  # shellcheck disable=SC2046
-  pct set "$vmid" $(grep -v '^#' <<<"$lines")
-  make_template "$vmid" "bb-box desktop template ($(grep '^#' <<<"$lines" | cut -c3-)), copied from $from on $(date -u +%F)."
-  echo "desktop template $vmid ready ($(grep '^#' <<<"$lines" | cut -c3-))"
+  pct set "$ct" $(grep -v '^#' <<<"$lines")
+  if [ "$ct" != "$vmid" ]; then
+    replace_with "$ct" "$vmid" "bb-box-desktop-$vmid" "$description"
+  else
+    make_template "$vmid" "$description"
+  fi
+  echo "desktop template $vmid ready ($note)"
   exit 0
 fi
 
@@ -231,13 +257,13 @@ pct shutdown "$ct" --timeout 60
 pct set "$ct" --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=manual,type=veth" --delete nameserver \
   --cores 2 --memory 4096 --swap 512
 note=$(grep '^#' <<<"$lines" | cut -c3- || true)
+description="bb-box $kind template${note:+ ($note)}, built $(date -u +%F). See /usr/share/bb-box/template-release inside."
 if [ "$ct" != "$vmid" ]; then
-  # The new template replaces the old one only now. A full copy takes seconds.
+  # The new template replaces the old one only now.
   echo "replacing template $vmid with CT $ct (if this fails, CT $ct keeps the new template)"
-  remove_template "$vmid"
-  pct clone "$ct" "$vmid" --full --pool "$BBBOX_POOL" --hostname "bb-box-$kind" --storage "$BBBOX_STORAGE"
-  pct destroy "$ct"
+  replace_with "$ct" "$vmid" "bb-box-$kind" "$description"
+else
+  make_template "$vmid" "$description"
 fi
-make_template "$vmid" "bb-box $kind template${note:+ ($note)}, built $(date -u +%F). See /usr/share/bb-box/template-release inside."
 rm -rf "$stage"
 echo "$kind template $vmid ready${note:+ ($note)}"
