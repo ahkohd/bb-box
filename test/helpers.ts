@@ -1,11 +1,33 @@
 // Shared test fixtures. Addresses come from 192.0.2.0/24, which is reserved
 // for documentation.
 
+import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseLxcSettings, type LxcConfig } from "../src/backends/proxmox-lxc/config.ts";
 import type { BackendContext, BackendStorage } from "../src/backends/types.ts";
 import { Ssh } from "../src/transports/ssh.ts";
+
+export const KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----";
+
+export const VALID = {
+  "proxmox-lxc-url": "https://pve.example.com:8006/",
+  "proxmox-lxc-token-id": "bb-box@pve!plugin",
+  "proxmox-lxc-token-secret": "s3cret",
+  "proxmox-lxc-headless-template": 9000,
+  "proxmox-lxc-bridge": "vmbr1",
+  "proxmox-lxc-subnet": "192.0.2.0/24",
+  "proxmox-lxc-gateway": "192.0.2.1",
+  "proxmox-lxc-addresses": "192.0.2.100-192.0.2.199",
+  "proxmox-lxc-ssh-private-key": KEY,
+};
+
+export function lxcConfig(values: Record<string, unknown> = {}): LxcConfig {
+  const result = parseLxcSettings({ ...VALID, ...values });
+  assert.ok(result.enabled && result.ok, JSON.stringify(result));
+  return result.config;
+}
 
 export const FAKE_SSH_BINARY = new URL("./fake-ssh.mjs", import.meta.url).pathname;
 
