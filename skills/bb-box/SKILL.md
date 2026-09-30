@@ -59,6 +59,18 @@ backend offers:
 
 A kind is on offer only when its templates are set.
 
+A `linux-desktop` box always has its GPU. One whose desktop started without
+it is released and made again on another GPU; when no GPU is left, the
+refusal suggests `linux-desktop-cpu`. `box_status` shows each desktop's GPU,
+display mode and the reason for it.
+
+## Desktops
+
+A person can watch each desktop box live from the panel and take control of
+its keyboard and mouse. While they hold control, their input goes to the box
+and nobody else's does. Control goes back to the agent when they hand it
+back or close the viewer for a minute.
+
 ## BB machines
 
 When `enrol-boxes` is on, a ready box is added to BB as a machine, so threads
@@ -93,7 +105,9 @@ Most take `--json`.
 ## The panel
 
 The Boxes thread panel lists the thread's boxes. It makes a box of any kind
-and stops, starts, checks and releases boxes. The Backends section in
+and stops, starts, checks and releases boxes. For a desktop box it opens the
+desktop in a panel tab of its own or in a new browser tab, and shows who has
+control. The Desktops page lists every desktop box. The Backends section in
 bb-box's settings shows each backend's state and what it still needs, and
 runs the doctor.
 

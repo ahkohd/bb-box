@@ -84,7 +84,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
-              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box)}\n` };
+              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };
             }),
         }),
         status: cliCommand({
@@ -94,7 +94,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ positionals, options }, ctx) =>
             guard("Checking the box", async () => {
               const box = await boxes.refresh(threadOf(options.thread, ctx), positionals.box, ctx.signal);
-              return options.json ? json(app.view(box)) : out(boxDetail(box));
+              return options.json ? json(app.view(box)) : out(boxDetail(box, app.control(box)));
             }),
         }),
         release: cliCommand({

@@ -1,5 +1,7 @@
 // A smoke test of a real backend, without BB: it acquires a box, runs a
-// command in it, releases it, and prints how long each step took.
+// command in it, releases it, and prints how long each step took. For a
+// desktop kind it also opens the desktop the way the viewer's relay does,
+// answering its VNC password, and shows the box's display facts.
 //
 //   node scripts/smoke.ts <settings.json> [--kind <kind>] [--command <script>] [--doctor] [--json]
 //
@@ -25,6 +27,7 @@ import { parseArgs } from "node:util";
 import { Backends } from "../src/backends/index.ts";
 import type { BackendDriver, BackendStorage } from "../src/backends/types.ts";
 import { Boxes, describeError, type BoxRecord } from "../src/core/boxes.ts";
+import { desktopSize, displayOpener } from "../src/core/relay.ts";
 import { doctorText } from "../src/plugin/views.ts";
 
 export const SMOKE_THREAD = "thr_smoke";
@@ -45,6 +48,10 @@ export interface SmokeResult {
   readonly ok: boolean;
   readonly box: { readonly name: string; readonly kind: string; readonly backend: string; readonly address: string | null } | null;
   readonly output: { readonly exitCode: number | null; readonly stdout: string; readonly stderr: string } | null;
+  /** The desktop's size, for a desktop kind whose desktop answered. */
+  readonly desktop: { readonly width: number; readonly height: number } | null;
+  /** The box's facts, such as its GPU and display mode. */
+  readonly facts: readonly { readonly label: string; readonly value: string }[];
   /** Milliseconds: the backend's acquire steps, then acquire, run and release as the caller saw them. */
   readonly timings: Record<string, number>;
   readonly problems: string[];
@@ -101,6 +108,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
   const timings: Record<string, number> = {};
   let box: BoxRecord | null = null;
   let output: SmokeResult["output"] = null;
+  let desktop: SmokeResult["desktop"] = null;
   const boxes = new Boxes({
     kv: storage,
     backends,
@@ -113,6 +121,8 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
     ok: problems.length === 0,
     box: box && { name: box.name, kind: box.kind, backend: box.backendLabel, address: box.guest?.address ?? null },
     output,
+    desktop,
+    facts: box?.guest?.facts ?? [],
     timings,
     problems,
   });
@@ -162,6 +172,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
       problems.push(`Box ${box.name} is ${box.state}: ${box.error ?? "no reason given"}`);
     } else {
       log(`Box ${box.name} from ${box.backendLabel} is ready${box.guest?.address ? ` at ${box.guest.address}` : ""}.`);
+      for (const fact of box.guest?.facts ?? []) log(`  ${fact.label}: ${fact.value}`);
       if (options.signal?.aborted) {
         problems.push("Interrupted before the command ran.");
       } else {
@@ -177,6 +188,19 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
           else if (run.exitCode !== 0) problems.push(`The command exited with ${run.exitCode}.`);
         } catch (error) {
           problems.push(describeError(error, "Running the command"));
+        }
+      }
+      if (box.capabilities.displays.length && !options.signal?.aborted) {
+        log("Opening the desktop as the viewer's relay does...");
+        started = performance.now();
+        try {
+          const [display] = (await boxes.transports(box)).displays;
+          if (!display) throw new Error("The box's backend gave no desktop.");
+          desktop = await desktopSize(displayOpener(display));
+          timings.desktop = performance.now() - started;
+          log(`The desktop answered: ${desktop.width} by ${desktop.height}.`);
+        } catch (error) {
+          problems.push(describeError(error, "Opening the desktop"));
         }
       }
     }

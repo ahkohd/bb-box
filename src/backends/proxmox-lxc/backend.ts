@@ -47,7 +47,7 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
-import { waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
+import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import type { Display, SshAccess } from "../../transports/types.ts";
 import {
@@ -72,11 +72,16 @@ const GiB = 2 ** 30;
 const VNC_PORT = 5900;
 /** The desktop template writes a fresh VNC password here, readable by the box user. */
 const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
+/** The desktop's display service writes the path it took, gpu or cpu, and why. */
+const DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
+const DISPLAY_REASON_FILE = "/run/bb-box/display-reason";
 const SSH_KEY = "ssh-key";
 /** Where the next VMID search starts. */
 const NEXT_VMID = "next-vmid";
 /** Clone, start and SSH answering take a few seconds; this leaves room for a busy host. */
 const READY_TIMEOUT_MS = 30_000;
+/** How long new desktops avoid a GPU whose desktop started without it. */
+const AVOID_GPU_MS = 10 * 60_000;
 
 /** The Cua Driver the desktop template pins, run by the box user's service. */
 const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socket: "/home/box/.cache/cua-driver/cua-driver.sock" };
@@ -244,6 +249,16 @@ function namesOf(config: Record<string, unknown>): { install: string | null; box
   };
 }
 
+/** A linux-desktop box got no GPU, and no other GPU can take it. */
+function noGpu(failed: ReadonlyMap<string, string>, why: string): BackendError {
+  const reasons = [...failed].map(([gpu, reason]) => `GPU ${gpu}: ${reason}`).join("; ");
+  return new BackendError(
+    "no_capacity",
+    `The desktop started without a GPU, so bb-box released it (${reasons}). ${why} ` +
+      "Try again later, or use a linux-desktop-cpu box, whose desktop runs without a GPU.",
+  );
+}
+
 function gone(vmid: number): BackendError {
   return new BackendError("gone", `The box's container ${vmid} no longer exists.`);
 }
@@ -335,6 +350,14 @@ interface Choice {
   readonly problem: string | null;
 }
 
+/** The path a desktop's display took at boot, and why. */
+interface DisplayMode {
+  readonly mode: string;
+  readonly reason: string;
+}
+
+const NO_GPUS: ReadonlySet<string> = new Set();
+
 export class ProxmoxLxcBackend implements Backend {
   readonly id = "proxmox-lxc";
   readonly nature = "virtual" as const;
@@ -352,6 +375,8 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #filling = new Map<number, number>();
   /** Acquires running in this process, by box, with their template once chosen and their VMID once claimed. */
   readonly #acquiring = new Map<string, { readonly flavour: LxcFlavour; template: number | null; vmid: number | null }>();
+  /** GPUs whose desktop lately started without them, and until when new desktops avoid them. */
+  readonly #avoid = new Map<string, number>();
   /** Root disk storage and size of each template. */
   readonly #templates = new Map<number, { readonly storage: string; readonly diskGiB: number | null }>();
   readonly #stopping = new AbortController();
@@ -469,12 +494,13 @@ export class ProxmoxLxcBackend implements Backend {
    * The least used of the offer's templates. For a GPU desktop, the least
    * used template on the GPU with the fewest desktops, and whether any GPU
    * has room once `pending` acquires that have no template yet are placed.
+   * GPUs in `exclude` are left out; at least one GPU must be left.
    */
-  #choose(offer: Offer, guests: readonly PoolGuest[], pending: readonly string[], node: string): Choice {
+  #choose(offer: Offer, guests: readonly PoolGuest[], pending: readonly string[], node: string, exclude: ReadonlySet<string> = NO_GPUS): Choice {
     const counts = this.#perTemplate(guests);
     const uses = (template: LxcTemplate) => counts.get(template.vmid) ?? 0;
     const least = (templates: readonly LxcTemplate[]) => templates.reduce((best, template) => (uses(template) < uses(best) ? template : best));
-    const templates = offer.config.templates;
+    const templates = offer.config.templates.filter((template) => template.gpu === null || !exclude.has(template.gpu));
     if (!offer.kind.capabilities.gpu) return { template: least(templates), gpus: null, problem: null };
 
     const desktops = new Map<string, number>();
@@ -547,26 +573,58 @@ export class ProxmoxLxcBackend implements Backend {
           acquiring.template = null;
         }
       }
-      if (vmid === null) {
-        vmid = await step("clone", async () => {
-          const guests = await api.listPool(this.#config.proxmox.pool, signal);
-          acquiring.template = this.#choose(offer, guests, [], api.node).template.vmid;
-          return this.#clone(api, guests, acquiring.template, box.name, describe(box, this.#context.installId), claim, signal);
+      // GPUs whose box started without them. A linux-desktop box promises
+      // the GPU, so such a box is released and another GPU is tried.
+      const failed = new Map<string, string>();
+      let started = false;
+      for (;;) {
+        if (vmid === null) {
+          vmid = await step("clone", async () => {
+            const guests = await api.listPool(this.#config.proxmox.pool, signal);
+            const choice = this.#choose(offer, guests, [], api.node, this.#placing(offer, new Set(failed.keys())));
+            if (failed.size && choice.problem) throw noGpu(failed, choice.problem);
+            acquiring.template = choice.template.vmid;
+            return this.#clone(api, guests, acquiring.template, box.name, describe(box, this.#context.installId), claim, signal);
+          });
+        }
+        const id = vmid;
+        const template = acquiring.template;
+        if (!warm) {
+          await step("configure", () => api.configure(id, this.#settings(offer.config, id), signal));
+          await step("tags", () => api.configure(id, { tags: boxTags(box, this.#context.installId, template) }, signal));
+        }
+        if (!started) await hooks.starting();
+        started = true;
+        await step("start", async () => {
+          if ((await api.status(id, signal))?.status !== "running") await api.start(id, signal);
         });
+        if (!warm && template !== null) await this.#grow(api, id, offer.config, template, step, signal);
+        await this.#waitReady(id, box.kind, Math.max(1_000, deadline - Date.now()), signal, step);
+        const display = offer.kind.capabilities.displays.length
+          ? await step("display", () => this.#displayMode(id, box.kind, Math.max(1_000, deadline - Date.now()), signal))
+          : null;
+        if (!offer.kind.capabilities.gpu || display?.mode === "gpu") {
+          const guest = this.#guest(api.node, id, template, box.boxId, display);
+          // Claimed again, so the box's record shows the display's facts as it becomes ready.
+          if (display) await hooks.claim(guest);
+          return guest;
+        }
+
+        const gpu = this.#gpuOf(template) ?? "unknown";
+        const reason = display?.reason || "no reason given";
+        failed.set(gpu, reason);
+        this.#avoidGpu(this.#gpuOf(template));
+        this.#context.logError("acquire", new Error(`Box ${box.name} started without GPU ${gpu} (${reason}), so bb-box released it and tries another GPU.`));
+        await api.destroy(id, signal);
+        vmid = null;
+        claimed = null;
+        acquiring.vmid = null;
+        acquiring.template = null;
+        warm = false;
+        const left = offer.config.templates.some((candidate) => candidate.gpu !== null && !failed.has(candidate.gpu));
+        if (!left) throw noGpu(failed, `No other GPU on ${api.node} has a linux-desktop template.`);
+        if (Date.now() >= deadline) throw noGpu(failed, "There is no time left to try another GPU.");
       }
-      const id = vmid;
-      const template = acquiring.template;
-      if (!warm) {
-        await step("configure", () => api.configure(id, this.#settings(offer.config, id), signal));
-        await step("tags", () => api.configure(id, { tags: boxTags(box, this.#context.installId, template) }, signal));
-      }
-      await hooks.starting();
-      await step("start", async () => {
-        if ((await api.status(id, signal))?.status !== "running") await api.start(id, signal);
-      });
-      if (!warm && template !== null) await this.#grow(api, id, offer.config, template, step, signal);
-      await this.#waitReady(id, box.kind, Math.max(1_000, deadline - Date.now()), signal, step);
-      return this.#guest(api.node, id, template, box.boxId);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
@@ -967,13 +1025,42 @@ export class ProxmoxLxcBackend implements Backend {
     return vmid;
   }
 
-  /** `template` and `box` are kept with the box, and a GPU desktop's GPU is shown. */
-  #guest(node: string, vmid: number, template: number | null = null, box: string | null = null): Guest {
+  /**
+   * `template` and `box` are kept with the box. A GPU desktop's GPU is
+   * shown, and a desktop's display mode and why, once it has started.
+   */
+  #guest(node: string, vmid: number, template: number | null = null, box: string | null = null, display: DisplayMode | null = null): Guest {
     const guest: Guest = { ref: String(vmid), host: node, address: addressFor(this.#config, vmid) };
     const data = { ...(template !== null ? { template } : {}), ...(box !== null ? { box } : {}) };
     if (!Object.keys(data).length) return guest;
-    const gpu = this.#config.flavours.desktop.templates.find((listed) => listed.vmid === template)?.gpu;
-    return { ...guest, data, ...(gpu ? { facts: [{ label: "GPU", value: gpu }] } : {}) };
+    const gpu = this.#gpuOf(template);
+    const facts = [
+      ...(gpu ? [{ label: "GPU", value: gpu }] : []),
+      ...(display ? [{ label: "Display mode", value: display.mode }] : []),
+      ...(display?.reason ? [{ label: "Display reason", value: display.reason }] : []),
+    ];
+    return { ...guest, data, ...(facts.length ? { facts } : {}) };
+  }
+
+  /** A desktop started without its GPU: new desktops go to other GPUs for a while. */
+  #avoidGpu(gpu: string | null): void {
+    if (gpu) this.#avoid.set(gpu, Date.now() + AVOID_GPU_MS);
+  }
+
+  /**
+   * The GPUs a new desktop is not placed on: those in `failed`, and those
+   * avoided lately while another GPU is left.
+   */
+  #placing(offer: Offer, failed: ReadonlySet<string> = NO_GPUS): ReadonlySet<string> {
+    const now = Date.now();
+    for (const [gpu, until] of this.#avoid) if (until <= now) this.#avoid.delete(gpu);
+    const skip = new Set([...failed, ...this.#avoid.keys()]);
+    return offer.config.templates.some((template) => template.gpu !== null && !skip.has(template.gpu)) ? skip : failed;
+  }
+
+  /** The GPU a GPU desktop template carries. */
+  #gpuOf(template: number | null): string | null {
+    return this.#config.flavours.desktop.templates.find((listed) => listed.vmid === template)?.gpu ?? null;
   }
 
   /** The guest's config, or null when it does not exist. */
@@ -1137,6 +1224,32 @@ export class ProxmoxLxcBackend implements Backend {
     }
   }
 
+  /**
+   * Waits for the desktop's display service to say which path it took. It
+   * writes the files before it starts the display, soon after boot.
+   */
+  async #displayMode(vmid: number, kind: string, timeoutMs: number, signal?: AbortSignal): Promise<DisplayMode> {
+    const deadline = Date.now() + timeoutMs;
+    const command = await this.#command(vmid);
+    const sleep = this.#options.sleep ?? pause;
+    for (;;) {
+      const result = await command.run(`cat ${DISPLAY_MODE_FILE} 2>/dev/null && cat ${DISPLAY_REASON_FILE} 2>/dev/null; :`, {
+        timeoutMs: 15_000,
+        signal,
+        maxOutputBytes: 4096,
+      });
+      const [mode = "", reason = ""] = result.stdout.split("\n").map((line) => line.trim());
+      if (mode) return { mode, reason };
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `The ${kind} box's desktop did not start: ${DISPLAY_MODE_FILE} is missing after ${Math.round(timeoutMs / 1000)} s. ` +
+            `Check bb-box-display.service in the ${kind} template.`,
+        );
+      }
+      await sleep(200, signal);
+    }
+  }
+
   /** The password the desktop wrote at boot, or null when it asks for none. */
   async #vncPassword(command: SshTransport, signal?: AbortSignal): Promise<string | null> {
     const result = await command.run(`cat ${VNC_PASSWORD_FILE} 2>/dev/null || :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
@@ -1230,7 +1343,7 @@ export class ProxmoxLxcBackend implements Backend {
     const claimed: number[] = [];
     try {
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
-      const template = this.#choose(offer, guests, [], api.node).template.vmid;
+      const template = this.#choose(offer, guests, [], api.node, this.#placing(offer)).template.vmid;
       vmid = await this.#clone(
         api,
         guests,
@@ -1248,6 +1361,13 @@ export class ProxmoxLxcBackend implements Backend {
       await api.start(vmid, signal);
       await this.#grow(api, vmid, config, template, untimed, signal);
       await this.#waitReady(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
+      if (offer.kind.capabilities.gpu) {
+        const display = await this.#displayMode(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
+        if (display.mode !== "gpu") {
+          this.#avoidGpu(this.#gpuOf(template));
+          throw new Error(`A warm linux-desktop box started without GPU ${this.#gpuOf(template) ?? "unknown"} (${display.reason || "no reason given"}), so bb-box released it.`);
+        }
+      }
       await api.configure(vmid, { tags: [TAG, install, WARM, templateTag(template)] }, signal);
     } catch (error) {
       if (vmid !== null) await api.destroy(vmid).catch((cause) => this.#context.logError("release a failed warm box", cause));

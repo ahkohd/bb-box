@@ -1,15 +1,13 @@
-// bb-box's panels: a thread's boxes, and the backends on the settings page.
-// They read everything through the RPC contract and refetch when the server
-// says something changed.
+// bb-box's panels: a thread's boxes, each desktop box's viewer, the
+// Desktops page, and the backends on the settings page. They read everything
+// through the RPC contract and refetch when the server says something changed.
 
-import { definePluginApp, experimental_Icon as Icon, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { definePluginApp, experimental_Icon as Icon, experimental_usePluginId, useRpc } from "@get-bb/plugin-sdk/app";
+import { useEffect, useState, type ReactNode } from "react";
+import { BUTTON, DANGER, message, seconds, useLive } from "./src/app/common.tsx";
+import { DESKTOP_ACTION, DESKTOP_PAGE, DesktopPanel, DesktopsPage, pageHref, useOpenDesktop } from "./src/app/desktop.tsx";
 import type { BoxResult, Contract, PanelState } from "./src/plugin/contract.ts";
 import type { BackendView, BoxView, DoctorView } from "./src/plugin/views.ts";
-
-const BUTTON =
-  "inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-xs text-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50";
-const DANGER = `${BUTTON} text-destructive`;
 
 const STATE_LABELS: Record<BoxView["state"], string> = {
   acquiring: "Acquiring",
@@ -21,52 +19,6 @@ const STATE_LABELS: Record<BoxView["state"], string> = {
   gone: "Gone",
   releasing: "Releasing",
 };
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function seconds(ms: number): string {
-  return `${(ms / 1000).toFixed(1)} s`;
-}
-
-/**
- * State from the server for `key`, refetched on each change signal that
- * `relevant` accepts and after a reconnect. Only the newest answer is kept.
- */
-function useLive<T>(key: string, load: () => Promise<T>, relevant: (payload: unknown) => boolean) {
-  const latest = useRef({ load, relevant });
-  latest.current = { load, relevant };
-  const sequence = useRef(0);
-  const [value, setValue] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const refresh = useCallback(async () => {
-    const mine = ++sequence.current;
-    try {
-      const next = await latest.current.load();
-      if (mine !== sequence.current) return;
-      setValue(next);
-      setError(null);
-    } catch (caught) {
-      if (mine === sequence.current) setError(message(caught));
-    }
-  }, []);
-  useEffect(() => {
-    setValue(null);
-    setError(null);
-    void refresh();
-  }, [key, refresh]);
-  useRealtime("changed", (payload) => {
-    if (latest.current.relevant(payload)) void refresh();
-  });
-  const connection = useRealtimeConnectionState();
-  const previous = useRef(connection);
-  useEffect(() => {
-    if (connection === "connected" && previous.current !== "connected") void refresh();
-    previous.current = connection;
-  }, [connection, refresh]);
-  return { value, error, refresh };
-}
 
 function StateBadge({ state }: { state: BoxView["state"] }) {
   const tone =
@@ -87,7 +39,43 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function BoxCard({ box, act }: { box: BoxView; act: (method: "release" | "stop" | "start" | "refresh", box: BoxView) => Promise<void> }) {
+const CONTROL_LABELS: Record<NonNullable<BoxView["control"]>["owner"], string> = {
+  agent: "The agent",
+  human: "You, in a desktop tab",
+  none: "Changing hands",
+};
+
+function DesktopRow({ box, threadId }: { box: BoxView; threadId: string }) {
+  const open = useOpenDesktop();
+  const pluginId = experimental_usePluginId();
+  if (!box.display) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2 text-xs">
+      <span className="text-muted-foreground">Control:</span>
+      <span className="text-foreground">{box.control ? CONTROL_LABELS[box.control.owner] : CONTROL_LABELS.agent}</span>
+      <span className="ml-auto flex gap-2">
+        <button type="button" className={BUTTON} disabled={box.state !== "ready"} onClick={() => open(box)}>
+          <Icon name="Monitor" className="size-3" aria-hidden />
+          Open desktop
+        </button>
+        <a className={BUTTON} href={pageHref(pluginId, threadId, box.id)} target="_blank" rel="noopener noreferrer">
+          <Icon name="ExternalLink" className="size-3" aria-hidden />
+          New browser tab
+        </a>
+      </span>
+    </div>
+  );
+}
+
+function BoxCard({
+  box,
+  threadId,
+  act,
+}: {
+  box: BoxView;
+  threadId: string;
+  act: (method: "release" | "stop" | "start" | "refresh", box: BoxView) => Promise<void>;
+}) {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const run = async (method: "release" | "stop" | "start" | "refresh") => {
@@ -136,13 +124,7 @@ function BoxCard({ box, act }: { box: BoxView; act: (method: "release" | "stop" 
         {box.timings.total !== undefined ? <Row label="Ready in">{seconds(box.timings.total)}</Row> : null}
         {box.timings.enrol !== undefined ? <Row label="BB enrolment">{seconds(box.timings.enrol)}</Row> : null}
       </div>
-      {box.desktop ? (
-        <div className="flex h-32 items-center justify-center rounded-md border border-dashed border-border text-center text-xs text-muted-foreground">
-          The desktop viewer comes in a later version of bb-box.
-          <br />
-          Agents can already open windows with box_run and desktop set.
-        </div>
-      ) : null}
+      {box.desktop ? <DesktopRow box={box} threadId={threadId} /> : null}
       <div className="flex flex-wrap gap-2">
         {box.canStopStart && box.state === "ready" ? (
           <button type="button" className={BUTTON} disabled={busy} onClick={() => void run("stop")}>
@@ -243,7 +225,7 @@ function BoxesPanel({ threadId }: { threadId: string }) {
       {state && !state.boxes.length ? (
         <p className="text-sm text-muted-foreground">This thread has no boxes. Make one here, or ask the agent to use box_acquire.</p>
       ) : null}
-      {state?.boxes.map((box) => <BoxCard key={box.id} box={box} act={act} />)}
+      {state?.boxes.map((box) => <BoxCard key={box.id} box={box} threadId={threadId} act={act} />)}
     </div>
   );
 }
@@ -352,6 +334,20 @@ export default definePluginApp((app) => {
     title: "Boxes",
     icon: "Box",
     component: BoxesPanel,
+  });
+  app.slots.threadPanelAction({
+    id: DESKTOP_ACTION,
+    title: "Desktop",
+    icon: "Monitor",
+    component: DesktopPanel,
+    layout: "flush",
+  });
+  app.slots.navPanel({
+    id: "desktops",
+    title: "Desktops",
+    icon: "Monitor",
+    path: DESKTOP_PAGE,
+    component: DesktopsPage,
   });
   app.slots.settingsSection({
     id: "backends",

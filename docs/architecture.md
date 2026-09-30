@@ -119,7 +119,10 @@ and `start` and `stop` throw `gone`.
   through its paravirtualised GPU, so macOS kinds declare `gpu: false`.
 - A `linux-desktop` box whose display fell back to the CPU
   ([006](decisions/006-gpu-desktop-on-xorg.md)) does not meet its kind. The
-  backend releases it and tries another GPU, or reports that none is free.
+  backend releases it and tries another GPU within the kind's
+  `readyTimeoutMs`, or reports that none is left and names
+  `linux-desktop-cpu`. New desktops avoid that GPU for 10 minutes while
+  another is left ([020](decisions/020-control-belongs-to-a-viewer.md)).
   `linux-desktop-cpu` boxes come only from CPU-only templates or images,
   which have no GPU device nodes or driver. Every desktop shows its display
   mode and the reason as facts.
@@ -633,18 +636,33 @@ A box is a resource of its thread and gets what the thread's own machine has.
 | Desktop | the viewer in the panel, over the relayed stream | six computer tools: the accessibility tree first, screenshots when appearance matters |
 | Control | take and hand back | its computer tools refuse while you hold control |
 
-- **Desktop viewer.** The panel opens one WebSocket per viewer on the plugin's
-  `/desktop?box=<id>` route. The relay opens the display's route, answers
-  the box's RFB authentication itself, and copies bytes both ways without
-  decoding pixels. The panel loads the client
-  for the stream type: noVNC for `rfb`
-  ([007](decisions/007-desktop-stream-is-a-typed-transport.md)).
+- **Desktop viewer.** Each desktop box in the panel has "Open desktop", which
+  opens the box's desktop in a thread panel tab of its own, and "New browser
+  tab", which opens it on the plugin's Desktops page. The Desktops page also
+  lists every desktop box. Each viewer opens one WebSocket on the plugin's
+  `/desktop?box=<id>&viewer=<id>` route. The relay opens the display's route,
+  answers the box's RFB authentication itself (VNC authentication with the
+  password the box wrote at boot), offers the viewer security type None, and
+  copies bytes both ways without decoding pixels. It always joins the desktop
+  as a shared client, so one viewer never disconnects another. The panel
+  loads the client for the stream type: noVNC for `rfb`
+  ([007](decisions/007-desktop-stream-is-a-typed-transport.md),
+  [011](decisions/011-interface-v1.md)).
+- **Viewer ID.** Each viewer has a random ID kept in the browser tab's
+  session storage, so a panel tab that remounts keeps the control it took.
+  Two viewers open at once never share an ID. Control belongs to one viewer,
+  not to you, so another tab of yours shows the desktop without input
+  ([020](decisions/020-control-belongs-to-a-viewer.md)).
 - **Shared control.** One owner of input at a time, the agent by default,
-  held in the plugin's memory. The relay drops input from any viewer that is
-  not the owner, so nothing in the box filters input. Resizing is allowed
-  only while you hold control. On hand-back the relay releases any keys and
-  buttons still held down. Control returns to the agent when you hand back,
-  when your viewer has been gone for 60 s, or when the plugin restarts
+  held in the plugin's memory. The relay parses what each viewer sends and
+  drops keys, pointer, clipboard writes and resizes from any viewer that is
+  not the owner, so nothing in the box filters input. Update requests pass,
+  so every viewer sees the desktop. Taking control in one viewer releases
+  whatever another viewer of yours held down. On hand-back the relay releases
+  any keys and buttons still held down, and sets the desktop back to the
+  size it had while the agent had control. Control returns to the agent when
+  you hand back, when your viewer has been gone for 60 s, when the box ends
+  the connection, or when the plugin restarts
   ([008](decisions/008-shared-control.md)).
 - **Pausing the agent** happens in the plugin, not the box
   ([015](decisions/015-computer-use-through-cua-driver.md)). While you hold

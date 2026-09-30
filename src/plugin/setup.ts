@@ -8,7 +8,9 @@ import type { BackendDriver, DoctorReport } from "../backends/types.ts";
 import { Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { GENERAL_SETTINGS, parseGeneral, type GeneralConfig } from "../core/config.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
+import type { ControlView } from "../core/control.ts";
 import { registerCli } from "./cli.ts";
+import { registerDesktop, type Desktops } from "./desktop.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
@@ -27,8 +29,12 @@ export interface BbBox {
   readonly boxes: Boxes;
   readonly backends: Backends;
   readonly enrolment: Enrolment;
+  /** Desktop viewers and who controls each desktop's input. */
+  readonly desktops: Desktops;
   general(): Promise<GeneralConfig>;
   view(box: BoxRecord): BoxView;
+  /** Who controls a box's desktop. */
+  control(box: BoxRecord): ControlView;
   kinds(): KindView[];
   backendViews(): BackendView[];
   doctor(signal?: AbortSignal): Promise<DoctorView>;
@@ -84,6 +90,8 @@ export interface SetupOptions {
   readonly drivers?: readonly BackendDriver<any>[];
   /** Where commands in a box take BB's variables from. Tests give a process of their own. */
   readonly daemonParent?: string;
+  /** How long a viewer holding control may be gone before the agent has it again. */
+  readonly controlStaleMs?: number;
 }
 
 export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promise<BbBox> {
@@ -117,11 +125,16 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   };
 
   let enrolment: Enrolment;
+  let desktops: Desktops | undefined;
   const boxes = new Boxes({
     kv: bb.storage.kv,
     backends,
     general,
     notify,
+    // A desktop that stops, restarts or goes gives control back to the agent.
+    recorded(box, deleted) {
+      if (deleted || box.state !== "ready") desktops?.control.forget(box.id);
+    },
     async thread(threadId): Promise<ThreadLiveness> {
       try {
         const thread = await bb.sdk.threads.get({ threadId });
@@ -154,10 +167,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
   });
   bb.experimental_machines.register(enrolment.provider());
+  const desktop = registerDesktop(bb, { boxes, notify, logError, staleMs: options.controlStaleMs });
+  desktops = desktop;
+  const control = desktop.control;
 
   // Disposed in reverse: boxes first, so acquires stop before their backends.
   bb.onDispose(() => backends.dispose());
   bb.onDispose(() => boxes.dispose());
+  bb.onDispose(() => desktop.dispose());
 
   const problems = () =>
     backends
@@ -204,8 +221,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     boxes,
     backends,
     enrolment,
+    desktops: desktop,
     general,
-    view: (box) => boxView(box, boxes.canStopStart(box)),
+    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id)),
+    control: (box) => control.view(box.id),
     kinds: () => kindViews(backends.kinds()),
     backendViews: () =>
       backends.statuses().map((backend) => ({

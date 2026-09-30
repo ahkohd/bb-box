@@ -130,7 +130,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         }
         // box_run would wait for enrolment anyway, so the result can say how it went.
         const enrolled = await boxes.enrolled(settled, signal);
-        return `${boxDetail(enrolled)}${next(...using(enrolled))}`;
+        return `${boxDetail(enrolled, app.control(enrolled))}${next(...using(enrolled))}`;
       } catch (error) {
         return failure(error, "Acquiring a box");
       }
@@ -180,7 +180,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
           failed: [`Release it with box_release, then box_acquire another.`],
           gone: [`Release it with box_release, then box_acquire another.`],
         };
-        return `${boxDetail(box)}${next(...(hints[box.state] ?? []))}`;
+        return `${boxDetail(box, app.control(box))}${next(...(hints[box.state] ?? []))}`;
       } catch (error) {
         return failure(error, "Checking the box");
       }
@@ -296,7 +296,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     async execute({ box: ref }, { threadId, signal }) {
       try {
         const box = await boxes.start(thread(threadId), ref, signal);
-        return `${boxDetail(box)}${next(...using(box))}`;
+        return `${boxDetail(box, app.control(box))}${next(...using(box))}`;
       } catch (error) {
         return failure(error, "Starting the box");
       }

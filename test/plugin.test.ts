@@ -549,6 +549,77 @@ test("the panel lists, acquires, stops, starts and releases boxes over RPC", asy
   assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host"]]);
 });
 
+/** Everything the plugin sent a desktop viewer, joined. */
+function sentTo(session: { sent: readonly (string | Uint8Array)[] }): Buffer {
+  return Buffer.concat(session.sent.map((part) => (typeof part === "string" ? Buffer.from(part) : part)));
+}
+
+test("the desktop route relays a box's desktop, and only the viewer with control reaches it", async (t) => {
+  const { harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const acquired = (await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" })) as { box: { id: string } };
+  await app.boxes.idle();
+  const box = await only(app);
+  assert.equal(box.id, acquired.box.id);
+
+  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { desktopPath: string };
+  assert.equal(state.desktopPath, "/api/v1/plugins/bb-box/http/desktop");
+  assert.deepEqual(
+    ((await harness.behavior.callRpc("desktops", null)) as { threadId: string; box: { id: string } }[]).map((entry) => [entry.threadId, entry.box.id]),
+    [[THREAD, box.id]],
+  );
+
+  const viewer = "viewer-one-0001";
+  const refused = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string };
+  assert.match(refused.error, /This viewer is not connected to the box's desktop/);
+
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  const init = sentTo(session);
+  assert.equal(init.subarray(0, 12).toString(), "RFB 003.008\n");
+  assert.deepEqual([...init.subarray(12, 18)], [1, 1, 0, 0, 0, 0], "the relay offers None, and answered the box's password itself");
+  assert.deepEqual([init.readUInt16BE(18), init.readUInt16BE(20)], [1280, 800]);
+  const [rfb] = world.backend!.rfb.connections;
+  assert.equal(rfb!.shared, 1);
+
+  const key = (down: number) => Uint8Array.of(4, down, 0, 0, 0, 0, 0, 0x61);
+  await session.receive(key(1));
+  assert.equal(rfb!.received.byteLength, 0, "a viewer without control sends no input");
+
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { box: { control: unknown }; error: null };
+  assert.equal(took.error, null);
+  assert.deepEqual(took.box.control, { owner: "human", holder: viewer });
+  await session.receive(key(1));
+  await until("the key to reach the box", async () => rfb!.received.byteLength === 8);
+
+  const back = (await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name })) as { box: { control: unknown } };
+  assert.deepEqual(back.box.control, { owner: "agent", holder: null });
+  await until("the key to be let go", async () => rfb!.received.byteLength === 16);
+  assert.deepEqual([...rfb!.received.subarray(8)], [...key(0)]);
+
+  await session.close();
+  const noId = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=short`);
+  await noId.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await noId.receive(Uint8Array.of(1));
+  assert.match(sentTo(noId).subarray(12).toString(), /The viewer gave no viewer ID/);
+
+  assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
+  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath });
+});
+
+test("a headless box has no desktop to control", async (t) => {
+  const { harness, app } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-headless" });
+  await app.boxes.idle();
+  const box = await only(app);
+  const result = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer: "viewer-one-0001" })) as { error: string };
+  assert.equal(result.error, `Box ${box.name} has no desktop.`);
+  assert.deepEqual(await harness.behavior.callRpc("desktops", null), []);
+});
+
 test("bb box lists kinds and boxes, and acquires and releases for the thread it runs in", async (t) => {
   const { harness, app } = await start();
   t.after(() => harness.lifecycle.dispose());

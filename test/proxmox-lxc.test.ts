@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import {
@@ -197,8 +197,9 @@ test("desktops spread across GPUs, and a full set of GPUs points to CPU desktops
   });
   const first = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   const second = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
-  assert.deepEqual([first.data?.template, first.facts], [9001, [{ label: "GPU", value: "gpu-a" }]]);
-  assert.deepEqual([second.data?.template, second.facts], [9002, [{ label: "GPU", value: "gpu-b" }]]);
+  const display = [{ label: "Display mode", value: "gpu" }, { label: "Display reason", value: "fake GPU" }];
+  assert.deepEqual([first.data?.template, first.facts], [9001, [{ label: "GPU", value: "gpu-a" }, ...display]]);
+  assert.deepEqual([second.data?.template, second.facts], [9002, [{ label: "GPU", value: "gpu-b" }, ...display]]);
   assert.ok(parseTags(proxmox.guests.get(Number(second.ref))!.config.tags).includes("template.9002"));
 
   const full = await backend.capacity("linux-desktop", [], signal());
@@ -209,12 +210,103 @@ test("desktops spread across GPUs, and a full set of GPUs points to CPU desktops
 
   const cpu = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
   assert.equal(cpu.data?.template, 9003);
-  assert.equal(cpu.facts, undefined);
+  assert.deepEqual(cpu.facts, display, "a CPU desktop names no GPU");
 
   await backend.release(first, releasing());
   assert.equal((await backend.capacity("linux-desktop", [], signal())).ok, true, "gpu-a has room again");
   const third = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   assert.equal(third.data?.template, 9001);
+});
+
+/** Time for a retry on another GPU, which the fakes' deadline of now leaves none for. */
+const RETRY = { readyTimeoutMs: 10_000 };
+
+/** Makes the box at `host` start its desktop in `mode`, as the display service would record it. */
+function displayAt(dir: string, host: string, mode: string, reason: string): void {
+  mkdirSync(join(dir, "display"), { recursive: true });
+  writeFileSync(join(dir, "display", host), `${mode}\n${reason}`);
+}
+
+test("a desktop that starts without its GPU is released and tried on another GPU", async () => {
+  const { backend, proxmox, ssh, context } = setup({ "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b" }, new MemoryStorage(), RETRY);
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "no render node");
+  const hook = hooks();
+  const guest = await backend.acquire(identity("linux-desktop"), null, hook.value, signal());
+  assert.equal(guest.ref, "7001");
+  assert.equal(guest.data?.template, 9002);
+  assert.deepEqual(guest.facts, [
+    { label: "GPU", value: "gpu-b" },
+    { label: "Display mode", value: "gpu" },
+    { label: "Display reason", value: "fake GPU" },
+  ]);
+  assert.equal(proxmox.guests.has(7000), false, "the box without its GPU is deleted");
+  assert.deepEqual(hook.events, ["claim 7000", "starting", "claim 7001", "claim 7001"]);
+  assert.deepEqual(hook.claimed.at(-1), guest, "the last claim carries the display's facts");
+  assert.match(context.errors.join("\n"), /started without GPU gpu-a \(no render node\), so bb-box released it and tries another GPU/);
+
+  // gpu-a is avoided for a while, though it now runs fewer desktops.
+  const next = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.equal(next.data?.template, 9002);
+});
+
+test("a desktop with no GPU left to try is refused, naming CPU desktops", async () => {
+  const { backend, proxmox, ssh } = setup();
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "no render node");
+  await assert.rejects(backend.acquire(identity("linux-desktop"), null, hooks().value, signal()), (error: unknown) => {
+    assert.ok(error instanceof BackendError);
+    assert.equal(error.code, "no_capacity");
+    assert.match(error.message, /started without a GPU, so bb-box released it \(GPU gpu-a: no render node\)/);
+    assert.match(error.message, /No other GPU on pve has a linux-desktop template/);
+    assert.match(error.message, /linux-desktop-cpu box/);
+    return true;
+  });
+  assert.deepEqual([...proxmox.guests.values()].filter((guest) => !guest.template), [], "nothing is left behind");
+
+  // While gpu-a is avoided and no other GPU exists, a desktop is still tried on it.
+  const again = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.equal(again.data?.template, 9001);
+});
+
+test("a desktop that fails on every GPU names each GPU and its reason", async () => {
+  const { backend, ssh } = setup({ "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b" }, new MemoryStorage(), RETRY);
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "no render node");
+  displayAt(ssh.dir, "192.0.2.101", "cpu", "driver mismatch");
+  await assert.rejects(
+    backend.acquire(identity("linux-desktop"), null, hooks().value, signal()),
+    /\(GPU gpu-a: no render node; GPU gpu-b: driver mismatch\)\. No other GPU on pve has a linux-desktop template/,
+  );
+});
+
+test("a CPU desktop shows its display mode and is never retried", async () => {
+  const { backend, ssh } = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" });
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "software rendering");
+  const guest = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
+  assert.equal(guest.ref, "7000");
+  assert.deepEqual(guest.facts, [
+    { label: "Display mode", value: "cpu" },
+    { label: "Display reason", value: "software rendering" },
+  ]);
+});
+
+test("a desktop whose display never records its mode is deleted with a clear reason", async () => {
+  // An ssh whose box never writes the display mode.
+  const binary = join(tempDir("no-display-ssh"), "ssh");
+  writeFileSync(binary, `#!/bin/sh\ncase "$*" in *display-mode*) exit 0;; esac\nexec "${FAKE_SSH_BINARY}" "$@"\n`, { mode: 0o755 });
+  const { backend, proxmox } = setup({}, new MemoryStorage(), { sshBinary: binary });
+  await assert.rejects(
+    backend.acquire(identity("linux-desktop"), null, hooks().value, signal()),
+    /desktop did not start: \/run\/bb-box\/display-mode is missing after 1 s\. Check bb-box-display\.service/,
+  );
+  assert.deepEqual([...proxmox.guests.values()].filter((guest) => !guest.template), []);
+});
+
+test("a warm desktop that starts without its GPU is deleted, and its GPU avoided", async () => {
+  const { backend, proxmox, ssh } = setup({ "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b", "proxmox-lxc-desktop-warm": 1 });
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "no render node");
+  await assert.rejects(backend.maintain(), /A warm linux-desktop box started without GPU gpu-a \(no render node\), so bb-box released it/);
+  assert.equal(proxmox.guests.has(7000), false);
+  await backend.maintain();
+  assert.equal(proxmox.guests.get(7001)?.config.tags?.includes("template.9002"), true, "the next warm desktop goes to gpu-b");
 });
 
 test("boxes spread across a flavour's templates", async () => {

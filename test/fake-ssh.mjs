@@ -2,7 +2,9 @@
 // A stand-in for `ssh` in tests. It runs the remote command locally with
 // `sh -c`, in a home directory per host under $FAKE_SSH_DIR. A host is down
 // while $FAKE_SSH_DIR/down/<host> exists; $FAKE_SSH_DIR/up-after/<host> holds
-// how many more dials fail before it answers.
+// how many more dials fail before it answers. Paths under /run/bb-box/ map to
+// run/bb-box/ in the host's home, where the desktop's display mode starts as
+// gpu, or as $FAKE_SSH_DIR/display/<host> holds it (a mode line, then a reason).
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -29,8 +31,15 @@ if (existsSync(upAfter)) {
   }
 }
 const home = join(root, "home", host);
-mkdirSync(home, { recursive: true });
-const result = spawnSync("sh", ["-c", command], {
+const run = join(home, "run", "bb-box");
+mkdirSync(run, { recursive: true });
+if (!existsSync(join(run, "display-mode"))) {
+  const forced = join(root, "display", host);
+  const [mode, reason] = existsSync(forced) ? readFileSync(forced, "utf8").split("\n") : ["gpu", "fake GPU"];
+  writeFileSync(join(run, "display-mode"), `${mode}\n`);
+  writeFileSync(join(run, "display-reason"), `${reason ?? ""}\n`);
+}
+const result = spawnSync("sh", ["-c", command.replaceAll("/run/bb-box/", `${run}/`)], {
   cwd: home,
   env: { PATH: process.env.PATH, HOME: home, USER: target.split("@")[0] },
   stdio: "inherit",

@@ -7,7 +7,7 @@ import type { CommandTransport } from "./types.ts";
 /** True when something accepts a TCP connection on host:port within `timeoutMs`. */
 export type PortCheck = (host: string, port: number, timeoutMs: number, signal?: AbortSignal) => Promise<boolean>;
 
-function pause(ms: number, signal?: AbortSignal): Promise<void> {
+export function pause(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
     const timer = setTimeout(() => {

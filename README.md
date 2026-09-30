@@ -169,6 +169,13 @@ directly. The tests run against a fake Proxmox API and a fake `ssh`, so they
 need no host. The smoke script runs against a real backend without BB; see
 [section 6 of the Proxmox LXC guide](setup/proxmox-lxc/README.md#6-smoke-test).
 
+## Third-party code
+
+The desktop viewer bundles noVNC 1.7.0 from npm (`@novnc/novnc`), unchanged.
+Its core library is under the Mozilla Public License 2.0, and the pako code it
+includes under the MIT licence. Their source and licence texts are in the
+package, in `node_modules/@novnc/novnc` after `npm install`.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)

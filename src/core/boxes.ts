@@ -95,6 +95,8 @@ export interface BoxesDeps {
   general(): Promise<GeneralConfig>;
   /** Tells panels and tools that a thread's boxes changed. */
   notify(threadId: string): void;
+  /** A box's record was written, or deleted when `deleted` is true. */
+  recorded?(box: BoxRecord, deleted: boolean): void;
   /**
    * Whether a thread still exists and is not archived. "ended" only when BB
    * says so: the sweep releases the thread's boxes and guests on it.
@@ -272,6 +274,7 @@ export class Boxes {
 
   async #write(box: BoxRecord): Promise<BoxRecord> {
     await this.#deps.kv.set(recordKey(box.threadId, box.id), box);
+    this.#deps.recorded?.(box, false);
     this.#deps.notify(box.threadId);
     return box;
   }
@@ -279,6 +282,7 @@ export class Boxes {
   async #forget(box: BoxRecord): Promise<void> {
     await this.#deps.kv.delete(recordKey(box.threadId, box.id));
     await this.#deps.kv.delete(indexKey(box.id));
+    this.#deps.recorded?.(box, true);
     this.#deps.notify(box.threadId);
   }
 

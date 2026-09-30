@@ -24,3 +24,4 @@ that changes gets a new record that supersedes the old one.
 | [017](017-boxes-clear-bb-daemon-state-at-boot.md) | Boxes clear BB's daemon lock and PID file at boot |
 | [018](018-guests-name-their-install-and-box.md) | Guests name their install and their box, and backends check both before acting |
 | [019](019-lost-records-are-restored-from-guests.md) | The sweep restores lost records, and only BB ends a thread |
+| [020](020-control-belongs-to-a-viewer.md) | Control belongs to one viewer, and a GPU desktop is retried on another GPU |

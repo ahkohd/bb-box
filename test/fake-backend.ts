@@ -10,9 +10,9 @@
 // greeting.
 
 import { mkdir, rm } from "node:fs/promises";
-import { createServer, type AddressInfo, type Server } from "node:net";
 import { join } from "node:path";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
+import { FakeRfb } from "./fake-rfb.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -144,7 +144,9 @@ export class FakeBackend implements Backend {
   readonly #storage: BackendStorage;
   readonly #pool: KvPoolStore<Holder>;
   readonly #ready: ReadyPool<Holder>;
-  #vnc: Promise<Server> | null = null;
+  /** Every desktop box's VNC server: one server, with a password the viewer never sees. */
+  readonly rfb = new FakeRfb({ password: "fakepass" });
+  #vnc: Promise<number> | null = null;
 
   constructor(options: FakeBackendOptions) {
     this.#options = options;
@@ -304,7 +306,10 @@ export class FakeBackend implements Backend {
         label: "Desktop",
         protocol: display.protocol,
         resizable: display.resizable,
-        open: async () => ({ route: { type: "tcp", host: "127.0.0.1", port: await this.#vncPort() }, auth: { type: "none" } }),
+        open: async () => ({
+          route: { type: "tcp", host: "127.0.0.1", port: await (this.#vnc ??= this.rfb.listen()) },
+          auth: { type: "vnc-password", password: "fakepass" },
+        }),
       }),
     );
     const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);
@@ -326,9 +331,9 @@ export class FakeBackend implements Backend {
   }
 
   async dispose(): Promise<void> {
-    const server = await this.#vnc;
+    if (this.#vnc) await this.#vnc;
     this.#vnc = null;
-    await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
+    await this.rfb.close();
   }
 
   #kind(kind: string): BoxKind {
@@ -419,15 +424,6 @@ export class FakeBackend implements Backend {
     if (fault?.at !== at) return;
     delete this.faults.acquire;
     throw fault.error;
-  }
-
-  #vncPort(): Promise<number> {
-    this.#vnc ??= new Promise((resolve, reject) => {
-      const server = createServer((socket) => socket.end("RFB 003.008\n"));
-      server.on("error", reject);
-      server.listen(0, "127.0.0.1", () => resolve(server));
-    });
-    return this.#vnc.then((server) => (server.address() as AddressInfo).port);
   }
 }
 
