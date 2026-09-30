@@ -110,6 +110,14 @@ visudo -cf "/etc/sudoers.d/90-$user" >/dev/null
 # starts at boot.
 install -d -m 0755 /var/lib/systemd/linger
 touch "/var/lib/systemd/linger/$user"
+# After a hard stop BB's daemon leaves its lock (a new daemon then waits about
+# 8 s for it to go stale) and, without a service manager, a pid file that may
+# name another process after the restart. Clear both at boot.
+cat >/etc/tmpfiles.d/bb-box.conf <<EOF
+# bb-box: BB daemon state a hard stop leaves behind.
+R /home/$user/.bb-machines/*/daemon.lock.lock
+r /home/$user/.bb-machines/*/install-daemon.pid
+EOF
 
 # The plugin's key, for the box user and root.
 key=$(cat "$build/plugin-key.pub")

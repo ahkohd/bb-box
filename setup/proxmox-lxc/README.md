@@ -189,7 +189,9 @@ Both templates:
   the plugin's SSH key; root also accepts that key. Linger is on for `box`,
   so its systemd user manager starts at boot and keeps running without a
   login: BB's installer puts its host daemon there when a box enrols as a
-  BB machine (as `box`);
+  BB machine (as `box`). At boot, `/etc/tmpfiles.d/bb-box.conf` removes the
+  daemon lock and pid file a hard stop leaves behind, so a restarted box
+  reconnects at once;
 - build tools, Python, Git, the pinned tools above, Docker with compose and
   buildx, and the Postgres, Redis and SQLite clients;
 - SSH with keys only; each box makes its own host keys on first boot;
