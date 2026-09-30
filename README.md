@@ -20,8 +20,9 @@ Requirements, from the operator, 30 September 2026:
 - Crazy fast startup.
 - A box has everything its thread has: Git credentials, machine variables, BB,
   and the same network reach as the thread's own machine.
-- **Desktop boxes** for real computer-use and browser-use work: profiling a
-  web app, working on a GPUI project, native apps, with a real GPU.
+- **Desktop boxes** for real computer-use and browser-use work and app
+  development: building, running and profiling web and native apps (GPUI apps,
+  for example) on a real GPU.
 - **Headless boxes** for the agent's own work: Docker, backend services,
   builds.
 - The operator and the agent both control every box in BB: start, see, use,
