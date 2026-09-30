@@ -39,6 +39,9 @@ desktop_packages="xserver-xorg-core xfce4-session xfwm4 xfce4-panel xfdesktop4 x
 # The small apps people and agents expect on a desktop: a text editor, an
 # image viewer, a PDF viewer and the panel's application finder (about 40 MiB).
 desktop_packages="$desktop_packages mousepad ristretto evince xfce4-appfinder"
+# Chinese, Japanese and Korean text, sans and serif, regular and bold (88 MiB).
+# Without it web pages in Chrome show empty boxes for them.
+desktop_packages="$desktop_packages fonts-noto-cjk"
 # What Zed's GPUI needs to build on Linux.
 gpui_packages="clang cmake libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
   libfontconfig-dev libfreetype-dev libssl-dev libzstd-dev libvulkan-dev libasound2-dev"

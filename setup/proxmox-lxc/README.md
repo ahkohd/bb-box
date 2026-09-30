@@ -203,13 +203,13 @@ Both templates:
 
 - Ubuntu 24.04 in an unprivileged container with `nesting=1`, no
   cloud-init, snapd or maintenance timers, and no apt runs at start;
-- the user `box` (uid 1000): passwordless sudo, in the `docker` group, with
-  the plugin's SSH key; root also accepts that key. Linger is on for `box`,
-  so its systemd user manager starts at boot and keeps running without a
-  login: BB's installer puts its host daemon there when a box enrols as a
-  BB machine (as `box`). At boot, `/etc/tmpfiles.d/bb-box.conf` removes the
-  daemon lock and pid file a hard stop leaves behind, so a restarted box
-  reconnects at once;
+- the user `box` (uid 1000): passwordless sudo, in the `sudo` and `docker`
+  groups, with the plugin's SSH key; root also accepts that key. Linger is on
+  for `box`, so its systemd user manager starts at boot and keeps running
+  without a login: BB's installer puts its host daemon there when a box
+  enrols as a BB machine (as `box`). At boot, `/etc/tmpfiles.d/bb-box.conf`
+  removes the daemon lock and pid file a hard stop leaves behind, so a
+  restarted box reconnects at once;
 - build tools, Python, Git with Git LFS, the pinned tools above, Docker with
   compose and buildx, the Postgres, Redis and SQLite clients, and everyday
   tools such as `tree`, `bc`, `zstd`, `socat` and `netstat`;
@@ -241,9 +241,10 @@ The desktop template adds:
 - Mousepad (text editor), Ristretto (image viewer), Evince (PDF viewer) and
   XFCE's application finder, which open text files, images and PDFs; web
   pages open in Chrome;
+- Noto CJK fonts (88 MiB), so Chinese, Japanese and Korean text renders;
 - Rust (rustup, stable) and the libraries Zed's GPUI needs to build;
 - `bb-box-check-desktop`, which checks the display, VNC, the GPU, Chrome's
-  GPU status, that Mousepad opens a window, and Cua Driver.
+  GPU status, CJK fonts, that Mousepad opens a window, and Cua Driver.
 
 ### Computer use (Cua Driver)
 

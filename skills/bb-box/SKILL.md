@@ -69,7 +69,7 @@ Its boxes run Ubuntu 24.04 with build tools, Git, Python with `uv`, Node.js
 with pnpm and Yarn, Docker, `gh`, `rg`, `fd`, `jj` and the Claude Code, Codex
 and Pi CLIs. `sudo apt-get install -y <package>` works at once; if apt
 answers 404 Not Found, run `sudo apt-get update` and try again. Desktops add
-XFCE, Chrome, Mousepad, Ristretto and Evince.
+XFCE, Chrome, Mousepad, Ristretto, Evince and CJK fonts.
 
 A `linux-desktop` box always has its GPU. One whose desktop started without
 it is released and made again on another GPU; when no GPU is left, the

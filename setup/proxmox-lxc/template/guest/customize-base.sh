@@ -110,7 +110,10 @@ if ! id -u "$user" >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash --uid 1000 --user-group "$user"
 fi
 [ "$(id -u "$user")" = 1000 ] || die "$user must have uid 1000"
-usermod -aG docker,adm "$user"
+# In the sudo group too, so tools such as command-not-found say "sudo apt
+# install". Its rule asks for a password, but sudoers reads sudoers.d last, so
+# the user's own NOPASSWD rule below wins.
+usermod -aG docker,adm,sudo "$user"
 passwd -l "$user" >/dev/null
 passwd -l root >/dev/null
 printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" >"/etc/sudoers.d/90-$user"
