@@ -108,6 +108,19 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               return out(`Released box ${positionals.box}.`);
             }),
         }),
+        "install-id": cliCommand({
+          summary: "Show this install's ID, which it records on its guests. --set takes back the ID it had before it lost its storage.",
+          options: { ...jsonOption, set: { type: "string", description: "The ID to use from now on, as bb box doctor lists it." } },
+          run: ({ options }) =>
+            guard("Setting the install ID", async () => {
+              const before = app.backends.installId;
+              if (options.set !== undefined) await app.setInstallId(options.set);
+              const installId = app.backends.installId;
+              if (options.json) return json({ installId });
+              if (installId === before) return out(`This install's ID is ${installId}.`);
+              return out(`This install's ID is now ${installId}. The next sweep adopts or releases the guests that carry it; run bb box sweep to do it now.`);
+            }),
+        }),
         sweep: cliCommand({
           summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers.",
           options: jsonOption,

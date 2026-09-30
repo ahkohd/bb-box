@@ -47,7 +47,7 @@ function fakeDriver(root: string, world: { backend: FakeBackend | null }): Backe
       if (values["fake-broken"] === true) return { enabled: true, ok: false, problems: ["Fill in the fake host's address."] };
       return { enabled: true, ok: true, config: {} };
     },
-    create: (_config, context) => (world.backend = new FakeBackend({ root, storage: context.storage })),
+    create: (_config, context) => (world.backend = new FakeBackend({ root, storage: context.storage, installId: context.installId })),
   };
 }
 
@@ -489,4 +489,33 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   assert.equal(missing.exitCode, 1);
   assert.match(missing.stderr ?? "", /no box "nope".*\(not_found\)/);
   assert.match((await harness.behavior.runCli(["release", box.name, "--thread", THREAD])).stdout ?? "", /Released box/);
+});
+
+test("bb box install-id shows the install's ID, and --set takes an old one back once no box holds a guest", async (t) => {
+  const { bb, harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const id = app.backends.installId;
+  assert.match(id, /^[a-z0-9]{10}$/, "a new install makes a random ID");
+  assert.equal(await bb.storage.kv.get("install-id"), id, "and keeps it");
+  assert.equal((await harness.behavior.runCli(["install-id"])).stdout, `This install's ID is ${id}.\n`);
+
+  const bad = await harness.behavior.runCli(["install-id", "--set", "Not_An_ID"]);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.stderr ?? "", /"Not_An_ID" is not an install ID/);
+
+  await harness.behavior.runCli(["acquire", "linux-headless", "--thread", THREAD]);
+  const box = await only(app);
+  const refused = await harness.behavior.runCli(["install-id", "--set", "old-install"]);
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.stderr ?? "", new RegExp(`Release ${box.name} first\\. Its guest carries this install's ID ${id}`));
+  assert.equal(app.backends.installId, id);
+
+  await harness.behavior.runCli(["release", box.name, "--thread", THREAD]);
+  const before = world.backend;
+  const set = await harness.behavior.runCli(["install-id", "--set", "old-install"]);
+  assert.equal(set.exitCode, 0, set.stderr);
+  assert.match(set.stdout ?? "", /^This install's ID is now old-install\. The next sweep adopts or releases the guests that carry it/);
+  assert.equal(await bb.storage.kv.get("install-id"), "old-install");
+  assert.notEqual(world.backend, before, "the backend is made again with the ID");
+  assert.deepEqual(JSON.parse((await harness.behavior.runCli(["install-id", "--json"])).stdout ?? ""), { installId: "old-install" });
 });

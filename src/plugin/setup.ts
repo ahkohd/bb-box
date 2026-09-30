@@ -7,7 +7,7 @@ import { Backends, DRIVERS, backendSettings, offerChecks } from "../backends/ind
 import type { BackendDriver, DoctorReport } from "../backends/types.ts";
 import { Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { GENERAL_SETTINGS, parseGeneral, type GeneralConfig } from "../core/config.ts";
-import { loadInstallId } from "../core/install.ts";
+import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import { registerCli } from "./cli.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
 import { registerRpc } from "./rpc.ts";
@@ -32,6 +32,12 @@ export interface BbBox {
   kinds(): KindView[];
   backendViews(): BackendView[];
   doctor(signal?: AbortSignal): Promise<DoctorView>;
+  /**
+   * Takes back an install ID this install had before it lost its storage
+   * (018). Refused while a box holds a guest, since its guest carries the
+   * current ID.
+   */
+  setInstallId(id: string): Promise<void>;
   /** The machine and directory a thread works in, for copying files to and from its boxes. */
   workspace(threadId: string, signal?: AbortSignal): Promise<{ hostId: string; path: string | null }>;
   /** A thread's project, for boxes the panel or the CLI acquires. */
@@ -235,6 +241,20 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         });
       }
       return { ok: sections.every((section) => section.report.ok), sections };
+    },
+    async setInstallId(id) {
+      requireInstallId(id);
+      if (id === backends.installId) return;
+      const holding = (await boxes.all()).filter((box) => box.guest && box.state !== "gone");
+      if (holding.length) {
+        throw new Error(
+          `Release ${holding.map((box) => box.name).join(", ")} first. ${holding.length === 1 ? "Its guest carries" : "Their guests carry"} ` +
+            `this install's ID ${backends.installId}, so under another ID ${holding.length === 1 ? "it" : "they"} would count as gone.`,
+        );
+      }
+      await storeInstallId(bb.storage.kv, id);
+      await backends.useInstallId(id);
+      notify(null);
     },
     async workspace(threadId, signal) {
       const thread = await bb.sdk.threads.get({ threadId, signal });
