@@ -117,6 +117,8 @@ export class FakeBackend implements Backend {
   readonly faults: FakeFaults = {};
   /** Acquires wait here after the claim while it is set. */
   gate: Promise<void> | null = null;
+  /** Stops and starts wait here while it is set. */
+  powerGate: Promise<void> | null = null;
   readonly calls: string[] = [];
   readonly start?: (guest: Guest) => Promise<void>;
   readonly stop?: (guest: Guest) => Promise<void>;
@@ -322,6 +324,7 @@ export class FakeBackend implements Backend {
   }
 
   async #power(guest: Guest, power: PowerState): Promise<void> {
+    await this.powerGate;
     if (!(await this.power(guest))) throw new BackendError("gone", `Guest ${guest.ref} no longer exists.`);
     await this.#setPower(guest.ref, power);
   }

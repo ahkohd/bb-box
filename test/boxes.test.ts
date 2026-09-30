@@ -354,6 +354,25 @@ test("a command runs anyway when enrolment takes longer than the wait", async ()
   assert.equal(result.stdout, "ran\n");
 });
 
+test("a stop or start that ends during a release leaves the box releasing", async () => {
+  for (const action of ["stop", "start"] as const) {
+    const world = setup();
+    const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+    if (action === "start") await world.boxes.stop(THREAD, box.name);
+    const gate = deferred();
+    world.backend.powerGate = gate.promise;
+    const moving = world.boxes[action](THREAD, box.name);
+    await until(async () => (await world.boxes.find(box.id))?.state === (action === "stop" ? "stopping" : "starting"));
+    world.backend.faults.release = new Error("the host is busy");
+    const release = world.boxes.release(THREAD, box.name);
+    gate.resolve();
+    await moving;
+    const left = await release;
+    assert.equal(left?.state, "releasing", `a failed release after a ${action} is tried again by the sweep`);
+    await assert.rejects(world.boxes[action](THREAD, box.name), /is being released/);
+  }
+});
+
 test("stop and start, and a stopped box says so instead of timing out", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));

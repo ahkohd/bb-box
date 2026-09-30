@@ -589,14 +589,14 @@ export class Boxes {
       const { stop } = this.#stopStart(current);
       if (current.state === "stopped") return current;
       this.#require(current, "ready");
-      await this.update(current, () => ({ state: "stopping", error: null }));
+      this.#require((await this.#move(current, "stopping")) ?? { ...current, state: "releasing" }, "stopping");
       try {
         await stop(current.guest!, signal);
       } catch (error) {
         await this.#observe(current, { signal, moving: true }).catch(() => null);
         throw error;
       }
-      return (await this.update(current, () => ({ state: "stopped" }))) ?? current;
+      return (await this.#move(current, "stopped")) ?? current;
     });
   }
 
@@ -608,14 +608,14 @@ export class Boxes {
       const { start } = this.#stopStart(current);
       if (current.state === "ready") return current;
       this.#require(current, "stopped");
-      await this.update(current, () => ({ state: "starting", error: null }));
+      this.#require((await this.#move(current, "starting")) ?? { ...current, state: "releasing" }, "starting");
       try {
         await start(current.guest!, signal);
       } catch (error) {
         await this.#observe(current, { signal, moving: true }).catch(() => null);
         throw error;
       }
-      const started = (await this.update(current, () => ({ state: "ready" }))) ?? current;
+      const started = (await this.#move(current, "ready")) ?? current;
       // A hard stop ends BB's daemon, and nothing in the box starts it again (017).
       if (started.state === "ready" && started.enrol.state === "enrolled" && this.#deps.reconnect) {
         void this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error));
@@ -624,8 +624,14 @@ export class Boxes {
     });
   }
 
+  /** Moves a box to `state` for a stop or start, unless its release began meanwhile. */
+  #move(box: BoxRecord, state: "stopping" | "stopped" | "starting" | "ready"): Promise<BoxRecord | null> {
+    const moving = state === "stopping" || state === "starting";
+    return this.update(box, (current) => (current.state === "releasing" ? {} : moving ? { state, error: null } : { state }));
+  }
+
   /** Throws the reason a box is not in `state`, in words for the user. */
-  #require(box: BoxRecord, state: "ready" | "stopped"): void {
+  #require(box: BoxRecord, state: BoxState): void {
     if (box.state === state && box.guest) return;
     const reasons: Record<BoxState, string> = {
       acquiring: `Box ${box.name} is still being acquired. Check its status in a few seconds.`,
