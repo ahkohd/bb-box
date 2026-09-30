@@ -91,11 +91,11 @@ the sweep repeats releases.
   in the order the backends are listed in settings, and takes the first with
   capacity. The box records both.
 - Offers of one kind must agree on what the agent relies on: `os`, `arch`,
-  `gpu`, `computerUse`, `enrol`, whether there is a desktop display, and the
-  features the kind requires (`requires`). Each offer's `features` include
-  the required ones and may add more, which the panel and `status` show for
-  each box. Size and transports may differ. `doctor` warns when offers do not
-  agree ([012](decisions/012-offers-may-add-features.md)).
+  `gpu`, the computer-use driver, `enrol`, whether there is a desktop display,
+  and the features the kind requires (`requires`). Each offer's `features`
+  include the required ones and may add more, which the panel and `status`
+  show for each box. Size and transports may differ. `doctor` warns when
+  offers do not agree ([012](decisions/012-offers-may-add-features.md)).
 
 | Kind | Promises | Offered by |
 | --- | --- | --- |
@@ -127,7 +127,7 @@ the sweep repeats releases.
 | `features` | words such as `docker`, `systemd`, `xcode`, `ios-simulator` | let the agent choose a kind, and show each box's extras |
 | `command` | the command capability below, or none | offer `run` and file copies |
 | `displays` | a list of `{id, protocol, resizable}`, empty when headless | load the viewer client before the box exists, and allow resizing |
-| `computerUse` | yes or no | offer the computer-use tools |
+| `computerUse` | `{driver, version, socket}`, or none | offer the computer tools, and reach the driver in the box ([015](decisions/015-computer-use-through-cua-driver.md)) |
 | `enrol` | yes or no | enrol the box as a BB machine |
 
 The command capability:
@@ -145,6 +145,9 @@ The command capability:
   yet ([BB requests](bb-requests.md)).
 - A kind with no command transport can still be viewed and released. A kind
   that cannot enrol still runs commands through the transport.
+- A kind with computer use needs a command transport with `spawn`, which
+  keeps a command running with its stdin and stdout as a byte channel. SSH
+  and `docker exec` have it; the QEMU guest agent does not.
 
 ### Reaching inside a box
 
@@ -334,6 +337,8 @@ export interface CommandTransport {
   // the capability's `transport` is the one name. Plus:
   /** A route to a TCP port inside the box. */
   route?(port: number, signal?: AbortSignal): Promise<Route>;
+  /** A long-running command whose stdin and stdout are the channel (015). */
+  spawn?(script: string, signal?: AbortSignal): Promise<ByteChannel>;
 }
 
 // src/backends/types.ts
@@ -345,6 +350,14 @@ export interface CommandCapability {
   readonly streaming: boolean;
 }
 
+/** Offers of a kind agree on the driver; each template pins its version. */
+export interface ComputerUse {
+  readonly driver: "cua";
+  readonly version: string;
+  /** Where `cua-driver serve` listens: a Unix socket, or a named pipe on Windows. */
+  readonly socket: string;
+}
+
 export interface KindCapabilities {
   readonly os: GuestOs;
   readonly arch: Arch;
@@ -353,7 +366,7 @@ export interface KindCapabilities {
   readonly features: readonly string[];
   readonly command: CommandCapability | null;
   readonly displays: readonly { readonly id: string; readonly protocol: DisplayProtocol; readonly resizable: boolean }[];
-  readonly computerUse: boolean;
+  readonly computerUse: ComputerUse | null;
   /** Only when command.shell is "sh" and os is linux or macos. */
   readonly enrol: boolean;
 }
@@ -566,8 +579,8 @@ A box is a resource of its thread and gets what the thread's own machine has.
 | --- | --- | --- |
 | Panel | list the thread's boxes, acquire one by kind, see status, GPU or CPU, and timings, stop, start and release | not used |
 | Tools | not used | acquire, list, status, run, copy files in and out, stop, start, release, start a child thread on a box |
-| Desktop | the viewer in the panel, over the relayed stream | computer use inside the box: the accessibility tree first, screenshots when appearance matters |
-| Control | take and hand back | waits while you hold control |
+| Desktop | the viewer in the panel, over the relayed stream | six computer tools: the accessibility tree first, screenshots when appearance matters |
+| Control | take and hand back | its computer tools refuse while you hold control |
 
 - **Desktop viewer.** The panel opens one WebSocket per viewer on the plugin's
   `/desktop?box=<id>` route. The relay opens the display's route, answers
@@ -577,15 +590,59 @@ A box is a resource of its thread and gets what the thread's own machine has.
   ([007](decisions/007-desktop-stream-is-a-typed-transport.md)).
 - **Shared control.** One owner of input at a time, the agent by default,
   held in the plugin's memory. The relay drops input from any viewer that is
-  not the owner, so nothing in the box filters input. Taking control refuses
-  new computer-use calls, lets running ones finish for up to 5 s, then stops
-  the computer-use service; apps it started keep running. Resizing is allowed
+  not the owner, so nothing in the box filters input. Resizing is allowed
   only while you hold control. On hand-back the relay releases any keys and
   buttons still held down. Control returns to the agent when you hand back,
   when your viewer has been gone for 60 s, or when the plugin restarts
   ([008](decisions/008-shared-control.md)).
-- **Computer use** runs as a service inside the box, written once per OS. The
-  computer use research (in progress) compares the options.
+- **Pausing the agent** happens in the plugin, not the box
+  ([015](decisions/015-computer-use-through-cua-driver.md)). While you hold
+  control, every computer tool refuses at once without reaching the box.
+  Taking control waits up to 3 s for a call in flight, then closes the box's
+  computer-use session; the panel shows control as yours only after that.
+  Handing back drops every reference and image, and the agent's next call
+  tells it to observe again. This is cooperative: the agent can still reach
+  the box over SSH.
+
+**Computer use** ([015](decisions/015-computer-use-through-cua-driver.md),
+[research](research/computer-use.md)).
+
+- **Driver.** Cua Driver, one release pinned in each template with its
+  SHA-256, with telemetry and the update check off. The pin moves only after
+  the conformance suite passes.
+- **In the box.** `cua-driver serve` runs in the logged-in desktop session:
+  a user service on Linux, a per-user Scheduled Task at logon on Windows, a
+  LaunchAgent that starts Cua's signed app on macOS.
+- **From the plugin.** One session per box runs `cua-driver mcp --socket
+  <socket>` through the command transport's `spawn`, and the plugin speaks
+  MCP over it: 2 to 4 ms per call, against 165 ms for a new SSH connection.
+  It opens on first use, and closes after 10 idle minutes, when you take
+  control and when the box is released.
+- **Tools.** The agent sees bb-box's tools, never Cua's:
+
+  | Tool | Does |
+  | --- | --- |
+  | `computer_windows` | lists windows with ID, app, title, size and focus |
+  | `computer_observe` | reads a window's tree, with an optional query, limit and screenshot |
+  | `computer_screenshot` | returns an image of a window or the desktop |
+  | `computer_act` | clicks, scrolls, sets a value or runs an element action, by reference or by pixel |
+  | `computer_type` | types text or a key chord, optionally into a reference |
+  | `computer_launch` | opens an app or URL and returns its window ID |
+
+- **Tree text** has no frames, and uses the plugin's references such as
+  `e26`. The default budget is 300 elements; over it, the result says so and
+  suggests a query. A long article is 165 KB of text without one.
+- **References** belong to the plugin. Each has a fingerprint: role, name,
+  and its ancestors' roles and names. An old reference is found again in the
+  latest tree, or refused if it matches none or several. With raw Cua tokens,
+  a stale reference in foreground mode clicked the wrong element.
+- **Pixels.** The agent sees only pixels of images the plugin returned, at or
+  under 1568 pixels on the long edge. A pixel action is accepted only against
+  the latest image of that window.
+- **After each action** the plugin reads the tree again and returns what
+  changed.
+- **Delivery.** Background first, which does not move the shared pointer.
+  When Cua refuses, in 2 to 4 ms, the plugin retries in foreground.
 
 ## Clean-up and crash recovery
 
@@ -657,24 +714,27 @@ Notes:
   script starts it again after a restart. `access.dockerHost` stays null
   unless the operator opts in.
 - **Windows** on Proxmox QEMU streams its console through Proxmox's API, so
-  nothing is installed in the guest for the desktop. Commands need OpenSSH
-  for Windows or the QEMU guest agent, whose calls Proxmox limits to 64 KiB of
+  nothing is installed in the guest for the desktop. Commands need OpenSSH for
+  Windows or the QEMU guest agent, whose calls Proxmox limits to 64 KiB of
   stdin and 60 KiB per file write, so the transport splits larger data. It
-  cannot enrol in BB until BB's host app runs on Windows. A sysprepped
-  clone's first boot takes minutes, so Windows needs a warm pool to feel
-  quick.
+  cannot enrol in BB until BB's host app runs on Windows. Computer use needs
+  OpenSSH, automatic logon and a standard user, since Cua runs unelevated in
+  the desktop session. A sysprepped clone's first boot takes minutes, so
+  Windows needs a warm pool to feel quick.
 - **SSH host pool** needs nothing but SSH access to each machine. It is the
   simplest real backend, and the physical Mac backend may turn out to be the
   same driver with macOS machines and a desktop kind.
 - **Physical Macs** have one console session. The box user must be logged in
   at the console for the desktop and computer use. macOS logs a user in
   automatically only at boot, so a reset recreates the box user's home and
-  reboots, about 1 to 2 minutes on Apple silicon. Accessibility and Screen
-  Recording permissions are granted once per machine at setup.
-- **Tart** images are prepared ahead: permissions granted, Xcode and the iOS
-  Simulator warmed, background indexing off. They are pulled from an OCI
-  registry with `tart pull`. Several Macs can be listed in settings, or
-  managed by Orchard later.
+  reboots, about 1 to 2 minutes on Apple silicon. Cua's Accessibility grant
+  can come from an MDM profile, but Screen Recording needs one approval by a
+  person when the Mac joins the pool.
+- **Tart** images are prepared ahead: Cua's permissions written offline into
+  the image's TCC database, automatic login, Xcode and the iOS Simulator
+  warmed, background indexing off. They are pulled from an OCI registry with
+  `tart pull`. Several Macs can be listed in settings, or managed by Orchard
+  later.
   - Apple's macOS licence (section 2B(iii)) allows two macOS VMs per Mac you
     own or control, for software development, testing during development,
     macOS Server or personal non-commercial use, and not as a service bureau
@@ -698,14 +758,14 @@ Notes:
 
 - **Conformance suite** in `test/conformance/`, run against a live backend
   from an env file. For each kind: capacity, acquire to ready with the hooks,
-  run a command with 1 MiB of stdin, copy 32 MiB each way (so a transport
-  with small limits, such as the QEMU guest agent's 64 KiB of stdin, proves it
+  run a command with 1 MiB of stdin, copy 32 MiB each way (so a transport with
+  small limits, such as the QEMU guest agent's 64 KiB of stdin, proves it
   splits the data), enrol, reconnect to BB after a restart, stream a frame,
-  computer use, stop and start where supported, repeated release, and crash
-  recovery (an interrupted acquire is resumed or released, and `held()` finds
-  every guest). Steps a
-  kind does not support are skipped by its declared capabilities, never by
-  backend name.
+  computer use (the Chrome and GTK sequences from the research rig, also run
+  when the Cua pin moves), stop and start where supported, repeated release,
+  and crash recovery (an interrupted acquire is resumed or released, and
+  `held()` finds every guest). Steps a kind does not support are skipped by
+  its declared capabilities, never by backend name.
 - **Fake backend.** An in-memory backend passes the suite and backs the core's
   own tests.
 - **Setup scripts**, one per backend, prepare the provider: templates or
@@ -722,7 +782,7 @@ Notes:
 | Question | Where it is answered |
 | --- | --- |
 | How long a real enrolment takes, which decides whether warm guests are enrolled ahead | the experiment in [enrolment and warm pools](research/enrolment-and-warm-pools.md) |
-| Accessibility tree and input on each OS, and which computer-use tool to build on | computer use research |
-| Details of the Windows, Mac, Tart, Docker and SSH pool backends | later-backends research |
+| Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
+| First boot of a Windows clone, Tart boot and resume, a physical Mac's reset; until then `readyTimeoutMs` values are estimates | [later backends](research/later-backends.md) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
