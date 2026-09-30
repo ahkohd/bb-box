@@ -48,12 +48,20 @@ function status(error: unknown): { status?: unknown; code?: unknown } {
   return (error ?? {}) as { status?: unknown; code?: unknown };
 }
 
-/** Only a clear "no such thread" counts: a thread that ended loses its boxes. */
+/**
+ * Only BB's own answer for a thread that does not exist, or was deleted,
+ * counts: a thread that ended loses its boxes. Any other error, another 404
+ * included, keeps them.
+ */
 export function isMissingThread(error: unknown): boolean {
   const { status: code, code: name } = status(error);
-  if (code === 404) return true;
-  if (typeof name === "string" && /(^|_)not_found$/.test(name)) return true;
-  return error instanceof Error && /thread\b.*\bnot found|not found.*\bthread/i.test(error.message);
+  if (name === "thread_not_found") return true;
+  return name === undefined && code === 404 && error instanceof Error && /^(HTTP 404: )?Thread not found\.?$/i.test(error.message);
+}
+
+/** Set, as opposed to null or missing. */
+function isSet(value: unknown): boolean {
+  return value !== null && value !== undefined;
 }
 
 function withTimeout(ms: number, signal?: AbortSignal): AbortSignal {
@@ -100,6 +108,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     return parsed.ok ? parsed.config : { perThreadLimit: null, enrol: true };
   };
 
+  const projectOf = async (threadId: string): Promise<string | null> => {
+    try {
+      return (await bb.sdk.threads.get({ threadId })).projectId;
+    } catch {
+      return null;
+    }
+  };
+
   let enrolment: Enrolment;
   const boxes = new Boxes({
     kv: bb.storage.kv,
@@ -109,11 +125,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     async thread(threadId): Promise<ThreadLiveness> {
       try {
         const thread = await bb.sdk.threads.get({ threadId });
-        return thread.archivedAt !== null || thread.deletedAt !== null ? "ended" : "live";
+        return isSet(thread.archivedAt) || isSet(thread.deletedAt) ? "ended" : "live";
       } catch (error) {
         return isMissingThread(error) ? "ended" : "unknown";
       }
     },
+    projectOf,
     enrol: (box) => enrolment.enrol(box),
     unenrol: (box) => enrolment.unenrol(box),
     reconnect: (box) => enrolment.reconnect(box),
@@ -128,6 +145,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return { names: [...names], parent: options.daemonParent ?? DAEMON_PARENT };
     },
     logError,
+    log: (message) => bb.log.info(message),
   });
   enrolment = new Enrolment({
     boxes,
@@ -262,13 +280,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId, signal });
       return { hostId: environment.hostId, path: environment.path ?? null };
     },
-    async projectOf(threadId) {
-      try {
-        return (await bb.sdk.threads.get({ threadId })).projectId;
-      } catch {
-        return null;
-      }
-    },
+    projectOf,
   };
 
   registerTools(bb, api);

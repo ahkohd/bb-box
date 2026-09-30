@@ -314,7 +314,9 @@ export interface Backend {
   /**
    * Every guest this backend holds for this install's boxes, for the safety
    * sweep. Excludes free pool members, and guests with another install's ID
-   * or none, which still count against capacity.
+   * or none, which still count against capacity. The owner comes from the
+   * guest itself, as its labels, so a new instance on empty storage with the
+   * same install ID finds it: the sweep rebuilds lost records from it.
    */
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
 

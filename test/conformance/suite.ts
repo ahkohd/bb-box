@@ -548,6 +548,22 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             await until(() => options.bb!.connected(box, signal()), Math.max(0, restartedAt + RECONNECT_MS - Date.now()), "the box reconnects to BB", 100);
           });
 
+          it("a new instance on empty storage with the same install ID names the box's owner", { timeout, skip: skip.recovery ?? false }, async () => {
+            const { guest } = need();
+            // As when bb-box loses its storage: the sweep rebuilds the box's record from this.
+            const fresh = await options.create(new MemoryStorage(), CONFORMANCE_INSTALL);
+            others.push(fresh);
+            const held = (await fresh.held(signal())).find((other) => other.ref === guest.ref);
+            assert.ok(held, "the new instance holds the guest");
+            assert.equal(held.owner?.boxId, box.boxId);
+            assert.equal(held.owner?.threadId, box.threadId);
+            assert.equal(held.owner?.name, box.name);
+            assert.equal(held.owner?.kind, box.kind);
+            assert.ok(held.owner?.createdAt !== null && held.owner?.createdAt !== undefined, "it knows when the box was made");
+            assert.ok(Math.abs(held.owner.createdAt - box.createdAt) < 2000, "to within a second or so");
+            assert.notEqual(held.power, "unknown");
+          });
+
           it("a new instance finds the box after a restart and releases it", { timeout, skip: skip.recovery ?? false }, async () => {
             const { guest } = need();
             const restarted = await options.create(options.storage, CONFORMANCE_INSTALL);

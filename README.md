@@ -138,6 +138,23 @@ Then set a backend up with its guide, fill in its settings in BB under
 bb-box, and check them with `bb box doctor`. Each thread gets a Boxes panel,
 agents get the `box_` tools, and `skills/bb-box/SKILL.md` describes both.
 
+## Upgrade
+
+Do not remove bb-box to upgrade it: `bb plugin remove` deletes its settings
+and secrets. `bb plugin source bb-box` shows what it was installed from.
+
+- From a path, as above: pull, run `npm install` and `bb plugin build`, then
+  `bb plugin reload bb-box`.
+- From a branch, with `bb plugin install git:<bb-box repository>@<branch>`:
+  `bb plugin update bb-box` moves it to the branch's newest commit and keeps
+  its settings and storage. `bb plugin outdated` shows whether there is one.
+- From a commit or a tag: BB pins it, and `bb plugin update` refuses. Only a
+  remove and an install move it, so install from a branch instead.
+
+If bb-box loses its storage, its boxes keep running: take its install ID
+back with `bb box install-id --set <id>`, and the next sweep restores the
+boxes of live threads from their guests.
+
 ## Develop
 
 ```sh

@@ -118,7 +118,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const installId = app.backends.installId;
               if (options.json) return json({ installId });
               if (installId === before) return out(`This install's ID is ${installId}.`);
-              return out(`This install's ID is now ${installId}. The next sweep adopts or releases the guests that carry it; run bb box sweep to do it now.`);
+              return out(`This install's ID is now ${installId}. The next sweep restores the boxes of the guests that carry it; run bb box sweep to do it now.`);
             }),
         }),
         sweep: cliCommand({
@@ -132,7 +132,8 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
                 [
                   `Boxes of ended threads released: ${report.released}`,
                   `Leftover guests removed: ${report.leftovers}`,
-                  `Boxes rebuilt from their guests: ${report.adopted}`,
+                  `Boxes restored from their guests: ${report.adopted}`,
+                  `Guests kept until BB says whether their thread ended: ${report.kept}`,
                   `Interrupted acquires and releases carried on: ${report.resumed}`,
                 ].join("\n"),
               );

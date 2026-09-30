@@ -31,6 +31,11 @@ function notFound(what: string): Error {
   return Object.assign(new Error(`${what} not found`), { status: 404, code: "not_found" });
 }
 
+/** What BB's SDK throws for a thread that does not exist or was deleted. */
+function threadNotFound(): Error {
+  return Object.assign(new Error("HTTP 404: Thread not found"), { status: 404, code: "thread_not_found" });
+}
+
 /** A backend driver for the fake backend, switched on by "fake-enabled". "fake-broken" makes its settings wrong. */
 function fakeDriver(root: string, world: { backend: FakeBackend | null }): BackendDriver<Record<string, never>> {
   return {
@@ -75,8 +80,10 @@ async function start(settings: Record<string, PluginSettingValue> = { "fake-enab
     bootstraps: [] as string[],
     /** Host calls, in order, to check a machine is removed before its box. */
     events: [] as string[],
-    /** Makes threads.get fail as a network error would. */
-    threadsDown: false,
+    /** Makes threads.get fail with this error, such as a network error. */
+    threadsError: null as Error | null,
+    /** Makes threads.get fail for one thread. */
+    threadErrors: new Map<string, Error>(),
   };
   const { bb, harness } = createFakePluginHost({
     pluginId: "bb-box",
@@ -84,9 +91,10 @@ async function start(settings: Record<string, PluginSettingValue> = { "fake-enab
     sdk: {
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
-          if (world.threadsDown) throw new Error("connect ECONNREFUSED 127.0.0.1:3000");
+          const error = world.threadsError ?? world.threadErrors.get(threadId);
+          if (error) throw error;
           const thread = threads.get(threadId);
-          if (!thread) throw notFound("Thread");
+          if (!thread) throw threadNotFound();
           return thread;
         },
       },
@@ -403,13 +411,71 @@ test("the sweep releases boxes of threads that are gone, but not when BB does no
 
   await tool("box_acquire", {});
   world.threads.delete(THREAD);
-  world.threadsDown = true;
-  assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Boxes of ended threads released: 0/);
-  assert.equal((await app.boxes.list(THREAD)).length, 1, "a network error does not end a thread");
+  const answers: [string, Error][] = [
+    ["a network error", new Error("connect ECONNREFUSED 127.0.0.1:3000")],
+    ["a 404 from a route BB does not have yet", Object.assign(new Error("HTTP 404: Not Found"), { status: 404 })],
+    ["another resource's not-found", Object.assign(new Error("HTTP 404: Plugin not found"), { status: 404, code: "plugin_not_found" })],
+    ["a not-found that mentions the thread", Object.assign(new Error("HTTP 404: Not found: project of thread"), { status: 404, code: "not_found" })],
+  ];
+  for (const [what, error] of answers) {
+    world.threadsError = error;
+    assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Boxes of ended threads released: 0/);
+    assert.equal((await app.boxes.list(THREAD)).length, 1, `${what} does not end a thread`);
+  }
 
-  world.threadsDown = false;
+  world.threadsError = null;
   assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Boxes of ended threads released: 1/);
   assert.deepEqual(await app.boxes.list(THREAD), []);
+});
+
+test("after bb-box loses its storage, the sweep restores a live thread's box from its guest and leaves it running", async (t) => {
+  const { harness, bb, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.threads.set("thr_two", makeThreadResponse({ id: "thr_two", projectId: PROJECT }));
+  world.threads.set("thr_three", makeThreadResponse({ id: "thr_three", projectId: PROJECT }));
+
+  await tool("box_acquire", {});
+  await tool("box_acquire", {}, "thr_two");
+  await tool("box_acquire", {}, "thr_three");
+  const [live] = await app.boxes.list(THREAD);
+  const [ended] = await app.boxes.list("thr_two");
+  const [unsure] = await app.boxes.list("thr_three");
+  await tool("box_run", { box: live!.name, command: "echo kept > work.txt" });
+  // The plugin's storage loses every box record; the guests keep running.
+  for (const key of await bb.storage.kv.list("box/")) await bb.storage.kv.delete(key);
+  for (const key of await bb.storage.kv.list("index/")) await bb.storage.kv.delete(key);
+  world.threads.set("thr_two", makeThreadResponse({ id: "thr_two", projectId: PROJECT, archivedAt: Date.now() }));
+  world.threads.set("thr_three", { ...makeThreadResponse({ id: "thr_three", projectId: PROJECT }), deletedAt: undefined } as unknown as Thread);
+  world.threadErrors.set("thr_three", Object.assign(new Error("HTTP 404: Not Found"), { status: 404 }));
+
+  const swept = (await harness.behavior.runCli(["sweep"])).stdout ?? "";
+  assert.match(swept, /Boxes restored from their guests: 1/);
+  assert.match(swept, /Leftover guests removed: 1/);
+  assert.match(swept, /Guests kept until BB says whether their thread ended: 1/);
+
+  const restored = (await app.boxes.list(THREAD))[0]!;
+  assert.equal(restored.id, live!.id);
+  assert.equal(restored.name, live!.name);
+  assert.equal(restored.kind, live!.kind);
+  assert.equal(restored.projectId, PROJECT);
+  assert.equal(restored.state, "ready");
+  assert.equal(restored.error, null);
+  assert.deepEqual(restored.guest, live!.guest);
+  const result = await tool("box_run", { box: live!.name, command: "cat work.txt" });
+  assert.match(text(result), /kept/);
+  assert.deepEqual(await app.boxes.list("thr_two"), [], "the archived thread's guest went");
+  assert.deepEqual(await app.boxes.list("thr_three"), [], "no record until BB answers");
+  const held = (await world.backend!.held()).map((guest) => guest.owner?.boxId).sort();
+  assert.deepEqual(held, [live!.id, unsure!.id].sort());
+  assert.ok(!held.includes(ended!.id));
+  const logs = harness.inspection.logEntries.map((entry) => entry.message);
+  assert.ok(logs.some((line) => line.startsWith(`Restored box ${live!.name} of thread ${THREAD}`)), "the restore is logged");
+  assert.ok(logs.some((line) => line.includes(`${ended!.id}, which no box records: its box's thread thr_two was archived or deleted`)));
+  assert.ok(logs.some((line) => line.startsWith(`Kept guest`) && line.includes(unsure!.id)));
+
+  world.threadErrors.clear();
+  assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Boxes restored from their guests: 1/);
+  assert.equal((await app.boxes.list("thr_three"))[0]?.id, unsure!.id, "restored once BB answers");
 });
 
 test("refusals say what to do next", async (t) => {
@@ -528,7 +594,7 @@ test("bb box install-id shows the install's ID, and --set takes an old one back 
   const before = world.backend;
   const set = await harness.behavior.runCli(["install-id", "--set", "old-install"]);
   assert.equal(set.exitCode, 0, set.stderr);
-  assert.match(set.stdout ?? "", /^This install's ID is now old-install\. The next sweep adopts or releases the guests that carry it/);
+  assert.match(set.stdout ?? "", /^This install's ID is now old-install\. The next sweep restores the boxes of the guests that carry it/);
   assert.equal(await bb.storage.kv.get("install-id"), "old-install");
   assert.notEqual(world.backend, before, "the backend is made again with the ID");
   assert.deepEqual(JSON.parse((await harness.behavior.runCli(["install-id", "--json"])).stdout ?? ""), { installId: "old-install" });

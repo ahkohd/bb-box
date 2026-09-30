@@ -31,7 +31,10 @@ The core uses only [src/backends/types.ts](../src/backends/types.ts) and
    transport's `route(port)`. A kind with computer use needs a command
    transport with `spawn`, which carries the driver's MCP session.
 3. Record ownership at the provider (tags, names or a marker file), so
-   `held()` finds every guest even if bb-box's storage is lost. Record
+   `held()` finds every guest even if bb-box's storage is lost. Record the
+   box's ID, thread, name, kind and creation time, which the sweep restores
+   a lost record from
+   ([019](decisions/019-lost-records-are-restored-from-guests.md)). Record
    `context.installId` with it from the first write, on warm and part-made
    guests too, and list only this install's guests in `held()`
    ([018](decisions/018-guests-name-their-install-and-box.md)).

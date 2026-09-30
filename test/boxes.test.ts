@@ -498,6 +498,79 @@ test("the sweep releases guests no box owns and adopts guests of live threads", 
   assert.deepEqual((await world.backend.held()).map((guest) => guest.ref).sort(), [kept.guest!.ref, lost.guest!.ref].sort());
 });
 
+test("after its records are wiped, the sweep restores the boxes of live threads, releases only those of ended threads, and keeps the rest", async () => {
+  const world = setup();
+  const acquire = async (threadId: string, kind = "linux-headless") => ready(world.boxes, await world.boxes.acquire({ threadId, projectId: null, kind }));
+  const running = await acquire("thr_live", "linux-desktop");
+  const stopped = await acquire("thr_live");
+  const silent = await acquire("thr_quiet");
+  const ended = await acquire("thr_ended");
+  const unsure = await acquire("thr_unsure");
+  await world.boxes.stop("thr_live", stopped.name);
+  await world.boxes.run("thr_live", running.name, "echo work > file.txt");
+  // Every record and index entry goes, as when bb-box loses its storage; the backend's own keys stay.
+  for (const key of [...(await world.kv.list("box/")), ...(await world.kv.list("index/"))]) await world.kv.delete(key);
+  const boxes = world.restart();
+  assert.deepEqual(await boxes.all(), []);
+  world.threads.set("thr_ended", "ended");
+  world.threads.set("thr_unsure", "unknown");
+  world.backend.faults.silent = silent.guest!.ref;
+
+  const report = await boxes.sweep();
+  assert.deepEqual({ ...report }, { released: 0, leftovers: 1, adopted: 3, kept: 1, resumed: 0 });
+
+  for (const [before, state] of [[running, "ready"], [stopped, "stopped"]] as const) {
+    const after = await boxes.find(before.id);
+    assert.ok(after, `${before.name} is restored`);
+    assert.equal(after.threadId, before.threadId);
+    assert.equal(after.name, before.name);
+    assert.equal(after.kind, before.kind);
+    assert.equal(after.kindLabel, before.kindLabel);
+    assert.deepEqual(after.capabilities, before.capabilities);
+    assert.deepEqual(after.guest, before.guest);
+    assert.equal(after.createdAt, before.createdAt);
+    assert.equal(after.state, state);
+    assert.equal(after.error, null);
+  }
+  const quiet = await boxes.find(silent.id);
+  assert.equal(quiet?.state, "ready", "its guest runs");
+  assert.match(quiet?.error ?? "", /did not answer when bb-box restored/);
+  delete world.backend.faults.silent;
+  assert.equal(await boxes.find(ended.id), null);
+  assert.equal(await boxes.find(unsure.id), null, "no record until BB answers");
+  assert.deepEqual(
+    (await world.backend.held()).map((guest) => guest.owner?.boxId).sort(),
+    [running.id, stopped.id, silent.id, unsure.id].sort(),
+    "only the ended thread's guest went",
+  );
+  assert.equal((await boxes.run("thr_live", running.name, "cat file.txt")).result.stdout, "work\n");
+
+  // Records restored once are left alone; a thread BB confirms later gets its box back.
+  world.threads.set("thr_unsure", "live");
+  assert.deepEqual({ ...(await boxes.sweep()) }, { released: 0, leftovers: 0, adopted: 1, kept: 0, resumed: 0 });
+  assert.equal((await boxes.find(unsure.id))?.name, unsure.name);
+  assert.equal(await boxes.release("thr_live", running.name), null);
+  assert.deepEqual(
+    (await world.backend.held()).map((guest) => guest.owner?.boxId).sort(),
+    [stopped.id, silent.id, unsure.id].sort(),
+  );
+});
+
+test("the sweep never releases a guest whose record is missing while its thread is live or unknown", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await world.kv.delete(`box/${THREAD}/${box.id}`);
+  await world.kv.delete(`index/${box.id}`);
+  for (const liveness of ["unknown", "unknown", "live", "live"] as const) {
+    world.threads.set(THREAD, liveness);
+    const report = await world.boxes.sweep();
+    assert.equal(report.leftovers, 0, `a ${liveness} thread keeps its guest`);
+    assert.equal(report.released, 0);
+  }
+  assert.equal((await world.boxes.find(box.id))?.state, "ready");
+  assert.deepEqual((await world.backend.held()).map((guest) => guest.owner?.boxId), [box.id]);
+});
+
 test("the sweep releases a guest whose box moved on or failed", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));

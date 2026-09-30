@@ -72,6 +72,8 @@ export interface FakeFaults {
   /** Real: the reset fails, so the machine goes out of service with this reason. */
   reset?: string;
   doctor?: string;
+  /** The guest whose command transport does not answer, although it runs. */
+  silent?: string;
 }
 
 interface GuestRecord {
@@ -305,7 +307,8 @@ export class FakeBackend implements Backend {
         open: async () => ({ route: { type: "tcp", host: "127.0.0.1", port: await this.#vncPort() }, auth: { type: "none" } }),
       }),
     );
-    return { command: new FakeTransport(this.#home(guest.ref), () => this.power(guest)), displays, access: null };
+    const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);
+    return { command: new FakeTransport(this.#home(guest.ref), power), displays, access: null };
   }
 
   async doctor(): Promise<DoctorReport> {

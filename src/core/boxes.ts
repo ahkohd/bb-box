@@ -95,8 +95,13 @@ export interface BoxesDeps {
   general(): Promise<GeneralConfig>;
   /** Tells panels and tools that a thread's boxes changed. */
   notify(threadId: string): void;
-  /** Whether a thread still exists and is not archived. */
+  /**
+   * Whether a thread still exists and is not archived. "ended" only when BB
+   * says so: the sweep releases the thread's boxes and guests on it.
+   */
   thread(threadId: string): Promise<ThreadLiveness>;
+  /** A thread's project, for a box the sweep restores from its guest. */
+  projectOf?(threadId: string): Promise<string | null>;
   /** Enrols a ready box as a BB machine. Called without awaiting. */
   enrol?(box: BoxRecord): Promise<void>;
   /** Removes a box's BB machine. Awaited before the backend releases the box. */
@@ -112,6 +117,8 @@ export interface BoxesDeps {
    */
   access?(box: BoxRecord): Promise<Access | null>;
   logError(operation: string, error: unknown): void;
+  /** Records what the sweep did to a guest, and why. */
+  log?(message: string): void;
   /** How long a command waits for its box to finish enrolling. */
   readonly enrolWaitMs?: number;
   now?(): number;
@@ -211,8 +218,10 @@ export interface SweepReport {
   readonly released: number;
   /** Guests released that no box owns. */
   readonly leftovers: number;
-  /** Records rebuilt from guests whose record was lost. */
+  /** Records restored from guests whose record was lost. */
   readonly adopted: number;
+  /** Guests with no record whose thread BB did not confirm, kept for the next sweep. */
+  readonly kept: number;
   /** Acquires and releases a restart interrupted, carried on. */
   readonly resumed: number;
 }
@@ -829,9 +838,10 @@ export class Boxes {
   /**
    * The safety net, run at start and every few minutes. In order: releases
    * the boxes of threads that ended, finishes interrupted releases and
-   * acquires, releases guests no box owns, adopts guests of live threads
-   * whose record was lost, checks power, and lets each backend do its upkeep.
-   * Nothing is released for age or idleness.
+   * acquires, restores the records of guests whose record was lost, releases
+   * guests no box can own, checks power, and lets each backend do its upkeep.
+   * Nothing is released for age or idleness, and no guest because its record
+   * is missing: only when BB says its thread was archived or deleted.
    */
   async sweep(signal?: AbortSignal): Promise<SweepReport> {
     const liveness = new Map<string, Promise<ThreadLiveness>>();
@@ -846,6 +856,7 @@ export class Boxes {
     let released = 0;
     let leftovers = 0;
     let adopted = 0;
+    let kept = 0;
     let resumed = 0;
 
     // First, as at the first start after an upgrade: this install's ID goes on
@@ -902,15 +913,31 @@ export class Boxes {
             continue;
           }
           const owner = guest.owner;
-          const owned = owner && records.find((box) => box.id === owner.boxId);
-          const state = owner && !owned ? await thread(owner.threadId) : "ended";
-          if (state === "live") {
-            if (await this.#adopt(backend, guest)) adopted++;
-          } else if (state === "ended") {
-            // No box owns it: an acquire interrupted before its claim was
-            // labelled, a box that moved to another guest, or an ended thread.
-            await backend.release(guest, QUIET, signal);
+          if (!owner) {
+            // An acquire interrupted before its guest named a box: no box can own it.
+            await this.#releaseLeftover(backend, guest, "it names no box", signal);
             leftovers++;
+            continue;
+          }
+          const owned = records.find((box) => box.id === owner.boxId);
+          if (owned) {
+            // Its box has another guest now, or none, as after an acquire that tried again or failed.
+            if (isAcquiring(owned) || this.#work.has(owned.id)) continue;
+            await this.#releaseLeftover(backend, guest, `its box ${owned.name} ${owned.guest ? `has guest ${owned.guest.ref} now` : "holds no guest"}`, signal);
+            leftovers++;
+            continue;
+          }
+          // Its record was lost, as when bb-box lost its storage. The guest
+          // names its box and thread, so it goes only when the thread ended.
+          const state = await thread(owner.threadId);
+          if (state === "live") {
+            if (await this.#restore(backend, guest, signal)) adopted++;
+          } else if (state === "ended") {
+            await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} was archived or deleted`, signal);
+            leftovers++;
+          } else {
+            this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB did not say whether thread ${owner.threadId} still exists.`);
+            kept++;
           }
         } catch (error) {
           this.#deps.logError("sweep", error);
@@ -927,24 +954,38 @@ export class Boxes {
       signal?.throwIfAborted();
       await backend.maintain?.(signal).catch((error) => this.#deps.logError(`maintain ${backend.id}`, error));
     }
-    return { released, leftovers, adopted, resumed };
+    return { released, leftovers, adopted, kept, resumed };
   }
 
-  /** Rebuilds the record of a live thread's guest, for example after storage was lost. */
-  async #adopt(backend: Backend, guest: HeldGuest): Promise<boolean> {
-    const owner = guest.owner!;
-    return this.#locked(owner.threadId, async () => {
-      if (await this.#read(owner.threadId, owner.boxId)) return false;
+  async #releaseLeftover(backend: Backend, guest: HeldGuest, reason: string, signal?: AbortSignal): Promise<void> {
+    this.#deps.log?.(`Releasing guest ${guest.ref}${guest.owner ? ` of box ${guest.owner.boxId}` : ""}, which no box records: ${reason}.`);
+    await backend.release(guest, QUIET, signal);
+  }
+
+  /**
+   * Rebuilds the record of a live thread's guest, for example after storage
+   * was lost, from what the guest names: its box, thread, name, kind and
+   * creation, with its reference, address and data. A running guest is ready
+   * when its command transport answers. Its BB machine is not restored.
+   */
+  async #restore(backend: Backend, held: HeldGuest, signal?: AbortSignal): Promise<boolean> {
+    const { owner: found, power, ...guest } = held;
+    const owner = found!;
+    const kind = backend.kinds().find((candidate) => candidate.id === owner.kind);
+    const kindId = owner.kind ?? "unknown";
+    const answers = power === "stopped" ? false : await this.#answers(backend, guest, kindId, signal);
+    const projectId = (await this.#deps.projectOf?.(owner.threadId).catch(() => null)) ?? null;
+    const restored = await this.#locked(owner.threadId, async () => {
+      if (await this.#read(owner.threadId, owner.boxId)) return null;
       const existing = await this.list(owner.threadId);
       const taken = new Set(existing.map((box) => box.name));
-      const kind = backend.kinds().find((candidate) => candidate.id === owner.kind);
       const name = owner.name && isFriendlyName(owner.name) && !taken.has(owner.name) ? owner.name : generateName(taken, this.#random);
       const box: BoxRecord = {
         id: owner.boxId,
         threadId: owner.threadId,
-        projectId: null,
+        projectId,
         name,
-        kind: owner.kind ?? "unknown",
+        kind: kindId,
         kindLabel: kind?.label ?? owner.kind ?? "Unknown kind",
         requires: kind?.requires ?? [],
         capabilities: kind?.capabilities ?? UNKNOWN_KIND,
@@ -952,9 +993,12 @@ export class Boxes {
         backendLabel: backend.label,
         nature: backend.nature,
         role: "box",
-        guest: { ref: guest.ref, host: guest.host, address: guest.address, ...(guest.data ? { data: guest.data } : {}) },
-        state: guest.power === "stopped" ? "stopped" : "ready",
-        error: null,
+        guest,
+        state: power === "stopped" ? "stopped" : "ready",
+        error:
+          power === "stopped" || answers
+            ? null
+            : "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.",
         createdAt: owner.createdAt ?? this.#now(),
         readyAt: owner.createdAt ?? this.#now(),
         releaseRequestedAt: null,
@@ -963,9 +1007,23 @@ export class Boxes {
         enrol: { state: "off", hostId: null, error: null },
       };
       await this.#deps.kv.set(indexKey(box.id), box.threadId);
-      await this.#write(box);
-      return true;
+      return this.#write(box);
     });
+    if (restored) {
+      this.#deps.log?.(`Restored box ${restored.name} of thread ${restored.threadId} from guest ${guest.ref}, whose record was lost. It is ${restored.state}.`);
+    }
+    return restored !== null;
+  }
+
+  /** Whether a guest's command transport answers, for a box being restored. */
+  async #answers(backend: Backend, guest: Guest, kind: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const { command } = await backend.transports(guest, kind);
+      return command ? await command.probe(signal) : true;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return false;
+    }
   }
 
   /** Cancels acquires in progress, which a restart then resumes, and waits for running tasks. */

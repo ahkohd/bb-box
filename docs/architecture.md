@@ -716,17 +716,24 @@ Nothing expires, so a box must never be forgotten.
   1. records this install on the guests of its boxes from before install
      IDs, through `stamp()`, once per box. A guest with no install ID that
      no box records is left to the doctor's note;
-  2. releases the boxes of threads that are archived, deleted or gone;
+  2. releases the boxes of threads that BB says were archived or deleted.
+     A thread has ended only when BB returns it archived or deleted, or
+     answers `thread_not_found`; any other error keeps its boxes;
   3. finishes interrupted releases;
-  4. releases this install's guests from `held()` that have no owner (an
-     acquire interrupted before the claim was labelled) or whose thread has
-     ended;
-  5. adopts guests whose thread is live but whose record was lost;
-  6. calls `maintain()`.
+  4. for each of this install's guests from `held()` that no record names:
+     releases it when it names no box (an acquire interrupted before the
+     claim was labelled) or when its box now holds another guest or none.
+     Otherwise it restores the box's record from the guest while BB says
+     the thread is live, releases the guest once BB says the thread ended,
+     and keeps it while BB does not say
+     ([019](decisions/019-lost-records-are-restored-from-guests.md));
+  5. calls `maintain()`.
 
   A guest from `held()` belongs to a box record only when it names that
   box, or, with no owner yet, when the box is still acquiring. So a reused
   reference never makes the sweep treat a new box's guest as an old one's.
+  No guest is released because its record is missing, and the sweep logs
+  each guest it releases, restores or keeps, with the reason.
 - **A guest deleted outside bb-box** makes `power` return nothing; the box is
   marked gone and the panel says so. It stays gone when its reference is
   reused, since the new guest names another box.
@@ -741,7 +748,7 @@ Nothing expires, so a box must never be forgotten.
 
 | Data | Lives in | Owned by | Survives |
 | --- | --- | --- | --- |
-| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | rebuilt by the sweep from provider records if lost |
+| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | restored by the sweep from the guests' labels if lost, while their threads are live; a restored box is not re-enrolled as a BB machine |
 | Which guest belongs to which box and thread | the provider (tags, names), or a marker on a real machine | backend | the plugin's storage being lost |
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |

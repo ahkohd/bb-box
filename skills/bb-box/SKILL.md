@@ -114,9 +114,14 @@ reserve, or has no free address or GPU. The refusal says what to do instead.
 ## Clean-up
 
 - When a thread is archived or deleted, bb-box releases its boxes.
-- Every 3 minutes a sweep releases the boxes of ended threads. It removes
-  guests that bb-box made but no box owns, and rebuilds the record of a
-  guest whose thread is still live.
+- Every 3 minutes a sweep releases the boxes of threads that BB says were
+  archived or deleted. It removes guests that bb-box made that name no box,
+  or whose box now has another guest.
+- A guest whose record was lost, as when bb-box loses its storage, keeps
+  running. The sweep restores its box from the guest's labels while its
+  thread is live, and releases it only once BB says the thread ended.
+  `bb plugin logs bb-box` shows each guest the sweep released, restored or
+  kept, and why.
 - The sweep also finishes acquires and releases that a restart interrupted.
 - Each install records its ID on its guests and acts only on those. A guest
   of another install, or with no ID, is left alone but still takes capacity.
@@ -125,5 +130,6 @@ reserve, or has no free address or GPU. The refusal says what to do instead.
   `bb box install-id --set <id>` and run `bb box sweep`.
 - A box whose guest was deleted, or whose guest's reference now holds
   another box, shows as gone. Releasing it leaves the other box alone.
-- A thread whose state BB cannot read keeps its boxes.
+- A thread whose state BB cannot read keeps its boxes. Only BB's "thread
+  not found", or a thread BB returns archived or deleted, ends a thread.
 - Boxes do not expire.

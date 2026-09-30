@@ -23,3 +23,4 @@ that changes gets a new record that supersedes the old one.
 | [016](016-changes-from-building-v1.md) | Changes from building Interface v1: jump hosts, first keys, setup, stale releases, facts |
 | [017](017-boxes-clear-bb-daemon-state-at-boot.md) | Boxes clear BB's daemon lock and PID file at boot |
 | [018](018-guests-name-their-install-and-box.md) | Guests name their install and their box, and backends check both before acting |
+| [019](019-lost-records-are-restored-from-guests.md) | The sweep restores lost records, and only BB ends a thread |
