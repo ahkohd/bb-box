@@ -16,7 +16,7 @@ export const VALID = {
   "proxmox-lxc-url": "https://pve.example.com:8006/",
   "proxmox-lxc-token-id": "bb-box@pve!plugin",
   "proxmox-lxc-token-secret": "s3cret",
-  "proxmox-lxc-headless-template": 9000,
+  "proxmox-lxc-headless-templates": "9000",
   "proxmox-lxc-bridge": "vmbr1",
   "proxmox-lxc-subnet": "192.0.2.0/24",
   "proxmox-lxc-gateway": "192.0.2.1",

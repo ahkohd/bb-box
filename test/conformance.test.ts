@@ -41,12 +41,12 @@ await conformance({
 
 fakeSsh();
 const proxmox = new FakeProxmox();
-proxmox.addTemplate(9000);
-proxmox.addTemplate(9001);
+for (const template of [9000, 9001, 9002, 9003]) proxmox.addTemplate(template);
 const config = lxcConfig({
   "proxmox-lxc-token-id": FAKE_TOKEN.tokenId,
   "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret,
-  "proxmox-lxc-desktop-template": 9001,
+  "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b",
+  "proxmox-lxc-desktop-cpu-templates": "9003",
   "proxmox-lxc-ssh-private-key": "",
 });
 

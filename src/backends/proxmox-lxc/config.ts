@@ -2,8 +2,11 @@
 // starts with "proxmox-lxc-". The plugin's settings page, the smoke script's
 // settings file and the tests all go through parseLxcSettings.
 //
-// There are two templates. Headless boxes of both headless kinds are clones
-// of one; desktop boxes are clones of the other.
+// Templates come in three flavours, each a list of CT templates: headless
+// ones serve both headless kinds, GPU desktop ones (each carrying one GPU,
+// named by an ID) serve linux-desktop, and CPU-only desktop ones serve
+// linux-desktop-cpu. A new box is cloned from the flavour's least used
+// template; a GPU desktop goes to the GPU with the fewest desktops.
 //
 // Each VMID in the owned range has a fixed address: the n-th VMID gets the
 // n-th address. Proxmox refuses a second guest with the same VMID, so two
@@ -18,22 +21,30 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { ParsedSettings } from "../types.ts";
 
-export const LXC_TEMPLATES = ["headless", "desktop"] as const;
-export type LxcTemplate = (typeof LXC_TEMPLATES)[number];
+export const LXC_FLAVOURS = ["headless", "desktop", "desktop-cpu"] as const;
+export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
 
-/** The kinds each template's clones serve. */
-export const TEMPLATE_KINDS: Readonly<Record<LxcTemplate, readonly string[]>> = {
+/** The kinds each flavour's clones serve. */
+export const FLAVOUR_KINDS: Readonly<Record<LxcFlavour, readonly string[]>> = {
   headless: ["linux-headless", "linux-headless-docker"],
   desktop: ["linux-desktop"],
+  "desktop-cpu": ["linux-desktop-cpu"],
 };
 
-export function templateOf(kind: string): LxcTemplate | null {
-  return LXC_TEMPLATES.find((template) => TEMPLATE_KINDS[template].includes(kind)) ?? null;
+export function flavourOf(kind: string): LxcFlavour | null {
+  return LXC_FLAVOURS.find((flavour) => FLAVOUR_KINDS[flavour].includes(kind)) ?? null;
 }
 
-export interface LxcTemplateConfig {
-  /** CT template VMID, or null when its kinds are not set up. */
-  readonly template: number | null;
+export interface LxcTemplate {
+  /** CT template VMID. */
+  readonly vmid: number;
+  /** The GPU a GPU desktop template carries, or null. Templates with the same ID share a GPU. */
+  readonly gpu: string | null;
+}
+
+export interface LxcFlavourConfig {
+  /** In the order the settings list them. Empty when the flavour's kinds are off. */
+  readonly templates: readonly LxcTemplate[];
   readonly cores: number;
   readonly memoryMiB: number;
   /** Root disk size, or null to keep the template's. A larger size is applied while the box runs. */
@@ -54,10 +65,10 @@ export interface LxcConfig {
     readonly node: string | null;
     readonly pool: string;
   };
-  readonly templates: Readonly<Record<LxcTemplate, LxcTemplateConfig>>;
+  readonly flavours: Readonly<Record<LxcFlavour, LxcFlavourConfig>>;
   readonly desktop: {
-    /** The most desktop boxes the node's GPU runs at once, or null for no limit. */
-    readonly gpuDesktops: number | null;
+    /** The most desktop boxes each GPU runs at once, or null for no limit. */
+    readonly perGpu: number | null;
   };
   readonly vmids: { readonly first: number; readonly last: number };
   readonly network: {
@@ -79,6 +90,7 @@ export const LXC_DEFAULTS = {
   vmidLast: 9999,
   headless: { cores: 2, memoryMiB: 4096 },
   desktop: { cores: 4, memoryMiB: 8192 },
+  "desktop-cpu": { cores: 4, memoryMiB: 8192 },
   bridge: "vmbr200",
   subnet: "10.200.0.0/24",
   gateway: "10.200.0.1",
@@ -106,36 +118,53 @@ export const LXC_KEYS = {
   addresses: "proxmox-lxc-addresses",
   sshPrivateKey: "proxmox-lxc-ssh-private-key",
   sshUser: "proxmox-lxc-ssh-user",
-  gpuDesktops: "proxmox-lxc-desktop-gpu-limit",
+  perGpu: "proxmox-lxc-desktops-per-gpu",
   reserveMemoryMiB: "proxmox-lxc-reserve-memory-mib",
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
 } as const;
 
-export function templateKey(template: LxcTemplate, field: "template" | "cores" | "memory-mib" | "disk-gib" | "warm"): string {
-  return `proxmox-lxc-${template}-${field}`;
+export function flavourKey(flavour: LxcFlavour, field: "templates" | "cores" | "memory-mib" | "disk-gib" | "warm"): string {
+  return `proxmox-lxc-${flavour}-${field}`;
 }
 
-function templateSettings(template: LxcTemplate): Record<string, PluginSettingDescriptor> {
-  const defaults = LXC_DEFAULTS[template];
-  const kinds = TEMPLATE_KINDS[template].join(" and ");
+const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readonly templates: string }>> = {
+  headless: {
+    name: "headless",
+    templates: "VMIDs of the CT templates linux-headless and linux-headless-docker boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+  },
+  desktop: {
+    name: "GPU desktop",
+    templates:
+      "One line per GPU desktop template that linux-desktop boxes are linked clones of: its VMID, a space and the ID of the GPU it carries, such as the UUID nvidia-smi -L shows. Empty turns them off.",
+  },
+  "desktop-cpu": {
+    name: "CPU desktop",
+    templates: "VMIDs of the CPU-only desktop templates linux-desktop-cpu boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+  },
+};
+
+function flavourSettings(flavour: LxcFlavour): Record<string, PluginSettingDescriptor> {
+  const defaults = LXC_DEFAULTS[flavour];
+  const { name, templates } = FLAVOUR_WORDS[flavour];
   return {
-    [templateKey(template, "template")]: {
-      type: "number",
-      label: `Proxmox LXC: ${template} template VMID`,
-      description: `The CT template ${kinds} boxes are linked clones of. 0 turns them off.`,
-      default: template === "headless" ? LXC_DEFAULTS.headlessTemplate : 0,
+    [flavourKey(flavour, "templates")]: {
+      type: "string",
+      label: `Proxmox LXC: ${name} templates`,
+      description: templates,
+      ...(flavour === "desktop" ? { experimental_multiline: true } : {}),
+      default: flavour === "headless" ? String(LXC_DEFAULTS.headlessTemplate) : "",
     },
-    [templateKey(template, "cores")]: { type: "number", label: `Proxmox LXC: ${template} cores`, default: defaults.cores },
-    [templateKey(template, "memory-mib")]: { type: "number", label: `Proxmox LXC: ${template} memory (MiB)`, default: defaults.memoryMiB },
-    [templateKey(template, "disk-gib")]: {
+    [flavourKey(flavour, "cores")]: { type: "number", label: `Proxmox LXC: ${name} cores`, default: defaults.cores },
+    [flavourKey(flavour, "memory-mib")]: { type: "number", label: `Proxmox LXC: ${name} memory (MiB)`, default: defaults.memoryMiB },
+    [flavourKey(flavour, "disk-gib")]: {
       type: "number",
-      label: `Proxmox LXC: ${template} disk (GiB)`,
+      label: `Proxmox LXC: ${name} disk (GiB)`,
       description: "0 keeps the template's size, which is quickest. A larger size is applied after the box starts, in about a second.",
       default: 0,
     },
-    [templateKey(template, "warm")]: {
+    [flavourKey(flavour, "warm")]: {
       type: "number",
-      label: `Proxmox LXC: warm ${template} boxes`,
+      label: `Proxmox LXC: warm ${name} boxes`,
       description: "Ready boxes kept started and waiting, so a new box is ready at once. 0 turns the warm pool off.",
       default: 0,
     },
@@ -188,12 +217,14 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "Boxes are made in this pool. The token needs rights on it.",
     default: LXC_DEFAULTS.pool,
   },
-  ...templateSettings("headless"),
-  ...templateSettings("desktop"),
-  [LXC_KEYS.gpuDesktops]: {
+  ...flavourSettings("headless"),
+  ...flavourSettings("desktop"),
+  ...flavourSettings("desktop-cpu"),
+  [LXC_KEYS.perGpu]: {
     type: "number",
-    label: "Proxmox LXC: desktops on the GPU at once",
-    description: "A new desktop box is refused when this many are on the node. 0 means no limit.",
+    label: "Proxmox LXC: desktops per GPU",
+    description:
+      "A new linux-desktop box goes to the GPU with the fewest desktops, and is refused when every GPU runs this many. 0 means no limit.",
     default: 0,
   },
   [LXC_KEYS.vmidFirst]: {
@@ -290,6 +321,45 @@ function wholeInRange(value: number, min: number, max: number): boolean {
 }
 
 /**
+ * A flavour's template list. Entries are separated by commas or new lines,
+ * or by spaces when there are no GPU IDs. A GPU desktop entry is a VMID and a
+ * GPU ID, separated by a space or "=".
+ */
+function templateList(
+  values: Readonly<Record<string, unknown>>,
+  flavour: LxcFlavour,
+  problems: string[],
+): LxcTemplate[] {
+  const key = flavourKey(flavour, "templates");
+  const raw = values[key];
+  const fallback = flavour === "headless" ? String(LXC_DEFAULTS.headlessTemplate) : "";
+  // A settings file may give a lone VMID as a number.
+  const listed = typeof raw === "number" ? (raw > 0 ? String(raw) : "") : text(values, key, fallback);
+  const gpu = flavour === "desktop";
+  const entries = listed.split(gpu ? /[,\n]+/ : /[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
+  const name = FLAVOUR_WORDS[flavour].name;
+  const templates: LxcTemplate[] = [];
+  for (const entry of entries) {
+    const [vmidText = "", id = "", ...rest] = entry.split(/\s*=\s*|\s+/);
+    const vmid = Number(vmidText);
+    if (!wholeInRange(vmid, 100, 999_999_999) || rest.length || (!gpu && id)) {
+      problems.push(
+        gpu
+          ? `Use one line per GPU desktop template, with its VMID and its GPU's ID, like "9101 GPU-0a1b2c3d". "${entry}" is not.`
+          : `Use VMIDs from 100 for the ${name} templates. "${entry}" is not one.`,
+      );
+      continue;
+    }
+    if (gpu && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(id)) {
+      problems.push(`Give GPU desktop template ${vmid} the ID of its GPU, like "${vmid} GPU-0a1b2c3d".`);
+      continue;
+    }
+    templates.push({ vmid, gpu: gpu ? id : null });
+  }
+  return templates;
+}
+
+/**
  * An OpenSSH private key in its usual form. Accepts a key pasted into a
  * one-line field, whose line breaks became spaces, and a base64-encoded key file.
  */
@@ -353,38 +423,36 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   const pool = text(values, LXC_KEYS.pool, LXC_DEFAULTS.pool);
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(pool)) problems.push("Use a Proxmox pool name such as bb-box.");
 
-  const templates = {} as Record<LxcTemplate, LxcTemplateConfig>;
-  for (const name of LXC_TEMPLATES) {
-    const template = number(values, templateKey(name, "template"), name === "headless" ? LXC_DEFAULTS.headlessTemplate : 0);
-    const diskGiB = number(values, templateKey(name, "disk-gib"), 0);
-    const config: LxcTemplateConfig = {
-      template: template > 0 ? template : null,
-      cores: number(values, templateKey(name, "cores"), LXC_DEFAULTS[name].cores),
-      memoryMiB: number(values, templateKey(name, "memory-mib"), LXC_DEFAULTS[name].memoryMiB),
+  const flavours = {} as Record<LxcFlavour, LxcFlavourConfig>;
+  for (const flavour of LXC_FLAVOURS) {
+    const name = FLAVOUR_WORDS[flavour].name;
+    const diskGiB = number(values, flavourKey(flavour, "disk-gib"), 0);
+    const config: LxcFlavourConfig = {
+      templates: templateList(values, flavour, problems),
+      cores: number(values, flavourKey(flavour, "cores"), LXC_DEFAULTS[flavour].cores),
+      memoryMiB: number(values, flavourKey(flavour, "memory-mib"), LXC_DEFAULTS[flavour].memoryMiB),
       diskGiB: diskGiB === 0 ? null : diskGiB,
-      warm: number(values, templateKey(name, "warm"), 0),
+      warm: number(values, flavourKey(flavour, "warm"), 0),
     };
-    if (config.template !== null && !wholeInRange(config.template, 100, 999_999_999)) {
-      problems.push(`Use a VMID from 100 for the ${name} template.`);
-    }
     if (!wholeInRange(config.cores, 1, 128)) problems.push(`Use 1 to 128 cores for ${name} boxes.`);
     if (!wholeInRange(config.memoryMiB, 256, 1_048_576)) problems.push(`Use 256 MiB or more of memory for ${name} boxes.`);
     if (config.diskGiB !== null && !wholeInRange(config.diskGiB, 1, 16_384)) problems.push(`Use 0, or a disk of 1 GiB or more, for ${name} boxes.`);
     if (!wholeInRange(config.warm, 0, 20)) problems.push(`Keep 0 to 20 warm ${name} boxes.`);
-    templates[name] = config;
+    flavours[flavour] = config;
   }
-  if (!LXC_TEMPLATES.some((name) => templates[name].template !== null)) problems.push("Set the VMID of the headless or desktop CT template.");
+  const listed = LXC_FLAVOURS.flatMap((flavour) => flavours[flavour].templates.map((template) => template.vmid));
+  for (const vmid of new Set(listed.filter((vmid, index) => listed.indexOf(vmid) !== index))) {
+    problems.push(`Template ${vmid} is listed more than once. List each template once, under one flavour.`);
+  }
+  if (!listed.length) problems.push("Set the VMID of at least one CT template: headless, GPU desktop or CPU desktop.");
 
   const first = number(values, LXC_KEYS.vmidFirst, LXC_DEFAULTS.vmidFirst);
   const last = number(values, LXC_KEYS.vmidLast, LXC_DEFAULTS.vmidLast);
   if (!wholeInRange(first, 100, 999_999_999) || !wholeInRange(last, first, 999_999_999)) {
     problems.push("Use a VMID range from 100 whose last VMID is not below its first.");
   }
-  for (const name of LXC_TEMPLATES) {
-    const template = templates[name].template;
-    if (template !== null && template >= first && template <= last) {
-      problems.push(`Move the ${name} template out of the box VMID range.`);
-    }
+  for (const vmid of new Set(listed)) {
+    if (vmid >= first && vmid <= last) problems.push(`Move template ${vmid} out of the box VMID range.`);
   }
 
   const bridge = text(values, LXC_KEYS.bridge, LXC_DEFAULTS.bridge);
@@ -434,8 +502,8 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   const user = text(values, LXC_KEYS.sshUser) || LXC_DEFAULTS.sshUser;
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user)) problems.push("Use a Linux user name for SSH.");
 
-  const gpuDesktops = number(values, LXC_KEYS.gpuDesktops, 0);
-  if (!wholeInRange(gpuDesktops, 0, 1_000)) problems.push("Use 0 or more for the desktops on the GPU at once.");
+  const perGpu = number(values, LXC_KEYS.perGpu, 0);
+  if (!wholeInRange(perGpu, 0, 1_000)) problems.push("Use 0 or more for the desktops per GPU.");
 
   const reserveMemoryMiB = number(values, LXC_KEYS.reserveMemoryMiB, LXC_DEFAULTS.reserveMemoryMiB);
   const reserveDiskGiB = number(values, LXC_KEYS.reserveDiskGiB, LXC_DEFAULTS.reserveDiskGiB);
@@ -448,8 +516,8 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
     ok: true,
     config: {
       proxmox: { apiUrl, tokenId, tokenSecret, caCertificate, tlsFingerprint, node, pool },
-      templates,
-      desktop: { gpuDesktops: gpuDesktops > 0 ? gpuDesktops : null },
+      flavours,
+      desktop: { perGpu: perGpu > 0 ? perGpu : null },
       vmids: { first, last },
       network: { bridge, prefix, gateway: gatewayText, addresses },
       ssh: { privateKey, user },

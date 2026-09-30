@@ -29,12 +29,11 @@ function fakes(proxmox: FakeProxmox): LxcBackendOptions {
 function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage(), options: LxcBackendOptions = {}) {
   const ssh = fakeSsh();
   const proxmox = new FakeProxmox();
-  proxmox.addTemplate(9000);
-  proxmox.addTemplate(9001);
+  for (const template of [9000, 9001, 9002, 9003, 9004]) proxmox.addTemplate(template);
   const config = lxcConfig({
     "proxmox-lxc-token-id": FAKE_TOKEN.tokenId,
     "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret,
-    "proxmox-lxc-desktop-template": 9001,
+    "proxmox-lxc-desktop-templates": "9001 gpu-a",
     "proxmox-lxc-vmid-first": 7000,
     "proxmox-lxc-vmid-last": 7009,
     ...values,
@@ -86,7 +85,7 @@ function releasing(): ReleaseHooks & { timings: Record<string, number> } {
 }
 
 test("kinds lists only kinds with a template", () => {
-  const { backend } = setup({ "proxmox-lxc-desktop-template": 0 });
+  const { backend } = setup({ "proxmox-lxc-desktop-templates": "" });
   const kinds = backend.kinds();
   assert.deepEqual(
     kinds.map((kind) => kind.id),
@@ -104,6 +103,10 @@ test("kinds lists only kinds with a template", () => {
   assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }]);
   assert.equal(desktop.capabilities.gpu, true);
   assert.equal(desktop.size, "4 cores, 8 GiB memory, the template's disk");
+  const cpu = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.kinds().find((kind) => kind.id === "linux-desktop-cpu")!;
+  assert.equal(cpu.capabilities.gpu, false);
+  assert.deepEqual(cpu.capabilities.displays, desktop.capabilities.displays);
+  assert.deepEqual(cpu.capabilities.computerUse, desktop.capabilities.computerUse);
 });
 
 test("a kind's size shows the template's disk once it is known, or the larger size set", async () => {
@@ -163,8 +166,8 @@ test("capacity refuses when the VMID range is full", async () => {
   assert.match(full.message!, /Every VMID from 7000 to 7000 is in use/);
 });
 
-test("capacity counts desktops on the GPU against its limit", async () => {
-  const { backend } = setup({ "proxmox-lxc-desktop-gpu-limit": 2 });
+test("capacity counts desktops on each GPU against the limit per GPU", async () => {
+  const { backend } = setup({ "proxmox-lxc-desktops-per-gpu": 2 });
   const headless = await backend.capacity("linux-headless", [], signal());
   assert.equal(headless.hosts[0]!.limits.find((limit) => limit.resource === "gpu-desktops"), undefined);
 
@@ -175,14 +178,51 @@ test("capacity counts desktops on the GPU against its limit", async () => {
 
   const full = await backend.capacity("linux-desktop", ["linux-desktop", "linux-headless"], signal());
   assert.equal(full.ok, false);
-  assert.match(full.message!, /pve runs 2 desktop boxes on its GPU, the most bb-box's settings allow/);
+  assert.match(full.message!, /Every GPU on pve runs 2 desktop boxes, the most bb-box's settings allow\. Release a desktop box, or raise the desktops per GPU/);
 
   const unlimited = await setup().backend.capacity("linux-desktop", [], signal());
   assert.deepEqual(unlimited.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 0, total: null, reserve: 0, unit: "count" });
 });
 
+test("desktops spread across GPUs, and a full set of GPUs points to CPU desktops", async () => {
+  const { backend, proxmox } = setup({
+    "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b",
+    "proxmox-lxc-desktop-cpu-templates": "9003",
+    "proxmox-lxc-desktops-per-gpu": 1,
+  });
+  const first = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  const second = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.deepEqual([first.data, first.facts], [{ template: 9001 }, [{ label: "GPU", value: "gpu-a" }]]);
+  assert.deepEqual([second.data, second.facts], [{ template: 9002 }, [{ label: "GPU", value: "gpu-b" }]]);
+  assert.ok(parseTags(proxmox.guests.get(Number(second.ref))!.config.tags).includes("template.9002"));
+
+  const full = await backend.capacity("linux-desktop", [], signal());
+  assert.equal(full.ok, false);
+  assert.deepEqual(full.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 2, total: 2, reserve: 0, unit: "count" });
+  assert.match(full.message!, /Every GPU on pve runs 1 desktop box, .* Use a linux-desktop-cpu box, or release a desktop box/);
+  assert.equal((await backend.capacity("linux-desktop-cpu", [], signal())).ok, true, "CPU desktops use no GPU");
+
+  const cpu = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
+  assert.deepEqual(cpu.data, { template: 9003 });
+  assert.equal(cpu.facts, undefined);
+
+  await backend.release(first, releasing());
+  assert.equal((await backend.capacity("linux-desktop", [], signal())).ok, true, "gpu-a has room again");
+  const third = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.deepEqual(third.data, { template: 9001 });
+});
+
+test("boxes spread across a flavour's templates", async () => {
+  const { backend } = setup({ "proxmox-lxc-headless-templates": "9000 9004" });
+  const made = await Promise.all([1, 2, 3].map(() => backend.acquire(identity(), null, hooks().value, signal())));
+  assert.deepEqual(
+    made.map((guest) => guest.data?.template),
+    [9000, 9004, 9000],
+  );
+});
+
 test("a desktop still being acquired counts once against the GPU limit", async () => {
-  const { backend, proxmox } = setup({ "proxmox-lxc-desktop-gpu-limit": 2 });
+  const { backend, proxmox } = setup({ "proxmox-lxc-desktops-per-gpu": 2 });
   const box = identity("linux-desktop");
   let during: number | undefined;
   const hook = hooks();
@@ -192,11 +232,11 @@ test("a desktop still being acquired counts once against the GPU limit", async (
   } }, signal());
   await acquired;
   assert.equal(during, 1, "the acquiring box is both pending and listed, and counts once");
-  assert.equal(proxmox.guests.size, 3);
+  assert.equal(proxmox.guests.size, 6);
 });
 
 test("an unknown kind is refused", async () => {
-  const { backend } = setup({ "proxmox-lxc-desktop-template": 0 });
+  const { backend } = setup({ "proxmox-lxc-desktop-templates": "" });
   await assert.rejects(backend.capacity("linux-desktop", [], signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
 });
 
@@ -209,7 +249,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
     return undefined;
   };
   const guest = await backend.acquire(box, null, hook.value, signal());
-  assert.deepEqual(guest, { ref: "7000", host: "pve", address: "192.0.2.100" });
+  assert.deepEqual(guest, { ref: "7000", host: "pve", address: "192.0.2.100", data: { template: 9000 } });
   assert.deepEqual(hook.events, ["claim 7000", "clone 7000", "starting"]);
   assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags", "warm"]);
 
@@ -231,6 +271,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
     "tags go in a PUT of their own",
   );
   const tags = parseTags(made.config.tags);
+  assert.equal(tags.at(-1), "template.9000");
   assert.deepEqual(ownerFromTags(tags), { boxId: box.boxId, threadId: box.threadId, name: null, kind: box.kind, createdAt: box.createdAt });
   assert.equal(ownerFromDescription(made.config.description)?.boxId, box.boxId);
 });
@@ -323,7 +364,7 @@ test("acquire resumes the guest of an interrupted acquire", async () => {
   const again = await backend.acquire(box, first, hook.value, signal());
   assert.deepEqual(again, first);
   assert.deepEqual(hook.events, ["starting"]);
-  assert.equal(proxmox.guests.size, 3);
+  assert.equal(proxmox.guests.size, 6, "five templates and the one box");
 
   const other = await backend.acquire(identity(), first, hooks().value, signal());
   assert.equal(other.ref, "7001", "a guest another box owns is not resumed");
@@ -437,7 +478,7 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   await backend.maintain();
   const warm = proxmox.guests.get(7000)!;
   assert.equal(warm.status, "running");
-  assert.deepEqual(parseTags(warm.config.tags), ["bb-box", "warm", "template.headless"]);
+  assert.deepEqual(parseTags(warm.config.tags), ["bb-box", "warm", "template.9000"]);
   assert.deepEqual(await backend.held(), [], "warm guests belong to no box");
 
   const box = identity();
@@ -450,7 +491,7 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
 
   // Claiming a warm guest starts a refill; maintain returns the one in flight.
   await backend.maintain();
-  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "warm", "template.headless"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "warm", "template.9000"]);
   const capacity = await backend.capacity("linux-headless", [], signal());
   assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
 
@@ -509,8 +550,8 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["proxmox.node", "Node", "ok"],
       ["proxmox.memory", "Node memory", "ok"],
       ["proxmox.pool", "Resource pool", "ok"],
-      ["template.headless", "Headless template", "ok"],
-      ["template.desktop", "Desktop template", "ok"],
+      ["template.9000", "Headless template 9000", "ok"],
+      ["template.9001", "GPU desktop template 9001 (GPU gpu-a)", "ok"],
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
       ["ssh.key", "SSH key", "ok"],
@@ -533,8 +574,9 @@ test("doctor says what is missing", async () => {
   const byId = Object.fromEntries(report.checks.map((check) => [check.id, check]));
   assert.equal(byId["proxmox.pool"]!.status, "fail");
   assert.match(byId["proxmox.pool"]!.fix!, /pveum pool add bbbox/);
-  assert.match(byId["template.headless"]!.fix!, /pct set 9000 --features nesting=1/);
-  assert.match(byId["template.desktop"]!.detail, /CT 9001 does not exist on pve/);
+  assert.match(byId["template.9000"]!.fix!, /pct set 9000 --features nesting=1/);
+  assert.match(byId["template.9001"]!.detail, /CT 9001 does not exist on pve/);
+  assert.match(byId["template.9001"]!.fix!, /remove it from the GPU desktop templates/);
   assert.match(byId["proxmox.bridge"]!.detail, /pve has no vmbr1/);
   assert.match(report.summary, /^Resource pool: /);
 });
