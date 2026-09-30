@@ -76,5 +76,12 @@ WebSocket mode is not measured yet.
 - **One daemon at enrolment.** The installer starts a temporary daemon to
   join, then installs the service and waits for it to connect again. If timing
   a real enrolment shows that this handover is a large part of it, bb-box will
-  ask for the installer to start the service directly. The enrolment research
-  measures it first.
+  ask for the installer to start the service directly. The experiment in
+  [enrolment and warm pools](research/enrolment-and-warm-pools.md) measures
+  it first.
+- **Machines hidden from thread placement.** If warm boxes are enrolled ahead,
+  bb-box would ask for a way to keep an unclaimed machine out of BB's machine
+  list and thread placement until a thread claims it.
+- **Linger in the installer.** Where the installer makes a systemd user
+  service, it could enable linger, so the service outlives the session that
+  installed it. bb-box does this in its templates meanwhile.

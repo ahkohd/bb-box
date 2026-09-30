@@ -100,12 +100,19 @@ the sweep repeats releases.
 | Kind | Promises | Offered by |
 | --- | --- | --- |
 | `linux-headless` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
-| `linux-headless-docker` | as above, plus the feature `docker` | Proxmox LXC (`nesting=1`), Docker when privileged |
+| `linux-headless-docker` | as above, plus the feature `docker` | Proxmox LXC (`nesting=1`), Docker when privileged, an SSH pool machine whose reset restores the whole machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
 | `linux-desktop-cpu` | a Linux desktop without a GPU | Docker, an SSH pool machine, Proxmox LXC on a host with no GPU |
-| `windows-desktop` | a Windows desktop | Proxmox QEMU |
-| `macos-desktop` | a macOS desktop | a physical Mac, Tart |
+| `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
+| `macos-desktop` | a macOS desktop, no GPU | a physical Mac, Tart |
+| `macos-desktop-xcode` | as above, plus the features `xcode` and `ios-simulator` | a physical Mac or Tart image with Xcode |
 
+- "No GPU" means no scarce GPU is taken. Macs render with Metal, and Tart
+  through its paravirtualised GPU, so macOS kinds declare `gpu: false`.
+- A box user in the `docker` group is root on the machine, so an SSH pool
+  offers `linux-headless-docker` only if its reset restores the whole machine
+  (`restores: "machine"`). Rootless Docker kept in the box user's home may
+  allow it after a home reset; that is untested.
 - Each kind sets `readyTimeoutMs`, the longest an acquire may take: about
   30 s for an LXC or Docker box, 5 min for a macOS VM, 10 min for a Windows
   clone's first boot after sysprep.
@@ -155,7 +162,7 @@ The command capability:
 | --- | --- | --- |
 | `tcp` | host and port | a box on a network the BB server reaches |
 | `command` | a command whose stdin and stdout carry the bytes | `ssh -W 127.0.0.1:5900 <host>`, `docker exec -i <container> socat - TCP:127.0.0.1:5900` |
-| `websocket` | URL, headers, and optionally a certificate fingerprint to pin | Proxmox's `vncwebsocket` with its ticket, Orchard's port-forward |
+| `websocket` | URL, headers, and optionally a certificate fingerprint to pin | Proxmox's `vncwebsocket` with its one-time ticket, Orchard's port-forward |
 
 - `openRoute(route)` in `src/transports/route.ts` is the only code that opens
   a route. It returns a byte channel with backpressure.
@@ -180,9 +187,11 @@ authentication the box expects (none, or a VNC password).
   type 30, which the relay cannot answer. Mac setup turns the option on.
 - Windows starts with RFB through Proxmox's console: nothing to install in the
   guest, the same noVNC client, and it shows the console session the agent
-  uses. RDP is not planned. It needs a gateway and a second client, and an RDP
-  login moves the session off the console, so you and the agent could not
-  share one desktop.
+  uses. `vncproxy` returns a one-time ticket, which authorises the WebSocket,
+  and a one-time password, which the relay answers as the VNC password. RDP
+  is not planned. It needs a gateway and a second client, and an RDP login
+  moves the session off the console, so you and the agent could not share one
+  desktop.
 
 **SSH access** gives host, port, user, the host keys, and an optional jump
 host (the Mac host for Tart, a bastion for a pool). The SSH transport is built
@@ -514,19 +523,32 @@ real backend's pool of free, reset machines is the same thing
   pool up after each claim and on every sweep, and never below the backend's
   memory and disk reserves.
 - A warm guest counts against capacity and always fits when claimed.
-- Warm guests are not enrolled, because enrolment ties a machine to a thread's
-  environment. Whether a warm guest can be enrolled ahead and handed over is
-  the subject of the enrolment research (in progress).
+- Warm guests are not enrolled. Nothing thread-specific is fixed at
+  enrolment, but BB has no way to hide a machine, so an enrolled warm guest
+  would show in BB's machine list for anyone to start a thread on
+  ([014](decisions/014-enrol-through-machine-providers.md)). A box enrols
+  when it is claimed, and runs commands meanwhile.
 
 ## Thread access
 
 A box is a resource of its thread and gets what the thread's own machine has.
 
-- **Enrolment.** A box whose kind can enrol becomes an ordinary BB machine.
-  The plan is to install BB's host app in the template, so enrolment skips
-  the download (enrolment research, in progress). The thread's Git
-  credentials and machine variables reach the box through BB, and bb-box's
-  in-box scripts write them where the box's commands load them.
+- **Enrolment.** A box whose kind can enrol becomes an ordinary BB machine
+  ([014](decisions/014-enrol-through-machine-providers.md),
+  [research](research/enrolment-and-warm-pools.md)).
+  - bb-box registers a machine provider. It creates a machine with the box ID
+    as the key, and the provider's `create` runs BB's `bootstrap` through the
+    box's command transport. BB issues the credential and runs its own
+    installer.
+  - Templates carry Node.js, npm, curl and a pre-installed bb-app, so the
+    installer skips the download. Where systemd runs, the box user has linger,
+    or the host daemon stops when the installing SSH session ends. A template
+    sets it; a pool machine turns it on at claim, since its reset turns it
+    off.
+  - The thread's Git credentials and machine variables reach the box through
+    BB, which resolves them each time they are used. bb-box's host entry,
+    which runs in every enrolled box, writes them to a file that the box's SSH
+    sessions load.
 - **Child threads.** A child thread can run on an enrolled box.
 - **Direct access.** The agent can also reach its boxes itself, for example
   with `ssh <box name>` or `DOCKER_HOST`, over the same network the BB server
@@ -599,7 +621,7 @@ Nothing expires, so a box must never be forgotten.
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |
 | bb-box's SSH key | plugin storage; its public key is installed by setup | core | |
-| The thread's Git credentials and variables | BB | BB | delivered to the box on enrolment, never stored by bb-box |
+| The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; copied to a file in the box for SSH sessions, never to bb-box's storage |
 | Work in the box: files, containers, running apps | the box's disk | the thread | deleted on release (virtual), or the home recreated (real); not backed up |
 | Templates and images | the provider | operator | built by the setup scripts |
 | Who holds each desktop's input | plugin memory | core | resets to the agent on restart |
@@ -618,7 +640,7 @@ planned, and the later-backends research fills in the details.
 | Release | delete | delete | remove the container | reset the box user | reset the box user | `tart delete` |
 | Command | SSH | OpenSSH for Windows with PowerShell, or the QEMU guest agent | `docker exec`, or SSH if the image runs it | SSH | SSH | SSH through the Mac host |
 | Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | RFB through SSH | RFB (Screen Sharing) through SSH | RFB through the Mac host |
-| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file and plugin storage | marker file and plugin storage | VM name with box and thread IDs |
+| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file and plugin storage | marker file and plugin storage | VM name for boxes made on demand; the pool store for warm VMs, which are claimed rather than renamed, since `tart rename` does not check whether a VM is running |
 | Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), GPU | machines | machines | guests (two VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
 | Enrol | yes | not until BB's host app runs on Windows | yes, without systemd | yes | yes | yes |
@@ -665,7 +687,8 @@ Notes:
     `tart run` under a launchd job that writes them to a file only its admin
     user can read, and `open()` reads the file each time. The password never
     goes in `Guest.data`.
-  - A suspended VM holds no slot and no memory, so `stop` can suspend.
+  - A suspended VM holds no slot and no memory, so `stop` can suspend
+    (macOS 14 or later on the host).
 - **Clouds, microsandbox and Crabbox** fit as virtual backends with SSH and
   instance tags; a cloud's capacity is its quota.
 
@@ -698,7 +721,7 @@ Notes:
 
 | Question | Where it is answered |
 | --- | --- |
-| How fast enrolment can be, and whether warm guests can be enrolled ahead | enrolment and warm pools research |
+| How long a real enrolment takes, which decides whether warm guests are enrolled ahead | the experiment in [enrolment and warm pools](research/enrolment-and-warm-pools.md) |
 | Accessibility tree and input on each OS, and which computer-use tool to build on | computer use research |
 | Details of the Windows, Mac, Tart, Docker and SSH pool backends | later-backends research |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
