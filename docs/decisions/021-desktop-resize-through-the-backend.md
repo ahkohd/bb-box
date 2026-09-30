@@ -1,6 +1,6 @@
 # 021: A desktop whose VNC server cannot resize is resized by its backend
 
-Status: accepted, 30 September 2026; not built yet. Partly supersedes
+Status: accepted, 30 September 2026. Partly supersedes
 [006](006-gpu-desktop-on-xorg.md): the GPU desktop's screen can resize.
 Extends [011](011-interface-v1.md) and
 [020](020-control-belongs-to-a-viewer.md).
@@ -41,13 +41,14 @@ is the default desktop.
   stream server follows the screen.
 - One resize of a box runs at a time. A request that arrives meanwhile
   replaces any request still waiting, so only the latest size is applied.
-- Hand-back sets the size back with `resize` when the display has it,
-  otherwise over a connection of the relay's own (020).
+- Hand-back sets the size back over a connection of the relay's own (020),
+  then with `resize` when the display has it. A `linux-desktop` box can come
+  back on the CPU after a stop and start (006), where Xtigervnc takes
+  SetDesktopSize and `xrandr --fb` cannot shrink the screen below its output.
 - Proxmox LXC gives `linux-desktop` a `resize` that runs
   `xrandr --fb <width>x<height>` on display `:99` as the box user over SSH,
   with no size cap, and sets `resizable: true` again.
   `linux-desktop-cpu` keeps SetDesktopSize.
-- Until this is built, `linux-desktop` stays `resizable: false`.
 - The conformance suite checks `resize` where a display offers it: after it
   resolves, a new connection's ServerInit gives the new size.
 
@@ -60,7 +61,9 @@ is the default desktop.
 - Each resize runs one SSH command, so it takes about half a second (an
   acquire's SSH step takes 0.45 s), against a few milliseconds on Xtigervnc.
 - Resizes still pass only from the viewer that holds control, and hand-back
-  still restores the agent's size (008, 020).
+  still restores the agent's size (008, 020). On a GPU desktop hand-back
+  opens one VNC connection, whose SetDesktopSize the box refuses, before it
+  resizes.
 - The same hook serves any backend whose stream server shows a screen it did
   not make, such as `x0vncserver` on a real machine's display.
 - Checked on a real `linux-desktop` box on 30 September:

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import {
@@ -105,7 +105,7 @@ test("kinds lists only kinds with a template", () => {
   assert.equal(kinds[0]!.readyTimeoutMs, 30_000);
   assert.equal(kinds[0]!.size, "2 cores, 4 GiB memory, the template's disk");
   const desktop = setup().backend.kinds().find((kind) => kind.id === "linux-desktop")!;
-  assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: false }], "the GPU's screen keeps its size");
+  assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "xrandr resizes the GPU's screen");
   assert.equal(desktop.capabilities.gpu, true);
   assert.equal(desktop.size, "4 cores, 8 GiB memory, the template's disk");
   const cpu = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.kinds().find((kind) => kind.id === "linux-desktop-cpu")!;
@@ -660,7 +660,7 @@ test("transports reach the box over SSH, and desktops over VNC", async () => {
   const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   const [display, ...others] = (await backend.transports(desktop, "linux-desktop")).displays;
   assert.equal(others.length, 0);
-  assert.deepEqual([display!.id, display!.label, display!.protocol, display!.resizable], ["desktop", "Desktop", "rfb", false]);
+  assert.deepEqual([display!.id, display!.label, display!.protocol, display!.resizable], ["desktop", "Desktop", "rfb", true]);
   assert.deepEqual(await display!.open(), { route: { type: "tcp", host: "192.0.2.101", port: 5900 }, auth: { type: "none" } });
 });
 
@@ -673,6 +673,28 @@ test("a desktop's VNC password is read from the box when a viewer opens it", asy
   const [display] = (await backend.transports(desktop, "linux-desktop")).displays;
   assert.equal(ssh.log().some((entry) => entry.command.includes("vnc-password")), false, "nothing is read before a viewer opens");
   assert.deepEqual((await display!.open()).auth, { type: "vnc-password", password: "hunter2" });
+});
+
+test("a GPU desktop is resized with xrandr as the box user, and a size X cannot take fails with xrandr's reason (021)", async () => {
+  // An xrandr that records how it ran, since the fake SSH runs commands on this machine.
+  const dir = tempDir("xrandr");
+  const log = join(dir, "log");
+  const refusal = "xrandr: screen cannot be larger than 32767x32767 (desired size 40000x800)";
+  writeFileSync(join(dir, "xrandr"), `#!/bin/sh\necho "$DISPLAY $XAUTHORITY $*" >>"${log}"\n[ "$2" != 40000x800 ] || { echo "${refusal}" >&2; exit 1; }\n`, { mode: 0o755 });
+  const binary = join(dir, "ssh");
+  writeFileSync(binary, `#!/bin/sh\nPATH="${dir}:$PATH" exec "${FAKE_SSH_BINARY}" "$@"\n`, { mode: 0o755 });
+  const { backend, ssh } = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }, new MemoryStorage(), { sshBinary: binary });
+  const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  const [display] = (await backend.transports(desktop, "linux-desktop")).displays;
+  await display!.resize!({ width: 1600, height: 900 });
+  assert.match(readFileSync(log, "utf8"), /^:99 \S*\/run\/bb-box\/Xauthority --fb 1600x900\n$/);
+  assert.ok(ssh.log().some((entry) => entry.target.startsWith("box@") && entry.command.includes("xrandr --fb 1600x900")), "it runs as the box user");
+  await assert.rejects(display!.resize!({ width: 40000, height: 800 }), { message: `xrandr could not set the desktop to 40000x800: ${refusal}.` });
+  await assert.rejects(display!.resize!({ width: 0.5, height: 800 }), { message: "The desktop cannot be 0.5 by 800 pixels." });
+
+  const cpu = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
+  const [stream] = (await backend.transports(cpu, "linux-desktop-cpu")).displays;
+  assert.equal(stream!.resize, undefined, "Xtigervnc takes a viewer's SetDesktopSize itself");
 });
 
 test("the warm pool fills, hands out a ready guest and refills", async () => {

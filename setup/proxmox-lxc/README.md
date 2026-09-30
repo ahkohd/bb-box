@@ -278,8 +278,9 @@ Limits:
   desktop template carries exactly one GPU.
 - The GPU's free memory limits how many desktops get the GPU at once. Each
   desktop's Xorg takes about 40 to 75 MiB, Chrome and GPU apps more.
-- The GPU path's screen is fixed at 1920x1080; the CPU path can be resized
-  from the viewer.
+- Both paths start at 1920x1080 and resize to the viewer while you hold
+  control. On the GPU path bb-box runs `xrandr --fb` over SSH, since
+  `x0vncserver` cannot resize a screen with no RandR outputs.
 - When the host's NVIDIA driver changes, desktops fall back to the CPU until
   you rebuild the desktop templates.
 

@@ -49,7 +49,7 @@ import {
 } from "../types.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import type { Display, SshAccess } from "../../transports/types.ts";
+import type { Display, DisplaySize, SshAccess } from "../../transports/types.ts";
 import {
   FLAVOUR_KINDS,
   LXC_FLAVOURS,
@@ -75,6 +75,8 @@ const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 /** The desktop's display service writes the path it took, gpu or cpu, and why. */
 const DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
 const DISPLAY_REASON_FILE = "/run/bb-box/display-reason";
+/** What a program needs to reach the desktop's display as the box user. */
+const DISPLAY_ENV = "DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority";
 const SSH_KEY = "ssh-key";
 /** Where the next VMID search starts. */
 const NEXT_VMID = "next-vmid";
@@ -119,8 +121,9 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
       gpu: true,
       features: ["docker"],
       command: SSH_COMMAND,
-      // x0vncserver refuses a viewer's resize on a screen with no RandR outputs (006, 021).
-      displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
+      // x0vncserver refuses a viewer's resize on a screen with no RandR outputs
+      // (006), so transports() gives this display a resize that runs xrandr (021).
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
       computerUse: CUA_DRIVER,
       enrol: true,
     },
@@ -721,7 +724,8 @@ export class ProxmoxLxcBackend implements Backend {
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
     const vmid = this.#vmid(guest);
     const access = this.#access(vmid);
-    const capabilities = OFFERS.find((offer) => offer.id === kind)?.capabilities;
+    const offer = OFFERS.find((candidate) => candidate.id === kind);
+    const capabilities = offer?.capabilities;
     const command = await this.#command(vmid);
     const displays = (capabilities?.displays ?? []).map(
       (display): Display => ({
@@ -734,6 +738,7 @@ export class ProxmoxLxcBackend implements Backend {
             auth: password ? { type: "vnc-password", password } : { type: "none" },
           };
         },
+        ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
       }),
     );
     return {
@@ -1258,6 +1263,21 @@ export class ProxmoxLxcBackend implements Backend {
       throw new Error(`Cannot read the desktop's VNC password over SSH: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
     }
     return result.stdout.trim() || null;
+  }
+
+  /**
+   * Sets the GPU desktop's size with xrandr, as the box user. With no clamp:
+   * a size the X server cannot take fails with xrandr's reason (021).
+   */
+  async #resize(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+    const { width, height } = size;
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+      throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
+    }
+    const result = await command.run(`${DISPLAY_ENV} xrandr --fb ${width}x${height}`, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) {
+      throw new Error(`xrandr could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    }
   }
 
   #keys(): Promise<SshKeys> {

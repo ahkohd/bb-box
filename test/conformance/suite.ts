@@ -32,6 +32,7 @@ import {
 } from "../../src/backends/types.ts";
 import { driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
+import { desktopSize, displayOpener } from "../../src/core/relay.ts";
 import { quote } from "../../src/transports/process.ts";
 import { openRoute } from "../../src/transports/route.ts";
 import type { ByteChannel, CommandTransport } from "../../src/transports/types.ts";
@@ -384,7 +385,10 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               capabilities.displays.map((display) => [display.id, display.protocol, display.resizable]),
               "the displays match the kind",
             );
-            for (const display of transports.displays) assert.ok(display.label.trim(), `display ${display.id} has a label`);
+            for (const display of transports.displays) {
+              assert.ok(display.label.trim(), `display ${display.id} has a label`);
+              if (display.resize) assert.ok(display.resizable, `display ${display.id} can resize, so it says it is resizable`);
+            }
             if (transports.access) {
               const ssh = transports.access.ssh;
               if (ssh) assert.ok(ssh.host && ssh.user && Number.isInteger(ssh.port), "SSH access names a host, port and user");
@@ -522,6 +526,25 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               } finally {
                 await channel.close();
               }
+            });
+
+            it(`resizes the ${capability.id} display through the backend`, { timeout, skip: skip.display ?? unsupported }, async (t) => {
+              assert.ok(guest, "the box was acquired");
+              const display = (await backend.transports(guest, kind.id)).displays.find((other) => other.id === capability.id);
+              assert.ok(display, `the box has the ${capability.id} display`);
+              if (!display.resize) return t.skip("the display's stream server sets its size");
+              // A new connection's ServerInit gives the size once resize resolves (021).
+              // It grows, then goes back: an X server cannot shrink below its outputs with xrandr.
+              const open = displayOpener(display);
+              const before = await desktopSize(open);
+              const wanted = { width: before.width + 128, height: before.height + 64 };
+              try {
+                await display.resize(wanted, signal());
+                assert.deepEqual(await desktopSize(open), wanted);
+              } finally {
+                await display.resize(before, signal());
+              }
+              assert.deepEqual(await desktopSize(open), before);
             });
           }
 

@@ -126,11 +126,12 @@ and `start` and `stop` throw `gone`.
   `linux-desktop-cpu` boxes come only from CPU-only templates or images,
   which have no GPU device nodes or driver. Every desktop shows its display
   mode and the reason as facts.
-- On Proxmox LXC a `linux-desktop` display is not `resizable` yet:
-  `x0vncserver` refuses a viewer's resize on a screen with no RandR outputs,
-  though `xrandr --fb` resizes it. The backend will resize it instead
-  ([021](decisions/021-desktop-resize-through-the-backend.md)). A
-  `linux-desktop-cpu` desktop resizes to the viewer while you hold control.
+- On Proxmox LXC `x0vncserver` refuses a viewer's resize on a
+  `linux-desktop` screen, which has no RandR outputs, so the backend resizes
+  it with `xrandr --fb`
+  ([021](decisions/021-desktop-resize-through-the-backend.md)).
+  `linux-desktop-cpu` takes the viewer's resize itself. Both desktops resize
+  to the viewer while you hold control.
 - A box user in the `docker` group is root on the machine, so an SSH pool
   offers `linux-headless-docker` only if its reset restores the whole machine
   (`restores: "machine"`). Rootless Docker kept in the box user's home may
@@ -203,8 +204,8 @@ The command capability:
 `selkies`), whether it can resize, and `open()`, which returns a route and the
 authentication the box expects (none, or a VNC password). A display whose
 stream server cannot resize may offer `resize()`, which the relay calls
-beside the viewer's own request
-([021](decisions/021-desktop-resize-through-the-backend.md), not built yet).
+beside the viewer's own request, one at a time per box with the latest size
+last ([021](decisions/021-desktop-resize-through-the-backend.md)).
 
 - For RFB the relay does the security handshake with the box itself: it
   answers VNC authentication (security type 2) with the password, then offers
@@ -356,7 +357,7 @@ export interface Display {
   readonly resizable: boolean;
   /** Called once per viewer connection: tickets can be single use. */
   open(signal?: AbortSignal): Promise<{ readonly route: Route; readonly auth: DisplayAuth }>;
-  /** Sets the size the backend's own way, when the stream server cannot (021, not built yet). */
+  /** Sets the size the backend's own way, when the stream server cannot (021). */
   resize?(size: { readonly width: number; readonly height: number }, signal?: AbortSignal): Promise<void>;
 }
 

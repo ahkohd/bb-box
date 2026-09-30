@@ -1,7 +1,8 @@
 // A stand-in for a box's VNC server: RFB 3.8 with VNC authentication when it
 // has a password, a desktop of a set size, and a record of what each
 // connection sent after its ClientInit. It answers every update request with
-// an empty update and takes SetDesktopSize.
+// an empty update and takes SetDesktopSize, or ignores it when told to, as a
+// server that cannot resize does (021).
 
 import { createServer, type Server } from "node:net";
 import type { AddressInfo } from "node:net";
@@ -13,6 +14,8 @@ export interface FakeRfbOptions {
   readonly password?: string;
   readonly width?: number;
   readonly height?: number;
+  /** Whether SetDesktopSize sets the size. True by default. */
+  readonly acceptResize?: boolean;
 }
 
 export interface RfbConnection {
@@ -31,6 +34,7 @@ export class FakeRfb {
   width: number;
   height: number;
   readonly password: string | null;
+  readonly acceptResize: boolean;
   readonly connections: RfbConnection[] = [];
   #server: Server | null = null;
 
@@ -38,6 +42,7 @@ export class FakeRfb {
     this.width = options.width ?? 1280;
     this.height = options.height ?? 800;
     this.password = options.password ?? null;
+    this.acceptResize = options.acceptResize ?? true;
   }
 
   /** An in-memory connection, as a display route would open. */
@@ -130,7 +135,7 @@ export class FakeRfb {
       if (chunk === null) break;
       connection.received = concat(connection.received, chunk.slice());
       for (const message of parser.push(chunk)) {
-        if (message.type === "resize") {
+        if (message.type === "resize" && this.acceptResize) {
           this.width = message.width;
           this.height = message.height;
         }
