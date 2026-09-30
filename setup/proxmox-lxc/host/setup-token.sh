@@ -28,6 +28,13 @@ else
   pveum role add "$BBBOX_API_ROLE" --privs "$privs"
 fi
 
+# Reading the node's memory, disk and network (capacity guard and doctor).
+if pveum role list --output-format json | jq -e --arg r "$BBBOX_API_ROLE-node" '.[] | select(.roleid == $r)' >/dev/null; then
+  pveum role modify "$BBBOX_API_ROLE-node" --privs Sys.Audit
+else
+  pveum role add "$BBBOX_API_ROLE-node" --privs Sys.Audit
+fi
+
 pveum user list --output-format json | jq -e --arg u "$BBBOX_API_USER" '.[] | select(.userid == $u)' >/dev/null ||
   pveum user add "$BBBOX_API_USER" --comment "bb-box plugin; API token only, no password"
 
@@ -66,6 +73,7 @@ for who in "$BBBOX_API_USER" "$tokenid"; do
   pveum acl modify "/pool/$BBBOX_POOL" "$flag" "$who" --roles "$BBBOX_API_ROLE"
   pveum acl modify "/storage/$BBBOX_STORAGE" "$flag" "$who" --roles PVEDatastoreUser
   pveum acl modify "/sdn/zones/localnetwork/$BBBOX_BRIDGE" "$flag" "$who" --roles PVESDNUser
+  pveum acl modify "/nodes/$BBBOX_NODE" "$flag" "$who" --roles "$BBBOX_API_ROLE-node"
 done
 pveum acl list --output-format json |
   jq -r --arg u "$BBBOX_API_USER" '.[] | select(.ugid | startswith($u)) | "  \(.path)  \(.ugid)  \(.roleid)"'
