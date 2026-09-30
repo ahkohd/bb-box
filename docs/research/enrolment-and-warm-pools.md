@@ -147,7 +147,7 @@ three machines, so remove them afterwards.
    S=<server URL>; H=$(printf '%s' "${S#*://}" | tr -c 'a-zA-Z0-9.-' '-')
    D=$HOME/.bb-machines/$H; mkdir -p "$D"
    curl -fsS -D /tmp/h -o /tmp/bb-app.tgz "$S/install/bb-app.tgz"
-   npm install -g --allow-scripts=node-pty,@parcel/watcher --prefix "$D/npm" /tmp/bb-app.tgz
+   npm install -g --allow-scripts=better-sqlite3,node-pty,@parcel/watcher --prefix "$D/npm" /tmp/bb-app.tgz
    sed -n 's/^x-bb-artifact-sha256: *\([a-f0-9]*\).*/\1/Ip' /tmp/h > "$D/host-artifact.sha256"
    ```
 
