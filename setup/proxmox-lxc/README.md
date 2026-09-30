@@ -326,6 +326,22 @@ It does what the plugin does, with the token: clone, configure, start, wait
 for SSH, run the template's check as `box` and delete the box, and prints
 how long each step took.
 
+To test the plugin's own code against the host before installing it, run
+this from a checkout of bb-box, on a machine that reaches the host's API and
+the box subnet ([Reaching boxes](#reaching-boxes)), with Node 22.18 or later:
+
+```sh
+npm install
+cp scripts/smoke.example.json /root/bb-box/smoke.json
+node scripts/smoke.ts /root/bb-box/smoke.json --doctor
+```
+
+The example reads the API URL, node, token and fingerprint from the token
+file, and the key from `ssh/id_ed25519`, both next to the settings file.
+Change the other values to match your settings. It acquires a
+`linux-headless` box, runs `uname -a`, releases the box and prints each
+step's time. `--kind` and `--command` pick another kind or command.
+
 ## 7. Plugin settings
 
 Set these in BB under the bb-box plugin's settings. The examples are this
