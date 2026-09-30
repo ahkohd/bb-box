@@ -66,11 +66,19 @@ whether the box enrols as a BB machine, and how to check capacity. Tools and
 the panel follow those declarations, so a new platform plugs in without
 reworking them. Several backends can be active at once.
 
-| Backend | Kinds | Status |
-| --- | --- | --- |
-| Proxmox LXC | Linux desktop (GPU), Linux headless (Docker) | first |
-| Proxmox QEMU | Windows desktop (RDP or VNC) | next |
-| Mac | macOS on a Mac mini, physical or as macOS VMs on it | last |
+A box is virtual or real. The interface is acquire and release, not create and
+destroy: a virtual backend clones and starts a box, or takes one from its warm
+pool, and deletes it on release; a real backend claims a free physical machine
+from a pool and, on release, resets it to a clean state and returns it to the
+pool. A real machine is held by one thread at a time. Capacity is free memory
+and disk for virtual boxes and free machines for real ones.
+
+| Backend | Virtual or real | Kinds | Status |
+| --- | --- | --- | --- |
+| Proxmox LXC | virtual | Linux desktop (GPU), Linux headless (Docker) | first |
+| Proxmox QEMU | virtual | Windows desktop (RDP or VNC) | next |
+| Mac | real Mac mini, or virtual macOS VMs on one | macOS desktop | last |
+| Physical PC pool | real | Linux or Windows | when needed |
 
 ## Architecture
 
