@@ -45,8 +45,8 @@ Moonstead:
   systemd finished booting in 0.8 s. Crabbox took 55 s to hand over the same
   container. Containers share the host's NVIDIA driver, so many desktops share
   one GPU; a VM would need a whole GPU passed through. Docker runs in an
-  unprivileged container with `nesting=1` (and `keyctl=1` if needed). A QEMU VM
-  is only a later option, for work that needs its own kernel.
+  unprivileged container with `nesting=1`. bb-box has no VMs: the operator
+  decided a VM is overkill for this use.
 - **Microsandbox is not needed.** It boots faster (about 100 ms) but has no
   display or GPU on Linux, runs one process under its own init rather than
   systemd, and is beta. Containers boot in under a second, and a warm pool
