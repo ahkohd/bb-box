@@ -23,19 +23,23 @@ The core uses only [src/backends/types.ts](../src/backends/types.ts) and
    - `settings`, including an enable switch;
    - `parse`, which turns setting values into a typed config or a list of
      problems;
-   - `setup`, the paths of its setup script and guide;
+   - `setup`, the path of its guide and of the scripts it runs, in order.
+     The settings page links the guide first, then the scripts;
    - `create`, which builds the `Backend`.
 2. Reuse a transport from `src/transports/`, or add one there. A backend
    that serves a display inside the box builds it from the command
-   transport's `route(port)`.
+   transport's `route(port)`. A kind with computer use needs a command
+   transport with `spawn`, which carries the driver's MCP session.
 3. Record ownership at the provider (tags, names or a marker file), so
    `held()` finds every guest even if bb-box's storage is lost.
 4. Write `doctor()` so that it checks everything the backend needs and says
    how to fix each failure. Give each check a stable ID.
 5. Add the driver to `DRIVERS` in
    [src/backends/index.ts](../src/backends/index.ts).
-6. Add `setup/<type>/` with the setup script and its guide. Keep deployment
-   values out: the guide uses example addresses and names.
+6. Add `setup/<type>/` with the guide and its scripts. Keep deployment
+   values out: the guide uses example addresses and names. Templates and
+   images remove BB's daemon lock and PID file at boot
+   ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
 7. Test it against a fake of the provider's API, as
    `test/proxmox-lxc.test.ts` does with `test/fake-proxmox.ts`, and run the
    conformance suite against it.
@@ -53,6 +57,9 @@ kinds.
   and puts the machine out of service if the reset fails. Keep the pool
   member's generation in `Guest.data`, so a repeated release of an old box
   never resets a machine that the next box holds.
+- Put what a person should know about a box, such as a desktop's display
+  mode, in `Guest.facts`. Status and the panel show them in order. Like
+  `data`, they are stored with the box and are never a secret.
 - Throw `BackendError` with `no_capacity`, `unsupported` or `gone` when the
   registry should act on it. Any other error is shown as it is, so its
   message must make sense to a person and never include a credential.
@@ -64,8 +71,9 @@ kinds.
 
 [test/conformance/suite.ts](../test/conformance/suite.ts) runs the same
 checks against any backend: doctor first, then for each kind acquire,
-transports, commands with 1 MiB of stdin, streaming, 32 MiB copied each
-way, enrolment, Docker, displays, stop and start, recovery by a new
+transports, a spawned channel, commands with 1 MiB of stdin, streaming,
+32 MiB copied each way, enrolment, Docker, displays, stop and start (with
+the box connected to BB again within 3 s of being ready), recovery by a new
 instance, repeated release and interrupted acquires. Steps a kind does not
 declare are skipped by its capabilities; any other skip gives its reason.
 

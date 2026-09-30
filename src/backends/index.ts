@@ -52,7 +52,7 @@ const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
   ["OS", (kind) => kind.capabilities.os],
   ["architecture", (kind) => kind.capabilities.arch],
   ["GPU", (kind) => kind.capabilities.gpu],
-  ["computer use", (kind) => kind.capabilities.computerUse],
+  ["computer-use driver", (kind) => kind.capabilities.computerUse?.driver ?? "none"],
   ["enrolment", (kind) => kind.capabilities.enrol],
   ["having a desktop", (kind) => kind.capabilities.displays.length > 0],
   ["required features", (kind) => [...kind.requires].sort().join(", ") || "none"],

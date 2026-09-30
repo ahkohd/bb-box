@@ -98,6 +98,11 @@ export interface CommandTransport {
   readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array>;
   /** A route to a TCP port inside the box, for a display served there. */
   route?(port: number, signal?: AbortSignal): Promise<Route>;
+  /**
+   * Starts a long-running command whose stdin and stdout are the channel,
+   * such as the computer-use driver's MCP server. Closing the channel ends it.
+   */
+  spawn?(script: string, signal?: AbortSignal): Promise<ByteChannel>;
 }
 
 export type TransportErrorCode =

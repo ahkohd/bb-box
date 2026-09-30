@@ -29,9 +29,11 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../src/backends/types.ts";
-import { CommandLine } from "../src/transports/process.ts";
+import { CommandLine, quote } from "../src/transports/process.ts";
+import { openRoute } from "../src/transports/route.ts";
 import {
   TransportError,
+  type ByteChannel,
   type CommandTransport,
   type Display,
   type Route,
@@ -84,7 +86,7 @@ export const FAKE_KINDS: readonly BoxKind[] = [
     description: "A fake box: a directory on the test machine.",
     size: "1 core",
     requires: [],
-    capabilities: { os: "linux", arch: ARCH, gpu: false, features: [], command: COMMAND, displays: [], computerUse: false, enrol: true },
+    capabilities: { os: "linux", arch: ARCH, gpu: false, features: [], command: COMMAND, displays: [], computerUse: null, enrol: true },
     readyTimeoutMs: 10_000,
   },
   {
@@ -100,7 +102,7 @@ export const FAKE_KINDS: readonly BoxKind[] = [
       features: [],
       command: COMMAND,
       displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
-      computerUse: false,
+      computerUse: null,
       enrol: true,
     },
     readyTimeoutMs: 10_000,
@@ -375,10 +377,12 @@ export class FakeBackend implements Backend {
 
 /** Runs scripts in the guest's directory with sh. A stopped guest does not answer. */
 export class FakeTransport implements CommandTransport {
+  readonly #home: string;
   readonly #line: CommandLine;
   readonly #power: () => Promise<PowerState | null>;
 
   constructor(home: string, power: () => Promise<PowerState | null>) {
+    this.#home = home;
     this.#line = new CommandLine({ argv: (script) => ["sh", "-c", script], cwd: home, env: { PATH: process.env.PATH, HOME: home } });
     this.#power = power;
   }
@@ -415,5 +419,10 @@ export class FakeTransport implements CommandTransport {
   async route(port: number): Promise<Route> {
     await this.#answer();
     return { type: "tcp", host: "127.0.0.1", port };
+  }
+
+  async spawn(script: string, signal?: AbortSignal): Promise<ByteChannel> {
+    await this.#answer();
+    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && ${script}`] }, signal);
   }
 }

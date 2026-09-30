@@ -34,6 +34,10 @@ export type ConformanceCheck = "arch" | "docker" | "display" | "enrol" | "stop-s
 
 /** Enrolment in a live BB server. */
 export interface ConformanceBb {
+  /**
+   * Runs BB's bootstrap in the box with the box ID as the key. The suite
+   * calls it again after a stop and start, as bb-box does (017).
+   */
   enrol(box: BoxIdentity, command: CommandTransport, signal: AbortSignal): Promise<void>;
   /** Whether the box's BB machine is connected to the server. */
   connected(box: BoxIdentity, signal: AbortSignal): Promise<boolean>;
@@ -57,6 +61,8 @@ export interface ConformanceOptions {
 const THREAD = "thr_conformance";
 const MiB = 1024 * 1024;
 const ID = /^[a-z0-9][a-z0-9-]*$/;
+/** After a stop and start, the box is connected to BB again this soon after it is ready (017). */
+const RECONNECT_MS = 3_000;
 /** Prints the SHA-256 of stdin, on Linux and macOS. */
 const SHA256 = "if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-64";
 const MIB_UNITS: readonly Limit["resource"][] = ["memory", "disk", "gpu-memory"];
@@ -126,11 +132,11 @@ async function greeting(channel: ByteChannel, bytes: number, timeoutMs: number):
   return data.subarray(0, bytes).toString("latin1");
 }
 
-async function until(check: () => Promise<boolean>, timeoutMs: number, what: string): Promise<void> {
+async function until(check: () => Promise<boolean>, timeoutMs: number, what: string, intervalMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await check())) {
     if (Date.now() > deadline) assert.fail(`${what} within ${timeoutMs} ms`);
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }
 
@@ -143,7 +149,12 @@ export function checkKind(kind: BoxKind): void {
   const capabilities = kind.capabilities;
   assert.ok(["linux", "windows", "macos"].includes(capabilities.os), `${kind.id} has a known OS`);
   assert.ok(["x86_64", "arm64"].includes(capabilities.arch), `${kind.id} has a known architecture`);
-  for (const flag of ["gpu", "computerUse", "enrol"] as const) assert.equal(typeof capabilities[flag], "boolean", `${kind.id}.${flag}`);
+  for (const flag of ["gpu", "enrol"] as const) assert.equal(typeof capabilities[flag], "boolean", `${kind.id}.${flag}`);
+  const computerUse = capabilities.computerUse;
+  if (computerUse !== null) {
+    assert.equal(computerUse.driver, "cua", `${kind.id} names a known computer-use driver`);
+    assert.ok(computerUse.version.trim() && computerUse.socket.trim(), `${kind.id} pins the driver's version and names its socket`);
+  }
   for (const feature of [...kind.requires, ...capabilities.features]) assert.match(feature, ID, `${kind.id} feature ${feature}`);
   for (const feature of kind.requires) assert.ok(capabilities.features.includes(feature), `${kind.id} has the ${feature} it requires`);
   const command = capabilities.command;
@@ -163,7 +174,7 @@ export function checkKind(kind: BoxKind): void {
     assert.equal(command?.shell, "sh", `${kind.id} enrols, so it runs sh commands`);
     assert.notEqual(capabilities.os, "windows", `${kind.id} enrols, so it is not Windows`);
   }
-  if (capabilities.computerUse) assert.ok(capabilities.displays.length && command, `${kind.id} offers computer use, so it has a display and commands`);
+  if (computerUse) assert.ok(capabilities.displays.length && command, `${kind.id} offers computer use, so it has a display and commands`);
   if (capabilities.features.includes("docker")) assert.ok(command, `${kind.id} has Docker, so it runs commands`);
 }
 
@@ -310,6 +321,8 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           let generation: number | null = null;
           let command: CommandTransport | null = null;
           let enrolled = false;
+          /** When the box answered again after the stop and start step. */
+          let restartedAt: number | null = null;
           const posix = capabilities.os !== "windows";
           const scripts = posix ? false : "Windows scripts are not in the suite yet";
           const need = () => {
@@ -326,6 +339,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             assert.equal(recorded.events.filter((event) => event === "starting").length, 1, "starting ran once");
             assert.deepEqual(recorded.claimed.at(-1), guest, "the guest is the last one claimed");
             assert.ok(guest.host === null || guest.host.trim(), "the guest's host is a name or null");
+            for (const fact of guest.facts ?? []) assert.ok(fact.label.trim() && typeof fact.value === "string", "a fact has a label and a value");
             for (const value of Object.values(guest.data ?? {})) assert.ok(["string", "number", "boolean"].includes(typeof value), "guest data is plain values");
             checkTimings(recorded.timings);
             const held = (await backend.held(signal())).find((other) => other.ref === guest!.ref);
@@ -361,6 +375,23 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             assert.ok(transports.command, "a kind with a command transport gets one");
             assert.equal(await transports.command.probe(signal()), true);
             command = transports.command;
+          });
+
+          it("spawns a command whose stdin and stdout are a channel", { timeout, skip: scripts }, async (t) => {
+            const { command } = need();
+            if (!command.spawn) {
+              assert.equal(capabilities.computerUse, null, `${kind.id} offers computer use, so its command transport can spawn the driver`);
+              return t.skip("the command transport cannot spawn");
+            }
+            const channel = await command.spawn("cat", signal());
+            try {
+              const writer = channel.writable.getWriter();
+              await writer.write(new TextEncoder().encode("ping\n"));
+              assert.equal(await greeting(channel, 5, 10_000), "ping\n");
+              await writer.close();
+            } finally {
+              await channel.close();
+            }
           });
 
           it("runs a command with stdin, exit codes and a timeout", { timeout, skip: scripts }, async () => {
@@ -485,11 +516,16 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             assert.equal(await backend.power(guest, signal()), "running");
             const { command } = await backend.transports(guest, kind.id);
             if (command) assert.equal(await command.probe(signal()), true);
+            restartedAt = Date.now();
           });
 
-          it("reconnects to BB after a restart", { timeout, skip: stopStart || (options.bb && capabilities.enrol ? false : "needs a live BB server") }, async (t) => {
+          it("reconnects to BB within 3 s of being ready after a stop and start", { timeout, skip: stopStart || (options.bb && capabilities.enrol ? false : "needs a live BB server") }, async (t) => {
             if (!enrolled) return t.skip("the box did not enrol");
-            await until(() => options.bb!.connected(box, signal()), timeout, "the box reconnects to BB");
+            if (restartedAt === null) return t.skip("the box did not stop and start");
+            const { command } = need();
+            // bb-box starts BB's daemon again with the same key after a start.
+            await options.bb!.enrol(box, command, signal());
+            await until(() => options.bb!.connected(box, signal()), Math.max(0, restartedAt + RECONNECT_MS - Date.now()), "the box reconnects to BB", 100);
           });
 
           it("a new instance finds the box after a restart and releases it", { timeout, skip: skip.recovery ?? false }, async () => {

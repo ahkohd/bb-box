@@ -11,8 +11,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CommandLine, quote } from "./process.ts";
+import { openRoute } from "./route.ts";
 import {
   TransportError,
+  type ByteChannel,
   type CommandTransport,
   type GuestOs,
   type Route,
@@ -107,6 +109,11 @@ export class Ssh {
     });
   }
 
+  /** Runs `remoteCommand` with its stdin and stdout as the channel, over `ssh -T`. */
+  spawn(access: SshAccess, remoteCommand: string, signal?: AbortSignal): Promise<ByteChannel> {
+    return openRoute({ type: "command", argv: [this.binary, ...this.args(access, remoteCommand)] }, signal);
+  }
+
   /** Runs `remoteCommand` in the box user's shell. */
   run(access: SshAccess, remoteCommand: string, options: RunOptions = {}): Promise<RunResult> {
     return this.#line(access).run(remoteCommand, options);
@@ -196,6 +203,10 @@ export class SshTransport implements CommandTransport {
 
   async route(port: number): Promise<Route> {
     return this.#ssh.route(this.#access, port);
+  }
+
+  spawn(script: string, signal?: AbortSignal): Promise<ByteChannel> {
+    return this.#ssh.spawn(this.#access, script, signal);
   }
 }
 

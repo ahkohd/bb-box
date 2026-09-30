@@ -29,6 +29,7 @@ import {
   type BoxTransports,
   type Capacity,
   type CommandCapability,
+  type ComputerUse,
   type DoctorCheck,
   type DoctorReport,
   type Guest,
@@ -67,6 +68,8 @@ const NEXT_VMID = "next-vmid";
 /** Clone, start and SSH answering take a few seconds; this leaves room for a busy host. */
 const READY_TIMEOUT_MS = 30_000;
 
+/** The Cua Driver the desktop template pins, run by the box user's service. */
+const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socket: "/home/box/.cache/cua-driver/cua-driver.sock" };
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
 
 /** The kinds, less their size, which comes from the template's settings. */
@@ -77,7 +80,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly template: LxcTemplate
     label: "Linux headless",
     description: "A Linux container for builds, backend services and the agent's own work.",
     requires: [],
-    capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: false, enrol: true },
+    capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
     readyTimeoutMs: READY_TIMEOUT_MS,
   },
   {
@@ -86,7 +89,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly template: LxcTemplate
     label: "Linux headless with Docker",
     description: "A Linux container with Docker inside, for builds and services that need it.",
     requires: ["docker"],
-    capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: false, enrol: true },
+    capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
     readyTimeoutMs: READY_TIMEOUT_MS,
   },
   {
@@ -102,7 +105,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly template: LxcTemplate
       features: ["docker"],
       command: SSH_COMMAND,
       displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
-      computerUse: true,
+      computerUse: CUA_DRIVER,
       enrol: true,
     },
     readyTimeoutMs: READY_TIMEOUT_MS,

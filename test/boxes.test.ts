@@ -31,6 +31,7 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}) {
     errors: [] as string[],
     enrolled: [] as string[],
     unenrolled: [] as string[],
+    reconnected: [] as string[],
     boxes: null as unknown as Boxes,
     /** A new registry and backend on the same storage, as after a restart. */
     restart() {
@@ -57,6 +58,9 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}) {
       },
       unenrol: async (box) => {
         world.unenrolled.push(box.enrol.hostId!);
+      },
+      reconnect: async (box) => {
+        world.reconnected.push(box.enrol.hostId!);
       },
       logError: (operation, error) => world.errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
     });
@@ -225,7 +229,20 @@ test("stop and start, and a stopped box says so instead of timing out", async ()
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /is stopped. Start it first/);
   const started = await world.boxes.start(THREAD, box.name);
   assert.equal(started.state, "ready");
+  assert.deepEqual(world.reconnected, [`host-${box.id}`], "the BB machine is reconnected after the start");
+  assert.equal((await world.boxes.start(THREAD, box.name)).state, "ready");
+  assert.equal(world.reconnected.length, 1, "a running box is not reconnected again");
   assert.equal((await world.boxes.run(THREAD, box.name, "echo up")).result.stdout, "up\n");
+});
+
+test("a box that is not enrolled is not reconnected after a start", async () => {
+  const world = setup();
+  world.general = { ...world.general, enrol: false };
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  assert.equal(box.enrol.state, "off");
+  await world.boxes.stop(THREAD, box.name);
+  await world.boxes.start(THREAD, box.name);
+  assert.deepEqual(world.reconnected, []);
 });
 
 test("a box stopped behind bb-box's back is found when a command cannot reach it", async () => {

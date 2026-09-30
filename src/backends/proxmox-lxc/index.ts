@@ -7,7 +7,15 @@ export const proxmoxLxcDriver: BackendDriver<LxcConfig> = {
   label: "Proxmox LXC",
   nature: "virtual",
   settings: LXC_SETTINGS,
-  setup: { script: "setup/proxmox-lxc/host/setup-host.sh", guide: "setup/proxmox-lxc/README.md" },
+  setup: {
+    guide: "setup/proxmox-lxc/README.md",
+    scripts: [
+      "setup/proxmox-lxc/host/setup-host.sh",
+      "setup/proxmox-lxc/host/setup-network.sh",
+      "setup/proxmox-lxc/template/build.sh",
+      "setup/proxmox-lxc/host/setup-token.sh",
+    ],
+  },
   parse: parseLxcSettings,
   create: (config, context) => new ProxmoxLxcBackend(config, context),
 };

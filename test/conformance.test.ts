@@ -2,17 +2,32 @@
 // natures, and against the Proxmox LXC backend on a fake Proxmox and fake SSH.
 
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
-import { conformance } from "./conformance/suite.ts";
+import type { CommandTransport } from "../src/transports/types.ts";
+import { conformance, type ConformanceBb } from "./conformance/suite.ts";
 import { FakeBackend } from "./fake-backend.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
 const root = tempDir("fake-backend");
 
+/** Stands in for BB: a box is connected while it answers, once bootstrap has run in it. */
+function fakeBb(): ConformanceBb {
+  const daemons = new Map<string, CommandTransport>();
+  return {
+    enrol: async (box, command) => {
+      const result = await command.run("true");
+      if (result.exitCode !== 0) throw new Error(`bootstrap failed: ${result.stderr}`);
+      daemons.set(box.boxId, command);
+    },
+    connected: async (box) => (await daemons.get(box.boxId)?.probe()) ?? false,
+  };
+}
+
 await conformance({
   name: "fake virtual backend",
   storage: new MemoryStorage(),
   create: (storage) => new FakeBackend({ root, storage, id: "fake-virtual" }),
+  bb: fakeBb(),
   timeoutMs: 20_000,
 });
 
@@ -20,6 +35,7 @@ await conformance({
   name: "fake real backend",
   storage: new MemoryStorage(),
   create: (storage) => new FakeBackend({ root, storage, id: "fake-real", nature: "real", machines: 2 }),
+  bb: fakeBb(),
   timeoutMs: 20_000,
 });
 

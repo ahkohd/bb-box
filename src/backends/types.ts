@@ -38,6 +38,14 @@ export interface CommandCapability {
   readonly streaming: boolean;
 }
 
+/** Offers of a kind agree on the driver; each template pins its version. */
+export interface ComputerUse {
+  readonly driver: "cua";
+  readonly version: string;
+  /** Where `cua-driver serve` listens: a Unix socket, or a named pipe on Windows. */
+  readonly socket: string;
+}
+
 export interface DisplayCapability {
   readonly id: string;
   readonly protocol: DisplayProtocol;
@@ -62,7 +70,8 @@ export interface KindCapabilities {
   readonly command: CommandCapability | null;
   /** One per stream; empty for a headless box. The viewer loads its client before the box exists. */
   readonly displays: readonly DisplayCapability[];
-  readonly computerUse: boolean;
+  /** The computer-use driver in the box, reached through the command transport's spawn. Null when there is none. */
+  readonly computerUse: ComputerUse | null;
   /** The box can enrol as a BB machine. Only when command.shell is "sh" and os is linux or macos. */
   readonly enrol: boolean;
 }
@@ -106,6 +115,13 @@ export interface Guest {
   readonly address: string | null;
   /** Small values the backend needs later, stored with the box and passed back. Never a secret. */
   readonly data?: Readonly<Record<string, string | number | boolean>>;
+  /** Short facts shown in order by status and the panel, such as a desktop's display mode. Stored with the box. Never a secret. */
+  readonly facts?: readonly GuestFact[];
+}
+
+export interface GuestFact {
+  readonly label: string;
+  readonly value: string;
 }
 
 export interface BoxOwner {
@@ -355,8 +371,11 @@ export interface BackendDriver<C = unknown> {
   readonly nature: MachineNature;
   /** Setting keys start with the driver's prefix. One of them enables the backend. */
   readonly settings: Readonly<Record<string, PluginSettingDescriptor>>;
-  /** Paths in bb-box's repository, linked from the settings page. */
-  readonly setup: { readonly script: string; readonly guide: string };
+  /**
+   * Paths in bb-box's repository. The guide is the entry point: the settings
+   * page links it first, then the scripts in the order the guide runs them.
+   */
+  readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
   parse(values: Readonly<Record<string, unknown>>): ParsedSettings<C>;
   create(config: C, context: BackendContext): Backend;
 }

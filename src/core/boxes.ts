@@ -101,6 +101,11 @@ export interface BoxesDeps {
   enrol?(box: BoxRecord): Promise<void>;
   /** Removes a box's BB machine. Awaited before the backend releases the box. */
   unenrol?(box: BoxRecord): Promise<void>;
+  /**
+   * Starts an enrolled box's BB daemon again after bb-box started the box:
+   * BB's bootstrap with the box ID as the key. Called without awaiting.
+   */
+  reconnect?(box: BoxRecord): Promise<void>;
   logError(operation: string, error: unknown): void;
   now?(): number;
   random?(bytes: number): Uint8Array;
@@ -165,7 +170,7 @@ const UNKNOWN_KIND: KindCapabilities = {
   features: [],
   command: null,
   displays: [],
-  computerUse: false,
+  computerUse: null,
   enrol: false,
 };
 
@@ -584,7 +589,7 @@ export class Boxes {
     });
   }
 
-  /** Starts a stopped box and waits until its command transport answers. */
+  /** Starts a stopped box, waits until its command transport answers, and reconnects its BB machine. */
   async start(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
     return this.#chain(box.id, async () => {
@@ -599,7 +604,12 @@ export class Boxes {
         await this.#observe(current, { signal, moving: true }).catch(() => null);
         throw error;
       }
-      return (await this.update(current, () => ({ state: "ready" }))) ?? current;
+      const started = (await this.update(current, () => ({ state: "ready" }))) ?? current;
+      // A hard stop ends BB's daemon, and nothing in the box starts it again (017).
+      if (started.state === "ready" && started.enrol.state === "enrolled" && this.#deps.reconnect) {
+        void this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error));
+      }
+      return started;
     });
   }
 
