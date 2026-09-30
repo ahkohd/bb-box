@@ -13,8 +13,10 @@
 // scripts/smoke.example.json reads the setup guide's token file and SSH key
 // this way. Keep your own settings file out of the repository.
 //
-// The box belongs to thread thr_smoke, which is not a BB thread. If bb-box
-// runs against the same backend, its sweep removes a box a smoke run left.
+// The box belongs to thread thr_smoke, which is not a BB thread. Smoke runs
+// are their own install, with the ID "smoke" (018): a bb-box install on the
+// same backend leaves their boxes alone, and each run first releases the
+// boxes an earlier run left.
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -135,6 +137,13 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
       if (!view.ok) {
         problems.push("The doctor found problems. Fix them, then run the smoke test again.");
         return result();
+      }
+    }
+
+    for (const backend of backends.active()) {
+      for (const guest of await backend.held(options.signal)) {
+        log(`Releasing a box an earlier smoke run left in ${backend.label}...`);
+        await backend.release(guest, { resetting: async () => {}, timing: () => {} }, options.signal);
       }
     }
 

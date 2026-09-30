@@ -107,3 +107,16 @@ test("the smoke test reports an unknown kind without making a box", async () => 
   assert.match(result.problems[0] ?? "", /linux-nope/);
   assert.deepEqual([...proxmox.guests.keys()], [9000]);
 });
+
+test("a smoke run first releases what an earlier smoke run left, and leaves other installs' guests alone", async () => {
+  const { proxmox, values, drivers, lines, log } = fakes();
+  const guest = (vmid: number, tags: string) =>
+    proxmox.guests.set(vmid, { vmid, name: `left-${vmid}`, pool: "bbbox", status: "running", template: false, config: { tags } });
+  guest(9900, "bb-box;install.smoke;box.box_left;thread.smoke;kind.linux-headless;template.9000");
+  guest(9901, "bb-box;install.other;box.box_theirs;thread.thr_x;kind.linux-headless;template.9000");
+  const result = await smoke(values, { kind: "linux-headless", command: "true", drivers, log });
+
+  assert.deepEqual(result.problems, []);
+  assert.deepEqual([...proxmox.guests.keys()].sort(), [9000, 9901], "the earlier run's box went, and the other install's stayed");
+  assert.match(lines.join("\n"), /Releasing a box an earlier smoke run left in Proxmox LXC/);
+});
