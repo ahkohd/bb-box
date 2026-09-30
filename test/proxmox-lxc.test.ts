@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after, test } from "node:test";
-import { ProxmoxLxcBackend, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox-lxc/backend.ts";
+import { ProxmoxLxcBackend, ownerFromDescription, ownerFromTags, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
 
@@ -19,7 +21,12 @@ function track(backend: ProxmoxLxcBackend): ProxmoxLxcBackend {
   return backend;
 }
 
-function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage()) {
+/** The fake Proxmox, SSH and network, and no waiting. */
+function fakes(proxmox: FakeProxmox): LxcBackendOptions {
+  return { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
+}
+
+function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage(), options: LxcBackendOptions = {}) {
   const ssh = fakeSsh();
   const proxmox = new FakeProxmox();
   proxmox.addTemplate(9000);
@@ -34,7 +41,7 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
   });
   const context = testContext(storage);
   const make = () =>
-    track(new ProxmoxLxcBackend(config, context, { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, readyTimeoutMs: 0 }));
+    track(new ProxmoxLxcBackend(config, context, { ...fakes(proxmox), ...options }));
   return { ssh, proxmox, context, storage, make, backend: make() };
 }
 
@@ -92,11 +99,19 @@ test("kinds lists only kinds with a template", () => {
   assert.deepEqual(kinds[0]!.capabilities.displays, []);
   assert.equal(kinds[0]!.capabilities.arch, "x86_64");
   assert.equal(kinds[0]!.readyTimeoutMs, 30_000);
-  assert.equal(kinds[0]!.size, "2 cores, 4 GiB memory, 16 GiB disk");
+  assert.equal(kinds[0]!.size, "2 cores, 4 GiB memory, the template's disk");
   const desktop = setup().backend.kinds().find((kind) => kind.id === "linux-desktop")!;
   assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }]);
   assert.equal(desktop.capabilities.gpu, true);
-  assert.equal(desktop.size, "4 cores, 8 GiB memory, 32 GiB disk");
+  assert.equal(desktop.size, "4 cores, 8 GiB memory, the template's disk");
+});
+
+test("a kind's size shows the template's disk once it is known, or the larger size set", async () => {
+  const { backend } = setup();
+  await backend.capacity("linux-headless", [], signal());
+  assert.equal(backend.kinds()[0]!.size, "2 cores, 4 GiB memory, 8 GiB disk");
+  const bigger = setup({ "proxmox-lxc-headless-disk-gib": 20 }).backend;
+  assert.equal(bigger.kinds()[0]!.size, "2 cores, 4 GiB memory, 20 GiB disk");
 });
 
 test("the node is found when there is only one", async () => {
@@ -142,7 +157,7 @@ test("capacity keeps the memory and disk reserves", async () => {
 
 test("capacity refuses when the VMID range is full", async () => {
   const { backend, proxmox } = setup({ "proxmox-lxc-vmid-last": 7000 });
-  proxmox.guests.set(7000, { vmid: 7000, name: "x", pool: "bb-box", status: "running", template: false, config: {} });
+  proxmox.guests.set(7000, { vmid: 7000, name: "x", pool: "bbbox", status: "running", template: false, config: {} });
   const full = await backend.capacity("linux-headless", [], signal());
   assert.equal(full.ok, false);
   assert.match(full.message!, /Every VMID from 7000 to 7000 is in use/);
@@ -196,20 +211,55 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   const guest = await backend.acquire(box, null, hook.value, signal());
   assert.deepEqual(guest, { ref: "7000", host: "pve", address: "192.0.2.100" });
   assert.deepEqual(hook.events, ["claim 7000", "clone 7000", "starting"]);
-  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "ready", "start", "warm"]);
+  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags", "warm"]);
 
   const made = proxmox.guests.get(7000)!;
   assert.equal(made.status, "running");
-  assert.equal(made.pool, "bb-box");
+  assert.equal(made.pool, "bbbox");
   assert.equal(made.name, box.name);
   assert.equal(made.config.cores, "2");
   assert.equal(made.config.memory, "4096");
   assert.equal(made.config.onboot, "1");
   assert.equal(made.config.net0, "name=eth0,bridge=vmbr1,ip=192.0.2.100/24,gw=192.0.2.1,type=veth");
-  assert.match(made.config.rootfs!, /size=16G/);
+  assert.match(made.config.rootfs!, /size=8G/, "the template's disk is kept");
+  assert.equal(made.config.protection, undefined, "the template's protection is dropped");
+  assert.equal(proxmox.calls.some((call) => call.path.endsWith("/resize")), false);
+  const puts = proxmox.calls.filter((call) => call.method === "PUT" && call.path === "/nodes/pve/lxc/7000/config");
+  assert.deepEqual(
+    puts.map((call) => Object.keys(call.params).sort()),
+    [["cores", "delete", "memory", "net0", "onboot"], ["tags"]],
+    "tags go in a PUT of their own",
+  );
   const tags = parseTags(made.config.tags);
   assert.deepEqual(ownerFromTags(tags), { boxId: box.boxId, threadId: box.threadId, name: null, kind: box.kind, createdAt: box.createdAt });
   assert.equal(ownerFromDescription(made.config.description)?.boxId, box.boxId);
+});
+
+test("a larger disk is applied once the box runs", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-headless-disk-gib": 20 });
+  const states: string[] = [];
+  proxmox.intercept = (call) => {
+    if (call.path.endsWith("/resize")) states.push(proxmox.guests.get(Number(call.path.split("/")[4]))!.status);
+    return undefined;
+  };
+  const hook = hooks();
+  await backend.acquire(identity(), null, hook.value, signal());
+  assert.deepEqual(states, ["running"]);
+  assert.match(proxmox.guests.get(7000)!.config.rootfs!, /size=20G/);
+  assert.equal(typeof hook.timings.resize, "number");
+});
+
+test("VMIDs are handed out round-robin, so a deleted box's address waits its turn", async () => {
+  const storage = new MemoryStorage();
+  const { backend, make } = setup({ "proxmox-lxc-vmid-last": 7002 }, storage);
+  const first = await backend.acquire(identity(), null, hooks().value, signal());
+  await backend.release(first, releasing());
+  const second = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(second.ref, "7001");
+  const third = await make().acquire(identity(), null, hooks().value, signal());
+  assert.equal(third.ref, "7002", "a new instance carries on from the stored cursor");
+  const fourth = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(fourth.ref, "7000", "the search wraps round to the first free VMID");
 });
 
 test("acquire skips a VMID another pool holds", async () => {
@@ -228,13 +278,39 @@ test("a failed acquire deletes what it made", async () => {
   assert.equal(proxmox.guests.has(7000), false);
 });
 
+test("a clone that fails before it is configured is deleted despite the template's protection", async () => {
+  const { backend, proxmox } = setup();
+  proxmox.intercept = (call) =>
+    call.method === "PUT" && call.params.net0
+      ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "no such bridge" }) }
+      : undefined;
+  await assert.rejects(backend.acquire(identity(), null, hooks().value, signal()), /no such bridge/);
+  assert.equal(proxmox.guests.has(7000), false);
+});
+
 test("a box that never answers on SSH is deleted with a clear reason", async () => {
   const { backend, proxmox, ssh } = setup();
   ssh.down("192.0.2.100");
   await assert.rejects(
     backend.acquire(identity(), null, hooks().value, signal()),
-    /SSH on 192\.0\.2\.100 did not answer.*template starts sshd on port 22.*user box accepts bb-box's key/,
+    /Port 22 of 192\.0\.2\.100 is open, but SSH as box did not answer.*user box in the linux-headless template accepts bb-box's key/,
   );
+  assert.equal(proxmox.guests.has(7000), false);
+});
+
+test("a box whose port 22 never opens is deleted with a clear reason", async () => {
+  const checked: string[] = [];
+  const portCheck = async (host: string, port: number) => {
+    checked.push(`${host}:${port}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return false;
+  };
+  const { backend, proxmox } = setup({}, new MemoryStorage(), { portCheck });
+  await assert.rejects(
+    backend.acquire(identity(), null, hooks().value, signal()),
+    /Nothing answered on port 22 of 192\.0\.2\.100.*can reach the boxes' subnet/,
+  );
+  assert.ok(checked.length > 1 && checked.every((target) => target === "192.0.2.100:22"));
   assert.equal(proxmox.guests.has(7000), false);
 });
 
@@ -287,14 +363,14 @@ test("held lists owned guests and unlabelled ones, and leaves others alone", asy
   proxmox.guests.set(7001, {
     vmid: 7001,
     name: "half",
-    pool: "bb-box",
+    pool: "bbbox",
     status: "stopped",
     template: false,
     config: { description: "bb-box half-done\nbox box_x\nthread thr_x\nkind linux-headless\ncreated 2026-09-30T00:00:00.000Z" },
   });
-  proxmox.guests.set(7002, { vmid: 7002, name: "mystery", pool: "bb-box", status: "running", template: false, config: {} });
-  proxmox.guests.set(7003, { vmid: 7003, name: "warm", pool: "bb-box", status: "running", template: false, config: { tags: "bb-box;warm;kind.linux-headless" } });
-  proxmox.guests.set(8000, { vmid: 8000, name: "outside", pool: "bb-box", status: "running", template: false, config: {} });
+  proxmox.guests.set(7002, { vmid: 7002, name: "mystery", pool: "bbbox", status: "running", template: false, config: {} });
+  proxmox.guests.set(7003, { vmid: 7003, name: "warm", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;warm;kind.linux-headless" } });
+  proxmox.guests.set(8000, { vmid: 8000, name: "outside", pool: "bbbox", status: "running", template: false, config: {} });
   proxmox.guests.set(7004, { vmid: 7004, name: "other-pool", pool: "else", status: "running", template: false, config: {} });
 
   const held = await backend.held();
@@ -345,10 +421,14 @@ test("transports reach the box over SSH, and desktops over VNC", async () => {
   assert.deepEqual(await display!.open(), { route: { type: "tcp", host: "192.0.2.101", port: 5900 }, auth: { type: "none" } });
 });
 
-test("a desktop with a VNC password says so, and the relay answers it", async () => {
-  const { backend } = setup({ "proxmox-lxc-desktop-vnc-password": "hunter2" });
+test("a desktop's VNC password is read from the box when a viewer opens it", async () => {
+  // An ssh that answers the password file itself, since the fake runs commands on this machine.
+  const binary = join(tempDir("vnc-ssh"), "ssh");
+  writeFileSync(binary, `#!/bin/sh\ncase "$*" in *vnc-password*) echo hunter2; exit 0;; esac\nexec "${FAKE_SSH_BINARY}" "$@"\n`, { mode: 0o755 });
+  const { backend, ssh } = setup({}, new MemoryStorage(), { sshBinary: binary });
   const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   const [display] = (await backend.transports(desktop, "linux-desktop")).displays;
+  assert.equal(ssh.log().some((entry) => entry.command.includes("vnc-password")), false, "nothing is read before a viewer opens");
   assert.deepEqual((await display!.open()).auth, { type: "vnc-password", password: "hunter2" });
 });
 
@@ -394,12 +474,11 @@ test("warm guests beyond the target are removed", async () => {
   await backend.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 2);
   const smaller = track(
-    new ProxmoxLxcBackend(lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009, "proxmox-lxc-headless-warm": 1 }), context, {
-      fetch: proxmox.fetch,
-      sleep: async () => {},
-      sshBinary: FAKE_SSH_BINARY,
-      readyTimeoutMs: 0,
-    }),
+    new ProxmoxLxcBackend(
+      lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009, "proxmox-lxc-headless-warm": 1 }),
+      context,
+      fakes(proxmox),
+    ),
   );
   await smaller.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 1);
@@ -453,7 +532,7 @@ test("doctor says what is missing", async () => {
   assert.equal(report.ok, false);
   const byId = Object.fromEntries(report.checks.map((check) => [check.id, check]));
   assert.equal(byId["proxmox.pool"]!.status, "fail");
-  assert.match(byId["proxmox.pool"]!.fix!, /pveum pool add bb-box/);
+  assert.match(byId["proxmox.pool"]!.fix!, /pveum pool add bbbox/);
   assert.match(byId["template.headless"]!.fix!, /pct set 9000 --features nesting=1/);
   assert.match(byId["template.desktop"]!.detail, /CT 9001 does not exist on pve/);
   assert.match(byId["proxmox.bridge"]!.detail, /pve has no vmbr1/);
@@ -462,7 +541,7 @@ test("doctor says what is missing", async () => {
 
 test("doctor warns, without failing, when every VMID is in use", async () => {
   const { backend, proxmox } = setup({ "proxmox-lxc-vmid-last": 7000, "proxmox-lxc-ssh-private-key": "" });
-  proxmox.guests.set(7000, { vmid: 7000, name: "x", pool: "bb-box", status: "running", template: false, config: {} });
+  proxmox.guests.set(7000, { vmid: 7000, name: "x", pool: "bbbox", status: "running", template: false, config: {} });
   const report = await backend.doctor();
   assert.equal(report.ok, true, JSON.stringify(report.checks.filter((check) => check.status === "fail")));
   const vmids = report.checks.find((check) => check.id === "proxmox.vmids")!;

@@ -1,6 +1,7 @@
 // A small in-memory Proxmox API with the LXC behaviour bb-box relies on:
-// linked clones that reject `storage`, "already exists" for used VMIDs,
-// asynchronous tasks, tags, pools and /cluster/resources.
+// linked clones that reject `storage` and inherit the template's protection,
+// "already exists" for used VMIDs, asynchronous tasks, tags, pools and
+// /cluster/resources.
 
 import type { FetchLike, FetchResponse } from "../src/backends/proxmox/api.ts";
 
@@ -43,7 +44,7 @@ export class FakeProxmox {
   memory = { total: 64 * 2 ** 30, available: 48 * 2 ** 30 };
   /** Storage in bytes by storage ID. */
   readonly storage = new Map<string, { total: number; avail: number }>([["local-lvm", { total: 900 * 2 ** 30, avail: 600 * 2 ** 30 }]]);
-  readonly pools = new Set<string>(["bb-box"]);
+  readonly pools = new Set<string>(["bbbox"]);
   readonly bridges = new Set<string>(["vmbr0", "vmbr1"]);
   /** Optional hook to fail a request: return a response to short-circuit. */
   intercept?: (call: FakeCall) => FetchResponse | undefined;
@@ -59,6 +60,7 @@ export class FakeProxmox {
         features: "nesting=1",
         cores: "1",
         memory: "512",
+        protection: "1",
         template: "1",
         ...config,
       },
@@ -188,7 +190,8 @@ export class FakeProxmox {
       if (!guest) return this.#missing(vmid);
       if (method === "GET") return ok({ ...guest.config });
       if (method === "PUT") {
-        for (const [key, value] of Object.entries(params)) guest.config[key] = value;
+        for (const [key, value] of Object.entries(params)) if (key !== "delete") guest.config[key] = value;
+        for (const key of params.delete?.split(",") ?? []) delete guest.config[key];
         if (params.hostname) guest.name = params.hostname;
         return ok(null);
       }
@@ -224,6 +227,7 @@ export class FakeProxmox {
       const guest = this.guests.get(vmid);
       if (!guest) return this.#missing(vmid);
       if (guest.status === "running") return respond(500, `CT ${vmid} is running - destroy failed`, { data: null });
+      if (guest.config.protection === "1") return respond(500, `can't remove CT ${vmid} - protection mode enabled`, { data: null });
       this.guests.delete(vmid);
       return ok(this.#task("vzdestroy", vmid));
     }

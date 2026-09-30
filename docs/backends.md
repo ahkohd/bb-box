@@ -84,5 +84,5 @@ node --test test/conformance.test.ts
   with the API client in [src/backends/proxmox/](../src/backends/proxmox/).
 - The host side, templates and API token are set up by
   `setup/proxmox-lxc/`, whose guide lists the settings.
-- Ownership lives in Proxmox tags (`bbbox`, `thread.<id>`, `box.<id>`,
+- Ownership lives in Proxmox tags (`bb-box`, `thread.<id>`, `box.<id>`,
   `kind.<kind>`).

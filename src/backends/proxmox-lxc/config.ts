@@ -7,7 +7,13 @@
 //
 // Each VMID in the owned range has a fixed address: the n-th VMID gets the
 // n-th address. Proxmox refuses a second guest with the same VMID, so two
-// boxes never share an address and no address is stored or leased.
+// boxes never share an address and no address is stored or leased. VMIDs are
+// handed out round-robin, so an address is not reused straight after a box
+// is deleted.
+//
+// The defaults match the generic ones in setup/proxmox-lxc/, so a host set up
+// with that guide's defaults needs only the API URL, token, fingerprint and
+// SSH key.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { ParsedSettings } from "../types.ts";
@@ -30,7 +36,8 @@ export interface LxcTemplateConfig {
   readonly template: number | null;
   readonly cores: number;
   readonly memoryMiB: number;
-  readonly diskGiB: number;
+  /** Root disk size, or null to keep the template's. A larger size is applied while the box runs. */
+  readonly diskGiB: number | null;
   /** Ready boxes kept in the warm pool. */
   readonly warm: number;
 }
@@ -41,14 +48,14 @@ export interface LxcConfig {
     readonly tokenId: string;
     readonly tokenSecret: string;
     readonly caCertificate: string | null;
+    /** SHA-256 of the API's certificate, as AA:BB:..., pinned instead of checking its CA. */
+    readonly tlsFingerprint: string | null;
     /** Null means the API's only node. */
     readonly node: string | null;
     readonly pool: string;
   };
   readonly templates: Readonly<Record<LxcTemplate, LxcTemplateConfig>>;
   readonly desktop: {
-    /** The VNC password the desktop template sets, or null when it asks for none. */
-    readonly vncPassword: string | null;
     /** The most desktop boxes the node's GPU runs at once, or null for no limit. */
     readonly gpuDesktops: number | null;
   };
@@ -66,11 +73,16 @@ export interface LxcConfig {
 }
 
 export const LXC_DEFAULTS = {
-  pool: "bb-box",
-  vmidFirst: 7000,
-  vmidLast: 7099,
-  headless: { cores: 2, memoryMiB: 4096, diskGiB: 16 },
-  desktop: { cores: 4, memoryMiB: 8192, diskGiB: 32 },
+  pool: "bbbox",
+  headlessTemplate: 9100,
+  vmidFirst: 9900,
+  vmidLast: 9999,
+  headless: { cores: 2, memoryMiB: 4096 },
+  desktop: { cores: 4, memoryMiB: 8192 },
+  bridge: "vmbr200",
+  subnet: "10.200.0.0/24",
+  gateway: "10.200.0.1",
+  addresses: "10.200.0.10-10.200.0.254",
   sshUser: "box",
   reserveMemoryMiB: 4096,
   reserveDiskGiB: 50,
@@ -82,6 +94,7 @@ export const LXC_KEYS = {
   url: "proxmox-lxc-url",
   tokenId: "proxmox-lxc-token-id",
   tokenSecret: "proxmox-lxc-token-secret",
+  tlsFingerprint: "proxmox-lxc-tls-fingerprint",
   caCertificate: "proxmox-lxc-ca-certificate",
   node: "proxmox-lxc-node",
   pool: "proxmox-lxc-pool",
@@ -93,7 +106,6 @@ export const LXC_KEYS = {
   addresses: "proxmox-lxc-addresses",
   sshPrivateKey: "proxmox-lxc-ssh-private-key",
   sshUser: "proxmox-lxc-ssh-user",
-  vncPassword: "proxmox-lxc-desktop-vnc-password",
   gpuDesktops: "proxmox-lxc-desktop-gpu-limit",
   reserveMemoryMiB: "proxmox-lxc-reserve-memory-mib",
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
@@ -111,15 +123,15 @@ function templateSettings(template: LxcTemplate): Record<string, PluginSettingDe
       type: "number",
       label: `Proxmox LXC: ${template} template VMID`,
       description: `The CT template ${kinds} boxes are linked clones of. 0 turns them off.`,
-      default: 0,
+      default: template === "headless" ? LXC_DEFAULTS.headlessTemplate : 0,
     },
     [templateKey(template, "cores")]: { type: "number", label: `Proxmox LXC: ${template} cores`, default: defaults.cores },
     [templateKey(template, "memory-mib")]: { type: "number", label: `Proxmox LXC: ${template} memory (MiB)`, default: defaults.memoryMiB },
     [templateKey(template, "disk-gib")]: {
       type: "number",
       label: `Proxmox LXC: ${template} disk (GiB)`,
-      description: "The root disk grows to this size if the template's is smaller.",
-      default: defaults.diskGiB,
+      description: "0 keeps the template's size, which is quickest. A larger size is applied after the box starts, in about a second.",
+      default: 0,
     },
     [templateKey(template, "warm")]: {
       type: "number",
@@ -140,7 +152,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [LXC_KEYS.url]: {
     type: "string",
     label: "Proxmox LXC: API URL",
-    description: "For example https://pve.example.com:8006.",
+    description: "For example https://192.0.2.10:8006/api2/json, as the setup guide's token file gives it.",
     default: "",
   },
   [LXC_KEYS.tokenId]: {
@@ -150,10 +162,17 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     default: "",
   },
   [LXC_KEYS.tokenSecret]: { type: "string", label: "Proxmox LXC: API token secret", secret: true },
+  [LXC_KEYS.tlsFingerprint]: {
+    type: "string",
+    label: "Proxmox LXC: TLS fingerprint",
+    description:
+      "The SHA-256 fingerprint of the Proxmox API's certificate, from the setup guide's token file. bb-box then trusts that certificate alone. Leave empty to check the certificate against its CA.",
+    default: "",
+  },
   [LXC_KEYS.caCertificate]: {
     type: "string",
     label: "Proxmox LXC: CA certificate",
-    description: "PEM certificate of the CA that signed the Proxmox API's certificate. Leave empty for a publicly trusted one.",
+    description: "PEM certificate of the CA that signed the Proxmox API's certificate, when there is no TLS fingerprint. Leave empty for a publicly trusted one.",
     experimental_multiline: true,
     default: "",
   },
@@ -171,12 +190,6 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   },
   ...templateSettings("headless"),
   ...templateSettings("desktop"),
-  [LXC_KEYS.vncPassword]: {
-    type: "string",
-    label: "Proxmox LXC: desktop VNC password",
-    description: "The VNC password the desktop template sets. Leave empty when its VNC server asks for none. bb-box answers it; viewers never see it.",
-    secret: true,
-  },
   [LXC_KEYS.gpuDesktops]: {
     type: "number",
     label: "Proxmox LXC: desktops on the GPU at once",
@@ -193,33 +206,32 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [LXC_KEYS.bridge]: {
     type: "string",
     label: "Proxmox LXC: network bridge",
-    description: "The bridge boxes attach to, for example vmbr1.",
-    default: "",
+    description: "The bridge boxes attach to.",
+    default: LXC_DEFAULTS.bridge,
   },
   [LXC_KEYS.subnet]: {
     type: "string",
     label: "Proxmox LXC: subnet",
-    description: "The bridge's subnet in CIDR form, for example 10.10.10.0/24. Boxes get static addresses; there is no DHCP.",
-    default: "",
+    description: "The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP.",
+    default: LXC_DEFAULTS.subnet,
   },
   [LXC_KEYS.gateway]: {
     type: "string",
     label: "Proxmox LXC: gateway",
-    description: "For example 10.10.10.1.",
-    default: "",
+    description: "The host's address on the bridge.",
+    default: LXC_DEFAULTS.gateway,
   },
   [LXC_KEYS.addresses]: {
     type: "string",
     label: "Proxmox LXC: box addresses",
-    description:
-      "A range such as 10.10.10.100-10.10.10.199. The n-th VMID gets the n-th address. Leave empty to use the whole subnet except the gateway.",
-    default: "",
+    description: "The range bb-box hands out. The n-th VMID gets the n-th address. Leave empty to use the whole subnet except the gateway.",
+    default: LXC_DEFAULTS.addresses,
   },
   [LXC_KEYS.sshPrivateKey]: {
     type: "string",
     label: "Proxmox LXC: SSH private key",
     description:
-      "An unencrypted OpenSSH private key whose public key is in the templates' authorized_keys. Leave empty and bb-box makes one and shows its public key in the panel.",
+      "The unencrypted OpenSSH private key the templates were built with (the setup guide's BBBOX_SSH_KEY). Leave empty and bb-box makes one and shows its public key, which the templates must then accept.",
     secret: true,
   },
   [LXC_KEYS.sshUser]: {
@@ -301,11 +313,19 @@ export function normalisePrivateKey(value: string): string | null {
   return `-----BEGIN ${match[1]}-----\n${lines.join("\n")}\n-----END ${match[1]}-----\n`;
 }
 
+/** A SHA-256 fingerprint as AA:BB:..., from hex with or without colons, or null. */
+export function normaliseFingerprint(value: string): string | null {
+  const hex = value.trim().replace(/^sha256[:=]?\s*/i, "").replace(/[:\s]/g, "").toUpperCase();
+  if (!/^[0-9A-F]{64}$/.test(hex)) return null;
+  return hex.match(/../g)!.join(":");
+}
+
 export function parseLxcSettings(values: Readonly<Record<string, unknown>>): ParsedSettings<LxcConfig> {
   if (values[LXC_KEYS.enabled] === false) return { enabled: false };
   const problems: string[] = [];
 
-  const apiUrl = text(values, LXC_KEYS.url).replace(/\/+$/, "");
+  // The setup guide's token file gives the URL with /api2/json, which the client adds itself.
+  const apiUrl = text(values, LXC_KEYS.url).replace(/\/+$/, "").replace(/\/api2\/json$/, "");
   if (!apiUrl) problems.push("Set the Proxmox API URL.");
   else {
     try {
@@ -321,6 +341,9 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   else if (!/^[^\s@!=]+@[^\s@!=]+![^\s@!=]+$/.test(tokenId)) problems.push("Use a token ID like bb-box@pve!plugin.");
   const tokenSecret = text(values, LXC_KEYS.tokenSecret);
   if (!tokenSecret) problems.push("Set the Proxmox API token secret.");
+  const fingerprintText = text(values, LXC_KEYS.tlsFingerprint);
+  const tlsFingerprint = fingerprintText ? normaliseFingerprint(fingerprintText) : null;
+  if (fingerprintText && !tlsFingerprint) problems.push("Use a SHA-256 fingerprint like AB:CD:..., with 32 pairs of hex digits.");
   const caCertificate = text(values, LXC_KEYS.caCertificate) || null;
   if (caCertificate && !caCertificate.includes("-----BEGIN CERTIFICATE-----")) {
     problems.push("Use a PEM certificate for the Proxmox CA, or leave it empty.");
@@ -332,12 +355,13 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
 
   const templates = {} as Record<LxcTemplate, LxcTemplateConfig>;
   for (const name of LXC_TEMPLATES) {
-    const template = number(values, templateKey(name, "template"), 0);
+    const template = number(values, templateKey(name, "template"), name === "headless" ? LXC_DEFAULTS.headlessTemplate : 0);
+    const diskGiB = number(values, templateKey(name, "disk-gib"), 0);
     const config: LxcTemplateConfig = {
       template: template > 0 ? template : null,
       cores: number(values, templateKey(name, "cores"), LXC_DEFAULTS[name].cores),
       memoryMiB: number(values, templateKey(name, "memory-mib"), LXC_DEFAULTS[name].memoryMiB),
-      diskGiB: number(values, templateKey(name, "disk-gib"), LXC_DEFAULTS[name].diskGiB),
+      diskGiB: diskGiB === 0 ? null : diskGiB,
       warm: number(values, templateKey(name, "warm"), 0),
     };
     if (config.template !== null && !wholeInRange(config.template, 100, 999_999_999)) {
@@ -345,7 +369,7 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
     }
     if (!wholeInRange(config.cores, 1, 128)) problems.push(`Use 1 to 128 cores for ${name} boxes.`);
     if (!wholeInRange(config.memoryMiB, 256, 1_048_576)) problems.push(`Use 256 MiB or more of memory for ${name} boxes.`);
-    if (!wholeInRange(config.diskGiB, 1, 16_384)) problems.push(`Use a disk of 1 GiB or more for ${name} boxes.`);
+    if (config.diskGiB !== null && !wholeInRange(config.diskGiB, 1, 16_384)) problems.push(`Use 0, or a disk of 1 GiB or more, for ${name} boxes.`);
     if (!wholeInRange(config.warm, 0, 20)) problems.push(`Keep 0 to 20 warm ${name} boxes.`);
     templates[name] = config;
   }
@@ -363,13 +387,13 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
     }
   }
 
-  const bridge = text(values, LXC_KEYS.bridge);
+  const bridge = text(values, LXC_KEYS.bridge, LXC_DEFAULTS.bridge);
   if (!bridge) problems.push("Set the network bridge.");
   else if (!/^[A-Za-z0-9_.-]{1,15}$/.test(bridge)) problems.push("Use a Linux bridge name such as vmbr1.");
-  const [networkText = "", prefixText = ""] = text(values, LXC_KEYS.subnet).split("/");
+  const [networkText = "", prefixText = ""] = text(values, LXC_KEYS.subnet, LXC_DEFAULTS.subnet).split("/");
   const network = parseIpv4(networkText);
   const prefix = Number(prefixText);
-  const gatewayText = text(values, LXC_KEYS.gateway);
+  const gatewayText = text(values, LXC_KEYS.gateway, LXC_DEFAULTS.gateway);
   const gateway = parseIpv4(gatewayText);
   const addresses: string[] = [];
   if (network === null || !wholeInRange(prefix, 8, 30)) {
@@ -383,7 +407,7 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
     if (gateway <= base || gateway >= broadcast) problems.push("Put the gateway inside the subnet.");
     let low = base + 1;
     let high = broadcast - 1;
-    const range = text(values, LXC_KEYS.addresses);
+    const range = text(values, LXC_KEYS.addresses, LXC_DEFAULTS.addresses);
     if (range) {
       const [from, to] = range.split("-").map((part) => parseIpv4(part));
       if (from == null || to == null || from > to) {
@@ -410,8 +434,6 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   const user = text(values, LXC_KEYS.sshUser) || LXC_DEFAULTS.sshUser;
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user)) problems.push("Use a Linux user name for SSH.");
 
-  const vncPassword = text(values, LXC_KEYS.vncPassword) || null;
-  if (vncPassword && vncPassword.length > 8) problems.push("Use a VNC password of 8 characters or fewer; VNC ignores the rest.");
   const gpuDesktops = number(values, LXC_KEYS.gpuDesktops, 0);
   if (!wholeInRange(gpuDesktops, 0, 1_000)) problems.push("Use 0 or more for the desktops on the GPU at once.");
 
@@ -425,9 +447,9 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
     enabled: true,
     ok: true,
     config: {
-      proxmox: { apiUrl, tokenId, tokenSecret, caCertificate, node, pool },
+      proxmox: { apiUrl, tokenId, tokenSecret, caCertificate, tlsFingerprint, node, pool },
       templates,
-      desktop: { vncPassword, gpuDesktops: gpuDesktops > 0 ? gpuDesktops : null },
+      desktop: { gpuDesktops: gpuDesktops > 0 ? gpuDesktops : null },
       vmids: { first, last },
       network: { bridge, prefix, gateway: gatewayText, addresses },
       ssh: { privateKey, user },

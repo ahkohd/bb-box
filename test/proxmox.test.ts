@@ -21,16 +21,16 @@ function setup() {
 
 test("a linked clone joins the pool without a storage parameter and waits for its task", async () => {
   const { api, proxmox, sleeps } = setup();
-  await proxmox.cloneLinked({ template: 9000, vmid: 7001, hostname: "quiet-heron", pool: "bb-box" });
+  await proxmox.cloneLinked({ template: 9000, vmid: 7001, hostname: "quiet-heron", pool: "bbbox" });
   const clone = api.calls.find((call) => call.path.endsWith("/clone"))!;
   assert.equal(clone.method, "POST");
   assert.equal(clone.path, "/nodes/pve/lxc/9000/clone");
-  assert.deepEqual(clone.params, { newid: "7001", hostname: "quiet-heron", full: "0", pool: "bb-box" });
+  assert.deepEqual(clone.params, { newid: "7001", hostname: "quiet-heron", full: "0", pool: "bbbox" });
   assert.equal(clone.auth, `PVEAPIToken=${FAKE_TOKEN.tokenId}=${FAKE_TOKEN.tokenSecret}`);
   assert.ok(api.calls.some((call) => call.path.includes("/tasks/")));
-  assert.deepEqual(sleeps, [500], "tasks are polled every 0.5 s");
+  assert.deepEqual(sleeps, [50], "tasks are polled every 50 ms");
   const guest = api.guests.get(7001)!;
-  assert.equal(guest.pool, "bb-box");
+  assert.equal(guest.pool, "bbbox");
   assert.equal(guest.config.features, "nesting=1", "features come from the template");
 });
 
@@ -45,7 +45,7 @@ test("a used VMID reports already exists", async () => {
 
 test("configure sets cores, memory, a static address and tags after the clone is in the pool", async () => {
   const { api, proxmox } = setup();
-  await proxmox.cloneLinked({ template: 9000, vmid: 7003, hostname: "calm-otter", pool: "bb-box" });
+  await proxmox.cloneLinked({ template: 9000, vmid: 7003, hostname: "calm-otter", pool: "bbbox" });
   await proxmox.configure(7003, {
     cores: 4,
     memory: 8192,
@@ -77,7 +77,7 @@ test("the root disk only grows", async () => {
 
 test("start, status, stop and destroy with purge; a missing CT counts as deleted", async () => {
   const { api, proxmox } = setup();
-  await proxmox.cloneLinked({ template: 9000, vmid: 7005, hostname: "kind-lark", pool: "bb-box" });
+  await proxmox.cloneLinked({ template: 9000, vmid: 7005, hostname: "kind-lark", pool: "bbbox" });
   await proxmox.start(7005);
   assert.equal((await proxmox.status(7005))?.status, "running");
   await proxmox.destroy(7005);
@@ -105,10 +105,10 @@ test("task warnings are success, task errors are not", async () => {
 
 test("listPool returns only the pool's guests with their tags", async () => {
   const { proxmox } = setup();
-  await proxmox.cloneLinked({ template: 9000, vmid: 7007, hostname: "wise-moss", pool: "bb-box" });
+  await proxmox.cloneLinked({ template: 9000, vmid: 7007, hostname: "wise-moss", pool: "bbbox" });
   await proxmox.configure(7007, { tags: ["bb-box", "thread.thr_1", "box.bx1"] });
   await proxmox.cloneLinked({ template: 9000, vmid: 7008, hostname: "other-pool" });
-  const guests = await proxmox.listPool("bb-box");
+  const guests = await proxmox.listPool("bbbox");
   assert.deepEqual(
     guests.map((guest) => [guest.vmid, guest.name, guest.tags]),
     [[7007, "wise-moss", ["bb-box", "thread.thr_1", "box.bx1"]]],

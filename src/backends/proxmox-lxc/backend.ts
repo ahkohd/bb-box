@@ -5,14 +5,19 @@
 // sweep can find every guest even if bb-box's storage is lost. Commands run
 // over SSH as the templates' box user; desktops stream over VNC.
 //
+// An acquire clones, configures (dropping the protection clones inherit),
+// tags, starts, grows the disk if asked (quick only while running), waits for
+// port 22 and then for SSH. Proxmox tasks are polled every 50 ms.
+//
 // Two templates serve three kinds: linux-headless and linux-headless-docker
 // are clones of the headless template, linux-desktop of the desktop one. The
 // warm pool keeps started guests of each template, tagged "warm". Claiming one
 // retags it for its box, so a new box is ready as soon as the tags change.
 
-import { Agent, fetch as undiciFetch } from "undici";
+import type { TLSSocket } from "node:tls";
+import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import { ReadyPool, type PoolStore } from "../pool.ts";
-import { Proxmox, ProxmoxError, parseTags, type FetchLike, type PoolGuest } from "../proxmox/api.ts";
+import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest } from "../proxmox/api.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -33,7 +38,7 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
-import { waitUntilAnswers } from "../../transports/ready.ts";
+import { waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import type { Display, SshAccess } from "../../transports/types.ts";
 import {
@@ -54,7 +59,11 @@ const RETIRED = "retired";
 const MiB = 2 ** 20;
 const GiB = 2 ** 30;
 const VNC_PORT = 5900;
+/** The desktop template writes a fresh VNC password here, readable by the box user. */
+const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 const SSH_KEY = "ssh-key";
+/** Where the next VMID search starts. */
+const NEXT_VMID = "next-vmid";
 /** Clone, start and SSH answering take a few seconds; this leaves room for a busy host. */
 const READY_TIMEOUT_MS = 30_000;
 
@@ -171,8 +180,11 @@ export function ownerFromDescription(text: unknown): BoxOwner | null {
   };
 }
 
-function size(config: LxcTemplateConfig): string {
-  return `${config.cores} ${config.cores === 1 ? "core" : "cores"}, ${formatMiB(config.memoryMiB)} memory, ${config.diskGiB} GiB disk`;
+/** `templateDiskGiB` is the template's own disk, when known. */
+function size(config: LxcTemplateConfig, templateDiskGiB: number | null): string {
+  const cores = `${config.cores} ${config.cores === 1 ? "core" : "cores"}`;
+  const disk = Math.max(config.diskGiB ?? 0, templateDiskGiB ?? 0);
+  return `${cores}, ${formatMiB(config.memoryMiB)} memory, ${disk ? `${Math.round(disk)} GiB disk` : "the template's disk"}`;
 }
 
 function formatMiB(value: number): string {
@@ -184,21 +196,56 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** A fetch that trusts `ca` for the Proxmox API, or the system roots when it is null. */
-function proxmoxFetch(ca: string | null): { fetch: FetchLike; close(): Promise<void> } {
-  if (!ca) return { fetch: (url, init) => fetch(url, init), close: async () => {} };
-  const agent = new Agent({ connect: { ca } });
+/**
+ * A fetch for the Proxmox API. With a fingerprint it trusts that certificate
+ * alone, which suits Proxmox's self-signed one; otherwise it trusts `ca`, or
+ * the system roots when that is null.
+ */
+function proxmoxFetch(tls: { ca: string | null; fingerprint: string | null }): { fetch: FetchLike; close(): Promise<void> } {
+  let agent: Agent;
+  if (tls.fingerprint) {
+    const expected = tls.fingerprint;
+    // No cached sessions: a resumed session may not carry the certificate to check.
+    const connect = buildConnector({ rejectUnauthorized: false, maxCachedSessions: 0 });
+    agent = new Agent({
+      connect: (options, callback) =>
+        connect(options, (error, socket) => {
+          if (error) return callback(error, null);
+          if (options.protocol !== "https:") return callback(null, socket!);
+          const actual = (socket as TLSSocket).getPeerCertificate().fingerprint256;
+          if (actual === expected) return callback(null, socket!);
+          socket!.destroy();
+          callback(
+            new Error(
+              `the API's certificate has SHA-256 fingerprint ${actual || "(none)"}, not the one in bb-box's settings. ` +
+                "If the certificate was renewed, set the new fingerprint.",
+            ),
+            null,
+          );
+        }),
+    });
+  } else if (tls.ca) {
+    agent = new Agent({ connect: { ca: tls.ca } });
+  } else {
+    return { fetch: (url, init) => fetch(url, init), close: async () => {} };
+  }
   return { fetch: (url, init) => undiciFetch(url, { ...init, dispatcher: agent }), close: () => agent.close() };
 }
 
 export interface LxcBackendOptions {
-  /** Replaces the Proxmox API's fetch; the CA setting is then ignored. */
+  /** Replaces the Proxmox API's fetch; the TLS settings are then ignored. */
   readonly fetch?: FetchLike;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly sshBinary?: string;
+  /** Replaces the TCP check for port 22, for tests. */
+  readonly portCheck?: PortCheck;
   /** Replaces each kind's readyTimeoutMs, for tests. */
   readonly readyTimeoutMs?: number;
 }
+
+/** Times one step of an acquire. */
+type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
+const untimed: Step = (_name, run) => run();
 
 interface SshKeys {
   readonly ssh: Ssh;
@@ -231,18 +278,22 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #filling = new Map<number, LxcTemplate>();
   /** Acquires running in this process, by box, with their VMID once claimed. */
   readonly #acquiring = new Map<string, { readonly template: LxcTemplate; vmid: number | null }>();
-  /** Root disk storage of each template. */
-  readonly #storages = new Map<number, string>();
+  /** Root disk storage and size of each template. */
+  readonly #templates = new Map<number, { readonly storage: string; readonly diskGiB: number | null }>();
   readonly #stopping = new AbortController();
   #api: Promise<Proxmox> | null = null;
   #ssh: Promise<SshKeys> | null = null;
+  /** Where the next VMID search starts, so a deleted box's VMID and address are not reused at once. */
+  #nextVmid: number | null = null;
   #maintaining: Promise<void> | null = null;
 
   constructor(config: LxcConfig, context: BackendContext, options: LxcBackendOptions = {}) {
     this.#config = config;
     this.#context = context;
     this.#options = options;
-    this.#http = options.fetch ? { fetch: options.fetch, close: async () => {} } : proxmoxFetch(config.proxmox.caCertificate);
+    this.#http = options.fetch
+      ? { fetch: options.fetch, close: async () => {} }
+      : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
     this.label = `Proxmox LXC on ${config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname}`;
     this.#warm = new ReadyPool(new WarmStore(this, config.proxmox.pool));
   }
@@ -270,7 +321,7 @@ export class ProxmoxLxcBackend implements Backend {
     fromWarm: boolean,
     signal?: AbortSignal,
   ): Promise<Capacity> {
-    const storage = await this.#storageOf(api, offer.config.template, signal);
+    const { storage } = await this.#templateOf(api, offer.config.template, signal);
     const [node, disk] = await Promise.all([api.nodeStatus(signal), api.storageStatus(storage, signal)]);
     const reserve = this.#config.reserve;
     const kind = offer.kind.id;
@@ -356,7 +407,7 @@ export class ProxmoxLxcBackend implements Backend {
     const offer = this.#offer(box.kind);
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs);
     const api = await this.client();
-    const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+    const step: Step = async (name, run) => {
       const started = performance.now();
       try {
         return await run();
@@ -394,20 +445,15 @@ export class ProxmoxLxcBackend implements Backend {
       }
       const id = vmid;
       if (!warm) {
-        await step("configure", async () => {
-          await api.configure(
-            id,
-            { cores: offer.config.cores, memory: offer.config.memoryMiB, net0: net0For(this.#config, id), tags: boxTags(box), onboot: true },
-            signal,
-          );
-          await api.growRootDisk(id, offer.config.diskGiB, signal);
-        });
+        await step("configure", () => api.configure(id, this.#settings(offer.config, id), signal));
+        await step("tags", () => api.configure(id, { tags: boxTags(box) }, signal));
       }
       await hooks.starting();
       await step("start", async () => {
         if ((await api.status(id, signal))?.status !== "running") await api.start(id, signal);
       });
-      await step("ready", () => this.#waitReady(id, box.kind, Math.max(1_000, deadline - Date.now()), signal));
+      if (!warm) await this.#grow(api, id, offer.config, step, signal);
+      await this.#waitReady(id, box.kind, Math.max(1_000, deadline - Date.now()), signal, step);
       return this.#guest(api.node, id);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
@@ -468,19 +514,22 @@ export class ProxmoxLxcBackend implements Backend {
     const vmid = this.#vmid(guest);
     const access = this.#access(vmid);
     const capabilities = OFFERS.find((offer) => offer.id === kind)?.capabilities;
-    const password = this.#config.desktop.vncPassword;
+    const command = await this.#command(vmid);
     const displays = (capabilities?.displays ?? []).map(
       (display): Display => ({
         ...display,
         label: "Desktop",
-        open: async () => ({
-          route: { type: "tcp", host: access.host, port: VNC_PORT },
-          auth: password ? { type: "vnc-password", password } : { type: "none" },
-        }),
+        open: async (signal) => {
+          const password = await this.#vncPassword(command, signal);
+          return {
+            route: { type: "tcp", host: access.host, port: VNC_PORT },
+            auth: password ? { type: "vnc-password", password } : { type: "none" },
+          };
+        },
       }),
     );
     return {
-      command: await this.#command(vmid),
+      command,
       displays,
       access: {
         ssh: access,
@@ -513,7 +562,7 @@ export class ProxmoxLxcBackend implements Backend {
         message(error),
         unauthorised
           ? "Check the API token ID and secret in bb-box's settings."
-          : "Check the API URL, and that BB's server can reach it. For a certificate from a private CA, set the CA certificate.",
+          : "Check the API URL, and that BB's server can reach it. Set the TLS fingerprint from the setup guide's token file, or the CA certificate if a private CA signed the API's certificate.",
       );
       skip(...later);
     }
@@ -554,6 +603,7 @@ export class ProxmoxLxcBackend implements Backend {
         try {
           const config = await api.config(template, signal);
           const storage = String(config.rootfs ?? "").split(":")[0];
+          const diskGiB = rootDiskGiB(config);
           if (config.template !== 1 && config.template !== "1") {
             fail(name, `CT ${template} is not a template.`, `Convert it with pct template ${template}.`);
           } else if (docker && !/(?:^|,)nesting=1(?:,|$)/.test(String(config.features ?? ""))) {
@@ -565,7 +615,7 @@ export class ProxmoxLxcBackend implements Backend {
             if (disk instanceof Error) {
               fail(name, `CT template ${template} is on ${storage}, whose free space cannot be read.`, audit(disk, `Give the token Datastore.Audit on /storage/${storage}.`));
             } else {
-              this.#storages.set(template, storage);
+              this.#templates.set(template, { storage, diskGiB });
               pass(name, `CT template ${template} on ${storage}, ${Math.floor((disk as { available: number }).available / GiB)} GiB free.`);
             }
           }
@@ -678,11 +728,10 @@ export class ProxmoxLxcBackend implements Backend {
   /** Retags a warm guest for its box. The guest keeps running. */
   async hold(member: PoolMember, box: BoxIdentity, signal?: AbortSignal): Promise<void> {
     const { config } = this.#offer(box.kind);
-    await (await this.client()).configure(
-      Number(member.ref),
-      { hostname: box.name, cores: config.cores, memory: config.memoryMiB, tags: boxTags(box), description: describe(box) },
-      signal,
-    );
+    const api = await this.client();
+    const vmid = Number(member.ref);
+    await api.configure(vmid, { hostname: box.name, cores: config.cores, memory: config.memoryMiB, description: describe(box) }, signal);
+    await api.configure(vmid, { tags: boxTags(box) }, signal);
   }
 
   #proxmox(node: string): Proxmox {
@@ -706,7 +755,8 @@ export class ProxmoxLxcBackend implements Backend {
     for (const { template, ...kind } of OFFERS) {
       const config = this.#config.templates[template];
       if (config.template === null) continue;
-      offers.push({ kind: { ...kind, size: size(config) }, template, config: config as Configured });
+      const templateDisk = this.#templates.get(config.template)?.diskGiB ?? null;
+      offers.push({ kind: { ...kind, size: size(config, templateDisk) }, template, config: config as Configured });
     }
     return offers;
   }
@@ -738,10 +788,37 @@ export class ProxmoxLxcBackend implements Backend {
     return { host: address, port: 22, user: this.#config.ssh.user, hostKeys: [] };
   }
 
-  #freeVmid(guests: readonly PoolGuest[]): number | null {
+  /** The first free VMID from `from`, wrapping round the range. */
+  #freeVmid(guests: readonly PoolGuest[], from = this.#config.vmids.first): number | null {
+    const { first, last } = this.#config.vmids;
+    const count = last - first + 1;
     const used = new Set<number>([...this.#reserved, ...this.#filling.keys(), ...guests.map((guest) => guest.vmid)]);
-    for (let vmid = this.#config.vmids.first; vmid <= this.#config.vmids.last; vmid++) if (!used.has(vmid)) return vmid;
+    for (let step = 0; step < count; step++) {
+      const vmid = first + ((from - first + step) % count);
+      if (!used.has(vmid)) return vmid;
+    }
     return null;
+  }
+
+  /** Config for a fresh clone of `config`'s template at `vmid`. */
+  #settings(config: Configured, vmid: number) {
+    return {
+      cores: config.cores,
+      memory: config.memoryMiB,
+      net0: net0For(this.#config, vmid),
+      onboot: true,
+      // Templates are protected against deletion, and clones inherit it.
+      delete: ["protection"],
+    };
+  }
+
+  /** Grows a running guest's disk when the settings ask for more than the template has. */
+  async #grow(api: Proxmox, vmid: number, config: Configured, step: Step, signal?: AbortSignal): Promise<void> {
+    const wanted = config.diskGiB;
+    if (wanted === null) return;
+    const templateDisk = this.#templates.get(config.template)?.diskGiB;
+    if (templateDisk != null && templateDisk >= wanted) return;
+    await step("resize", () => api.growRootDisk(vmid, wanted, signal));
   }
 
   async #owns(api: Proxmox, vmid: number, boxId: string, signal?: AbortSignal): Promise<boolean> {
@@ -751,25 +828,26 @@ export class ProxmoxLxcBackend implements Backend {
     return owner?.boxId === boxId;
   }
 
-  async #storageOf(api: Proxmox, template: number, signal?: AbortSignal): Promise<string> {
-    const cached = this.#storages.get(template);
+  async #templateOf(api: Proxmox, template: number, signal?: AbortSignal): Promise<{ storage: string; diskGiB: number | null }> {
+    const cached = this.#templates.get(template);
     if (cached) return cached;
-    let rootfs: string;
+    let config: Record<string, unknown>;
     try {
-      rootfs = String((await api.config(template, signal)).rootfs ?? "");
+      config = await api.config(template, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.notFound) throw new Error(`CT template ${template} does not exist on ${api.node}. Run the doctor check in bb-box's panel.`);
       throw error;
     }
-    const storage = rootfs.split(":")[0];
+    const storage = String(config.rootfs ?? "").split(":")[0];
     if (!storage) throw new Error(`CT template ${template} has no root disk.`);
-    this.#storages.set(template, storage);
-    return storage;
+    const found = { storage, diskGiB: rootDiskGiB(config) };
+    this.#templates.set(template, found);
+    return found;
   }
 
   /**
-   * Linked-clones `template` into the first free VMID. `before` runs before
-   * each attempt. A VMID another guest has taken is skipped.
+   * Linked-clones `template` into the next free VMID, round-robin. `before`
+   * runs before each attempt. A VMID another guest has taken is skipped.
    */
   async #clone(
     api: Proxmox,
@@ -780,9 +858,13 @@ export class ProxmoxLxcBackend implements Backend {
     signal: AbortSignal,
   ): Promise<number> {
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
+    if (this.#nextVmid === null) {
+      const stored = await this.#context.storage.get<number>(NEXT_VMID);
+      this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
+    }
     const skipped = new Set<number>();
     for (;;) {
-      const vmid = this.#freeVmid([...guests, ...[...skipped].map((id) => ({ vmid: id }) as PoolGuest)]);
+      const vmid = this.#freeVmid([...guests, ...[...skipped].map((id) => ({ vmid: id }) as PoolGuest)], this.#nextVmid);
       if (vmid === null) {
         throw new BackendError(
           "no_capacity",
@@ -790,7 +872,9 @@ export class ProxmoxLxcBackend implements Backend {
         );
       }
       this.#reserved.add(vmid);
+      this.#nextVmid = vmid === this.#config.vmids.last ? this.#config.vmids.first : vmid + 1;
       try {
+        await this.#context.storage.set(NEXT_VMID, this.#nextVmid);
         await before(vmid);
         await api.cloneLinked({ template, vmid, hostname, pool: this.#config.proxmox.pool, description }, signal);
         return vmid;
@@ -810,14 +894,37 @@ export class ProxmoxLxcBackend implements Backend {
     return new SshTransport((await this.#keys()).ssh, this.#access(vmid), "linux");
   }
 
-  async #waitReady(vmid: number, kind: string | null, timeoutMs: number, signal?: AbortSignal): Promise<void> {
-    const ready = await waitUntilAnswers(await this.#command(vmid), { timeoutMs, signal, sleep: this.#options.sleep });
-    if (!ready) {
+  /** Waits for port 22 to open, which is cheap to poll, then for SSH to answer. */
+  async #waitReady(vmid: number, kind: string | null, timeoutMs: number, signal?: AbortSignal, step: Step = untimed): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const { host, port, user } = this.#access(vmid);
+    const sleep = this.#options.sleep;
+    const seconds = (ms: number) => `${Math.round(ms / 1000)} s`;
+    const open = await step("network", () => waitForPort(host, port, { timeoutMs, check: this.#options.portCheck, signal, sleep }));
+    if (!open) {
       throw new Error(
-        `SSH on ${addressFor(this.#config, vmid)} did not answer within ${Math.round(timeoutMs / 1000)} s. ` +
-          `Check that the ${kind ?? "box's"} template starts sshd on port 22 and that user ${this.#config.ssh.user} accepts bb-box's key.`,
+        `Nothing answered on port ${port} of ${host} within ${seconds(timeoutMs)}. ` +
+          `Check that BB's server can reach the boxes' subnet, and that the ${kind ?? "box's"} template starts sshd.`,
       );
     }
+    const left = Math.max(1_000, deadline - Date.now());
+    const command = await this.#command(vmid);
+    const ready = await step("ssh", () => waitUntilAnswers(command, { timeoutMs: left, intervalMs: 100, signal, sleep }));
+    if (!ready) {
+      throw new Error(
+        `Port ${port} of ${host} is open, but SSH as ${user} did not answer within ${seconds(left)}. ` +
+          `Check that user ${user} in the ${kind ?? "box's"} template accepts bb-box's key.`,
+      );
+    }
+  }
+
+  /** The password the desktop wrote at boot, or null when it asks for none. */
+  async #vncPassword(command: SshTransport, signal?: AbortSignal): Promise<string | null> {
+    const result = await command.run(`cat ${VNC_PASSWORD_FILE} 2>/dev/null || :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
+    if (result.exitCode !== 0) {
+      throw new Error(`Cannot read the desktop's VNC password over SSH: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    }
+    return result.stdout.trim() || null;
   }
 
   #keys(): Promise<SshKeys> {
@@ -911,13 +1018,10 @@ export class ProxmoxLxcBackend implements Backend {
         },
         signal,
       );
-      await api.configure(
-        vmid,
-        { cores: config.cores, memory: config.memoryMiB, net0: net0For(this.#config, vmid), tags: [TAG, FILLING, templateTag(template)], onboot: true },
-        signal,
-      );
-      await api.growRootDisk(vmid, config.diskGiB, signal);
+      await api.configure(vmid, this.#settings(config, vmid), signal);
+      await api.configure(vmid, { tags: [TAG, FILLING, templateTag(template)] }, signal);
       await api.start(vmid, signal);
+      await this.#grow(api, vmid, config, untimed, signal);
       await this.#waitReady(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
       await api.configure(vmid, { tags: [TAG, WARM, templateTag(template)] }, signal);
     } catch (error) {

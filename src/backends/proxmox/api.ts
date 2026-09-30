@@ -15,7 +15,7 @@ export type FetchLike = (
 ) => Promise<FetchResponse>;
 
 export interface ProxmoxOptions {
-  /** For example https://pve.example.com:8006. */
+  /** For example https://pve.example.com:8006, with or without /api2/json. */
   readonly apiUrl: string;
   /** user@realm!name */
   readonly tokenId: string;
@@ -23,7 +23,7 @@ export interface ProxmoxOptions {
   readonly node: string;
   readonly fetch?: FetchLike;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
-  /** Task poll interval. Proxmox tasks for a linked clone finish in about a second. */
+  /** Task poll interval. A linked clone or start finishes in about a second, so polls are close together. */
   readonly taskPollMs?: number;
   readonly taskTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
@@ -47,6 +47,11 @@ export class ProxmoxError extends Error {
 
   get notFound(): boolean {
     return this.status === 404 || /does not exist|no such (?:vm|ct|container)/i.test(this.message);
+  }
+
+  /** The guest has protection set, which blocks deleting it. */
+  get protected(): boolean {
+    return /protection mode enabled/i.test(this.message);
   }
 
   get forbidden(): boolean {
@@ -74,6 +79,8 @@ export interface LxcSettings {
   readonly tags?: readonly string[];
   readonly description?: string;
   readonly onboot?: boolean;
+  /** Options to remove, such as "protection", which clones inherit from the template. */
+  readonly delete?: readonly string[];
 }
 
 export interface LxcStatus {
@@ -139,6 +146,12 @@ export function parseSizeGiB(value: string): number | null {
   return unit === "" ? amount / (1024 * 1024 * 1024) : amount * factor;
 }
 
+/** The root disk's size in GiB, from a guest's config, or null when it does not say. */
+export function rootDiskGiB(config: Record<string, unknown>): number | null {
+  const size = /(?:^|,)size=([^,]+)/.exec(String(config.rootfs ?? ""))?.[1];
+  return size ? parseSizeGiB(size) : null;
+}
+
 export class Proxmox {
   readonly node: string;
   readonly #base: string;
@@ -151,11 +164,11 @@ export class Proxmox {
 
   constructor(options: ProxmoxOptions) {
     this.node = options.node;
-    this.#base = `${options.apiUrl.replace(/\/+$/, "")}/api2/json`;
+    this.#base = `${options.apiUrl.replace(/\/+$/, "").replace(/\/api2\/json$/, "")}/api2/json`;
     this.#auth = `PVEAPIToken=${options.tokenId}=${options.tokenSecret}`;
     this.#fetch = options.fetch ?? ((url, init) => fetch(url, init));
     this.#sleep = options.sleep ?? sleep;
-    this.#taskPollMs = options.taskPollMs ?? 500;
+    this.#taskPollMs = options.taskPollMs ?? 50;
     this.#taskTimeoutMs = options.taskTimeoutMs ?? 180_000;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
   }
@@ -218,6 +231,7 @@ export class Proxmox {
       tags: settings.tags?.join(";"),
       description: settings.description,
       onboot: settings.onboot === undefined ? undefined : settings.onboot ? 1 : 0,
+      delete: settings.delete?.length ? settings.delete.join(",") : undefined,
     };
     if (Object.values(params).every((value) => value === undefined)) return;
     const result = await this.#request<unknown>("PUT", `/nodes/${enc(this.node)}/lxc/${vmid}/config`, params, signal);
@@ -228,11 +242,13 @@ export class Proxmox {
     return (await this.#request<Record<string, unknown>>("GET", `/nodes/${enc(this.node)}/lxc/${vmid}/config`, undefined, signal)) ?? {};
   }
 
-  /** Grows the root disk to `sizeGiB` if it is smaller. Proxmox cannot shrink disks. */
+  /**
+   * Grows the root disk to `sizeGiB` if it is smaller. Proxmox cannot shrink
+   * disks. On a running container this takes about a second; on a stopped
+   * linked clone it can take much longer.
+   */
   async growRootDisk(vmid: number, sizeGiB: number, signal?: AbortSignal): Promise<boolean> {
-    const config = await this.config(vmid, signal);
-    const current = /(?:^|,)size=([^,]+)/.exec(String(config.rootfs ?? ""))?.[1];
-    const currentGiB = current ? parseSizeGiB(current) : null;
+    const currentGiB = rootDiskGiB(await this.config(vmid, signal));
     if (currentGiB !== null && currentGiB >= sizeGiB) return false;
     const result = await this.#request<unknown>(
       "PUT",
@@ -288,7 +304,7 @@ export class Proxmox {
         return;
       }
     }
-    try {
+    const remove = async () => {
       const upid = await this.#request<string>(
         "DELETE",
         `/nodes/${enc(this.node)}/lxc/${vmid}`,
@@ -296,9 +312,15 @@ export class Proxmox {
         signal,
       );
       await this.waitTask(upid, signal);
+    };
+    try {
+      await remove();
     } catch (error) {
       if (error instanceof ProxmoxError && error.notFound) return;
-      throw error;
+      // A clone keeps the template's protection until it is configured.
+      if (!(error instanceof ProxmoxError && error.protected)) throw error;
+      await this.configure(vmid, { delete: ["protection"] }, signal);
+      await remove();
     }
   }
 
@@ -384,7 +406,7 @@ export class Proxmox {
       response = await this.#fetch(url, { method, headers, body, signal: combined });
     } catch (error) {
       if (signal?.aborted) throw signal.reason;
-      const reason = timeout.aborted ? "timed out" : error instanceof Error ? error.message : String(error);
+      const reason = timeout.aborted ? "timed out" : fetchFailure(error);
       throw new ProxmoxError(method, path, 0, `cannot reach the Proxmox API: ${reason}`);
     }
     const text = await response.text();
@@ -407,6 +429,13 @@ export class Proxmox {
     }
     return parsed?.data as T;
   }
+}
+
+/** Why a fetch failed. Node's fetch says only "fetch failed" and puts the reason in `cause`. */
+function fetchFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = error.cause instanceof Error ? error.cause.message : "";
+  return cause && error.message === "fetch failed" ? cause : [error.message, cause].filter(Boolean).join(": ");
 }
 
 function enc(value: string): string {
