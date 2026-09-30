@@ -1,12 +1,13 @@
 // The desktop viewer's WebSocket route, /desktop?box=<id>&viewer=<id>, and
 // the shared control behind it. Each connection gets its own relay to the
 // box's display (007, 011). The viewer ID names one tab of the panel, so only
-// the tab that took control sends input (008).
+// the tab that took control sends input (008). A display whose stream server
+// cannot resize is resized by its backend (021).
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Boxes } from "../core/boxes.ts";
 import { Control, type ViewerConnection } from "../core/control.ts";
-import { RfbRelay, displayOpener, restoreSize, type OpenDisplay } from "../core/relay.ts";
+import { RfbRelay, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Display } from "../transports/types.ts";
 
 export const DESKTOP_ROUTE = "/desktop";
@@ -41,8 +42,45 @@ async function display(boxes: Boxes, boxId: string): Promise<Display> {
   return first;
 }
 
-function opener(boxes: Boxes, boxId: string): OpenDisplay {
-  return async (signal) => displayOpener(await display(boxes, boxId))(signal);
+interface Caller {
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
+/**
+ * Backend resizes of each box's desktop, one at a time. A request that
+ * arrives while one runs waits, and a later one replaces it, so only the
+ * latest size is set. A replaced request settles with the one that replaced it.
+ */
+class Resizes {
+  readonly #waiting = new Map<string, { display: Display; size: Size; callers: Caller[] }>();
+  readonly #running = new Set<string>();
+
+  request(boxId: string, display: Display, size: Size): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const waiting = this.#waiting.get(boxId);
+      const callers = [...(waiting?.callers ?? []), { resolve, reject }];
+      this.#waiting.set(boxId, { display, size, callers });
+      if (!this.#running.has(boxId)) void this.#run(boxId);
+    });
+  }
+
+  async #run(boxId: string): Promise<void> {
+    this.#running.add(boxId);
+    try {
+      for (let next = this.#waiting.get(boxId); next; next = this.#waiting.get(boxId)) {
+        this.#waiting.delete(boxId);
+        try {
+          await next.display.resize!(next.size);
+          for (const caller of next.callers) caller.resolve();
+        } catch (error) {
+          for (const caller of next.callers) caller.reject(error);
+        }
+      }
+    } finally {
+      this.#running.delete(boxId);
+    }
+  }
 }
 
 export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
@@ -53,13 +91,18 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       .then((box) => deps.notify(box?.threadId ?? null))
       .catch((error) => deps.logError("notify", error));
   };
+  const resizes = new Resizes();
   const control = new Control({
     changed,
     logError: deps.logError,
     staleMs: deps.staleMs,
     pause: deps.pause,
     async restore(boxId, size, screen) {
-      await restoreSize(opener(boxes, boxId), size, screen);
+      const shown = await display(boxes, boxId);
+      // SetDesktopSize first, even when the backend resizes: a GPU desktop
+      // can come back on the CPU after a stop and start, and take it (021).
+      await restoreSize(displayOpener(shown), size, screen);
+      if (shown.resize) await resizes.request(boxId, shown, size);
     },
   });
   const relays = new Set<RfbRelay>();
@@ -70,10 +113,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const boxId = url.searchParams.get("box") ?? "";
       const viewer = url.searchParams.get("viewer") ?? "";
       let relay: RfbRelay | null = null;
+      let shown: Display | null = null;
       return {
         onOpen(socket) {
           const open: OpenDisplay = VIEWER_ID.test(viewer)
-            ? opener(boxes, boxId)
+            ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)
             : async () => {
                 throw new Error("The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
               };
@@ -86,7 +130,13 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             open,
             mayInput: () => control.mayInput(boxId, viewer),
             onServerInit: (size) => control.seen(boxId, size),
-            onResize: (_size, screen) => control.resized(boxId, viewer, screen),
+            onResize: (size, screen) => {
+              control.resized(boxId, viewer, screen);
+              // The SetDesktopSize still reaches the box, which answers the viewer.
+              if (shown?.resize) {
+                resizes.request(boxId, shown, size).catch((error) => deps.logError("resize the desktop", error));
+              }
+            },
             onEnd: (by) => {
               relays.delete(relay!);
               control.detach(boxId, connection, by);

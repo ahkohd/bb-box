@@ -28,7 +28,8 @@ const virtualHost = new MemoryStorage();
 await conformance({
   name: "fake virtual backend",
   storage: new MemoryStorage(),
-  create: (storage, installId) => new FakeBackend({ root, storage, host: virtualHost, installId, id: "fake-virtual" }),
+  // Its desktops resize through the backend, as a GPU desktop does; the real one's through the stream (021).
+  create: (storage, installId) => new FakeBackend({ root, storage, host: virtualHost, installId, id: "fake-virtual", resize: "backend" }),
   // The fake numbers its guests g1, g2 and so on from a counter.
   reuse: async (_storage, ref) => virtualHost.set("counter", Number(ref.slice(1)) - 1),
   bb: fakeBb(),

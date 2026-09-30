@@ -7,7 +7,8 @@
 // restart. Instances given one `host` storage share the fake provider, as two
 // installs share a host: each records its install ID on its guests and acts
 // only on its own (018). Desktops stream from a local server that sends an RFB
-// greeting.
+// greeting. With `resize: "backend"` that server ignores SetDesktopSize and the
+// display's resize sets the size instead, as on a GPU desktop (021).
 
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,6 +41,7 @@ import {
   type ByteChannel,
   type CommandTransport,
   type Display,
+  type DisplaySize,
   type Route,
   type RunOptions,
   type RunResult,
@@ -63,6 +65,8 @@ export interface FakeBackendOptions {
   readonly installId?: string;
   /** Where the fake provider keeps its guests and machines. The storage by default. */
   readonly host?: BackendStorage;
+  /** What sets a desktop's size: the stream server's SetDesktopSize (the default), or the display's resize. */
+  readonly resize?: "stream" | "backend";
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -149,11 +153,19 @@ export class FakeBackend implements Backend {
   readonly #pool: KvPoolStore<Holder>;
   readonly #ready: ReadyPool<Holder>;
   /** Every desktop box's VNC server: one server, with a password the viewer never sees. */
-  readonly rfb = new FakeRfb({ password: "fakepass" });
+  readonly rfb: FakeRfb;
   #vnc: Promise<number> | null = null;
+  /** Each size a display's resize was asked for, in order. */
+  readonly resizes: DisplaySize[] = [];
+  /** How many resizes run now, and the most that ran at once. */
+  resizing = 0;
+  mostResizing = 0;
+  /** Resizes wait here while it is set. */
+  resizeGate: Promise<void> | null = null;
 
   constructor(options: FakeBackendOptions) {
     this.#options = options;
+    this.rfb = new FakeRfb({ password: "fakepass", acceptResize: options.resize !== "backend" });
     this.#kinds = options.kinds ?? FAKE_KINDS;
     this.#installId = options.installId ?? "test";
     this.#storage = options.host ?? options.storage;
@@ -314,10 +326,28 @@ export class FakeBackend implements Backend {
           route: { type: "tcp", host: "127.0.0.1", port: await (this.#vnc ??= this.rfb.listen()) },
           auth: { type: "vnc-password", password: "fakepass" },
         }),
+        ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
       }),
     );
     const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);
     return { command: new FakeTransport(this.#home(guest.ref), power), displays, access: null };
+  }
+
+  async #resize(size: DisplaySize): Promise<void> {
+    this.resizes.push(size);
+    this.resizing += 1;
+    this.mostResizing = Math.max(this.mostResizing, this.resizing);
+    try {
+      await this.resizeGate;
+      // X's limit, which xrandr reports as it exits.
+      if (size.width > 32767 || size.height > 32767) {
+        throw new Error(`xrandr: screen cannot be larger than 32767x32767 (desired size ${size.width}x${size.height})`);
+      }
+      this.rfb.width = size.width;
+      this.rfb.height = size.height;
+    } finally {
+      this.resizing -= 1;
+    }
   }
 
   async doctor(): Promise<DoctorReport> {

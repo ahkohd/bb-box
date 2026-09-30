@@ -10,7 +10,8 @@
 #         matches the template's userspace and the GPU has at least
 #         MIN_FREE_VRAM_MIB free; cpu otherwise (the default)
 #   gpu   Xorg with NVIDIA's driver on a virtual screen, served by
-#         x0tigervncserver: OpenGL and Vulkan on the GPU; fixed size
+#         x0tigervncserver: OpenGL and Vulkan on the GPU; bb-box resizes it
+#         with xrandr
 #   cpu   Xtigervnc: OpenGL and Vulkan on the CPU (llvmpipe, lavapipe); resizable
 #
 # The path taken is in /run/bb-box/display-mode (gpu or cpu), and why in

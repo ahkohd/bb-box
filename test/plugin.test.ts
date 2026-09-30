@@ -10,10 +10,11 @@ import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-s
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import type { BackendDriver } from "../src/backends/types.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
+import { setDesktopSize } from "../src/core/rfb.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
-import { FakeBackend } from "./fake-backend.ts";
+import { FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -39,7 +40,11 @@ function threadNotFound(): Error {
 }
 
 /** A backend driver for the fake backend, switched on by "fake-enabled". "fake-broken" makes its settings wrong. */
-function fakeDriver(root: string, world: { backend: FakeBackend | null }): BackendDriver<Record<string, never>> {
+function fakeDriver(
+  root: string,
+  world: { backend: FakeBackend | null },
+  options: Pick<FakeBackendOptions, "resize"> = {},
+): BackendDriver<Record<string, never>> {
   return {
     type: "fake",
     label: "Fake host",
@@ -54,7 +59,7 @@ function fakeDriver(root: string, world: { backend: FakeBackend | null }): Backe
       if (values["fake-broken"] === true) return { enabled: true, ok: false, problems: ["Fill in the fake host's address."] };
       return { enabled: true, ok: true, config: {} };
     },
-    create: (_config, context) => (world.backend = new FakeBackend({ root, storage: context.storage, installId: context.installId })),
+    create: (_config, context) => (world.backend = new FakeBackend({ ...options, root, storage: context.storage, installId: context.installId })),
   };
 }
 
@@ -68,7 +73,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"] } = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"] } & Pick<FakeBackendOptions, "resize"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -178,7 +183,11 @@ async function start(
       },
     },
   });
-  const app = await setup(bb, { drivers: [fakeDriver(root, world)], daemonParent: options.daemonParent ?? join(root, "no-daemon"), computer: options.computer });
+  const app = await setup(bb, {
+    drivers: [fakeDriver(root, world, { resize: options.resize })],
+    daemonParent: options.daemonParent ?? join(root, "no-daemon"),
+    computer: options.computer,
+  });
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
   return { bb, harness, app, world, tool };
 }
@@ -612,6 +621,52 @@ test("the desktop route relays a box's desktop, and only the viewer with control
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
   assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath });
+});
+
+test("the backend resizes a desktop whose stream server cannot, one resize at a time and the latest last (021)", async (t) => {
+  const { harness, app, world } = await start(undefined, { resize: "backend" });
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
+  await app.boxes.idle();
+  const box = await only(app);
+  const backend = world.backend!;
+  const screen = { id: 7, flags: 0 };
+  const update = Uint8Array.of(3, 1, 0, 0, 0, 0, 0, 1, 0, 1);
+
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  const [rfb] = backend.rfb.connections;
+  await session.receive(setDesktopSize(1600, 900, screen));
+  await session.receive(update);
+  await until("the update request to reach the box", async () => rfb!.received.byteLength === update.byteLength);
+  assert.deepEqual(backend.resizes, [], "a viewer without control resizes nothing");
+
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  let open!: () => void;
+  backend.resizeGate = new Promise((resolve) => (open = resolve));
+  for (const [width, height] of [
+    [1400, 900],
+    [1500, 900],
+    [1600, 1000],
+  ] as const) {
+    await session.receive(setDesktopSize(width, height, screen));
+  }
+  await until("the resizes to reach the box", async () => rfb!.received.byteLength === update.byteLength + 3 * 24);
+  assert.deepEqual(backend.resizes, [{ width: 1400, height: 900 }], "one resize runs; the rest wait");
+  backend.resizeGate = null;
+  open();
+  await until("the latest resize", async () => backend.resizes.length === 2 && backend.resizing === 0);
+  assert.deepEqual(backend.resizes.at(-1), { width: 1600, height: 1000 }, "the latest waiting request replaced the one before");
+  assert.equal(backend.mostResizing, 1);
+  assert.deepEqual([backend.rfb.width, backend.rfb.height], [1600, 1000]);
+
+  await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name });
+  assert.deepEqual(backend.resizes.at(-1), { width: 1280, height: 800 }, "hand-back gives the agent its size back");
+  assert.deepEqual([backend.rfb.width, backend.rfb.height], [1280, 800]);
+  await session.close();
 });
 
 test("a headless box has no desktop to control", async (t) => {

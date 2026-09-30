@@ -37,6 +37,11 @@ export type Route =
 /** What the stream server in the box expects. The relay answers it; the browser never sees it. */
 export type DisplayAuth = { readonly type: "none" } | { readonly type: "vnc-password"; readonly password: string };
 
+export interface DisplaySize {
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface Display {
   readonly id: string;
   readonly label: string;
@@ -44,6 +49,14 @@ export interface Display {
   readonly resizable: boolean;
   /** Called once per viewer connection, because tickets can be single use. */
   open(signal?: AbortSignal): Promise<{ readonly route: Route; readonly auth: DisplayAuth }>;
+  /**
+   * Sets the display's size the backend's own way, for a stream server that
+   * may not act on a viewer's SetDesktopSize (021). A display with it is
+   * resizable. The SetDesktopSize still reaches the box, so setting a size the
+   * display already has must succeed. Rejects with the box's reason when the
+   * box refuses the size.
+   */
+  resize?(size: DisplaySize, signal?: AbortSignal): Promise<void>;
 }
 
 /** How to reach a box over SSH, for bb-box and for the thread's own machine. */
