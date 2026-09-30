@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rig app</title>
+<style>
+  body { font: 16px sans-serif; margin: 16px; }
+  section { border: 1px solid #ccc; padding: 12px; margin-bottom: 16px; }
+  label { display: block; margin: 6px 0; }
+  #list { max-height: 260px; overflow: auto; border: 1px solid #eee; }
+  #list li { display: flex; gap: 8px; align-items: center; padding: 2px 4px; }
+  #list li.done span { text-decoration: line-through; }
+  canvas { border: 1px solid #333; background: #fafafa; }
+</style>
+</head>
+<body>
+<h1>Rig app</h1>
+
+<section aria-labelledby="form-h">
+  <h2 id="form-h">Sign up</h2>
+  <form id="signup">
+    <label>Full name <input id="name" name="name" autocomplete="off"></label>
+    <label>Email <input id="email" name="email" type="email" autocomplete="off"></label>
+    <label>Country
+      <select id="country" name="country">
+        <option>United Kingdom</option><option>France</option><option>Nigeria</option><option>Japan</option>
+      </select>
+    </label>
+    <fieldset><legend>Plan</legend>
+      <label><input type="radio" name="plan" value="free" checked> Free</label>
+      <label><input type="radio" name="plan" value="pro"> Pro</label>
+    </fieldset>
+    <label><input type="checkbox" id="news" name="news"> Send me news</label>
+    <label>Notes <textarea id="notes" name="notes" rows="2" cols="40"></textarea></label>
+    <button type="submit">Create account</button>
+  </form>
+  <p id="status" role="status" aria-live="polite">Not saved</p>
+</section>
+
+<section aria-labelledby="list-h">
+  <h2 id="list-h">Tasks</h2>
+  <label>Filter <input id="filter" autocomplete="off"></label>
+  <ul id="list" aria-label="Task list"></ul>
+  <p id="count" role="status">0 done</p>
+</section>
+
+<section aria-labelledby="canvas-h">
+  <h2 id="canvas-h">Canvas</h2>
+  <canvas id="pad" width="600" height="300"></canvas>
+  <p id="last" role="status">No click yet</p>
+</section>
+
+<script>
+const status = document.getElementById('status');
+document.getElementById('signup').addEventListener('submit', e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  status.textContent = `Saved ${f.get('name')} <${f.get('email')}> ${f.get('country')} ${f.get('plan')} news=${f.get('news') ? 'yes' : 'no'}`;
+});
+
+const list = document.getElementById('list');
+const count = document.getElementById('count');
+function updateCount() {
+  count.textContent = `${list.querySelectorAll('input:checked').length} done`;
+}
+for (let i = 1; i <= 100; i++) {
+  const li = document.createElement('li');
+  li.innerHTML = `<input type="checkbox" id="t${i}" aria-label="Done: Task ${i}"><span>Task ${i}</span><button aria-label="Delete Task ${i}">Delete</button>`;
+  li.querySelector('input').addEventListener('change', ev => { li.classList.toggle('done', ev.target.checked); updateCount(); });
+  li.querySelector('button').addEventListener('click', () => { li.remove(); updateCount(); });
+  list.appendChild(li);
+}
+document.getElementById('filter').addEventListener('input', ev => {
+  const q = ev.target.value.toLowerCase();
+  for (const li of list.children) li.hidden = !li.textContent.toLowerCase().includes(q);
+});
+
+const pad = document.getElementById('pad');
+const ctx = pad.getContext('2d');
+const last = document.getElementById('last');
+pad.addEventListener('mousedown', ev => {
+  const r = pad.getBoundingClientRect();
+  const x = Math.round(ev.clientX - r.left), y = Math.round(ev.clientY - r.top);
+  ctx.fillStyle = '#c00';
+  ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
+  last.textContent = `Last click ${x},${y} screen ${ev.screenX},${ev.screenY}`;
+});
+// Targets for pixel clicks: filled squares with known canvas coordinates.
+ctx.fillStyle = '#06c';
+for (const [x, y] of [[100, 100], [300, 150], [500, 250]]) ctx.fillRect(x - 10, y - 10, 20, 20);
+</script>
+</body>
+</html>

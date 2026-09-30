@@ -1,0 +1,31 @@
+#!/bin/bash
+# Time accessibility-cli actions against the rig page in Chrome.
+. /etc/profile.d/desktop-env.sh
+A=${ACLI:-acli-patched}
+P=$(accessibility-cli --list-windows | awk '/Google Chrome/{print $1; exit}')
+run() {
+  local s e rc out
+  s=$(date +%s%N)
+  out=$("$A" --platform linux --pid "$P" --timeout 3000 "$@" 2>&1); rc=$?
+  e=$(( ($(date +%s%N)-s)/1000000 ))
+  printf '%-60s rc=%s ms=%-5s %s\n' "$*" "$rc" "$e" "$(echo "$out" | tr '\n' ' ' | cut -c1-150)"
+}
+mouse() { xdotool getmouselocation --shell | tr '\n' ' '; echo; }
+echo "mouse before: $(mouse)"
+run --type 'TextInput[title="Full name"]' 'Ada Lovelace'
+run --type 'TextInput[title="Email"]' 'ada@example.org'
+run --click 'Radio[title="Pro"]'
+run --click 'Checkbox[title="Send me news"]'
+run --click 'Button[title="Create account"]'
+run --query 'Label[title^="Saved"]'
+run --query 'TextInput[title="Full name"]'
+run --focus 'TextInput[title="Filter"]'
+run --key enter 'TextInput[title="Filter"]'
+run --mouse-click 100,500
+run --screenshot
+run --hit-test 150,340
+run --click 'Checkbox[title="Done: Task 3"]'
+run --query 'Label[title="1 done"]'
+run --click 'Button[title="Delete Task 1"]'
+run --query 'Button[title="Delete Task 1"]' --timeout 0
+echo "mouse after: $(mouse)"
