@@ -1,0 +1,352 @@
+# Proxmox LXC backend
+
+This backend runs boxes as unprivileged LXC containers on a Proxmox VE host.
+A box is a linked clone of one of two CT templates that you build once:
+
+- **headless**: Ubuntu 24.04 with development tools, agent CLIs and Docker;
+- **desktop**: the same, plus an XFCE desktop on a real Xorg server driven by
+  an NVIDIA GPU, streamed over VNC, with Chrome and Cua Driver for computer
+  use.
+
+The bb-box plugin drives boxes through the Proxmox API with its own API
+token, and reaches inside them over SSH and VNC. Measured on Proxmox VE 9.2
+from another machine on the LAN: clone 0.75 s, configure 0.02 s, start 1.0 s,
+and SSH answers about 0.45 s after start, so about 2.2 s from request to a
+usable box.
+
+This directory holds everything needed on the Proxmox side:
+
+| Path | What it does |
+| --- | --- |
+| `host/bb-box.env.example` | Example settings for every script here |
+| `host/setup-host.sh` | Kernel modules for Docker in boxes, NVIDIA device nodes at boot |
+| `host/setup-network.sh` | The box bridge, NAT and a unit that keeps them up |
+| `host/setup-token.sh` | Pool, user, role, API token and ACLs for the plugin |
+| `template/build.sh` | Builds the headless and desktop templates |
+| `test/smoke.sh` | Clones, starts, checks and deletes a box with the plugin's token |
+
+## Requirements
+
+- Proxmox VE 8 or 9, and root on the host. The scripts use `pct`, `pveum`,
+  `pveam`, `nft`, `ifupdown2`, `curl`, `jq` and `python3`.
+- Storage that supports linked clones for containers: LVM-thin, ZFS or Ceph
+  RBD (not a plain directory).
+- Internet access from the host during template builds.
+- For GPU desktops: an NVIDIA GPU with NVIDIA's driver loaded on the host,
+  including `nvidia-modprobe` and `nvidia-smi`. Desktops share the GPU with
+  anything else on the host. Without a GPU, desktops render on the CPU.
+- A route from the machine that runs your BB server to the boxes' subnet
+  (see [Reaching boxes](#reaching-boxes)).
+
+## 1. Settings
+
+```sh
+mkdir -p /etc/bb-box
+cp host/bb-box.env.example /etc/bb-box/bb-box.env
+```
+
+Edit `/etc/bb-box/bb-box.env`. The example lists every setting with its
+default. Check at least:
+
+- `BBBOX_BRIDGE` and `BBBOX_GATEWAY_CIDR`: a bridge name and a subnet that
+  are free on your host and network. Boxes get addresses in this subnet.
+- `BBBOX_STORAGE`: storage with linked clones.
+- `BBBOX_BB_URL`: your BB server's URL. Template builds then pre-install its
+  host package for the box user, which makes enrolling a box as a BB machine
+  faster. Boxes must be able to reach this URL.
+
+A setting in the environment wins over the file, for example
+`BBBOX_BUILD_ADDRESS=10.200.0.3 template/build.sh ...` for a second build
+running at the same time.
+
+## 2. Host prerequisites
+
+```sh
+host/setup-host.sh
+```
+
+- An unprivileged container cannot load kernel modules, so the modules
+  Docker needs inside boxes (overlayfs, veth, nftables NAT and the iptables
+  matches it uses) are loaded at every boot from
+  `/etc/modules-load.d/bb-box.conf`.
+- With an NVIDIA driver, `bb-box-nvidia-devices.service` creates every NVIDIA
+  device node at boot. `/dev/nvidia-uvm*` otherwise appear only on first CUDA
+  use, and a desktop box then fails to start. The script lists each GPU's PCI
+  address and nodes; you need the PCI address to build a desktop template.
+
+## 3. Network
+
+```sh
+host/setup-network.sh
+```
+
+Boxes live on a bridge with no physical port. The host has the gateway
+address on it, routes the subnet, and masquerades boxes out of every other
+interface. Nothing is filtered: a box reaches whatever the host reaches (the
+internet, your LAN, a VPN), leaving as the host's address.
+
+The script:
+
+- adds the bridge to `/etc/network/interfaces` itself (Proxmox's network API
+  does not read `interfaces.d`), after a backup in `/root/bb-box/backup`, and
+  brings it up with `ifup`. It refuses to change an existing, different
+  bridge of the same name;
+- turns on IPv4 forwarding (`/etc/sysctl.d/90-bb-box.conf`);
+- writes the nft table `ip bbbox` to `/etc/bb-box/network.nft`: masquerade,
+  TCP MSS clamping to each route's MTU (for VPNs with a small MTU), and any
+  `BBBOX_DNAT` rules;
+- installs `bb-box-network.service` (at boot) and `bb-box-network.timer`
+  (every 30 s), which run `bb-box-network repair`. Repair brings back a
+  missing bridge or table and never takes anything down. To take the network
+  down on purpose, stop the timer first.
+
+Boxes get static addresses that the plugin sets on each clone before start,
+so there is no DHCP server and no DHCP wait. DNS inside boxes uses
+`BBBOX_DNS`, baked into the templates.
+
+### Reaching boxes
+
+The plugin reaches boxes by address, over SSH (port 22) and VNC (port 5900).
+Add a route to the box subnet via the Proxmox host on the machine that runs
+your BB server, and on any other machine that should reach boxes directly,
+for example with the host's LAN address `192.0.2.10`:
+
+```sh
+ip route replace 10.200.0.0/24 via 192.0.2.10
+```
+
+To make it persistent on a machine that uses systemd-networkd, add a drop-in
+for its interface, for example
+`/etc/systemd/network/eth0.network.d/bb-box.conf`:
+
+```ini
+[Route]
+Destination=10.200.0.0/24
+Gateway=192.0.2.10
+```
+
+A static route on your LAN router covers every LAN machine at once. For
+machines on a VPN such as Tailscale, advertise the subnet from the host
+(`tailscale set --advertise-routes=...`, keeping any routes it already
+advertises) and approve it.
+
+### Names that resolve to the host
+
+If a name boxes need, such as your BB server's, resolves to one of the
+host's own addresses whose port forward only matches traffic from elsewhere
+(for example a VPN address), boxes get no answer. Add a DNAT rule for boxes:
+
+```sh
+BBBOX_DNAT="100.64.0.1:443=192.0.2.20"   # the host's VPN address -> the real server
+```
+
+## 4. Templates
+
+Build the headless template, then a desktop template for each GPU you want
+desktops on. Each build takes about 5 to 10 minutes, mostly downloads.
+
+```sh
+template/build.sh headless 9100
+template/build.sh desktop 9101 --gpu 0000:01:00.0
+template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
+```
+
+`build.sh` creates a CT from Proxmox's Ubuntu 24.04 template (downloading it
+with `pveam` if needed), customises it with `pct exec`, boots it once and
+runs its checks as the box user, then cleans it, turns it into a template in
+`BBBOX_POOL` and protects it. Only root can give a container device nodes or
+features, and a clone copies them, so the plugin's token never needs those
+rights. `copy-desktop` makes a full copy of a desktop template with another
+GPU's device nodes; use it to spread desktops across GPUs.
+
+Everything a build downloads is checked against a pinned SHA-256 and kept in
+`/var/cache/bb-box/artifacts`:
+
+- `template/apt-snapshot`: the Ubuntu archive snapshot every build installs
+  from, so builds are repeatable;
+- `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, Claude
+  Code, Codex and Pi;
+- `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Google Chrome, Cua
+  Driver and rustup;
+- the NVIDIA installer for exactly the host's driver version, checked against
+  the SHA-256 NVIDIA publishes next to it.
+
+To update a tool, change its pin (URL and SHA-256) and rebuild.
+
+### What is in a box
+
+Both templates:
+
+- Ubuntu 24.04 in an unprivileged container with `nesting=1`, no
+  cloud-init, snapd or maintenance timers, and no apt runs at start;
+- the user `box` (uid 1000): passwordless sudo, in the `docker` group, with
+  the plugin's SSH key; root also accepts that key. Linger is on for `box`,
+  so its systemd user manager starts at boot and keeps running without a
+  login: BB's installer puts its host daemon there when a box enrols as a
+  BB machine (as `box`);
+- build tools, Python, Git, the pinned tools above, Docker with compose and
+  buildx, and the Postgres, Redis and SQLite clients;
+- SSH with keys only; each box makes its own host keys on first boot;
+- systemd-networkd with the address Proxmox writes from the plugin's
+  settings, systemd-resolved with `BBBOX_DNS`, IPv4 only;
+- a gratuitous ARP as soon as the address is up (`bb-box-announce.service`),
+  so the host stops using a deleted box's MAC for a reused address at once
+  instead of after its neighbour timers (up to 8 s);
+- BB's host package for `box`, if `BBBOX_BB_URL` was set;
+- `bb-box-check-headless`, a health check the plugin can run as `box`.
+
+The desktop template adds:
+
+- an XFCE session on display `:99` as `box`, and VNC on port 5900 with a
+  password each box makes on first boot (`/var/lib/bb-box/vnc-password`,
+  readable by `box` and root);
+- the NVIDIA userspace matching the host's driver, VirtualGL, Vulkan and
+  Mesa's CPU renderers, Google Chrome and Cua Driver;
+- Rust (rustup, stable) and the libraries Zed's GPUI needs to build;
+- `bb-box-check-desktop`, which checks the display, VNC, the GPU, Chrome's
+  GPU status and Cua Driver.
+
+Every login of `box`, including SSH commands and BB's services, gets
+`DISPLAY=:99` and `XAUTHORITY=/run/bb-box/Xauthority`.
+
+### The desktop's display
+
+`bb-box-display.service` chooses a path each time it starts:
+
+- **GPU**: a rootless Xorg server with NVIDIA's driver on a virtual
+  1920x1080 screen, served by TigerVNC's `x0tigervncserver`. OpenGL and
+  Vulkan run on the GPU, so Chrome's compositing, WebGL and WebGPU, and
+  Vulkan apps such as GPUI, are hardware accelerated.
+- **CPU**: `Xtigervnc`, with OpenGL and Vulkan on Mesa's CPU renderers
+  (llvmpipe and lavapipe). Everything works, slowly: Chrome keeps WebGL,
+  WebGPU and compositing on the CPU (the template's Chrome wrapper adds
+  `--ignore-gpu-blocklist` on this path), and Vulkan apps present in mailbox
+  mode, because Xtigervnc paces FIFO presentation by its viewers and would
+  stall an app while nobody watches. The settings programs need on this path
+  are in `/run/bb-box/display.env`, which the desktop session and the box
+  user's shells load.
+
+It takes the CPU path when the GPU's device nodes are missing, when the
+host's NVIDIA driver no longer matches the template's userspace, or when the
+GPU has less than `MIN_FREE_VRAM_MIB` free (384 by default: enough for Xorg
+and Chrome's GPU process). The path is in `/run/bb-box/display-mode` (`gpu`
+or `cpu`), and why in `/run/bb-box/display-reason`. Settings are in
+`/etc/bb-box/desktop.env` in the box.
+
+A desktop on the CPU path moves to the GPU once memory is free:
+
+```sh
+sudo systemctl restart bb-box-display   # restarts the desktop session
+```
+
+Limits:
+
+- A desktop uses one GPU. With two GPUs visible, Vulkan's first device may
+  not be the one driving the X screen and cannot present to it, so each
+  desktop template carries exactly one GPU.
+- The GPU's free memory limits how many desktops get the GPU at once. Each
+  desktop's Xorg takes about 40 to 75 MiB, Chrome and GPU apps more.
+- The GPU path's screen is fixed at 1920x1080; the CPU path can be resized
+  from the viewer.
+- When the host's NVIDIA driver changes, desktops fall back to the CPU until
+  you rebuild the desktop templates.
+
+## 5. The plugin's API token
+
+```sh
+host/setup-token.sh
+```
+
+This creates the pool, a user with no password, an API token with privilege
+separation, and the role `BBBoxPlugin` with only what the plugin uses:
+
+| Privilege | Used for |
+| --- | --- |
+| VM.Clone | linked-clone a template |
+| VM.Allocate | create boxes in the pool, and delete them |
+| VM.Config.CPU, VM.Config.Memory, VM.Config.Disk | cores, memory, disk size |
+| VM.Config.Network | the box's address on `net0` |
+| VM.Config.Options | description, tags, and clearing the protection a clone inherits |
+| VM.PowerMgmt | start and stop |
+| VM.Audit, Pool.Audit | status, config and the pool's members |
+
+The role applies on `/pool/<pool>`; the token also gets `PVEDatastoreUser`
+on the storage and `PVESDNUser` on the bridge, which cloning and setting the
+network need. With privilege separation the token has the intersection of
+its own ACLs and its user's, so both get the same ones. The token cannot
+touch guests outside the pool, add devices, or set container features other
+than nesting.
+
+The token is written to `BBBOX_TOKEN_FILE` (mode 0600) with the API URL,
+node and the SHA-256 fingerprint of the host's certificate. The script never
+prints the secret.
+
+## 6. Smoke test
+
+```sh
+test/smoke.sh 9100 9900 10.200.0.50
+test/smoke.sh 9101 9901 10.200.0.51
+```
+
+It does what the plugin does, with the token: clone, configure, start, wait
+for SSH, run the template's check as `box` and delete the box, and prints
+how long each step took.
+
+## 7. Plugin settings
+
+| Setting | Example | Notes |
+| --- | --- | --- |
+| `proxmox.url` | `https://192.0.2.10:8006/api2/json` | from the token file |
+| `proxmox.node` | `pve` | |
+| `proxmox.tokenId` | `bbbox@pve!plugin` | |
+| `proxmox.tokenSecret` | | from the token file |
+| `proxmox.tlsFingerprint` | | SHA-256 of the host's certificate, from the token file |
+| `proxmox.pool` | `bbbox` | |
+| `proxmox.templates.headless` | `9100` | |
+| `proxmox.templates.desktop` | `9101,9102` | one per GPU; pick the one with the most free GPU memory |
+| `proxmox.vmids` | `9900-9999` | a range only bb-box uses |
+| `network.bridge` | `vmbr200` | |
+| `network.subnet` | `10.200.0.0/24` | |
+| `network.gateway` | `10.200.0.1` | |
+| `network.addresses` | `10.200.0.10-10.200.0.254` | box addresses bb-box hands out |
+| `ssh.privateKey` | | the key `BBBOX_SSH_KEY` names |
+| `ssh.user` | `box` | |
+
+### How the plugin drives a box
+
+1. `POST /nodes/{node}/lxc/{template}/clone` with `newid`, `hostname`,
+   `pool` and `full=0`. A linked clone takes no `storage` parameter.
+2. `PUT /nodes/{node}/lxc/{vmid}/config` with
+   `net0=name=eth0,bridge={bridge},ip={address}/{prefix},gw={gateway},type=veth`,
+   `cores`, `memory` and `delete=protection`.
+3. `PUT` the same path with `tags`, now that the box is in the pool (Proxmox
+   checks tags against `/vms/{vmid}` alone).
+4. `POST /nodes/{node}/lxc/{vmid}/status/start`.
+5. To grow the disk, `PUT /nodes/{node}/lxc/{vmid}/resize` while the box is
+   running: online it takes about a second, on a stopped clone Proxmox checks
+   the file system first and it takes over 20 s.
+6. Wait for TCP port 22 with a connect timeout of about 250 ms, then SSH as
+   `box`. An earlier attempt, made before the box has its address, waits out
+   ARP resolution, which takes longer than the box's whole boot.
+7. To delete: `POST .../status/stop` if it is running, then
+   `DELETE /nodes/{node}/lxc/{vmid}?purge=1&destroy-unreferenced-disks=1`.
+
+Hand out addresses round-robin rather than reusing the lowest free one.
+Boxes announce themselves, but a peer that missed the announcement still
+holds the old box's MAC for a while.
+
+Poll `GET /nodes/{node}/tasks/{upid}/status` every 50 to 100 ms: clone and
+start finish in under a second. Treat `exitstatus` `OK` and `WARNINGS: n` as
+success. VMIDs can collide with guests created meanwhile; on "already
+exists", try the next free VMID in the range.
+
+## Troubleshooting
+
+- **A desktop box does not start** with an error about a missing device:
+  run `systemctl status bb-box-nvidia-devices` on the host.
+- **A desktop shows the CPU path**: read `/run/bb-box/display-reason` in the
+  box. After a host driver upgrade, rebuild the desktop templates.
+- **Boxes cannot reach a name that resolves to the host**: see
+  [Names that resolve to the host](#names-that-resolve-to-the-host).
+- **Box network missing after changes on the host**: `bb-box-network check`
+  says which part is missing; the timer restores it within 30 s.

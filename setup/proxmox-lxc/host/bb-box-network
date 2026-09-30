@@ -1,0 +1,55 @@
+#!/bin/bash
+# bb-box box network on a Proxmox host.
+#
+#   bb-box-network check    say what is missing; exit 1 if anything is
+#   bb-box-network repair   bring back what is missing (bridge, NAT table)
+#
+# Repair only adds; it never takes anything down. To take the network down on
+# purpose, stop bb-box-network.timer first, or it comes back within 30 s.
+set -u
+# shellcheck disable=SC1091
+. /etc/bb-box/network.env
+ruleset=/etc/bb-box/network.nft
+
+say() { logger -t bb-box-network "$*" 2>/dev/null || true; echo "bb-box-network: $*" >&2; }
+
+bridge_ok() { ip -o -4 addr show dev "$BBBOX_BRIDGE" 2>/dev/null | grep -qw "$BBBOX_GATEWAY_CIDR"; }
+
+table_ok() {
+  listing=$(nft list table ip bbbox 2>/dev/null) || return 1
+  grep -q "ip saddr $BBBOX_SUBNET oifname != \"$BBBOX_BRIDGE\" masquerade" <<<"$listing" &&
+    grep -q 'maxseg size set rt mtu' <<<"$listing"
+}
+
+forward_ok() { [ "$(sysctl -n net.ipv4.ip_forward)" = 1 ]; }
+
+check() {
+  rc=0
+  bridge_ok || { echo "bridge $BBBOX_BRIDGE is missing or has no $BBBOX_GATEWAY_CIDR"; rc=1; }
+  table_ok || { echo "nft table ip bbbox is missing or incomplete"; rc=1; }
+  forward_ok || { echo "net.ipv4.ip_forward is not 1"; rc=1; }
+  return $rc
+}
+
+repair() {
+  rc=0
+  if ! bridge_ok; then
+    say "bringing up $BBBOX_BRIDGE"
+    ifup "$BBBOX_BRIDGE" || rc=1
+  fi
+  if ! table_ok; then
+    say "loading $ruleset"
+    nft -f "$ruleset" || rc=1
+  fi
+  if ! forward_ok; then
+    say "net.ipv4.ip_forward is 0; boxes cannot leave $BBBOX_BRIDGE (not changing it)"
+    rc=1
+  fi
+  return $rc
+}
+
+case "${1:-}" in
+  check) check ;;
+  repair) repair ;;
+  *) echo "usage: $0 check|repair" >&2; exit 2 ;;
+esac

@@ -128,3 +128,4 @@ then speed (a warm pool, faster BB enrolment), then Windows, then macOS.
 - [Backend interface](docs/backends.md)
 - [Decision records](docs/decisions)
 - [Research](docs/research)
+- [Setting up the Proxmox LXC backend](setup/proxmox-lxc/README.md)
