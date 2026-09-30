@@ -174,14 +174,20 @@ template/build.sh headless 9100 --replace
 template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0 --replace
 ```
 
-The new template is built and checked in another CT, `BBBOX_BUILD_VMID` or
-else the next free VMID, and takes the old template's VMID only once it has
-passed its checks: the old template is removed and the new one copied into
-its place, which takes seconds. A failed build leaves the old template as it
-was. `--replace` replaces only a bb-box template of the same kind, and
-refuses while boxes are linked clones of it: release them first. Two builds
-at the same time each need their own `BBBOX_BUILD_ADDRESS` and
-`BBBOX_BUILD_VMID`.
+The new template is built and checked (for `copy-desktop`, copied) in
+another CT, `BBBOX_BUILD_VMID` or else the next free VMID, and takes the old
+template's VMID only then, so a failure leaves the old template as it was.
+`--replace` replaces only a bb-box template of the same kind. The old
+template is removed and the new one put in its place: on LVM-thin as a
+linked clone, which leaves the VMID without a template for about 3 s, and
+elsewhere as a full copy, which takes longer.
+
+Boxes cloned from the old template keep running. On LVM-thin a linked clone
+is a thin snapshot that needs nothing of its template's volume, so boxes
+keep the old template's blocks in the pool until they are released. Where a
+linked clone needs its template, as on ZFS or Ceph RBD, `--replace` refuses
+while such boxes exist: release them first. Two builds at the same time each
+need their own `BBBOX_BUILD_ADDRESS` and `BBBOX_BUILD_VMID`.
 
 Everything a build downloads is checked against a pinned SHA-256 and kept in
 `/var/cache/bb-box/artifacts`:

@@ -41,7 +41,9 @@ install -d -m 0755 "$node_prefix/etc"
 printf 'prefix=/usr/local\nupdate-notifier=false\nfund=false\n' >"$node_prefix/etc/npmrc"
 # pnpm and Yarn through Corepack, which fetches the version a project's
 # packageManager field names on first use. It does not ask first: an agent's
-# terminal cannot answer.
+# terminal cannot answer. Corepack ships with Node.js 24 but not with Node.js
+# 25 and later: when the Node pin moves past 24, install Corepack from npm,
+# pinned, and drop its link from the Node entry in pins.json.
 /usr/local/bin/node /usr/local/bin/corepack enable --install-directory /usr/local/bin
 grep -q '^COREPACK_ENABLE_DOWNLOAD_PROMPT=' /etc/environment ||
   printf 'COREPACK_ENABLE_DOWNLOAD_PROMPT=0\n' >>/etc/environment
