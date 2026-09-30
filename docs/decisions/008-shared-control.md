@@ -1,6 +1,8 @@
 # 008: You and the agent share one desktop, with one controller at a time
 
-Status: accepted, 30 September 2026.
+Status: accepted, 30 September 2026. Partly superseded by
+[015](015-computer-use-through-cua-driver.md): taking control closes the
+box's computer-use session in the plugin, and nothing in the box is stopped.
 
 ## Context
 

@@ -3,7 +3,9 @@
 Status: accepted, 30 September 2026. Partly supersedes
 [007](007-desktop-stream-is-a-typed-transport.md). Partly superseded by
 [012](012-offers-may-add-features.md): offers agree on the features a kind
-requires and may add more, and Docker inside a box is a feature.
+requires and may add more, and Docker inside a box is a feature. Partly
+superseded by [015](015-computer-use-through-cua-driver.md): `computerUse`
+names the driver, and command transports gain `spawn`.
 
 ## Context
 

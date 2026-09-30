@@ -153,6 +153,9 @@ it is released.
   - write the owner marker `/var/lib/bb-box/owner` with the box, thread and
     generation;
   - install the box's key in the box user's `authorized_keys`;
+  - turn on linger for the box user where systemd runs, so BB's host daemon
+    outlives the SSH session that enrols the box
+    ([014](../decisions/014-enrol-through-machine-providers.md));
   - start the desktop service for desktop kinds.
 
   The guest is `{ref: machine, host: machine, address, data: {user: "box"}}`.
@@ -662,5 +665,4 @@ Cloned on 30 September 2026:
 - BB host app 0.44.0 `package.json` (`os: ["darwin", "linux"]`).
 - Devin's article on Mac workspaces (image preparation by writing the guest's
   configuration databases from the host).
-- The Docker measurements: the Dockerfile and scripts are kept with this
-  thread's research files, not in the repository.
+- The Docker measurements: the Dockerfile and scripts are not published.
