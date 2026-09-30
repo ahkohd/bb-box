@@ -1,0 +1,10 @@
+--- a/packages/accessibility-core/src/platform/x11.rs
++++ b/packages/accessibility-core/src/platform/x11.rs
+@@ -88,6 +88,7 @@
+             $proxy_type::builder(conn)
+                 .destination(bus_name)?
+                 .path(object_path)?
++                .cache_properties(CacheProperties::No)
+                 .build()
+                 .await
+                 .map_err(|e| anyhow!("Failed to create {}: {}", stringify!($proxy_type), e))

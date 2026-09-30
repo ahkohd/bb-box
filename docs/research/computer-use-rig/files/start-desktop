@@ -1,0 +1,21 @@
+#!/bin/bash
+# Starts one XFCE desktop on Xtigervnc :99 for user agent, plus a static web
+# server for the test pages. Runs as root in the container.
+set -euo pipefail
+install -d -o agent -g agent -m 700 /run/user/1000
+install -d -o agent -g agent -m 700 /run/agent-display
+geometry=${GEOMETRY:-1920x1080}
+sudo -u agent -H bash -s "$geometry" <<'AGENT'
+set -euo pipefail
+. /etc/profile.d/desktop-env.sh
+cookie=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+xauth -q -f "$XAUTHORITY" add :99 MIT-MAGIC-COOKIE-1 "$cookie"
+dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --fork --nopidfile
+nohup Xtigervnc :99 -geometry "$1" -depth 24 -rfbport 5900 -localhost=0 \
+  -SecurityTypes None -AlwaysShared -AcceptSetDesktopSize \
+  -auth "$XAUTHORITY" >/tmp/xvnc.log 2>&1 &
+for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
+nohup xfce4-session >/tmp/xfce.log 2>&1 &
+cd /srv/web && nohup python3 -m http.server 8000 --bind 127.0.0.1 >/tmp/web.log 2>&1 &
+AGENT
+exec sleep infinity

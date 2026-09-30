@@ -1,0 +1,15 @@
+#!/bin/bash
+# Restart Chrome on the rig page and wait until it is on the AT-SPI bus.
+. /etc/profile.d/desktop-env.sh
+pkill -x chrome; sleep 1
+dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus \
+  org.freedesktop.DBus.Properties.Set string:org.a11y.Status string:IsEnabled variant:boolean:true >/dev/null
+url=${1:-http://127.0.0.1:8000/}
+setsid google-chrome-stable --user-data-dir=/home/agent/.chrome --window-position=0,0 \
+  --window-size=1280,1000 "$url" >/tmp/chrome.log 2>&1 < /dev/null &
+for _ in $(seq 100); do
+  p=$(accessibility-cli --list-windows 2>/dev/null | awk '/Google Chrome/{print $1; exit}')
+  [ -n "$p" ] && { sleep 2; echo "$p"; exit 0; }
+  sleep 0.1
+done
+echo "chrome did not register" >&2; exit 1
