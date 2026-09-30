@@ -23,6 +23,9 @@ Requirements, from the operator on 30 September 2026:
   services there instead of on the operator's machine.
 - The operator controls all of this in BB, and so does the agent.
 
+A box lives until its thread is archived or deleted, or until the operator or
+the agent releases it. There is no expiry, TTL or idle timeout.
+
 What matters, in order: UX, startup speed, BB integration. Do not add security
 hardening that serves none of these. Keep what makes bb-box reliable: clean-up
 when a thread ends, limits against runaway use, and recovery after a crash.
@@ -67,7 +70,8 @@ BB server (LXC 115)
      │   Cua input for desktops
      ├─ panel: every box in the thread; start, stop, view, take control
      └─ thread archive and delete: delete that thread's boxes; a sweep deletes
-         boxes whose thread is gone
+         boxes whose thread is archived, deleted or gone, in case an event was
+         missed. Nothing else ends a box: no expiry, TTL or idle timeout.
 Moonstead (Proxmox)
  ├─ CT templates: bbbox-headless (dev tools, Docker) and bbbox-desktop
  │   (XFCE, TigerVNC or NVIDIA Xorg, Chrome, Cua Driver, NVIDIA user space)
