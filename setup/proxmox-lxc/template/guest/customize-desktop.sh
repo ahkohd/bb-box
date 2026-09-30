@@ -327,8 +327,14 @@ EOF
 # Rust for the box user (GPUI and other native work). Projects'
 # rust-toolchain.toml files pull their own toolchains on first use.
 install -m 0755 "$(check rustup)" /var/tmp/rustup-init
-runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/local/bin:/usr/bin:/bin \
-  /var/tmp/rustup-init -y -q --profile minimal --default-toolchain stable -c rustfmt -c clippy --no-modify-path
+# rustup downloads the toolchain itself; try again if the network drops.
+for attempt in 1 2 3; do
+  runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/local/bin:/usr/bin:/bin \
+    /var/tmp/rustup-init -y -q --profile minimal --default-toolchain stable -c rustfmt -c clippy \
+    --no-modify-path && break
+  [ "$attempt" -lt 3 ] || die "rustup could not install the stable toolchain"
+  sleep 5
+done
 rm -f /var/tmp/rustup-init
 grep -q "^PATH=\"/home/$user/.cargo/bin:" /etc/environment ||
   sed -i "s|^PATH=\"|PATH=\"/home/$user/.cargo/bin:|" /etc/environment
