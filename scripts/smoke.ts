@@ -26,6 +26,7 @@ import { Boxes, describeError, type BoxRecord } from "../src/core/boxes.ts";
 import { doctorText } from "../src/plugin/views.ts";
 
 export const SMOKE_THREAD = "thr_smoke";
+export const SMOKE_INSTALL = "smoke";
 
 export interface SmokeOptions {
   readonly kind: string;
@@ -94,7 +95,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
   const storage = new MemoryStorage();
   const problems: string[] = [];
   const logError = (operation: string, error: unknown) => log(`  (${operation}: ${describeError(error, operation)})`);
-  const backends = new Backends({ storage, logError, drivers: options.drivers });
+  const backends = new Backends({ storage, installId: SMOKE_INSTALL, logError, drivers: options.drivers });
   const timings: Record<string, number> = {};
   let box: BoxRecord | null = null;
   let output: SmokeResult["output"] = null;

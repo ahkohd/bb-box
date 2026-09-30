@@ -92,10 +92,11 @@ export class MemoryStorage implements BackendStorage {
   }
 }
 
-export function testContext(storage: BackendStorage = new MemoryStorage()): BackendContext & { errors: string[] } {
+export function testContext(storage: BackendStorage = new MemoryStorage(), installId = "test"): BackendContext & { errors: string[] } {
   const errors: string[] = [];
   return {
     storage,
+    installId,
     errors,
     logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
   };

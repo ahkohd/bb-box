@@ -7,6 +7,7 @@ import { Backends, DRIVERS, backendSettings, offerChecks } from "../backends/ind
 import type { BackendDriver, DoctorReport } from "../backends/types.ts";
 import { Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { GENERAL_SETTINGS, parseGeneral, type GeneralConfig } from "../core/config.ts";
+import { loadInstallId } from "../core/install.ts";
 import { registerCli } from "./cli.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
 import { registerRpc } from "./rpc.ts";
@@ -85,7 +86,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     }
   };
 
-  const backends = new Backends({ storage: bb.storage.kv, logError, drivers });
+  const backends = new Backends({ storage: bb.storage.kv, installId: await loadInstallId(bb.storage.kv), logError, drivers });
   const initial = await settings.get();
   await backends.configure(initial);
   const general = async () => {

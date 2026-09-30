@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { ProxmoxLxcBackend, ownerFromDescription, ownerFromTags, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
+import {
+  ProxmoxLxcBackend,
+  installFromDescription,
+  ownerFromDescription,
+  ownerFromTags,
+  type LxcBackendOptions,
+} from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
@@ -39,8 +45,7 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
     ...values,
   });
   const context = testContext(storage);
-  const make = () =>
-    track(new ProxmoxLxcBackend(config, context, { ...fakes(proxmox), ...options }));
+  const make = (on = context) => track(new ProxmoxLxcBackend(config, on, { ...fakes(proxmox), ...options }));
   return { ssh, proxmox, context, storage, make, backend: make() };
 }
 
@@ -192,8 +197,8 @@ test("desktops spread across GPUs, and a full set of GPUs points to CPU desktops
   });
   const first = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   const second = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
-  assert.deepEqual([first.data, first.facts], [{ template: 9001 }, [{ label: "GPU", value: "gpu-a" }]]);
-  assert.deepEqual([second.data, second.facts], [{ template: 9002 }, [{ label: "GPU", value: "gpu-b" }]]);
+  assert.deepEqual([first.data?.template, first.facts], [9001, [{ label: "GPU", value: "gpu-a" }]]);
+  assert.deepEqual([second.data?.template, second.facts], [9002, [{ label: "GPU", value: "gpu-b" }]]);
   assert.ok(parseTags(proxmox.guests.get(Number(second.ref))!.config.tags).includes("template.9002"));
 
   const full = await backend.capacity("linux-desktop", [], signal());
@@ -203,13 +208,13 @@ test("desktops spread across GPUs, and a full set of GPUs points to CPU desktops
   assert.equal((await backend.capacity("linux-desktop-cpu", [], signal())).ok, true, "CPU desktops use no GPU");
 
   const cpu = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
-  assert.deepEqual(cpu.data, { template: 9003 });
+  assert.equal(cpu.data?.template, 9003);
   assert.equal(cpu.facts, undefined);
 
   await backend.release(first, releasing());
   assert.equal((await backend.capacity("linux-desktop", [], signal())).ok, true, "gpu-a has room again");
   const third = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
-  assert.deepEqual(third.data, { template: 9001 });
+  assert.equal(third.data?.template, 9001);
 });
 
 test("boxes spread across a flavour's templates", async () => {
@@ -249,7 +254,8 @@ test("acquire claims the VMID before it clones, then configures and starts the b
     return undefined;
   };
   const guest = await backend.acquire(box, null, hook.value, signal());
-  assert.deepEqual(guest, { ref: "7000", host: "pve", address: "192.0.2.100", data: { template: 9000 } });
+  assert.deepEqual(guest, { ref: "7000", host: "pve", address: "192.0.2.100", data: { template: 9000, box: box.boxId } });
+  assert.deepEqual(hook.claimed[0]?.data, { template: 9000, box: box.boxId }, "the claim records the box");
   assert.deepEqual(hook.events, ["claim 7000", "clone 7000", "starting"]);
   assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags", "warm"]);
 
@@ -271,7 +277,9 @@ test("acquire claims the VMID before it clones, then configures and starts the b
     "tags go in a PUT of their own",
   );
   const tags = parseTags(made.config.tags);
+  assert.deepEqual(tags.slice(0, 2), ["bb-box", "install.test"]);
   assert.equal(tags.at(-1), "template.9000");
+  assert.equal(installFromDescription(made.config.description), "test", "the clone's description names the install");
   assert.deepEqual(ownerFromTags(tags), { boxId: box.boxId, threadId: box.threadId, name: null, kind: box.kind, createdAt: box.createdAt });
   assert.equal(ownerFromDescription(made.config.description)?.boxId, box.boxId);
 });
@@ -396,21 +404,120 @@ test("power, stop and start", async () => {
   await assert.rejects(backend.start(guest), (error: unknown) => error instanceof BackendError && error.code === "gone");
 });
 
-test("held lists owned guests and unlabelled ones, and leaves others alone", async () => {
+const isGone = (error: unknown) => error instanceof BackendError && error.code === "gone";
+
+test("a reused VMID holds another box: the old box's guest is gone, and acting on it leaves the new box alone", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-vmid-last": 7000 });
+  const old = await backend.acquire(identity(), null, hooks().value, signal());
+  // Deleted outside bb-box, so the only VMID goes to the next box.
+  proxmox.guests.delete(7000);
+  const current = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(current.ref, old.ref);
+  assert.equal(await backend.power(old), null);
+  await assert.rejects(backend.stop(old), isGone);
+  await assert.rejects(backend.start(old), isGone);
+  await backend.release(old, releasing());
+  assert.equal(proxmox.guests.get(7000)?.status, "running", "the new box is untouched");
+  assert.equal(await backend.power(current), "running");
+});
+
+test("another install's guests count against capacity, and this one leaves them alone", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-headless-warm": 1, "proxmox-lxc-desktops-per-gpu": 1 });
+  await backend.maintain();
+  const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.equal(desktop.ref, "7001");
+  const other = track(
+    new ProxmoxLxcBackend(
+      lxcConfig({
+        "proxmox-lxc-token-id": FAKE_TOKEN.tokenId,
+        "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret,
+        "proxmox-lxc-desktop-templates": "9001 gpu-a",
+        "proxmox-lxc-desktops-per-gpu": 1,
+        "proxmox-lxc-vmid-first": 7000,
+        "proxmox-lxc-vmid-last": 7009,
+      }),
+      testContext(new MemoryStorage(), "other"),
+      fakes(proxmox),
+    ),
+  );
+  assert.deepEqual(await other.held(), []);
+  assert.equal(await other.power(desktop), null);
+  await assert.rejects(other.stop(desktop), isGone);
+  await other.release(desktop, releasing());
+  await other.maintain();
+  assert.equal(proxmox.guests.get(7001)?.status, "running", "the other install's release left the desktop alone");
+  assert.ok(proxmox.guests.has(7000), "the other install, with no warm pool, leaves this one's warm guest");
+  assert.equal((await other.capacity("linux-desktop", [], signal())).ok, false, "this install's desktop still uses the GPU");
+
+  const theirs = await other.acquire(identity(), null, hooks().value, signal());
+  assert.equal(theirs.ref, "7002", "the other install clones rather than take this one's warm guest");
+  assert.deepEqual(parseTags(proxmox.guests.get(7002)!.config.tags).slice(0, 2), ["bb-box", "install.other"]);
+  assert.deepEqual((await backend.held()).map((guest) => guest.ref), ["7001"]);
+  assert.equal(await backend.power(theirs), null);
+});
+
+test("stamp records this install on its guest from before install IDs, and leaves others alone", async () => {
+  const { backend, proxmox } = setup();
+  const tags = "bb-box;box.box_old;thread.thr_x;kind.linux-headless;template.9000";
+  proxmox.guests.set(7005, {
+    vmid: 7005,
+    name: "old",
+    pool: "bbbox",
+    status: "running",
+    template: false,
+    config: { tags, description: "bb-box old\nbox box_old\nthread thr_x" },
+  });
+  proxmox.guests.set(7006, { vmid: 7006, name: "theirs", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;install.other;box.box_old" } });
+  const guest: Guest = { ref: "7005", host: "pve", address: "192.0.2.105", data: { template: 9000 } };
+  assert.deepEqual(await backend.held(), [], "a guest with no install ID is not this install's yet");
+
+  const wrong = await backend.stamp("box_other", guest);
+  assert.deepEqual(wrong.data, { template: 9000, box: "box_other" });
+  assert.equal(proxmox.guests.get(7005)!.config.tags, tags, "a guest that names another box is not stamped");
+  assert.equal(await backend.power(wrong), null);
+
+  const stamped = await backend.stamp("box_old", guest);
+  assert.deepEqual(stamped.data, { template: 9000, box: "box_old" });
+  const config = proxmox.guests.get(7005)!.config;
+  assert.deepEqual(parseTags(config.tags), ["bb-box", "install.test", "box.box_old", "thread.thr_x", "kind.linux-headless", "template.9000"]);
+  assert.equal(config.description, "bb-box old\ninstall test\nbox box_old\nthread thr_x");
+  assert.deepEqual(
+    (await backend.held()).map((held) => [held.ref, held.owner?.boxId]),
+    [["7005", "box_old"]],
+  );
+  assert.equal(await backend.power(stamped), "running");
+
+  await backend.stamp("box_old", { ref: "7006", host: "pve", address: null });
+  assert.equal(proxmox.guests.get(7006)!.config.tags, "bb-box;install.other;box.box_old", "another install's guest is not stamped");
+});
+
+test("held lists this install's guests, labelled or part-made, and leaves others alone", async () => {
   const { backend, proxmox } = setup();
   const box = identity();
   await backend.acquire(box, null, hooks().value, signal());
-  // Cloned but not yet tagged: only the description names the box.
+  // Cloned but not yet tagged: only the description names the install and the box.
   proxmox.guests.set(7001, {
     vmid: 7001,
     name: "half",
     pool: "bbbox",
     status: "stopped",
     template: false,
-    config: { description: "bb-box half-done\nbox box_x\nthread thr_x\nkind linux-headless\ncreated 2026-09-30T00:00:00.000Z" },
+    config: { description: "bb-box half-done\ninstall test\nbox box_x\nthread thr_x\nkind linux-headless\ncreated 2026-09-30T00:00:00.000Z" },
   });
-  proxmox.guests.set(7002, { vmid: 7002, name: "mystery", pool: "bbbox", status: "running", template: false, config: {} });
-  proxmox.guests.set(7003, { vmid: 7003, name: "warm", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;warm;kind.linux-headless" } });
+  // A warm guest whose fill was interrupted: this install's, and no box's.
+  proxmox.guests.set(7002, { vmid: 7002, name: "filling", pool: "bbbox", status: "stopped", template: false, config: { tags: "bb-box;install.test;filling;template.9000" } });
+  proxmox.guests.set(7003, { vmid: 7003, name: "warm", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;install.test;warm;template.9000" } });
+  proxmox.guests.set(7005, {
+    vmid: 7005,
+    name: "theirs",
+    pool: "bbbox",
+    status: "running",
+    template: false,
+    config: { tags: "bb-box;install.other;box.box_y;thread.thr_y;kind.linux-headless" },
+  });
+  proxmox.guests.set(7006, { vmid: 7006, name: "their-half", pool: "bbbox", status: "stopped", template: false, config: { description: "bb-box their-half\ninstall other\nbox box_z" } });
+  proxmox.guests.set(7007, { vmid: 7007, name: "mystery", pool: "bbbox", status: "running", template: false, config: {} });
+  proxmox.guests.set(7008, { vmid: 7008, name: "old", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;box.box_old;thread.thr_x;kind.linux-headless" } });
   proxmox.guests.set(8000, { vmid: 8000, name: "outside", pool: "bbbox", status: "running", template: false, config: {} });
   proxmox.guests.set(7004, { vmid: 7004, name: "other-pool", pool: "else", status: "running", template: false, config: {} });
 
@@ -422,8 +529,11 @@ test("held lists owned guests and unlabelled ones, and leaves others alone", asy
   assert.equal(held[0]!.owner?.boxId, box.boxId);
   assert.equal(held[0]!.owner?.name, box.name);
   assert.equal(held[0]!.power, "running");
+  assert.deepEqual(held[0]!.data, { template: 9000, box: box.boxId });
   assert.deepEqual(held[1]!.owner, { boxId: "box_x", threadId: "thr_x", name: "half-done", kind: "linux-headless", createdAt: Date.parse("2026-09-30T00:00:00.000Z") });
+  assert.deepEqual(held[1]!.data, { box: "box_x" });
   assert.equal(held[2]!.owner, null);
+  assert.deepEqual(held[2]!.data, { template: 9000 }, "a guest of no box carries none");
 });
 
 test("a new instance finds the guests the last one held", async () => {
@@ -478,7 +588,8 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   await backend.maintain();
   const warm = proxmox.guests.get(7000)!;
   assert.equal(warm.status, "running");
-  assert.deepEqual(parseTags(warm.config.tags), ["bb-box", "warm", "template.9000"]);
+  assert.deepEqual(parseTags(warm.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
+  assert.equal(installFromDescription(warm.config.description), "test", "a warm guest names the install from its first write");
   assert.deepEqual(await backend.held(), [], "warm guests belong to no box");
 
   const box = identity();
@@ -491,7 +602,7 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
 
   // Claiming a warm guest starts a refill; maintain returns the one in flight.
   await backend.maintain();
-  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "warm", "template.9000"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
   const capacity = await backend.capacity("linux-headless", [], signal());
   assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
 
@@ -561,6 +672,22 @@ test("doctor passes on a complete setup and shows the generated public key", asy
   const stored = await storage.get<{ privateKey: string; publicKey: string }>("ssh-key");
   assert.ok(stored?.privateKey.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"));
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE KEY/);
+});
+
+test("doctor shows this install's ID and counts the containers it leaves alone", async () => {
+  const { backend, proxmox } = setup();
+  await backend.acquire(identity(), null, hooks().value, signal());
+  proxmox.guests.set(7005, { vmid: 7005, name: "theirs", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;install.other;box.box_y" } });
+  proxmox.guests.set(7006, { vmid: 7006, name: "their-half", pool: "bbbox", status: "stopped", template: false, config: { description: "bb-box their-half\ninstall other\nbox box_z" } });
+  proxmox.guests.set(7007, { vmid: 7007, name: "mystery", pool: "bbbox", status: "running", template: false, config: {} });
+  proxmox.guests.set(7008, { vmid: 7008, name: "old", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;box.box_old" } });
+  const report = await backend.doctor();
+  const notes = report.notes.join("\n");
+  assert.match(notes, /^This install's ID is test\. Its containers carry the tag install\.test\.$/m);
+  assert.match(
+    notes,
+    /^This install leaves alone 2 containers of install other, 2 containers with no install ID in pool bbbox\. They still count against the host's capacity\. .* bb box install-id --set <id>\.$/m,
+  );
 });
 
 test("doctor says what is missing", async () => {

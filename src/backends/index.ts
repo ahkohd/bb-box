@@ -1,8 +1,8 @@
 // The backends built into bb-box, and the set that is active under the
 // current settings. Each driver owns the settings under its own prefix and
 // has an enable switch, so several backends can be active at once. A backend
-// is rebuilt only when its own settings change, so a warm pool or an open
-// connection survives changes to other settings.
+// is rebuilt only when its own settings or the install ID change, so a warm
+// pool or an open connection survives changes to other settings.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
@@ -106,20 +106,36 @@ export class Backends {
   readonly #storage: BackendStorage;
   readonly #logError: (operation: string, error: unknown) => void;
   readonly #entries = new Map<string, Entry>();
+  #installId: string;
+  #values: Readonly<Record<string, unknown>> = {};
   #statuses: BackendStatus[] = [];
 
   constructor(options: {
     storage: BackendStorage;
+    /** This install's ID (018), which every backend records on its guests. */
+    installId: string;
     logError(operation: string, error: unknown): void;
     drivers?: readonly BackendDriver<any>[];
   }) {
     this.#drivers = options.drivers ?? DRIVERS;
     this.#storage = options.storage;
+    this.#installId = options.installId;
     this.#logError = options.logError;
+  }
+
+  get installId(): string {
+    return this.#installId;
+  }
+
+  /** Rebuilds every backend with another install ID, for an install that takes back its old one. */
+  async useInstallId(id: string): Promise<void> {
+    this.#installId = id;
+    await this.configure(this.#values);
   }
 
   /** Builds, keeps or disposes each backend to match `values`. */
   async configure(values: Readonly<Record<string, unknown>>): Promise<void> {
+    this.#values = values;
     const statuses: BackendStatus[] = [];
     for (const driver of this.#drivers) {
       const parsed = driver.parse(values);
@@ -132,11 +148,12 @@ export class Backends {
         );
         continue;
       }
-      const signature = JSON.stringify(parsed.config);
+      const signature = JSON.stringify([this.#installId, parsed.config]);
       if (current?.signature !== signature) {
         if (current) await this.#dispose(current);
         const backend = driver.create(parsed.config, {
           storage: scopedStorage(this.#storage, `backend/${driver.type}/`),
+          installId: this.#installId,
           logError: this.#logError,
         });
         this.#entries.set(driver.type, { driver, signature, backend });

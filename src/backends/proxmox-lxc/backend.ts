@@ -2,8 +2,11 @@
 // from one CT template per kind into a resource pool, with a VMID from
 // bb-box's range and the static address fixed to it. Ownership lives in
 // Proxmox tags (and the description, which the clone sets first), so the
-// sweep can find every guest even if bb-box's storage is lost. Commands run
-// over SSH as the templates' box user; desktops stream over VNC.
+// sweep can find every guest even if bb-box's storage is lost. Both name the
+// install as well as the box (018): an install acts only on its own guests,
+// and checks the guest still names the box before it acts on a VMID, which
+// Proxmox reuses. Commands run over SSH as the templates' box user; desktops
+// stream over VNC.
 //
 // An acquire clones, configures (dropping the protection clones inherit),
 // tags, starts, grows the disk if asked (quick only while running), waits for
@@ -16,7 +19,8 @@
 // GPU with the fewest desktops. Every guest carries a "template.<vmid>" tag,
 // which is how that use is counted. The warm pool keeps started guests of
 // each flavour, tagged "warm". Claiming one retags it for its box, so a new
-// box is ready as soon as the tags change.
+// box is ready as soon as the tags change. Guests of other installs, or with
+// no install, count against capacity but are otherwise left alone.
 
 import type { TLSSocket } from "node:tls";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
@@ -62,6 +66,7 @@ const TAG = "bb-box";
 const WARM = "warm";
 const FILLING = "filling";
 const RETIRED = "retired";
+const INSTALL = "install.";
 const MiB = 2 ** 20;
 const GiB = 2 ** 30;
 const VNC_PORT = 5900;
@@ -167,17 +172,31 @@ function powerOf(status: string): PowerState {
 
 const tagPattern = /^[a-z0-9_][a-z0-9_+.-]*$/i;
 
-export function boxTags(box: BoxIdentity, template: number | null): string[] {
-  const tags = [TAG, `box.${box.boxId}`, `kind.${box.kind}`, `created.${Math.floor(box.createdAt / 1000)}`];
-  if (tagPattern.test(`thread.${box.threadId}`)) tags.splice(1, 0, `thread.${box.threadId}`);
+export function installTag(installId: string): string {
+  return `${INSTALL}${installId}`;
+}
+
+export function installFromTags(tags: readonly string[]): string | null {
+  return tags.find((tag) => tag.startsWith(INSTALL))?.slice(INSTALL.length) || null;
+}
+
+export function installFromDescription(text: unknown): string | null {
+  if (typeof text !== "string" || !text.startsWith("bb-box ")) return null;
+  return /^install (\S+)$/m.exec(text)?.[1] ?? null;
+}
+
+export function boxTags(box: BoxIdentity, installId: string, template: number | null): string[] {
+  const tags = [TAG, installTag(installId), `box.${box.boxId}`, `kind.${box.kind}`, `created.${Math.floor(box.createdAt / 1000)}`];
+  if (tagPattern.test(`thread.${box.threadId}`)) tags.splice(2, 0, `thread.${box.threadId}`);
   if (template !== null) tags.push(templateTag(template));
   return tags;
 }
 
-/** Written by the clone, before the tags, so an interrupted acquire still names its box. */
-export function describe(box: BoxIdentity): string {
+/** Written by the clone, before the tags, so an interrupted acquire still names its install and box. */
+export function describe(box: BoxIdentity, installId: string): string {
   return [
     `bb-box ${box.name}`,
+    `install ${installId}`,
     `box ${box.boxId}`,
     `thread ${box.threadId}`,
     `kind ${box.kind}`,
@@ -214,6 +233,19 @@ export function ownerFromDescription(text: unknown): BoxOwner | null {
     kind: field("kind") ?? null,
     createdAt: Number.isFinite(created) ? created : null,
   };
+}
+
+/** The install and the box a guest's config names, from its tags or, before those are written, its description. */
+function namesOf(config: Record<string, unknown>): { install: string | null; box: string | null } {
+  const tags = parseTags(config.tags);
+  return {
+    install: installFromTags(tags) ?? installFromDescription(config.description),
+    box: (ownerFromTags(tags) ?? ownerFromDescription(config.description))?.boxId ?? null,
+  };
+}
+
+function gone(vmid: number): BackendError {
+  return new BackendError("gone", `The box's container ${vmid} no longer exists.`);
 }
 
 /** `templateDiskGiB` is the templates' own disk, when known. */
@@ -488,7 +520,7 @@ export class ProxmoxLxcBackend implements Backend {
     const claim = async (id: number) => {
       claimed = id;
       acquiring.vmid = id;
-      await hooks.claim(this.#guest(api.node, id, acquiring.template));
+      await hooks.claim(this.#guest(api.node, id, acquiring.template, box.boxId));
     };
     try {
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
@@ -519,14 +551,14 @@ export class ProxmoxLxcBackend implements Backend {
         vmid = await step("clone", async () => {
           const guests = await api.listPool(this.#config.proxmox.pool, signal);
           acquiring.template = this.#choose(offer, guests, [], api.node).template.vmid;
-          return this.#clone(api, guests, acquiring.template, box.name, describe(box), claim, signal);
+          return this.#clone(api, guests, acquiring.template, box.name, describe(box, this.#context.installId), claim, signal);
         });
       }
       const id = vmid;
       const template = acquiring.template;
       if (!warm) {
         await step("configure", () => api.configure(id, this.#settings(offer.config, id), signal));
-        await step("tags", () => api.configure(id, { tags: boxTags(box, template) }, signal));
+        await step("tags", () => api.configure(id, { tags: boxTags(box, this.#context.installId, template) }, signal));
       }
       await hooks.starting();
       await step("start", async () => {
@@ -534,7 +566,7 @@ export class ProxmoxLxcBackend implements Backend {
       });
       if (!warm && template !== null) await this.#grow(api, id, offer.config, template, step, signal);
       await this.#waitReady(id, box.kind, Math.max(1_000, deadline - Date.now()), signal, step);
-      return this.#guest(api.node, id, template);
+      return this.#guest(api.node, id, template, box.boxId);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
@@ -549,21 +581,23 @@ export class ProxmoxLxcBackend implements Backend {
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
-    await (await this.client()).destroy(this.#vmid(guest), signal);
+    const api = await this.client();
+    if (await this.#still(api, guest, signal)) await api.destroy(this.#vmid(guest), signal);
     hooks.timing("delete", Math.round(performance.now() - started));
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
-    const status = await (await this.client()).status(this.#vmid(guest), signal);
-    if (!status) return null;
-    return powerOf(status.status);
+    const api = await this.client();
+    if (!(await this.#still(api, guest, signal))) return null;
+    const status = await api.status(this.#vmid(guest), signal);
+    return status ? powerOf(status.status) : null;
   }
 
   async start(guest: Guest, signal?: AbortSignal): Promise<void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
-    const status = await api.status(vmid, signal);
-    if (!status) throw new BackendError("gone", `Container ${vmid} no longer exists.`);
+    const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
+    if (!status) throw gone(vmid);
     if (status.status !== "running") await api.start(vmid, signal);
     await this.#waitReady(vmid, null, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal);
   }
@@ -571,23 +605,58 @@ export class ProxmoxLxcBackend implements Backend {
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
-    if ((await api.status(vmid, signal))?.status === "running") await api.stop(vmid, signal);
+    const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
+    if (!status) throw gone(vmid);
+    if (status.status === "running") await api.stop(vmid, signal);
   }
 
+  /** This install's guests, from the pool listing. Only a guest not yet tagged costs a config read. */
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {
     const api = await this.client();
     const held: HeldGuest[] = [];
     for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
       if (guest.type !== "lxc" || guest.template || !this.#inRange(guest.vmid)) continue;
       if (this.#reserved.has(guest.vmid) || this.#filling.has(guest.vmid) || guest.tags.includes(WARM)) continue;
+      let install = installFromTags(guest.tags);
       let owner = ownerFromTags(guest.tags, guest.name || null);
-      if (!owner && !guest.tags.includes(FILLING) && !guest.tags.includes(RETIRED)) {
+      const labelled = guest.tags.includes(FILLING) || guest.tags.includes(RETIRED);
+      if (!guest.tags.includes(TAG) || (!owner && !labelled)) {
         const config = await api.config(guest.vmid, signal).catch((): Record<string, unknown> => ({}));
-        owner = ownerFromDescription(config.description);
+        install ??= installFromDescription(config.description);
+        owner ??= ownerFromDescription(config.description);
       }
-      held.push({ ...this.#guest(guest.node || api.node, guest.vmid), owner, power: powerOf(guest.status) });
+      if (install !== this.#context.installId) continue;
+      const template = templateFromTags(guest.tags);
+      held.push({ ...this.#guest(guest.node || api.node, guest.vmid, template, owner?.boxId ?? null), owner, power: powerOf(guest.status) });
     }
     return held;
+  }
+
+  /**
+   * Adds this install to the guest of a box recorded before install IDs,
+   * when the guest has none and names the box, and keeps the box ID with the
+   * guest. From then on, a guest at the VMID that does not name the box
+   * counts as gone.
+   */
+  async stamp(boxId: string, guest: Guest, signal?: AbortSignal): Promise<Guest> {
+    const stamped: Guest = { ...guest, data: { ...guest.data, box: boxId } };
+    const api = await this.client();
+    const vmid = this.#vmid(guest);
+    const config = await this.#guestConfig(api, vmid, signal);
+    if (!config) return stamped;
+    const names = namesOf(config);
+    if (names.install !== null || names.box !== boxId) return stamped;
+    const tags = parseTags(config.tags);
+    const description = typeof config.description === "string" && config.description.startsWith("bb-box ") ? config.description : null;
+    await api.configure(
+      vmid,
+      {
+        tags: [TAG, installTag(this.#context.installId), ...tags.filter((tag) => tag !== TAG)],
+        ...(description ? { description: description.replace(/^.*/, (first) => `${first}\ninstall ${this.#context.installId}`) } : {}),
+      },
+      signal,
+    );
+    return stamped;
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
@@ -729,10 +798,13 @@ export class ProxmoxLxcBackend implements Backend {
         const total = last - first + 1;
         if (used < total) pass(VMIDS, `${total - used} of ${total} VMIDs from ${first} to ${last} are free.`);
         else warn(VMIDS, `All ${total} VMIDs from ${first} to ${last} are in use.`, "Release boxes, or widen the VMID range.");
+        const others = await this.#others(api, guests, signal);
+        if (others) notes.push(others);
       } catch (error) {
         fail(VMIDS, message(error), audit(error, `Give the token VM.Audit on /pool/${pool}.`));
       }
     }
+    notes.unshift(`This install's ID is ${this.#context.installId}. Its containers carry the tag ${installTag(this.#context.installId)}.`);
 
     try {
       const keys = await this.#keys();
@@ -756,6 +828,33 @@ export class ProxmoxLxcBackend implements Backend {
       checks,
       notes,
     };
+  }
+
+  /**
+   * The doctor's note on containers in bb-box's pool and VMID range that
+   * this install leaves alone, counted by the install they name, or null
+   * when there are none.
+   */
+  async #others(api: Proxmox, guests: readonly PoolGuest[], signal?: AbortSignal): Promise<string | null> {
+    const counts = new Map<string | null, number>();
+    for (const guest of guests) {
+      if (guest.type !== "lxc" || guest.template || !this.#inRange(guest.vmid) || this.#reserved.has(guest.vmid) || this.#filling.has(guest.vmid)) continue;
+      let install = installFromTags(guest.tags);
+      if (install === null && !guest.tags.includes(TAG)) {
+        install = installFromDescription((await api.config(guest.vmid, signal).catch((): Record<string, unknown> => ({}))).description);
+      }
+      if (install === this.#context.installId) continue;
+      counts.set(install, (counts.get(install) ?? 0) + 1);
+    }
+    if (!counts.size) return null;
+    const containers = (count: number) => `${count} ${count === 1 ? "container" : "containers"}`;
+    const parts = [...counts]
+      .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)))
+      .map(([install, count]) => (install === null ? `${containers(count)} with no install ID` : `${containers(count)} of install ${install}`));
+    return (
+      `This install leaves alone ${parts.join(", ")} in pool ${this.#config.proxmox.pool}. They still count against the host's capacity. ` +
+      "If one of these IDs was this install's before it lost its storage, take it back with bb box install-id --set <id>."
+    );
   }
 
   maintain(signal?: AbortSignal): Promise<void> {
@@ -804,7 +903,7 @@ export class ProxmoxLxcBackend implements Backend {
   /** The flavour and template of a guest that is ready in the warm pool, or null. */
   warmOf(guest: PoolGuest): { readonly flavour: LxcFlavour; readonly template: number } | null {
     if (guest.type !== "lxc" || guest.template || !this.#inRange(guest.vmid) || this.#filling.has(guest.vmid)) return null;
-    if (!guest.tags.includes(WARM)) return null;
+    if (!guest.tags.includes(WARM) || installFromTags(guest.tags) !== this.#context.installId) return null;
     const template = templateFromTags(guest.tags);
     const flavour = template === null ? null : this.#flavourOf(template);
     return flavour && template !== null ? { flavour, template } : null;
@@ -815,8 +914,9 @@ export class ProxmoxLxcBackend implements Backend {
     const { config } = this.#offer(box.kind);
     const api = await this.client();
     const vmid = Number(member.ref);
-    await api.configure(vmid, { hostname: box.name, cores: config.cores, memory: config.memoryMiB, description: describe(box) }, signal);
-    await api.configure(vmid, { tags: boxTags(box, template) }, signal);
+    const installId = this.#context.installId;
+    await api.configure(vmid, { hostname: box.name, cores: config.cores, memory: config.memoryMiB, description: describe(box, installId) }, signal);
+    await api.configure(vmid, { tags: boxTags(box, installId, template) }, signal);
   }
 
   #proxmox(node: string): Proxmox {
@@ -867,12 +967,38 @@ export class ProxmoxLxcBackend implements Backend {
     return vmid;
   }
 
-  /** `template` is kept with the box, and a GPU desktop's GPU is shown. */
-  #guest(node: string, vmid: number, template: number | null = null): Guest {
+  /** `template` and `box` are kept with the box, and a GPU desktop's GPU is shown. */
+  #guest(node: string, vmid: number, template: number | null = null, box: string | null = null): Guest {
     const guest: Guest = { ref: String(vmid), host: node, address: addressFor(this.#config, vmid) };
-    if (template === null) return guest;
+    const data = { ...(template !== null ? { template } : {}), ...(box !== null ? { box } : {}) };
+    if (!Object.keys(data).length) return guest;
     const gpu = this.#config.flavours.desktop.templates.find((listed) => listed.vmid === template)?.gpu;
-    return { ...guest, data: { template }, ...(gpu ? { facts: [{ label: "GPU", value: gpu }] } : {}) };
+    return { ...guest, data, ...(gpu ? { facts: [{ label: "GPU", value: gpu }] } : {}) };
+  }
+
+  /** The guest's config, or null when it does not exist. */
+  async #guestConfig(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
+    try {
+      return await api.config(vmid, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.notFound) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Whether the guest at the reference is still `guest` (018): it names this
+   * install and the box in `guest.data.box`, or no box when that is absent,
+   * as for a leftover `held()` found without an owner. Proxmox reuses a VMID
+   * once the range wraps, so a box whose container was deleted outside
+   * bb-box may find another box's there.
+   */
+  async #still(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<boolean> {
+    const config = await this.#guestConfig(api, this.#vmid(guest), signal);
+    if (!config) return false;
+    const names = namesOf(config);
+    const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+    return names.install === this.#context.installId && names.box === box;
   }
 
   /** How bb-box and the thread reach a box over SSH. A fresh guest's host key is accepted. */
@@ -915,11 +1041,10 @@ export class ProxmoxLxcBackend implements Backend {
     await step("resize", () => api.growRootDisk(vmid, wanted, signal));
   }
 
+  /** Whether the guest at `vmid` names the box. Box IDs are unique, so no other install's guest does. */
   async #owns(api: Proxmox, vmid: number, boxId: string, signal?: AbortSignal): Promise<boolean> {
-    if (!(await api.status(vmid, signal))) return false;
-    const config = await api.config(vmid, signal);
-    const owner = ownerFromTags(parseTags(config.tags)) ?? ownerFromDescription(config.description);
-    return owner?.boxId === boxId;
+    const config = await this.#guestConfig(api, vmid, signal);
+    return !!config && namesOf(config).box === boxId;
   }
 
   async #templateOf(api: Proxmox, template: number, signal?: AbortSignal): Promise<{ storage: string; diskGiB: number | null }> {
@@ -1064,13 +1189,14 @@ export class ProxmoxLxcBackend implements Backend {
       const out: number[] = [];
       for (const guest of guests) {
         if (!guest.tags.includes(WARM) || guest.type !== "lxc" || guest.template || !this.#inRange(guest.vmid) || this.#filling.has(guest.vmid)) continue;
+        if (installFromTags(guest.tags) !== this.#context.installId) continue;
         const flavour = this.warmOf(guest)?.flavour;
         const count = flavour ? (kept.get(flavour) ?? 0) : 0;
         if (flavour && guest.status === "running" && count < this.#config.flavours[flavour].warm) {
           kept.set(flavour, count + 1);
           continue;
         }
-        await api.configure(guest.vmid, { tags: [TAG, RETIRED] }, signal);
+        await api.configure(guest.vmid, { tags: [TAG, installTag(this.#context.installId), RETIRED] }, signal);
         out.push(guest.vmid);
       }
       return out;
@@ -1099,6 +1225,7 @@ export class ProxmoxLxcBackend implements Backend {
 
   async #fill(api: Proxmox, offer: Offer, signal: AbortSignal): Promise<void> {
     const { flavour, config } = offer;
+    const install = installTag(this.#context.installId);
     let vmid: number | null = null;
     const claimed: number[] = [];
     try {
@@ -1109,7 +1236,7 @@ export class ProxmoxLxcBackend implements Backend {
         guests,
         template,
         "bb-box-warm",
-        `bb-box warm ${flavour}`,
+        `bb-box warm ${flavour}\ninstall ${this.#context.installId}`,
         async (id) => {
           this.#filling.set(id, template);
           claimed.push(id);
@@ -1117,11 +1244,11 @@ export class ProxmoxLxcBackend implements Backend {
         signal,
       );
       await api.configure(vmid, this.#settings(config, vmid), signal);
-      await api.configure(vmid, { tags: [TAG, FILLING, templateTag(template)] }, signal);
+      await api.configure(vmid, { tags: [TAG, install, FILLING, templateTag(template)] }, signal);
       await api.start(vmid, signal);
       await this.#grow(api, vmid, config, template, untimed, signal);
       await this.#waitReady(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
-      await api.configure(vmid, { tags: [TAG, WARM, templateTag(template)] }, signal);
+      await api.configure(vmid, { tags: [TAG, install, WARM, templateTag(template)] }, signal);
     } catch (error) {
       if (vmid !== null) await api.destroy(vmid).catch((cause) => this.#context.logError("release a failed warm box", cause));
       throw error;

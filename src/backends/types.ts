@@ -113,7 +113,11 @@ export interface Guest {
   readonly host: string | null;
   /** Where the box answers on the network, when known. Shown to users. */
   readonly address: string | null;
-  /** Small values the backend needs later, stored with the box and passed back. Never a secret. */
+  /**
+   * Small values the backend needs later, stored with the box and passed
+   * back. Never a secret. A backend whose references can be reused keeps the
+   * box ID as `box` from the claim on (018).
+   */
   readonly data?: Readonly<Record<string, string | number | boolean>>;
   /** Short facts shown in order by status and the panel, such as a desktop's display mode. Stored with the box. Never a secret. */
   readonly facts?: readonly GuestFact[];
@@ -132,11 +136,12 @@ export interface BoxOwner {
   readonly createdAt: number | null;
 }
 
-/** A guest a backend holds for bb-box, as seen by the safety sweep. */
+/** A guest a backend holds for this install, as seen by the safety sweep. */
 export interface HeldGuest extends Guest {
   /**
    * The box it was acquired for, or null for a guest an interrupted acquire
-   * left behind before it was labelled. The sweep releases those.
+   * left behind before it was labelled. The sweep releases those. Its
+   * `data.box` is this box's ID, or absent when there is no owner.
    */
   readonly owner: BoxOwner | null;
   readonly power: PowerState;
@@ -281,6 +286,14 @@ export interface Backend {
    */
   acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
 
+  /*
+   * `release`, `power`, `start` and `stop` first check that the guest at the
+   * reference is still `guest` (018): it names this install and the same box
+   * as `guest.data.box`, or no box when that is absent, for an ownerless
+   * leftover. A guest that does not is another box's, and counts as gone.
+   * Real pools check the reset generation instead (016).
+   */
+
   /**
    * Deletes a virtual guest, or resets a real machine and returns it to the
    * pool. A guest that no longer exists counts as released.
@@ -289,13 +302,30 @@ export interface Backend {
 
   /** Null when the guest no longer exists. */
   power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null>;
-  /** Starts a stopped guest and waits until its command transport answers. Only where the provider can. */
+  /**
+   * Starts a stopped guest and waits until its command transport answers.
+   * Only where the provider can. Throws BackendError("gone") when the guest
+   * no longer exists.
+   */
   start?(guest: Guest, signal?: AbortSignal): Promise<void>;
-  /** Only where the provider can. */
+  /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
 
-  /** Every guest this backend holds for boxes, for the safety sweep. Excludes free pool members. */
+  /**
+   * Every guest this backend holds for this install's boxes, for the safety
+   * sweep. Excludes free pool members, and guests with another install's ID
+   * or none, which still count against capacity.
+   */
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
+
+  /**
+   * For a box recorded before install IDs (018): records this install on its
+   * guest when the guest has no install and names the box, and returns the
+   * guest to store, with the box ID as `data.box`. The registry calls it once
+   * per such box, before anything else acts on the guest. Only backends
+   * whose guests can predate install IDs.
+   */
+  stamp?(boxId: string, guest: Guest, signal?: AbortSignal): Promise<Guest>;
 
   /** The command transport, the displays, and how the thread reaches a box of `kind`. */
   transports(guest: Guest, kind: string): Promise<BoxTransports>;
@@ -351,6 +381,12 @@ export interface BackendStorage {
 export interface BackendContext {
   /** Scoped to this backend. */
   readonly storage: BackendStorage;
+  /**
+   * This bb-box install's ID (018). A backend records it on every guest from
+   * its first write, warm and part-made guests too, and acts only on guests
+   * that carry it.
+   */
+  readonly installId: string;
   logError(operation: string, error: unknown): void;
 }
 
