@@ -88,6 +88,8 @@ async function start(
     backend: null as FakeBackend | null,
     /** Keys BB's bootstrap ran with, in order. */
     bootstraps: [] as string[],
+    /** The script BB's installer runs in the box. */
+    installer: "echo installed > bb-installed",
     /** Host calls, in order, to check a machine is removed before its box. */
     events: [] as string[],
     /** Makes threads.get fail with this error, such as a network error. */
@@ -177,7 +179,7 @@ async function start(
     machineBootstrap: {
       async bootstrap({ key, executor, signal }) {
         world.bootstraps.push(key);
-        const { exitCode } = await executor.exec({ command: ["sh", "-c", "echo installed > bb-installed"], timeoutMs: 10_000, signal, stdin: "", onOutput: () => {} });
+        const { exitCode } = await executor.exec({ command: ["sh", "-c", world.installer], timeoutMs: 10_000, signal, stdin: "", onOutput: () => {} });
         if (exitCode !== 0) throw new Error(`The installer exited with ${exitCode}.`);
         return { hostId: `host-${key}` };
       },
@@ -304,6 +306,9 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   t.after(daemon.stop);
   const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent });
   t.after(() => harness.lifecycle.dispose());
+  // The thread's access is set up while BB's installer runs: it sees ~/.bashrc change.
+  world.installer =
+    'for i in $(seq 50); do grep -qs "Added by bb-box" .bashrc && break; sleep 0.1; done; grep -c "Added by bb-box" .bashrc > access-during-install; echo installed > bb-installed';
 
   // box_acquire waits for enrolment, as box_run would, and says how long it took.
   const acquired = text(await tool("box_acquire", { kind: "linux-headless" }));
@@ -319,6 +324,18 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   assert.ok(enrolled.timings.enrol! >= 0);
   assert.deepEqual(world.bootstraps, [box.id], "BB's bootstrap runs once, keyed by the box ID");
   assert.equal(world.hosts.get(`host-${box.id}`)?.name, box.name);
+  assert.equal(text(await tool("box_run", { box: box.name, command: "cat access-during-install" })).match(/stdout:\n(\d)/)?.[1], "1");
+
+  // The log says how long each step took, counted from when the box was ready.
+  const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
+  assert.ok(logged, "the enrolment is logged");
+  const s = String.raw`\d+\.\d\d s`;
+  for (const step of ["asking BB", "BB calling bb-box's create", "reaching the box", "BB preparing the enrolment", "BB's installer in the box", "BB waiting for the daemon", "finishing"]) {
+    assert.match(logged, new RegExp(`[:,] ${step} ${s}[,;]`), step);
+  }
+  assert.match(logged, new RegExp(`^Enrolled box ${box.name} ${s} after it was ready: .*; setting up the thread's access took ${s} alongside\\.$`));
+  // Once bootstrap returns, bb-box notices the machine connected at once rather than at its next 500 ms poll.
+  assert.match(logged, /, BB showing the machine connected 0\.[0-2]\d s,/);
 
   // BB's installer ran in the box, and commands see the box's identity.
   const installed = await tool("box_run", { box: box.name, command: 'cat bb-installed; echo "$BB_BOX_NAME $BB_THREAD_ID $BB_HOST_ID"' });

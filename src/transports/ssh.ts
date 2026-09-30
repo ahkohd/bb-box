@@ -4,6 +4,15 @@
 // known_hosts file the backend writes. A jump host is reached with the same
 // key and options. Every dial has a 2 s connect timeout and one attempt;
 // callers retry on their own 1 s loop.
+//
+// With a directory for sockets, commands to one box share a connection, so
+// each command after the first skips SSH's handshake. bb-box starts the
+// shared connection itself, one at a time, and ssh keeps it in the
+// background until it has been idle for two minutes. bb-box stops using it
+// shortly before then, and never puts more than 8 commands on it at once;
+// sshd allows 10 sessions per connection. A command that exits with 255,
+// SSH's own failure, stops new commands using the connection it went
+// through. A probe always dials afresh, so it says whether the box answers.
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -32,6 +41,35 @@ export interface SshOptions {
   /** A known_hosts file with every pinned key, needed when an access has host keys. */
   readonly knownHostsPath?: string | null;
   readonly binary?: string;
+  /** A directory for shared connections' sockets. Without it, every command dials. */
+  readonly shareDir?: string | null;
+  /** How long a shared connection stays open with nothing using it. */
+  readonly shareIdleMs?: number;
+}
+
+const SHARE_IDLE_MS = 120_000;
+/** A shared connection this close to closing gets no new commands. */
+const SHARE_MARGIN_MS = 10_000;
+const SHARE_MAX_SESSIONS = 8;
+/** After a shared connection could not be made, commands dial alone for this long. */
+const SHARE_RETRY_MS = 5_000;
+const SHARE_START_TIMEOUT_MS = 15_000;
+
+/** A connection that commands to one box share. */
+interface Shared {
+  readonly path: string;
+  readonly target: string;
+  state: "opening" | "open" | "failed" | "retired";
+  readonly opened: Promise<boolean>;
+  users: number;
+  /** When the last command on it finished, or when it opened or failed. */
+  since: number;
+}
+
+/** A command's place on a shared connection. */
+interface Lease {
+  readonly args: readonly string[];
+  done(failed: boolean): void;
 }
 
 export class SshError extends Error {
@@ -47,6 +85,8 @@ function pinned(access: SshAccess): boolean {
 
 export class Ssh {
   readonly #options: SshOptions;
+  readonly #shared = new Map<string, Shared>();
+  #count = 0;
 
   constructor(options: SshOptions) {
     this.#options = options;
@@ -90,8 +130,123 @@ export class Ssh {
     ];
   }
 
-  args(access: SshAccess, remoteCommand: string): string[] {
-    return [...this.options(access), "-T", `${access.user}@${access.host}`, "--", remoteCommand];
+  args(access: SshAccess, remoteCommand: string, share: readonly string[] = []): string[] {
+    return [...this.options(access), ...share, "-T", `${access.user}@${access.host}`, "--", remoteCommand];
+  }
+
+  get #idleMs(): number {
+    return this.#options.shareIdleMs ?? SHARE_IDLE_MS;
+  }
+
+  /** A place on the box's shared connection, opening it first. Null dials alone. */
+  async #lease(access: SshAccess): Promise<Lease | null> {
+    const dir = this.#options.shareDir;
+    if (!dir || process.platform === "win32") return null;
+    const options = this.options(access);
+    const target = `${access.user}@${access.host}`;
+    const key = createHash("sha256").update([...options, target].join("\0")).digest("hex").slice(0, 12);
+    let shared = this.#shared.get(key);
+    const now = Date.now();
+    if (shared?.state === "failed" && now - shared.since < SHARE_RETRY_MS) return null;
+    if (shared && (shared.state === "failed" || (shared.users === 0 && now - shared.since > this.#idleMs - SHARE_MARGIN_MS))) {
+      this.#retire(key, shared);
+      shared = undefined;
+    }
+    if (!shared) {
+      shared = this.#open(options, target, join(dir, `${key}-${++this.#count}`));
+      this.#shared.set(key, shared);
+    }
+    if (shared.users >= SHARE_MAX_SESSIONS) return null;
+    shared.users++;
+    const finish = (failed: boolean) => {
+      shared.users--;
+      shared.since = Date.now();
+      if (failed) this.#retire(key, shared);
+    };
+    if (!(await shared.opened)) {
+      finish(false);
+      return null;
+    }
+    return { args: ["-o", "ControlMaster=no", "-o", `ControlPath=${shared.path}`], done: finish };
+  }
+
+  /** Starts a shared connection, which ssh keeps in the background once it is up. */
+  #open(options: readonly string[], target: string, path: string): Shared {
+    const persist = `${Math.ceil(this.#idleMs / 1000)}s`;
+    const argv = [...options, "-o", "ControlMaster=yes", "-o", `ControlPath=${path}`, "-o", `ControlPersist=${persist}`, "-N", target];
+    const shared: Shared = {
+      path,
+      target,
+      state: "opening",
+      users: 0,
+      since: Date.now(),
+      opened: new Promise<boolean>((resolve) => {
+        const child = spawn(this.binary, argv, { stdio: "ignore" });
+        const timer = setTimeout(() => child.kill("SIGKILL"), SHARE_START_TIMEOUT_MS);
+        const settle = (open: boolean) => {
+          clearTimeout(timer);
+          if (shared.state === "opening") shared.state = open ? "open" : "failed";
+          shared.since = Date.now();
+          resolve(open);
+        };
+        child.on("error", () => settle(false));
+        child.on("exit", (code) => settle(code === 0));
+      }),
+    };
+    return shared;
+  }
+
+  /** New commands stop using a shared connection. ssh closes it once its commands finish and it has been idle. */
+  #retire(key: string, shared: Shared): void {
+    if (shared.state !== "failed") shared.state = "retired";
+    if (this.#shared.get(key) === shared) this.#shared.delete(key);
+  }
+
+  /** Closes a shared connection now, and ends what runs on it. */
+  #close(shared: Shared): Promise<void> {
+    shared.state = "retired";
+    return new Promise((resolve) => {
+      const child = spawn(this.binary, ["-o", `ControlPath=${shared.path}`, "-O", "exit", shared.target], { stdio: "ignore" });
+      const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      child.on("error", done);
+      child.on("exit", done);
+    });
+  }
+
+  /** Closes the box's shared connection, as before it stops or goes. */
+  async forget(access: SshAccess): Promise<void> {
+    const target = `${access.user}@${access.host}`;
+    const closing: Promise<void>[] = [];
+    for (const [key, shared] of this.#shared) {
+      if (shared.target !== target) continue;
+      this.#shared.delete(key);
+      closing.push(shared.opened.then((open) => (open ? this.#close(shared) : undefined)));
+    }
+    await Promise.all(closing);
+  }
+
+  /** Closes every shared connection. */
+  async dispose(): Promise<void> {
+    const all = [...this.#shared.values()];
+    this.#shared.clear();
+    await Promise.all(all.map((shared) => shared.opened.then((open) => (open ? this.#close(shared) : undefined))));
+  }
+
+  /** Runs `task` with a place on the box's shared connection, when there is one. */
+  async #leased<T>(access: SshAccess, task: (share: readonly string[]) => Promise<T>, failed: (result: T) => boolean): Promise<T> {
+    const lease = await this.#lease(access);
+    try {
+      const result = await task(lease?.args ?? []);
+      lease?.done(failed(result));
+      return result;
+    } catch (error) {
+      lease?.done(error instanceof SshError && /: exit 255\b/.test(error.message));
+      throw error;
+    }
   }
 
   /** A route to `port` inside the box, carried by `ssh -W`. */
@@ -103,9 +258,9 @@ export class Ssh {
   }
 
   /** Scripts for `os`: POSIX sh unless it is Windows. */
-  #line(access: SshAccess, os: GuestOs = "linux"): CommandLine {
+  #line(access: SshAccess, os: GuestOs = "linux", share: readonly string[] = []): CommandLine {
     return new CommandLine({
-      argv: (script) => [this.binary, ...this.args(access, script)],
+      argv: (script) => [this.binary, ...this.args(access, script, share)],
       error: (message) => new SshError(message),
       posix: os !== "windows",
     });
@@ -118,22 +273,22 @@ export class Ssh {
 
   /** Runs `remoteCommand` in the box user's shell. It returns when that shell exits, even if it left something running. */
   run(access: SshAccess, remoteCommand: string, options: RunOptions = {}, os?: GuestOs): Promise<RunResult> {
-    return this.#line(access, os).run(remoteCommand, options);
+    return this.#leased(access, (share) => this.#line(access, os, share).run(remoteCommand, options), (result) => result.exitCode === 255);
   }
 
   /** Runs `remoteCommand` and passes its output on as it arrives. */
   stream(access: SshAccess, remoteCommand: string, options: StreamOptions, os?: GuestOs): Promise<{ exitCode: number | null; timedOut: boolean }> {
-    return this.#line(access, os).stream(remoteCommand, options);
+    return this.#leased(access, (share) => this.#line(access, os, share).stream(remoteCommand, options), (result) => result.exitCode === 255);
   }
 
   /** Writes `data` to `path` in the box, creating parent directories. */
   writeFile(access: SshAccess, path: string, data: Uint8Array, options: { mode?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
-    return this.#line(access).writeFile(path, data, options);
+    return this.#leased(access, (share) => this.#line(access, "linux", share).writeFile(path, data, options), () => false);
   }
 
   /** Reads `path` from the box. Fails when it is larger than `maxBytes`. */
   readFile(access: SshAccess, path: string, options: { maxBytes: number; timeoutMs?: number; signal?: AbortSignal }): Promise<Buffer> {
-    return this.#line(access).readFile(path, options);
+    return this.#leased(access, (share) => this.#line(access, "linux", share).readFile(path, options), () => false);
   }
 
   /** True when SSH answers and the shell runs. */
@@ -215,6 +370,7 @@ export class SshTransport implements CommandTransport {
 /** A private key written to a 0600 file for `ssh -i`, and known_hosts files beside it. */
 export class KeyFile {
   #dir: string | null = null;
+  #shareDir: string | null = null;
   #path: string | null = null;
   #key: string | null = null;
 
@@ -238,9 +394,15 @@ export class KeyFile {
     return path;
   }
 
+  /** A directory for shared connections' sockets. A socket's path must fit in about 100 bytes, so it is short. */
+  async shareDir(): Promise<string> {
+    this.#shareDir ??= await mkdtemp(join(tmpdir().length > 40 ? "/tmp" : tmpdir(), "bb-box-cm-"));
+    return this.#shareDir;
+  }
+
   async dispose(): Promise<void> {
-    if (this.#dir) await rm(this.#dir, { recursive: true, force: true });
-    this.#dir = this.#path = this.#key = null;
+    for (const dir of [this.#dir, this.#shareDir]) if (dir) await rm(dir, { recursive: true, force: true });
+    this.#dir = this.#shareDir = this.#path = this.#key = null;
   }
 }
 

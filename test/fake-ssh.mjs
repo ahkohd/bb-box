@@ -5,17 +5,21 @@
 // how many more dials fail before it answers. Paths under /run/bb-box/ map to
 // run/bb-box/ in the host's home, where the desktop's display mode starts as
 // gpu, or as $FAKE_SSH_DIR/display/<host> holds it (a mode line, then a reason).
+// Starting a shared connection (-N) dials like a command; -O succeeds. Their
+// log entries have an empty command and say which they were.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
-const split = args.indexOf("--");
+const control = args.includes("-O") ? args[args.indexOf("-O") + 1] : args.includes("-N") ? "master" : null;
+const split = control ? args.length : args.indexOf("--");
 const target = args[split - 1];
 const command = args.slice(split + 1).join(" ");
 const host = target.slice(target.indexOf("@") + 1);
 const root = process.env.FAKE_SSH_DIR;
-appendFileSync(join(root, "log"), JSON.stringify({ target, command, args: args.slice(0, split - 1) }) + "\n");
+appendFileSync(join(root, "log"), JSON.stringify({ target, command, args: args.slice(0, split - 1), ...(control ? { control } : {}) }) + "\n");
+if (control && control !== "master") process.exit(0);
 
 const refuse = () => {
   process.stderr.write(`ssh: connect to host ${host} port 22: Connection refused\n`);
@@ -30,6 +34,7 @@ if (existsSync(upAfter)) {
     refuse();
   }
 }
+if (control) process.exit(0);
 const home = join(root, "home", host);
 const run = join(home, "run", "bb-box");
 mkdirSync(run, { recursive: true });

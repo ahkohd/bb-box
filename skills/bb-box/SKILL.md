@@ -111,6 +111,7 @@ When `enrol-boxes` is on, a ready box is added to BB as a machine, so threads
 and terminals can use it and BB's own secrets and Git credentials reach it.
 This takes a few seconds after the box is ready; `box_acquire` and `box_run`
 wait up to 10 s for it, and `box_status` shows how long it took.
+`bb plugin logs bb-box` shows how long each step of it took.
 bb-box removes the machine before it releases the box.
 
 In a Linux box that is a BB machine, each command takes `GH_TOKEN` and BB's

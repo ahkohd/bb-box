@@ -175,6 +175,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     hosts: () => bb.sdk.hosts as unknown as HostApi,
     bootstrap: (request) => bb.experimental_machines.bootstrap(request),
     logError,
+    log: (message) => bb.log.info(message),
   });
   bb.experimental_machines.register(enrolment.provider());
   const computing = new Computer({

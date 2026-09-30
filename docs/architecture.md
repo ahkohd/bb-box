@@ -235,6 +235,16 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
 - With a jump host, pinned keys are checked on both hops. A fresh Tart VM
   behind a pinned Mac is reached with the Mac's key checked and the VM's
   accepted.
+- Commands to one box share a connection, so only the first pays for SSH's
+  handshake: about 0.1 s on a local network, more through a jump host.
+  bb-box starts it with `ControlMaster=yes -N`, one at a time, and ssh keeps
+  it until it has been idle for two minutes. bb-box stops using it 10 s
+  before then, puts at most 8 commands on it at once, since sshd allows 10,
+  and dials alone beyond that. A command that exits with 255 retires the
+  connection; after a connection cannot be made, commands dial alone for
+  5 s. A probe always dials afresh, so it says whether the box answers.
+  The backend closes a box's connection before it stops or releases the
+  box, as another box may take its address.
 
 **Output and the desktop session.**
 
@@ -619,6 +629,11 @@ A box is a resource of its thread and gets what the thread's own machine has.
     runs, the box user has linger, or the host daemon stops when the
     installing SSH session ends. A template sets it; a pool machine turns it
     on at claim, since its reset turns it off.
+  - Setting up the thread's access, below, needs only the machine's ID, so it
+    runs while BB's installer does. bb-box asks BB whether the machine is
+    connected every 500 ms, and every 100 ms once bootstrap has returned.
+    Each enrolment logs how long each step took, from ready to enrolled, in
+    `bb plugin logs bb-box`.
   - Every template and image removes BB's daemon lock and PID file at boot,
     so a box that restarts after a hard stop reconnects in about 0.5 s
     ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). Without

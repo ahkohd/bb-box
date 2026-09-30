@@ -51,13 +51,14 @@ export function at(host: string): SshAccess {
 }
 
 /** Points the fake ssh at a fresh directory. Tests in one file run one at a time, so the environment variable is safe. */
-export function fakeSsh() {
+/** A fake ssh client. `share` gives commands to one box a shared connection. */
+export function fakeSsh(options: { share?: boolean } = {}) {
   const dir = tempDir("fake-ssh");
   process.env.FAKE_SSH_DIR = dir;
   mkdirSync(join(dir, "down"));
   mkdirSync(join(dir, "up-after"));
   writeFileSync(join(dir, "log"), "");
-  const ssh = new Ssh({ keyPath: "/nonexistent/key", binary: FAKE_SSH_BINARY });
+  const ssh = new Ssh({ keyPath: "/nonexistent/key", binary: FAKE_SSH_BINARY, shareDir: options.share ? join(dir, "shared") : null });
   return {
     dir,
     ssh,
@@ -68,7 +69,7 @@ export function fakeSsh() {
       readFileSync(join(dir, "log"), "utf8")
         .split("\n")
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as { target: string; command: string; args: string[] }),
+        .map((line) => JSON.parse(line) as { target: string; command: string; args: string[]; control?: string }),
   };
 }
 
