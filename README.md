@@ -38,9 +38,17 @@ capacity guard) and nothing that serves none of these.
 
 - **Box**: one computer held by one thread. It has a friendly name, a kind, an
   address and a state.
-- **Backend**: where boxes come from. The plugin reaches every machine only
-  through the backend interface, and never talks to Proxmox, a hypervisor, SSH
-  or a platform directly.
+- **Backend**: where boxes come from. bb-box's core does not care who the
+  provider is: Proxmox, LXC, a VM, a physical machine, Crabbox or anything
+  else is a backend behind one interface. The core (registry, panel, agent
+  tools, lifecycle, BB enrolment, computer use, desktop viewer) never names a
+  provider, a hypervisor, a container technology or a transport. A backend
+  only adapts its provider: acquire and release, address, capacity, and which
+  transports reach its boxes.
+- **Transport**: how bb-box reaches inside a box, shared by backends: command
+  execution and file copy (SSH now; WinRM or an in-box agent later) and the
+  desktop stream (VNC now; RDP or WebRTC later). Everything that runs inside a
+  box goes through a transport and is written once for every backend.
 - **Kind**: what a backend offers, with declared capabilities: guest OS,
   desktop or headless, GPU, Docker, how to run commands and copy files, the
   desktop viewer, whether the box enrols in BB, and capacity. The agent tools
@@ -71,6 +79,7 @@ capacity guard) and nothing that serves none of these.
 | Proxmox QEMU | virtual | Windows desktop | next |
 | Mac | real Mac mini, or macOS VMs on one | macOS desktop, iOS Simulator | last |
 | Physical PC pool | real | Linux or Windows | when needed |
+| Crabbox, microsandbox, clouds | virtual | whatever they provide | possible |
 
 ## The first backend: Proxmox LXC on Moonstead
 
