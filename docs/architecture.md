@@ -214,11 +214,14 @@ A box is a resource of its thread and gets what the thread's own machine has.
   copies bytes both ways without decoding them. The panel loads the client
   for the stream type: noVNC for `rfb`
   ([007](decisions/007-desktop-stream-is-a-typed-transport.md)).
-- **Shared control.** One controller at a time, the agent by default. Taking
-  control stops new agent actions, lets the one in progress finish for up to
-  5 s, then ends it. The relay drops input from any viewer without control,
-  and resizing is allowed only while you hold it. Control returns to the agent
-  when you hand back or your viewer goes away
+- **Shared control.** One owner of input at a time, the agent by default,
+  held in the plugin's memory. The relay drops input from any viewer that is
+  not the owner, so nothing in the box filters input. Taking control refuses
+  new computer-use calls, lets running ones finish for up to 5 s, then stops
+  the computer-use service; apps it started keep running. Resizing is allowed
+  only while you hold control. On hand-back the relay releases any keys and
+  buttons still held down. Control returns to the agent when you hand back,
+  when your viewer has been gone for 60 s, or when the plugin restarts
   ([008](decisions/008-shared-control.md)).
 - **Computer use** runs as a service inside the box, written once per OS. The
   computer use research (in progress) compares the options.
@@ -260,7 +263,7 @@ Nothing expires, so a box must never be forgotten.
 | The thread's Git credentials and variables | BB | BB | delivered to the box on enrolment, never stored by bb-box |
 | Work in the box: files, containers, running apps | the box's disk | the thread | deleted on release (virtual), or the home recreated (real); not backed up |
 | Templates and images | the provider | operator | built by the setup scripts |
-| Who holds each desktop | plugin memory and the in-box service | core | resets to the agent on restart |
+| Who holds each desktop's input | plugin memory | core | resets to the agent on restart |
 
 Push work to Git or copy it out before releasing a box.
 
