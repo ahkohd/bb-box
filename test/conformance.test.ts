@@ -23,18 +23,23 @@ function fakeBb(): ConformanceBb {
   };
 }
 
+// Each fake keeps its guests in a host storage of its own, which every install on it shares.
+const virtualHost = new MemoryStorage();
 await conformance({
   name: "fake virtual backend",
   storage: new MemoryStorage(),
-  create: (storage) => new FakeBackend({ root, storage, id: "fake-virtual" }),
+  create: (storage, installId) => new FakeBackend({ root, storage, host: virtualHost, installId, id: "fake-virtual" }),
+  // The fake numbers its guests g1, g2 and so on from a counter.
+  reuse: async (_storage, ref) => virtualHost.set("counter", Number(ref.slice(1)) - 1),
   bb: fakeBb(),
   timeoutMs: 20_000,
 });
 
+const realHost = new MemoryStorage();
 await conformance({
   name: "fake real backend",
   storage: new MemoryStorage(),
-  create: (storage) => new FakeBackend({ root, storage, id: "fake-real", nature: "real", machines: 2 }),
+  create: (storage, installId) => new FakeBackend({ root, storage, host: realHost, installId, id: "fake-real", nature: "real", machines: 2 }),
   bb: fakeBb(),
   timeoutMs: 20_000,
 });
@@ -53,14 +58,16 @@ const config = lxcConfig({
 await conformance({
   name: "Proxmox LXC on fakes",
   storage: new MemoryStorage(),
-  create: (storage) =>
-    new ProxmoxLxcBackend(config, testContext(storage), {
+  create: (storage, installId) =>
+    new ProxmoxLxcBackend(config, testContext(storage, installId), {
       fetch: proxmox.fetch,
       sleep: async () => {},
       sshBinary: FAKE_SSH_BINARY,
       portCheck: async () => true,
       readyTimeoutMs: 0,
     }),
+  // The backend's search for a free VMID starts where its storage says.
+  reuse: async (storage, ref) => storage.set("next-vmid", Number(ref)),
   skip: {
     arch: "the fake SSH runs commands on the test machine",
     docker: "the fake SSH runs commands on the test machine",

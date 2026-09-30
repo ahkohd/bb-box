@@ -8,6 +8,10 @@
 // capabilities, never by backend name. A check a run cannot do (Docker in a
 // fake box, a desktop stream the test machine cannot reach) is skipped with
 // its reason, never passed silently.
+//
+// The suite is an install of its own, with the ID "conformance". Its last
+// checks add a second install on the same backend, and reuse a reference
+// where the backend can (018).
 
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
@@ -29,8 +33,9 @@ import {
 import { quote } from "../../src/transports/process.ts";
 import { openRoute } from "../../src/transports/route.ts";
 import type { ByteChannel, CommandTransport } from "../../src/transports/types.ts";
+import { MemoryStorage } from "../helpers.ts";
 
-export type ConformanceCheck = "arch" | "docker" | "display" | "enrol" | "stop-start" | "recovery" | "interrupted";
+export type ConformanceCheck = "arch" | "docker" | "display" | "enrol" | "stop-start" | "recovery" | "interrupted" | "installs";
 
 /** Enrolment in a live BB server. */
 export interface ConformanceBb {
@@ -45,9 +50,19 @@ export interface ConformanceBb {
 
 export interface ConformanceOptions {
   readonly name: string;
-  /** Makes the backend. Called again on the same storage to check recovery after a restart. */
-  readonly create: (storage: BackendStorage) => Backend | Promise<Backend>;
+  /**
+   * Makes the backend for an install. Called again on the same storage to
+   * check recovery after a restart, and on new storage with another install
+   * ID to check that two installs leave each other's guests alone.
+   */
+  readonly create: (storage: BackendStorage, installId: string) => Backend | Promise<Backend>;
   readonly storage: BackendStorage;
+  /**
+   * For a virtual backend that can reuse references: makes the next guest
+   * that a new instance on this storage makes take this reference, which is
+   * free.
+   */
+  readonly reuse?: (storage: BackendStorage, ref: string) => Promise<void>;
   /** Kinds to check. All the backend's kinds by default. */
   readonly kinds?: readonly string[];
   /** Checks this run cannot do, with the reason. */
@@ -59,6 +74,7 @@ export interface ConformanceOptions {
 }
 
 const THREAD = "thr_conformance";
+export const CONFORMANCE_INSTALL = "conformance";
 const MiB = 1024 * 1024;
 const ID = /^[a-z0-9][a-z0-9-]*$/;
 /** After a stop and start, the box is connected to BB again this soon after it is ready (017). */
@@ -207,6 +223,10 @@ export function checkCapacity(capacity: Capacity, nature: MachineNature): void {
   }
 }
 
+function limitOf(capacity: Capacity, host: string, resource: Limit["resource"]): Limit | undefined {
+  return capacity.hosts.find((other) => other.host === host)?.limits.find((limit) => limit.resource === resource);
+}
+
 export function checkDoctor(report: DoctorReport): void {
   assert.ok(report.checks.length > 0, "doctor runs at least one check");
   const ids = report.checks.map((check) => check.id);
@@ -231,7 +251,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
   const timeout = options.timeoutMs ?? 180_000;
   const skip = options.skip ?? {};
   const signal = () => AbortSignal.timeout(timeout);
-  const backend = await options.create(options.storage);
+  const backend = await options.create(options.storage, CONFORMANCE_INSTALL);
   const kinds = backend.kinds().filter((kind) => !options.kinds || options.kinds.includes(kind.id));
   const doctor = await backend.doctor(signal()).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
   const blocked = doctor instanceof Error ? `doctor threw: ${doctor.message}` : doctor.ok ? false : `doctor found a failure: ${doctor.summary}`;
@@ -530,7 +550,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
 
           it("a new instance finds the box after a restart and releases it", { timeout, skip: skip.recovery ?? false }, async () => {
             const { guest } = need();
-            const restarted = await options.create(options.storage);
+            const restarted = await options.create(options.storage, CONFORMANCE_INSTALL);
             others.push(restarted);
             const held = (await restarted.held(signal())).find((other) => other.ref === guest.ref);
             assert.ok(held, "the new instance holds the guest");
@@ -572,6 +592,61 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             for (const guest of recorded.claimed) await assertReleased(backend, guest);
           });
         }
+      });
+
+      describe("installs", { skip: skip.installs ?? (kinds.length ? false : "no kinds to check") }, () => {
+        const kind = kinds[0]?.id ?? "";
+        const isGone = (error: unknown) => error instanceof BackendError && error.code === "gone";
+
+        it("two installs on one backend leave each other's guests alone", { timeout }, async () => {
+          const other = await options.create(new MemoryStorage(), `${CONFORMANCE_INSTALL}-other`);
+          others.push(other);
+          const before = await other.capacity(kind, [], signal());
+          const mine = await acquire(identity(kind), recordingHooks().hooks);
+          const after = await other.capacity(kind, [], signal());
+          assert.ok(
+            after.hosts.some((host) => host.limits.some((limit) => limit.used > (limitOf(before, host.host, limit.resource)?.used ?? Infinity))),
+            "this install's guest counts against the other's capacity",
+          );
+          const theirs = await other.acquire(identity(kind), null, recordingHooks().hooks, signal());
+          try {
+            assert.equal((await other.held(signal())).find((guest) => guest.ref === mine.ref), undefined, "the other install does not hold this one's guest");
+            assert.equal((await backend.held(signal())).find((guest) => guest.ref === theirs.ref), undefined, "this install does not hold the other's guest");
+            assert.equal(await other.power(mine, signal()), null, "to the other install, this one's guest does not exist");
+            if (other.stop) await assert.rejects(other.stop(mine, signal()), isGone);
+            await other.release(mine, releaseHooks().hooks, signal());
+            await other.maintain?.(signal());
+            assert.equal(await backend.power(mine, signal()), "running", "the other install left this one's guest alone");
+            assert.equal(await other.power(theirs, signal()), "running");
+          } finally {
+            await other.release(theirs, releaseHooks().hooks, signal());
+            await release(backend, mine);
+          }
+          await assertReleased(other, theirs);
+        });
+
+        const reuse = options.reuse && backend.nature === "virtual" ? false : "the backend does not reuse references";
+        it("a reused reference belongs to the new box: the old box's guest is gone", { timeout, skip: reuse }, async () => {
+          const old = await acquire(identity(kind), recordingHooks().hooks);
+          await release(backend, old);
+          await options.reuse!(options.storage, old.ref);
+          const next = await options.create(options.storage, CONFORMANCE_INSTALL);
+          others.push(next);
+          const box = identity(kind);
+          const current = await next.acquire(box, null, recordingHooks().hooks, signal());
+          outstanding.set(current.ref, current);
+          try {
+            assert.equal(current.ref, old.ref, "the new box's guest took the old box's reference");
+            assert.equal(await backend.power(old, signal()), null, "the old box's guest is gone");
+            if (backend.start) await assert.rejects(backend.start(old, signal()), isGone);
+            if (backend.stop) await assert.rejects(backend.stop(old, signal()), isGone);
+            await backend.release(old, releaseHooks().hooks, signal());
+            assert.equal(await backend.power(current, signal()), "running", "the old box's release left the new box alone");
+            assert.equal((await backend.held(signal())).find((guest) => guest.ref === current.ref)?.owner?.boxId, box.boxId);
+          } finally {
+            await release(backend, current);
+          }
+        });
       });
     });
   });

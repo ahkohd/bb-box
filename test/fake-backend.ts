@@ -4,7 +4,10 @@
 // it) or a real one (a fixed set of machines, claimed through the shared ready
 // pool, reset and returned on release). State lives in backend storage, so a
 // new instance on the same storage and root finds the same guests, as after a
-// restart. Desktops stream from a local server that sends an RFB greeting.
+// restart. Instances given one `host` storage share the fake provider, as two
+// installs share a host: each records its install ID on its guests and acts
+// only on its own (018). Desktops stream from a local server that sends an RFB
+// greeting.
 
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type AddressInfo, type Server } from "node:net";
@@ -55,6 +58,10 @@ export interface FakeBackendOptions {
   readonly maxGuests?: number;
   /** Whether it can stop and start guests. True by default. */
   readonly stopStart?: boolean;
+  /** This install's ID. "test" by default. */
+  readonly installId?: string;
+  /** Where the fake provider keeps its guests and machines. The storage by default. */
+  readonly host?: BackendStorage;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -68,9 +75,13 @@ export interface FakeFaults {
 }
 
 interface GuestRecord {
+  readonly install: string;
   readonly owner: BoxIdentity | null;
   readonly power: PowerState;
 }
+
+/** A real machine's holder: the box, and the install it belongs to. */
+type Holder = BoxIdentity & { readonly install: string };
 
 const HOST = "fake";
 
@@ -124,17 +135,20 @@ export class FakeBackend implements Backend {
   readonly stop?: (guest: Guest) => Promise<void>;
   readonly members?: () => Promise<readonly PoolMember[]>;
   readonly returnToService?: (ref: string) => Promise<void>;
+  readonly stamp?: (boxId: string, guest: Guest) => Promise<Guest>;
   readonly #options: FakeBackendOptions;
   readonly #kinds: readonly BoxKind[];
+  readonly #installId: string;
   readonly #storage: BackendStorage;
-  readonly #pool: KvPoolStore<BoxIdentity>;
-  readonly #ready: ReadyPool<BoxIdentity>;
+  readonly #pool: KvPoolStore<Holder>;
+  readonly #ready: ReadyPool<Holder>;
   #vnc: Promise<Server> | null = null;
 
   constructor(options: FakeBackendOptions) {
     this.#options = options;
     this.#kinds = options.kinds ?? FAKE_KINDS;
-    this.#storage = options.storage;
+    this.#installId = options.installId ?? "test";
+    this.#storage = options.host ?? options.storage;
     this.id = options.id ?? "fake";
     this.nature = options.nature ?? "virtual";
     this.label = this.nature === "real" ? "Fake machine pool" : "Fake host";
@@ -148,6 +162,8 @@ export class FakeBackend implements Backend {
       this.restores = "home";
       this.members = () => this.#pool.members();
       this.returnToService = (ref) => this.#pool.returnToService(ref);
+    } else {
+      this.stamp = (boxId, guest) => this.#stamp(boxId, guest);
     }
   }
 
@@ -198,9 +214,9 @@ export class FakeBackend implements Backend {
     try {
       if (previous && (await this.#owner(previous.ref))?.boxId === box.boxId) guest = previous;
       if (!guest && this.nature === "real") {
-        const member = await this.#ready.claim(box.kind, box, {
+        const member = await this.#ready.claim(box.kind, { ...box, install: this.#installId }, {
           before: async (candidate) => {
-            guest = this.#guest(candidate.ref, candidate.generation);
+            guest = this.#guest(candidate.ref, candidate.generation, null);
             await hooks.claim(guest);
           },
           signal,
@@ -210,10 +226,10 @@ export class FakeBackend implements Backend {
       if (!guest) {
         const counter = ((await this.#storage.get<number>("counter")) ?? 0) + 1;
         await this.#storage.set("counter", counter);
-        guest = this.#guest(`g${counter}`, null);
+        guest = this.#guest(`g${counter}`, null, box.boxId);
         await hooks.claim(guest);
         signal.throwIfAborted();
-        await this.#storage.set(`guest/${guest.ref}`, { owner: box, power: "stopped" } satisfies GuestRecord);
+        await this.#storage.set(`guest/${guest.ref}`, { install: this.#installId, owner: box, power: "stopped" } satisfies GuestRecord);
       }
       await mkdir(this.#home(guest.ref), { recursive: true });
       hooks.timing("make", Math.round(performance.now() - started));
@@ -239,24 +255,29 @@ export class FakeBackend implements Backend {
       delete this.faults.release;
       throw error;
     }
-    await this.#discard(guest, hooks);
+    if (await this.#still(guest)) await this.#discard(guest, hooks);
   }
 
   async power(guest: Guest): Promise<PowerState | null> {
+    if (!(await this.#still(guest))) return null;
     if (this.nature === "real") return (await this.#storage.get<PowerState>(`power/${guest.ref}`)) ?? "running";
     return (await this.#storage.get<GuestRecord>(`guest/${guest.ref}`))?.power ?? null;
   }
 
   async held(): Promise<HeldGuest[]> {
     const held: HeldGuest[] = [];
-    const guests =
+    const refs =
       this.nature === "real"
-        ? (await this.#pool.members()).filter((member) => member.state === "held").map((member) => this.#guest(member.ref, member.generation))
-        : (await this.#storage.list("guest/")).map((key) => this.#guest(key.slice("guest/".length), null));
-    for (const guest of guests) {
+        ? (await this.#pool.members()).filter((member) => member.state === "held").map((member) => member.ref)
+        : (await this.#storage.list("guest/")).map((key) => key.slice("guest/".length));
+    for (const ref of refs) {
+      const owner = await this.#owner(ref);
+      if (this.nature === "virtual" && (await this.#record(ref))?.install !== this.#installId) continue;
+      if (this.nature === "real" && !owner) continue;
+      const generation = this.nature === "real" ? (await this.#pool.state(ref)).generation : null;
+      const guest = this.#guest(ref, generation, owner?.boxId ?? null);
       const power = await this.power(guest);
       if (!power) continue;
-      const owner = await this.#owner(guest.ref);
       held.push({
         ...guest,
         owner: owner && { boxId: owner.boxId, threadId: owner.threadId, name: owner.name, kind: owner.kind, createdAt: owner.createdAt },
@@ -264,6 +285,14 @@ export class FakeBackend implements Backend {
       });
     }
     return held;
+  }
+
+  /** Virtual: records this install on a guest that names the box and no install. */
+  async #stamp(boxId: string, guest: Guest): Promise<Guest> {
+    this.calls.push(`stamp ${guest.ref}`);
+    const record = await this.#record(guest.ref);
+    if (record && !record.install && record.owner?.boxId === boxId) await this.#storage.set(`guest/${guest.ref}`, { ...record, install: this.#installId });
+    return { ...guest, data: { ...guest.data, box: boxId } };
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
@@ -305,22 +334,43 @@ export class FakeBackend implements Backend {
     return found;
   }
 
-  /** A real machine's guest carries the reset generation it was claimed at, so a stale release cannot reset the next box's machine. */
-  #guest(ref: string, generation: number | null): Guest {
+  /**
+   * A real machine's guest carries the reset generation it was claimed at, so
+   * a stale release cannot reset the next box's machine. A virtual guest
+   * carries its box, as a reference can be reused.
+   */
+  #guest(ref: string, generation: number | null, box: string | null): Guest {
     const address = this.machines().find((machine) => machine.ref === ref)?.address ?? null;
-    return generation === null ? { ref, host: HOST, address } : { ref, host: HOST, address, data: { generation } };
+    if (generation !== null) return { ref, host: HOST, address, data: { generation } };
+    return box === null ? { ref, host: HOST, address } : { ref, host: HOST, address, data: { box } };
+  }
+
+  async #record(ref: string): Promise<GuestRecord | undefined> {
+    return this.#storage.get<GuestRecord>(`guest/${ref}`);
+  }
+
+  /** Whether the guest at the reference is still this install's, and the same box's (018). */
+  async #still(guest: Guest): Promise<boolean> {
+    if (this.nature === "real") {
+      const state = await this.#pool.state(guest.ref);
+      return state.state !== "held" || state.holder.install === this.#installId;
+    }
+    const record = await this.#record(guest.ref);
+    return !!record && record.install === this.#installId && (record.owner?.boxId ?? null) === (guest.data?.box ?? null);
   }
 
   #home(ref: string): string {
     return join(this.#options.root, this.id, ref);
   }
 
+  /** The box that holds the guest, when it is this install's. */
   async #owner(ref: string): Promise<BoxIdentity | null> {
     if (this.nature === "real") {
       const state = await this.#pool.state(ref);
-      return state.state === "held" ? state.holder : null;
+      return state.state === "held" && state.holder.install === this.#installId ? state.holder : null;
     }
-    return (await this.#storage.get<GuestRecord>(`guest/${ref}`))?.owner ?? null;
+    const record = await this.#record(ref);
+    return record?.install === this.#installId ? record.owner : null;
   }
 
   async #power(guest: Guest, power: PowerState): Promise<void> {
