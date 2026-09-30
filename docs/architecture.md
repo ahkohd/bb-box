@@ -235,16 +235,17 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
 - With a jump host, pinned keys are checked on both hops. A fresh Tart VM
   behind a pinned Mac is reached with the Mac's key checked and the VM's
   accepted.
-- Commands to one box share a connection, so only the first pays for SSH's
-  handshake: about 0.1 s on a local network, more through a jump host.
-  bb-box starts it with `ControlMaster=yes -N`, one at a time, and ssh keeps
-  it until it has been idle for two minutes. bb-box stops using it 10 s
-  before then, puts at most 8 commands on it at once, since sshd allows 10,
-  and dials alone beyond that. A command that exits with 255 retires the
-  connection; after a connection cannot be made, commands dial alone for
-  5 s. A probe always dials afresh, so it says whether the box answers.
-  The backend closes a box's connection before it stops or releases the
-  box, as another box may take its address.
+- Commands to one box share a connection where the backend gives the
+  transport a directory for its sockets, as Proxmox LXC does. Only the first
+  pays for SSH's handshake: about 0.1 s on a local network, more through a
+  jump host. bb-box starts it with `ControlMaster=yes -N`, one at a time,
+  and ssh keeps it until it has been idle for two minutes. bb-box stops
+  using it 10 s before then, puts at most 8 commands on it at once, since
+  sshd allows 10, and dials alone beyond that. A command that exits with
+  255 retires the connection; after a connection cannot be made, commands
+  dial alone for 5 s. A probe always dials afresh, so it says whether the
+  box answers. The backend closes a box's connection before it stops or
+  releases the box, as another box may take its address.
 
 **Output and the desktop session.**
 
@@ -624,11 +625,13 @@ A box is a resource of its thread and gets what the thread's own machine has.
     box's command transport. BB issues the credential and runs its own
     installer.
   - Templates carry Node.js, npm, curl and a pre-installed bb-app, so the
-    installer skips the download and `npm install`. As measured, a box is
-    enrolled 1.7 to 2.5 s after bb-box starts the installer. Where systemd
-    runs, the box user has linger, or the host daemon stops when the
-    installing SSH session ends. A template sets it; a pool machine turns it
-    on at claim, since its reset turns it off.
+    installer skips the download and `npm install`. On a real host with
+    BB 0.44.0, a box is enrolled 5.2 to 5.5 s after it is ready, of which the
+    installer takes about 5 s; bb-box asks BB for under 2 s
+    ([BB request 5](bb-requests.md#5-enrol-quickly-when-bb-app-is-installed)).
+    Where systemd runs, the box user has linger, or the host daemon stops
+    when the installing SSH session ends. A template sets it; a pool machine
+    turns it on at claim, since its reset turns it off.
   - Setting up the thread's access, below, needs only the machine's ID, so it
     runs while BB's installer does. bb-box asks BB whether the machine is
     connected every 500 ms, and every 100 ms once bootstrap has returned.
