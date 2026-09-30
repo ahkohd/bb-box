@@ -359,9 +359,10 @@ how long each step took.
    ARP resolution, which takes longer than the box's whole boot.
 7. For a GPU desktop, read `/run/bb-box/display-mode` once SSH works. If it
    says `cpu`, the box did not get the GPU (`display-reason` says why), so it
-   does not meet the `linux-desktop` kind: release it and try another
-   template, or offer it as `linux-desktop-cpu`. Counting desktops per GPU
-   before cloning avoids most of these.
+   does not meet the `linux-desktop` kind: release it and try another GPU's
+   template. `linux-desktop-cpu` boxes come only from CPU-only templates.
+   Counting desktops per GPU before cloning avoids most of these. Show the
+   mode and the reason as the box's facts.
 8. To delete: `POST .../status/stop` if it is running, then
    `DELETE /nodes/{node}/lxc/{vmid}?purge=1&destroy-unreferenced-disks=1`.
 
