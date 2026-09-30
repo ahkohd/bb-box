@@ -123,6 +123,35 @@ will be open-sourced. Linux headless and desktop boxes on Proxmox LXC come
 first, with Docker and an SSH host pool to keep the core backend-agnostic,
 then speed (a warm pool, faster BB enrolment), then Windows, then macOS.
 
+## Install
+
+On the machine that runs BB:
+
+```sh
+git clone <bb-box repository> && cd bb-box
+npm install
+bb plugin build
+bb plugin install .
+```
+
+Then set a backend up with its guide, fill in its settings in BB under
+bb-box, and check them with `bb box doctor`. Each thread gets a Boxes panel,
+agents get the `box_` tools, and `skills/bb-box/SKILL.md` describes both.
+
+## Develop
+
+```sh
+npm run typecheck
+npm test
+npm run build
+node scripts/smoke.ts <settings.json>
+```
+
+The tests and scripts need Node 22.18 or later, which runs TypeScript
+directly. The tests run against a fake Proxmox API and a fake `ssh`, so they
+need no host. The smoke script runs against a real backend without BB; see
+[section 6 of the Proxmox LXC guide](setup/proxmox-lxc/README.md#6-smoke-test).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
