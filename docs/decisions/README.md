@@ -15,3 +15,4 @@ that changes gets a new record that supersedes the old one.
 | [008](008-shared-control.md) | You and the agent share one desktop, with one controller at a time |
 | [009](009-conformance-suite-and-doctor.md) | A conformance suite and a doctor check for every backend |
 | [010](010-publishable-by-default.md) | The repository is publishable at all times |
+| [011](011-interface-v1.md) | Interface v1: shared kinds, routes and displays |

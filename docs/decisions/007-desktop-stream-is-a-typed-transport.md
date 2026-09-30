@@ -1,7 +1,10 @@
 # 007: The desktop stream is a typed transport, relayed through the plugin
 
 Status: accepted, 30 September 2026. Research:
-[desktop streaming](../research/desktop-streaming.md).
+[desktop streaming](../research/desktop-streaming.md). Partly superseded by
+[011](011-interface-v1.md): a display gives a route for each connection
+rather than a port, the relay answers the box's RFB authentication, and
+Windows starts with RFB through Proxmox's console rather than RDP.
 
 ## Context
 

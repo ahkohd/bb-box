@@ -39,7 +39,7 @@ The code has three parts.
   for Linux and macOS, and PowerShell for Windows.
 - Transports are shared modules that backends compose. Commands and file
   copies go over SSH now; `docker exec`, WinRM or an in-box agent come later.
-  The desktop streams over VNC now, and Selkies or RDP later.
+  The desktop streams over RFB (VNC) now, and Selkies later.
 - Any provider can become a backend by implementing the interface.
 
 ## Consequences
