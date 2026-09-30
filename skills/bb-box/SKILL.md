@@ -84,6 +84,7 @@ Most take `--json`.
 | `bb box status <box>` | Shows one box. |
 | `bb box release <box>` | Releases a box. |
 | `bb box sweep` | Runs the clean-up now. |
+| `bb box install-id` | Shows this install's ID, which it records on its guests. `--set <id>` takes back the ID it had before it lost its storage, once no box holds a guest. |
 
 ## The panel
 
@@ -113,5 +114,12 @@ reserve, or has no free address or GPU. The refusal says what to do instead.
   guests that bb-box made but no box owns, and rebuilds the record of a
   guest whose thread is still live.
 - The sweep also finishes acquires and releases that a restart interrupted.
+- Each install records its ID on its guests and acts only on those. A guest
+  of another install, or with no ID, is left alone but still takes capacity.
+  The doctor counts them per install ID. An install that lost its storage
+  starts with a new ID: take the old one back with
+  `bb box install-id --set <id>` and run `bb box sweep`.
+- A box whose guest was deleted, or whose guest's reference now holds
+  another box, shows as gone. Releasing it leaves the other box alone.
 - A thread whose state BB cannot read keeps its boxes.
 - Boxes do not expire.

@@ -342,6 +342,11 @@ Change the other values to match your settings. It acquires a
 `linux-headless` box, runs `uname -a`, releases the box and prints each
 step's time. `--kind` and `--command` pick another kind or command.
 
+Smoke runs are an install of their own, with the ID `smoke`, so they can
+share the pool with a BB server's bb-box: neither touches the other's boxes,
+though they share the host's capacity. Each run first releases any box an
+earlier run left.
+
 ## 7. Plugin settings
 
 Set these in BB under the bb-box plugin's settings. The examples are this

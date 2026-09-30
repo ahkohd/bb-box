@@ -72,6 +72,7 @@ A backend declares its nature (virtual or real) and its kinds, and implements:
 | `power(guest)` | `running`, `stopped` or `unknown`; null when the guest is gone |
 | `start?`, `stop?` | only where the provider can; the panel and tools offer them only when present |
 | `held()` | every guest this install holds for boxes, with the owner recorded at the provider ([018](decisions/018-guests-name-their-install-and-box.md)) |
+| `stamp?(boxId, guest)` | records this install on the guest of a box from before install IDs, and returns the guest with its box ID |
 | `transports(guest, kind)` | the command transport, the displays, and how the thread reaches the box |
 | `doctor()` | checks the setup end to end and says what is missing |
 | `maintain?()` | upkeep, such as topping up a warm pool |
@@ -239,7 +240,8 @@ A guest is the backend's handle on a box's machine: its own reference, the
 host it is on (a Proxmox node, a Docker host, a Mac), its address, and `data`,
 small values the backend needs later, such as a per-claim user or published
 ports. The registry stores `data` with the box and passes it back. It never
-holds a secret.
+holds a secret. Where references can be reused, `data.box` holds the box ID
+from the claim on ([018](decisions/018-guests-name-their-install-and-box.md)).
 
 ### Capacity
 
@@ -478,6 +480,7 @@ export interface Backend {
   start?(guest: Guest, signal?: AbortSignal): Promise<void>;
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
+  stamp?(boxId: string, guest: Guest, signal?: AbortSignal): Promise<Guest>;
   transports(guest: Guest, kind: string): Promise<BoxTransports>;
   doctor(signal?: AbortSignal): Promise<DoctorReport>;
   maintain?(signal?: AbortSignal): Promise<void>;
@@ -700,13 +703,20 @@ Nothing expires, so a box must never be forgotten.
 - **After a restart** the registry resumes boxes that were acquiring, repeats
   releases that were interrupted, and checks the power of the rest.
 - **The sweep** runs at start and every few minutes:
-  1. releases the boxes of threads that are archived, deleted or gone;
-  2. finishes interrupted releases;
-  3. releases this install's guests from `held()` that have no owner (an
+  1. records this install on the guests of its boxes from before install
+     IDs, through `stamp()`, once per box. A guest with no install ID that
+     no box records is left to the doctor's note;
+  2. releases the boxes of threads that are archived, deleted or gone;
+  3. finishes interrupted releases;
+  4. releases this install's guests from `held()` that have no owner (an
      acquire interrupted before the claim was labelled) or whose thread has
      ended;
-  4. adopts guests whose thread is live but whose record was lost;
-  5. calls `maintain()`.
+  5. adopts guests whose thread is live but whose record was lost;
+  6. calls `maintain()`.
+
+  A guest from `held()` belongs to a box record only when it names that
+  box, or, with no owner yet, when the box is still acquiring. So a reused
+  reference never makes the sweep treat a new box's guest as an old one's.
 - **A guest deleted outside bb-box** makes `power` return nothing; the box is
   marked gone and the panel says so. It stays gone when its reference is
   reused, since the new guest names another box.

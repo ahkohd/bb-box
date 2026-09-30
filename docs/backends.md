@@ -31,7 +31,10 @@ The core uses only [src/backends/types.ts](../src/backends/types.ts) and
    transport's `route(port)`. A kind with computer use needs a command
    transport with `spawn`, which carries the driver's MCP session.
 3. Record ownership at the provider (tags, names or a marker file), so
-   `held()` finds every guest even if bb-box's storage is lost.
+   `held()` finds every guest even if bb-box's storage is lost. Record
+   `context.installId` with it from the first write, on warm and part-made
+   guests too, and list only this install's guests in `held()`
+   ([018](decisions/018-guests-name-their-install-and-box.md)).
 4. Write `doctor()` so that it checks everything the backend needs and says
    how to fix each failure. Give each check a stable ID.
 5. Add the driver to `DRIVERS` in
@@ -53,6 +56,13 @@ kinds.
   restart can resume and the sweep can find the guest.
 - If acquiring fails, release what was claimed before throwing.
 - Make every method safe to repeat. A missing guest counts as released.
+- Where the provider can reuse a reference, keep the box ID as
+  `Guest.data.box` from the claim on, and check before acting that the
+  guest at the reference still names this install and that box, or no box
+  for an ownerless leftover. If it does not, `power` returns null, `release`
+  does nothing, and `start` and `stop` throw `gone`. Add `stamp()` if your
+  guests can predate install IDs.
+- Guests of another install, or with none, still count against capacity.
 - A real backend calls `hooks.resetting()` before it touches the machine,
   and puts the machine out of service if the reset fails. Keep the pool
   member's generation in `Guest.data`, so a repeated release of an old box
@@ -74,8 +84,12 @@ checks against any backend: doctor first, then for each kind acquire,
 transports, a spawned channel, commands with 1 MiB of stdin, streaming,
 32 MiB copied each way, enrolment, Docker, displays, stop and start (with
 the box connected to BB again within 3 s of being ready), recovery by a new
-instance, repeated release and interrupted acquires. Steps a kind does not
-declare are skipped by its capabilities; any other skip gives its reason.
+instance, repeated release and interrupted acquires. It also checks that
+two installs on one backend leave each other's guests alone, and, given a
+`reuse` hook that makes the backend hand out a reference again, that the old
+box reads as gone and its release leaves the new box alone. Steps a kind
+does not declare are skipped by its capabilities; any other skip gives its
+reason.
 
 [test/fake-backend.ts](../test/fake-backend.ts) is an in-memory backend,
 virtual or real, that passes the suite and backs the core's own tests.
@@ -92,5 +106,6 @@ node --test test/conformance.test.ts
   with the API client in [src/backends/proxmox/](../src/backends/proxmox/).
 - The host side, templates and API token are set up by
   `setup/proxmox-lxc/`, whose guide lists the settings.
-- Ownership lives in Proxmox tags (`bb-box`, `thread.<id>`, `box.<id>`,
-  `kind.<kind>`).
+- Ownership lives in Proxmox tags (`bb-box`, `install.<id>`, `thread.<id>`,
+  `box.<id>`, `kind.<kind>`), and in the description the clone writes, which
+  names the install and the box before the tags are set.
