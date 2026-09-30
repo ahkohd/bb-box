@@ -5,17 +5,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { BackendError, type Backend, type ReleaseHooks } from "../src/backends/types.ts";
-import { BoxError, Boxes, extraFeatures, type BoxRecord, type ThreadLiveness } from "../src/core/boxes.ts";
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { BoxError, Boxes, extraFeatures, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { envScript } from "../src/core/in-box.ts";
+import { accessSetup, envScript } from "../src/core/in-box.ts";
 import { FAKE_KINDS, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
-import { MemoryStorage, tempDir } from "./helpers.ts";
+import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "enrolWaitMs"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -63,6 +66,7 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}) {
         world.reconnected.push(box.enrol.hostId!);
       },
       logError: (operation, error) => world.errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
+      ...deps,
     });
   world.boxes = registry();
   return world;
@@ -201,23 +205,153 @@ test("releasing a box while it is acquired cancels the acquire and leaves nothin
   assert.equal(await world.boxes.find(box.id), null);
 });
 
-test("commands run in the box's shell with the thread's environment, in a directory", async () => {
+test("commands run in the box's shell with the box's identity, in a directory", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
-  await world.boxes.writeFile(THREAD, box.name, ".config/bb-box/env", Buffer.from(envScript("linux", { GREETING: "it's here", "BAD-NAME": "x" })));
   await world.boxes.writeFile(THREAD, box.name, "work/dir/file.txt", Buffer.from("content"), { mode: "600" });
-  const { result } = await world.boxes.run(THREAD, box.name, 'printf "%s|" "$GREETING" && cat file.txt && cat >&2', {
+  const { result } = await world.boxes.run(THREAD, box.name, 'printf "%s|%s|" "$BB_BOX_NAME" "$BB_HOST_ID" && cat file.txt && cat >&2', {
     cwd: "work/dir",
     stdin: "from stdin",
   });
   assert.equal(result.exitCode, 0);
-  assert.equal(result.stdout, "it's here|content");
+  assert.equal(result.stdout, `${box.name}|host-${box.id}|content`);
   assert.equal(result.stderr, "from stdin");
   const exit = await world.boxes.run(THREAD, box.id, "exit 3");
   assert.equal(exit.result.exitCode, 3);
   const { data } = await world.boxes.readFile(THREAD, box.name, "work/dir/file.txt", { maxBytes: 100 });
   assert.equal(Buffer.from(data).toString(), "content");
   await assert.rejects(world.boxes.readFile(THREAD, box.name, "work/dir/file.txt", { maxBytes: 3 }), /larger than 3 bytes/);
+  const mode = await world.boxes.run(THREAD, box.name, "stat -c %a .config/bb-box/env");
+  assert.equal(mode.result.stdout, "600\n", "only the box user can read the env file");
+});
+
+test("a script given a directory that does not exist runs none of its lines", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const { result } = await world.boxes.run(THREAD, box.name, "echo first\necho second", { cwd: "missing" });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.stdout, "");
+});
+
+test("the env file sets only valid names, and quotes values", () => {
+  const dir = tempDir("env");
+  const script = envScript("linux", { GREETING: "it's\nhere", "BAD-NAME": "x" });
+  assert.doesNotMatch(script, /BAD-NAME/);
+  writeFileSync(join(dir, "env"), script);
+  const out = execFileSync("sh", ["-c", '. ./env && printf %s "$GREETING"'], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
+  assert.equal(out, "it's\nhere");
+});
+
+test("commands in an enrolled box take the thread's access from BB's daemon as they start, and never store it", async (t) => {
+  const multiline = "it's\ntwo lines";
+  const daemon = await fakeDaemon([
+    { FOO: "value-old", BAR: "value-bar", QUOTE: multiline },
+    { FOO: "value-few" },
+    { FOO: "value-new", BAR: "value-bar", QUOTE: multiline, OTHER: "value-other" },
+  ]);
+  t.after(daemon.stop);
+  const asked: string[] = [];
+  const world = setup(
+    {},
+    {
+      access: async (box) => {
+        asked.push(box.name);
+        return { names: ["BAR", "FOO", "GH_TOKEN", "QUOTE", "not a name"], parent: daemon.parent };
+      },
+    },
+  );
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const show = 'printf "%s|" "$FOO" "$BAR" "$QUOTE" "${OTHER-unset}" "${GH_TOKEN-unset}"';
+  const first = await world.boxes.run(THREAD, box.name, show);
+  assert.equal(first.result.stdout, `value-new|value-bar|${multiline}|unset|unset|`, "the newest worker with the most names");
+  assert.deepEqual(asked, [box.name]);
+
+  // BB replaced its newest worker: the next command takes the values it now has.
+  process.kill(daemon.workers().at(-1)!, "SIGKILL");
+  await until(async () => daemon.workers().length === 2);
+  const second = await world.boxes.run(THREAD, box.name, show);
+  assert.equal(second.result.stdout, `value-old|value-bar|${multiline}|unset|unset|`);
+
+  const { data } = await world.boxes.readFile(THREAD, box.name, ".config/bb-box/env", { maxBytes: 100_000 });
+  assert.doesNotMatch(Buffer.from(data).toString(), /value-/, "the env file holds names, not values");
+
+  // A box that is not a BB machine has no daemon to take them from.
+  await world.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
+  const off = await world.boxes.run(THREAD, box.name, show);
+  assert.equal(off.result.stdout, "|||unset|unset|");
+  assert.equal(asked.length, 2);
+});
+
+test("when bb-box cannot tell which variables to take, commands keep the env file they had", async () => {
+  let fail = false;
+  const world = setup(
+    {},
+    {
+      access: async () => {
+        if (fail) throw new Error("BB did not answer");
+        return null;
+      },
+    },
+  );
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  assert.equal((await world.boxes.run(THREAD, box.name, 'printf %s "$BB_BOX_NAME"')).result.stdout, box.name);
+  fail = true;
+  const { result } = await world.boxes.run(THREAD, box.name, 'printf %s "$BB_BOX_NAME"');
+  assert.equal(result.stdout, box.name);
+  assert.deepEqual(world.errors, ["access: BB did not answer"]);
+});
+
+test("access setup puts the env file above ~/.bashrc's early return, once, and keeps the file's mode", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await world.boxes.writeFile(THREAD, box.name, ".bashrc", Buffer.from('case $- in *i*) ;; *) return;; esac\nexport MINE=1\n'), { mode: "640" });
+  for (let i = 0; i < 2; i++) assert.equal((await world.boxes.run(THREAD, box.name, accessSetup("linux")!)).result.exitCode, 0);
+  const { result } = await world.boxes.run(THREAD, box.name, "stat -c %a .bashrc; cat .bashrc; bash -c '. ~/.bashrc; printf %s \"$BB_BOX_NAME\"'");
+  assert.equal(
+    result.stdout,
+    `640\n# Added by bb-box: the thread's environment and access, for SSH commands too.\nif [ -r "$HOME/.config/bb-box/env" ]; then . "$HOME/.config/bb-box/env"; fi\n\ncase $- in *i*) ;; *) return;; esac\nexport MINE=1\n${box.name}`,
+  );
+  assert.equal(accessSetup("macos"), null);
+});
+
+test("a command that times out stops in the box, with everything it started", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const { result } = await world.boxes.run(THREAD, box.name, "sleep 60 & echo $! > child.pid; sleep 60", { timeoutMs: 300 });
+  assert.equal(result.timedOut, true);
+  assert.ok(result.durationMs < 5_000, `stopped in the box, not by the local backstop: ${result.durationMs} ms`);
+  const alive = async () => (await world.boxes.run(THREAD, box.name, 'kill -0 "$(cat child.pid)" 2>/dev/null && echo alive')).result.stdout;
+  await until(async () => (await alive()) === "");
+  // A command that exits 124 by itself did not time out.
+  const own = await world.boxes.run(THREAD, box.name, "exit 124", { timeoutMs: 10_000 });
+  assert.equal(own.result.timedOut, false);
+  assert.equal(own.result.exitCode, 124);
+});
+
+test("a command waits a few seconds for its box to finish enrolling", async () => {
+  const world = setup({}, { enrolWaitMs: 5_000 });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await world.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: "host-late", error: null } }));
+  setTimeout(() => void world.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId: "host-late", error: null } })), 300);
+  const started = Date.now();
+  const waited = await world.boxes.run(THREAD, box.name, "true");
+  assert.equal(waited.box.enrol.state, "enrolled");
+  assert.ok(Date.now() - started >= 250);
+
+  await world.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: "host-late", error: null } }));
+  const now = Date.now();
+  const unwaited = await world.boxes.run(THREAD, box.name, "true", { waitForEnrolment: false });
+  assert.equal(unwaited.box.enrol.state, "enrolling");
+  assert.ok(Date.now() - now < 250);
+});
+
+test("a command runs anyway when enrolment takes longer than the wait", async () => {
+  const world = setup({}, { enrolWaitMs: 100 });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await world.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: "host-slow", error: null } }));
+  const { box: after, result } = await world.boxes.run(THREAD, box.name, "echo ran");
+  assert.equal(after.enrol.state, "enrolling");
+  assert.equal(result.stdout, "ran\n");
 });
 
 test("stop and start, and a stopped box says so instead of timing out", async () => {

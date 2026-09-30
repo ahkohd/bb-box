@@ -5,15 +5,18 @@
 // starts a stopped box, bootstrap runs again with the same key to start BB's
 // daemon (017).
 //
-// Secret machine variables and Git credentials reach a box only through BB,
-// for threads and terminals on its machine: plugins can read their names but
-// not their values. Commands bb-box runs source ~/.config/bb-box/env, which
-// holds the box's own identity.
+// Plugins can read the names of BB's machine variables but not their values;
+// BB gives the values, and GH_TOKEN, to its daemon in the box. Commands in a
+// Linux box source ~/.config/bb-box/env, which bb-box writes before each
+// command it runs: the box's identity, and a loader that takes those
+// variables from the daemon's process as the command starts. Once the daemon
+// connects, the box's ~/.bashrc sources the file too, for the thread's own
+// SSH commands, and git takes GitHub credentials from gh.
 
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { describeError, type BoxRecord, type Boxes } from "../core/boxes.ts";
-import { envFile, envScript } from "../core/in-box.ts";
+import { accessSetup } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 
 export const MACHINE_PROVIDER_ID = "bb-box";
@@ -47,6 +50,7 @@ export interface EnrolmentDeps {
 }
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
+const ACCESS_SETUP_TIMEOUT_MS = 60_000;
 
 function sh(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
@@ -173,8 +177,8 @@ export class Enrolment {
         const host = await this.#deps.hosts().get({ hostId });
         const phase = host.lifecycle.phase;
         if (phase === "active" && host.status === "connected") {
+          await this.#setUpAccess(current);
           await this.#deps.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId, error: null } }));
-          await this.#writeEnv(current, hostId).catch((error) => this.#deps.logError("enrol env", error));
           return;
         }
         if (phase === "destroyed" || phase === "removing") {
@@ -194,16 +198,16 @@ export class Enrolment {
     }
   }
 
-  async #writeEnv(box: BoxRecord, hostId: string): Promise<void> {
-    const os = box.capabilities.os;
-    const script = envScript(os, {
-      BB_BOX_ID: box.id,
-      BB_BOX_NAME: box.name,
-      BB_BOX_KIND: box.kind,
-      BB_THREAD_ID: box.threadId,
-      BB_HOST_ID: hostId,
-    });
-    await this.#deps.boxes.writeFile(box.threadId, box.id, envFile(os), new TextEncoder().encode(script), { mode: "0644" });
+  /** Makes the box's shells and git use the thread's access. A failure leaves the box enrolled. */
+  async #setUpAccess(box: BoxRecord): Promise<void> {
+    const script = accessSetup(box.capabilities.os);
+    if (!script) return;
+    try {
+      const { result } = await this.#deps.boxes.run(box.threadId, box.id, script, { timeoutMs: ACCESS_SETUP_TIMEOUT_MS, waitForEnrolment: false });
+      if (result.exitCode !== 0) throw new Error(`Setting up the thread's access in box ${box.name} exited with ${result.exitCode ?? "no code"}: ${result.stderr.trim()}`);
+    } catch (error) {
+      this.#deps.logError("enrol access", error);
+    }
   }
 
   /** Removes a box's machine from BB, before its release. */

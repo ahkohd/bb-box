@@ -13,7 +13,7 @@ import type { BoxRecord } from "../src/core/boxes.ts";
 import { setup } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { FakeBackend } from "./fake-backend.ts";
-import { tempDir } from "./helpers.ts";
+import { fakeDaemon, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_one";
 const PROJECT = "prj_one";
@@ -51,7 +51,15 @@ function fakeDriver(root: string, world: { backend: FakeBackend | null }): Backe
   };
 }
 
-async function start(settings: Record<string, PluginSettingValue> = { "fake-enabled": true }) {
+function variables(names: readonly string[]) {
+  return names.map((name) => ({ name, note: null, secret: true as const, value: null }));
+}
+
+/**
+ * `daemonParent` stands in for BB's daemon in the boxes. The fake boxes run
+ * on this machine as its user, so it must never match BB's real daemon here.
+ */
+async function start(settings: Record<string, PluginSettingValue> = { "fake-enabled": true }, options: { daemonParent?: string } = {}) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
   mkdirSync(workspace, { recursive: true });
@@ -84,6 +92,16 @@ async function start(settings: Record<string, PluginSettingValue> = { "fake-enab
       },
       environments: {
         get: async () => ({ id: "env_one", hostId: "host-workspace", path: workspace }) as never,
+      },
+      system: {
+        machineEnvironment: async () => ({ builtInGit: { status: "logged in", statusMessage: "" }, variables: variables(["MACHINE_VAR"]) }),
+      },
+      projects: {
+        machineEnvironment: async ({ projectId }: { projectId: string }) => ({
+          builtInGit: { status: "logged in", statusMessage: "" },
+          inheritedVariables: variables(["MACHINE_VAR"]),
+          variables: variables(projectId === PROJECT ? ["PROJECT_VAR"] : []),
+        }),
       },
       hosts: {
         // Like BB: records the machine, then calls the provider's create in the background.
@@ -147,7 +165,7 @@ async function start(settings: Record<string, PluginSettingValue> = { "fake-enab
       },
     },
   });
-  const app = await setup(bb, { drivers: [fakeDriver(root, world)] });
+  const app = await setup(bb, { drivers: [fakeDriver(root, world)], daemonParent: options.daemonParent ?? join(root, "no-daemon") });
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
   return { bb, harness, app, world, tool };
 }
@@ -194,6 +212,14 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   assert.match(text(ran), /stdout:\nout/);
   assert.match(text(ran), /stderr:\nerr/);
   assert.equal(isError(ran), false, "a command that fails is not a tool error");
+
+  // A server started as the hints say: box_run returns at once, and the server keeps running.
+  const started = Date.now();
+  const server = await tool("box_run", { box: box.name, command: "nohup sleep 30 >server.log 2>&1 & echo $! > server.pid" });
+  assert.match(text(server), /Exit code 0/);
+  assert.ok(Date.now() - started < 3_000, "box_run returned at once");
+  const running = await tool("box_run", { box: box.name, command: 'kill "$(cat server.pid)" && echo stopped' });
+  assert.match(text(running), /stdout:\nstopped/);
 
   writeFileSync(join(world.workspace, "input.txt"), "from the workspace\n");
   const copiedIn = await tool("box_copy", { box: box.name, direction: "to_box", from: "input.txt" });
@@ -244,7 +270,9 @@ test("workspace and box paths", () => {
 });
 
 test("a ready box becomes a BB machine, and its machine goes before the box", async (t) => {
-  const { harness, app, world, tool } = await start();
+  const daemon = await fakeDaemon([{ GH_TOKEN: "value-token", MACHINE_VAR: "value-machine", PROJECT_VAR: "value-project", UNLISTED: "value-unlisted" }]);
+  t.after(daemon.stop);
+  const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent });
   t.after(() => harness.lifecycle.dispose());
 
   await tool("box_acquire", { kind: "linux-headless" });
@@ -261,6 +289,16 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   const installed = await tool("box_run", { box: box.name, command: 'cat bb-installed; echo "$BB_BOX_NAME $BB_THREAD_ID $BB_HOST_ID"' });
   assert.match(text(installed), new RegExp(`installed\n${box.name} ${THREAD} host-${box.id}`));
   assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolled/);
+
+  // Commands take the listed variables from BB's daemon, and nothing else.
+  const access = await tool("box_run", { box: box.name, command: 'printf "%s|" "${GH_TOKEN:+token}" "$MACHINE_VAR" "$PROJECT_VAR" "${UNLISTED-unset}"' });
+  assert.match(text(access), /stdout:\ntoken\|value-machine\|value-project\|unset\|/);
+  // So do SSH commands, through ~/.bashrc, and git asks gh for GitHub credentials.
+  const shells = await tool("box_run", {
+    box: box.name,
+    command: 'head -n 1 .bashrc; bash -c \'unset MACHINE_VAR; . ~/.bashrc; printf "%s\\n" "$MACHINE_VAR"\'; git config --global --get-all credential.https://github.com.helper',
+  });
+  assert.match(text(shells), /stdout:\n# Added by bb-box: .*\nvalue-machine\n(.*\n)*.*gh auth git-credential/);
 
   await tool("box_release", { box: box.name });
   assert.deepEqual(world.events, [`create host-${box.id}`, `delete host-${box.id}`]);

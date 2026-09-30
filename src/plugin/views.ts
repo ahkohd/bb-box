@@ -144,7 +144,7 @@ export function boxDetail(box: BoxRecord): string {
   for (const fact of box.guest?.facts ?? []) lines.push(`${fact.label}: ${fact.value}`);
   const enrol: Record<EnrolState, string> = {
     off: "not enrolled",
-    enrolling: "enrolling",
+    enrolling: "being added, which takes a few seconds. box_run waits for it, so commands have the thread's access",
     enrolled: "enrolled",
     failed: `enrolment failed${box.enrol.error ? `: ${box.enrol.error}` : ""}`,
   };

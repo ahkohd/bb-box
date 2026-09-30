@@ -30,7 +30,7 @@ import {
 } from "../backends/types.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
-import { canRunInDesktop, command, type Session } from "./in-box.ts";
+import { TIMED_OUT_EXITS, canRunInDesktop, command, envScript, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
 
 export type BoxState =
@@ -106,7 +106,14 @@ export interface BoxesDeps {
    * BB's bootstrap with the box ID as the key. Called without awaiting.
    */
   reconnect?(box: BoxRecord): Promise<void>;
+  /**
+   * Which of BB's variables commands in a box enrolled as a BB machine take
+   * from its daemon, so they have the thread's access. Null for none.
+   */
+  access?(box: BoxRecord): Promise<Access | null>;
   logError(operation: string, error: unknown): void;
+  /** How long a command waits for its box to finish enrolling. */
+  readonly enrolWaitMs?: number;
   now?(): number;
   random?(bytes: number): Uint8Array;
 }
@@ -175,6 +182,10 @@ const UNKNOWN_KIND: KindCapabilities = {
 };
 
 /** For releases whose progress nobody watches: leftovers the sweep finds, and guests whose box was forgotten. */
+/** How much longer than the timeout in the box bb-box waits before it stops the command itself. */
+const LOCAL_TIMEOUT_GRACE_MS = 10_000;
+const ENROL_POLL_MS = 250;
+
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
 /** The features a box has beyond what its kind promises. */
@@ -685,7 +696,12 @@ export class Boxes {
     }
   }
 
-  /** Runs a script in the box's shell, with the thread's environment. */
+  /**
+   * Runs a script in the box's shell, with the thread's environment. A box
+   * still enrolling gets a few seconds to finish, so the command has the
+   * thread's access. In a Linux box the timeout stops the script and
+   * everything it started, and the local one is a backstop.
+   */
   async run(
     threadId: string,
     ref: string,
@@ -698,9 +714,12 @@ export class Boxes {
       session?: Session;
       signal?: AbortSignal;
       maxOutputBytes?: number;
+      /** False runs at once in a box that is enrolling. */
+      waitForEnrolment?: boolean;
     } = {},
   ): Promise<{ box: BoxRecord; result: RunResult }> {
-    const box = await this.get(threadId, ref);
+    const found = await this.get(threadId, ref);
+    const box = options.waitForEnrolment === false ? found : await this.#enrolled(found, options.signal);
     const capabilities = box.capabilities;
     if (options.session === "desktop" && !capabilities.displays.length) {
       throw new BoxError("unsupported", `Box ${box.name} has no desktop. Run the command without session "desktop", or use a desktop box.`);
@@ -710,18 +729,55 @@ export class Boxes {
     if (session === "desktop" && !canRunInDesktop(capabilities.os)) {
       throw new BoxError("unsupported", `bb-box cannot run commands in box ${box.name}'s desktop session yet: its OS is ${capabilities.os}.`);
     }
+    const env = await this.#envFile(box);
+    const inBox = capabilities.os === "linux" ? options.timeoutMs : undefined;
     const result = await this.#reach(
       box,
       (transport) =>
-        transport.run(command(capabilities.os, script, { cwd: options.cwd, session }), {
+        transport.run(command(capabilities.os, script, { cwd: options.cwd, session, env, timeoutMs: inBox }), {
           stdin: options.stdin,
-          timeoutMs: options.timeoutMs,
+          timeoutMs: inBox === undefined ? options.timeoutMs : inBox + LOCAL_TIMEOUT_GRACE_MS,
           signal: options.signal,
           maxOutputBytes: options.maxOutputBytes,
         }),
       options.signal,
     );
-    return { box, result };
+    const stopped = inBox !== undefined && TIMED_OUT_EXITS.includes(result.exitCode ?? -1) && result.durationMs >= inBox;
+    return { box, result: stopped ? { ...result, timedOut: true } : result };
+  }
+
+  /** Waits a few seconds for a box that is enrolling to finish. */
+  async #enrolled(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
+    const deadline = this.#now() + (this.#deps.enrolWaitMs ?? 10_000);
+    while (box.state === "ready" && box.enrol.state === "enrolling" && this.#now() < deadline && !signal?.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, ENROL_POLL_MS));
+      box = (await this.find(box.id)) ?? box;
+    }
+    return box;
+  }
+
+  /**
+   * The env file for a box: who it is, and once BB knows it as a machine,
+   * where to take the thread's access from. Undefined leaves the file as it
+   * is, when the access cannot be worked out.
+   */
+  async #envFile(box: BoxRecord): Promise<string | undefined> {
+    const variables: Record<string, string> = {
+      BB_BOX_ID: box.id,
+      BB_BOX_NAME: box.name,
+      BB_BOX_KIND: box.kind,
+      BB_THREAD_ID: box.threadId,
+    };
+    const hostId = box.enrol.hostId;
+    if (!hostId) return envScript(box.capabilities.os, variables);
+    variables.BB_HOST_ID = hostId;
+    try {
+      const access = (await this.#deps.access?.(box)) ?? undefined;
+      return envScript(box.capabilities.os, variables, access);
+    } catch (error) {
+      this.#deps.logError("access", error);
+      return undefined;
+    }
   }
 
   /** Writes a file in the box. A relative path is under the box user's home. */

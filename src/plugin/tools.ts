@@ -200,7 +200,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .positive()
         .max(RUN_TIMEOUT_MAX_S)
         .optional()
-        .describe(`Seconds before the command is killed. Defaults to ${RUN_TIMEOUT_S}. For a server, start it in the background with nohup.`),
+        .describe(
+          `Seconds before the command, and everything it started, is stopped. Defaults to ${RUN_TIMEOUT_S}. Start a server in the background with its output redirected, so box_run returns at once: nohup <cmd> >server.log 2>&1 &`,
+        ),
       stdin: z.string().optional().describe("Text to send to the command's standard input."),
       desktop: z.boolean().optional().describe("Run in the box's desktop session so it can open windows. Desktop boxes only."),
     }),
@@ -216,7 +218,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         });
         const text = runText(box, result);
         const hints = result.timedOut
-          ? ["Give timeout_seconds more time, or run long jobs in the background with nohup and check on them."]
+          ? ["Give timeout_seconds more time, or start a long job in the background with nohup <cmd> >job.log 2>&1 & and check on it."]
           : [`Run more with box_run, or copy results out with box_copy (direction from_box).`];
         return result.exitCode === 0 && !result.timedOut
           ? `${text}${next(...hints)}`

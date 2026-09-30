@@ -594,9 +594,12 @@ A box is a resource of its thread and gets what the thread's own machine has.
     ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). Without
     that, it waits up to 10 s for the lock, or fails where PIDs repeat.
   - The thread's Git credentials and machine variables reach the box through
-    BB, which resolves them each time they are used. bb-box's host entry,
-    which runs in every enrolled box, writes them to a file that the box's SSH
-    sessions load.
+    BB, which gives them to its daemon in the box. Plugins can read their
+    names but not their values, so each command bb-box runs, and each SSH
+    session through the box's `~/.bashrc`, takes the listed names from a
+    worker of that daemon as it starts. A change in BB reaches the next
+    command, and the values never reach the disk. `git` asks `gh` for GitHub
+    credentials, so it uses `GH_TOKEN`.
 - **Child threads.** A child thread can run on an enrolled box.
 - **Direct access.** The agent can also reach its boxes itself, for example
   with `ssh <box name>` or `DOCKER_HOST`, over the same network the BB server
@@ -724,7 +727,7 @@ Nothing expires, so a box must never be forgotten.
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |
 | bb-box's SSH key | plugin storage; its public key is installed by setup | core | |
 | The install ID | plugin storage, and on every guest | core | the plugin's storage being lost: the doctor shows the old ID and an operator command restores it |
-| The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; copied to a file in the box for SSH sessions, never to bb-box's storage |
+| The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; read from BB's daemon in the box by each command, never written to disk or to bb-box's storage |
 | Work in the box: files, containers, running apps | the box's disk | the thread | deleted on release (virtual), or the home recreated (real); not backed up |
 | Templates and images | the provider | operator | built by the setup scripts |
 | Who holds each desktop's input | plugin memory | core | resets to the agent on restart |

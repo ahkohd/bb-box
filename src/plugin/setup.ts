@@ -16,6 +16,8 @@ import { boxView, kindViews, type BackendView, type BoxView, type DoctorView, ty
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
 
+/** In a box that is a BB machine, the program of the process whose workers carry BB's variables. */
+const DAEMON_PARENT = "host-daemon/dist/daemon-bundle";
 const SWEEP_EVERY_MS = 3 * 60_000;
 const DOCTOR_TIMEOUT_MS = 30_000;
 
@@ -63,7 +65,13 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export async function setup(bb: BbPluginApi, options: { drivers?: readonly BackendDriver<any>[] } = {}): Promise<BbBox> {
+export interface SetupOptions {
+  readonly drivers?: readonly BackendDriver<any>[];
+  /** Where commands in a box take BB's variables from. Tests give a process of their own. */
+  readonly daemonParent?: string;
+}
+
+export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promise<BbBox> {
   const drivers = options.drivers ?? DRIVERS;
   const settings = bb.settings.define({ ...GENERAL_SETTINGS, ...backendSettings(drivers) });
   const logError = (operation: string, error: unknown) => {
@@ -102,6 +110,16 @@ export async function setup(bb: BbPluginApi, options: { drivers?: readonly Backe
     enrol: (box) => enrolment.enrol(box),
     unenrol: (box) => enrolment.unenrol(box),
     reconnect: (box) => enrolment.reconnect(box),
+    // Names only: BB never gives plugins the values.
+    async access(box) {
+      const names = new Set(["GH_TOKEN"]);
+      for (const variable of (await bb.sdk.system.machineEnvironment()).variables) names.add(variable.name);
+      if (box.projectId) {
+        const project = await bb.sdk.projects.machineEnvironment({ projectId: box.projectId });
+        for (const variable of [...project.inheritedVariables, ...project.variables]) names.add(variable.name);
+      }
+      return { names: [...names], parent: options.daemonParent ?? DAEMON_PARENT };
+    },
     logError,
   });
   enrolment = new Enrolment({

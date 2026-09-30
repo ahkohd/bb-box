@@ -28,9 +28,11 @@ Every result ends with a `Next:` line that says what to do next.
 
 Limits:
 
-- `box_run` waits 600 s by default and 3600 s at most. It keeps 32 KiB of
-  each stream: the first 16 KiB and the last 16 KiB. Start a server in the
-  background with `nohup`.
+- `box_run` waits 600 s by default and 3600 s at most, then stops the
+  command and everything it started. It keeps 32 KiB of each stream: the
+  first 16 KiB and the last 16 KiB. Start a server in the background with
+  its output redirected, `nohup <cmd> >server.log 2>&1 &`, so `box_run`
+  returns at once. Without the redirect, `box_run` waits for the server.
 - A command that exits with a non-zero code is not a tool error. A command
   that times out is.
 - `box_copy` moves one file of up to 16 MiB. Tar a directory first. A
@@ -38,9 +40,9 @@ Limits:
   relative box path, or one that starts with `~/`, is under the box user's
   home.
 - The box user can use `sudo` without a password.
-- Once a box is a BB machine, each command reads `~/.config/bb-box/env`,
-  which sets `BB_BOX_ID`, `BB_BOX_NAME`, `BB_BOX_KIND`, `BB_THREAD_ID` and
-  `BB_HOST_ID`.
+- Each command reads `~/.config/bb-box/env`, which sets `BB_BOX_ID`,
+  `BB_BOX_NAME`, `BB_BOX_KIND` and `BB_THREAD_ID`, and `BB_HOST_ID` once the
+  box is a BB machine.
 
 ## Kinds
 
@@ -58,7 +60,15 @@ A kind is on offer only when its templates are set.
 
 When `enrol-boxes` is on, a ready box is added to BB as a machine, so threads
 and terminals can use it and BB's own secrets and Git credentials reach it.
+This takes a few seconds after the box is ready; `box_run` waits for it.
 bb-box removes the machine before it releases the box.
+
+In a Linux box that is a BB machine, each command takes `GH_TOKEN` and BB's
+machine variables, for the system and for the thread's project, from BB's
+daemon in the box as it starts, so a change in BB reaches the next command.
+The values are never written to disk. The box's `~/.bashrc` reads the env
+file first, so SSH commands from the thread's machine get them too, and `git`
+uses `gh` for GitHub credentials.
 
 ## The bb box command
 
