@@ -147,6 +147,69 @@ test("the SSH transport reports an unreachable box and refuses Windows file copi
   await assert.rejects(windows.writeFile("x", new Uint8Array()), (error: unknown) => error instanceof TransportError && error.code === "unsupported");
 });
 
+test("commands to one box share a connection that bb-box opens once", async () => {
+  const { ssh, log, dir } = fakeSsh({ share: true });
+  const box = at("192.0.2.20");
+  const results = await Promise.all([1, 2, 3].map((n) => ssh.run(box, `echo ${n}`)));
+  assert.deepEqual(results.map((result) => result.stdout), ["1\n", "2\n", "3\n"]);
+  await ssh.writeFile(box, "f", new TextEncoder().encode("x"));
+  assert.equal((await ssh.readFile(box, "f", { maxBytes: 10 })).toString(), "x");
+  assert.equal(await ssh.probe(box), true);
+
+  const entries = log();
+  const masters = entries.filter((entry) => entry.control === "master");
+  assert.equal(masters.length, 1, "one shared connection");
+  const path = masters[0]!.args.find((arg) => arg.startsWith("ControlPath="))!;
+  assert.ok(path.startsWith(`ControlPath=${join(dir, "shared")}/`));
+  assert.ok(masters[0]!.args.includes("ControlMaster=yes") && masters[0]!.args.includes("ControlPersist=120s"));
+  const commands = entries.filter((entry) => !entry.control);
+  assert.equal(commands.length, 6);
+  for (const entry of commands.slice(0, 5)) assert.ok(entry.args.includes("ControlMaster=no") && entry.args.includes(path), entry.command);
+  assert.ok(!commands[5]!.args.some((arg) => arg.startsWith("ControlPath=")), "a probe dials afresh");
+
+  // Another box gets its own connection; forget closes only this box's.
+  await ssh.run(at("192.0.2.21"), "true");
+  await ssh.forget(box);
+  assert.deepEqual(
+    log().filter((entry) => entry.control === "exit").map((entry) => [entry.target, entry.args.includes(path)]),
+    [["box@192.0.2.20", true]],
+  );
+  await ssh.run(box, "true");
+  assert.equal(log().filter((entry) => entry.control === "master" && entry.target === "box@192.0.2.20").length, 2, "a forgotten box's next command opens a new connection");
+  await ssh.dispose();
+  assert.deepEqual(log().filter((entry) => entry.control === "exit").map((entry) => entry.target).sort(), ["box@192.0.2.20", "box@192.0.2.20", "box@192.0.2.21"]);
+});
+
+test("no more than 8 commands share a connection, and the rest dial alone", async () => {
+  const { ssh, log } = fakeSsh({ share: true });
+  const box = at("192.0.2.22");
+  await Promise.all(Array.from({ length: 10 }, (_, n) => ssh.run(box, `sleep 0.3; echo ${n}`)));
+  const commands = log().filter((entry) => !entry.control);
+  assert.equal(commands.filter((entry) => entry.args.includes("ControlMaster=no")).length, 8);
+  assert.equal(commands.filter((entry) => !entry.args.some((arg) => arg.startsWith("ControlPath="))).length, 2);
+});
+
+test("a box that cannot be reached gets no shared connection for 5 s, and SSH's own failure retires one", async () => {
+  const { ssh, log, down } = fakeSsh({ share: true });
+  const box = at("192.0.2.23");
+  down("192.0.2.23");
+  assert.equal((await ssh.run(box, "true")).exitCode, 255);
+  assert.equal((await ssh.run(box, "true")).exitCode, 255);
+  let entries = log();
+  assert.equal(entries.filter((entry) => entry.control === "master").length, 1, "one try at a shared connection");
+  assert.ok(entries.filter((entry) => !entry.control).every((entry) => !entry.args.some((arg) => arg.startsWith("ControlPath="))), "commands dial alone");
+
+  const up = at("192.0.2.24");
+  await ssh.run(up, "true");
+  assert.equal((await ssh.run(up, "exit 255")).exitCode, 255);
+  await ssh.run(up, "true");
+  entries = log().filter((entry) => entry.target === "box@192.0.2.24");
+  const paths = entries.filter((entry) => entry.control === "master").map((entry) => entry.args.find((arg) => arg.startsWith("ControlPath=")));
+  assert.equal(paths.length, 2, "exit 255 retires the connection");
+  assert.notEqual(paths[0], paths[1]);
+  await ssh.dispose();
+});
+
 test("stream passes output on as it arrives", async () => {
   const { ssh } = fakeSsh();
   const chunks: Record<string, string> = { stdout: "", stderr: "" };

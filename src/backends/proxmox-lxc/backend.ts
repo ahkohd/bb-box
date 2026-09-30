@@ -619,6 +619,7 @@ export class ProxmoxLxcBackend implements Backend {
         failed.set(gpu, reason);
         this.#avoidGpu(this.#gpuOf(template));
         this.#context.logError("acquire", new Error(`Box ${box.name} started without GPU ${gpu} (${reason}), so bb-box released it and tries another GPU.`));
+        await this.#forget(id);
         await api.destroy(id, signal);
         vmid = null;
         claimed = null;
@@ -633,6 +634,7 @@ export class ProxmoxLxcBackend implements Backend {
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
       if (leftover !== null && (vmid !== null || (await this.#owns(api, leftover, box.boxId).catch(() => false)))) {
+        await this.#forget(leftover);
         await api.destroy(leftover).catch((cause) => this.#context.logError("release after a failed acquire", cause));
       }
       throw error;
@@ -643,6 +645,7 @@ export class ProxmoxLxcBackend implements Backend {
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
+    await this.#forget(this.#vmid(guest));
     const api = await this.client();
     if (await this.#still(api, guest, signal)) await api.destroy(this.#vmid(guest), signal);
     hooks.timing("delete", Math.round(performance.now() - started));
@@ -669,7 +672,18 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
     if (!status) throw gone(vmid);
+    await this.#forget(vmid);
     if (status.status === "running") await api.stop(vmid, signal);
+  }
+
+  /** Closes the shared SSH connection to a guest that is stopping or going, as another guest may take its address. */
+  async #forget(vmid: number): Promise<void> {
+    try {
+      const keys = await this.#ssh;
+      await keys?.ssh.forget(this.#access(vmid));
+    } catch (error) {
+      this.#context.logError("ssh", error);
+    }
   }
 
   /** This install's guests, from the pool listing. Only a guest not yet tagged costs a config read. */
@@ -934,6 +948,7 @@ export class ProxmoxLxcBackend implements Backend {
   async dispose(): Promise<void> {
     this.#stopping.abort(new Error("bb-box is stopping."));
     await this.#maintaining?.catch(() => undefined);
+    await (await this.#ssh?.catch(() => null))?.ssh.dispose();
     await this.#keyFile.dispose();
     await this.#http.close();
   }
@@ -1300,7 +1315,8 @@ export class ProxmoxLxcBackend implements Backend {
         }
         const keyPath = await this.#keyFile.path(privateKey);
         publicText ??= await publicKey(keyPath);
-        return { ssh: new Ssh({ keyPath, binary: this.#options.sshBinary }), publicKey: publicText, generated };
+        const shareDir = await this.#keyFile.shareDir();
+        return { ssh: new Ssh({ keyPath, binary: this.#options.sshBinary, shareDir }), publicKey: publicText, generated };
       })();
       this.#ssh = pending;
       pending.catch(() => {
@@ -1338,7 +1354,10 @@ export class ProxmoxLxcBackend implements Backend {
       }
       return out;
     });
-    for (const vmid of retired) await api.destroy(vmid, signal).catch((error) => this.#context.logError("retire a warm box", error));
+    for (const vmid of retired) {
+      await this.#forget(vmid);
+      await api.destroy(vmid, signal).catch((error) => this.#context.logError("retire a warm box", error));
+    }
 
     for (const flavour of LXC_FLAVOURS) {
       // Any kind of the flavour stands for it: their guests are the same.
@@ -1394,7 +1413,10 @@ export class ProxmoxLxcBackend implements Backend {
       }
       await api.configure(vmid, { tags: [TAG, install, WARM, templateTag(template)] }, signal);
     } catch (error) {
-      if (vmid !== null) await api.destroy(vmid).catch((cause) => this.#context.logError("release a failed warm box", cause));
+      if (vmid !== null) {
+        await this.#forget(vmid);
+        await api.destroy(vmid).catch((cause) => this.#context.logError("release a failed warm box", cause));
+      }
       throw error;
     } finally {
       for (const id of claimed) this.#filling.delete(id);

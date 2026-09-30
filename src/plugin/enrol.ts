@@ -13,6 +13,12 @@
 // variables from the daemon's process as the command starts. Once the daemon
 // connects, the box's ~/.bashrc sources the file too, for the thread's own
 // SSH commands, and git takes GitHub credentials from gh.
+//
+// Setting up that access runs alongside BB's bootstrap, which touches
+// neither ~/.bashrc nor git's settings. bb-box asks BB about the machine
+// every 500 ms, and every 100 ms once bootstrap has returned, since BB shows
+// the machine connected soon after. Each enrolment logs how long its steps
+// took.
 
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -45,9 +51,13 @@ export interface EnrolmentDeps {
   readonly hosts: () => HostApi;
   bootstrap(request: { key: string; executor: MachineExecutor; report: Progress; signal: AbortSignal }): Promise<{ hostId: string }>;
   logError(operation: string, error: unknown): void;
+  log?(message: string): void;
   /** How long an enrolment may take before bb-box gives up on it. */
   readonly timeoutMs?: number;
+  /** How often to ask BB about the machine, until bootstrap returns. */
   readonly pollMs?: number;
+  /** How often to ask once bootstrap has returned. */
+  readonly fastPollMs?: number;
 }
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
@@ -58,20 +68,80 @@ function sh(value: string): string {
 }
 
 /** Runs BB's installer commands in the box, as the box user, through its command transport. */
-export function executor(transport: CommandTransport): MachineExecutor {
+export function executor(transport: CommandTransport, phases?: Phases): MachineExecutor {
   return {
     async exec({ command, stdin, timeoutMs, signal, onOutput }) {
       const decoder = new TextDecoder();
+      phases?.mark("install");
       const result = await transport.stream(command.map(sh).join(" "), {
         stdin,
         timeoutMs,
         signal,
         onOutput: (chunk) => onOutput(decoder.decode(chunk, { stream: true })),
       });
+      phases?.mark("installed");
       // 124 is what timeout(1) exits with; BB reports the exit code with the output's tail.
       return { exitCode: result.exitCode ?? (result.timedOut ? 124 : 137) };
     },
   };
+}
+
+/** What each step of an enrolment is called in the log, by the moment it ends. */
+const STEPS: Readonly<Record<string, string>> = {
+  requested: "asking BB",
+  called: "BB calling bb-box's create",
+  prepared: "reaching the box",
+  install: "BB preparing the enrolment",
+  installed: "BB's installer in the box",
+  bootstrapped: "BB waiting for the daemon",
+  connected: "BB showing the machine connected",
+  enrolled: "finishing",
+};
+
+/** When each step of one enrolment ended, counted from when the box was ready. */
+export class Phases {
+  readonly origin: number;
+  readonly #now: () => number;
+  readonly marks = new Map<string, number>();
+  access: { readonly started: number; ended: number | null } | null = null;
+  #wake: (() => void) | null = null;
+
+  constructor(origin: number, now: () => number = Date.now) {
+    this.origin = origin;
+    this.#now = now;
+  }
+
+  mark(step: string): void {
+    this.marks.set(step, this.#now());
+    if (step === "bootstrapped") this.#wake?.();
+  }
+
+  /** Waits `ms`, or less if bootstrap returns meanwhile. */
+  sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        if (this.#wake === done) this.#wake = null;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.#wake = done;
+    });
+  }
+
+  /** One line for the log: each step in the order it ended, then the access setup that ran alongside. */
+  line(boxName: string): string {
+    const seconds = (ms: number) => `${(ms / 1000).toFixed(2)} s`;
+    const steps = [...this.marks].filter(([step]) => STEPS[step]).sort((a, b) => a[1] - b[1]);
+    let last = this.origin;
+    const parts = steps.map(([step, at]) => {
+      const part = `${STEPS[step]} ${seconds(Math.max(0, at - last))}`;
+      last = Math.max(last, at);
+      return part;
+    });
+    const access = this.access?.ended != null ? `; setting up the thread's access took ${seconds(this.access.ended - this.access.started)} alongside` : "";
+    return `Enrolled box ${boxName} ${seconds(last - this.origin)} after it was ready: ${parts.join(", ")}${access}.`;
+  }
 }
 
 function isNotFound(error: unknown): boolean {
@@ -79,21 +149,23 @@ function isNotFound(error: unknown): boolean {
   return status === 404 || code === "not_found" || /not found/i.test(error instanceof Error ? error.message : "");
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export class Enrolment {
   readonly #deps: EnrolmentDeps;
   readonly #timeoutMs: number;
   readonly #pollMs: number;
+  readonly #fastPollMs: number;
   /** Boxes whose enrolment this process is following. */
   readonly #following = new Set<string>();
   /** Boxes whose BB daemon this process is starting again. */
   readonly #reconnecting = new Set<string>();
+  /** The steps of each enrolment this process is following. */
+  readonly #phases = new Map<string, Phases>();
 
   constructor(deps: EnrolmentDeps) {
     this.#deps = deps;
     this.#timeoutMs = deps.timeoutMs ?? 5 * 60_000;
     this.#pollMs = deps.pollMs ?? 500;
+    this.#fastPollMs = deps.fastPollMs ?? 100;
   }
 
   /** The machine provider BB calls to create and remove a box's machine. */
@@ -110,11 +182,15 @@ export class Enrolment {
         if (!box || box.state !== "ready") {
           return { status: "failed", message: `Box ${box?.name ?? inputs.boxId} is not ready, so it cannot become a BB machine.` };
         }
+        const phases = this.#phases.get(box.id);
+        phases?.mark("called");
         await checkpoint({ boxId: box.id });
         try {
           const transport = await this.#transport(box);
+          phases?.mark("prepared");
           report.step(`Installing BB in box ${box.name}`);
-          await this.#deps.bootstrap({ key, executor: executor(transport), report, signal });
+          await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
+          phases?.mark("bootstrapped");
           return { status: "created", name: box.name, resource: { boxId: box.id } };
         } catch (error) {
           return { status: "failed", message: describeError(error, `Enrolling box ${box.name}`) };
@@ -143,77 +219,91 @@ export class Enrolment {
 
   /** Makes a ready box a BB machine and waits until its daemon connects. Never throws. */
   async enrol(box: BoxRecord): Promise<void> {
+    if (this.#following.has(box.id)) return;
+    this.#following.add(box.id);
+    // Enrolment starts once the box is ready, so its time counts from then.
+    const phases = new Phases(box.readyAt ?? Date.now());
+    this.#phases.set(box.id, phases);
     try {
-      let hostId = box.enrol.hostId;
-      if (!hostId) {
+      let current: BoxRecord = box;
+      if (!box.enrol.hostId) {
         const host = await this.#deps.hosts().experimental_create({
           machineProviderId: MACHINE_PROVIDER_ID,
           key: box.id,
           inputs: { boxId: box.id },
           wait: false,
         });
-        hostId = host.id;
-        const recorded = await this.#deps.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId, error: null } }));
+        phases.mark("requested");
+        const recorded = await this.#deps.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: host.id, error: null } }));
         // Released meanwhile: its release did not know the machine yet.
         if (!recorded || recorded.state === "releasing") {
-          await this.#remove(hostId);
+          await this.#remove(host.id);
           return;
         }
+        current = recorded;
       }
-      await this.#follow(box, hostId);
+      await this.#follow(current, phases, this.#setUpAccess(current, phases));
     } catch (error) {
       this.#deps.logError("enrol", error);
       await this.#deps.boxes
         .update(box, (current) => ({ enrol: { ...current.enrol, state: "failed", error: describeError(error, "Enrolling the box") } }))
         .catch(() => null);
-    }
-  }
-
-  async #follow(box: BoxRecord, hostId: string): Promise<void> {
-    if (this.#following.has(box.id)) return;
-    this.#following.add(box.id);
-    try {
-      const deadline = Date.now() + this.#timeoutMs;
-      for (;;) {
-        const current = await this.#deps.boxes.find(box.id);
-        if (!current || current.state === "releasing" || current.enrol.hostId !== hostId) return;
-        const host = await this.#deps.hosts().get({ hostId });
-        const phase = host.lifecycle.phase;
-        if (phase === "active" && host.status === "connected") {
-          await this.#setUpAccess(current);
-          // Enrolment starts once the box is ready, so its time counts from then.
-          await this.#deps.boxes.update(box, (latest) => ({
-            enrol: { state: "enrolled", hostId, error: null },
-            ...(latest.readyAt === null ? {} : { timings: { ...latest.timings, enrol: Date.now() - latest.readyAt } }),
-          }));
-          return;
-        }
-        if (phase === "destroyed" || phase === "removing") {
-          const reason = host.lifecycle.message ?? "BB removed the machine before it connected.";
-          await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId: null, error: reason } }));
-          return;
-        }
-        if (Date.now() > deadline) {
-          const reason = `BB did not finish adding the box as a machine within ${Math.round(this.#timeoutMs / 60_000)} minutes.${host.lifecycle.message ? ` ${host.lifecycle.message}` : ""}`;
-          await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId, error: reason } }));
-          return;
-        }
-        await sleep(this.#pollMs);
-      }
     } finally {
+      this.#phases.delete(box.id);
       this.#following.delete(box.id);
     }
   }
 
-  /** Makes the box's shells and git use the thread's access. A failure leaves the box enrolled. */
-  async #setUpAccess(box: BoxRecord): Promise<void> {
+  /** Waits for BB to show the machine connected. `access` is the access setup running alongside. */
+  async #follow(box: BoxRecord, phases: Phases, access: Promise<void>): Promise<void> {
+    const hostId = box.enrol.hostId!;
+    const deadline = Date.now() + this.#timeoutMs;
+    for (;;) {
+      const current = await this.#deps.boxes.find(box.id);
+      if (!current || current.state === "releasing" || current.enrol.hostId !== hostId) return;
+      const host = await this.#deps.hosts().get({ hostId });
+      const phase = host.lifecycle.phase;
+      if (phase === "active" && host.status === "connected") {
+        phases.mark("connected");
+        await access;
+        const enrolled = await this.#deps.boxes.update(box, (latest) => ({
+          enrol: { state: "enrolled", hostId, error: null },
+          ...(latest.readyAt === null ? {} : { timings: { ...latest.timings, enrol: Date.now() - latest.readyAt } }),
+        }));
+        phases.mark("enrolled");
+        if (enrolled) this.#deps.log?.(phases.line(enrolled.name));
+        return;
+      }
+      if (phase === "destroyed" || phase === "removing") {
+        const reason = host.lifecycle.message ?? "BB removed the machine before it connected.";
+        await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId: null, error: reason } }));
+        return;
+      }
+      if (Date.now() > deadline) {
+        const reason = `BB did not finish adding the box as a machine within ${Math.round(this.#timeoutMs / 60_000)} minutes.${host.lifecycle.message ? ` ${host.lifecycle.message}` : ""}`;
+        await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId, error: reason } }));
+        return;
+      }
+      await phases.sleep(phases.marks.has("bootstrapped") ? this.#fastPollMs : this.#pollMs);
+    }
+  }
+
+  /**
+   * Makes the box's shells and git use the thread's access. It needs only
+   * the machine's ID, so it runs while BB installs its daemon. A failure
+   * leaves the box enrolled.
+   */
+  async #setUpAccess(box: BoxRecord, phases: Phases): Promise<void> {
     const script = accessSetup(box.capabilities.os);
     if (!script) return;
+    const access = (phases.access = { started: Date.now(), ended: null as number | null });
     try {
       const { result } = await this.#deps.boxes.run(box.threadId, box.id, script, { timeoutMs: ACCESS_SETUP_TIMEOUT_MS, waitForEnrolment: false });
       if (result.exitCode !== 0) throw new Error(`Setting up the thread's access in box ${box.name} exited with ${result.exitCode ?? "no code"}: ${result.stderr.trim()}`);
     } catch (error) {
       this.#deps.logError("enrol access", error);
+    } finally {
+      access.ended = Date.now();
     }
   }
 

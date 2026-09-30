@@ -484,15 +484,21 @@ test("release deletes the guest, and a missing guest counts as released", async 
   assert.equal(proxmox.guests.has(9000), true);
 });
 
-test("power, stop and start", async () => {
-  const { backend } = setup();
+test("power, stop and start, and a box's shared SSH connection closes before it stops and before it goes", async () => {
+  const { backend, ssh } = setup();
   const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  const run = async () => assert.equal((await (await backend.transports(guest, "linux-headless")).command!.run("true")).exitCode, 0);
+  const closed = () => ssh.log().filter((entry) => entry.control === "exit" && entry.target === "box@192.0.2.100").length;
+  await run();
   assert.equal(await backend.power(guest), "running");
   await backend.stop(guest);
+  assert.equal(closed(), 1);
   assert.equal(await backend.power(guest), "stopped");
   await backend.start(guest);
   assert.equal(await backend.power(guest), "running");
+  await run();
   await backend.release(guest, releasing());
+  assert.equal(closed(), 2);
   await assert.rejects(backend.start(guest), (error: unknown) => error instanceof BackendError && error.code === "gone");
 });
 
