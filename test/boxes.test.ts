@@ -115,7 +115,7 @@ test("names are unique within a thread and unknown boxes are named in the error"
   await world.boxes.idle();
   await assert.rejects(world.boxes.get(THREAD, "no-such-box"), (error: BoxError) => {
     assert.equal(error.code, "not_found");
-    assert.match(error.message, new RegExp(`${a.name}, ${b.name}`));
+    assert.match(error.message, new RegExp(`Its boxes are: (${a.name}, ${b.name}|${b.name}, ${a.name})\\.`));
     return true;
   });
 });
