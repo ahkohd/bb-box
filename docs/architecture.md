@@ -102,13 +102,19 @@ the sweep repeats releases.
 | `linux-headless` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
 | `linux-headless-docker` | as above, plus the feature `docker` | Proxmox LXC (`nesting=1`), Docker when privileged, an SSH pool machine whose reset restores the whole machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
-| `linux-desktop-cpu` | a Linux desktop without a GPU | Docker, an SSH pool machine, Proxmox LXC on a host with no GPU |
+| `linux-desktop-cpu` | a Linux desktop without a GPU | Docker, an SSH pool machine, Proxmox LXC from a CPU-only desktop template |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
 | `macos-desktop` | a macOS desktop, no GPU | a physical Mac, Tart |
 | `macos-desktop-xcode` | as above, plus the features `xcode` and `ios-simulator` | a physical Mac or Tart image with Xcode |
 
 - "No GPU" means no scarce GPU is taken. Macs render with Metal, and Tart
   through its paravirtualised GPU, so macOS kinds declare `gpu: false`.
+- A `linux-desktop` box whose display fell back to the CPU
+  ([006](decisions/006-gpu-desktop-on-xorg.md)) does not meet its kind. The
+  backend releases it and tries another GPU, or reports that none is free.
+  `linux-desktop-cpu` boxes come only from CPU-only templates or images,
+  which have no GPU device nodes or driver. Every desktop shows its display
+  mode and the reason as facts.
 - A box user in the `docker` group is root on the machine, so an SSH pool
   offers `linux-headless-docker` only if its reset restores the whole machine
   (`restores: "machine"`). Rootless Docker kept in the box user's home may
