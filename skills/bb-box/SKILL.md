@@ -1,0 +1,135 @@
+---
+name: bb-box
+description: Use bb-box to give a BB thread fresh Linux boxes for commands, builds, tests, servers and Docker, and to set up, check or clean up bb-box's backends with the bb box command.
+---
+
+# bb-box
+
+bb-box gives each BB thread its own boxes: small Linux computers that start
+in seconds. A box belongs to the thread that acquired it. It stays until the
+thread releases it, or until the thread is archived or deleted.
+
+## Agent tools
+
+Every result ends with a `Next:` line that says what to do next.
+
+| Tool | Parameters | What it does |
+| --- | --- | --- |
+| `box_acquire` | `kind?`, `wait?` | Makes a box and waits until it answers. `kind` defaults to `linux-headless`. |
+| `box_list` | | Lists the thread's boxes and the kinds on offer. |
+| `box_status` | `box` | Shows one box, checking its power state with the backend. |
+| `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
+| `box_copy` | `box`, `direction`, `from`, `to?` | Copies one file between the thread's workspace and a box: `to_box` or `from_box`. |
+| `box_stop` | `box` | Stops a box and keeps its disk. |
+| `box_start` | `box` | Starts a stopped box again. |
+| `box_release` | `box` | Releases a box. Its disk is deleted. |
+
+`box` is the box's name or ID.
+
+Limits:
+
+- `box_run` waits 600 s by default and 3600 s at most, then stops the
+  command and everything it started. It keeps 32 KiB of each stream: the
+  first 16 KiB and the last 16 KiB.
+- `box_run` returns when the script's shell exits, even while something it
+  started keeps running. What that writes afterwards is not captured. Start
+  a server in the background with its output redirected,
+  `nohup <cmd> >server.log 2>&1 &`. Without the redirect, the server's
+  writes fail once `box_run` returns, and it may stop answering.
+- A command that exits with a non-zero code is not a tool error. A command
+  that times out is.
+- `box_copy` moves one file of up to 16 MiB. Tar a directory first. A
+  relative workspace path is under the thread's workspace directory. A
+  relative box path, or one that starts with `~/`, is under the box user's
+  home.
+- The box user can use `sudo` without a password.
+- Each command reads `~/.config/bb-box/env`, which sets `BB_BOX_ID`,
+  `BB_BOX_NAME`, `BB_BOX_KIND` and `BB_THREAD_ID`, and `BB_HOST_ID` once the
+  box is a BB machine.
+
+## Kinds
+
+`bb box kinds` and `box_list` show what the backends offer. The Proxmox LXC
+backend offers:
+
+- `linux-headless`: a Linux box without a desktop
+- `linux-headless-docker`: the same, with Docker
+- `linux-desktop`: a desktop with a GPU
+- `linux-desktop-cpu`: a desktop without a GPU
+
+A kind is on offer only when its templates are set.
+
+## BB machines
+
+When `enrol-boxes` is on, a ready box is added to BB as a machine, so threads
+and terminals can use it and BB's own secrets and Git credentials reach it.
+This takes a few seconds after the box is ready; `box_acquire` and `box_run`
+wait up to 10 s for it, and `box_status` shows how long it took.
+bb-box removes the machine before it releases the box.
+
+In a Linux box that is a BB machine, each command takes `GH_TOKEN` and BB's
+machine variables, for the system and for the thread's project, from BB's
+daemon in the box as it starts, so a change in BB reaches the next command.
+The values are never written to disk. The box's `~/.bashrc` reads the env
+file first, so SSH commands from the thread's machine get them too, and `git`
+uses `gh` for GitHub credentials.
+
+## The bb box command
+
+Commands about a thread's boxes use the thread they run in, or `--thread <id>`.
+Most take `--json`.
+
+| Command | What it does |
+| --- | --- |
+| `bb box doctor` | Checks each backend's settings, host and templates, and says how to fix what is wrong. Exits 1 when a check fails. |
+| `bb box kinds` | Lists the kinds on offer. |
+| `bb box list` | Lists the thread's boxes. `--all` lists every thread's boxes. |
+| `bb box acquire <kind>` | Makes a box and waits for it. `--no-wait` returns at once. |
+| `bb box status <box>` | Shows one box. |
+| `bb box release <box>` | Releases a box. |
+| `bb box sweep` | Runs the clean-up now. |
+| `bb box install-id` | Shows this install's ID, which it records on its guests. `--set <id>` takes back the ID it had before it lost its storage, once no box holds a guest. |
+
+## The panel
+
+The Boxes thread panel lists the thread's boxes. It makes a box of any kind
+and stops, starts, checks and releases boxes. The Backends section in
+bb-box's settings shows each backend's state and what it still needs, and
+runs the doctor.
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `boxes-per-thread` | `0` | The most boxes one thread may hold. 0 means no limit. |
+| `enrol-boxes` | `true` | Adds ready boxes to BB as machines. |
+
+Each backend's settings start with its name, for example `proxmox-lxc-url`.
+`setup/proxmox-lxc/README.md` explains how to set up a Proxmox host, and its
+section 7 lists every `proxmox-lxc-` setting.
+
+A backend refuses a new box when the host would fall below its memory or disk
+reserve, or has no free address or GPU. The refusal says what to do instead.
+
+## Clean-up
+
+- When a thread is archived or deleted, bb-box releases its boxes.
+- Every 3 minutes a sweep releases the boxes of threads that BB says were
+  archived or deleted. It removes guests that bb-box made that name no box,
+  or whose box now has another guest.
+- A guest whose record was lost, as when bb-box loses its storage, keeps
+  running. The sweep restores its box from the guest's labels while its
+  thread is live, and releases it only once BB says the thread ended.
+  `bb plugin logs bb-box` shows each guest the sweep released, restored or
+  kept, and why.
+- The sweep also finishes acquires and releases that a restart interrupted.
+- Each install records its ID on its guests and acts only on those. A guest
+  of another install, or with no ID, is left alone but still takes capacity.
+  The doctor counts them per install ID. An install that lost its storage
+  starts with a new ID: take the old one back with
+  `bb box install-id --set <id>` and run `bb box sweep`.
+- A box whose guest was deleted, or whose guest's reference now holds
+  another box, shows as gone. Releasing it leaves the other box alone.
+- A thread whose state BB cannot read keeps its boxes. Only BB's "thread
+  not found", or a thread BB returns archived or deleted, ends a thread.
+- Boxes do not expire.

@@ -1,0 +1,152 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { addressFor, net0For, normalisePrivateKey, parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
+import { parseGeneral } from "../src/core/config.ts";
+import { VALID, lxcConfig, tempDir } from "./helpers.ts";
+
+test("valid settings parse with defaults", () => {
+  const config = lxcConfig();
+  assert.equal(config.proxmox.apiUrl, "https://pve.example.com:8006");
+  assert.equal(config.proxmox.node, null);
+  assert.equal(config.proxmox.pool, "bbbox");
+  assert.equal(config.proxmox.tlsFingerprint, null);
+  assert.equal(config.ssh.user, "box");
+  assert.deepEqual(config.vmids, { first: 9900, last: 9999 });
+  assert.deepEqual(config.flavours.headless.templates, [{ vmid: 9000, gpu: null }]);
+  assert.equal(config.flavours.headless.diskGiB, null, "the template's disk is kept");
+  assert.deepEqual(config.flavours.desktop.templates, []);
+  assert.deepEqual(config.flavours["desktop-cpu"].templates, []);
+  assert.equal(config.flavours.headless.memoryMiB, 4096);
+  assert.equal(config.flavours.headless.warm, 0);
+  assert.deepEqual(config.desktop, { perGpu: null });
+  assert.deepEqual(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 3 }).desktop, { perGpu: 3 });
+  assert.deepEqual(config.reserve, { memoryMiB: 4096, diskGiB: 50 });
+});
+
+test("the setup guide's token file values work as they are", () => {
+  const config = lxcConfig({
+    "proxmox-lxc-url": "https://192.0.2.10:8006/api2/json",
+    "proxmox-lxc-tls-fingerprint": "ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89",
+  });
+  assert.equal(config.proxmox.apiUrl, "https://192.0.2.10:8006");
+  assert.equal(config.proxmox.tlsFingerprint, "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89");
+  const hex = lxcConfig({ "proxmox-lxc-tls-fingerprint": `sha256 ${"0f".repeat(32)}` });
+  assert.equal(hex.proxmox.tlsFingerprint, Array(32).fill("0F").join(":"));
+  const wrong = parseLxcSettings({ ...VALID, "proxmox-lxc-tls-fingerprint": "AB:CD" });
+  assert.ok(wrong.enabled && !wrong.ok);
+  assert.match(wrong.problems.join(" "), /SHA-256 fingerprint/);
+});
+
+test("the network and template defaults match the setup guide's", () => {
+  const result = parseLxcSettings({
+    "proxmox-lxc-url": "https://192.0.2.10:8006",
+    "proxmox-lxc-token-id": "bbbox@pve!plugin",
+    "proxmox-lxc-token-secret": "s3cret",
+  });
+  assert.ok(result.enabled && result.ok, JSON.stringify(result));
+  const { config } = result;
+  assert.deepEqual(config.flavours.headless.templates, [{ vmid: 9100, gpu: null }]);
+  assert.deepEqual(config.flavours.desktop.templates, []);
+  assert.equal(config.network.bridge, "vmbr200");
+  assert.equal(config.network.gateway, "10.200.0.1");
+  assert.equal(addressFor(config, 9900), "10.200.0.10");
+  assert.equal(addressFor(config, 9999), "10.200.0.109");
+  assert.equal(net0For(config, 9900), "name=eth0,bridge=vmbr200,ip=10.200.0.10/24,gw=10.200.0.1,type=veth");
+});
+
+test("each flavour takes a list of templates, and GPU desktop templates name their GPU", () => {
+  const config = lxcConfig({
+    "proxmox-lxc-headless-templates": "9000, 9004",
+    "proxmox-lxc-desktop-templates": "9001 GPU-0a1b2c3d\n9002=GPU-4e5f6a7b\n9005 GPU-0a1b2c3d",
+    "proxmox-lxc-desktop-cpu-templates": "9003",
+  });
+  assert.deepEqual(config.flavours.headless.templates, [
+    { vmid: 9000, gpu: null },
+    { vmid: 9004, gpu: null },
+  ]);
+  assert.deepEqual(config.flavours.desktop.templates, [
+    { vmid: 9001, gpu: "GPU-0a1b2c3d" },
+    { vmid: 9002, gpu: "GPU-4e5f6a7b" },
+    { vmid: 9005, gpu: "GPU-0a1b2c3d" },
+  ]);
+  assert.deepEqual(config.flavours["desktop-cpu"].templates, [{ vmid: 9003, gpu: null }]);
+  assert.equal(config.flavours["desktop-cpu"].memoryMiB, 8192);
+  assert.deepEqual(lxcConfig({ "proxmox-lxc-headless-templates": 9000 }).flavours.headless.templates, [{ vmid: 9000, gpu: null }]);
+  const desktopsOnly = lxcConfig({ "proxmox-lxc-headless-templates": "", "proxmox-lxc-desktop-cpu-templates": "9003" });
+  assert.deepEqual(desktopsOnly.flavours.headless.templates, []);
+});
+
+test("template lists with mistakes are refused", () => {
+  const problems = (values: Record<string, unknown>) => {
+    const result = parseLxcSettings({ ...VALID, ...values });
+    assert.ok(result.enabled && !result.ok, JSON.stringify(values));
+    return result.problems.join(" ");
+  };
+  assert.match(problems({ "proxmox-lxc-desktop-templates": "9001" }), /Give GPU desktop template 9001 the ID of its GPU/);
+  assert.match(problems({ "proxmox-lxc-desktop-templates": "9001 GPU-a extra" }), /one line per GPU desktop template/);
+  assert.match(problems({ "proxmox-lxc-desktop-cpu-templates": "9001 9001" }), /Template 9001 is listed more than once/);
+  assert.match(problems({ "proxmox-lxc-desktop-cpu-templates": "9000" }), /Template 9000 is listed more than once/);
+  assert.match(problems({ "proxmox-lxc-headless-templates": "ninety" }), /VMIDs from 100 for the headless templates/);
+  assert.match(problems({ "proxmox-lxc-headless-templates": "" }), /at least one CT template/);
+});
+
+test("the backend can be switched off", () => {
+  assert.deepEqual(parseLxcSettings({ "proxmox-lxc-enabled": false }), { enabled: false });
+});
+
+test("each VMID has a fixed static address", () => {
+  const config = lxcConfig();
+  assert.equal(addressFor(config, 9900), "192.0.2.100");
+  assert.equal(addressFor(config, 9999), "192.0.2.199");
+  assert.equal(addressFor(config, 10000), null);
+  assert.equal(net0For(config, 9905), "name=eth0,bridge=vmbr1,ip=192.0.2.105/24,gw=192.0.2.1,type=veth");
+});
+
+test("without a range, every subnet host but the gateway is used", () => {
+  const config = lxcConfig({ "proxmox-lxc-addresses": "", "proxmox-lxc-subnet": "192.0.2.0/25", "proxmox-lxc-vmid-first": 100, "proxmox-lxc-vmid-last": 224 });
+  assert.equal(addressFor(config, 100), "192.0.2.2");
+  assert.equal(addressFor(config, 224), "192.0.2.126");
+});
+
+test("too few addresses for the VMID range is a problem", () => {
+  const result = parseLxcSettings({ ...VALID, "proxmox-lxc-addresses": "192.0.2.100-192.0.2.109" });
+  assert.ok(result.enabled && !result.ok);
+  assert.match(result.problems.join(" "), /10 addresses for 100 VMIDs/);
+});
+
+test("missing settings are listed without echoing the secret", () => {
+  const result = parseLxcSettings({ "proxmox-lxc-token-secret": "do-not-show", "proxmox-lxc-headless-templates": "", "proxmox-lxc-bridge": "" });
+  assert.ok(result.enabled && !result.ok);
+  const problems = result.problems.join(" ");
+  assert.match(problems, /Proxmox API URL/);
+  assert.match(problems, /token ID/);
+  assert.match(problems, /template/);
+  assert.match(problems, /bridge/);
+  assert.doesNotMatch(problems, /do-not-show/);
+});
+
+test("a template inside the box range is refused", () => {
+  const result = parseLxcSettings({ ...VALID, "proxmox-lxc-desktop-cpu-templates": "9905" });
+  assert.ok(result.enabled && !result.ok);
+  assert.match(result.problems.join(" "), /Move template 9905 out of the box VMID range/);
+});
+
+test("the SSH key is optional and survives a one-line paste or base64", () => {
+  assert.equal(lxcConfig({ "proxmox-lxc-ssh-private-key": "" }).ssh.privateKey, null);
+  const dir = tempDir("key");
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", join(dir, "k")]);
+  const key = readFileSync(join(dir, "k"), "utf8");
+  assert.equal(normalisePrivateKey(key), key);
+  assert.equal(normalisePrivateKey(key.replaceAll("\n", " ")), key);
+  assert.equal(normalisePrivateKey(Buffer.from(key).toString("base64")), key);
+  assert.equal(normalisePrivateKey("not a key"), null);
+});
+
+test("general settings: no per-thread limit unless set", () => {
+  assert.deepEqual(parseGeneral({}), { ok: true, config: { perThreadLimit: null, enrol: true } });
+  assert.deepEqual(parseGeneral({ "boxes-per-thread": 3, "enrol-boxes": false }), { ok: true, config: { perThreadLimit: 3, enrol: false } });
+  assert.equal(parseGeneral({ "boxes-per-thread": -1 }).ok, false);
+});

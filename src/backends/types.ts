@@ -1,0 +1,419 @@
+// The backend interface. A backend adapts one provider of machines (Proxmox
+// LXC now; Proxmox QEMU, a Mac host, a pool of physical machines, a cloud
+// later) to bb-box: acquire and release, address, capacity, and the
+// transports that reach each box. bb-box's core depends only on this file and
+// src/transports/types.ts, and never names a provider, a hypervisor, a
+// container technology or a transport. docs/backends.md explains the design.
+//
+// A box's life is acquire, then release:
+// - A virtual backend acquires by cloning and starting a guest, or by taking
+//   a ready one from its warm pool, and releases by deleting it.
+// - A real backend acquires by claiming a free machine from a configured pool
+//   of existing machines, and releases by resetting it to a clean state and
+//   returning it to the pool. It never creates or destroys a machine, and a
+//   machine is held by one box, so one thread, at a time.
+
+import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
+import type { Arch, CommandTransport, Display, DisplayProtocol, GuestOs, SshAccess } from "../transports/types.ts";
+
+export type { Arch, GuestOs } from "../transports/types.ts";
+
+/** Whether a backend's boxes are guests it makes and deletes, or existing machines it lends. */
+export type MachineNature = "virtual" | "real";
+
+/** How bb-box runs commands in a box of a kind. */
+export interface CommandCapability {
+  /** A name for people: "ssh", "docker", "guest-agent". The core never branches on it. */
+  readonly transport: string;
+  /** The language of the in-box scripts. */
+  readonly shell: "sh" | "powershell";
+  /** The box user can become root or Administrator. */
+  readonly admin: boolean;
+  /**
+   * Commands already run in the logged-in desktop session. False for SSH on
+   * macOS and for OpenSSH or WinRM on Windows, which run outside it.
+   */
+  readonly inDesktopSession: boolean;
+  /** Output arrives while the command runs. */
+  readonly streaming: boolean;
+}
+
+/** Offers of a kind agree on the driver; each template pins its version. */
+export interface ComputerUse {
+  readonly driver: "cua";
+  readonly version: string;
+  /** Where `cua-driver serve` listens: a Unix socket, or a named pipe on Windows. */
+  readonly socket: string;
+}
+
+export interface DisplayCapability {
+  readonly id: string;
+  readonly protocol: DisplayProtocol;
+  readonly resizable: boolean;
+}
+
+/**
+ * What a box of one offer has. Offers of one kind agree exactly on os, arch,
+ * gpu, computerUse, enrol and having a desktop display; doctor warns when
+ * they do not. Size and transports may differ.
+ */
+export interface KindCapabilities {
+  readonly os: GuestOs;
+  readonly arch: Arch;
+  readonly gpu: boolean;
+  /**
+   * This offer's features: the kind's `requires`, and any extras. Words such
+   * as "docker", "systemd", "xcode" or "ios-simulator".
+   */
+  readonly features: readonly string[];
+  /** Null when bb-box cannot run commands in the box. */
+  readonly command: CommandCapability | null;
+  /** One per stream; empty for a headless box. The viewer loads its client before the box exists. */
+  readonly displays: readonly DisplayCapability[];
+  /** The computer-use driver in the box, reached through the command transport's spawn. Null when there is none. */
+  readonly computerUse: ComputerUse | null;
+  /** The box can enrol as a BB machine. Only when command.shell is "sh" and os is linux or macos. */
+  readonly enrol: boolean;
+}
+
+/** A kind of box a backend offers, such as linux-headless. */
+export interface BoxKind {
+  /**
+   * A shared word that names what the kind promises, never what it lacks.
+   * Several backends may offer the same kind. Lower-case letters, digits and "-".
+   */
+  readonly id: string;
+  readonly label: string;
+  /** One sentence for agents and the panel. */
+  readonly description: string;
+  /** Resources in words, for example "2 cores, 4 GiB memory, 16 GiB disk". */
+  readonly size: string;
+  /** The features every offer of this kind has. The agent relies on these only. */
+  readonly requires: readonly string[];
+  readonly capabilities: KindCapabilities;
+  /** The longest an acquire of this kind may take, to ready. */
+  readonly readyTimeoutMs: number;
+}
+
+/** The box a backend acquires for, as the registry knows it. */
+export interface BoxIdentity {
+  readonly boxId: string;
+  readonly threadId: string;
+  /** Friendly name, unique within the thread. A backend may use it as the hostname. */
+  readonly name: string;
+  readonly kind: string;
+  readonly createdAt: number;
+}
+
+/** A backend's handle on the machine behind a box. */
+export interface Guest {
+  /** The backend's own ID, opaque to the registry: a VMID, a machine name. */
+  readonly ref: string;
+  /** Which of the backend's hosts it is on: a Proxmox node, a Docker host, a Mac. */
+  readonly host: string | null;
+  /** Where the box answers on the network, when known. Shown to users. */
+  readonly address: string | null;
+  /**
+   * Small values the backend needs later, stored with the box and passed
+   * back. Never a secret. A backend whose references can be reused keeps the
+   * box ID as `box` from the claim on (018).
+   */
+  readonly data?: Readonly<Record<string, string | number | boolean>>;
+  /** Short facts shown in order by status and the panel, such as a desktop's display mode. Stored with the box. Never a secret. */
+  readonly facts?: readonly GuestFact[];
+}
+
+export interface GuestFact {
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface BoxOwner {
+  readonly boxId: string;
+  readonly threadId: string;
+  readonly name: string | null;
+  readonly kind: string | null;
+  readonly createdAt: number | null;
+}
+
+/** A guest a backend holds for this install, as seen by the safety sweep. */
+export interface HeldGuest extends Guest {
+  /**
+   * The box it was acquired for, or null for a guest an interrupted acquire
+   * left behind before it was labelled. The sweep releases those. Its
+   * `data.box` is this box's ID, or absent when there is no owner.
+   */
+  readonly owner: BoxOwner | null;
+  readonly power: PowerState;
+}
+
+/** "unknown" when the provider cannot tell, for example a machine that does not answer. */
+export type PowerState = "running" | "stopped" | "unknown";
+
+export interface AcquireHooks {
+  /**
+   * Records the guest before the backend makes or changes anything, so a
+   * restart can resume the acquire and the sweep can find the guest. Awaited;
+   * a backend may call it again if it moves to another guest.
+   */
+  claim(guest: Guest): Promise<void>;
+  /** Moves the box to "starting": the guest exists and is booting. */
+  starting(): Promise<void>;
+  /** How long a named step took, in milliseconds. Shown in status and the smoke script. */
+  timing(step: string, ms: number): void;
+}
+
+/** Whether one more box fits, with the limits of each host. */
+export interface Capacity {
+  readonly ok: boolean;
+  /** What is full and what to release, in words for the user. Null when ok. */
+  readonly message: string | null;
+  /** The warm pool for the kind asked about. Null for a real backend, whose free machines are its `machines` limit. */
+  readonly warm: { readonly ready: number; readonly target: number } | null;
+  readonly hosts: readonly HostCapacity[];
+}
+
+/** A box needs all its resources on one host, so limits are per host. */
+export interface HostCapacity {
+  readonly host: string;
+  /** One more box of the kind fits on this host. */
+  readonly ok: boolean;
+  readonly limits: readonly Limit[];
+}
+
+export interface Limit {
+  readonly resource: "memory" | "disk" | "cpu" | "guests" | "gpu-desktops" | "gpu-memory" | "machines";
+  /** Which one, where there are several: a GPU's index or UUID. */
+  readonly id?: string;
+  readonly used: number;
+  /** Null when there is no known ceiling. */
+  readonly total: number | null;
+  /** The part kept back for the host. */
+  readonly reserve: number;
+  readonly unit: "MiB" | "count";
+}
+
+/** How the thread's own machine reaches a box. */
+export interface BoxAccess {
+  /** For `ssh <box name>`. */
+  readonly ssh: SshAccess | null;
+  /** For DOCKER_HOST, when Docker in the box can be reached directly. */
+  readonly dockerHost: string | null;
+}
+
+/** The transports that reach one box. */
+export interface BoxTransports {
+  readonly command: CommandTransport | null;
+  readonly displays: readonly Display[];
+  /** Null when only the BB server can reach the box. */
+  readonly access: BoxAccess | null;
+}
+
+export interface ReleaseHooks {
+  /**
+   * Records that the machine is being reset, before it is touched, so a
+   * restart finishes the reset rather than lending a dirty machine. Real
+   * backends call it; virtual ones need not.
+   */
+  resetting(): Promise<void>;
+  /** How long a named step took, in milliseconds. */
+  timing(step: string, ms: number): void;
+}
+
+/** A machine in a real backend's pool, or a warm guest, as the panel shows it. */
+export interface PoolMember {
+  readonly ref: string;
+  readonly host: string | null;
+  /** The kinds it can serve. */
+  readonly kinds: readonly string[];
+  readonly state: "free" | "held" | "resetting" | "out-of-service";
+  /** Why it is out of service. */
+  readonly reason: string | null;
+  /** When it entered its state. */
+  readonly since: number;
+  /** Counts resets, so a claim can check the machine was reset since its last box. */
+  readonly generation: number;
+}
+
+/** Failure codes the registry and tools act on. Any other error is reported as it is. */
+export type BackendErrorCode =
+  /** The host or pool has no room. The message says why and what to do. */
+  | "no_capacity"
+  /** The kind cannot do this. */
+  | "unsupported"
+  /** The guest no longer exists. */
+  | "gone";
+
+export class BackendError extends Error {
+  readonly code: BackendErrorCode;
+  constructor(code: BackendErrorCode, message: string) {
+    super(message);
+    this.name = "BackendError";
+    this.code = code;
+  }
+}
+
+/**
+ * A configured, active backend. Methods that take a guest get the one the
+ * backend returned from `acquire`. Every method must be safe to repeat: the
+ * registry retries after restarts and the sweep calls `release` for boxes
+ * whose release was interrupted.
+ */
+export interface Backend {
+  /** Unique among active backends, stable across restarts. Stored with each box. */
+  readonly id: string;
+  /** Shown to users, for example "Proxmox LXC on pve". */
+  readonly label: string;
+  readonly nature: MachineNature;
+  /** Real backends: what a release restores, the box user's home or the whole machine. */
+  readonly restores?: "home" | "machine";
+
+  /** The kinds this backend can acquire now. */
+  kinds(): readonly BoxKind[];
+
+  /**
+   * Whether one more box of `kind` fits. `pending` lists the kinds of this
+   * backend's boxes still being acquired, which may not show in host figures yet.
+   */
+  capacity(kind: string, pending: readonly string[], signal?: AbortSignal): Promise<Capacity>;
+
+  /**
+   * Makes or claims the guest for `box`, starts it and waits until its
+   * command transport answers, within the kind's `readyTimeoutMs`.
+   * `previous` is the guest of an acquire a restart interrupted, which the
+   * backend resumes or replaces. On failure the backend releases whatever it
+   * claimed before it throws.
+   */
+  acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
+
+  /*
+   * `release`, `power`, `start` and `stop` first check that the guest at the
+   * reference is still `guest` (018): it names this install and the same box
+   * as `guest.data.box`, or no box when that is absent, for an ownerless
+   * leftover. A guest that does not is another box's, and counts as gone.
+   * Real pools check the reset generation instead (016).
+   */
+
+  /**
+   * Deletes a virtual guest, or resets a real machine and returns it to the
+   * pool. A guest that no longer exists counts as released.
+   */
+  release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void>;
+
+  /** Null when the guest no longer exists. */
+  power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null>;
+  /**
+   * Starts a stopped guest and waits until its command transport answers.
+   * Only where the provider can. Throws BackendError("gone") when the guest
+   * no longer exists.
+   */
+  start?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
+  stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
+
+  /**
+   * Every guest this backend holds for this install's boxes, for the safety
+   * sweep. Excludes free pool members, and guests with another install's ID
+   * or none, which still count against capacity. The owner comes from the
+   * guest itself, as its labels, so a new instance on empty storage with the
+   * same install ID finds it: the sweep rebuilds lost records from it.
+   */
+  held(signal?: AbortSignal): Promise<HeldGuest[]>;
+
+  /**
+   * For a box recorded before install IDs (018): records this install on its
+   * guest when the guest has no install and names the box, and returns the
+   * guest to store, with the box ID as `data.box`. The registry calls it once
+   * per such box, before anything else acts on the guest. Only backends
+   * whose guests can predate install IDs.
+   */
+  stamp?(boxId: string, guest: Guest, signal?: AbortSignal): Promise<Guest>;
+
+  /** The command transport, the displays, and how the thread reaches a box of `kind`. */
+  transports(guest: Guest, kind: string): Promise<BoxTransports>;
+
+  /**
+   * Checks the setup from end to end and says exactly what is missing: the
+   * provider answers, the credentials have the rights they need, each kind's
+   * image or template exists, the network is set up. Shown in the panel and
+   * by the doctor command.
+   */
+  doctor(signal?: AbortSignal): Promise<DoctorReport>;
+
+  /** Periodic upkeep, such as topping up a warm pool. Called by the sweep. */
+  maintain?(signal?: AbortSignal): Promise<void>;
+  /** Pool members and their state, for the panel. */
+  members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
+  /** Puts back a machine the operator has fixed. */
+  returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
+  dispose?(): Promise<void>;
+}
+
+export interface DoctorCheck {
+  /** Stable, for example "proxmox.api" or "template.linux-desktop". */
+  readonly id: string;
+  /** What was checked, for example "Proxmox API". */
+  readonly name: string;
+  /** "skipped" when an earlier check failed. */
+  readonly status: "ok" | "warn" | "fail" | "skipped";
+  /** What was found, for example "Proxmox VE 9.2 on pve", or what is wrong. */
+  readonly detail: string;
+  /** What to do when it failed or warns. */
+  readonly fix: string | null;
+}
+
+export interface DoctorReport {
+  /** No check failed. Warnings do not count. */
+  readonly ok: boolean;
+  /** One line, for example "Proxmox VE 9.2 on pve". */
+  readonly summary: string;
+  readonly checks: readonly DoctorCheck[];
+  /** Setup notes in plain words, such as a public key to install. Never credentials. */
+  readonly notes: readonly string[];
+}
+
+/** Storage a backend may use for its own state, such as pool membership. */
+export interface BackendStorage {
+  get<T>(key: string): Promise<T | undefined>;
+  set(key: string, value: unknown): Promise<void>;
+  delete(key: string): Promise<void>;
+  list(prefix?: string): Promise<string[]>;
+}
+
+export interface BackendContext {
+  /** Scoped to this backend. */
+  readonly storage: BackendStorage;
+  /**
+   * This bb-box install's ID (018). A backend records it on every guest from
+   * its first write, warm and part-made guests too, and acts only on guests
+   * that carry it.
+   */
+  readonly installId: string;
+  logError(operation: string, error: unknown): void;
+}
+
+export type ParsedSettings<C> =
+  | { readonly enabled: false }
+  | { readonly enabled: true; readonly ok: true; readonly config: C }
+  | { readonly enabled: true; readonly ok: false; readonly problems: readonly string[] };
+
+/**
+ * A backend type built into bb-box. Its settings appear in bb-box's settings
+ * under its own prefix, with an enable switch, so several backends can be
+ * active at once.
+ */
+export interface BackendDriver<C = unknown> {
+  /** Also the backend ID of its single instance. */
+  readonly type: string;
+  readonly label: string;
+  readonly nature: MachineNature;
+  /** Setting keys start with the driver's prefix. One of them enables the backend. */
+  readonly settings: Readonly<Record<string, PluginSettingDescriptor>>;
+  /**
+   * Paths in bb-box's repository. The guide is the entry point: the settings
+   * page links it first, then the scripts in the order the guide runs them.
+   */
+  readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
+  parse(values: Readonly<Record<string, unknown>>): ParsedSettings<C>;
+  create(config: C, context: BackendContext): Backend;
+}

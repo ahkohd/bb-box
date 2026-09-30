@@ -72,6 +72,7 @@ A backend declares its nature (virtual or real) and its kinds, and implements:
 | `power(guest)` | `running`, `stopped` or `unknown`; null when the guest is gone |
 | `start?`, `stop?` | only where the provider can; the panel and tools offer them only when present |
 | `held()` | every guest this install holds for boxes, with the owner recorded at the provider ([018](decisions/018-guests-name-their-install-and-box.md)) |
+| `stamp?(boxId, guest)` | records this install on the guest of a box from before install IDs, and returns the guest with its box ID |
 | `transports(guest, kind)` | the command transport, the displays, and how the thread reaches the box |
 | `doctor()` | checks the setup end to end and says what is missing |
 | `maintain?()` | upkeep, such as topping up a warm pool |
@@ -227,6 +228,15 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
 - `onOutput(chunk, from)` gives bytes, and says whether they came from stdout
   or stderr. A transport that cannot stream calls it once per stream when the
   command exits.
+- A run ends when the script's shell exits, even while something it left in
+  the background holds the output open, as bash's subshell for
+  `cd web && nohup server >log 2>&1 &` does. `CommandLine` in
+  [src/transports/process.ts](../src/transports/process.ts) runs a POSIX
+  script in a child shell, with stdin from `/dev/null` when none is given,
+  then writes a random end mark and the exit status to stdout and stderr.
+  Once both marks arrive, the run returns and stops the local command, such
+  as `ssh`. Output written after the mark is dropped. PowerShell scripts are
+  not wrapped yet, so their runs end when the output closes.
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the
@@ -239,7 +249,8 @@ A guest is the backend's handle on a box's machine: its own reference, the
 host it is on (a Proxmox node, a Docker host, a Mac), its address, and `data`,
 small values the backend needs later, such as a per-claim user or published
 ports. The registry stores `data` with the box and passes it back. It never
-holds a secret.
+holds a secret. Where references can be reused, `data.box` holds the box ID
+from the claim on ([018](decisions/018-guests-name-their-install-and-box.md)).
 
 ### Capacity
 
@@ -478,6 +489,7 @@ export interface Backend {
   start?(guest: Guest, signal?: AbortSignal): Promise<void>;
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
+  stamp?(boxId: string, guest: Guest, signal?: AbortSignal): Promise<Guest>;
   transports(guest: Guest, kind: string): Promise<BoxTransports>;
   doctor(signal?: AbortSignal): Promise<DoctorReport>;
   maintain?(signal?: AbortSignal): Promise<void>;
@@ -535,7 +547,8 @@ any state -> releasing -> released     (release, or the thread is archived or de
    step's time goes to `hooks.timing` and shows in the box's status.
 4. **Ready.** The command transport answers.
 5. **Enrolled.** If the kind can enrol, bb-box enrols the box as a BB machine
-   and the thread's environment reaches it (see Thread access).
+   and the thread's environment reaches it (see Thread access). The time from
+   ready to enrolled shows after the start-up steps' times, as BB enrolment.
 6. **Released.** You or the agent release the box, or its thread is archived
    or deleted ([003](decisions/003-boxes-live-until-released.md)). bb-box
    removes the machine from BB, then the backend releases the guest. A missing
@@ -594,9 +607,12 @@ A box is a resource of its thread and gets what the thread's own machine has.
     ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). Without
     that, it waits up to 10 s for the lock, or fails where PIDs repeat.
   - The thread's Git credentials and machine variables reach the box through
-    BB, which resolves them each time they are used. bb-box's host entry,
-    which runs in every enrolled box, writes them to a file that the box's SSH
-    sessions load.
+    BB, which gives them to its daemon in the box. Plugins can read their
+    names but not their values, so each command bb-box runs, and each SSH
+    session through the box's `~/.bashrc`, takes the listed names from a
+    worker of that daemon as it starts. A change in BB reaches the next
+    command, and the values never reach the disk. `git` asks `gh` for GitHub
+    credentials, so it uses `GH_TOKEN`.
 - **Child threads.** A child thread can run on an enrolled box.
 - **Direct access.** The agent can also reach its boxes itself, for example
   with `ssh <box name>` or `DOCKER_HOST`, over the same network the BB server
@@ -697,13 +713,27 @@ Nothing expires, so a box must never be forgotten.
 - **After a restart** the registry resumes boxes that were acquiring, repeats
   releases that were interrupted, and checks the power of the rest.
 - **The sweep** runs at start and every few minutes:
-  1. releases the boxes of threads that are archived, deleted or gone;
-  2. finishes interrupted releases;
-  3. releases this install's guests from `held()` that have no owner (an
-     acquire interrupted before the claim was labelled) or whose thread has
-     ended;
-  4. adopts guests whose thread is live but whose record was lost;
+  1. records this install on the guests of its boxes from before install
+     IDs, through `stamp()`, once per box. A guest with no install ID that
+     no box records is left to the doctor's note;
+  2. releases the boxes of threads that BB says were archived or deleted.
+     A thread has ended only when BB returns it archived or deleted, or
+     answers `thread_not_found`; any other error keeps its boxes;
+  3. finishes interrupted releases;
+  4. for each of this install's guests from `held()` that no record names:
+     releases it when it names no box (an acquire interrupted before the
+     claim was labelled) or when its box now holds another guest or none.
+     Otherwise it restores the box's record from the guest while BB says
+     the thread is live, releases the guest once BB says the thread ended,
+     and keeps it while BB does not say
+     ([019](decisions/019-lost-records-are-restored-from-guests.md));
   5. calls `maintain()`.
+
+  A guest from `held()` belongs to a box record only when it names that
+  box, or, with no owner yet, when the box is still acquiring. So a reused
+  reference never makes the sweep treat a new box's guest as an old one's.
+  No guest is released because its record is missing, and the sweep logs
+  each guest it releases, restores or keeps, with the reason.
 - **A guest deleted outside bb-box** makes `power` return nothing; the box is
   marked gone and the panel says so. It stays gone when its reference is
   reused, since the new guest names another box.
@@ -718,13 +748,13 @@ Nothing expires, so a box must never be forgotten.
 
 | Data | Lives in | Owned by | Survives |
 | --- | --- | --- | --- |
-| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | rebuilt by the sweep from provider records if lost |
+| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | restored by the sweep from the guests' labels if lost, while their threads are live; a restored box is not re-enrolled as a BB machine |
 | Which guest belongs to which box and thread | the provider (tags, names), or a marker on a real machine | backend | the plugin's storage being lost |
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |
 | bb-box's SSH key | plugin storage; its public key is installed by setup | core | |
 | The install ID | plugin storage, and on every guest | core | the plugin's storage being lost: the doctor shows the old ID and an operator command restores it |
-| The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; copied to a file in the box for SSH sessions, never to bb-box's storage |
+| The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; read from BB's daemon in the box by each command, never written to disk or to bb-box's storage |
 | Work in the box: files, containers, running apps | the box's disk | the thread | deleted on release (virtual), or the home recreated (real); not backed up |
 | Templates and images | the provider | operator | built by the setup scripts |
 | Who holds each desktop's input | plugin memory | core | resets to the agent on restart |

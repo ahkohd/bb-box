@@ -1,12 +1,14 @@
 # Proxmox LXC backend
 
 This backend runs boxes as unprivileged LXC containers on a Proxmox VE host.
-A box is a linked clone of one of two CT templates that you build once:
+A box is a linked clone of a CT template that you build once. Templates
+come in three flavours:
 
 - **headless**: Ubuntu 24.04 with development tools, agent CLIs and Docker;
 - **desktop**: the same, plus an XFCE desktop on a real Xorg server driven by
   an NVIDIA GPU, streamed over VNC, with Chrome and Cua Driver for computer
-  use.
+  use. Each desktop template carries one GPU;
+- **CPU desktop**: the desktop with no GPU, drawn by the CPU.
 
 The bb-box plugin drives boxes through the Proxmox API with its own API
 token, and reaches inside them over SSH and VNC. Measured on Proxmox VE 9.2
@@ -324,24 +326,85 @@ It does what the plugin does, with the token: clone, configure, start, wait
 for SSH, run the template's check as `box` and delete the box, and prints
 how long each step took.
 
+To test the plugin's own code against the host before installing it, run
+this from a checkout of bb-box, on a machine that reaches the host's API and
+the box subnet ([Reaching boxes](#reaching-boxes)), with Node 22.18 or later:
+
+```sh
+npm install
+cp scripts/smoke.example.json /root/bb-box/smoke.json
+node scripts/smoke.ts /root/bb-box/smoke.json --doctor
+```
+
+The example reads the API URL, node, token and fingerprint from the token
+file, and the key from `ssh/id_ed25519`, both next to the settings file.
+Change the other values to match your settings. It acquires a
+`linux-headless` box, runs `uname -a`, releases the box and prints each
+step's time. `--kind` and `--command` pick another kind or command.
+
+Smoke runs are an install of their own, with the ID `smoke`, so they can
+share the pool with a BB server's bb-box: neither touches the other's boxes,
+though they share the host's capacity. Each run first releases any box an
+earlier run left.
+
 ## 7. Plugin settings
+
+Set these in BB under the bb-box plugin's settings. The examples are this
+guide's defaults; a host set up with them needs only the values from the
+token file, the SSH key and the templates you built.
 
 | Setting | Example | Notes |
 | --- | --- | --- |
-| `proxmox.url` | `https://192.0.2.10:8006/api2/json` | from the token file |
-| `proxmox.node` | `pve` | |
-| `proxmox.tokenId` | `bbbox@pve!plugin` | |
-| `proxmox.tokenSecret` | | from the token file |
-| `proxmox.tlsFingerprint` | | SHA-256 of the host's certificate, from the token file |
-| `proxmox.pool` | `bbbox` | |
-| `proxmox.templates` | `linux-headless=9100, linux-headless-docker=9100, linux-desktop=9101 9102, linux-desktop-cpu=9103` | each kind's templates; for `linux-desktop`, one per GPU |
-| `proxmox.vmids` | `9900-9999` | a range only bb-box uses |
-| `network.bridge` | `vmbr200` | |
-| `network.subnet` | `10.200.0.0/24` | |
-| `network.gateway` | `10.200.0.1` | |
-| `network.addresses` | `10.200.0.10-10.200.0.254` | box addresses bb-box hands out |
-| `ssh.privateKey` | | the key `BBBOX_SSH_KEY` names |
-| `ssh.user` | `box` | |
+| `proxmox-lxc-enabled` | `true` | offer boxes from this host |
+| `proxmox-lxc-url` | `https://192.0.2.10:8006/api2/json` | from the token file |
+| `proxmox-lxc-token-id` | `bbbox@pve!plugin` | from the token file |
+| `proxmox-lxc-token-secret` | | from the token file |
+| `proxmox-lxc-tls-fingerprint` | | from the token file: the SHA-256 of the host's certificate, which bb-box then trusts alone |
+| `proxmox-lxc-ca-certificate` | | only without a fingerprint, when a private CA signed the host's certificate |
+| `proxmox-lxc-node` | `pve` | from the token file; can be empty on a single-node host |
+| `proxmox-lxc-pool` | `bbbox` | `BBBOX_POOL` |
+| `proxmox-lxc-headless-templates` | `9100` | VMIDs of headless templates, separated by spaces or commas |
+| `proxmox-lxc-desktop-templates` | `9101 GPU-<uuid>`, then `9102 GPU-<uuid>` on the next line | one line per GPU desktop template: its VMID and its GPU's ID |
+| `proxmox-lxc-desktop-cpu-templates` | `9103` | VMIDs of CPU-only desktop templates |
+| `proxmox-lxc-desktops-per-gpu` | `0` | the most desktops on one GPU at once; 0 means no limit |
+| `proxmox-lxc-vmid-first` | `9900` | boxes take VMIDs from this range; keep other guests out of it |
+| `proxmox-lxc-vmid-last` | `9999` | |
+| `proxmox-lxc-bridge` | `vmbr200` | `BBBOX_BRIDGE` |
+| `proxmox-lxc-subnet` | `10.200.0.0/24` | the subnet of `BBBOX_GATEWAY_CIDR` |
+| `proxmox-lxc-gateway` | `10.200.0.1` | the address of `BBBOX_GATEWAY_CIDR` |
+| `proxmox-lxc-addresses` | `10.200.0.10-10.200.0.254` | box addresses; the n-th VMID gets the n-th address |
+| `proxmox-lxc-ssh-private-key` | | the key `BBBOX_SSH_KEY` names; left empty, bb-box makes one and its doctor shows the public key the templates must accept |
+| `proxmox-lxc-ssh-user` | `box` | |
+| `proxmox-lxc-reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |
+| `proxmox-lxc-reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
+
+Each flavour of template has its own box size and warm pool. Replace
+`<flavour>` with `headless`, `desktop` or `desktop-cpu`:
+
+| Setting | Headless | GPU desktop | CPU desktop | Notes |
+| --- | --- | --- | --- | --- |
+| `proxmox-lxc-<flavour>-cores` | `2` | `4` | `4` | |
+| `proxmox-lxc-<flavour>-memory-mib` | `4096` | `8192` | `8192` | |
+| `proxmox-lxc-<flavour>-disk-gib` | `0` | `0` | `0` | 0 keeps the template's disk, which is quickest |
+| `proxmox-lxc-<flavour>-warm` | `0` | `0` | `0` | started boxes kept waiting, so a new box is ready at once |
+
+Leave a flavour's templates empty to offer none of its kinds. Headless
+templates serve `linux-headless` and `linux-headless-docker`, GPU desktop
+templates `linux-desktop`, and CPU-only desktop templates
+`linux-desktop-cpu`.
+
+The GPU's ID can be any name without spaces; templates with the same ID
+share a GPU. Use its UUID, which this command lists next to the PCI address
+you gave `build.sh`:
+
+```sh
+nvidia-smi --query-gpu=pci.bus_id,uuid --format=csv
+```
+
+A new box is cloned from its flavour's least used template. A GPU desktop
+goes to the GPU with the fewest desktops, and is refused when every GPU runs
+`proxmox-lxc-desktops-per-gpu` desktops; the refusal suggests a
+`linux-desktop-cpu` box when there are CPU-only templates.
 
 ### How the plugin drives a box
 
@@ -349,9 +412,10 @@ how long each step took.
    `pool` and `full=0`. A linked clone takes no `storage` parameter.
 2. `PUT /nodes/{node}/lxc/{vmid}/config` with
    `net0=name=eth0,bridge={bridge},ip={address}/{prefix},gw={gateway},type=veth`,
-   `cores`, `memory` and `delete=protection`.
+   `cores`, `memory`, `onboot=1` and `delete=protection`.
 3. `PUT` the same path with `tags`, now that the box is in the pool (Proxmox
-   checks tags against `/vms/{vmid}` alone).
+   checks tags against `/vms/{vmid}` alone): `bb-box`, `thread.<id>`,
+   `box.<id>`, `kind.<kind>`, `created.<seconds>` and `template.<vmid>`.
 4. `POST /nodes/{node}/lxc/{vmid}/status/start`.
 5. To grow the disk, `PUT /nodes/{node}/lxc/{vmid}/resize` while the box is
    running: online it takes about a second, on a stopped clone Proxmox checks
