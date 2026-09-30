@@ -16,3 +16,5 @@ that changes gets a new record that supersedes the old one.
 | [009](009-conformance-suite-and-doctor.md) | A conformance suite and a doctor check for every backend |
 | [010](010-publishable-by-default.md) | The repository is publishable at all times |
 | [011](011-interface-v1.md) | Interface v1: shared kinds, routes and displays |
+| [012](012-offers-may-add-features.md) | A kind names what it promises, and offers may add features |
+| [013](013-docker-boxes-run-unprivileged.md) | Docker boxes run unprivileged, without systemd |

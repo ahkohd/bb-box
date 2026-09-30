@@ -85,16 +85,27 @@ the sweep repeats releases.
 
 ### Kinds and offers
 
-- A kind ID is a shared word, such as `linux-headless`, `linux-desktop`,
-  `windows-desktop` or `macos-desktop`. Several backends may offer the same
-  kind.
+- A kind ID is a shared word that names what the kind promises, never what
+  it lacks. Several backends may offer the same kind.
 - An offer is a backend and a kind. The registry tries the offers of a kind
   in the order the backends are listed in settings, and takes the first with
   capacity. The box records both.
 - Offers of one kind must agree on what the agent relies on: `os`, `arch`,
-  `gpu`, `docker`, `features`, `computerUse`, `enrol`, and whether there is a
-  desktop display. Size and transports may differ. `doctor` warns when they
-  do not agree.
+  `gpu`, `computerUse`, `enrol`, whether there is a desktop display, and the
+  features the kind requires (`requires`). Each offer's `features` include
+  the required ones and may add more, which the panel and `status` show for
+  each box. Size and transports may differ. `doctor` warns when offers do not
+  agree ([012](decisions/012-offers-may-add-features.md)).
+
+| Kind | Promises | Offered by |
+| --- | --- | --- |
+| `linux-headless` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
+| `linux-headless-docker` | as above, plus the feature `docker` | Proxmox LXC (`nesting=1`), Docker when privileged |
+| `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
+| `linux-desktop-cpu` | a Linux desktop without a GPU | Docker, an SSH pool machine, Proxmox LXC on a host with no GPU |
+| `windows-desktop` | a Windows desktop | Proxmox QEMU |
+| `macos-desktop` | a macOS desktop | a physical Mac, Tart |
+
 - Each kind sets `readyTimeoutMs`, the longest an acquire may take: about
   30 s for an LXC or Docker box, 5 min for a macOS VM, 10 min for a Windows
   clone's first boot after sysprep.
@@ -106,8 +117,7 @@ the sweep repeats releases.
 | `os` | `linux`, `windows`, `macos` | pick the in-box scripts |
 | `arch` | `x86_64`, `arm64` | tell the agent what runs there |
 | `gpu` | yes or no | show GPU status and count GPU capacity |
-| `docker` | yes or no | tell the agent Docker is there |
-| `features` | words such as `ios-simulator`, `xcode`, `systemd`, `docker-in-docker` | let the agent choose a kind |
+| `features` | words such as `docker`, `systemd`, `xcode`, `ios-simulator` | let the agent choose a kind, and show each box's extras |
 | `command` | the command capability below, or none | offer `run` and file copies |
 | `displays` | a list of `{id, protocol, resizable}`, empty when headless | load the viewer client before the box exists, and allow resizing |
 | `computerUse` | yes or no | offer the computer-use tools |
@@ -181,6 +191,10 @@ from it and uses the jump host as `ProxyJump`.
 - A real machine's host keys are pinned at setup.
 - A fresh virtual guest has no known key yet. The transport accepts its first
   key, and the registry records it with the box.
+- With a jump host, both hops are checked. The transport writes one
+  known_hosts file with the jump host's pinned keys and the target's keys, or
+  accepts the target's first key when it has none yet, as for a fresh Tart VM
+  behind a pinned Mac.
 
 **Output and the desktop session.**
 
@@ -211,7 +225,7 @@ So `capacity` reports named limits per host, plus the warm pool for the kind.
 | --- | --- | --- |
 | `memory`, `disk` | MiB | every virtual backend |
 | `cpu` | count | backends that reserve cores |
-| `guests` | count | Tart (two macOS VMs per Mac), a Docker container budget, Proxmox's guest ID range |
+| `guests` | count | Tart (two macOS VMs per Mac, counting every macOS VM on it, not only bb-box's), a Docker container budget, Proxmox's guest ID range |
 | `gpu-desktops`, `gpu-memory` | count, MiB | GPU desktops, one limit per GPU |
 | `machines` | count | real pools: held, resetting and out of service, of the total |
 
@@ -231,8 +245,9 @@ Docker without a budget) and `reserve`, the part kept back for the host.
   number, and recording the same number in the pool store. Before handing a
   machine out, a claim checks that the numbers match, the box user has no
   processes, its home matches the skeleton, no BB machine is enrolled and no
-  owner marker is left. If any check fails, the machine goes out of service
-  with the reason, and the claim tries the next one.
+  owner marker is left. For a desktop kind, the box user must also own the
+  console session. If any check fails, the machine goes out of service with
+  the reason, and the claim tries the next one.
 - A `PoolStore` must not assume a guest's labels or tags can change after
   creation. Docker sets labels when it creates a container (backend, kind,
   generation), so `held()` finds every container bb-box made, and claims a
@@ -306,7 +321,8 @@ export interface StreamOptions {
 }
 
 export interface CommandTransport {
-  // kind, probe, run, stream, writeFile and readFile as built, plus:
+  // probe, run, stream, writeFile and readFile as built. `kind` is dropped:
+  // the capability's `transport` is the one name. Plus:
   /** A route to a TCP port inside the box. */
   route?(port: number, signal?: AbortSignal): Promise<Route>;
 }
@@ -324,7 +340,7 @@ export interface KindCapabilities {
   readonly os: GuestOs;
   readonly arch: Arch;
   readonly gpu: boolean;
-  readonly docker: boolean;
+  /** This offer's features: the kind's `requires`, and any extras. */
   readonly features: readonly string[];
   readonly command: CommandCapability | null;
   readonly displays: readonly { readonly id: string; readonly protocol: DisplayProtocol; readonly resizable: boolean }[];
@@ -339,6 +355,8 @@ export interface BoxKind {
   readonly label: string;
   readonly description: string;
   readonly size: string;
+  /** The features every offer of this kind has. */
+  readonly requires: readonly string[];
   readonly capabilities: KindCapabilities;
   readonly readyTimeoutMs: number;
 }
@@ -603,30 +621,51 @@ planned, and the later-backends research fills in the details.
 | Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file and plugin storage | marker file and plugin storage | VM name with box and thread IDs |
 | Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), GPU | machines | machines | guests (two VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
-| Enrol | yes | not until BB's host app runs on Windows | open question: containers usually run without an init system | yes | yes | yes |
+| Enrol | yes | not until BB's host app runs on Windows | yes, without systemd | yes | yes | yes |
 
 Notes:
 
 - **Docker** reaches its daemon through a local socket or a remote Docker
-  host. GPU desktops use NVIDIA's container toolkit. Docker inside a Docker box
-  needs Docker-in-Docker or another runtime; the first Docker kinds may leave
-  it out.
+  host. GPU desktops use NVIDIA's container toolkit. Boxes run unprivileged
+  with `--init` and a start script, ready in 0.78 s as measured
+  ([013](decisions/013-docker-boxes-run-unprivileged.md)). systemd and Docker
+  inside a box need a privileged kind, which the operator turns on because a
+  privileged container is root on the Docker host. Without systemd, BB's
+  installer leaves its host daemon running in the background, and the start
+  script starts it again after a restart. `access.dockerHost` stays null
+  unless the operator opts in.
 - **Windows** on Proxmox QEMU streams its console through Proxmox's API, so
   nothing is installed in the guest for the desktop. Commands need OpenSSH
-  for Windows or the QEMU guest agent. It cannot enrol in BB until BB's host
-  app runs on Windows.
+  for Windows or the QEMU guest agent, whose calls Proxmox limits to 64 KiB of
+  stdin and 60 KiB per file write, so the transport splits larger data. It
+  cannot enrol in BB until BB's host app runs on Windows. A sysprepped
+  clone's first boot takes minutes, so Windows needs a warm pool to feel
+  quick.
 - **SSH host pool** needs nothing but SSH access to each machine. It is the
   simplest real backend, and the physical Mac backend may turn out to be the
   same driver with macOS machines and a desktop kind.
 - **Physical Macs** have one console session. The box user must be logged in
-  at the console for the desktop and computer use, so resetting it means
-  logging out and in again. Accessibility and Screen Recording permissions
-  are granted once per machine at setup.
+  at the console for the desktop and computer use. macOS logs a user in
+  automatically only at boot, so a reset recreates the box user's home and
+  reboots, about 1 to 2 minutes on Apple silicon. Accessibility and Screen
+  Recording permissions are granted once per machine at setup.
 - **Tart** images are prepared ahead: permissions granted, Xcode and the iOS
   Simulator warmed, background indexing off. They are pulled from an OCI
-  registry with `tart pull`. Apple's licence allows two macOS VMs per Mac.
-  Several Macs can be listed in settings, or managed by Orchard later. Tart's
-  licence terms for this use are being checked.
+  registry with `tart pull`. Several Macs can be listed in settings, or
+  managed by Orchard later.
+  - Apple's macOS licence (section 2B(iii)) allows two macOS VMs per Mac you
+    own or control, for software development, testing during development,
+    macOS Server or personal non-commercial use, and not as a service bureau
+    or time-sharing service. Agents developing and testing on your own Macs
+    fit.
+  - Tart, Orchard and tart-guest-agent are under FSL-1.1-ALv2, where internal
+    use is a permitted purpose. bb-box drives Tart and does not redistribute
+    it.
+  - The VNC port and password change on every `tart run`. The backend runs
+    `tart run` under a launchd job that writes them to a file only its admin
+    user can read, and `open()` reads the file each time. The password never
+    goes in `Guest.data`.
+  - A suspended VM holds no slot and no memory, so `stop` can suspend.
 - **Clouds, microsandbox and Crabbox** fit as virtual backends with SSH and
   instance tags; a cloud's capacity is its quota.
 
@@ -636,9 +675,12 @@ Notes:
 
 - **Conformance suite** in `test/conformance/`, run against a live backend
   from an env file. For each kind: capacity, acquire to ready with the hooks,
-  run a command, copy files, enrol, stream a frame, computer use, stop and
-  start where supported, repeated release, and crash recovery (an interrupted
-  acquire is resumed or released, and `held()` finds every guest). Steps a
+  run a command with 1 MiB of stdin, copy 32 MiB each way (so a transport
+  with small limits, such as the QEMU guest agent's 64 KiB of stdin, proves it
+  splits the data), enrol, reconnect to BB after a restart, stream a frame,
+  computer use, stop and start where supported, repeated release, and crash
+  recovery (an interrupted acquire is resumed or released, and `held()` finds
+  every guest). Steps a
   kind does not support are skipped by its declared capabilities, never by
   backend name.
 - **Fake backend.** An in-memory backend passes the suite and backs the core's
@@ -658,7 +700,6 @@ Notes:
 | --- | --- |
 | How fast enrolment can be, and whether warm guests can be enrolled ahead | enrolment and warm pools research |
 | Accessibility tree and input on each OS, and which computer-use tool to build on | computer use research |
-| Details and licences of the Windows, Mac, Tart, Docker and SSH pool backends | later-backends research |
-| Enrolment in a container without an init system | enrolment research, then the Docker backend |
+| Details of the Windows, Mac, Tart, Docker and SSH pool backends | later-backends research |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
