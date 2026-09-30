@@ -47,10 +47,12 @@ is the default desktop.
   SetDesktopSize and `xrandr --fb` cannot shrink the screen below its output.
 - Proxmox LXC gives `linux-desktop` a `resize` that runs
   `xrandr --fb <width>x<height>` on display `:99` as the box user over SSH,
-  with no size cap, and sets `resizable: true` again.
+  with no size cap, and sets `resizable: true` again. Back on the CPU it
+  does nothing, as Xtigervnc has taken the SetDesktopSize.
   `linux-desktop-cpu` keeps SetDesktopSize.
-- The conformance suite checks `resize` where a display offers it: after it
-  resolves, a new connection's ServerInit gives the new size.
+- The conformance suite checks `resize` where a display offers it, as core
+  uses it: after a SetDesktopSize and `resize`, a new connection's
+  ServerInit gives the new size.
 
 ## Consequences
 
@@ -66,6 +68,12 @@ is the default desktop.
   resizes.
 - The same hook serves any backend whose stream server shows a screen it did
   not make, such as `x0vncserver` on a real machine's display.
+- `xrandr --fb` on the CPU path would race the viewer. noVNC sends a resize
+  every 100 ms while the panel is dragged, and Xtigervnc takes each in about
+  1 ms, so an older size over SSH can land after a newer one. Below the
+  screen's output, `xrandr --fb` exits 1 but still shrinks the screen and
+  leaves its only output disconnected until the next SetDesktopSize
+  (TigerVNC 1.16.2).
 - Checked on a real `linux-desktop` box on 30 September:
 
   | Check | Result |

@@ -1267,14 +1267,17 @@ export class ProxmoxLxcBackend implements Backend {
 
   /**
    * Sets the GPU desktop's size with xrandr, as the box user. With no clamp:
-   * a size the X server cannot take fails with xrandr's reason (021).
+   * a size the X server cannot take fails with xrandr's reason (021). Back on
+   * the CPU it does nothing: Xtigervnc has taken the viewer's SetDesktopSize,
+   * and an older size that lands after a newer one disconnects its output.
    */
   async #resize(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
     const { width, height } = size;
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
       throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
     }
-    const result = await command.run(`${DISPLAY_ENV} xrandr --fb ${width}x${height}`, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+    const script = `[ "$(cat ${DISPLAY_MODE_FILE} 2>/dev/null)" = cpu ] || ${DISPLAY_ENV} xrandr --fb ${width}x${height}`;
+    const result = await command.run(script, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) {
       throw new Error(`xrandr could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
     }

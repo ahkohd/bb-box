@@ -130,8 +130,9 @@ and `start` and `stop` throw `gone`.
   `linux-desktop` screen, which has no RandR outputs, so the backend resizes
   it with `xrandr --fb`
   ([021](decisions/021-desktop-resize-through-the-backend.md)).
-  `linux-desktop-cpu` takes the viewer's resize itself. Both desktops resize
-  to the viewer while you hold control.
+  `linux-desktop-cpu`, and a `linux-desktop` box back on the CPU, take the
+  viewer's resize themselves. Both desktops resize to the viewer while you
+  hold control.
 - A box user in the `docker` group is root on the machine, so an SSH pool
   offers `linux-headless-docker` only if its reset restores the whole machine
   (`restores: "machine"`). Rootless Docker kept in the box user's home may

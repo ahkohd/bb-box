@@ -52,7 +52,8 @@ export interface Display {
   /**
    * Sets the display's size the backend's own way, for a stream server that
    * may not act on a viewer's SetDesktopSize (021). A display with it is
-   * resizable. The SetDesktopSize still reaches the box, so setting a size the
+   * resizable. Core sends the box a SetDesktopSize for the size first, so it
+   * may do nothing when the stream server took that, and setting a size the
    * display already has must succeed. Rejects with the box's reason when the
    * box refuses the size.
    */
