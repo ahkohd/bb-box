@@ -119,7 +119,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
       gpu: true,
       features: ["docker"],
       command: SSH_COMMAND,
-      // Xorg on the GPU has no RandR outputs, so its screen keeps its size (006).
+      // x0vncserver refuses a viewer's resize on a screen with no RandR outputs (006, 021).
       displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
       computerUse: CUA_DRIVER,
       enrol: true,

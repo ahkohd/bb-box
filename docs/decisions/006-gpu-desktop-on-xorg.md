@@ -1,7 +1,9 @@
 # 006: The Linux GPU desktop runs Xorg with NVIDIA's driver, streamed by x0vncserver
 
 Status: accepted, 30 September 2026. Research:
-[the GPU in a desktop box](../research/gpu-desktop.md).
+[the GPU in a desktop box](../research/gpu-desktop.md). Partly superseded by
+[021](021-desktop-resize-through-the-backend.md): the screen resizes with
+`xrandr --fb`, so the backend resizes it for the viewer.
 
 ## Context
 
