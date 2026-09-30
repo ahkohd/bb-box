@@ -1,136 +1,124 @@
 # bb-box
 
-bb-box gives each BB thread its own computers: fast Linux boxes on the
-operator's Proxmox host, controlled from BB by the operator and by the thread's
-agent.
+Computers for BB threads. A thread gets its own boxes (Linux, Windows or macOS,
+virtual or real, with a desktop or headless), and both the operator and the
+thread's agent control them from BB.
 
 ## Goal
 
 bb-box is for the operator's personal use with BB. A box is a resource of the
-BB thread that asked for it, not a security boundary: anyone who can start the
+thread that asked for it, not a security boundary: anyone who can start the
 operator's BB threads already has everything. A box exists so an agent has its
-own environment for real computer, browser and app development work.
+own machine for real computer, browser and app development work, and so heavy
+or messy work (Docker, backends, builds) runs there instead of on the
+operator's machine.
 
-Requirements, from the operator on 30 September 2026:
+Requirements, from the operator, 30 September 2026:
 
-- A BB thread can have as many boxes as it needs; Moonstead's capacity is the
-  only limit (an optional per-thread limit setting is off by default).
+- A thread can have as many boxes as it needs. The host's capacity is the only
+  limit; an optional per-thread limit is off by default.
 - Crazy fast startup.
-- A box has access to everything its thread has.
-- A **desktop** box where the agent does real computer-use and browser-use
-  work, for example profiling a web app or working on a GPUI project, with a
-  real GPU.
-- A **headless** box for the agent's own work, so it runs Docker and backend
-  services there instead of on the operator's machine.
-- The operator controls all of this in BB, and so does the agent.
+- A box has everything its thread has: Git credentials, machine variables, BB,
+  and the same network reach as the thread's own machine.
+- **Desktop boxes** for real computer-use and browser-use work: profiling a
+  web app, working on a GPUI project, native apps, with a real GPU.
+- **Headless boxes** for the agent's own work: Docker, backend services,
+  builds.
+- The operator and the agent both control every box in BB: start, see, use,
+  take control, release.
+- A box lives until its thread is archived or deleted, or until the operator or
+  the agent releases it. No expiry, TTL or idle timeout.
+- Linux first, Windows next, macOS last.
 
-A box lives until its thread is archived or deleted, or until the operator or
-the agent releases it. There is no expiry, TTL or idle timeout.
+What matters, in order: UX, startup speed, BB integration. Keep what makes
+bb-box reliable (clean-up when a thread ends, recovery after a crash, a
+capacity guard) and nothing that serves none of these.
 
-What matters, in order: UX, startup speed, BB integration. Do not add security
-hardening that serves none of these. Keep what makes bb-box reliable: clean-up
-when a thread ends, limits against runaway use, and recovery after a crash.
+## Concepts
 
-## Decisions
+- **Box**: one computer held by one thread. It has a friendly name, a kind, an
+  address and a state.
+- **Backend**: where boxes come from. The plugin reaches every machine only
+  through the backend interface, and never talks to Proxmox, a hypervisor, SSH
+  or a platform directly.
+- **Kind**: what a backend offers, with declared capabilities: guest OS,
+  desktop or headless, GPU, Docker, how to run commands and copy files, the
+  desktop viewer, whether the box enrols in BB, and capacity. The agent tools
+  and the panel follow these declarations, so a new platform plugs in without
+  reworking them.
+- **Virtual or real**: a virtual box is created on demand and deleted on
+  release; a real box is a physical machine claimed from a pool and reset and
+  returned on release. The interface is acquire and release for both. A warm
+  pool of ready virtual boxes and a pool of real machines are the same idea.
+- **Thread access**: a box enrols in BB as an ordinary machine, which is how it
+  gets the thread's Git credentials and machine variables, and lets child
+  threads run on it. The agent can also reach its boxes directly, for example
+  with `ssh` or `DOCKER_HOST`.
+- **Control**: the operator uses the thread's panel (every box, its desktop
+  view, take control, release); the agent uses bb-box's tools (acquire, list,
+  status, release, run a command, copy files, and computer use on desktops).
+  The desktop is shared: when the operator takes control they drive the
+  agent's own desktop, and the agent's input pauses until they hand back.
+- **Computer use**: the accessibility tree first (roles, names, values,
+  actions, element references), screenshots second, the same way on every
+  OS.
 
-bb-box replaces Stead (`moonstead/stead`), which leased VMs through a Crabbox
-coordinator and adapter and wrapped them in a security design the operator did
-not want. These were decided on 30 September 2026, from measurements on
-Moonstead:
-
-- **No Crabbox, no coordinator.** A box belongs to one thread, and BB already
-  knows who the operator and the agent are, so BB is the coordinator. The
-  bb-box BB plugin calls the Proxmox API itself and reaches boxes over SSH and
-  VNC. BB's plugin SDK serves HTTP and WebSocket routes
-  (`bb.http.route`, `bb.http.experimental_websocket`), agent tools, a panel,
-  thread lifecycle events and machine providers.
-- **LXC containers, not VMs.** On Moonstead (Proxmox VE 9.2, kernel 6.17), a
-  linked clone of an Ubuntu 24.04 CT template took 1 s, starting it 1 s, and
-  systemd finished booting in 0.8 s. Crabbox took 55 s to hand over the same
-  container. Containers share the host's NVIDIA driver, so many desktops share
-  one GPU; a VM would need a whole GPU passed through. Docker runs in an
-  unprivileged container with `nesting=1`. bb-box has no VMs: the operator
-  decided a VM is overkill for this use.
-- **Microsandbox is not needed.** It boots faster (about 100 ms) but has no
-  display or GPU on Linux, runs one process under its own init rather than
-  systemd, and is beta. Containers boot in under a second, and a warm pool
-  hides even that.
-
-## Backends: the core of the design
-
-Every box comes from a backend. The registry, agent tools and panel talk only
-to the backend interface, never to Proxmox, LXC or SSH directly. Each backend
-declares its box kinds and what they can do: guest OS, desktop or headless,
-GPU, Docker, how to run commands and copy files, the desktop viewer protocol,
-whether the box enrols as a BB machine, and how to check capacity. Tools and
-the panel follow those declarations, so a new platform plugs in without
-reworking them. Several backends can be active at once.
-
-A box is virtual or real. The interface is acquire and release, not create and
-destroy: a virtual backend clones and starts a box, or takes one from its warm
-pool, and deletes it on release; a real backend claims a free physical machine
-from a pool and, on release, resets it to a clean state and returns it to the
-pool. A real machine is held by one thread at a time. Capacity is free memory
-and disk for virtual boxes and free machines for real ones.
+## Backends
 
 | Backend | Virtual or real | Kinds | Status |
 | --- | --- | --- | --- |
-| Proxmox LXC | virtual | Linux desktop (GPU), Linux headless (Docker) | first |
-| Proxmox QEMU | virtual | Windows desktop (RDP or VNC) | next |
-| Mac | real Mac mini, or virtual macOS VMs on one | macOS desktop | last |
+| Proxmox LXC | virtual | Linux desktop with GPU, Linux headless with Docker | building |
+| Proxmox QEMU | virtual | Windows desktop | next |
+| Mac | real Mac mini, or macOS VMs on one | macOS desktop, iOS Simulator | last |
 | Physical PC pool | real | Linux or Windows | when needed |
 
-## Architecture
+## The first backend: Proxmox LXC on Moonstead
 
-```
-BB server (LXC 115)
- └─ bb-box plugin
-     ├─ registry: each thread's boxes (kind, VMID, address, state), in plugin storage
-     ├─ Proxmox API: linked clone from a CT template, set cores, memory, disk,
-     │   features and devices, start, stop, delete; tags name the owning thread
-     ├─ warm pool: a few started boxes per kind, handed out at once and refilled
-     ├─ SSH to each box: run commands, copy files, set up the thread's access
-     ├─ WebSocket route: noVNC in BB's panel to each desktop box's VNC server
-     ├─ agent tools: create, list, status, release, exec, copy, screenshot and
-     │   Cua input for desktops
-     ├─ panel: every box in the thread; start, stop, view, take control
-     └─ thread archive and delete: delete that thread's boxes; a sweep deletes
-         boxes whose thread is archived, deleted or gone, in case an event was
-         missed. Nothing else ends a box: no expiry, TTL or idle timeout.
-Moonstead (Proxmox)
- ├─ CT templates: bbbox-headless (dev tools, Docker) and bbbox-desktop
- │   (XFCE, TigerVNC or NVIDIA Xorg, Chrome, Cua Driver, NVIDIA user space)
- ├─ pool bbbox, VMIDs in a dedicated range
- └─ guest bridge with NAT: boxes reach the internet, LAN and tailnet like the
-     thread's own machine, and the tailnet and LAN reach boxes by address
-```
+Measured on Moonstead (Proxmox VE 9.2, 2 NVIDIA RTX PRO 6000, 64 threads,
+251 GB) on 30 September 2026:
 
-A box gets what its thread has: the thread's Git credentials and machine
-variables, BB (a box can also be enrolled as a BB machine, so a child thread
-can run on it), and network reach. The thread's agent can SSH to its boxes, for
-example with `DOCKER_HOST=ssh://<box>`.
+- Unprivileged LXC containers, linked-cloned from CT templates: clone 1 s,
+  start 1 s, boot 0.8 s, SSH ready about 1.2 s after start. Crabbox, which
+  Stead used, took 55 s for the same container.
+- Headless template 9800: Ubuntu 24.04, dev tools, Claude Code, Codex, Pi,
+  Docker with compose and buildx (`nesting=1`; no `keyctl` needed).
+- Desktop template 9801: Xorg with NVIDIA's driver on a virtual screen as the
+  box user, served over VNC, XFCE, Chrome, and the host's NVIDIA driver version
+  in the container. GL and Vulkan run on the GPU: Chrome's WebGL, WebGPU and
+  video decode are hardware accelerated, and a GPUI example runs on the GPU.
+  Without the GPU, the desktop falls back to CPU rendering.
+- Network: bridge `vmbr78` (10.78.0.0/24) with NAT and no filtering; boxes
+  reach the internet, the LAN, the tailnet and BB, and BB reaches boxes
+  directly. Addresses are static, so there is no DHCP wait.
+- Nesting and GPU devices are set on the templates once by root; the plugin's
+  Proxmox token only clones, configures, starts and deletes.
+- Limits: each desktop uses one GPU, and the GPUs' free memory limits how many
+  desktops get hardware rendering; the rest fall back to CPU rendering.
 
-Taking control of a desktop is shared: the operator drives the agent's own
-desktop, and the agent's Cua input pauses until they hand back.
+## Decisions
 
-## Plan
+- **BB is the coordinator.** No Crabbox, coordinator, adapter, relay or portal:
+  the bb-box BB plugin calls each backend directly, and BB provides auth,
+  threads, events, agent tools, the panel, HTTP and WebSocket routes, and
+  machine enrolment.
+- **Containers for Linux.** LXC gives startup in seconds, a shared host GPU and
+  Docker. A VM is overkill for Linux; Windows needs one.
+- **Microsandbox is not needed.** It has no display or GPU on Linux and runs
+  one process rather than a full systemd session; LXC boots in under a second.
+- **Stead is gone.** bb-box replaces it; Stead and Crabbox were removed on
+  30 September 2026.
 
-1. Headless boxes end to end: CT template with Docker, plugin registry and
-   Proxmox driver, SSH exec, agent tools, panel list, clean-up. Target: a
-   thread gets a working headless box in a few seconds.
-2. Desktop boxes: CT template with the desktop stack and the NVIDIA GPU, noVNC
-   through the plugin, shared control, Cua tools. Target: an agent profiles a
-   web app in Chrome and runs a GPUI example on the GPU.
-3. Thread access: Git credentials, machine variables, BB machine enrolment for
-   child threads, network reach both ways.
-4. Speed: warm pool, and anything else between request and ready.
-5. Windows desktop boxes, as Proxmox QEMU VMs (a container cannot run
-   Windows).
-6. macOS boxes, last: a real Mac mini, or macOS VMs on one (Apple allows macOS
-   VMs only on Apple hardware, so not on Proxmox).
+Detailed design: [docs/architecture.md](docs/architecture.md),
+[docs/backends.md](docs/backends.md), decision records in
+[docs/decisions](docs/decisions), research in [docs/research](docs/research).
 
-The plugin's driver is a small backend interface; Proxmox LXC implements it
-now, and Windows and macOS backends plug in later without reworking the
-registry, tools or panel.
+## Roadmap
 
-Stead was removed on 30 September 2026, with the operator's approval.
+1. Linux headless boxes end to end: template, backend, registry, agent tools,
+   panel, clean-up, BB enrolment. Target: a working box in seconds.
+2. Linux desktop boxes: GPU desktop template, desktop streaming in BB's panel,
+   shared control, computer use for the agent.
+3. Speed: a warm pool of ready boxes, and faster BB enrolment and checkout.
+4. Windows boxes on Proxmox QEMU.
+5. macOS boxes on a Mac mini, physical or as macOS VMs, with the iOS
+   Simulator.
