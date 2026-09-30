@@ -767,7 +767,7 @@ function imageOf(result: PluginAgentToolResult): { data: string; mimeType: strin
 
 /** A desktop box whose desktop has one Tasks window, window 100. */
 async function desktopBox(options: { computer?: SetupOptions["computer"] } = {}) {
-  const started = await start(undefined, { computer: { pauseWaitMs: 300, ...options.computer } });
+  const started = await start(undefined, { computer: { pauseWaitMs: 300, desktopWaitMs: 300, ...options.computer } });
   await started.harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
   await started.app.boxes.idle();
   const box = await only(started.app);
@@ -784,7 +784,7 @@ test("an agent reads a desktop box's window, acts on references and is told what
   assert.match(windows, /- window 100: tasks "Tasks", 800 by 600/);
 
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
-  assert.match(tree, /^Window 100: tasks "Tasks", 800 by 600\. 11 elements\./);
+  assert.match(tree, /^Window 100: tasks "Tasks", 800 by 600\. 11 elements, 12 lines\./);
   assert.match(tree, /\n {2}- heading = "My tasks"\n/, "text that cannot be acted on has no reference");
   assert.doesNotMatch(tree, /actions=\[\]/);
   const deleteOne = refOf(tree, '"Delete Task 1"');
@@ -821,7 +821,7 @@ test("an agent reads a desktop box's window, acts on references and is told what
   assert.doesNotMatch(queried, /Buy milk/);
 
   const limited = text(await tool("computer_observe", { box: box.name, window: 100, limit: 2 }));
-  assert.match(limited, /Partial: showing 2 of them\. Pass query to find an element, or a larger limit\./);
+  assert.match(limited, /Partial: showing 2 of 10 lines \(1 of 9 elements\); 8 lines cut\. Pass query to see only the lines you need, or a larger limit \(at most 2000\)\./);
 
   const unknown = await tool("computer_act", { box: box.name, action: "click", ref: "e999" });
   assert.match(text(unknown), /^bb-box has no reference e999 for box .*\n\nNext: Call computer_observe to get references\./);
@@ -856,13 +856,13 @@ test("pixels count only against the agent's latest image of the window or the de
   assert.match(text(blind), /^You have no current image of window 100, so bb-box cannot tell what x and y mean\.\n\nNext: Call computer_screenshot with window 100/);
 
   const shot = await tool("computer_screenshot", { box: box.name, window: 100 });
-  assert.match(text(shot), /^window 100: tasks "Tasks", 800 by 600\. The image is 800 by 600 pixels\./);
+  assert.match(text(shot), /^window 100: tasks "Tasks", 800 by 600\. Image 800x600 of window 800x600, scale 1; x and y are image pixels\./);
   assert.equal(imageOf(shot)?.mimeType, "image/png");
   const outside = await tool("computer_act", { box: box.name, action: "click", window: 100, x: 800, y: 10 });
   assert.match(text(outside), /x and y must be inside the image of window 100: x from 0 to 799, y from 0 to 599\./);
   // Task 3's Delete button.
   const clicked = text(await tool("computer_act", { box: box.name, action: "click", window: 100, x: 745, y: 140 }));
-  assert.match(clicked, /^Clicked \(745, 140\) in window 100\./);
+  assert.match(clicked, /^Clicked \(745, 140\) in window 100\. Image 800x600 of window 800x600, scale 1; x and y are image pixels\./);
   assert.match(clicked, /- \[e\d+\] list item "Task 3"/);
 
   // The window grows: the next read finds the image no longer fits.
@@ -874,27 +874,115 @@ test("pixels count only against the agent's latest image of the window or the de
   assert.match(text(await tool("computer_act", { box: box.name, action: "click", window: 100, x: 745, y: 100 })), /^You have no current image of window 100/);
 
   const desktop = await tool("computer_screenshot", { box: box.name });
-  assert.match(text(desktop), /^The desktop, 1568 by 882 pixels\. x and y are pixels of this image; give window "desktop" with them\./);
-  assert.match(text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 })), /^Clicked \(784, 441\) on the desktop\.\n\nNext: Call computer_screenshot/);
+  assert.match(text(desktop), /^The desktop\. Image 1568x882 of screen 1920x1080, scale 0\.817; x and y are image pixels\. Give window "desktop" with them\./);
+  assert.match(
+    text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 })),
+    /^Clicked \(784, 441\) on the desktop, \(960, 540\) on the screen\. Image 1568x882 of screen 1920x1080, scale 0\.817; x and y are image pixels\.\n\nNo window opened, closed or changed and nothing changed in the tree of window 100, which is under that point\./,
+  );
   const click = lastCall(file, "click");
   assert.deepEqual(click?.args, { x: 960, y: 540, scope: "desktop", button: "left", count: 1, delivery_mode: "background" }, "the desktop's pixels become the screen's");
 
   const launched = text(await tool("computer_launch", { box: box.name, app: "wide" }));
   const wide = Number(/window (\d+): wide/.exec(launched)?.[1]);
   const big = await tool("computer_screenshot", { box: box.name, window: wide });
-  assert.match(text(big), /The image is 1568 by 78 pixels\./, "no image is longer than 1568 pixels");
+  assert.match(text(big), /Image 1568x78 of window 4000x200, scale 0\.392; x and y are image pixels\./, "no image is longer than 1568 pixels");
+  const observed = text(await tool("computer_observe", { box: box.name, window: wide, screenshot: true }));
+  assert.match(observed, /\n\nImage 1568x78 of window 4000x200, scale 0\.392; x and y are image pixels\./);
 });
 
 test("computer_launch opens apps and URLs and says which windows opened", async (t) => {
-  const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 500 } });
+  const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 500, pageWaitMs: 1_500 } });
   t.after(() => harness.lifecycle.dispose());
   assert.match(text(await tool("computer_launch", { box: box.name, app: "tasks" })), /^Opened tasks\. Its window:\n- window 101: tasks "Tasks", 800 by 600\n\nNext: Call computer_observe with window 101/);
   assert.match(text(await tool("computer_launch", { box: box.name, app: "mousepad" })), /^Opened mousepad\. Its window:\n- window 102: mousepad "mousepad", 640 by 480/);
-  assert.match(text(await tool("computer_launch", { box: box.name, url: "https://example.com" })), /no new window appeared within 1 s\. It may have opened in a browser window that was already open\./);
+
+  // A browser's window is untitled until its page loads.
+  const page = text(await tool("computer_launch", { box: box.name, url: "https://example.com/" }));
+  assert.match(page, /^Opened https:\/\/example\.com\/\. Its window:\n- window 103: browser "example\.com - Browser", 1280 by 800\n\nNext: Call computer_observe with window 103/);
+  const reused = text(await tool("computer_launch", { box: box.name, url: "https://example.org/" }));
+  assert.match(reused, /^Opened https:\/\/example\.org\/ in a window that was already open:\n- window 103: browser "example\.org - Browser", 1280 by 800\n\nNext/);
+  const slow = text(await tool("computer_launch", { box: box.name, url: "https://example.net/slow" }));
+  assert.match(slow, /^Opened https:\/\/example\.net\/slow in a window that was already open:\n- window 103: browser "Untitled - Browser", 1280 by 800\n\nThe page is still loading: its window's title is still "Untitled - Browser"\./);
+
+  // Cua's advice names its own tools, which the agent does not have.
   const missing = await tool("computer_launch", { box: box.name, app: "missing" });
   assert.equal(isError(missing), true);
-  assert.match(text(missing), /^Cua Driver could not open missing: No app named missing\./);
+  assert.equal(
+    text(missing),
+    "bb-box could not open missing: 'missing' is not an executable on PATH and matches no installed .desktop application. Apps installed in the box: Browser, Editor, Tasks, Wide.\n\n" +
+      "Next: Give app as one of these names, or the path of a program in the box.",
+  );
   assert.match(text(await tool("computer_launch", { box: box.name })), /^Give app or url, not both and not neither\./);
+});
+
+test("a web page's runs of text are one line each, and the limit counts every line shown", async (t) => {
+  const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  const opened = text(await tool("computer_launch", { box: box.name, url: "https://example.com/" }));
+  const id = Number(/window (\d+): browser/.exec(opened)?.[1]);
+
+  const page = text(await tool("computer_observe", { box: box.name, window: id }));
+  assert.match(page, new RegExp(`^Window ${id}: browser "example\\.com - Browser", 1280 by 800\\. 65 elements, 128 lines\\.\n`));
+  assert.match(page, /\n {4}- static = "The quick brown fox jumps over the lazy dog\."\n {4}- \[e\d+\] link "Read more" \[actions=\[click\]\]\n {4}- static = "Hello world"\n {4}- \[e\d+\] link "" \[actions=\[click\]\]\n {4}- \[e\d+\] list "Results"\n/);
+  assert.match(page, /- \[e\d+\] list item ""\n {8}- static = "Result 60"\n/);
+  assert.doesNotMatch(page, /\uFFFC/, "names made only of object replacement characters are noise");
+  assert.doesNotMatch(page, /Partial/);
+  assert.match(page, /Next: .*This tree is large: pass query to see only the lines you need\./);
+
+  const limited = text(await tool("computer_observe", { box: box.name, window: id, limit: 50 }));
+  assert.match(limited, /Partial: showing 50 of 128 lines \(26 of 65 elements\); 78 lines cut\. Pass query to see only the lines you need, or a larger limit \(at most 2000\)\./);
+  assert.equal(limited.split("\n\n")[1]!.split("\n").length, 50);
+  assert.doesNotMatch(limited, /This tree is large/);
+
+  const queried = text(await tool("computer_observe", { box: box.name, window: id, query: "result 7" }));
+  assert.match(queried, /1 line matches "result 7", shown with their ancestors\./);
+  assert.match(queried, /\n {6}- \[e\d+\] list item ""\n {8}- static = "Result 7"\n\nNext/);
+});
+
+test("a text area keeps its reference when typing into it renames its document", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  const opened = text(await tool("computer_launch", { box: box.name, app: "editor" }));
+  const id = Number(/window (\d+): editor "Untitled 1 - Editor"/.exec(opened)?.[1]);
+  const tree = text(await tool("computer_observe", { box: box.name, window: id }));
+  const area = refOf(tree, 'text "" value=""');
+
+  const typed = text(await tool("computer_type", { box: box.name, ref: area, text: "Hello" }));
+  assert.match(typed, new RegExp(`^Typed 5 characters into ${area} \\(text\\)\\.`));
+  assert.match(typed, /The window's title is now "\*Untitled 1 - Editor"\./);
+  assert.match(typed, new RegExp(`${area} now reads: \\[${area}\\] text "" value="Hello"`));
+  assert.equal(lastCall(file, "type_text")?.args.delivery_mode, "background");
+
+  const again = text(await tool("computer_type", { box: box.name, ref: area, text: " world" }));
+  assert.match(again, new RegExp(`${area} now reads: \\[${area}\\] text "" value="Hello world"`));
+  assert.match(text(await tool("computer_observe", { box: box.name, window: id })), new RegExp(`- \\[${area}\\] text "" value="Hello world"`));
+});
+
+test("an action on the desktop says which windows opened, closed or changed, or suggests a screenshot", async (t) => {
+  const { harness, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const shot = text(await tool("computer_screenshot", { box: box.name }));
+  assert.match(shot, /^The desktop\. Image 1568x882 of screen 1920x1080, scale 0\.817;/);
+
+  // The Clear all button of window 100, at (850, 640) on the screen.
+  const opened = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 694, y: 523 }));
+  assert.match(opened, /^Clicked \(694, 523\) on the desktop, \(850, 640\) on the screen\. Image 1568x882 of screen 1920x1080, scale 0\.817; x and y are image pixels\./);
+  assert.match(opened, /\n\nA modal dialog "Clear all tasks\?", window 101, is open over this window\./);
+  assert.match(opened, /\n\nWindows that changed \(\+ opened, - closed, ~ changed\):\n\+ window 101: tasks "Clear all tasks\?", 300 by 150\n\nNext: /);
+  assert.match(opened, /Call computer_observe with window 101 to read it\./);
+
+  // The dialog's Cancel button.
+  const closed = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 302, y: 339 }));
+  assert.match(closed, /Windows that changed \(\+ opened, - closed, ~ changed\):\n- window 101: tasks "Clear all tasks\?", 300 by 150/);
+
+  // A context menu is missing from the window list, but not from the tree of the window it opened over.
+  const menu = text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 245 }));
+  assert.match(menu, /A popup, window 102, is open over this window\./);
+  assert.doesNotMatch(menu, /Windows that changed/);
+
+  // Nothing is under (960, 540), and nothing changes.
+  const nothing = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 }));
+  assert.match(nothing, /\n\nNo window opened, closed or changed\. Anything else that changed shows only in pixels\.\n\nNext: Call computer_screenshot with window "desktop" to see the desktop now\.$/);
 });
 
 test("while a person holds a desktop the computer tools wait, and afterwards the agent is told to observe", async (t) => {

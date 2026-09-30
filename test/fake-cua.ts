@@ -7,8 +7,18 @@
 //
 // The desktop has Tasks windows: a list of tasks, each with a "Delete Task N"
 // button, a "New task" field that refuses background typing, an Add button
-// and a "Clear all" button that opens a modal dialog. A window of app "wide"
-// is wider than the longest edge bb-box gives the agent.
+// and a "Clear all" button that opens a modal dialog. A right click in one
+// opens a context menu, which, like a real one, is missing from the window
+// list. A window of app "wide" is wider than the longest edge bb-box gives
+// the agent.
+//
+// App "editor" is like Mousepad: a text area with no name, inside a tab
+// named after the document, which gains a "*" once edited, as does the title.
+// A URL opens in app "browser", whose window is titled "Untitled" until its
+// page loads; a URL with "slow" in it never does. A second URL goes to the
+// browser window already open. Its page gives each word, and each letter, of
+// some text a line of its own, as Chrome does, and has names made only of
+// U+FFFC.
 
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -28,6 +38,8 @@ export interface FakeWindow {
   onScreen: boolean;
   /** The Tasks window a dialog belongs to. */
   dialogOf?: number;
+  /** The window a context menu belongs to. */
+  menuOf?: number;
 }
 
 export interface FakeDesktop {
@@ -35,8 +47,10 @@ export interface FakeDesktop {
   windows: FakeWindow[];
   /** The tasks of each Tasks window. */
   tasks: Record<string, string[]>;
-  /** The "New task" field of each Tasks window. */
+  /** The "New task" field of each Tasks window, or the text of each editor. */
   fields: Record<string, string>;
+  /** The URL each browser window shows. */
+  pages?: Record<string, string>;
   nextWindow: number;
   nextPid: number;
   /** Milliseconds a tool waits before it answers. */
@@ -143,8 +157,56 @@ function tree(desktop: FakeDesktop, window: FakeWindow): Node {
       ],
     };
   }
+  if (window.menuOf !== undefined) {
+    return {
+      key: "menu",
+      role: "menu",
+      label: "",
+      actions: [],
+      frame: frame(0, 0, window.width, window.height),
+      children: ["Rename", "Delete"].map((item, at) => ({ key: `menu:${item}`, role: "menu item", label: item, actions: ["click"], frame: frame(0, at * 30, window.width, 30), children: [] })),
+    };
+  }
+  const whole = frame(0, 0, window.width, window.height);
+  if (window.app === "editor") {
+    const edited = desktop.fields[window.id] ? "*" : "";
+    const area: Node = { key: "document", role: "text", label: "", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(0, 60, window.width, window.height - 60), children: [] };
+    const pane: Node = { key: "pane", role: "scroll pane", label: "", actions: [], frame: area.frame, children: [area] };
+    const tab: Node = { key: "tab", role: "page tab", label: `${edited}Untitled 1`, actions: ["click"], frame: frame(0, 30, 120, 30), children: [pane] };
+    return { key: "frame", role: "frame", label: window.title, actions: [], frame: whole, children: [tab] };
+  }
+  if (window.app === "browser") {
+    const url = desktop.pages?.[window.id] ?? "about:blank";
+    const statics = (key: string, pieces: string[]): Node[] =>
+      pieces.map((piece, at) => ({ key: `${key}:${at}`, role: "static", label: piece, actions: [], frame: whole, children: [], text: true }));
+    const results: Node[] = Array.from({ length: 60 }, (_, at) => ({
+      key: `result:${at + 1}`,
+      role: "list item",
+      label: "",
+      actions: [],
+      frame: whole,
+      children: statics(`result:${at + 1}`, ["Result", String(at + 1)]),
+    }));
+    const page: Node = {
+      key: "page",
+      role: "document web",
+      label: hostname(url),
+      actions: [],
+      frame: whole,
+      children: [
+        { key: "heading", role: "heading", label: "Welcome", actions: [], frame: whole, children: [], text: true },
+        ...statics("words", "The quick brown fox jumps over the lazy dog.".split(" ")),
+        { key: "more", role: "link", label: "Read more", actions: ["click"], frame: whole, children: [] },
+        ...statics("letters", [..."Hello world"]),
+        { key: "object", role: "link", label: "\uFFFC", actions: ["click"], frame: whole, children: [] },
+        { key: "objects", role: "static", label: "\uFFFC\uFFFC", actions: [], frame: whole, children: [], text: true },
+        { key: "results", role: "list", label: "Results", actions: [], frame: whole, children: results },
+      ],
+    };
+    return { key: "frame", role: "frame", label: window.title, actions: [], frame: whole, children: [page] };
+  }
   if (window.app !== "tasks") {
-    return { key: "frame", role: "frame", label: window.title, actions: [], frame: frame(0, 0, window.width, window.height), children: [] };
+    return { key: "frame", role: "frame", label: window.title, actions: [], frame: whole, children: [] };
   }
   const tasks = desktop.tasks[window.id] ?? [];
   return {
@@ -175,6 +237,14 @@ function tree(desktop: FakeDesktop, window: FakeWindow): Node {
       { key: "clear", role: "push button", label: "Clear all", actions: ["click"], frame: frame(710, 520, 80, 40), children: [] },
     ],
   };
+}
+
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 function flatten(root: Node): Flat[] {
@@ -280,6 +350,8 @@ export class FakeCua {
         return this.#setValue(args);
       case "launch_app":
         return this.#launch(args);
+      case "list_apps":
+        return this.#apps();
       default:
         return text(`Unknown tool ${tool}.`, { code: "unknown_tool" }, true);
     }
@@ -287,7 +359,7 @@ export class FakeCua {
 
   #listWindows(): Result {
     const desktop = this.#load();
-    const windows = desktop.windows.map((window) => this.#windowJson(window));
+    const windows = desktop.windows.filter((window) => window.menuOf === undefined).map((window) => this.#windowJson(window));
     return text(`${windows.length} windows.`, { windows });
   }
 
@@ -325,7 +397,7 @@ export class FakeCua {
       window_title: window.title,
       window_bounds: { x: window.x, y: window.y, width: window.width, height: window.height },
       dialogs,
-      popups: [],
+      popups: desktop.windows.filter((other) => other.menuOf === window.id).map((menu) => ({ ...this.#windowJson(menu), override_redirect: true })),
       tree_markdown: markdown(flat),
     };
     const content: Result["content"] = [{ type: "text", text: `${elements.length} elements.` }];
@@ -376,6 +448,13 @@ export class FakeCua {
     return this.#change((desktop) => {
       if (args.pid === undefined && args.window_id === undefined) {
         if (args.scope !== "desktop") return text('click: x,y given with no pid/window_id requires scope="desktop".', { code: "desktop_coordinate_scope_required" }, true);
+        // The topmost window at the point gets it, as on a real screen.
+        const x = Number(args.x);
+        const y = Number(args.y);
+        const under = desktop.windows
+          .filter((window) => window.onScreen && x >= window.x && x < window.x + window.width && y >= window.y && y < window.y + window.height)
+          .sort((a, b) => b.id - a.id)[0];
+        if (under) this.#activate(desktop, under, hit(desktop, under, x - under.x, y - under.y), args);
         return text(`Sent screen-absolute click at (${String(args.x)},${String(args.y)}) (desktop scope).`, { effect: "unverifiable" });
       }
       const window = this.#window(desktop, args);
@@ -384,29 +463,37 @@ export class FakeCua {
       if (typeof args.x === "number" && typeof args.y === "number") {
         const shot = this.#shots.get(window.id);
         if (!shot) return text("A pixel click needs a screenshot from get_window_state of this window first.", { code: "no_screenshot" }, true);
-        const x = (args.x * window.width) / shot.width;
-        const y = (args.y * window.height) / shot.height;
-        const hits = flatten(tree(desktop, window)).filter(({ node: { frame } }) => x >= frame.x && x < frame.x + frame.width && y >= frame.y && y < frame.y + frame.height);
-        node = hits[hits.length - 1]!.node;
+        node = hit(desktop, window, (args.x * window.width) / shot.width, (args.y * window.height) / shot.height);
       } else {
         node = this.#element(desktop, window, args.element_token);
       }
       if (!("key" in node)) return node;
-      const tasks = desktop.tasks[window.id];
-      if (node.key.startsWith("delete:") && tasks) {
-        desktop.tasks[window.id] = tasks.filter((task) => `delete:${task}` !== node.key);
-      } else if (node.key === "add" && tasks) {
-        const name = desktop.fields[window.id];
-        if (name) desktop.tasks[window.id] = [...tasks, name];
-        desktop.fields[window.id] = "";
-      } else if (node.key === "clear" && window.dialogOf === undefined) {
-        desktop.windows.push({ id: desktop.nextWindow++, pid: window.pid, app: window.app, title: "Clear all tasks?", x: 300, y: 300, width: 300, height: 150, onScreen: true, dialogOf: window.id });
-      } else if (window.dialogOf !== undefined && (node.key === "clear" || node.key === "cancel")) {
-        if (node.key === "clear") desktop.tasks[window.dialogOf] = [];
-        desktop.windows = desktop.windows.filter((other) => other.id !== window.id);
-      }
+      this.#activate(desktop, window, node, args);
       return text(`Clicked ${node.role} "${node.label}" (delivery_mode=${String(args.delivery_mode ?? "background")}).`, { verified: true });
     });
+  }
+
+  /** What a click on a node does. */
+  #activate(desktop: FakeDesktop, window: FakeWindow, node: Node, args: Args): void {
+    if (args.button === "right" && window.app === "tasks" && window.dialogOf === undefined && window.menuOf === undefined) {
+      desktop.windows.push({ id: desktop.nextWindow++, pid: window.pid, app: window.app, title: "", x: window.x + 50, y: window.y + 50, width: 120, height: 60, onScreen: true, menuOf: window.id });
+      return;
+    }
+    // Any other click closes a context menu.
+    desktop.windows = desktop.windows.filter((other) => other.menuOf === undefined || (other.menuOf !== window.id && other.id !== window.id));
+    const tasks = desktop.tasks[window.id];
+    if (node.key.startsWith("delete:") && tasks) {
+      desktop.tasks[window.id] = tasks.filter((task) => `delete:${task}` !== node.key);
+    } else if (node.key === "add" && tasks) {
+      const name = desktop.fields[window.id];
+      if (name) desktop.tasks[window.id] = [...tasks, name];
+      desktop.fields[window.id] = "";
+    } else if (node.key === "clear" && window.dialogOf === undefined) {
+      desktop.windows.push({ id: desktop.nextWindow++, pid: window.pid, app: window.app, title: "Clear all tasks?", x: 300, y: 300, width: 300, height: 150, onScreen: true, dialogOf: window.id });
+    } else if (window.dialogOf !== undefined && (node.key === "clear" || node.key === "cancel")) {
+      if (node.key === "clear") desktop.tasks[window.dialogOf] = [];
+      desktop.windows = desktop.windows.filter((other) => other.id !== window.id);
+    }
   }
 
   #type(args: Args): Result {
@@ -416,7 +503,12 @@ export class FakeCua {
       if (args.element_token !== undefined) {
         const node = this.#element(desktop, window, args.element_token);
         if (!("key" in node)) return node;
-        if (node.key !== "field") return text(`${node.role} "${node.label}" does not take text.`, { code: "not_editable" }, true);
+        if (node.key !== "field" && node.key !== "document") return text(`${node.role} "${node.label}" does not take text.`, { code: "not_editable" }, true);
+      }
+      if (window.app === "editor") {
+        desktop.fields[window.id] = `${desktop.fields[window.id] ?? ""}${String(args.text)}`;
+        window.title = "*Untitled 1 - Editor";
+        return text(`Typed ${String(args.text).length} characters.`, { delivery_mode: String(args.delivery_mode ?? "background") });
       }
       if (args.delivery_mode !== "foreground") {
         return text('Background delivery is not available for this target; retry with delivery_mode:"foreground".', {
@@ -461,9 +553,15 @@ export class FakeCua {
   }
 
   #launch(args: Args): Result {
-    if (Array.isArray(args.urls)) return text("Opened the URL.", { pid: null, running: true, windows: [], launcher_pid: 1 });
-    const name = String(args.name ?? args.launch_path ?? "");
-    if (name === "missing") return text("No app named missing.", { code: "not_found" }, true);
+    if (Array.isArray(args.urls)) return this.#openUrl(String(args.urls[0]));
+    const name = String(args.name ?? args.launch_path ?? "").toLowerCase();
+    if (name === "missing") {
+      return text(
+        `Failed to launch: 'missing' is not an executable on PATH and matches no installed .desktop application. Call list_apps and round-trip its launch_path.`,
+        undefined,
+        true,
+      );
+    }
     return this.#change((desktop) => {
       if (name === "tasks") {
         const window = openTasks(desktop, []);
@@ -475,12 +573,57 @@ export class FakeCua {
       const wide = name === "wide";
       setTimeout(() => {
         this.#change((later) => {
-          later.windows.push({ id, pid, app: name, title: name, x: 0, y: 0, width: wide ? 4000 : 640, height: wide ? 200 : 480, onScreen: true });
+          const title = name === "editor" ? "Untitled 1 - Editor" : name;
+          later.windows.push({ id, pid, app: name, title, x: 0, y: 0, width: wide ? 4000 : 640, height: wide ? 200 : 480, onScreen: true });
         });
       }, 200);
       return text(`Launched ${name}.`, { pid, running: true, windows: [] });
     });
   }
+
+  /** Opens a URL in the browser window already open, or in a new one a little later. */
+  #openUrl(url: string): Result {
+    return this.#change((desktop) => {
+      const loaded = (id: number) => {
+        if (url.includes("slow")) return;
+        setTimeout(() => {
+          this.#change((later) => {
+            const window = later.windows.find((candidate) => candidate.id === id);
+            if (window && later.pages?.[id] === url) window.title = `${hostname(url)} - Browser`;
+          });
+        }, 600);
+      };
+      const open = desktop.windows.find((window) => window.app === "browser");
+      if (open) {
+        (desktop.pages ??= {})[open.id] = url;
+        open.title = "Untitled - Browser";
+        loaded(open.id);
+      } else {
+        const pid = desktop.nextPid++;
+        const id = desktop.nextWindow++;
+        setTimeout(() => {
+          this.#change((later) => {
+            (later.pages ??= {})[id] = url;
+            later.windows.push({ id, pid, app: "browser", title: "Untitled - Browser", x: 0, y: 0, width: 1280, height: 800, onScreen: true });
+          });
+        }, 200);
+        loaded(id);
+      }
+      return text("Opened the URL.", { pid: null, running: true, windows: [], launcher_pid: 1 });
+    });
+  }
+
+  #apps(): Result {
+    const installed = ["Tasks", "Editor", "Browser", "Wide", "Editor"].map((name) => ({ name, kind: "desktop", launch_path: name.toLowerCase(), running: false }));
+    const apps = [...installed, { name: "Xvfb", kind: null, launch_path: null, running: true }];
+    return text(`${apps.length} apps.`, { apps });
+  }
+}
+
+/** The deepest node of a window at a point of it. */
+function hit(desktop: FakeDesktop, window: FakeWindow, x: number, y: number): Node {
+  const hits = flatten(tree(desktop, window)).filter(({ node: { frame } }) => x >= frame.x && x < frame.x + frame.width && y >= frame.y && y < frame.y + frame.height);
+  return hits[hits.length - 1]!.node;
 }
 
 /** Serves MCP on stdin and stdout, as `cua-driver mcp --socket <file>` does. */

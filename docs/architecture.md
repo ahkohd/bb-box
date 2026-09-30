@@ -713,17 +713,30 @@ A box is a resource of its thread and gets what the thread's own machine has.
   | `computer_launch` | opens an app or URL and returns its window ID |
 
 - **Tree text** has no frames, and uses the plugin's references such as
-  `e26`. The default budget is 300 elements; over it, the result says so and
-  suggests a query. A long article is 165 KB of text without one.
+  `e26`. Chrome gives each word, or each letter, of a page its own `static`
+  line, so a run of them becomes one line, and names made only of U+FFFC
+  (object replacement) are dropped. The default budget is 300 lines, counting
+  every printed line; over it, the header says how many were cut and suggests
+  a query. A long article is 165 KB of text without one.
 - **References** belong to the plugin. Each has a fingerprint: role, name,
-  and its ancestors' roles and names. An old reference is found again in the
-  latest tree, or refused if it matches none or several. With raw Cua tokens,
-  a stale reference in foreground mode clicked the wrong element.
+  and its ancestors' roles and names; never its value. An old reference is
+  found again in the latest tree, or refused if it matches none or several.
+  With raw Cua tokens, a stale reference in foreground mode clicked the wrong
+  element. When only an ancestor's name changed, as an editor's tab does when
+  its document is edited, an element keeps the reference of the element in
+  its place: the same role and name, under ancestors with the same roles, at
+  the same position among siblings of its role.
 - **Pixels.** The agent sees only pixels of images the plugin returned, at or
   under 1568 pixels on the long edge. A pixel action is accepted only against
-  the latest image of that window.
+  the latest image of that window. Each image and pixel action states the
+  image's size, the window's or screen's size and the scale between them.
 - **After each action** the plugin reads the tree again and returns what
-  changed.
+  changed. Cua cannot check a click on the desktop, so the plugin compares
+  the window list before and after, and reads the window under the point;
+  when it sees no change, it suggests a screenshot.
+- **Cua's own advice** names tools the agent does not have, such as
+  `list_apps`. The plugin drops those sentences, and when an app will not
+  open, lists the apps installed in the box.
 - **Delivery.** Background first, which does not move the shared pointer.
   When Cua refuses, in 2 to 4 ms, the plugin retries in foreground.
 
