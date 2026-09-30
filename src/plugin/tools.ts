@@ -29,12 +29,12 @@ const HINTS: Record<BoxErrorCode, string> = {
   unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
 };
 
-function failure(error: unknown, action: string): PluginAgentToolResult {
+export function failure(error: unknown, action: string): PluginAgentToolResult {
   const hint = error instanceof BoxError ? HINTS[error.code] : "Call box_status to see the box, or try again.";
   return { content: [{ type: "text", text: `${describeError(error, action)}${next(hint)}` }], isError: true };
 }
 
-function thread(threadId: string | undefined): string {
+export function thread(threadId: string | undefined): string {
   if (!threadId) throw new BoxError("unsupported", "bb-box tools work only inside a BB thread.");
   return threadId;
 }
@@ -93,9 +93,10 @@ async function ready(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<B
   }
 }
 
+export const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
+
 export function registerTools(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
-  const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
 
   bb.agents.registerTool({
     name: "box_acquire",

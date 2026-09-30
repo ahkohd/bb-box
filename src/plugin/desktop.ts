@@ -17,6 +17,8 @@ export interface DesktopDeps {
   /** A box's control changed, or the box did: its thread's panels refetch. */
   notify(threadId: string | null): void;
   logError(operation: string, error: unknown): void;
+  /** Stops the agent's computer use before a person takes control (015). */
+  pause?(boxId: string): Promise<void>;
   /** How long a holder's viewer may be gone before the agent has control again. */
   readonly staleMs?: number;
 }
@@ -55,6 +57,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     changed,
     logError: deps.logError,
     staleMs: deps.staleMs,
+    pause: deps.pause,
     async restore(boxId, size, screen) {
       await restoreSize(opener(boxes, boxId), size, screen);
     },

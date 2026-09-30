@@ -23,6 +23,12 @@ Every result ends with a `Next:` line that says what to do next.
 | `box_stop` | `box` | Stops a box and keeps its disk. |
 | `box_start` | `box` | Starts a stopped box again. |
 | `box_release` | `box` | Releases a box. Its disk is deleted. |
+| `computer_windows` | `box` | Lists the windows on a desktop box's screen, with their IDs. |
+| `computer_observe` | `box`, `window`, `query?`, `limit?`, `screenshot?` | Reads a window's accessibility tree, with a reference such as `e12` for each element you can act on. |
+| `computer_screenshot` | `box`, `window?` | Returns an image of a window, or of the whole desktop by default. |
+| `computer_act` | `box`, `action`, `ref?`, `window?`, `x?`, `y?`, `value?`, `direction?`, `amount?` | Clicks, double-clicks, right-clicks, scrolls or sets a value, on a reference or at pixels, and says what changed. |
+| `computer_type` | `box`, `text?`, `keys?`, `ref?`, `window?` | Types text, or presses a key or chord such as `ctrl+a`, and says what the element reads afterwards. |
+| `computer_launch` | `box`, `app?`, `url?` | Opens an app or a URL and says which windows it opened. |
 
 `box` is the box's name or ID.
 
@@ -70,6 +76,21 @@ A person can watch each desktop box live from the panel and take control of
 its keyboard and mouse. While they hold control, their input goes to the box
 and nobody else's does. Control goes back to the agent when they hand it
 back or close the viewer for a minute.
+
+## Computer use
+
+The `computer_` tools drive the apps on a desktop box. Read a window as text
+with `computer_observe` first, and act on its references. Take an image with
+`computer_screenshot` only when appearance matters.
+
+- A reference stays valid while its element is on screen. When the element
+  has gone, the tool says so; observe the window again.
+- Pixels count only in your latest image of that window, or of the desktop.
+  No image is longer than 1568 pixels on either edge.
+- Input goes in the background first. When the app refuses it there, it goes
+  in the foreground, and the result says so.
+- While a person holds control, every computer tool refuses at once. After
+  they hand back, references and images are gone: observe again.
 
 ## BB machines
 

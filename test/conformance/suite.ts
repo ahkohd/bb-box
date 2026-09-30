@@ -30,12 +30,14 @@ import {
   type MachineNature,
   type ReleaseHooks,
 } from "../../src/backends/types.ts";
+import { driverCommand } from "../../src/core/in-box.ts";
+import { McpSession } from "../../src/core/mcp.ts";
 import { quote } from "../../src/transports/process.ts";
 import { openRoute } from "../../src/transports/route.ts";
 import type { ByteChannel, CommandTransport } from "../../src/transports/types.ts";
 import { MemoryStorage } from "../helpers.ts";
 
-export type ConformanceCheck = "arch" | "docker" | "display" | "enrol" | "stop-start" | "recovery" | "interrupted" | "installs";
+export type ConformanceCheck = "arch" | "docker" | "display" | "computer-use" | "enrol" | "stop-start" | "recovery" | "interrupted" | "installs";
 
 /** Enrolment in a live BB server. */
 export interface ConformanceBb {
@@ -523,8 +525,34 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             });
           }
 
-          if (capabilities.computerUse) {
-            it("offers computer use", { skip: "bb-box does not offer computer use yet" }, () => {});
+          const computerUse = capabilities.computerUse;
+          if (computerUse) {
+            // The driver's daemon starts with the desktop session, which may come up after the box answers.
+            it("offers computer use: the driver answers over MCP and lists the desktop's windows", { timeout, skip: skip["computer-use"] ?? scripts }, async () => {
+              const { command } = need();
+              assert.ok(command.spawn, "the command transport can spawn the driver");
+              const deadline = Date.now() + 20_000;
+              for (;;) {
+                const channel = await command.spawn(driverCommand(capabilities.os, computerUse.socket), signal());
+                let windows: unknown;
+                let problem: string;
+                try {
+                  const session = await McpSession.open(channel, { client: { name: "bb-box-conformance", version: "1" }, timeoutMs: 20_000 });
+                  try {
+                    const listed = await session.call("list_windows", {}, { timeoutMs: 20_000 });
+                    windows = listed.structuredContent?.windows;
+                    problem = listed.isError ? listed.content.map((part) => part.text ?? "").join(" ") : "";
+                  } finally {
+                    await session.close();
+                  }
+                } catch (error) {
+                  problem = error instanceof Error ? error.message : String(error);
+                }
+                if (!problem && Array.isArray(windows)) return;
+                if (Date.now() > deadline) assert.fail(`the driver did not list the windows: ${problem || "no windows array"}`);
+                await new Promise((resolve) => setTimeout(resolve, 1_000));
+              }
+            });
           }
 
           const stopStart = skip["stop-start"] ?? (backend.start && backend.stop ? false : "the backend cannot stop and start its boxes");

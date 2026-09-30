@@ -10,9 +10,11 @@ import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-s
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import type { BackendDriver } from "../src/backends/types.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
-import { setup } from "../src/plugin/setup.ts";
+import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
+import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { FakeBackend } from "./fake-backend.ts";
+import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { fakeDaemon, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_one";
@@ -64,7 +66,10 @@ function variables(names: readonly string[]) {
  * `daemonParent` stands in for BB's daemon in the boxes. The fake boxes run
  * on this machine as its user, so it must never match BB's real daemon here.
  */
-async function start(settings: Record<string, PluginSettingValue> = { "fake-enabled": true }, options: { daemonParent?: string } = {}) {
+async function start(
+  settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
+  options: { daemonParent?: string; computer?: SetupOptions["computer"] } = {},
+) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
   mkdirSync(workspace, { recursive: true });
@@ -173,7 +178,7 @@ async function start(settings: Record<string, PluginSettingValue> = { "fake-enab
       },
     },
   });
-  const app = await setup(bb, { drivers: [fakeDriver(root, world)], daemonParent: options.daemonParent ?? join(root, "no-daemon") });
+  const app = await setup(bb, { drivers: [fakeDriver(root, world)], daemonParent: options.daemonParent ?? join(root, "no-daemon"), computer: options.computer });
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
   return { bb, harness, app, world, tool };
 }
@@ -669,4 +674,231 @@ test("bb box install-id shows the install's ID, and --set takes an old one back 
   assert.equal(await bb.storage.kv.get("install-id"), "old-install");
   assert.notEqual(world.backend, before, "the backend is made again with the ID");
   assert.deepEqual(JSON.parse((await harness.behavior.runCli(["install-id", "--json"])).stdout ?? ""), { installId: "old-install" });
+});
+
+/** The fake Cua Driver's desktop in a box. */
+function desktopFile(world: { root: string; backend: FakeBackend | null }, box: BoxRecord): string {
+  return join(world.root, world.backend!.id, box.guest!.ref, "cua-driver.json");
+}
+
+function readDesktop(file: string): FakeDesktop {
+  return JSON.parse(readFileSync(file, "utf8")) as FakeDesktop;
+}
+
+function editDesktop(file: string, edit: (desktop: FakeDesktop) => void): void {
+  const desktop = readDesktop(file);
+  edit(desktop);
+  writeFileSync(file, JSON.stringify(desktop));
+}
+
+function lastCall(file: string, tool: string): FakeDesktop["calls"][number] | undefined {
+  return readDesktop(file)
+    .calls.filter((call) => call.tool === tool)
+    .at(-1);
+}
+
+/** The reference on the tree line that contains `line`. */
+function refOf(tree: string, line: string): string {
+  const found = tree.split("\n").find((candidate) => candidate.includes(line));
+  const ref = found && /\[(e\d+)\]/.exec(found)?.[1];
+  assert.ok(ref, `a reference for ${line} in:\n${tree}`);
+  return ref;
+}
+
+function imageOf(result: PluginAgentToolResult): { data: string; mimeType: string } | undefined {
+  if (typeof result === "string") return undefined;
+  return result.content.find((part): part is { type: "image"; data: string; mimeType: string } => part.type === "image");
+}
+
+/** A desktop box whose desktop has one Tasks window, window 100. */
+async function desktopBox(options: { computer?: SetupOptions["computer"] } = {}) {
+  const started = await start(undefined, { computer: { pauseWaitMs: 300, ...options.computer } });
+  await started.harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
+  await started.app.boxes.idle();
+  const box = await only(started.app);
+  const file = desktopFile(started.world, box);
+  writeFileSync(file, JSON.stringify(tasksDesktop()));
+  return { ...started, box, file };
+}
+
+test("an agent reads a desktop box's window, acts on references and is told what changed", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+
+  const windows = text(await tool("computer_windows", { box: box.name }));
+  assert.match(windows, /- window 100: tasks "Tasks", 800 by 600/);
+
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  assert.match(tree, /^Window 100: tasks "Tasks", 800 by 600\. 11 elements\./);
+  assert.match(tree, /\n {2}- heading = "My tasks"\n/, "text that cannot be acted on has no reference");
+  assert.doesNotMatch(tree, /actions=\[\]/);
+  const deleteOne = refOf(tree, '"Delete Task 1"');
+  const deleteThree = refOf(tree, '"Delete Task 3"');
+  const field = refOf(tree, '"New task"');
+
+  const clicked = await tool("computer_act", { box: box.name, action: "click", ref: deleteOne });
+  assert.equal(isError(clicked), false, text(clicked));
+  assert.match(text(clicked), new RegExp(`^Clicked ${deleteOne} \\(push button 'Delete Task 1'\\)\\.`));
+  assert.match(text(clicked), /What changed in window 100 \(\+ appeared, - went, ~ changed\):\n- \[e\d+\] list item "Task 1"/);
+  assert.match(text(clicked), new RegExp(`\\n- \\[${deleteOne}\\] push button "Delete Task 1"`));
+
+  // Another element's reference outlives the change, and a gone one is refused.
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", ref: `[${deleteThree}]` })), /Clicked .*'Delete Task 3'/);
+  const gone = await tool("computer_act", { box: box.name, action: "click", ref: deleteThree });
+  assert.equal(isError(gone), true);
+  assert.equal(text(gone), `${deleteThree} (push button 'Delete Task 3') is no longer on screen. Call computer_observe again.`);
+
+  const typed = text(await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" }));
+  assert.match(typed, /^Typed 8 characters into e\d+ \(text 'New task'\), in the foreground because Cua could not do it in the background/);
+  assert.match(typed, new RegExp(`${field} now reads: \\[${field}\\] text "New task" value="Buy milk"`));
+  const types = readDesktop(file).calls.filter((call) => call.tool === "type_text").map((call) => call.args.delivery_mode);
+  assert.deepEqual(types, ["background", "foreground"]);
+
+  const pressed = text(await tool("computer_type", { box: box.name, window: 100, keys: "Return" }));
+  assert.match(pressed, /^Pressed Return in window 100\./);
+  assert.match(pressed, /\+ \[e\d+\] list item "Buy milk"/);
+  const press = lastCall(file, "press_key");
+  assert.deepEqual([press?.args.key, press?.args.modifiers], ["Return", []]);
+
+  const queried = text(await tool("computer_observe", { box: box.name, window: 100, query: "task 2" }));
+  assert.match(queried, /2 lines match "task 2", shown with their ancestors\./);
+  assert.match(queried, /- \[e\d+\] frame "Tasks"\n {2}- \[e\d+\] list "Tasks"\n {4}- \[e\d+\] list item "Task 2"\n {6}- \[e\d+\] push button "Delete Task 2"/);
+  assert.doesNotMatch(queried, /Buy milk/);
+
+  const limited = text(await tool("computer_observe", { box: box.name, window: 100, limit: 2 }));
+  assert.match(limited, /Partial: showing 2 of them\. Pass query to find an element, or a larger limit\./);
+
+  const unknown = await tool("computer_act", { box: box.name, action: "click", ref: "e999" });
+  assert.match(text(unknown), /^bb-box has no reference e999 for box .*\n\nNext: Call computer_observe to get references\./);
+  const noTarget = await tool("computer_act", { box: box.name, action: "click" });
+  assert.match(text(noTarget), /^Give ref, or window with x and y\./);
+  assert.match(text(await tool("computer_type", { box: box.name, window: 100, keys: "ctrl+" })), /"ctrl\+" is not a key chord/);
+  const closed = await tool("computer_observe", { box: box.name, window: 7 });
+  assert.match(text(closed), /has no window 7\.\n\nNext: Call computer_windows/);
+});
+
+test("a dialog is named with its window, and an action that closes a window says so", async (t) => {
+  const { harness, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const opened = text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Clear all"') }));
+  assert.match(opened, /A modal dialog "Clear all tasks\?", window 101, is open over this window\./);
+  assert.match(opened, /Next: .*Observe a dialog or popup by its window ID to act in it\./);
+  const dialog = text(await tool("computer_observe", { box: box.name, window: 101 }));
+  assert.match(dialog, /^Window 101: tasks "Clear all tasks\?", 300 by 150\./);
+  const cleared = text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(dialog, '"Clear"') }));
+  assert.match(cleared, /Window 101 closed\./);
+  const after = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  assert.doesNotMatch(after, /list item/);
+});
+
+test("pixels count only against the agent's latest image of the window or the desktop", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+
+  const blind = await tool("computer_act", { box: box.name, action: "click", window: 100, x: 745, y: 140 });
+  assert.equal(isError(blind), true);
+  assert.match(text(blind), /^You have no current image of window 100, so bb-box cannot tell what x and y mean\.\n\nNext: Call computer_screenshot with window 100/);
+
+  const shot = await tool("computer_screenshot", { box: box.name, window: 100 });
+  assert.match(text(shot), /^window 100: tasks "Tasks", 800 by 600\. The image is 800 by 600 pixels\./);
+  assert.equal(imageOf(shot)?.mimeType, "image/png");
+  const outside = await tool("computer_act", { box: box.name, action: "click", window: 100, x: 800, y: 10 });
+  assert.match(text(outside), /x and y must be inside the image of window 100: x from 0 to 799, y from 0 to 599\./);
+  // Task 3's Delete button.
+  const clicked = text(await tool("computer_act", { box: box.name, action: "click", window: 100, x: 745, y: 140 }));
+  assert.match(clicked, /^Clicked \(745, 140\) in window 100\./);
+  assert.match(clicked, /- \[e\d+\] list item "Task 3"/);
+
+  // The window grows: the next read finds the image no longer fits.
+  editDesktop(file, (desktop) => {
+    desktop.windows[0]!.width = 900;
+  });
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  assert.match(tree, /Window 100 changed size, so your last image of it no longer applies\./);
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", window: 100, x: 745, y: 100 })), /^You have no current image of window 100/);
+
+  const desktop = await tool("computer_screenshot", { box: box.name });
+  assert.match(text(desktop), /^The desktop, 1568 by 882 pixels\. x and y are pixels of this image; give window "desktop" with them\./);
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 })), /^Clicked \(784, 441\) on the desktop\.\n\nNext: Call computer_screenshot/);
+  const click = lastCall(file, "click");
+  assert.deepEqual(click?.args, { x: 960, y: 540, scope: "desktop", button: "left", count: 1, delivery_mode: "background" }, "the desktop's pixels become the screen's");
+
+  const launched = text(await tool("computer_launch", { box: box.name, app: "wide" }));
+  const wide = Number(/window (\d+): wide/.exec(launched)?.[1]);
+  const big = await tool("computer_screenshot", { box: box.name, window: wide });
+  assert.match(text(big), /The image is 1568 by 78 pixels\./, "no image is longer than 1568 pixels");
+});
+
+test("computer_launch opens apps and URLs and says which windows opened", async (t) => {
+  const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 500 } });
+  t.after(() => harness.lifecycle.dispose());
+  assert.match(text(await tool("computer_launch", { box: box.name, app: "tasks" })), /^Opened tasks\. Its window:\n- window 101: tasks "Tasks", 800 by 600\n\nNext: Call computer_observe with window 101/);
+  assert.match(text(await tool("computer_launch", { box: box.name, app: "mousepad" })), /^Opened mousepad\. Its window:\n- window 102: mousepad "mousepad", 640 by 480/);
+  assert.match(text(await tool("computer_launch", { box: box.name, url: "https://example.com" })), /no new window appeared within 1 s\. It may have opened in a browser window that was already open\./);
+  const missing = await tool("computer_launch", { box: box.name, app: "missing" });
+  assert.equal(isError(missing), true);
+  assert.match(text(missing), /^Cua Driver could not open missing: No app named missing\./);
+  assert.match(text(await tool("computer_launch", { box: box.name })), /^Give app or url, not both and not neither\./);
+});
+
+test("while a person holds a desktop the computer tools wait, and afterwards the agent is told to observe", async (t) => {
+  const { harness, app, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const add = refOf(tree, '"Add"');
+
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await until("the viewer to join", async () => app.desktops.control.connected(box.id, viewer));
+
+  // A click that takes longer than taking control waits for.
+  editDesktop(file, (desktop) => {
+    desktop.delays.click = 2_000;
+  });
+  const slow = tool("computer_act", { box: box.name, action: "click", ref: add });
+  await until("the click to reach the driver", async () => readDesktop(file).calls.some((call) => call.tool === "click"));
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null };
+  assert.equal(took.error, null);
+  const interrupted = await slow;
+  assert.equal(isError(interrupted), true);
+  assert.match(text(interrupted), /^A person took control of the box's desktop while this ran, so bb-box closed its session with the driver\. bb-box cannot tell whether it was done\.\n\nNext: Wait until they hand control back/);
+  assert.equal(app.computer.connected(box.id), false);
+
+  const paused = await tool("computer_windows", { box: box.name });
+  assert.equal(isError(paused), true);
+  assert.equal(text(paused), PAUSED);
+  const calls = readDesktop(file).calls.length;
+
+  await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name });
+  const back = text(await tool("computer_windows", { box: box.name }));
+  assert.match(back, new RegExp(`^${RETURNED.replace(/[.;]/g, "\\$&")}\\n\\nWindows on box`));
+  assert.equal(readDesktop(file).calls.length, calls + 1, "nothing reached the driver while the person held control");
+  assert.doesNotMatch(text(await tool("computer_windows", { box: box.name })), /Control returned/, "the notice comes once");
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", ref: add })), /^bb-box has no reference e\d+/, "references go when a person takes control");
+  await session.close();
+});
+
+test("a computer-use session closes when idle, opens again when needed, and goes with its box", async (t) => {
+  const { harness, app, box, file, tool } = await desktopBox({ computer: { idleMs: 100 } });
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  assert.equal(app.computer.connected(box.id), true);
+  await until("the idle session to close", async () => !app.computer.connected(box.id));
+  // The driver's tokens died with the session, so the reference is read again first.
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Delete Task 2"') })), /Clicked .*'Delete Task 2'/);
+  assert.equal(readDesktop(file).sessions, 2);
+
+  await tool("box_release", { box: box.name });
+  assert.equal(app.computer.connected(box.id), false);
+
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-headless" });
+  await app.boxes.idle();
+  const headless = await only(app);
+  const refused = await tool("computer_windows", { box: headless.name });
+  assert.equal(isError(refused), true);
+  assert.match(text(refused), /has no computer use: its kind, linux-headless, has no desktop the computer tools can drive\./);
 });

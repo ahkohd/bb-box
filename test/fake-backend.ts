@@ -11,6 +11,7 @@
 
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
 import { FakeRfb } from "./fake-rfb.ts";
 import {
@@ -86,6 +87,8 @@ interface GuestRecord {
 type Holder = BoxIdentity & { readonly install: string };
 
 const HOST = "fake";
+/** Where the fake `cua-driver` command is. */
+export const FAKE_CUA_BIN = fileURLToPath(new URL("./fake-cua", import.meta.url));
 
 const COMMAND: CommandCapability = { transport: "local", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
 
@@ -115,7 +118,8 @@ export const FAKE_KINDS: readonly BoxKind[] = [
       features: [],
       command: COMMAND,
       displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
-      computerUse: null,
+      // The fake driver keeps its desktop in this file, in the box's directory.
+      computerUse: { driver: "cua", version: "test", socket: "cua-driver.json" },
       enrol: true,
     },
     readyTimeoutMs: 10_000,
@@ -475,6 +479,8 @@ export class FakeTransport implements CommandTransport {
 
   async spawn(script: string, signal?: AbortSignal): Promise<ByteChannel> {
     await this.#answer();
-    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && ${script}`] }, signal);
+    // The fake Cua Driver is the box's cua-driver command.
+    const path = `${FAKE_CUA_BIN}:${process.env.PATH ?? ""}`;
+    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && ${script}`] }, signal);
   }
 }

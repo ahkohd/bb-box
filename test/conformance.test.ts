@@ -72,6 +72,7 @@ await conformance({
     arch: "the fake SSH runs commands on the test machine",
     docker: "the fake SSH runs commands on the test machine",
     display: "the fake Proxmox has no desktop to stream",
+    "computer-use": "the fake SSH host has no computer-use driver",
   },
   timeoutMs: 20_000,
 });

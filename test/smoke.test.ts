@@ -139,4 +139,7 @@ test("the smoke test opens a desktop box's desktop as the relay does", async () 
   assert.deepEqual(result.desktop, { width: 1280, height: 800 }, "the relay's handshake answered the desktop's VNC password");
   assert.ok("desktop" in result.timings);
   assert.match(lines.join("\n"), /The desktop answered: 1280 by 800\./);
+  assert.deepEqual(result.computerUse, { windows: 0 }, "the driver answered over MCP");
+  assert.ok("computer use" in result.timings);
+  assert.match(lines.join("\n"), /The computer-use driver answered: 0 windows\./);
 });
