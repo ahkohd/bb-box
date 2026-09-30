@@ -73,6 +73,8 @@ services and builds, so that work runs on a box and not on your own machine.
 | Proxmox QEMU | virtual | Windows desktop | planned |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
 | Apple Virtualization framework, for example [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS desktop, iOS Simulator | planned |
+| Docker | virtual | Linux desktop, Linux headless | planned, early |
+| SSH host pool | real | any machine reachable over SSH | planned, early |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
 
@@ -97,9 +99,22 @@ after start.
 - **Limits**: a desktop uses one GPU, and the GPU's free memory limits how many
   desktops get hardware rendering.
 
+## Easy to set up, tested on every backend
+
+bb-box should be easy to set up on whatever you have. Every backend has a
+setup script and a short guide, the plugin's settings page walks through
+configuring a backend, and a `doctor` check says exactly what is missing. One
+conformance suite (acquire each kind, ready, run a command, copy files, enrol
+in BB, stream the desktop, computer use, release, capacity, crash recovery)
+runs against every backend, so backend-agnostic is tested rather than assumed.
+Docker and an SSH host pool come early, beside Proxmox LXC, for that reason
+and because anyone can try them.
+
 ## Status
 
-In development. Linux headless and desktop boxes on Proxmox LXC come first,
+In development, and private until it has been used daily for months; then it
+will be open-sourced. Linux headless and desktop boxes on Proxmox LXC come
+first, with Docker and an SSH host pool to keep the core backend-agnostic,
 then speed (a warm pool, faster BB enrolment), then Windows, then macOS.
 
 ## Documentation
