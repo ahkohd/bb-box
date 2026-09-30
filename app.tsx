@@ -30,23 +30,34 @@ function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** State from the server, refetched on each change signal and after a reconnect. */
-function useLive<T>(load: () => Promise<T>, relevant: (payload: unknown) => boolean) {
+/**
+ * State from the server for `key`, refetched on each change signal that
+ * `relevant` accepts and after a reconnect. Only the newest answer is kept.
+ */
+function useLive<T>(key: string, load: () => Promise<T>, relevant: (payload: unknown) => boolean) {
+  const latest = useRef({ load, relevant });
+  latest.current = { load, relevant };
+  const sequence = useRef(0);
   const [value, setValue] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
+    const mine = ++sequence.current;
     try {
-      setValue(await load());
+      const next = await latest.current.load();
+      if (mine !== sequence.current) return;
+      setValue(next);
       setError(null);
     } catch (caught) {
-      setError(message(caught));
+      if (mine === sequence.current) setError(message(caught));
     }
-  }, [load]);
+  }, []);
   useEffect(() => {
+    setValue(null);
+    setError(null);
     void refresh();
-  }, [refresh]);
+  }, [key, refresh]);
   useRealtime("changed", (payload) => {
-    if (relevant(payload)) void refresh();
+    if (latest.current.relevant(payload)) void refresh();
   });
   const connection = useRealtimeConnectionState();
   const previous = useRef(connection);
@@ -166,18 +177,18 @@ function BoxCard({ box, act }: { box: BoxView; act: (method: "release" | "stop" 
 
 function BoxesPanel({ threadId }: { threadId: string }) {
   const rpc = useRpc<Contract>();
-  const load = useCallback(() => rpc.call("state", { threadId }), [rpc, threadId]);
-  const relevant = useCallback(
-    (payload: unknown) => {
+  const { value: state, error, refresh } = useLive<PanelState>(
+    threadId,
+    () => rpc.call("state", { threadId }),
+    (payload) => {
       const changed = (payload as { threadId?: unknown } | null)?.threadId;
       return changed === null || changed === undefined || changed === threadId;
     },
-    [threadId],
   );
-  const { value: state, error, refresh } = useLive<PanelState>(load, relevant);
   const [kind, setKind] = useState("");
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => setProblem(null), [threadId]);
 
   const kinds = state?.kinds ?? [];
   const chosen = kinds.some((candidate) => candidate.id === kind) ? kind : (kinds[0]?.id ?? "");
@@ -299,9 +310,11 @@ function Doctor({ view }: { view: DoctorView }) {
 
 function SettingsSection() {
   const rpc = useRpc<Contract>();
-  const load = useCallback(() => rpc.call("backends"), [rpc]);
-  const always = useCallback(() => true, []);
-  const { value: backends, error } = useLive<BackendView[]>(load, always);
+  const { value: backends, error } = useLive<BackendView[]>(
+    "backends",
+    () => rpc.call("backends"),
+    () => true,
+  );
   const [doctor, setDoctor] = useState<DoctorView | null>(null);
   const [checking, setChecking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
