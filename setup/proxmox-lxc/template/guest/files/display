@@ -1,0 +1,111 @@
+#!/bin/bash
+# bb-box: the desktop's display :99 and its VNC server, run as the box user
+# by bb-box-display.service.
+#
+#   display        start the display (the service's main process)
+#   display wait   wait until :99 answers (the service's ExecStartPost)
+#
+# DISPLAY_MODE in /etc/bb-box/desktop.env:
+#   auto  gpu when the GPU's device nodes exist, the host's NVIDIA driver
+#         matches the template's userspace and the GPU has at least
+#         MIN_FREE_VRAM_MIB free; cpu otherwise (the default)
+#   gpu   Xorg with NVIDIA's driver on a virtual screen, served by
+#         x0tigervncserver: OpenGL and Vulkan on the GPU; fixed size
+#   cpu   Xtigervnc: OpenGL and Vulkan on the CPU (llvmpipe, lavapipe); resizable
+#
+# The path taken is in /run/bb-box/display-mode (gpu or cpu), and why in
+# /run/bb-box/display-reason. After freeing GPU memory, `systemctl restart
+# bb-box-display` tries the GPU again (it restarts the desktop session).
+set -u
+run=/run/bb-box
+auth=$run/Xauthority
+geometry=${DISPLAY_GEOMETRY:-1920x1080}
+min_free=${MIN_FREE_VRAM_MIB:-384}
+passwd=/var/lib/bb-box/vnc.passwd
+
+wait_display() {
+  for _ in $(seq 1 200); do
+    DISPLAY=:99 XAUTHORITY=$auth xdpyinfo >/dev/null 2>&1 && return 0
+    sleep 0.05
+  done
+  echo "display: :99 did not come up" >&2
+  return 1
+}
+
+if [ "${1:-}" = wait ]; then
+  wait_display
+  exit
+fi
+
+security=(-SecurityTypes VncAuth -PasswordFile "$passwd")
+[ "${VNC_AUTH:-password}" != none ] || security=(-SecurityTypes None)
+
+mode=${DISPLAY_MODE:-auto}
+reason="DISPLAY_MODE=$mode"
+if [ "$mode" = auto ]; then
+  want=$(cat /usr/share/bb-box/nvidia-version 2>/dev/null)
+  have=$(cat /sys/module/nvidia/version 2>/dev/null)
+  if ! [ -c /dev/nvidiactl ] || ! ls /dev/nvidia[0-9]* >/dev/null 2>&1; then
+    mode=cpu reason="no NVIDIA device nodes"
+  elif [ -z "$want" ] || [ "$want" != "$have" ]; then
+    mode=cpu reason="host NVIDIA driver '${have:-none}' does not match the template's '${want:-none}'"
+  else
+    free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9)
+    if [ -z "$free" ]; then
+      mode=cpu reason="nvidia-smi cannot read the GPU"
+    elif [ "$free" -lt "$min_free" ]; then
+      mode=cpu reason="GPU has ${free} MiB free, below MIN_FREE_VRAM_MIB=${min_free}"
+    else
+      mode=gpu reason="GPU has ${free} MiB free"
+    fi
+  fi
+fi
+echo "$mode" >"$run/display-mode"
+echo "$reason" >"$run/display-reason"
+# What programs on :99 need for this path. On the CPU path the NVIDIA device
+# may still be visible, and Vulkan apps would pick it and fail to present, so
+# point Vulkan at lavapipe and GL and EGL at Mesa's software renderer.
+# Xtigervnc paces Present by its viewers' updates, so a FIFO swapchain stalls
+# while nobody watches; mailbox does not. The desktop session, the box user's
+# shells and the checks read this file.
+if [ "$mode" = cpu ]; then
+  lvp=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
+  cat >"$run/display.env" <<EOF
+VK_DRIVER_FILES=$lvp
+VK_ICD_FILENAMES=$lvp
+MESA_VK_WSI_PRESENT_MODE=mailbox
+LIBGL_ALWAYS_SOFTWARE=1
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+EOF
+else
+  : >"$run/display.env"
+fi
+echo "display: $mode ($reason)" >&2
+
+rm -f "$auth"
+xauth -q -f "$auth" add :99 MIT-MAGIC-COOKIE-1 "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+
+case "$mode" in
+  gpu)
+    # Rootless Xorg: no console or VT needed. -s 0 -dpms: never blank.
+    Xorg :99 -config bb-box-xorg.conf -auth "$auth" -noreset -nolisten tcp -novtswitch -sharevts \
+      -s 0 -dpms &
+    xorg=$!
+    wait_display || { kill "$xorg"; exit 1; }
+    XAUTHORITY=$auth x0tigervncserver -display :99 -rfbport 5900 "${security[@]}" -AlwaysShared \
+      -AcceptSetDesktopSize &
+    vnc=$!
+    wait -n "$xorg" "$vnc"
+    kill "$xorg" "$vnc" 2>/dev/null
+    exit 1
+    ;;
+  cpu)
+    # Xtigervnc has no DPMS; -s 0 alone keeps the screen from blanking.
+    exec Xtigervnc :99 -geometry "$geometry" -depth 24 -rfbport 5900 "${security[@]}" -AlwaysShared \
+      -AcceptSetDesktopSize -nolisten tcp -auth "$auth" -s 0
+    ;;
+  *)
+    echo "display: unknown DISPLAY_MODE $mode" >&2
+    exit 2
+    ;;
+esac

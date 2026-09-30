@@ -1,0 +1,131 @@
+{
+  "schema": 2,
+  "resolvedAt": "2026-09-26T06:16:54.911Z",
+  "aptSnapshot": "20260926T060000Z",
+  "tools": [
+    {
+      "name": "node",
+      "version": "24.21.0",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
+      "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6",
+      "source": "SHASUMS256.txt signed by 5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+      "strip": 1,
+      "links": {
+        "node": "bin/node",
+        "npm": "bin/npm",
+        "npx": "bin/npx",
+        "corepack": "bin/corepack"
+      },
+      "check": "node"
+    },
+    {
+      "name": "gh",
+      "version": "2.101.0",
+      "url": "https://github.com/cli/cli/releases/download/v2.101.0/gh_2.101.0_linux_amd64.tar.gz",
+      "sha256": "9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8",
+      "source": "GitHub release asset digest for cli/cli v2.101.0",
+      "strip": 1,
+      "links": {
+        "gh": "bin/gh"
+      },
+      "check": "gh"
+    },
+    {
+      "name": "ripgrep",
+      "version": "15.2.0",
+      "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+      "source": "GitHub release asset digest for BurntSushi/ripgrep 15.2.0",
+      "strip": 1,
+      "links": {
+        "rg": "rg"
+      },
+      "check": "rg"
+    },
+    {
+      "name": "fd",
+      "version": "10.5.0",
+      "url": "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7",
+      "source": "GitHub release asset digest for sharkdp/fd v10.5.0",
+      "strip": 1,
+      "links": {
+        "fd": "fd"
+      },
+      "check": "fd"
+    },
+    {
+      "name": "jj",
+      "version": "0.45.1",
+      "url": "https://github.com/jj-vcs/jj/releases/download/v0.45.1/jj-v0.45.1-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "f35438350b5d61963aac5dd74ede510b31d6b9690769d1a6268cf058cc825f72",
+      "source": "GitHub release asset digest for jj-vcs/jj v0.45.1",
+      "strip": 0,
+      "links": {
+        "jj": "jj"
+      },
+      "check": "jj"
+    },
+    {
+      "name": "claude-code",
+      "version": "2.1.283",
+      "url": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.283/linux-x64/claude",
+      "sha256": "1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2",
+      "source": "latest channel; manifest.json signed by 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
+      "strip": 0,
+      "file": "claude",
+      "links": {
+        "claude": "claude"
+      },
+      "check": "claude"
+    },
+    {
+      "name": "codex",
+      "version": "0.157.1",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "e98c1e8e028e8137fa2d2415c82ec58e7b3701a627e3554aace5b3ca31454af2",
+      "source": "GitHub release asset digest for openai/codex rust-v0.157.1",
+      "strip": 0,
+      "links": {
+        "codex": "codex-x86_64-unknown-linux-musl"
+      },
+      "check": "codex"
+    },
+    {
+      "name": "pi",
+      "version": "0.87.1",
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.87.1/pi-linux-x64.tar.gz",
+      "sha256": "80d78dd62d50049a006b981d994c61255bcc10e730b0c278d4ea0a755909764c",
+      "source": "GitHub release asset digest for earendil-works/pi v0.87.1",
+      "strip": 1,
+      "links": {
+        "pi": "pi"
+      },
+      "check": "pi"
+    }
+  ],
+  "profiles": {
+    "desktop-qemu": {
+      "ubuntu": {
+        "serial": "release-20260911",
+        "url": "https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img",
+        "sha256": "612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354",
+        "source": "SHA256SUMS signed by D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81"
+      },
+      "chrome": {
+        "version": "154.0.8037.57-1",
+        "url": "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_154.0.8037.57-1_amd64.deb",
+        "sha256": "66c0645f6a19871bab2844b8537c11a0db2e7d3bea8ef85a1c7cb52a54e65a3e",
+        "source": "signed stable InRelease by EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796"
+      }
+    },
+    "headless-lxc": {
+      "ubuntu": {
+        "serial": "release-20260911",
+        "url": "https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64-root.tar.xz",
+        "sha256": "2ea580b9dd2d0e97ba9047798becc63a94427679876dec193221e345a6e0cdc9",
+        "source": "SHA256SUMS signed by D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81"
+      }
+    }
+  }
+}
