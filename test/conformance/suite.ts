@@ -32,10 +32,10 @@ import {
 } from "../../src/backends/types.ts";
 import { driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
-import { desktopSize, displayOpener } from "../../src/core/relay.ts";
+import { desktopSize, displayOpener, restoreSize } from "../../src/core/relay.ts";
 import { quote } from "../../src/transports/process.ts";
 import { openRoute } from "../../src/transports/route.ts";
-import type { ByteChannel, CommandTransport } from "../../src/transports/types.ts";
+import type { ByteChannel, CommandTransport, DisplaySize } from "../../src/transports/types.ts";
 import { MemoryStorage } from "../helpers.ts";
 
 export type ConformanceCheck = "arch" | "docker" | "display" | "computer-use" | "enrol" | "stop-start" | "recovery" | "interrupted" | "installs";
@@ -533,16 +533,21 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               const display = (await backend.transports(guest, kind.id)).displays.find((other) => other.id === capability.id);
               assert.ok(display, `the box has the ${capability.id} display`);
               if (!display.resize) return t.skip("the display's stream server sets its size");
-              // A new connection's ServerInit gives the size once resize resolves (021).
-              // It grows, then goes back: an X server cannot shrink below its outputs with xrandr.
+              // As core does: SetDesktopSize, then resize, which may do nothing if
+              // the stream server took it. Then a new connection's ServerInit gives
+              // the size (021). Screen 0 is noVNC's before the server names one.
               const open = displayOpener(display);
+              const set = async (size: DisplaySize) => {
+                await restoreSize(open, size, { id: 0, flags: 0 });
+                await display.resize!(size, signal());
+              };
               const before = await desktopSize(open);
               const wanted = { width: before.width + 128, height: before.height + 64 };
               try {
-                await display.resize(wanted, signal());
+                await set(wanted);
                 assert.deepEqual(await desktopSize(open), wanted);
               } finally {
-                await display.resize(before, signal());
+                await set(before);
               }
               assert.deepEqual(await desktopSize(open), before);
             });

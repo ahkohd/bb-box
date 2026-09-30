@@ -675,7 +675,7 @@ test("a desktop's VNC password is read from the box when a viewer opens it", asy
   assert.deepEqual((await display!.open()).auth, { type: "vnc-password", password: "hunter2" });
 });
 
-test("a GPU desktop is resized with xrandr as the box user, and a size X cannot take fails with xrandr's reason (021)", async () => {
+test("a GPU desktop is resized with xrandr as the box user, a size X cannot take fails with xrandr's reason, and back on the CPU nothing runs (021)", async () => {
   // An xrandr that records how it ran, since the fake SSH runs commands on this machine.
   const dir = tempDir("xrandr");
   const log = join(dir, "log");
@@ -691,6 +691,12 @@ test("a GPU desktop is resized with xrandr as the box user, and a size X cannot 
   assert.ok(ssh.log().some((entry) => entry.target.startsWith("box@") && entry.command.includes("xrandr --fb 1600x900")), "it runs as the box user");
   await assert.rejects(display!.resize!({ width: 40000, height: 800 }), { message: `xrandr could not set the desktop to 40000x800: ${refusal}.` });
   await assert.rejects(display!.resize!({ width: 0.5, height: 800 }), { message: "The desktop cannot be 0.5 by 800 pixels." });
+
+  // Its display service restarted without the GPU: Xtigervnc took the viewer's
+  // SetDesktopSize, and xrandr would disconnect its output for an older size.
+  writeFileSync(join(ssh.dir, "home", "192.0.2.100", "run", "bb-box", "display-mode"), "cpu\n");
+  await display!.resize!({ width: 1400, height: 900 });
+  assert.doesNotMatch(readFileSync(log, "utf8"), /1400x900/);
 
   const cpu = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
   const [stream] = (await backend.transports(cpu, "linux-desktop-cpu")).displays;
