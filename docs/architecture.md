@@ -71,7 +71,7 @@ A backend declares its nature (virtual or real) and its kinds, and implements:
 | `release(guest, hooks)` | deletes a virtual guest, or resets a real machine and returns it to the pool |
 | `power(guest)` | `running`, `stopped` or `unknown`; null when the guest is gone |
 | `start?`, `stop?` | only where the provider can; the panel and tools offer them only when present |
-| `held()` | every guest it holds for boxes, with the owner recorded at the provider |
+| `held()` | every guest this install holds for boxes, with the owner recorded at the provider ([018](decisions/018-guests-name-their-install-and-box.md)) |
 | `transports(guest, kind)` | the command transport, the displays, and how the thread reaches the box |
 | `doctor()` | checks the setup end to end and says what is missing |
 | `maintain?()` | upkeep, such as topping up a warm pool |
@@ -82,6 +82,13 @@ home is recreated) or `machine` (reimaged or restored from a snapshot).
 
 Every method must be safe to repeat: the registry retries after a restart and
 the sweep repeats releases.
+
+Each guest names the install and the box it belongs to
+([018](decisions/018-guests-name-their-install-and-box.md)). Where a
+provider reuses references, as Proxmox reuses VMIDs, `power`, `start`,
+`stop` and `release` first check that the guest still names the box in
+`Guest.data.box`. Otherwise `power` returns null, `release` does nothing,
+and `start` and `stop` throw `gone`.
 
 ### Kinds and offers
 
@@ -272,8 +279,8 @@ Docker without a budget) and `reserve`, the part kept back for the host.
   the reason, and the claim tries the next one.
 - A `PoolStore` must not assume a guest's labels or tags can change after
   creation. Docker sets labels when it creates a container (backend, kind,
-  generation), so `held()` finds every container bb-box made, and claims a
-  warm container by renaming it.
+  generation, install), so `held()` finds every container this install made,
+  and claims a warm container by renaming it.
 
 ### Doctor and setup
 
@@ -399,7 +406,10 @@ export interface Guest {
   /** Which host of the backend: a Proxmox node, a Docker host, a Mac. */
   readonly host: string | null;
   readonly address: string | null;
-  /** Stored with the box and passed back. Never a secret. */
+  /**
+   * Stored with the box and passed back. Never a secret. Where references
+   * can be reused, `box` holds the box ID (018).
+   */
   readonly data?: Readonly<Record<string, string | number | boolean>>;
   /** Shown in order by status and the panel, such as the display mode. Never a secret. */
   readonly facts?: readonly { readonly label: string; readonly value: string }[];
@@ -491,8 +501,15 @@ export interface BackendDriver<C = unknown> {
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
 }
 
+export interface BackendContext {
+  readonly storage: BackendStorage;
+  /** This install's ID, recorded on every guest it makes (018). */
+  readonly installId: string;
+  logError(operation: string, error: unknown): void;
+}
+
 // Unchanged: BoxIdentity, BoxOwner, HeldGuest, AcquireHooks, DoctorReport,
-// BackendError, BackendStorage, BackendContext, ParsedSettings, RunOptions, RunResult.
+// BackendError, BackendStorage, ParsedSettings, RunOptions, RunResult.
 ```
 
 ## A box's life
@@ -670,6 +687,11 @@ Nothing expires, so a box must never be forgotten.
   guest, the container name for Docker, the VM name for Tart, a marker file on
   a real machine. `held()` reads it back, so the sweep works even if bb-box's
   storage is lost.
+- **Each install records its ID** on every guest it makes, and `held()`
+  returns only that install's guests. Two BB servers, or a smoke run, can
+  share a pool and never touch each other's guests. An install that lost
+  its storage gets its old ID back from the doctor's note, with an operator
+  command ([018](decisions/018-guests-name-their-install-and-box.md)).
 - **The claim comes first.** `hooks.claim` records the guest before anything
   is made, so an interrupted acquire is always found.
 - **After a restart** the registry resumes boxes that were acquiring, repeats
@@ -677,15 +699,20 @@ Nothing expires, so a box must never be forgotten.
 - **The sweep** runs at start and every few minutes:
   1. releases the boxes of threads that are archived, deleted or gone;
   2. finishes interrupted releases;
-  3. releases guests from `held()` that have no owner (an acquire interrupted
-     before the claim was labelled) or whose thread has ended;
+  3. releases this install's guests from `held()` that have no owner (an
+     acquire interrupted before the claim was labelled) or whose thread has
+     ended;
   4. adopts guests whose thread is live but whose record was lost;
   5. calls `maintain()`.
 - **A guest deleted outside bb-box** makes `power` return nothing; the box is
-  marked gone and the panel says so.
+  marked gone and the panel says so. It stays gone when its reference is
+  reused, since the new guest names another box.
 - **If the BB server is down**, boxes keep running and nothing is released.
 - **If a box reboots**, its services start again, the viewer reconnects and
-  control returns to the agent.
+  control returns to the agent. This includes a reboot bb-box did not start,
+  such as the host's. The sweep bootstraps a ready box's BB machine again
+  when BB shows it disconnected
+  ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
 
 ## Data ownership
 
@@ -696,6 +723,7 @@ Nothing expires, so a box must never be forgotten.
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |
 | bb-box's SSH key | plugin storage; its public key is installed by setup | core | |
+| The install ID | plugin storage, and on every guest | core | the plugin's storage being lost: the doctor shows the old ID and an operator command restores it |
 | The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; copied to a file in the box for SSH sessions, never to bb-box's storage |
 | Work in the box: files, containers, running apps | the box's disk | the thread | deleted on release (virtual), or the home recreated (real); not backed up |
 | Templates and images | the provider | operator | built by the setup scripts |
@@ -784,7 +812,9 @@ Notes:
   sequences from the research rig, also run when the Cua pin moves), stop and
   start where supported (connected to BB again within 3 s of being ready),
   repeated release, and crash recovery (an interrupted acquire is resumed or
-  released, and `held()` finds every guest). Steps a kind does not support
+  released, and `held()` finds every guest). Two installs on one backend
+  leave each other's guests alone, and a box whose reference is reused
+  reads as gone and releases nothing (018). Steps a kind does not support
   are skipped by its declared capabilities, never by backend name.
 - **Fake backend.** An in-memory backend passes the suite and backs the core's
   own tests.
