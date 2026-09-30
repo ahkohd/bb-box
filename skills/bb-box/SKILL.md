@@ -33,7 +33,10 @@ Limits:
   background with `nohup`.
 - A command that exits with a non-zero code is not a tool error. A command
   that times out is.
-- `box_copy` moves one file of up to 16 MiB. Tar a directory first.
+- `box_copy` moves one file of up to 16 MiB. Tar a directory first. A
+  relative workspace path is under the thread's workspace directory. A
+  relative box path, or one that starts with `~/`, is under the box user's
+  home.
 - The box user can use `sudo` without a password.
 - Once a box is a BB machine, each command reads `~/.config/bb-box/env`,
   which sets `BB_BOX_ID`, `BB_BOX_NAME`, `BB_BOX_KIND`, `BB_THREAD_ID` and

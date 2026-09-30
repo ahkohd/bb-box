@@ -2,7 +2,7 @@
 // says what to do instead, so an agent never has to guess.
 
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
-import { posix } from "node:path";
+import { posix, win32 } from "node:path";
 import { z } from "zod";
 import { BoxError, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
 import type { RunResult } from "../transports/types.ts";
@@ -54,6 +54,24 @@ function runText(box: BoxRecord, result: RunResult): string {
   if (!result.stdout && !result.stderr) parts.push("No output.");
   if (result.truncated) parts.push(`Output was cut to the first and last ${RUN_OUTPUT_BYTES / 1024} KiB of each stream. Redirect it to a file and copy that out with box_copy for the whole of it.`);
   return parts.join("\n\n");
+}
+
+/** Path rules for a workspace: Windows ones when its directory is a Windows path. */
+function pathsOf(root: string | null): typeof posix {
+  return root && /^(?:[A-Za-z]:[\\/]|\\\\)/.test(root) ? win32 : posix;
+}
+
+/** BB's file API takes absolute paths: a relative one is under the workspace's directory. */
+export function workspacePath(root: string | null, path: string): string {
+  const paths = pathsOf(root);
+  if (paths.isAbsolute(path)) return paths.normalize(path);
+  if (!root) throw new Error(`${path} is a relative path, and this thread's workspace has no directory. Give an absolute path.`);
+  return paths.resolve(root, path);
+}
+
+/** The box's transport runs in the box user's home, so a relative path is under it; so is one that starts with ~/. */
+export function boxPath(path: string): string {
+  return path.startsWith("~/") ? path.slice(2) || "." : path;
 }
 
 function bytes(content: string, encoding: "base64" | "utf8"): Uint8Array {
@@ -212,28 +230,30 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
   bb.agents.registerTool({
     name: "box_copy",
     description:
-      "Copy one file between this thread's workspace and a box. Relative paths in the workspace are under its root; relative paths in the box are under the box user's home. For a directory, tar it first with box_run or a shell command.",
+      "Copy one file between this thread's workspace and a box. A relative workspace path is under the workspace's directory. A relative box path, or one that starts with ~/, is under the box user's home. For a directory, tar it first with box_run or a shell command.",
     presentation: { label: { pending: "Copying a file", completed: "Copied a file" } },
     parameters: z.object({
       box: boxParam,
       direction: z.enum(["to_box", "from_box"]).describe("to_box copies from the workspace into the box; from_box copies from the box into the workspace."),
       from: z.string().min(1).describe("The file to copy."),
-      to: z.string().min(1).optional().describe("Where to put it. Defaults to the same file name, in the home directory or at the workspace root."),
+      to: z.string().min(1).optional().describe("Where to put it. Defaults to the file's own name, in the box user's home or in the workspace's directory."),
     }),
     async execute({ box: ref, direction, from, to }, { threadId, signal }) {
       try {
         const id = thread(threadId);
-        const target = to ?? posix.basename(from);
         const workspace = await app.workspace(id, signal);
         const rootPath = workspace.path ?? undefined;
         if (direction === "to_box") {
-          const file = await bb.sdk.files.read({ hostId: workspace.hostId, path: from, rootPath, signal });
-          if (!("content" in file)) throw new Error(`BB did not return the contents of ${from}.`);
-          if (file.sizeBytes > COPY_MAX_BYTES) throw new Error(`${from} is ${file.sizeBytes} bytes; box_copy moves files up to ${COPY_MAX_BYTES / 1024 / 1024} MiB. Split or compress it first.`);
+          const source = workspacePath(workspace.path, from);
+          const target = boxPath(to ?? pathsOf(workspace.path).basename(source));
+          const file = await bb.sdk.files.read({ hostId: workspace.hostId, path: source, rootPath, signal });
+          if (!("content" in file)) throw new Error(`BB did not return the contents of ${source}.`);
+          if (file.sizeBytes > COPY_MAX_BYTES) throw new Error(`${source} is ${file.sizeBytes} bytes; box_copy moves files up to ${COPY_MAX_BYTES / 1024 / 1024} MiB. Split or compress it first.`);
           const box = await boxes.writeFile(id, ref, target, bytes(file.content, file.contentEncoding), { signal });
-          return `Copied ${from} (${file.sizeBytes} bytes) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
+          return `Copied ${source} (${file.sizeBytes} bytes) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
         }
-        const { box, data } = await boxes.readFile(id, ref, from, { maxBytes: COPY_MAX_BYTES, signal });
+        const target = workspacePath(workspace.path, to ?? posix.basename(from));
+        const { box, data } = await boxes.readFile(id, ref, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal });
         await bb.sdk.files.write({
           hostId: workspace.hostId,
           path: target,

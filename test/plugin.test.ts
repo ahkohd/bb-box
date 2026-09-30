@@ -4,13 +4,14 @@
 
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import type { BackendDriver } from "../src/backends/types.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { setup } from "../src/plugin/setup.ts";
+import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { FakeBackend } from "./fake-backend.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -19,6 +20,12 @@ const PROJECT = "prj_one";
 
 type Host = ReturnType<typeof makeHostResponse>;
 type Thread = ReturnType<typeof makeThreadResponse>;
+
+/** BB's file API refuses a relative path. */
+function absolute(path: string): string {
+  if (!isAbsolute(path)) throw Object.assign(new Error("HTTP 400: Path must be absolute"), { status: 400 });
+  return path;
+}
 
 function notFound(what: string): Error {
   return Object.assign(new Error(`${what} not found`), { status: 404, code: "not_found" });
@@ -118,12 +125,12 @@ async function start(settings: Record<string, PluginSettingValue> = { "fake-enab
         },
       },
       files: {
-        read: async ({ path, rootPath }: { path: string; rootPath?: string }) => {
-          const data = readFileSync(resolve(rootPath ?? "/", path));
+        read: async ({ path }: { path: string }) => {
+          const data = readFileSync(absolute(path));
           return { path, content: data.toString("base64"), contentEncoding: "base64", sha256: "", sizeBytes: data.byteLength } as never;
         },
-        write: async ({ path, rootPath, content }: { path: string; rootPath?: string; content: string }) => {
-          const target = resolve(rootPath ?? "/", path);
+        write: async ({ path, content }: { path: string; content: string }) => {
+          const target = absolute(path);
           mkdirSync(dirname(target), { recursive: true });
           writeFileSync(target, Buffer.from(content, "base64"));
           return { path } as never;
@@ -189,10 +196,12 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   assert.equal(isError(ran), false, "a command that fails is not a tool error");
 
   writeFileSync(join(world.workspace, "input.txt"), "from the workspace\n");
-  assert.match(text(await tool("box_copy", { box: box.name, direction: "to_box", from: "input.txt" })), /Copied input.txt \(19 bytes\) to input.txt/);
+  const copiedIn = await tool("box_copy", { box: box.name, direction: "to_box", from: "input.txt" });
+  assert.ok(!isError(copiedIn), text(copiedIn));
+  assert.match(text(copiedIn), new RegExp(`Copied ${join(world.workspace, "input.txt")} \\(19 bytes\\) to input.txt in box`));
   const cat = await tool("box_run", { box: box.name, command: "tr a-z A-Z < input.txt > output.txt && cat output.txt" });
   assert.match(text(cat), /FROM THE WORKSPACE/);
-  assert.match(text(await tool("box_copy", { box: box.id, direction: "from_box", from: "output.txt", to: "out/result.txt" })), /to out\/result.txt in the workspace/);
+  assert.match(text(await tool("box_copy", { box: box.id, direction: "from_box", from: "output.txt", to: "out/result.txt" })), /to .*\/workspace\/out\/result.txt in the workspace/);
   assert.equal(readFileSync(join(world.workspace, "out/result.txt"), "utf8"), "FROM THE WORKSPACE\n");
 
   const listed = await tool("box_list", {});
@@ -203,6 +212,35 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   assert.match(text(released), new RegExp(`Released box ${box.name}`));
   assert.deepEqual(await app.boxes.list(THREAD), []);
   assert.match(text(await tool("box_list", {})), /This thread has no boxes/);
+});
+
+test("box_copy takes relative paths under the workspace and the box user's home, and names files after their source", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+
+  mkdirSync(join(world.workspace, "src"));
+  writeFileSync(join(world.workspace, "src", "notes.txt"), "notes\n");
+  assert.match(text(await tool("box_copy", { box: box.name, direction: "to_box", from: "src/notes.txt" })), /to notes.txt in box/);
+  assert.match(text(await tool("box_copy", { box: box.name, direction: "to_box", from: join(world.workspace, "src/notes.txt"), to: "~/deep/copy.txt" })), /to deep\/copy.txt in box/);
+  assert.match(text(await tool("box_run", { box: box.name, command: "cat notes.txt deep/copy.txt > both.txt" })), /Exit code 0/);
+
+  const out = await tool("box_copy", { box: box.name, direction: "from_box", from: "~/both.txt" });
+  assert.ok(!isError(out), text(out));
+  assert.equal(readFileSync(join(world.workspace, "both.txt"), "utf8"), "notes\nnotes\n");
+  await tool("box_copy", { box: box.name, direction: "from_box", from: "both.txt", to: join(world.root, "outside.txt") });
+  assert.equal(readFileSync(join(world.root, "outside.txt"), "utf8"), "notes\nnotes\n");
+});
+
+test("workspace and box paths", () => {
+  assert.equal(workspacePath("/work/thread", "a/../b.txt"), "/work/thread/b.txt");
+  assert.equal(workspacePath("/work/thread", "/etc/hosts"), "/etc/hosts");
+  assert.equal(workspacePath("C:\\work", "a\\b.txt"), "C:\\work\\a\\b.txt");
+  assert.throws(() => workspacePath(null, "b.txt"), /b.txt is a relative path, and this thread's workspace has no directory/);
+  assert.equal(boxPath("~/x/y"), "x/y");
+  assert.equal(boxPath("x/y"), "x/y");
+  assert.equal(boxPath("/tmp/y"), "/tmp/y");
 });
 
 test("a ready box becomes a BB machine, and its machine goes before the box", async (t) => {
