@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { addressFor, net0For, normalisePrivateKey, parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
 import { parseGeneral } from "../src/core/config.ts";
-import { VALID, lxcConfig } from "./helpers.ts";
+import { VALID, lxcConfig, tempDir } from "./helpers.ts";
 
 test("valid settings parse with defaults", () => {
   const config = lxcConfig();
@@ -64,7 +63,7 @@ test("a template inside the box range is refused", () => {
 
 test("the SSH key is optional and survives a one-line paste or base64", () => {
   assert.equal(lxcConfig({ "proxmox-lxc-ssh-private-key": "" }).ssh.privateKey, null);
-  const dir = mkdtempSync(join(tmpdir(), "bb-box-key-"));
+  const dir = tempDir("key");
   execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", join(dir, "k")]);
   const key = readFileSync(join(dir, "k"), "utf8");
   assert.equal(normalisePrivateKey(key), key);

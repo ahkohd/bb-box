@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { ProxmoxLxcBackend, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
@@ -7,6 +7,17 @@ import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
+
+/** Every backend the tests make, disposed at the end so their key files go. */
+const made: ProxmoxLxcBackend[] = [];
+after(async () => {
+  for (const backend of made) await backend.dispose();
+});
+
+function track(backend: ProxmoxLxcBackend): ProxmoxLxcBackend {
+  made.push(backend);
+  return backend;
+}
 
 function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage()) {
   const ssh = fakeSsh();
@@ -23,7 +34,7 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
   });
   const context = testContext(storage);
   const make = () =>
-    new ProxmoxLxcBackend(config, context, { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, readyTimeoutMs: 0 });
+    track(new ProxmoxLxcBackend(config, context, { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, readyTimeoutMs: 0 }));
   return { ssh, proxmox, context, storage, make, backend: make() };
 }
 
@@ -298,12 +309,14 @@ test("warm guests beyond the target are removed", async () => {
   const { backend, proxmox, context } = setup({ "proxmox-lxc-headless-warm": 2 });
   await backend.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 2);
-  const smaller = new ProxmoxLxcBackend(lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009, "proxmox-lxc-headless-warm": 1 }), context, {
-    fetch: proxmox.fetch,
-    sleep: async () => {},
-    sshBinary: FAKE_SSH_BINARY,
-    readyTimeoutMs: 0,
-  });
+  const smaller = track(
+    new ProxmoxLxcBackend(lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009, "proxmox-lxc-headless-warm": 1 }), context, {
+      fetch: proxmox.fetch,
+      sleep: async () => {},
+      sshBinary: FAKE_SSH_BINARY,
+      readyTimeoutMs: 0,
+    }),
+  );
   await smaller.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 1);
   assert.deepEqual(context.errors, []);

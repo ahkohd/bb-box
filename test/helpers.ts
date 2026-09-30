@@ -2,7 +2,7 @@
 // for documentation.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseLxcSettings, type LxcConfig } from "../src/backends/proxmox-lxc/config.ts";
@@ -29,11 +29,23 @@ export function lxcConfig(values: Record<string, unknown> = {}): LxcConfig {
   return result.config;
 }
 
+const temporary: string[] = [];
+process.once("exit", () => {
+  for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
+});
+
+/** A fresh directory, removed when the test process exits. */
+export function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), `bb-box-${prefix}-`));
+  temporary.push(dir);
+  return dir;
+}
+
 export const FAKE_SSH_BINARY = new URL("./fake-ssh.mjs", import.meta.url).pathname;
 
 /** Points the fake ssh at a fresh directory. Tests in one file run one at a time, so the environment variable is safe. */
 export function fakeSsh() {
-  const dir = mkdtempSync(join(tmpdir(), "bb-box-fake-ssh-"));
+  const dir = tempDir("fake-ssh");
   process.env.FAKE_SSH_DIR = dir;
   mkdirSync(join(dir, "down"));
   mkdirSync(join(dir, "up-after"));

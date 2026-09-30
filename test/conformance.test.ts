@@ -1,16 +1,13 @@
 // Runs the backend conformance suite against the fake backend, in both
 // natures, and against the Proxmox LXC backend on a fake Proxmox and fake SSH.
 
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
 import { conformance } from "./conformance/suite.ts";
 import { FakeBackend } from "./fake-backend.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
-const root = mkdtempSync(join(tmpdir(), "bb-box-fake-backend-"));
+const root = tempDir("fake-backend");
 
 await conformance({
   name: "fake virtual backend",

@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { waitUntilAnswers } from "../src/transports/ready.ts";
 import { KeyFile, Ssh, SshError, SshTransport, generateKeyPair, publicKey, quote } from "../src/transports/ssh.ts";
 import { TransportError } from "../src/transports/types.ts";
-import { fakeSsh } from "./helpers.ts";
+import { fakeSsh, tempDir } from "./helpers.ts";
 
 test("ssh dials port 22 once with a 2 s connect timeout and no host key file", () => {
   const ssh = new Ssh({ keyPath: "/k", user: "box" });
@@ -111,7 +110,7 @@ test("quote survives single quotes", () => {
 });
 
 test("the key file is private and yields its public key", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "bb-box-key-"));
+  const dir = tempDir("key");
   execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", join(dir, "k")]);
   const keys = new KeyFile();
   const path = await keys.path(readFileSync(join(dir, "k"), "utf8").trim());
