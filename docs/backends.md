@@ -20,7 +20,7 @@ means merged and in daily use.
 | Linux | macOS | - | - | - | not possible: macOS runs only on Apple hardware | - | - |
 | Mac | macOS | VM | Tart | plain, desktop | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
 | Mac | macOS | physical | physical Mac | desktop | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
-| Mac | Linux | VM | Tart | plain, Docker, desktop | research, #148 | arm64; x86_64 programs through Rosetta | to research |
+| Mac | Linux | VM | Tart | plain, Docker (desktop to come) | working, 040 | arm64 | none offered |
 | Mac | Windows | VM | QEMU with HVF, UTM or Parallels | desktop | research, #150 | arm64 | to research |
 | Windows | Linux | container | Docker, in one WSL2 distribution | plain, Docker, desktop | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | `linux-desktop-cpu`; CUDA through `/dev/dxg` to research |
 | Windows | Linux | VM | Hyper-V | plain, Docker, desktop | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
@@ -299,12 +299,17 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   the clone and removed after the VM is deleted. VM names hold the box ID, so
   references are never reused.
 - Capacity is per Mac: `guests`, the running macOS VMs Tart lists there, at
-  most two; `memory`, less a reserve and every running VM's; and `disk`. A
+  most two (Linux VMs do not count, as the framework does not count them);
+  `memory`, less a reserve and every running VM's; and `disk`. A
   box gets its size's cores and memory with `tart set`, and may not have
   more cores than the Mac. It keeps its image's disk, so a disk size is
   refused for now. `Guest.size` comes from the VM's
   config.json, with `diskGiB` null.
-- The warm pool keeps suspended clones at a kind's default size. A VM
+- Linux boxes on arm64 (040) are clones of a second image, which runs the
+  Linux template's guest scripts. They work as user `box`, run with no VNC
+  server, and stop by shutting down, since Tart cannot resume a Linux VM;
+  so they have no warm pool. Their guest data says `os: linux`.
+- The warm pool keeps suspended clones at a macOS kind's default size. A VM
   serves a kind while the kind's image and its build (the inode and
   modification time of the image's disk file), the default size, Tart's
   version and the Mac's macOS build are the ones it was filled with, and it

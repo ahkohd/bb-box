@@ -51,6 +51,10 @@ const SHIPPED: Readonly<Record<string, KindSizes>> = {
   "linux-docker": LINUX,
   "linux-desktop": DESKTOP,
   "linux-desktop-cpu": DESKTOP,
+  // Linux on arm64 takes the presets of the x86_64 kinds it follows (040).
+  "linux-arm64": LINUX,
+  "linux-arm64-docker": LINUX,
+  "linux-arm64-desktop-cpu": DESKTOP,
   macos: MACOS,
   "macos-desktop": MACOS,
   "windows-desktop": DESKTOP,

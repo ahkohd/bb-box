@@ -4,10 +4,13 @@
 // backend's host scripts on the test machine, in the host's fake home. VMs are
 // directories under $HOME/.tart/vms, as Tart keeps them:
 //
-// - `tart run` writes `running` with its PID, prints the VNC URL and waits
-//   until `running` goes; `tart stop` removes it, and `tart suspend` also
-//   writes state.vzvmsave. A run refuses when $FAKE_TART_LIMIT (2) VMs of the
-//   host run already, as the Virtualization framework does.
+// - `tart run` writes `running` with its PID, prints the VNC URL when given
+//   --vnc-experimental, and waits until `running` goes; `tart stop` removes
+//   it, and `tart suspend` also writes state.vzvmsave. A run of a macOS VM
+//   refuses when $FAKE_TART_LIMIT (2) macOS VMs run already, counting those
+//   another app runs (the number in ~/.fake-other-macos-vms), as the
+//   Virtualization framework does; Linux VMs do not count. A Linux VM refuses
+//   --suspendable and a saved state, as Tart 2.30.0 does (040).
 // - `tart ip` gives each VM an address of its own, 192.168.64.<n>.
 // - A saved state that holds "corrupt" fails to restore, as Tart reports it.
 // - `sw_vers -buildVersion` says 27A1, or what the Mac's ~/.fake-macos-build holds.
@@ -18,7 +21,8 @@ const [tool, ...args] = process.argv.slice(2);
 const home = process.env.HOME;
 const vms = join(home, ".tart", "vms");
 mkdirSync(vms, { recursive: true });
-if (process.env.FAKE_SSH_DIR) appendFileSync(join(process.env.FAKE_SSH_DIR, "tart-log"), `${JSON.stringify([tool, ...args])}\n`);
+// What it was asked, for tests to read: in the Mac's home, since the fake ssh passes only PATH, HOME and USER.
+appendFileSync(join(home, ".fake-tart-log"), `${JSON.stringify([tool, ...args])}\n`);
 
 const fail = (text, code = 1) => {
   process.stderr.write(`${text}\n`);
@@ -74,10 +78,13 @@ function tart() {
       const name = rest[rest.length - 1];
       if (!existsSync(dir(name))) fail(`the specified VM "${name}" does not exist`);
       if (running(name)) fail(`VM "${name}" is already running`);
-      const limit = Number(process.env.FAKE_TART_LIMIT ?? 2);
-      const others = names().filter(running);
-      if (others.length >= limit) fail(`The number of VMs exceeds the system limit (other running VMs: ${others.join(", ")})`);
+      const linux = config(name).os === "linux";
       const saved = join(dir(name), "state.vzvmsave");
+      if (linux && (rest.includes("--suspendable") || existsSync(saved))) fail("Error: You can only suspend macOS VMs");
+      const limit = Number(process.env.FAKE_TART_LIMIT ?? 2);
+      const others = names().filter((other) => running(other) && config(other).os !== "linux");
+      const elsewhere = existsSync(join(home, ".fake-other-macos-vms")) ? Number(readFileSync(join(home, ".fake-other-macos-vms"), "utf8")) : 0;
+      if (!linux && others.length + elsewhere >= limit) fail(`The number of VMs exceeds the system limit (other running VMs: ${others.join(", ") || "another app's"})`);
       if (existsSync(saved) && readFileSync(saved, "utf8") === "corrupt") {
         console.log("restoring VM state from a snapshot...");
         fail('Error Domain=VZErrorDomain Code=12 "The virtual machine failed to restore with error \u201cinvalid argument\u201d."');
@@ -85,7 +92,7 @@ function tart() {
       writeFileSync(join(dir(name), "running"), String(process.pid));
       rmSync(join(dir(name), "state.vzvmsave"), { force: true });
       const port = 5900 + (names().indexOf(name) % 100);
-      console.log(`VNC server is running at vnc://:fake-pass-word-${port}@127.0.0.1:${port}`);
+      if (rest.includes("--vnc-experimental")) console.log(`VNC server is running at vnc://:fake-pass-word-${port}@127.0.0.1:${port}`);
       const stop = () => {
         rmSync(join(dir(name), "running"), { force: true });
         process.exit(0);

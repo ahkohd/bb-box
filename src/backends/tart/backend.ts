@@ -1,5 +1,5 @@
-// The Tart backend: macOS boxes as VMs on Macs with Apple silicon, made by
-// Tart on Apple's Virtualization framework. bb-box reaches each Mac over SSH
+// The Tart backend: macOS boxes, and Linux boxes on arm64 (040), as VMs on
+// Macs with Apple silicon, made by Tart on Apple's Virtualization framework. bb-box reaches each Mac over SSH
 // as its host user and runs `tart` there (see host.ts). VMs sit on the Mac's
 // own NAT, so bb-box reaches them through the Mac: commands over SSH with the
 // Mac as the jump host, and the desktop through Tart's VNC server, which
@@ -10,10 +10,13 @@
 //   write on APFS), then `tart run` detached from SSH, then its address from
 //   the Mac's DHCP leases, then SSH through the Mac.
 // - Capacity: per Mac, at most two running macOS VMs, which Apple's licence
-//   and the Virtualization framework allow, counting every VM Tart runs
-//   there; memory, less a reserve and the running VMs'; free disk.
-// - Stop suspends the VM, which frees its memory and its slot, and start
-//   resumes it with a new VNC port and password.
+//   and the Virtualization framework allow, counting every macOS VM Tart
+//   runs there (Linux VMs do not count); memory, less a reserve and the
+//   running VMs'; free disk.
+// - Stop suspends a macOS VM, which frees its memory and its slot, and start
+//   resumes it with a new VNC port and password. A Linux VM is shut down and
+//   boots again, since Tart cannot resume one; it runs as user box, with no
+//   VNC server, and no warm pool.
 // - A VM's address can change when it starts again, so bb-box asks the Mac
 //   for it when it does not know it, and forgets it when the VM stops.
 
@@ -22,7 +25,7 @@ import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import { TransportError, type Display, type RunResult, type SshAccess } from "../../transports/types.ts";
+import { TransportError, type Display, type GuestOs, type RunResult, type SshAccess } from "../../transports/types.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -87,6 +90,14 @@ const DOCTOR_SIZE: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
 
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
 
+/** The user Linux boxes work as, as in every Linux image bb-box builds. */
+const LINUX_USER = "box";
+
+/** The guest OS of a Tart kind: linux-arm64 and its kin, or macOS. */
+export function guestOsOf(kind: string): GuestOs {
+  return kind.startsWith("linux") ? "linux" : "macos";
+}
+
 type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 
 export interface TartBackendOptions {
@@ -107,6 +118,8 @@ interface Placing {
   readonly host: string;
   readonly vm: string;
   readonly memoryMiB: number;
+  /** A macOS VM, which counts against the Mac's two. */
+  readonly macos: boolean;
 }
 
 /** The prefix of a warm VM's name. A box that takes it keeps the name. */
@@ -169,6 +182,7 @@ type Pending = { readonly kind: string; readonly size: BoxSize };
 
 /** Boxes the registry is acquiring that have not reached a Mac yet, which count on every Mac. */
 interface Unplaced {
+  /** Those that are macOS VMs. */
   readonly count: number;
   readonly memoryMiB: number;
 }
@@ -236,6 +250,22 @@ export function tartKinds(config: TartConfig): BoxKind[] {
       },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
+    "linux-arm64": {
+      id: "linux-arm64",
+      label: "Linux on arm64",
+      description: "A Linux VM on arm64, on a Mac with Apple silicon. amd64 container images and x86_64 binaries do not run there.",
+      requires: [],
+      capabilities: { os: "linux", arch: "arm64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    },
+    "linux-arm64-docker": {
+      id: "linux-arm64-docker",
+      label: "Linux on arm64 with Docker",
+      description: "A Linux VM on arm64 with Docker, on a Mac with Apple silicon. amd64 container images and x86_64 binaries do not run there.",
+      requires: ["docker"],
+      capabilities: { os: "linux", arch: "arm64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    },
   };
   return TART_KINDS.filter((kind) => config.kinds[kind].image).map((kind) => kinds[kind]);
 }
@@ -291,8 +321,30 @@ done`;
  * such as a test machine.
  */
 export function nameScript(name: string): string {
-  return `case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) echo "not a VM"; exit 0 ;; esac
-for key in ComputerName LocalHostName HostName; do sudo -n scutil --set "$key" ${quote(hostnameOf(name))} || exit 1; done`;
+  const host = quote(hostnameOf(name));
+  return `if [ "$(uname -s)" = Linux ]; then
+  [ "$(systemd-detect-virt --vm 2>/dev/null)" = apple ] || { echo "not a VM"; exit 0; }
+  sudo -n hostnamectl set-hostname ${host} || exit 1
+  if grep -q '^127[.]0[.]1[.]1[[:space:]]' /etc/hosts; then sudo -n sed -i "s/^127[.]0[.]1[.]1[[:space:]].*/127.0.1.1 "${host}"/" /etc/hosts; else echo "127.0.1.1 "${host} | sudo -n tee -a /etc/hosts >/dev/null; fi
+  exit 0
+fi
+case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) echo "not a VM"; exit 0 ;; esac
+for key in ComputerName LocalHostName HostName; do sudo -n scutil --set "$key" ${host} || exit 1; done`;
+}
+
+/**
+ * Asks a Linux VM to shut itself down, after its file systems are written
+ * out: `tart stop` does not wait for a Linux guest, and what the guest had not
+ * written was lost (an SSH host key made at first boot came back empty).
+ * Only in an Apple Virtualization VM that names itself `vm`
+ * (rememberScript), never on a machine a command reaches by mistake, such as
+ * a test machine. Prints "powering off" when it asked.
+ */
+export function powerOffScript(vm: string): string {
+  return String.raw`[ "$(systemd-detect-virt --vm 2>/dev/null)" = apple ] || { echo "not a VM"; exit 0; }
+[ "$(cat "$HOME/.config/bb-box/vm" 2>/dev/null)" = ${quote(vm)} ] || { echo "not ${vm}"; exit 0; }
+sync
+sudo -n systemctl poweroff --no-block && echo "powering off"`;
 }
 
 /** A Mac that did not answer over SSH, or whose script failed. */
@@ -315,6 +367,8 @@ export class TartBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Each VM's address while bb-box knows it: learnt when it starts, forgotten when it stops. */
   readonly #addresses = new Map<string, string>();
+  /** Each VM's guest OS, as bb-box last learnt it from its box, for its SSH user. A VM it does not know is macOS. */
+  readonly #os = new Map<string, GuestOs>();
   /** VMs being started for boxes or warm pools, by VM, until they run or their start ends. */
   readonly #placing = new Map<string, Placing>();
   /** Placement is one at a time, so two acquires, or an acquire and a fill, never take the last slot of one Mac. */
@@ -353,15 +407,16 @@ export class TartBackend implements Backend {
     const states = await this.#states(signal);
     const placed = [...this.#placing.values()];
     const unplaced: Unplaced = {
-      count: Math.max(0, pending.length - placed.length),
+      count: Math.max(0, pending.filter((other) => guestOsOf(other.kind) === "macos").length - placed.filter((other) => other.macos).length),
       memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
     };
-    const hosts = this.#on().map((host) => this.#room(host, states.get(host.name)!, size, unplaced));
+    const os = guestOsOf(kind);
+    const hosts = this.#on().map((host) => this.#room(host, states.get(host.name)!, size, unplaced, new Set(), os));
     // A warm VM being filled gives its slot to a box, as #place stops it or takes it over (#145).
     const filling = new Set([...this.#filling].filter(([, fill]) => !fill.adopted).map(([vm]) => vm));
     const ok =
       hosts.some((host) => host.capacity.ok) ||
-      (filling.size > 0 && this.#on().some((host) => this.#room(host, states.get(host.name)!, size, unplaced, filling).capacity.ok));
+      (filling.size > 0 && this.#on().some((host) => this.#room(host, states.get(host.name)!, size, unplaced, filling, os).capacity.ok));
     let ready = 0;
     for (const host of this.#on()) {
       const state = states.get(host.name)!;
@@ -383,14 +438,25 @@ export class TartBackend implements Backend {
     return new Map(entries);
   }
 
-  /** Whether a box of `size` fits on the Mac, and if not, why, with what to do. VMs `yielding` count as gone. */
-  #room(host: TartHost, state: HostState | Error, size: BoxSize, unplaced: Unplaced = NONE_UNPLACED, yielding: ReadonlySet<string> = new Set()): { capacity: HostCapacity; why: string | null } {
+  /**
+   * Whether a box of `size` fits on the Mac, and if not, why, with what to
+   * do. VMs `yielding` count as gone. A Linux VM (`os`) does not count
+   * against the Mac's two macOS VMs.
+   */
+  #room(
+    host: TartHost,
+    state: HostState | Error,
+    size: BoxSize,
+    unplaced: Unplaced = NONE_UNPLACED,
+    yielding: ReadonlySet<string> = new Set(),
+    os: GuestOs = "macos",
+  ): { capacity: HostCapacity; why: string | null } {
     if (state instanceof Error) return { capacity: { host: host.name, ok: false, limits: [] }, why: `${host.name} did not answer: ${state.message}` };
     // Every running VM takes memory; only macOS VMs count against Apple's two.
     const running = state.vms.filter((vm) => vm.running && !yielding.has(vm.name));
     const macos = running.filter((vm) => (state.configs.get(vm.name)?.os ?? "darwin") === "darwin");
     const placing = [...this.#placing.values()].filter((other) => other.host === host.name && !yielding.has(other.vm) && !running.some((vm) => vm.name === other.vm));
-    const starting = placing.length + unplaced.count;
+    const starting = placing.filter((other) => other.macos).length + unplaced.count;
     const memoryUsed =
       running.reduce((sum, vm) => sum + (state.configs.get(vm.name)?.memoryMiB ?? 0), 0) + placing.reduce((sum, other) => sum + other.memoryMiB, 0) + unplaced.memoryMiB;
     const memoryFree = state.memoryMiB - memoryUsed;
@@ -407,7 +473,7 @@ export class TartBackend implements Backend {
       why = `a Tart box keeps its image's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk yet. Ask for the base disk`;
     } else if (state.cpus && size.cores > state.cpus) {
       why = `${host.name} has ${state.cpus} cores, fewer than the ${size.cores} asked for. Ask for at most ${state.cpus} cores`;
-    } else if (macos.length + starting >= this.#config.vmsPerHost) {
+    } else if (os === "macos" && macos.length + starting >= this.#config.vmsPerHost) {
       const names = macos.map((vm) => vm.name).join(", ");
       why =
         `${host.name} runs ${macos.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}. ` +
@@ -451,8 +517,9 @@ export class TartBackend implements Backend {
     return this.#chain(async (): Promise<Placement> => {
       const states = await this.#states(signal);
       const on = this.#on();
-      const rooms = on.map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size) }));
-      const count = (host: TartHost, vm: string) => this.#placing.set(vm, { host: host.name, vm, memoryMiB: box.size.memoryMiB });
+      const os = guestOsOf(box.kind);
+      const rooms = on.map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size, NONE_UNPLACED, new Set(), os) }));
+      const count = (host: TartHost, vm: string) => this.#placing.set(vm, { host: host.name, vm, memoryMiB: box.size.memoryMiB, macos: os === "macos" });
       for (const room of rooms) {
         const state = states.get(room.host.name)!;
         if (!room.capacity.ok || state instanceof Error) continue;
@@ -495,6 +562,7 @@ export class TartBackend implements Backend {
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
     const image = this.#config.kinds[box.kind as TartKind].image!;
+    const os = guestOsOf(box.kind);
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs);
     const step: Step = async (name, run) => {
       const started = performance.now();
@@ -513,7 +581,7 @@ export class TartBackend implements Backend {
       created: box.createdAt,
     });
     let placement: Exclude<Placement, { how: "wait" }> | null = await this.#previous(box, previous, signal);
-    if (placement) this.#placing.set(placement.vm, { host: placement.host.name, vm: placement.vm, memoryMiB: box.size.memoryMiB });
+    if (placement) this.#placing.set(placement.vm, { host: placement.host.name, vm: placement.vm, memoryMiB: box.size.memoryMiB, macos: os === "macos" });
     let started = false;
     const starting = async () => {
       if (!started) await hooks.starting();
@@ -523,7 +591,10 @@ export class TartBackend implements Backend {
     for (let attempt = 0; ; attempt++) {
       placement ??= await step("place", () => this.#placeBox(box, signal));
       const { host, vm } = placement;
-      const guest = (address: string | null, size: BoxSize | null = null): Guest => ({ ref: vm, host: host.name, address, size, data: { box: box.boxId } });
+      // A Linux box says so, for its SSH user; a macOS box's data is as it was.
+      const data: Readonly<Record<string, string>> = os === "linux" ? { box: box.boxId, os } : { box: box.boxId };
+      const guest = (address: string | null, size: BoxSize | null = null): Guest => ({ ref: vm, host: host.name, address, size, data });
+      this.#os.set(vm, os);
       let owned = placement.how === "resume";
       try {
         let address: string;
@@ -626,6 +697,7 @@ export class TartBackend implements Backend {
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
     if ((await this.power(guest, signal)) === null) throw this.#gone(guest);
     this.#addresses.delete(guest.ref);
+    this.#os.set(guest.ref, this.#osOf(guest));
     await this.#start(host, guest.ref, deadline, signal, true, this.#boxOf(guest));
     const address = await this.#address(host, guest.ref, deadline, signal);
     await this.#waitReady(host, guest.ref, address, deadline, signal);
@@ -634,8 +706,16 @@ export class TartBackend implements Backend {
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
     const host = this.#hostOf(guest);
+    // A Linux VM shuts itself down, and the Mac waits for it; one that cannot be asked is stopped.
+    // Only this install's box is asked, and only when it runs: another install's is "gone" (stopScript).
+    let how: "suspend" | "stop" | "shutdown" = "suspend";
+    if (this.#osOf(guest) === "linux") {
+      const power = await this.power(guest, signal);
+      if (power === null) throw this.#gone(guest);
+      how = power === "running" && (await this.#powerOff(host, guest, signal)) ? "shutdown" : "stop";
+    }
     await this.#forget(host, guest.ref);
-    const result = await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), "suspend"), { timeoutMs: 120_000, signal });
+    const result = await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), how), { timeoutMs: 240_000, signal });
     if (result.stdout.trim() === "gone") throw this.#gone(guest);
   }
 
@@ -649,6 +729,7 @@ export class TartBackend implements Backend {
     const owner = ownerText({ install: this.#context.installId, kind: box.kind, box: box.boxId, thread: box.threadId, name: box.name, created: box.createdAt });
     const result = (await this.#run(host, relabelScript(guest.ref, this.#context.installId, box.boxId, owner), { signal })).stdout.trim();
     if (result !== "relabelled") throw new Error(`The owner file of ${guest.ref} on ${host.name} does not name box ${box.boxId}.`);
+    this.#os.set(guest.ref, this.#osOf(guest));
     if (from !== box.name && guest.address) await this.#name(host, guest.address, guest.ref, box.name, signal);
   }
 
@@ -676,7 +757,7 @@ export class TartBackend implements Backend {
           host: host.name,
           address: this.#addresses.get(vm) ?? null,
           size: sizeOf(state.configs.get(vm)),
-          data: owner ? { box: owner.boxId } : {},
+          data: owner ? (guestOsOf(fields.kind ?? "") === "linux" ? { box: owner.boxId, os: "linux" } : { box: owner.boxId }) : {},
           owner,
           // A VM not made yet, after an acquire cut short before its clone, counts as stopped.
           power: listed ? powerOf(listed.state) : "stopped",
@@ -715,6 +796,8 @@ export class TartBackend implements Backend {
     for (const kind of this.#kinds) {
       const settings = this.#context.kind(kind.id);
       const image = this.#config.kinds[kind.id as TartKind].image;
+      // Warm VMs are suspended, which Tart cannot do to a Linux VM (040).
+      if (kind.capabilities.os !== "macos") continue;
       if (!settings.enabled || !image || settings.defaultSize.diskGiB !== null) continue;
       const size = settings.defaultSize;
       const index = pools.findIndex((pool) => pool.image === image && sameSize(pool.size, size));
@@ -838,7 +921,7 @@ export class TartBackend implements Backend {
       for (const host of this.#on()) {
         const state = states.get(host.name)!;
         if (state instanceof Error || !this.#room(host, state, pool.size).capacity.ok) continue;
-        this.#placing.set(vm, { host: host.name, vm, memoryMiB: pool.size.memoryMiB });
+        this.#placing.set(vm, { host: host.name, vm, memoryMiB: pool.size.memoryMiB, macos: true });
         return { host, state };
       }
       return null;
@@ -919,9 +1002,11 @@ export class TartBackend implements Backend {
     if (!address) {
       address = (await this.#lookup(host, guest.ref).catch(() => null)) ?? guest.address;
     }
-    if (!address) throw new TransportError("unreachable", `The macOS VM ${guest.ref} on ${host.name} has no address. It may be stopped.`);
-    const access = this.#vm(mac, address);
-    const command = new SshTransport(ssh, access, "macos");
+    if (!address) throw new TransportError("unreachable", `The VM ${guest.ref} on ${host.name} has no address. It may be stopped.`);
+    const os = guestOsOf(kind);
+    this.#os.set(guest.ref, os);
+    const access = this.#vm(mac, address, os);
+    const command = new SshTransport(ssh, access, os);
     const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
     const displays = (capabilities?.displays ?? []).map(
       (display): Display => ({
@@ -948,7 +1033,7 @@ export class TartBackend implements Backend {
       if (keys.publicKey) {
         push("tart.ssh-key", "SSH key", "ok", keys.generated ? "bb-box made a key; its public key is below." : "From bb-box's settings; its public key is below.");
         notes.push(
-          `Each Mac's user, and user ${this.#config.ssh.vmUser} in each image, must accept this SSH key in ~/.ssh/authorized_keys: ${keys.publicKey}`,
+          `Each Mac's user, user ${this.#config.ssh.vmUser} in each macOS image and user ${LINUX_USER} in the Linux image, must accept this SSH key in ~/.ssh/authorized_keys: ${keys.publicKey}`,
         );
       } else {
         push("tart.ssh-key", "SSH key", "fail", "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole private key, or clear the setting so bb-box makes one.");
@@ -988,9 +1073,11 @@ export class TartBackend implements Backend {
         const listed = state.vms.find((vm) => vm.name === image);
         const config = state.configs.get(image);
         if (!listed) {
-          push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${host.name} has no Tart VM ${image}.`, "Prepare it with setup/tart/prepare-image.sh, or set the image in bb-box's settings.");
-        } else if (config?.os && config.os !== "darwin") {
-          push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${image} on ${host.name} is a ${config.os} VM.`, "Give a macOS image.");
+          const script = guestOsOf(kind) === "linux" ? "prepare-linux-image.sh" : "prepare-image.sh";
+          push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${host.name} has no Tart VM ${image}.`, `Prepare it with setup/tart/${script}, or set the image in bb-box's settings.`);
+        } else if (config?.os && config.os !== (guestOsOf(kind) === "linux" ? "linux" : "darwin")) {
+          const wanted = guestOsOf(kind) === "linux" ? "Linux" : "macOS";
+          push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${image} on ${host.name} is a ${config.os} VM.`, `Give a ${wanted} image.`);
         } else {
           push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "ok", `${image}${config ? `, ${config.cpus} cores and ${formatMiB(config.memoryMiB)} as prepared` : ""}.`);
         }
@@ -1052,15 +1139,21 @@ export class TartBackend implements Backend {
   }
 
   #gone(guest: Guest): BackendError {
-    return new BackendError("gone", `The macOS VM ${guest.ref} no longer exists on ${guest.host}.`);
+    return new BackendError("gone", `The VM ${guest.ref} no longer exists on ${guest.host}.`);
   }
 
   async #mac(host: TartHost): Promise<SshAccess> {
     return { host: host.address, port: host.port, user: host.user, hostKeys: this.#config.hostKeys };
   }
 
-  #vm(mac: SshAccess, address: string): SshAccess {
-    return { host: address, port: 22, user: this.#config.ssh.vmUser, hostKeys: [], jump: mac };
+  /** SSH to a VM through its Mac, as the user its OS works as. */
+  #vm(mac: SshAccess, address: string, os: GuestOs = "macos"): SshAccess {
+    return { host: address, port: 22, user: os === "linux" ? LINUX_USER : this.#config.ssh.vmUser, hostKeys: [], jump: mac };
+  }
+
+  /** A box's guest OS, from its data: a Linux box's says so (acquire). */
+  #osOf(guest: Guest): GuestOs {
+    return guest.data?.os === "linux" ? "linux" : "macos";
   }
 
   /** Runs a script on the Mac. Throws when the Mac does not answer, or the script fails. */
@@ -1140,14 +1233,16 @@ export class TartBackend implements Backend {
   /** Waits until SSH to the VM, through the Mac, answers, on the connection its first commands then share. */
   async #waitReady(host: TartHost, vm: string, address: string, deadline: number, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
-    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos");
+    const os = this.#os.get(vm) ?? "macos";
+    const access = this.#vm(await this.#mac(host), address, os);
+    const command = new SshTransport(ssh, access, os);
     const left = Math.max(1_000, deadline - Date.now());
     const answers = { probe: (inner?: AbortSignal) => command.answers(inner) };
     const ready = await waitUntilAnswers(answers, { timeoutMs: left, intervalMs: 500, signal, sleep: this.#options.sleep ?? pause });
     if (!ready) {
       throw new Error(
-        `${vm} on ${host.name} did not answer SSH as ${this.#config.ssh.vmUser} at ${address} within ${Math.round(left / 1000)} s. ` +
-          `Check that the image's user ${this.#config.ssh.vmUser} accepts bb-box's key.`,
+        `${vm} on ${host.name} did not answer SSH as ${access.user} at ${address} within ${Math.round(left / 1000)} s. ` +
+          `Check that the image's user ${access.user} accepts bb-box's key.`,
       );
     }
   }
@@ -1166,7 +1261,8 @@ export class TartBackend implements Backend {
    */
   async #identify(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
-    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos");
+    const os = this.#os.get(vm) ?? "macos";
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, os), os);
     const result = await command.run(identityScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new Error(`${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
     if (result.stdout.trim() !== "none") return;
@@ -1187,11 +1283,27 @@ export class TartBackend implements Backend {
   async #name(host: TartHost, address: string, vm: string, name: string, signal?: AbortSignal): Promise<void> {
     await this.#identify(host, address, vm, signal);
     const { ssh } = await this.#keys();
-    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos");
+    const os = this.#os.get(vm) ?? "macos";
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, os), os);
     const result = await command.run(nameScript(name), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 }).catch((error: unknown) => error);
     if (result instanceof Error || (result as RunResult).exitCode !== 0) {
       const why = result instanceof Error ? result.message : (result as RunResult).stderr.trim() || `exit code ${(result as RunResult).exitCode}`;
-      this.#context.logError("name the box", new Error(`Could not name the macOS VM on ${host.name} ${hostnameOf(name)}: ${why}`));
+      this.#context.logError("name the box", new Error(`Could not name the VM ${vm} on ${host.name} ${hostnameOf(name)}: ${why}`));
+    }
+  }
+
+  /** Asks a Linux box's VM to shut down (powerOffScript); false when it could not be asked. */
+  async #powerOff(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const address = this.#addresses.get(guest.ref) ?? (await this.#lookup(host, guest.ref).catch(() => null)) ?? guest.address;
+      if (!address) return false;
+      const { ssh } = await this.#keys();
+      const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "linux"), "linux");
+      const result = await command.run(powerOffScript(guest.ref), { timeoutMs: 20_000, signal, maxOutputBytes: 4096 });
+      return result.exitCode === 0 && result.stdout.includes("powering off");
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return false;
     }
   }
 
@@ -1202,7 +1314,7 @@ export class TartBackend implements Backend {
     if (!address) return;
     try {
       const { ssh } = await this.#keys();
-      await ssh.forget(this.#vm(await this.#mac(host), address));
+      await ssh.forget(this.#vm(await this.#mac(host), address, this.#os.get(vm) ?? "macos"));
     } catch (error) {
       this.#context.logError("ssh", error);
     }
