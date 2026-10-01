@@ -193,7 +193,8 @@ Leave empty to offer no CPU desktops.
   stop part way and resume; one that is on, or has boxes, cannot. A saved
   backend is reconfigured at once, and its state line updates.
 - **Save and turn on**, shown while the backend is off, saves it on in one
-  go, so first setup does not end with the row's switch. The server refuses
+  go, so first setup does not end with the row's switch. It is the form's
+  submit then, so Enter in a field does the same; Save is a plain button. The server refuses
   an on backend with problems, so a refusal saves nothing: the form says
   "Not saved: it cannot be on with these. Save keeps it off while you fix
   them." The Tart and SSH host pool guides save a backend off on purpose,

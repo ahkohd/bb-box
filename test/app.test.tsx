@@ -865,13 +865,14 @@ test("a backend that is off saves part way, and the form says what is still miss
   expect(slot.getByRole("button", { name: "Save" })).toBeTruthy();
 });
 
-test("a backend that is off offers Save and turn on, which saves it on in one go, and a refusal saves nothing", async () => {
+test("a backend that is off offers Save and turn on, which Enter and the button save on in one go, and a refusal saves nothing", async () => {
   const { handlers, changes } = server([]);
   const slot = settings(handlers);
   fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
   expect(slot.queryByRole("button", { name: "Save and turn on" })).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: "Set up Other pool" }));
-  fireEvent.click(await slot.findByRole("button", { name: "Save and turn on" }));
+  // Enter in a field submits the form, which does what the main button does (#193).
+  fireEvent.submit((await slot.findByRole("button", { name: "Save and turn on" })).closest("form")!);
   await waitFor(() => expect(changes).toHaveLength(1));
   const saved = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
   expect(saved.backends.find((backend: { id: string }) => backend.id === "other")).toMatchObject({ id: "other", type: "other", enabled: true });

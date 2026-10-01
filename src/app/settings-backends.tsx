@@ -256,7 +256,8 @@ export function BackendForm({
       className="mt-3 space-y-4 border-t border-border pt-3"
       onSubmit={(event) => {
         event.preventDefault();
-        void save();
+        // Enter does what the main button does: Save and turn on while the backend is off, Save otherwise (#193).
+        void (off ? saveOn() : save());
       }}
     >
       {guide ? (
@@ -353,12 +354,12 @@ export function BackendForm({
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {off ? (
-          <Button type="button" size="sm" className="h-7" disabled={busy !== null} onClick={() => void saveOn()}>
+          <Button type="submit" size="sm" className="h-7" disabled={busy !== null}>
             {busy === "on" ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
             Save and turn on
           </Button>
         ) : null}
-        <Button type="submit" variant={off ? "outline" : "default"} size="sm" className="h-7" disabled={busy !== null}>
+        <Button type={off ? "button" : "submit"} variant={off ? "outline" : "default"} size="sm" className="h-7" disabled={busy !== null} onClick={off ? () => void save() : undefined}>
           {busy === "save" ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
           Save
         </Button>
