@@ -935,7 +935,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
   - bb-box registers a machine provider. It creates a machine with the box ID
     as the key, and the provider's `create` runs BB's `bootstrap` through the
     box's command transport. BB issues the credential and runs its own
-    installer.
+    installer. While the plugin restarts, BB can say for some seconds that
+    it knows no such provider, so bb-box asks up to 6 times, 6 s apart,
+    and the log says so.
   - Templates carry Node.js, npm, curl and a pre-installed bb-app, so the
     installer skips the download and `npm install`. On a real host with
     BB 0.44.0, a box is enrolled 5.2 to 5.5 s after it is ready, of which the

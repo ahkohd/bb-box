@@ -52,7 +52,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; controlReconnectMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; controlReconnectMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -71,6 +71,8 @@ async function start(
     installer: "echo installed > bb-installed",
     /** BB's machine calls never answer, as for a plugin that is stopping. */
     silent: false,
+    /** How many more machine creates BB refuses, not knowing bb-box's provider, as while the plugin restarts. */
+    unknownProvider: 0,
     /** BB's built-in Git: "logged in" when it gives machines GH_TOKEN. */
     git: "logged in" as "logged in" | "not logged in" | "disabled" | "overridden",
     /** Host calls, in order, to check a machine is removed before its box. */
@@ -193,6 +195,10 @@ async function start(
         experimental_create: async ({ key, inputs }: { key: string; inputs: { boxId: string } }) => {
           const id = `host-${key}`;
           world.events.push(`create ${id}`);
+          if (world.unknownProvider > 0) {
+            world.unknownProvider--;
+            throw Object.assign(new Error('HTTP 400: Unknown machine provider "bb-box"'), { status: 400 });
+          }
           const existing = hosts.get(id);
           if (existing && existing.lifecycle.phase !== "destroyed") return existing;
           const host = makeHostResponse({ id, status: "disconnected", machineProviderId: "bb-box" });
@@ -279,6 +285,7 @@ async function start(
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
+    providerRetryMs: options.providerRetryMs,
     controlReconnectMs: options.controlReconnectMs,
   };
   const app = await setup(bb, setupOptions);
@@ -837,6 +844,26 @@ test("a kind keeps a spare box as a BB machine, which box_acquire claims, rename
   const next = await until("another spare", async () => (await app.boxes.list(SPARES)).find((spare) => spare.enrol.state === "enrolled"));
   assert.notEqual(next.id, box.id);
   await until("its machine", async () => world.hosts.get(`host-${next.id}`)?.name === `${next.name} (spare)`);
+});
+
+test("an enrolment BB refuses for not knowing bb-box's machine provider, as while the plugin restarts, asks again and enrols (#285)", async (t) => {
+  const { harness, app, world, tool } = await start(undefined, { providerRetryMs: 20 });
+  t.after(() => harness.lifecycle.dispose());
+  world.unknownProvider = 2;
+
+  assert.match(text(await tool("box_acquire", {})), /BB machine: enrolled/);
+  const box = await only(app);
+  assert.equal(world.events.filter((event) => event === `create host-${box.id}`).length, 3);
+  const messages = harness.inspection.logEntries.map((entry) => entry.message);
+  assert.ok(messages.includes(`Enrolling box ${box.name}: BB does not know bb-box's machine provider yet, as while the plugin restarts. Asking again in 0.02 s, 5 more times at most.`), messages.join("\n"));
+
+  // BB that never knows it: six tries, then the box says why it is not a BB machine.
+  world.unknownProvider = 100;
+  await tool("box_acquire", {}, "thr_two");
+  const [other] = await app.boxes.list("thr_two");
+  await until("the enrolment to give up", async () => (await app.boxes.find(other!.id))?.enrol.state === "failed");
+  assert.match((await app.boxes.find(other!.id))?.enrol.error ?? "", /Unknown machine provider "bb-box"/);
+  assert.equal(world.events.filter((event) => event === `create host-${other!.id}`).length, 6);
 });
 
 test("when BB removes a box's machine, the box is no longer enrolled", async (t) => {

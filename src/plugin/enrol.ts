@@ -71,12 +71,21 @@ export interface EnrolmentDeps {
   readonly fastPollMs?: number;
   /** How long to wait, once the machine connects, for a worker with the thread's variables. */
   readonly variablesWaitMs?: number;
+  /** How long to wait before asking BB again to add a box, when BB does not know bb-box's machine provider yet. */
+  readonly providerRetryMs?: number;
 }
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
 const ACCESS_SETUP_TIMEOUT_MS = 60_000;
 const ACCESS_CHECK_TIMEOUT_MS = 10_000;
 const VARIABLES_POLL_MS = 250;
+/** How many times bb-box asks BB to add a box while BB does not know its machine provider: about 30 s by default (#285). */
+const PROVIDER_TRIES = 6;
+
+/** BB's answer while it does not know bb-box's machine provider, as for some seconds while the plugin restarts. */
+function isUnknownProvider(error: unknown): boolean {
+  return error instanceof Error && /\bUnknown machine provider\b/i.test(error.message);
+}
 
 /** A wait for the log, such as "10 s" or "0.3 s". */
 function waited(ms: number): string {
@@ -224,6 +233,7 @@ export class Enrolment {
   readonly #pollMs: number;
   readonly #fastPollMs: number;
   readonly #variablesWaitMs: number;
+  readonly #providerRetryMs: number;
   /** Boxes whose enrolment this process is following. */
   readonly #following = new Set<string>();
   /** Boxes whose BB daemon this process is starting again. */
@@ -238,6 +248,7 @@ export class Enrolment {
     this.#fastPollMs = deps.fastPollMs ?? 100;
     // BB can give a new machine GH_TOKEN some seconds after it connects.
     this.#variablesWaitMs = deps.variablesWaitMs ?? 30_000;
+    this.#providerRetryMs = deps.providerRetryMs ?? 6_000;
   }
 
   /** The machine provider BB calls to create and remove a box's machine. */
@@ -313,12 +324,8 @@ export class Enrolment {
     try {
       let current: BoxRecord = box;
       if (!box.enrol.hostId) {
-        const host = await this.#deps.hosts().experimental_create({
-          machineProviderId: MACHINE_PROVIDER_ID,
-          key: box.id,
-          inputs: { boxId: box.id },
-          wait: false,
-        });
+        const host = await this.#create(box);
+        if (!host) return;
         phases.mark("requested");
         const recorded = await this.#deps.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: host.id, error: null } }));
         // Released meanwhile: its release did not know the machine yet.
@@ -345,6 +352,25 @@ export class Enrolment {
     } finally {
       this.#phases.delete(box.id);
       this.#following.delete(box.id);
+    }
+  }
+
+  /**
+   * Asks BB to add the box as a machine. While the plugin restarts, BB can
+   * say for some seconds that it knows no such machine provider, so bb-box
+   * asks again then. Null when the box was released meanwhile.
+   */
+  async #create(box: BoxRecord): Promise<HostState | null> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.#deps.hosts().experimental_create({ machineProviderId: MACHINE_PROVIDER_ID, key: box.id, inputs: { boxId: box.id }, wait: false });
+      } catch (error) {
+        if (!isUnknownProvider(error) || attempt >= PROVIDER_TRIES) throw error;
+        this.#deps.log?.(`Enrolling box ${box.name}: BB does not know bb-box's machine provider yet, as while the plugin restarts. Asking again in ${this.#providerRetryMs / 1000} s, ${PROVIDER_TRIES - attempt} more times at most.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.#providerRetryMs));
+      const current = await this.#deps.boxes.find(box.id);
+      if (!current || current.state === "releasing") return null;
     }
   }
 
