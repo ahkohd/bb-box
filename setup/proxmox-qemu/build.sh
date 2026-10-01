@@ -183,14 +183,24 @@ screen() { # vmid: the console as a PPM image, for a failed build
   echo "screendump $work/../bb-box-windows-$1.ppm" | qm monitor "$1" >/dev/null 2>&1 &&
     echo "console of VM $1: /var/tmp/bb-box-windows-$1.ppm"
 }
-installed() { gexec "$vm" 20 'if ((Test-Path C:\bb-box\firstlogon-done) -and (Get-Service sshd).Status -eq "Running" -and (Get-Process cua-driver -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0)) { exit 0 } else { exit 1 }'; }
+# Exit 0 once installed, restarted and logged on with Cua; 2 if the first
+# logon failed; 1 while it is not there yet.
+installed() { gexec "$vm" 20 'if (Test-Path C:\bb-box\firstlogon-failed) { exit 2 }; if ((Test-Path C:\bb-box\firstlogon-done) -and (Get-Service sshd).Status -eq "Running" -and (Get-Process cua-driver -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0)) { exit 0 } else { exit 1 }'; }
 
 log "Windows Setup, then the first logon (C:\\bb-box\\firstlogon.log in the VM)"
-if ! wait_for "installed, restarted and logged on" 6000 20 installed; then
-  screen "$vm"
-  gexec "$vm" 30 'Get-Content C:\bb-box\firstlogon.log -Tail 20' || true
-  die "Windows did not finish installing in VM $vm"
-fi
+start=$(date +%s)
+while :; do
+  state=0
+  installed >/dev/null 2>&1 || state=$?
+  [ "$state" != 0 ] || break
+  if [ "$state" = 2 ] || [ $(($(date +%s) - start)) -ge 6000 ]; then
+    screen "$vm"
+    gexec "$vm" 30 'Get-Content C:\bb-box\firstlogon.log -Tail 20' || true
+    die "Windows did not finish installing in VM $vm (above)"
+  fi
+  sleep 20
+done
+log "installed, restarted and logged on after $(($(date +%s) - start)) s"
 gexec "$vm" 30 'Select-String -Path C:\bb-box\firstlogon.log -Pattern "^\d\d:\d\d:\d\d " | ForEach-Object Line'
 
 # The template: no build address (clones take theirs from the SMBIOS serial),

@@ -11,10 +11,18 @@ function Set-Reg($path, $name, $value, $type = 'DWord') {
   if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
   New-ItemProperty -Path $path -Name $name -Value $value -PropertyType $type -Force | Out-Null
 }
-# Downloads a pinned file and checks its SHA-256.
+# Downloads a pinned file and checks its SHA-256, trying a few times.
 function Get-Pinned($url, $sha256, $out) {
-  Invoke-WebRequest $url -OutFile $out
-  if ((Get-FileHash $out -Algorithm SHA256).Hash -ne $sha256) { Remove-Item $out; throw "$url does not match its SHA-256" }
+  for ($try = 1; $try -le 5; $try++) {
+    try {
+      Invoke-WebRequest $url -OutFile $out -UseBasicParsing -ErrorAction Stop
+      if ((Get-FileHash $out -Algorithm SHA256).Hash -eq $sha256) { return }
+      Step "$url does not match its SHA-256 (try $try)"
+    } catch { Step "could not download $url (try $try): $_" }
+    Remove-Item $out -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 10
+  }
+  throw "could not download $url with its SHA-256"
 }
 # A task in box's desktop session at logon, with no console window.
 function Register-LogonTask($name, $command, $level) {
@@ -24,6 +32,15 @@ function Register-LogonTask($name, $command, $level) {
   $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel $level
   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
   Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+}
+
+# A step that fails stops the script and leaves C:\bb-box\firstlogon-failed,
+# which build.sh watches for, so a failed build ends at once.
+trap {
+  Step "FAILED: $_"
+  Set-Content C:\bb-box\firstlogon-failed "$_"
+  Stop-Transcript | Out-Null
+  break
 }
 
 $build = Get-Content C:\bb-box\build.json -Raw | ConvertFrom-Json
@@ -37,6 +54,8 @@ if ($virtio) {
 
 Step "Build address $($build.address)"
 & C:\bb-box\boot.ps1 -Address $build.address -Gateway $build.gateway -Dns $build.dns
+# The downloads below need the network the address has just brought up.
+for ($i = 0; $i -lt 60 -and -not (Resolve-DnsName github.com -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 2 }
 
 Step "PowerShell $($build.pwsh.version)"
 $msi = "C:\bb-box\pwsh.msi"
