@@ -138,9 +138,11 @@ function quote(value: string): string {
 /**
  * A stand-in for BB's daemon in a box: a process running a program at
  * `parent`, whose workers each have only the given variables. Workers start
- * in order, so the last is the newest. Stop it when the test ends.
+ * in order, so the last is the newest. With `startOn`, they start `seconds`
+ * after that file appears, as BB's do a moment after its daemon connects,
+ * and this returns without waiting for them. Stop it when the test ends.
  */
-export async function fakeDaemon(workers: readonly Readonly<Record<string, string>>[]) {
+export async function fakeDaemon(workers: readonly Readonly<Record<string, string>>[], options: { startOn?: { file: string; seconds: number } } = {}) {
   const dir = tempDir("daemon");
   const parent = join(dir, "daemon-bundle");
   const lines = workers.map(
@@ -149,7 +151,10 @@ export async function fakeDaemon(workers: readonly Readonly<Record<string, strin
         .map(([name, value]) => quote(`${name}=${value}`))
         .join(" ")} sleep 300 &`,
   );
-  writeFileSync(parent, `${lines.join("\n")}\n: > ${quote(join(dir, "started"))}\nwait\n`);
+  const { startOn } = options;
+  const wait = startOn ? `while [ ! -e ${quote(startOn.file)} ]; do sleep 0.05; done\nsleep ${startOn.seconds}\n` : "";
+  const started = `: > ${quote(join(dir, "started"))}\n`;
+  writeFileSync(parent, startOn ? `${started}${wait}${lines.join("\n")}\nwait\n` : `${lines.join("\n")}\n${started}wait\n`);
   const daemon = spawn("sh", [parent], { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } });
   const pid = daemon.pid!;
   const running = () => {
@@ -162,7 +167,7 @@ export async function fakeDaemon(workers: readonly Readonly<Record<string, strin
       return [];
     }
   };
-  for (let i = 0; !existsSync(join(dir, "started")) || running().length < workers.length; i++) {
+  for (let i = 0; !existsSync(join(dir, "started")) || (!startOn && running().length < workers.length); i++) {
     if (i > 400) throw new Error("the fake daemon did not start");
     await new Promise((resolve) => setTimeout(resolve, 5));
   }

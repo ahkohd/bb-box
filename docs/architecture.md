@@ -837,6 +837,12 @@ A box is a resource of its thread and gets what the thread's own machine has.
     ([BB requests](bb-requests.md), request 8). A changed value reaches the
     next command, and the values never reach the disk. `git` asks `gh` for
     GitHub credentials, so it uses `GH_TOKEN`.
+  - BB's daemon starts the workers that carry the variables a moment after
+    BB shows the machine connected, up to about a second later on a Mac. So
+    the enrolment ends once a command in the box finds such a worker, or
+    10 s after the machine connects. `box_run` waits for the enrolment, so
+    its first command has the variables. A box with no names to take, or
+    with nothing running the daemon's program, does not wait.
   - BB can take seconds to answer while it is busy, so bb-box asks for the
     machine's and the project's names together, first as the box starts,
     and keeps them for a minute. After that, a command gets the names it
