@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SshPoolBackend } from "../src/backends/ssh-pool/backend.ts";
 import { hostKeysFor, parseSshPoolSettings, parseTarget, type SshPoolConfig } from "../src/backends/ssh-pool/config.ts";
-import { BackendError, type Backend, type BackendStorage, type BoxIdentity, type BoxSize, type Guest } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type Backend, type BackendStorage, type BoxIdentity, type BoxSize, type Capacity, type Guest } from "../src/backends/types.ts";
 import { conformance, identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
 import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
@@ -226,6 +226,53 @@ describe("SSH host pool", () => {
     assert.equal(pending.ok, false, "the one free machine is spoken for");
     assert.equal(pending.hosts[0]!.limits[0]!.used, 1);
     await assert.rejects(backend.capacity("linux-docker", sizeOf("linux-docker"), []), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
+    await backend.dispose();
+  });
+
+  it("gives each acquire that has not claimed the machine its claim would take, whatever its size and kind", async () => {
+    machine("192.0.2.64", { cores: "2", memory: "3900" });
+    machine("192.0.2.65", { cores: "2", memory: "3900", docker: "", hook: "" });
+    machine("192.0.2.66", { cores: "8", memory: "15900" });
+    const { backend } = pool("s 192.0.2.64 linux\nd 192.0.2.65 linux,linux-docker reset=machine\nl 192.0.2.66 linux");
+    const small = sizeOf("linux");
+    const large: BoxSize = { cores: 8, memoryMiB: 16384, diskGiB: null };
+    const used = (capacity: Capacity) => capacity.hosts[0]!.limits[0]!.used;
+
+    const before = await backend.capacity("linux", large, [{ kind: "linux", size: small }]);
+    assert.equal(before.ok, true, "the small box will claim s, which leaves l");
+    assert.equal(used(before), 2, "s is spoken for, and d is too small");
+    const docker = await backend.capacity("linux-docker", small, [{ kind: "linux", size: small }]);
+    assert.equal(docker.ok, true, "the linux box will claim s, which leaves d");
+    const both = await backend.capacity("linux-docker", small, [{ kind: "linux", size: small }, { kind: "linux", size: small }]);
+    assert.equal(both.ok, false, "the second linux box will claim d");
+    assert.match(both.message!, /Of the 1 machine that serves linux-docker, 1 about to be claimed by other boxes\. Release a box to free one\./);
+    const refused = await backend.capacity("linux", large, [{ kind: "linux", size: large }]);
+    assert.equal(refused.ok, false);
+    assert.equal(used(refused), 3);
+    assert.match(refused.message!, /, 2 smaller than 8 cores, 16 GiB memory \(s: .*; d: .*\), 1 about to be claimed by other boxes\. Release a box to free one, or ask for a smaller size\./);
+
+    // A box that has claimed shows as held, so capacity does not give it another machine.
+    let go = () => {};
+    const gate = new Promise<void>((resolve) => (go = resolve));
+    let claimed = () => {};
+    const atClaim = new Promise<void>((resolve) => (claimed = resolve));
+    const hooks: AcquireHooks = {
+      ...recordingHooks().hooks,
+      starting: async () => {
+        claimed();
+        await gate;
+      },
+    };
+    const acquiring = backend.acquire(identity("linux", small), null, hooks, AbortSignal.timeout(20_000));
+    await atClaim;
+    const during = await backend.capacity("linux", large, [{ kind: "linux", size: small }]);
+    assert.equal(during.ok, true, "the small box holds s");
+    assert.equal(used(during), 2);
+    assert.equal((await backend.capacity("linux-docker", small, [{ kind: "linux", size: small }])).ok, true, "the small box does not also take d");
+    go();
+    const guest = await acquiring;
+    assert.equal(guest.ref, "s");
+    await backend.release(guest, releaseHooks().hooks);
     await backend.dispose();
   });
 

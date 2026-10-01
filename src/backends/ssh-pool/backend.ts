@@ -133,6 +133,12 @@ interface View {
   readonly since: number;
 }
 
+/** A box being acquired, as capacity sees it. */
+interface Acquiring {
+  readonly kind: string;
+  readonly size: BoxSize;
+}
+
 interface SshKeys {
   readonly ssh: Ssh;
   readonly publicKey: string | null;
@@ -206,6 +212,10 @@ function fits(status: MachineStatus | null, size: BoxSize): boolean {
   return size.diskGiB === null || (status!.diskGiB ?? 0) >= size.diskGiB;
 }
 
+function sameSize(a: BoxSize, b: BoxSize): boolean {
+  return a.cores === b.cores && a.memoryMiB === b.memoryMiB && a.diskGiB === b.diskGiB;
+}
+
 /** Fewer cores first, then less memory. */
 function bySize(a: View, b: View): number {
   const [x, y] = [machineSize(a.probe.status), machineSize(b.probe.status)];
@@ -226,8 +236,8 @@ export class SshPoolBackend implements Backend {
   readonly #resetting = new Set<string>();
   /** Machines this process is claiming, whose record the claim writes. */
   readonly #claiming = new Set<string>();
-  /** The kinds of boxes whose acquire in this process has claimed a machine and not finished. */
-  readonly #claimed = new Map<string, string>();
+  /** The kinds and sizes of boxes whose acquire in this process has claimed a machine and not finished. */
+  readonly #claimed = new Map<string, Acquiring>();
   #ssh: Promise<SshKeys> | null = null;
   /** Claims in this process go one at a time, so two never pick the same machine. */
   #queue: Promise<unknown> = Promise.resolve();
@@ -251,25 +261,46 @@ export class SshPoolBackend implements Backend {
     return offer;
   }
 
-  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: BoxSize, pending: readonly Acquiring[], signal?: AbortSignal): Promise<Capacity> {
     this.#offer(kind);
-    const views = (await this.#survey(signal)).filter((view) => this.#lists(view.machine, kind));
-    const free = views.filter((view) => view.state === "free" && this.#ready(view, kind) === null && fits(view.probe.status, size));
-    // Acquires of kinds that share a machine with this one wait for the same machines; those that have claimed one show as held.
-    const shares = (other: string) => views.some((view) => this.#lists(view.machine, other));
-    const waiting = Math.max(0, pending.filter((box) => shares(box.kind)).length - [...this.#claimed.values()].filter(shares).length);
-    const ok = free.length > waiting;
-    const used = Math.min(views.length, views.length - free.length + waiting);
+    const all = await this.#survey(signal);
+    const views = all.filter((view) => this.#lists(view.machine, kind));
+    // Acquires that have not claimed a machine take theirs first, as their claims would; those that have claimed one show as held.
+    const taken = new Set<View>();
+    for (const box of this.#waiting(pending)) {
+      const view = this.#candidates(all, box.kind, box.size).find((candidate) => !taken.has(candidate));
+      if (view) taken.add(view);
+    }
+    const fitting = this.#candidates(views, kind, size);
+    const left = fitting.filter((view) => !taken.has(view)).length;
+    const ok = left > 0;
     return {
       ok,
-      message: ok ? null : this.#full(kind, size, views, free.length),
+      message: ok ? null : this.#full(kind, size, views, fitting.length),
       warm: null,
-      hosts: [{ host: POOL_HOST, ok, limits: [{ resource: "machines", used, total: views.length, reserve: 0, unit: "count" }] }],
+      hosts: [{ host: POOL_HOST, ok, limits: [{ resource: "machines", used: views.length - left, total: views.length, reserve: 0, unit: "count" }] }],
     };
   }
 
-  /** Why no machine is free for `kind` at `size`, in words for the user. */
-  #full(kind: string, size: BoxSize, views: readonly View[], free: number): string {
+  /** The acquires in `pending` that have not claimed a machine in this process. */
+  #waiting(pending: readonly Acquiring[]): Acquiring[] {
+    const waiting = [...pending];
+    for (const claimed of this.#claimed.values()) {
+      const at = waiting.findIndex((box) => box.kind === claimed.kind && sameSize(box.size, claimed.size));
+      if (at >= 0) waiting.splice(at, 1);
+    }
+    return waiting;
+  }
+
+  /** The free machines a box of `kind` at `size` may claim, in the order its claim tries them. */
+  #candidates(views: readonly View[], kind: string, size: BoxSize): View[] {
+    return views
+      .filter((view) => this.#lists(view.machine, kind) && view.state === "free" && this.#ready(view, kind) === null && fits(view.probe.status, size))
+      .sort((a, b) => bySize(a, b) || a.machine.kinds.length - b.machine.kinds.length || a.since - b.since);
+  }
+
+  /** Why no machine is free for `kind` at `size`, in words for the user. `waited` machines would be free but for acquires waiting to claim. */
+  #full(kind: string, size: BoxSize, views: readonly View[], waited: number): string {
     const held = views.filter((view) => view.state === "held" && view.probe.status?.owner?.install === this.#context.installId).length;
     const others = views.filter((view) => view.state === "held").length - held;
     const resetting = views.filter((view) => view.state === "resetting").length;
@@ -285,9 +316,10 @@ export class SshPoolBackend implements Backend {
       small.length
         ? `${small.length} smaller than ${sizeWords(size)} (${small.map((view) => `${view.machine.name}: ${hasWords(view.probe.status).join(", ") || "it did not say its size"}`).join("; ")})`
         : "",
+      waited ? `${waited} about to be claimed by other boxes` : "",
     ].filter(Boolean);
     const all = `${plural(views.length, "machine")} that serve${views.length === 1 ? "s" : ""} ${kind}`;
-    const why = parts.length ? ` Of the ${all}, ${parts.join(", ")}.` : free ? ` Other boxes are waiting for the ${free === 1 ? "free one" : `${free} free ones`}.` : "";
+    const why = parts.length ? ` Of the ${all}, ${parts.join(", ")}.` : "";
     return `No machine in the SSH host pool is free for ${kind} at ${sizeWords(size)}.${why} Release a box to free one${small.length ? ", or ask for a smaller size" : ""}.`;
   }
 
@@ -351,9 +383,7 @@ export class SshPoolBackend implements Backend {
   ): Promise<{ machine: SshPoolMachine; guest: Guest }> {
     return this.#exclusive(async () => {
       const views = (await this.#survey(signal)).filter((view) => this.#lists(view.machine, kind.id));
-      const candidates = views
-        .filter((view) => view.state === "free" && this.#ready(view, kind.id) === null && fits(view.probe.status, box.size))
-        .sort((a, b) => bySize(a, b) || a.machine.kinds.length - b.machine.kinds.length || a.since - b.since);
+      const candidates = this.#candidates(views, kind.id, box.size);
       const { publicKey } = await this.#keys();
       if (!publicKey) throw new Error("ssh-keygen cannot read the SSH private key in bb-box's settings. Paste the whole key, or clear it so bb-box makes one.");
       for (const view of candidates) {
@@ -375,7 +405,7 @@ export class SshPoolBackend implements Backend {
             continue;
           }
           if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} could not be claimed: ${said(result)}`);
-          this.#claimed.set(box.boxId, kind.id);
+          this.#claimed.set(box.boxId, { kind: kind.id, size: box.size });
           await this.#write(machine, { state: "held", since: Date.now(), generation, reason: null, owner: ownerOf(box), user });
           return { machine, guest };
         } finally {

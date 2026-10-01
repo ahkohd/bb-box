@@ -137,7 +137,9 @@ node --test test/conformance.test.ts
 - Capacity is one `machines` limit: the machines serving the kind, and how
   many are not free at the size. A machine has a size when it has at least
   its cores, 90% of its memory and, for a disk, that much free under
-  `/home`. Acquire claims the smallest such machine. `Guest.size` is the
+  `/home`. Acquire claims the smallest such machine. Capacity first gives
+  each acquire that has not claimed the machine its claim would take, so a
+  small box waiting to claim does not stop a large one. `Guest.size` is the
   machine's cores and memory, with `diskGiB` null. There is no warm pool.
 - `restores` is `machine` only when every machine has a whole-machine
   reset (`reset=machine`); only those machines serve `linux-docker`.
