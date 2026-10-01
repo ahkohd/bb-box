@@ -656,6 +656,26 @@ test("switches stop new boxes only: an off backend or kind keeps its boxes worki
   assert.equal(await app().boxes.release(THREAD, box.name), null, "a box of an off backend can be released");
 });
 
+test("the sweep retires the warm guests of a backend turned off, and leaves its boxes alone (#85)", async () => {
+  const { rpc, app, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  const base = app().configuration.exported();
+  const warm = { ...base, backends: [{ ...base.backends[0], warm: { linux: 2 } }] };
+  assert.ok((await rpc<ApplyResult>("config.apply", { draft: warm, revision: 1 })).ok);
+  const backend = world.backend!;
+  await app().boxes.sweep();
+  assert.deepEqual([...backend.warmGuests], [["linux", 2]]);
+  const box = await app().boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  await app().boxes.settled(box);
+
+  const off = { ...warm, backends: [{ ...warm.backends[0], enabled: false }] };
+  assert.ok((await rpc<ApplyResult>("config.apply", { draft: off, revision: 2 })).ok);
+  await app().boxes.sweep();
+  assert.equal(world.backend, backend, "the off backend is the same one, still built");
+  assert.deepEqual([...backend.warmGuests], [], "its warm guests are retired");
+  assert.equal((await app().boxes.run(THREAD, box.name, "echo kept")).result.stdout.trim(), "kept", "its box still works");
+  assert.equal((await app().boxes.list(THREAD)).length, 1);
+});
+
 test("a backend reads its warm counts, kinds and hosts live from the configuration", async () => {
   const { rpc, app, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
   const context = world.contexts.at(-1)!;

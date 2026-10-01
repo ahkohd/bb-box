@@ -76,6 +76,8 @@ export interface FakeBackendOptions {
    * 64 GiB memory and 256 GiB disk by default.
    */
   readonly largest?: BoxSize;
+  /** Warm guests to keep per kind, read at each maintain, as a backend reads its context's. None by default. */
+  readonly warm?: (kind: string) => number;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -381,8 +383,16 @@ export class FakeBackend implements Backend {
     return { ok: !problem, summary: problem ? `Fake host: ${problem}` : this.label, checks, notes: [] };
   }
 
+  /** Warm guests kept per kind: maintain makes or retires them to match `warm`. */
+  readonly warmGuests = new Map<string, number>();
+
   async maintain(): Promise<void> {
     this.calls.push("maintain");
+    for (const kind of this.#kinds) {
+      const target = this.#options.warm?.(kind.id) ?? 0;
+      if (target) this.warmGuests.set(kind.id, target);
+      else this.warmGuests.delete(kind.id);
+    }
   }
 
   async dispose(): Promise<void> {
@@ -569,7 +579,7 @@ export function fakeDriver(
     },
     create(_config, context) {
       world.contexts?.push(context);
-      return (world.backend = new FakeBackend({ ...options, root, id: context.id, storage: context.storage, installId: context.installId }));
+      return (world.backend = new FakeBackend({ ...options, root, id: context.id, storage: context.storage, installId: context.installId, warm: context.warm }));
     },
     earlier: {
       settings: {
