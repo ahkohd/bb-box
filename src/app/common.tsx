@@ -190,17 +190,23 @@ export function osName(os: string): string {
 
 /**
  * What a kind or a box is beyond its OS, as badges: Desktop, GPU, Docker
- * inside (the feature), then what its boxes are (LXC, Docker, VM,
- * Physical), then Ready now for a kind with a spare (032). In a wrapping
- * line they go under the name rather than squeeze it.
+ * inside (the feature), arm64 (040; macOS is always arm64, so it has none),
+ * then what its boxes are (LXC, Docker, VM, Physical), then Ready now for
+ * a kind with a spare (032). In a wrapping line they go under the name
+ * rather than squeeze it.
  */
-export function KindBadges({ desktop = false, gpu, docker = false, forms, ready = false, className }: { desktop?: boolean; gpu: boolean; docker?: boolean; forms: readonly string[]; ready?: boolean; className?: string }) {
-  if (!desktop && !gpu && !docker && !forms.length && !ready) return null;
+export function isArm64Badge(os: string, arch: string): boolean {
+  return arch === "arm64" && os !== "macos";
+}
+
+export function KindBadges({ desktop = false, gpu, docker = false, arm64 = false, forms, ready = false, className }: { desktop?: boolean; gpu: boolean; docker?: boolean; /** The kind is arm64 (040); a badge tells two Linux rows apart. */ arm64?: boolean; forms: readonly string[]; ready?: boolean; className?: string }) {
+  if (!desktop && !gpu && !docker && !arm64 && !forms.length && !ready) return null;
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
       {desktop ? <Badge>Desktop</Badge> : null}
       {gpu ? <Badge>GPU</Badge> : null}
       {docker ? <Badge>Docker inside</Badge> : null}
+      {arm64 ? <Badge>arm64</Badge> : null}
       {forms.map((form) => (
         <Badge key={form}>{form}</Badge>
       ))}

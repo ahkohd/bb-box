@@ -96,6 +96,7 @@ function kind(id, label, description, cores, desktop, gpu, spares = { target: 0,
     gpu,
     desktop,
     os: id.startsWith("macos") ? "macos" : "linux",
+    arch: id.startsWith("macos") || id.includes("arm64") ? "arm64" : "x86_64",
     features: id === "linux-docker" ? ["docker"] : [],
     enrol: true,
     spares,
@@ -225,12 +226,12 @@ const DRIVERS = [
   },
 ];
 const KIND_INFO = [
-  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
-  { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, os: "linux", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, os: "linux", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, os: "linux", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
-  { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, os: "macos", features: [], spares: { ready: 0, making: 0 }, drivers: ["tart"] },
-  { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, os: "macos", features: [], spares: { ready: 0, making: 0 }, drivers: ["tart"] },
+  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
+  { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, os: "macos", arch: "arm64", features: [], spares: { ready: 0, making: 0 }, drivers: ["tart"] },
+  { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, os: "macos", arch: "arm64", features: [], spares: { ready: 0, making: 0 }, drivers: ["tart"] },
 ];
 const LINUX_SIZES = { enabled: true, presets: { small: sizeOf(2, 4), medium: sizeOf(4, 8), large: sizeOf(8, 16) }, default: "small", largest: sizeOf(16, 32, 256) };
 const DESKTOP_SIZES = { enabled: true, presets: { small: sizeOf(4, 8), medium: sizeOf(8, 16), large: sizeOf(16, 32) }, default: "small", largest: sizeOf(32, 64, 256) };

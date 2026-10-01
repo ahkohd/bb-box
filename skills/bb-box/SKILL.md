@@ -248,8 +248,8 @@ cannot list models until it exists.
 ## The panel
 
 The Box thread panel lists the thread's boxes as rows: name, the OS, badges
-(Desktop, GPU, Docker inside, and LXC, Docker, VM or Physical for what the
-box is), state, timings
+(Desktop, GPU, Docker inside, arm64, and LXC, Docker, VM or Physical for
+what the box is), state, timings
 and whether the box is a BB machine. A row opens to its details. A thread that runs on a box's machine (one of
 your machines, or another thread's) sees that box first, under "This thread
 runs on it", with no Release or Stop: those are in settings, or the holding

@@ -64,6 +64,9 @@ New box options and the desktop lists:
 - **Docker inside** for the kind that promises Docker in the box
   (`linux-docker`), as against the Docker badge below, which says the box
   runs on a Docker host.
+- **arm64** for a Linux (or later Windows) kind on arm64 (040,
+  `linux-arm64` and its desktop and Docker kinds), so two Linux rows read
+  apart. macOS runs on arm64 only, so it carries none.
 - **What the box is**, one word from its backend's driver: LXC, Docker, VM
   or Physical. A kind on offer from several backends shows each once.
 - **Ready now**, in the New box options only, last, on a kind with a spare
