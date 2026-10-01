@@ -126,16 +126,21 @@ const STEPS: readonly Step[] = [
   { end: "enrolled", after: ["connected", "accessed"], label: "finishing" },
 ];
 
-/** When each step of one enrolment ended, counted from when the box was ready. */
+/**
+ * When each step of one enrolment ended, counted from when the box was
+ * ready, or for an enrolment `resumed` after a restart, from then.
+ */
 export class Phases {
   readonly origin: number;
+  readonly resumed: boolean;
   readonly #now: () => number;
   readonly marks = new Map<string, number>();
   #wake: (() => void) | null = null;
 
-  constructor(origin: number, now: () => number = Date.now) {
+  constructor(origin: number, now: () => number = Date.now, resumed = false) {
     this.origin = origin;
     this.#now = now;
+    this.resumed = resumed;
   }
 
   mark(step: string, at = this.#now()): void {
@@ -173,7 +178,8 @@ export class Phases {
         .map((step) => step.text)
         .join(", ");
     const last = Math.max(this.origin, ...this.marks.values());
-    return `Enrolled box ${boxName} ${seconds(last - this.origin)} after it was ready: ${describe(STEPS)}.`;
+    const from = this.resumed ? "bb-box resumed following it" : "it was ready";
+    return `Enrolled box ${boxName} ${seconds(last - this.origin)} after ${from}: ${describe(STEPS)}.`;
   }
 }
 
@@ -250,12 +256,16 @@ export class Enrolment {
     if (box) await this.#deps.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
   }
 
-  /** Makes a ready box a BB machine and waits until its daemon connects. Never throws. */
-  async enrol(box: BoxRecord): Promise<void> {
+  /**
+   * Makes a ready box a BB machine and waits until its daemon connects, or
+   * with `resumed`, follows an enrolment a restart interrupted. Never throws.
+   */
+  async enrol(box: BoxRecord, options: { resumed?: boolean } = {}): Promise<void> {
     if (this.#following.has(box.id)) return;
     this.#following.add(box.id);
     // Enrolment starts once the box is ready, so its time counts from then.
-    const phases = new Phases(box.readyAt ?? Date.now());
+    // A resumed one's time from then would count the restart too.
+    const phases = options.resumed ? new Phases(Date.now(), Date.now, true) : new Phases(box.readyAt ?? Date.now());
     this.#phases.set(box.id, phases);
     try {
       let current: BoxRecord = box;
@@ -299,9 +309,10 @@ export class Enrolment {
       if (phase === "active" && host.status === "connected") {
         phases.mark("connected");
         await access;
+        // A resumed enrolment's own time is only its last part, so the box shows none.
         const enrolled = await this.#deps.boxes.update(box, (latest) => ({
           enrol: { state: "enrolled", hostId, error: null },
-          ...(latest.readyAt === null ? {} : { timings: { ...latest.timings, enrol: Date.now() - latest.readyAt } }),
+          ...(phases.resumed ? {} : { timings: { ...latest.timings, enrol: Date.now() - phases.origin } }),
         }));
         phases.mark("enrolled");
         if (enrolled) this.#deps.log?.(phases.line(enrolled.name));
@@ -416,7 +427,7 @@ export class Enrolment {
   async resume(): Promise<void> {
     for (const box of await this.#deps.boxes.all()) {
       if (box.state !== "ready" || box.enrol.state !== "enrolling") continue;
-      void this.enrol(box);
+      void this.enrol(box, { resumed: true });
     }
   }
 }

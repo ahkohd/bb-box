@@ -57,6 +57,7 @@ export function fakeSsh(options: { share?: boolean } = {}) {
   process.env.FAKE_SSH_DIR = dir;
   mkdirSync(join(dir, "down"));
   mkdirSync(join(dir, "up-after"));
+  mkdirSync(join(dir, "shared"));
   writeFileSync(join(dir, "log"), "");
   const ssh = new Ssh({ keyPath: "/nonexistent/key", binary: FAKE_SSH_BINARY, shareDir: options.share ? join(dir, "shared") : null });
   return {

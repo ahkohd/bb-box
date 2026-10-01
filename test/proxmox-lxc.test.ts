@@ -338,7 +338,7 @@ test("an unknown kind is refused", async () => {
 });
 
 test("acquire claims the VMID before it clones, then configures and starts the box", async () => {
-  const { backend, proxmox } = setup();
+  const { backend, proxmox, ssh } = setup();
   const box = identity();
   const hook = hooks();
   proxmox.intercept = (call) => {
@@ -374,6 +374,11 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.equal(installFromDescription(made.config.description), "test", "the clone's description names the install");
   assert.deepEqual(ownerFromTags(tags), { boxId: box.boxId, threadId: box.threadId, name: null, kind: box.kind, createdAt: box.createdAt });
   assert.equal(ownerFromDescription(made.config.description)?.boxId, box.boxId);
+
+  // The ready check opened the box's shared SSH connection, for its first commands.
+  const dials = ssh.log().filter((entry) => entry.target.endsWith("@192.0.2.100"));
+  assert.deepEqual(dials.map((entry) => entry.control ?? "command"), ["master", "command"]);
+  assert.ok(dials[1]!.args.includes("ControlMaster=no"));
 });
 
 /** Swaps template `vmid` as build.sh --replace does: gone, then a copy that is not yet a template, then a template, a step per read of its config. */

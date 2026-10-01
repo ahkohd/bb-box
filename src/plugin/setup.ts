@@ -14,6 +14,7 @@ import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
+import { Refreshing } from "./refreshing.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
 import { boxView, kindViews, type BackendView, type BoxView, type DoctorView, type KindView } from "./views.ts";
@@ -25,6 +26,8 @@ export const CHANGED = "changed";
 const DAEMON_PARENT = "host-daemon/dist/daemon-bundle";
 const SWEEP_EVERY_MS = 3 * 60_000;
 const DOCTOR_TIMEOUT_MS = 30_000;
+/** How long the names of BB's machine variables are kept before a refresh. */
+const NAMES_FRESH_MS = 60_000;
 
 /** What the tools, RPC and CLI work with. */
 export interface BbBox {
@@ -130,6 +133,24 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     }
   };
 
+  // Names only: BB never gives plugins the values. Every command in an
+  // enrolled box needs them, and BB can take seconds to answer while it is
+  // busy, so they are kept per project and refreshed in the background. The
+  // key "" holds the machine-wide names.
+  const variableNames = new Refreshing<readonly string[]>({
+    freshMs: NAMES_FRESH_MS,
+    onError: (error) => logError("variable names", error),
+    async load(projectId) {
+      if (!projectId) return (await bb.sdk.system.machineEnvironment()).variables.map((variable) => variable.name);
+      const project = await bb.sdk.projects.machineEnvironment({ projectId });
+      return [...project.inheritedVariables, ...project.variables].map((variable) => variable.name);
+    },
+  });
+  const names = async (box: BoxRecord): Promise<string[]> => {
+    const [system, project] = await Promise.all([variableNames.get(""), box.projectId ? variableNames.get(box.projectId) : []]);
+    return [...new Set(["GH_TOKEN", ...system, ...project])];
+  };
+
   let enrolment: Enrolment;
   let desktops: Desktops | undefined;
   let computer: Computer | undefined;
@@ -138,8 +159,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     backends,
     general,
     notify,
-    // A desktop that stops, restarts or goes gives control back to the agent.
     recorded(box, deleted) {
+      // Fetched while the box starts, for its enrolment.
+      if (!deleted && box.state === "acquiring") void names(box).catch(() => {});
+      // A desktop that stops, restarts or goes gives control back to the agent.
       if (deleted || box.state !== "ready") {
         desktops?.control.forget(box.id);
         computer?.forget(box.id);
@@ -157,16 +180,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     enrol: (box) => enrolment.enrol(box),
     unenrol: (box) => enrolment.unenrol(box),
     reconnect: (box) => enrolment.reconnect(box),
-    // Names only: BB never gives plugins the values.
-    async access(box) {
-      const names = new Set(["GH_TOKEN"]);
-      for (const variable of (await bb.sdk.system.machineEnvironment()).variables) names.add(variable.name);
-      if (box.projectId) {
-        const project = await bb.sdk.projects.machineEnvironment({ projectId: box.projectId });
-        for (const variable of [...project.inheritedVariables, ...project.variables]) names.add(variable.name);
-      }
-      return { names: [...names], parent: options.daemonParent ?? DAEMON_PARENT };
-    },
+    access: async (box) => ({ names: await names(box), parent: options.daemonParent ?? DAEMON_PARENT }),
     logError,
     log: (message) => bb.log.info(message),
   });

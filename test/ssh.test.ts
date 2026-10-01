@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CommandLine, EndMark } from "../src/transports/process.ts";
@@ -17,6 +17,7 @@ test("ssh dials once with a 2 s connect timeout and accepts a fresh box's first 
   assert.match(joined, /ConnectTimeout=2/);
   assert.match(joined, /ConnectionAttempts=1/);
   assert.match(joined, /BatchMode=yes/);
+  assert.match(joined, /ServerAliveInterval=5 -o ServerAliveCountMax=2/, "a box that dies unseen ends the connection within about 15 s");
   assert.match(joined, /StrictHostKeyChecking=no/);
   assert.match(joined, /UserKnownHostsFile=\/dev\/null/);
   assert.doesNotMatch(joined, /ProxyCommand/);
@@ -207,6 +208,64 @@ test("a box that cannot be reached gets no shared connection for 5 s, and SSH's 
   const paths = entries.filter((entry) => entry.control === "master").map((entry) => entry.args.find((arg) => arg.startsWith("ControlPath=")));
   assert.equal(paths.length, 2, "exit 255 retires the connection");
   assert.notEqual(paths[0], paths[1]);
+  await ssh.dispose();
+});
+
+/** The sockets of the shared connections bb-box opened to `target`, in order. */
+function sockets(entries: ReturnType<ReturnType<typeof fakeSsh>["log"]>, target: string): string[] {
+  return entries
+    .filter((entry) => entry.control === "master" && entry.target === target)
+    .map((entry) => entry.args.find((arg) => arg.startsWith("ControlPath="))!.slice("ControlPath=".length));
+}
+
+test("a shared connection whose socket has gone, as when its box restarts, gives way to a new one", async () => {
+  const { ssh, log } = fakeSsh({ share: true });
+  const box = at("192.0.2.25");
+  await ssh.run(box, "true");
+  const [ended] = sockets(log(), "box@192.0.2.25");
+  rmSync(ended!);
+  assert.equal((await ssh.run(box, "echo 1")).stdout, "1\n");
+  const [, next] = sockets(log(), "box@192.0.2.25");
+  assert.ok(next && next !== ended, "a new shared connection");
+  assert.ok(log().at(-1)!.args.includes(`ControlPath=${next}`), "the command used the new connection");
+  await ssh.dispose();
+  assert.deepEqual(log().filter((entry) => entry.control === "exit").map((entry) => entry.args.includes(`ControlPath=${next}`)), [true], "only the live one is closed");
+});
+
+test("a command that times out retires its shared connection, and forget and dispose close retired ones", async () => {
+  const { ssh, log } = fakeSsh({ share: true });
+  const box = at("192.0.2.26");
+  await ssh.run(box, "true");
+  assert.equal((await ssh.run(box, "sleep 5", { timeoutMs: 200 })).timedOut, true);
+  await ssh.run(box, "true");
+  const paths = sockets(log(), "box@192.0.2.26");
+  assert.equal(paths.length, 2, "the timeout retired the first connection");
+  const closed = () => log().filter((entry) => entry.control === "exit").map((entry) => entry.args.find((arg) => arg.startsWith("ControlPath="))!.slice("ControlPath=".length));
+  await ssh.forget(box);
+  assert.deepEqual(closed().sort(), [...paths].sort(), "forget closes the retired connection too");
+
+  // A connection retired by a write that timed out is closed when bb-box stops.
+  const other = at("192.0.2.27");
+  await ssh.run(other, "true");
+  await assert.rejects(ssh.writeFile(other, "f", new Uint8Array(), { timeoutMs: 1 }), /timed out/);
+  await ssh.run(other, "true");
+  const otherPaths = sockets(log(), "box@192.0.2.27");
+  assert.equal(otherPaths.length, 2);
+  await ssh.dispose();
+  assert.deepEqual(closed().sort(), [...paths, ...otherPaths].sort());
+});
+
+test("the ready check opens the shared connection, which the box's next command uses", async () => {
+  const { ssh, log, down } = fakeSsh({ share: true });
+  const box = new SshTransport(ssh, at("192.0.2.28"), "linux");
+  assert.equal(await box.answers(), true);
+  await box.run("true");
+  const [path] = sockets(log(), "box@192.0.2.28");
+  const commands = log().filter((entry) => !entry.control && entry.target === "box@192.0.2.28");
+  assert.equal(commands.length, 2);
+  for (const entry of commands) assert.ok(entry.args.includes(`ControlPath=${path}`));
+  down("192.0.2.29");
+  assert.equal(await new SshTransport(ssh, at("192.0.2.29"), "linux").answers(), false);
   await ssh.dispose();
 });
 
