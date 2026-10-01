@@ -73,6 +73,7 @@ A backend declares its nature (virtual or real) and its kinds, and implements:
 | `start?`, `stop?` | only where the provider can; the panel and tools offer them only when present |
 | `held()` | every guest this install holds for boxes, with the owner recorded at the provider ([018](decisions/018-guests-name-their-install-and-box.md)) |
 | `stamp?(boxId, guest)` | records this install on the guest of a box from before install IDs, and returns the guest with its box ID |
+| `asOffered?(guest, kind, createdAt)` | whether the guest comes from what the kind is offered from now, so a box gains what a release adds to its kind (see [Capabilities](#capabilities)) |
 | `transports(guest, kind)` | the command transport, the displays, and how the thread reaches the box |
 | `doctor()` | checks the setup end to end and says what is missing |
 | `maintain?()` | upkeep, such as topping up a warm pool |
@@ -169,6 +170,25 @@ and `start` and `stop` throw `gone`.
 | `displays` | a list of `{id, protocol, resizable}`, empty for a box without a desktop | load the viewer client before the box exists, and allow resizing |
 | `computerUse` | `{driver, version, socket}`, or none | offer the computer tools, and reach the driver in the box ([015](decisions/015-computer-use-through-cua-driver.md)) |
 | `enrol` | yes or no | enrol the box as a BB machine |
+
+A box records its kind's capabilities, `requires` and label when it is
+acquired. When the plugin starts, and after a change to the configuration,
+the core gives each box what its kind has now, so a release that adds a
+capability, such as computer use, reaches boxes made before it. It does so
+only where the backend's `asOffered` says the guest comes from what the
+kind is offered from now; a backend without it is assumed to match. The
+guest's size, address and facts stay as they were made.
+
+- Proxmox records the template's build ID with each guest when it is
+  cloned. On LVM-thin, `build.sh --replace` keeps a template's VMID while
+  clones of the old build keep running, so the VMID alone does not say
+  which build a guest came from. A guest matches while its template is
+  still one of the kind's and has the build it recorded.
+- A guest from before builds were recorded matches if it was made after
+  its template's build began. With no build tag on the template, the box
+  keeps what it has.
+- Docker, Tart and SSH pool kinds have capabilities fixed in code, not set
+  per image, so an older box gets what a new one would.
 
 The command capability:
 
