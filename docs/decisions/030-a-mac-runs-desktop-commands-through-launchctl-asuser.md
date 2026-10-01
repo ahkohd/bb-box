@@ -1,6 +1,8 @@
 # 030: A Mac runs desktop commands through `launchctl asuser`
 
-Status: accepted, 1 October 2026.
+Status: accepted, 1 October 2026. Extended by
+[039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
+Windows runs desktop commands through a one-off scheduled task.
 
 ## Context
 

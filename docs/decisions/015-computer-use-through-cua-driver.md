@@ -5,7 +5,9 @@ Status: accepted, 30 September 2026. Partly supersedes
 superseded by [022](022-references-follow-renames-not-rows.md): how an old
 reference is found again. Extended by
 [038](038-the-agent-can-take-control-back.md): the agent can take control
-back when asked.
+back when asked. Partly superseded by
+[039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
+Cua's daemon on Windows runs elevated.
 
 ## Context
 

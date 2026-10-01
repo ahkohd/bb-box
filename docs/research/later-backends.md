@@ -226,6 +226,20 @@ it is released.
 
 ## Proxmox QEMU for Windows (virtual; next)
 
+The spike (#46) changed this plan, and
+[039](../decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)
+records the result:
+
+- the template is not generalized, so there is no sysprep or
+  Cloudbase-Init, and a hibernated warm pool resumes in seconds;
+- the address goes in the VM's SMBIOS serial;
+- there is no helper of bb-box's own: desktop commands go through a
+  one-off scheduled task, and computer use through Cua, elevated;
+- the console resizes through the backend;
+- the guest agent is for readiness only.
+
+The rest of this section is the plan as it was.
+
 - **Template.** The setup script builds a Windows 11 or Windows Server 2025 VM
   from the operator's ISO. It uses UEFI (OVMF) with a TPM state disk and
   VirtIO drivers, and installs:

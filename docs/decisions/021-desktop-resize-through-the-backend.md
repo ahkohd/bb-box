@@ -3,7 +3,9 @@
 Status: accepted, 30 September 2026. Partly supersedes
 [006](006-gpu-desktop-on-xorg.md): the GPU desktop's screen can resize.
 Extends [011](011-interface-v1.md) and
-[020](020-control-belongs-to-a-viewer.md).
+[020](020-control-belongs-to-a-viewer.md). Extended by
+[039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
+Windows' console resizes through the backend.
 
 ## Context
 

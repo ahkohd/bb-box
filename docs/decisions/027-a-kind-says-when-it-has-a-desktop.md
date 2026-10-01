@@ -5,6 +5,8 @@ Status: accepted, 1 October 2026. Partly supersedes
 without a desktop. Partly superseded by
 [029](029-configuration-is-one-checked-document.md): the keys from before
 027 are read once, when BB's settings move into bb-box's configuration.
+Extended by [040](040-linux-on-arm64-has-kinds-of-its-own.md): where an
+architecture goes in a kind's ID.
 
 ## Context
 
