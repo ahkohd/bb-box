@@ -1,6 +1,7 @@
 // Who controls each desktop box's input: the agent (the default), a person
-// in one viewer, or nobody while control changes hands. It lives in memory
-// only, so a restart of the plugin gives control back to the agent (008).
+// in one viewer, or nobody while control changes hands. It lives in memory,
+// and each person's control is also kept in plugin storage, so after a
+// restart of the plugin their viewer keeps it if it connects again (045).
 // The relay asks mayInput for every input message it passes.
 
 import type { Size } from "./relay.ts";
@@ -14,6 +15,16 @@ export interface ControlView {
   readonly holder: string | null;
   /** The viewer the agent took control back from (038), until a person takes it again. */
   readonly takenFrom?: string;
+}
+
+/** A person's control of a box's desktop, kept in plugin storage for the plugin's next start (045). */
+export interface KeptControl {
+  readonly boxId: string;
+  readonly holder: string;
+  /** The desktop's size while the agent had control. */
+  readonly size: Size | null;
+  /** The screen of the holder's last resize. */
+  readonly resized: Screen | null;
 }
 
 /** One viewer's connection to a box's desktop. */
@@ -30,8 +41,10 @@ export interface ControlDeps {
   restore(boxId: string, size: Size, screen: Screen): Promise<void>;
   /** Stops the agent's input before a person takes control. It fails the take by throwing. */
   pause?(boxId: string): Promise<void>;
-  /** bb-box is stopping while a person has control of the box, so the log can say why it goes back to the agent. */
-  stopping?(boxId: string): Promise<void>;
+  /** Stores each person's control, after every change, for the plugin's next start (045). It fails by throwing. */
+  keep?(kept: readonly KeptControl[]): Promise<void>;
+  /** bb-box is stopping while a person has control of the box, so the log can say whether it stays theirs or goes back to the agent. */
+  stopping?(boxId: string, kept: boolean): Promise<void>;
   logError(operation: string, error: unknown): void;
   /** How long a holder's viewer may be gone before control goes back to the agent. */
   readonly staleMs?: number;
@@ -60,7 +73,7 @@ interface BoxControl {
   takenFrom: string | null;
 }
 
-const STALE_MS = 60_000;
+export const STALE_MS = 60_000;
 /** The viewer tries again after 1 s, then 2 s more, so two tries fit. */
 export const RECONNECT_MS = 5_000;
 const AGENT: ControlView = { owner: "agent", holder: null };
@@ -69,6 +82,8 @@ export class Control {
   readonly #deps: ControlDeps;
   readonly #boxes = new Map<string, BoxControl>();
   #disposed = false;
+  /** The latest store of each person's control, and whether it worked. */
+  #stored: Promise<boolean> = Promise.resolve(true);
 
   constructor(deps: ControlDeps) {
     this.#deps = deps;
@@ -118,13 +133,62 @@ export class Control {
     const state = this.#boxes.get(boxId);
     if (!state?.connections.delete(connection)) return;
     if (this.#disposed || state.owner !== "human" || state.holder !== connection.viewer || this.connected(boxId, connection.viewer)) return;
+    this.#wait(boxId, state, by === "box" ? (this.#deps.reconnectMs ?? RECONNECT_MS) : (this.#deps.staleMs ?? STALE_MS));
+  }
+
+  /** Control goes back to the agent after `ms`, unless the holder's viewer connects again first. */
+  #wait(boxId: string, state: BoxControl, ms: number): void {
     if (state.stale) clearTimeout(state.stale);
-    const wait = by === "box" ? (this.#deps.reconnectMs ?? RECONNECT_MS) : (this.#deps.staleMs ?? STALE_MS);
     state.stale = setTimeout(() => {
       state.stale = null;
       void this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error));
-    }, wait);
+    }, ms);
     state.stale.unref?.();
+  }
+
+  /**
+   * Control people had as the plugin's last instance stopped (045). Each
+   * holder's viewer has staleMs to connect again, as a viewer that went away
+   * has: BB starts this instance before it stops the last one, which closes
+   * the viewer's connection. If it does not, control goes back to the agent,
+   * and the desktop gets back the size it had while the agent had control.
+   */
+  resume(kept: readonly KeptControl[]): void {
+    if (this.#disposed) return;
+    for (const { boxId, holder, size, resized } of kept) {
+      const state = this.#box(boxId);
+      // A person took control since this start.
+      if (state.owner !== "agent") continue;
+      state.size = size;
+      state.resized = resized;
+      this.#set(boxId, state, "human", holder);
+      if (!this.connected(boxId, holder)) this.#wait(boxId, state, this.#deps.staleMs ?? STALE_MS);
+    }
+    // What was left out, such as a box that went while bb-box was away, is not kept again.
+    this.#store();
+  }
+
+  /**
+   * Stores each person's control, latest last. It is stored on every change,
+   * not as the plugin stops, because BB starts the next instance first. A
+   * stopped instance stores nothing, so it never overwrites the next one's.
+   */
+  #store(): void {
+    const keep = this.#deps.keep;
+    if (!keep || this.#disposed) return;
+    const kept: KeptControl[] = [];
+    for (const [boxId, state] of this.#boxes) {
+      if (state.owner === "human" && state.holder) kept.push({ boxId, holder: state.holder, size: state.size, resized: state.resized });
+    }
+    this.#stored = this.#stored.then(() =>
+      keep(kept).then(
+        () => true,
+        (error) => {
+          this.#deps.logError("keep control", error);
+          return false;
+        },
+      ),
+    );
   }
 
   /** The desktop's size as a viewer joined. Kept while the agent has control, as the size to restore. */
@@ -138,6 +202,7 @@ export class Control {
     const state = this.#boxes.get(boxId);
     if (!state || state.holder !== viewer || !screen) return;
     state.resized = screen;
+    this.#store();
   }
 
   #serial<T>(state: BoxControl, task: () => Promise<T>): Promise<T> {
@@ -152,6 +217,7 @@ export class Control {
     state.holder = holder;
     state.takenFrom = takenFrom;
     this.#deps.changed(boxId);
+    this.#store();
   }
 
   async #release(state: BoxControl, viewer: string): Promise<void> {
@@ -245,10 +311,12 @@ export class Control {
   }
 
   /**
-   * The plugin is going away, as on a reload, and its next start gives
-   * control to the agent (008). Each person's control goes back now, while
-   * bb-box can still reach the box, so a desktop the holder resized gets its
-   * size back (#139). Nothing is scheduled after.
+   * The plugin is going away, as on a reload. When each person's control is
+   * stored, it stays theirs for the next instance (045): what the holder
+   * holds down is let go, and the desktop keeps its size for the viewer to
+   * come back to. Otherwise control goes back now, while bb-box can still
+   * reach the box, so a desktop the holder resized gets its size back
+   * (#139). Nothing is scheduled or stored after.
    */
   async dispose(): Promise<void> {
     this.#disposed = true;
@@ -256,10 +324,13 @@ export class Control {
       if (state.stale) clearTimeout(state.stale);
       state.stale = null;
     }
+    const kept = this.#deps.keep !== undefined && (await this.#stored);
     await Promise.all(
       [...this.#boxes].map(async ([boxId, state]) => {
-        if (state.owner === "human") await this.#deps.stopping?.(boxId).catch((error) => this.#deps.logError("log a hand back", error));
-        await this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error));
+        const holder = state.owner === "human" ? state.holder : null;
+        if (holder) await this.#deps.stopping?.(boxId, kept).catch((error) => this.#deps.logError("log a hand back", error));
+        if (holder && kept) await this.#release(state, holder);
+        else await this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error));
       }),
     );
   }

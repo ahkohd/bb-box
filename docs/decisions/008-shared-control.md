@@ -6,7 +6,9 @@ box's computer-use session in the plugin, and nothing in the box is stopped.
 Partly superseded by [038](038-the-agent-can-take-control-back.md): the
 agent can take control back when asked. Extended by
 [037](037-a-panel-keeps-a-boxs-desktop-and-terminal.md): a hidden panel tab
-counts as a viewer gone.
+counts as a viewer gone. Partly superseded by
+[045](045-a-persons-control-lasts-through-a-restart-of-the-plugin.md): a
+restart of the plugin keeps a person's control for their viewer.
 
 ## Context
 

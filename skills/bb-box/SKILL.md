@@ -143,8 +143,9 @@ thread takes it.
 A person can watch each desktop box live from the panel and take control of
 its keyboard and mouse. While they hold control, their input goes to the box
 and nobody else's does. Control goes back to the agent when they hand it
-back, close the viewer for a minute or bb-box reloads, and the desktop gets
-back the size it had before they took control. The agent can also take it
+back or close the viewer for a minute, and the desktop gets back the size it
+had before they took control. A reload or update of bb-box keeps their
+control if the viewer connects again within a minute, as it does by itself. The agent can also take it
 back with `computer_take_control`; their viewer then says "The agent took
 control", and they can take it again at any time.
 

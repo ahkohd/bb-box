@@ -1070,11 +1070,14 @@ A box is a resource of its thread and gets what the thread's own machine has.
   whatever another viewer of yours held down. On hand-back the relay releases
   any keys and buttons still held down, and sets the desktop back to the
   size it had while the agent had control. Control returns to the agent when
-  you hand back, when your viewer has been gone for 60 s, when the box ends
-  the connection and your viewer does not connect again within 5 s, or when
-  the plugin restarts ([008](decisions/008-shared-control.md)). The plugin
-  log says why the box ended it, and says so when a restart, as for an
-  update, takes your control.
+  you hand back, when your viewer has been gone for 60 s, or when the box
+  ends the connection and your viewer does not connect again within 5 s
+  ([008](decisions/008-shared-control.md)). Your control is kept in plugin
+  storage on every change, so after a restart, as for an update, your
+  viewer keeps it and the desktop's size if it connects again within 60 s
+  ([045](decisions/045-a-persons-control-lasts-through-a-restart-of-the-plugin.md)).
+  The plugin log says why the box ended the connection, and what a restart
+  did with your control.
 - **Pausing the agent** happens in the plugin, not the box
   ([015](decisions/015-computer-use-through-cua-driver.md)). While you hold
   control, every computer tool refuses at once without reaching the box.
@@ -1311,7 +1314,7 @@ bb-box's configuration is one checked document in its plugin storage
 | The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; read from BB's daemon in the box by each command, never written to disk or to bb-box's storage |
 | Work in the box: files, containers, running apps | the box's disk | the thread | deleted on release (virtual), or the home recreated (real); not backed up |
 | Templates and images | the provider | operator | built by the setup scripts |
-| Who holds each desktop's input | plugin memory | core | resets to the agent on restart |
+| Who holds each desktop's input | plugin memory, and plugin storage while a person holds it | core | after a restart, the agent's again unless the holder's viewer connects within 60 s |
 
 Push work to Git or copy it out before releasing a box.
 

@@ -2,7 +2,9 @@
 
 Status: accepted, 1 October 2026. Partly supersedes
 [020](020-control-belongs-to-a-viewer.md): a box that ends the holder's
-connection no longer gives control back at once.
+connection no longer gives control back at once. Extended by
+[045](045-a-persons-control-lasts-through-a-restart-of-the-plugin.md): after
+a restart of the plugin, the holder's viewer has 60 s to connect again.
 
 ## Context
 
