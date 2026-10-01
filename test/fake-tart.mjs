@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stand-ins for a Mac's `tart`, `sysctl`, `sw_vers` and `uname`
+// Stand-ins for a Mac's `tart`, `arp`, `sysctl`, `sw_vers` and `uname`
 // in tests, chosen by the first argument. With the fake ssh they run the Tart
 // backend's host scripts on the test machine, in the host's fake home. VMs are
 // directories under $HOME/.tart/vms, as Tart keeps them:
@@ -11,7 +11,7 @@
 // - `tart ip` gives each VM an address of its own, 192.168.64.<n>.
 // - A saved state that holds "corrupt" fails to restore, as Tart reports it.
 // - `sw_vers -buildVersion` says 27A1, or what the Mac's ~/.fake-macos-build holds.
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [tool, ...args] = process.argv.slice(2);
@@ -56,7 +56,10 @@ function tart() {
       if (!existsSync(dir(from))) fail(`the specified VM "${from}" does not exist`);
       if (existsSync(dir(to))) fail(`VM "${to}" already exists`);
       mkdirSync(dir(to));
-      cpSync(join(dir(from), "config.json"), join(dir(to), "config.json"));
+      // A clone of a local VM gets a MAC address of its own, as Tart gives one when another VM has the same.
+      const cloned = config(from);
+      cloned.macAddress = Array.from({ length: 6 }, (_, i) => (i === 0 ? 0x02 : Math.floor(Math.random() * 256)).toString(16).padStart(2, "0")).join(":");
+      writeFileSync(join(dir(to), "config.json"), JSON.stringify(cloned));
       return;
     }
     case "set": {
@@ -125,9 +128,23 @@ function tart() {
   }
 }
 
+/** `arp -n <address>`: the MAC of the VM that holds the address, the newest lease when several do, without leading zeros as arp prints it. */
+function arp() {
+  const address = args[args.length - 1];
+  const holders = names()
+    .filter((name) => existsSync(join(dir(name), "lease")) && readFileSync(join(dir(name), "lease"), "utf8").trim() === address)
+    .sort((a, b) => statSync(join(dir(b), "lease")).mtimeMs - statSync(join(dir(a), "lease")).mtimeMs);
+  const mac = holders.length ? config(holders[0]).macAddress : null;
+  if (!mac) return console.log(`${address} (${address}) -- no entry`);
+  console.log(`? (${address}) at ${mac.split(":").map((byte) => byte.replace(/^0/, "")).join(":")} on bridge100 ifscope [ethernet]`);
+}
+
 switch (tool) {
   case "tart":
     tart();
+    break;
+  case "arp":
+    arp();
     break;
   case "sysctl":
     console.log(args.includes("hw.ncpu") ? "16" : String(128 * 1024 * 1024 * 1024));

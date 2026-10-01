@@ -109,7 +109,9 @@ for vm in $(ls "$home/vms" 2>/dev/null); do
 done
 echo @builds
 for vm in $(ls "$home/vms" 2>/dev/null); do
-  [ -f "$home/vms/$vm/disk.img" ] && printf '%s %s\\n' "$vm" "$(ls -i "$home/vms/$vm/disk.img" | awk '{ print $1 }')"
+  f="$home/vms/$vm/disk.img"
+  # macOS's stat takes -f for a format; GNU's, which answers --version, takes -c.
+  [ -f "$f" ] && printf '%s %s\\n' "$vm" "$(if stat --version >/dev/null 2>&1; then stat -c '%i.%Y' "$f"; else stat -f '%i.%m' "$f"; fi)"
 done
 echo @owners
 for vm in $(ls "$d/owners"); do [ -f "$d/owners/$vm" ] || continue; printf '=%s\\n' "$vm"; cat "$d/owners/$vm"; done
@@ -132,6 +134,8 @@ export interface TartVm {
 
 export interface VmConfig {
   readonly os: string | null;
+  /** The VM's network MAC address, as Tart keeps it. */
+  readonly macAddress: string | null;
   readonly memoryMiB: number;
   readonly cpus: number;
 }
@@ -141,8 +145,9 @@ export interface HostState {
   readonly vms: readonly TartVm[];
   readonly configs: ReadonlyMap<string, VmConfig>;
   /**
-   * Each VM's disk, as an ID that changes when the disk is made again: a
-   * clone or an image built again has a new file, and a rename keeps it.
+   * Each VM's disk, as an ID that changes when the disk changes: its file's
+   * inode and modification time. A clone or an image built again has a new
+   * file, and an image run to change it a new time; a rename keeps both.
    */
   readonly builds: ReadonlyMap<string, string>;
   readonly owners: ReadonlyMap<string, Record<string, string>>;
@@ -178,9 +183,10 @@ function named(text: string): Map<string, string> {
 export function parseConfig(text: string): VmConfig | null {
   const json = text.includes("@config") ? (sections(text).get("config") ?? "") : text;
   try {
-    const config = JSON.parse(json.trim()) as { os?: unknown; memorySize?: unknown; cpuCount?: unknown };
+    const config = JSON.parse(json.trim()) as { os?: unknown; memorySize?: unknown; cpuCount?: unknown; macAddress?: unknown };
     return {
       os: typeof config.os === "string" ? config.os : null,
+      macAddress: typeof config.macAddress === "string" ? config.macAddress : null,
       memoryMiB: typeof config.memorySize === "number" ? Math.round(config.memorySize / 1024 / 1024) : 0,
       cpus: typeof config.cpuCount === "number" ? config.cpuCount : 0,
     };
@@ -266,6 +272,37 @@ else
   cat "$f" 2>/dev/null
 fi
 `);
+}
+
+/**
+ * The MAC address the Mac's ARP table has for a VM's address, after bb-box
+ * has just reached it, and the one in the VM's config, in one trip.
+ */
+export function macScript(vm: string, address: string): string {
+  return script(String.raw`home=$HOME/.tart; [ -z "$TART_HOME" ] || home=$TART_HOME
+echo @arp; arp -n ${quote(address)} 2>/dev/null || :
+echo @config; sed -n 's/.*"macAddress" *: *"\([^"]*\)".*/\1/p' "$home/vms/"${quote(vm)}"/config.json" 2>/dev/null | head -n 1
+`);
+}
+
+/** The MAC address in `arp -n` output, or null. */
+export function parseArp(text: string): string | null {
+  return /\bat ([0-9a-f]{1,2}(?::[0-9a-f]{1,2}){5})\b/i.exec(text)?.[1] ?? null;
+}
+
+/** What macScript printed: the MAC address that answered, and the VM's own. */
+export function parseMacs(text: string): { answered: string | null; expected: string | null } {
+  const parts = sections(text);
+  return { answered: parseArp(parts.get("arp") ?? ""), expected: parts.get("config")?.trim() || null };
+}
+
+/** A MAC address in one form, as arp drops leading zeros: lower case, two digits a byte. */
+export function normalMac(mac: string): string {
+  return mac
+    .toLowerCase()
+    .split(":")
+    .map((byte) => byte.padStart(2, "0"))
+    .join(":");
 }
 
 /** A VM's owner file as it is, or nothing. */

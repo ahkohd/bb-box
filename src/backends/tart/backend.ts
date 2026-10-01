@@ -58,7 +58,10 @@ import {
   ipScript,
   ownerText,
   parseConfig,
+  macScript,
+  normalMac,
   parseFields,
+  parseMacs,
   parseState,
   parseVnc,
   powerScript,
@@ -249,15 +252,21 @@ export function hostnameOf(name: string): string {
 
 /**
  * Checks that the VM that answers is `vm`, from the name each VM keeps in a
- * file of its own, and writes the name when there is none. A VM resumed
- * after a long suspend may answer at an address its DHCP lease has given to
- * another VM since, and every clone has its image's host keys. Exits 4 when
- * another VM answers.
+ * file of its own. A VM resumed after a long suspend may answer at an
+ * address its DHCP lease has given to another VM since, and every clone has
+ * its image's host keys. Prints "same", or "none" when the VM keeps no name
+ * yet; exits 4 when it is another VM.
  */
 export function identityScript(vm: string): string {
   return String.raw`f="$HOME/.config/bb-box/vm"
-if [ -s "$f" ] && [ "$(cat "$f")" != ${quote(vm)} ]; then echo "The VM that answers is $(cat "$f"), not ${vm}." >&2; exit 4; fi
-mkdir -p "$HOME/.config/bb-box" && printf '%s\n' ${quote(vm)} > "$f"`;
+[ -s "$f" ] || { echo none; exit 0; }
+if [ "$(cat "$f")" != ${quote(vm)} ]; then echo "The VM that answers is $(cat "$f"), not ${vm}." >&2; exit 4; fi
+echo same`;
+}
+
+/** Writes the name a VM keeps of itself (identityScript). */
+export function rememberScript(vm: string): string {
+  return String.raw`mkdir -p "$HOME/.config/bb-box" && printf '%s\n' ${quote(vm)} > "$HOME/.config/bb-box/vm"`;
 }
 
 /**
@@ -612,7 +621,7 @@ export class TartBackend implements Backend {
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
     if ((await this.power(guest, signal)) === null) throw this.#gone(guest);
     this.#addresses.delete(guest.ref);
-    await this.#start(host, guest.ref, deadline, signal);
+    await this.#start(host, guest.ref, deadline, signal, true, this.#boxOf(guest));
     const address = await this.#address(host, guest.ref, deadline, signal);
     await this.#waitReady(host, guest.ref, address, deadline, signal);
     await this.#identify(host, address, guest.ref, signal);
@@ -765,7 +774,10 @@ export class TartBackend implements Backend {
           const kinds = this.#servedBy(state, fields, size);
           const pool = pools.find((candidate) => kinds.length && candidate.kinds.includes(kinds[0]!));
           const count = pool ? (kept.get(pool) ?? 0) : 0;
-          if (pool && count < pool.target) {
+          // Only a suspended warm VM can be claimed: one that someone ran or
+          // stopped since is retired. One being claimed no longer says warm.
+          const suspended = state.vms.find((candidate) => candidate.name === vm)?.state === "suspended";
+          if (pool && suspended && count < pool.target) {
             kept.set(pool, count + 1);
             continue;
           }
@@ -1055,12 +1067,18 @@ export class TartBackend implements Backend {
    * boots afresh from its disk when `discard` is true; a warm VM gives way to
    * a clone instead.
    */
-  async #start(host: TartHost, vm: string, deadline: number, signal?: AbortSignal, discard = true): Promise<void> {
+  async #start(host: TartHost, vm: string, deadline: number, signal?: AbortSignal, discard = true, box: string | null = null): Promise<void> {
     try {
       await this.#launch(host, vm, deadline, signal);
     } catch (error) {
       if (!discard || !failedRestore(error)) throw error;
-      this.#context.logError("start", new Error(`The saved state of ${vm} on ${host.name} did not restore, so it boots afresh from its disk: ${message(error)}`));
+      this.#context.logError(
+        "start",
+        new Error(
+          `Warning: the saved state of ${box ? `box ${box}'s VM ${vm}` : vm} on ${host.name} did not restore, so it boots afresh from its disk; what ran in it is lost. ` +
+            `After an update of macOS or Tart, every stopped box on the Mac does this once. ${message(error)}`,
+        ),
+      );
       await this.#run(host, discardStateScript(vm), { timeoutMs: 30_000, signal });
       await this.#launch(host, vm, deadline, signal);
     }
@@ -1122,12 +1140,26 @@ export class TartBackend implements Backend {
     return vnc;
   }
 
-  /** Checks that the VM that answers at `address` is `vm` (identityScript). */
+  /**
+   * Checks that the VM that answers at `address` is `vm` (identityScript). A
+   * VM that keeps no name, as one made before names were kept or whose file
+   * was removed, is named only when the Mac's ARP table, just after bb-box
+   * reached the address, gives the MAC address in the VM's config.
+   */
   async #identify(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos");
     const result = await command.run(identityScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new Error(`${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+    if (result.stdout.trim() !== "none") return;
+    const { answered, expected } = parseMacs((await this.#run(host, macScript(vm, address), { timeoutMs: 15_000, signal })).stdout);
+    if (!expected || !answered || normalMac(expected) !== normalMac(answered)) {
+      throw new Error(
+        `${host.name}: the VM that answers at ${address} keeps no name, and its MAC address is ${answered ?? "unknown"}, not ${vm}'s ${expected ?? "(unknown)"}.`,
+      );
+    }
+    const remembered = await command.run(rememberScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
+    if (remembered.exitCode !== 0) throw new Error(`${host.name}: ${remembered.stderr.trim() || `exit code ${remembered.exitCode}`}`);
   }
 
   /**

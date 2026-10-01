@@ -10,7 +10,7 @@ export const FAKE_MAC = "192.0.2.20";
 export const FAKE_IMAGE = "bb-box-macos";
 
 /**
- * Puts the fake tart, sysctl, sw_vers and uname in a fake Mac's
+ * Puts the fake tart, arp, sysctl, sw_vers and uname in a fake Mac's
  * ~/.nix-profile/bin, where the host scripts look for tart before the PATH.
  * Not on the test's own PATH: on a Mac whose /bin/sh is zsh, /etc/zshenv may
  * reset it.
@@ -19,7 +19,7 @@ export function fakeMacTools(home: string): void {
   const bin = join(home, ".nix-profile", "bin");
   mkdirSync(bin, { recursive: true });
   const script = new URL("./fake-tart.mjs", import.meta.url).pathname;
-  for (const tool of ["tart", "sysctl", "sw_vers", "uname"]) {
+  for (const tool of ["tart", "arp", "sysctl", "sw_vers", "uname"]) {
     writeFileSync(join(bin, tool), `#!/bin/sh\nexec '${process.execPath}' '${script}' ${tool} "$@"\n`);
     chmodSync(join(bin, tool), 0o755);
   }
@@ -28,7 +28,7 @@ export function fakeMacTools(home: string): void {
 /** Puts a Tart VM in a fake Mac's home, as the setup guide leaves an image. */
 export function addImage(home: string, name = FAKE_IMAGE, os = "darwin"): void {
   mkdirSync(join(home, ".tart", "vms", name), { recursive: true });
-  writeFileSync(join(home, ".tart", "vms", name, "config.json"), JSON.stringify({ os, cpuCount: 4, memorySize: 8 * GiB }));
+  writeFileSync(join(home, ".tart", "vms", name, "config.json"), JSON.stringify({ os, cpuCount: 4, memorySize: 8 * GiB, macAddress: "02:00:00:00:00:01" }));
 }
 
 export function tartConfig(values: Record<string, unknown> = {}): TartConfig {
