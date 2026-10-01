@@ -16,6 +16,7 @@ import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, wit
 import { BackendForm, BackendRow, backendId, type BackendRowModel } from "./settings-backends.tsx";
 import { Section } from "./settings-fields.tsx";
 import { KindForm, KindRow, kindRowModel } from "./settings-kinds.tsx";
+import { DockerHostsSection } from "./settings-docker-hosts.tsx";
 import { MachinesSection } from "./settings-machines.tsx";
 
 const STALE = "Someone saved the configuration first. It has been reloaded; make your change again.";
@@ -99,7 +100,8 @@ export function SettingsSection() {
     sourceName: source ? sourceName(document, source, state.drivers.find((driver) => driver.type === source.type)?.label ?? source.type) : null,
   });
   const backends: BackendRowModel[] = [
-    ...document.backends.map((config) => ({
+    // Docker on a BB machine has its row under "Docker on BB machines" (042), not a card here.
+    ...document.backends.filter((config) => !(config.type === "docker" && typeof config.fields.host === "string" && config.fields.host.startsWith("bb:"))).map((config) => ({
       driver: state.drivers.find((driver) => driver.type === config.type)!,
       config,
       ...lending(inheritSource(document, state.drivers.find((driver) => driver.type === config.type)?.fields ?? [], config.id)),
@@ -160,6 +162,7 @@ export function SettingsSection() {
           );
         })}
       </Section>
+      <DockerHostsSection />
       <Section title="Kinds" description="A kind is offered when it is on and a backend that is on has it.">
         {state.kinds.map((info) => {
           const sizes = effectiveKind(state, info.id);

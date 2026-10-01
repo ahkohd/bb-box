@@ -59,6 +59,21 @@ function describe(endpoint: DockerEndpoint): string {
   return "path" in endpoint ? endpoint.path : `${endpoint.host}:${endpoint.port}`;
 }
 
+/** Connects to Docker's endpoint and closes at once: whether it is there to relay to. */
+function reachable(endpoint: DockerEndpoint, timeoutMs = 3_000): Promise<string | null> {
+  return new Promise((resolve) => {
+    const socket = connect(endpoint as NetConnectOpts);
+    const done = (reason: string | null) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(reason);
+    };
+    const timer = setTimeout(() => done(`it did not answer at ${describe(endpoint)} within ${timeoutMs / 1000} s`), timeoutMs);
+    socket.once("connect", () => done(null));
+    socket.once("error", (error) => done(`${describe(endpoint)}: ${error.message}`));
+  });
+}
+
 export function relayHandlers(options: RelayOptions = {}) {
   const leases = new Set<ExperimentalHostWorkerLease>();
   const muxes = new Set<Mux>();
@@ -70,6 +85,16 @@ export function relayHandlers(options: RelayOptions = {}) {
   };
   return {
     handlers: {
+      docker: async () => {
+        let endpoint: DockerEndpoint;
+        try {
+          endpoint = await (options.endpoint ?? dockerEndpoint)();
+        } catch (error) {
+          return { endpoint: "", found: false, reason: error instanceof Error ? error.message : String(error) };
+        }
+        const reason = await reachable(endpoint);
+        return { endpoint: describe(endpoint), found: reason === null, reason };
+      },
       relay: async ({ secret, path }: { secret: string; path: string }, context: ExperimentalHostRpcContext) => {
         const endpoint = await (options.endpoint ?? dockerEndpoint)();
         const server = process.env.BB_SERVER_URL;

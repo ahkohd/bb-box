@@ -13,19 +13,20 @@ import { emptyDocument, type ConfigDocument } from "../core/document.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
 import type { ControlView } from "../core/control.ts";
-import { Configuration, boundedDoctor } from "./configuration.ts";
+import { Configuration, boundedDoctor, type ApplyResult } from "./configuration.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
-import { Enrolment, type HostApi } from "./enrol.ts";
+import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, type RetiredTerminals } from "./holder.ts";
 import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
+import { DockerHosts, withDockerHost, type MachineRecord } from "./docker-hosts.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { ThreadOnBox } from "./contract.ts";
-import { newBoxHost, registerNewBox } from "./new-box.ts";
+import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
 import { boxView, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type KindView } from "./views.ts";
@@ -66,6 +67,10 @@ export interface BbBox {
   readonly configuration: Configuration;
   /** The Docker API relay to BB machines that are Docker hosts (042). */
   readonly relay: RelayHub;
+  /** BB machines that can host Docker boxes (042). */
+  readonly dockerHosts: DockerHosts;
+  /** Turns a BB machine on or off as a Docker host (042), through the configuration. */
+  setDockerHost(hostId: string, enabled: boolean): Promise<ApplyResult>;
   /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
   dockerCheck(machine: string, signal?: AbortSignal): Promise<{ hostId: string; name: string; endpoint: string; info: DockerInfo; firstMs: number; againMs: number }>;
   general(): Promise<GeneralConfig>;
@@ -449,11 +454,38 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   /** Each thread's machine, once it has an environment. */
   const threadHosts = new Map<string, string>();
+  const dockerHosts = new DockerHosts({
+    machines: async () => (await bb.sdk.hosts.list({ includeCreating: false } as never)) as unknown as readonly MachineRecord[],
+    document: () => configuration.document,
+    providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],
+    async found(hostId, signal) {
+      const answer = await host.call("docker", {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+      return answer.found ? null : `there is no Docker to reach: ${answer.reason ?? "it did not answer"}`;
+    },
+    async docker(hostId, signal) {
+      await machines.ready(hostId);
+      return new DockerCli(relay.address(hostId)).info(signal);
+    },
+    async boxes() {
+      const counts = new Map<string, number>();
+      for (const box of await boxes.all()) if (box.state !== "gone") counts.set(box.backend, (counts.get(box.backend) ?? 0) + 1);
+      return counts;
+    },
+  });
   const api: BbBox = {
     boxes,
     backends,
     enrolment,
     relay,
+    dockerHosts,
+    async setDockerHost(hostId, enabled) {
+      const machine = (await dockerHosts.list()).find((candidate) => candidate.hostId === hostId);
+      if (!machine) throw new BoxError("not_found", `BB machine ${hostId} cannot host boxes: it is not a connected, persistent machine of BB's that bb-box did not make.`);
+      if (enabled && !machine.docker) throw new BoxError("unsupported", `${machine.name} cannot host boxes yet. ${machine.problem ?? ""}`.trim());
+      const document = configuration.document;
+      dockerHosts.forget(hostId);
+      return configuration.apply(withDockerHost(document, { id: hostId, name: machine.name }, enabled, machine.backend?.boxes ?? 0), document.revision);
+    },
     async dockerCheck(machine, signal) {
       const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];
       const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);

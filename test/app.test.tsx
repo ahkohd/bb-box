@@ -9,6 +9,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/p
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
+import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
 import { groupKinds, kindFacts, kindName, kindTitle, offerWhere, providerGlyph } from "../src/app/kind-picker.tsx";
@@ -287,9 +288,10 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
+function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[] } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
+  let dockerHosts = [...(options.dockerHosts ?? [])];
   const changes: string[] = [];
   const result = (found: BoxView | null): BoxResult => (options.failWith ? { box: null, error: options.failWith } : { box: found, error: null });
   const change = (method: string, ref: string, next: (found: BoxView) => BoxView | null): BoxResult => {
@@ -382,6 +384,13 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
       if (options.applyWith) return options.applyWith;
       applied = draft as ConfigDocument;
       return { ok: true, state: configState({ ...options.config, document: applied, revision: revision + 1 }), problems: options.savedWith ?? [] };
+    },
+    // BB machines that can host Docker boxes (042), switched as the tests ask.
+    "docker.hosts": () => ({ hosts: dockerHosts }),
+    "docker.host.set": ({ hostId, enabled }) => {
+      changes.push(`docker.host.set ${hostId} ${enabled}`);
+      dockerHosts = dockerHosts.map((host) => (host.hostId === hostId ? { ...host, backend: enabled ? { id: `docker:${host.name}`, enabled: true, boxes: 0 } : null } : host));
+      return { result: { ok: true, state: configState(options.config ?? {}), problems: [] }, hosts: dockerHosts };
     },
   };
   return { handlers, changes };
@@ -1567,4 +1576,38 @@ test("a field that takes a value from another backend names that backend when th
   cleanup();
   render(<FieldControl field={url} value="" onChange={() => {}} problem={null} inherited="https://pve.example.com:8006/" />);
   expect(screen.getByText("from Proxmox LXC")).toBeTruthy();
+});
+
+test("Docker on BB machines lists each machine with Docker's facts, and its switch makes it a Docker host (042)", async () => {
+  const machine = (hostId: string, name: string, more: Partial<DockerHostView> = {}): DockerHostView => ({
+    hostId,
+    name,
+    connected: true,
+    docker: { version: "29.8.1", os: "Arch Linux", arch: "x86_64", cpus: 16, memoryMiB: 100 * 1024 },
+    problem: null,
+    backend: null,
+    ...more,
+  });
+  const { handlers, changes } = server([], {
+    dockerHosts: [
+      machine("host_b", "behemoth"),
+      machine("host_n", "no-docker", { docker: null, problem: "Docker did not answer: connect: no such file or directory" }),
+      machine("host_o", "sleepy", { connected: false, docker: null, problem: "The machine is offline in BB.", backend: { id: "docker:sleepy", enabled: true, boxes: 1 } }),
+    ],
+  });
+  const slot = settings(handlers);
+  expect(await slot.findByText("Docker on BB machines")).toBeTruthy();
+  const row = (name: string) => slot.getByText(name).closest("[data-resource-row]") as HTMLElement;
+  expect(within(row("behemoth")).getByText("Can host boxes")).toBeTruthy();
+  expect(within(row("behemoth")).getByText("Docker 29.8.1")).toBeTruthy();
+  expect(within(row("behemoth")).getByText("16 cores")).toBeTruthy();
+  expect(within(row("behemoth")).getByText("100 GiB memory")).toBeTruthy();
+  expect(within(row("no-docker")).getByText("Cannot host boxes")).toBeTruthy();
+  expect(within(row("no-docker")).getByText(/Docker did not answer/)).toBeTruthy();
+  expect((within(row("no-docker")).getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
+  expect(within(row("sleepy")).getByText("Offline in BB, 1 box on it")).toBeTruthy();
+
+  fireEvent.click(within(row("behemoth")).getByRole("switch", { name: "Host boxes on behemoth" }));
+  await waitFor(() => expect(changes).toContain("docker.host.set host_b true"));
+  expect(await within(row("behemoth")).findByText("Hosts boxes")).toBeTruthy();
 });

@@ -18,6 +18,15 @@ export const hostContract = defineRpcContract({
    * `path`, with `secret`, whose channels go to Docker on the machine. Says
    * where Docker is.
    */
+  /**
+   * Whether Docker is on the machine: finds it as the docker CLI would, and
+   * connects to it and closes. It holds no lease and starts nothing, so the
+   * settings list opens a relay only where there is Docker to read (042).
+   */
+  docker: {
+    input: z.object({}).strict(),
+    output: z.object({ endpoint: z.string(), found: z.boolean(), reason: z.string().nullable() }).strict(),
+  },
   relay: {
     input: z.object({ secret: z.string().regex(/^[0-9a-f]{32}$/), path: z.string().regex(/^\/api\/v1\/plugins\/[^?#]+$/) }).strict(),
     output: z.object({ endpoint: z.string() }).strict(),

@@ -2,6 +2,7 @@
 
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "./views.ts";
 
@@ -124,6 +125,14 @@ export const contract = defineRpcContract({
    * that are off and have no boxes.
    */
   "config.apply": { input: z.object({ draft, revision: z.number().int().min(0) }), output: z.custom<ApplyResult>() },
+  /** BB machines that can host Docker boxes, with Docker as it answers through bb-box's relay (042). */
+  "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
+  /**
+   * Turns a BB machine on or off as a Docker host: on adds a Docker backend
+   * on it, last in acquire order; off removes it, or turns it off while it
+   * has boxes. Answers with the configuration's answer and the list again.
+   */
+  "docker.host.set": { input: z.object({ hostId: z.string().min(1).max(64), enabled: z.boolean() }), output: z.custom<{ result: ApplyResult; hosts: DockerHostView[] }>() },
 });
 
 export type Contract = typeof contract;
