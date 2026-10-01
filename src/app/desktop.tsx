@@ -261,7 +261,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     };
   }, [wanted, boxId, viewer, key, rpc, threadId]);
 
-  useEffect(() => {
+  // In the commit that shows who has control, so the toolbar never says "You have control" while input is still off (#116).
+  useLayoutEffect(() => {
     session.current?.setControl(mine, resizable);
   }, [mine, resizable, connection]);
 
