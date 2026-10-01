@@ -17,6 +17,7 @@ import { Configuration, boundedDoctor } from "./configuration.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
+import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { ThreadOnBox } from "./contract.ts";
@@ -50,6 +51,7 @@ export interface BbBox {
   readonly enrolment: Enrolment;
   /** Desktop viewers and who controls each desktop's input. */
   readonly desktops: Desktops;
+  readonly terminals: Terminals;
   /** The agent's computer use of desktop boxes (015). */
   readonly computer: Computer;
   /** The configuration document (029). */
@@ -131,6 +133,8 @@ export interface SetupOptions {
   readonly daemonParent?: string;
   /** How long a viewer holding control may be gone before the agent has it again. */
   readonly controlStaleMs?: number;
+  /** How long a terminal session stays with no tab showing it. */
+  readonly terminalIdleMs?: number;
   /** How long an enrolment waits for a worker of BB's daemon with the thread's variables. */
   readonly variablesWaitMs?: number;
   /** Computer use's waits, shorter in tests. */
@@ -215,6 +219,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   let enrolment: Enrolment;
   let desktops: Desktops | undefined;
+  let terminals: Terminals | undefined;
   let computer: Computer | undefined;
   const boxes = new Boxes({
     kv: bb.storage.kv,
@@ -228,6 +233,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (deleted || box.state !== "ready") {
         desktops?.control.forget(box.id);
         computer?.forget(box.id);
+        // Its shells are gone with it; their tabs hear why.
+        void terminals?.end(box.id, deleted ? "The box was released." : box.state === "stopped" || box.state === "stopping" ? "The box stopped." : "The box is no longer running.");
       }
     },
     async thread(threadId): Promise<ThreadLiveness> {
@@ -286,12 +293,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   computer = computing;
   const desktop = registerDesktop(bb, { boxes, notify, logError, staleMs: options.controlStaleMs, pause: (boxId) => computing.pause(boxId) });
   desktops = desktop;
+  const terminal = registerTerminals(bb, { boxes, logError, idleMs: options.terminalIdleMs });
+  terminals = terminal;
   const control = desktop.control;
 
   // Disposed in reverse: boxes first, so acquires stop before their backends.
   bb.onDispose(() => backends.dispose());
   bb.onDispose(() => boxes.dispose());
   bb.onDispose(() => desktop.dispose());
+  bb.onDispose(() => terminal.dispose());
   bb.onDispose(() => computing.dispose());
 
   /** Asks for configuration while no backend is on and valid. */
@@ -333,6 +343,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     backends,
     enrolment,
     desktops: desktop,
+    terminals: terminal,
     computer: computing,
     configuration,
     general,

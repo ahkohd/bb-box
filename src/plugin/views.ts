@@ -40,6 +40,8 @@ export interface BoxView {
   /** Who controls the desktop's input, when the box has one. */
   readonly control: ControlView | null;
   readonly computerUse: boolean;
+  /** A person can open a terminal in it: it is ready and runs commands. Every command transport gives a shell on a PTY on BB's server. */
+  readonly terminal: boolean;
   readonly address: string | null;
   readonly facts: readonly { readonly label: string; readonly value: string }[];
   readonly timings: Readonly<Record<string, number>>;
@@ -82,6 +84,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     display: display ? { protocol: display.protocol, resizable: display.resizable } : null,
     control: display ? control : null,
     computerUse: box.capabilities.computerUse !== null,
+    terminal: box.state === "ready" && box.capabilities.command !== null,
     address: box.guest?.address ?? null,
     facts: box.guest?.facts ?? [],
     timings: box.timings,

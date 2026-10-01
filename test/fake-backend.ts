@@ -39,6 +39,7 @@ import {
 } from "../src/backends/types.ts";
 import { CommandLine, quote } from "../src/transports/process.ts";
 import { openRoute } from "../src/transports/route.ts";
+import { openTerminal } from "../src/transports/terminal.ts";
 import {
   TransportError,
   type ByteChannel,
@@ -49,6 +50,8 @@ import {
   type RunOptions,
   type RunResult,
   type StreamOptions,
+  type Terminal,
+  type TerminalSize,
 } from "../src/transports/types.ts";
 
 export interface FakeBackendOptions {
@@ -578,6 +581,11 @@ export class FakeTransport implements CommandTransport {
     // The fake Cua Driver is the box's cua-driver command.
     const path = `${FAKE_CUA_BIN}:${process.env.PATH ?? ""}`;
     return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && ${script}`] }, this.#signal(signal));
+  }
+  /** A shell on the test machine in the fake box's home, on a PTY. */
+  async terminal(size: TerminalSize, signal?: AbortSignal): Promise<Terminal> {
+    await this.#answer();
+    return openTerminal(["sh", "-c", `cd ${quote(this.#home)} && exec sh -i`], size, this.#signal(signal));
   }
 }
 

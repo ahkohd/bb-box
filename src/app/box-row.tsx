@@ -22,6 +22,7 @@ import type { BoxView } from "../plugin/views.ts";
 import { IconButton, KindBadges, Meta, relativeTime, StatusDot } from "./common.tsx";
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, statusOf, timingWords } from "./status.ts";
+import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh";
 
@@ -77,6 +78,7 @@ export function BoxRow({
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
   const openDesktop = useOpenDesktop();
+  const openTerminal = useOpenTerminal();
   const glyph = useBoxGlyph();
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -166,6 +168,7 @@ export function BoxRow({
       </div>
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
         {box.desktop && ready ? <IconButton label="Open desktop" icon={`${pluginId}/monitor`} onClick={() => openDesktop(box)} /> : null}
+        {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={`${pluginId}/terminal`} onClick={() => openTerminal(box)} /> : null}
         {box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} /> : null}
         {box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} /> : null}
         <DropdownMenu>
@@ -187,6 +190,12 @@ export function BoxRow({
                 </DropdownMenuItem>
               </>
             ) : null}
+            {canOpenTerminal(box) ? (
+              <DropdownMenuItem onSelect={() => openTerminal(box)}>
+                <Icon name={`${pluginId}/terminal`} aria-hidden />
+                Open terminal
+              </DropdownMenuItem>
+            ) : null}
             {box.address ? (
               <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(box.address ?? "")}>
                 <Icon name="Copy" aria-hidden />
@@ -199,7 +208,7 @@ export function BoxRow({
                 New thread on this box…
               </DropdownMenuItem>
             ) : null}
-            {(box.desktop && ready) || box.address || (ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
+            {(box.desktop && ready) || canOpenTerminal(box) || box.address || (ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
             {box.canStopStart && ready ? (
               <DropdownMenuItem onSelect={() => void run("stop")}>
                 <Icon name="Square" aria-hidden />

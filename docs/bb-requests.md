@@ -15,6 +15,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Find a machine by its key](#6-find-a-machine-by-its-key) | draft | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
 | [Reach a port on a machine](#7-reach-a-port-on-a-machine) | draft | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already |
 | [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box reads the thread's variables and GH_TOKEN from BB's workers in the box: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
+| [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | draft | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
 
 ## 1. BB's host app on Windows
 
@@ -323,6 +324,38 @@ no plugin's server side sees them.
 **Until then.** Linux boxes read the workers' environment from `/proc`,
 and macOS boxes parse `ps -E`, choosing the worker the same way
 (`src/core/in-box.ts`). Windows boxes get none of the variables.
+
+## 9. Open BB's terminal on a machine from a plugin
+
+**What bb-box needs.** A terminal in a box, one click from the Box panel.
+A box that is a BB machine already has BB's own terminal sessions on it:
+BB's app opens a terminal tab on a machine, keeps the session across
+reloads, lists it with the thread's others, and streams it over its own
+WebSocket. bb-box wants that tab, opened on the box's machine, from its
+panel.
+
+**What BB does now.** Checked in BB 0.44.0 and the plugin SDK 0.5.29:
+
+- The SDK's `terminals` area creates, lists, resizes, writes to and closes
+  terminal sessions on a host (`scope: { kind: "host_path", hostId }`), and
+  reads their output by polling `output({ sinceSeq })`. There is no stream,
+  and nothing to put a session in BB's terminal tab: `useBbNavigate` opens
+  thread panels, plugin panels and URLs, and BB's terminal tab is none of
+  those.
+- BB's app streams its own terminals over `/ws/terminals/<id>`, which is
+  internal.
+
+**What we ask.** A navigation call that opens BB's terminal tab on a
+machine, for example `navigate.openTerminal({ hostId, cwd?, title? })`,
+returning the session so the plugin can close it with the box. A second
+best is a WebSocket for a session the SDK created, so a plugin's tab can
+stream it instead of polling.
+
+**Until then.** bb-box's terminal tab is its own: a shell in the box over
+the box's transport, with its PTY on BB's server, streamed to xterm.js
+over a plugin WebSocket (`src/plugin/terminal.ts`). It keeps the shell
+while the tab is away, but not across a plugin restart, and it is not in
+BB's terminal list.
 
 ## Checked, no request needed
 

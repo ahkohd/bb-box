@@ -41,7 +41,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   bb.rpc.register(contract, {
     async state({ threadId }) {
       const list = await boxes.list(threadId);
-      return { boxes: list.map(app.view), kinds: await app.kinds(), backends: app.backendViews(), desktopPath: app.desktops.path };
+      return { boxes: list.map(app.view), kinds: await app.kinds(), backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path };
     },
     acquire: ({ threadId, kind, size }) =>
       change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size })),
@@ -55,7 +55,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         if (error instanceof BoxError && error.code === "not_found") return null;
         throw error;
       });
-      return { box: box ? app.view(box) : null, desktopPath: app.desktops.path };
+      return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path };
     },
     takeControl: ({ threadId, box: ref, viewer }) =>
       change("Taking control", async () => {

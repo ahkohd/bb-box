@@ -9,6 +9,7 @@
 
 import { CommandLine, quote } from "../../transports/process.ts";
 import { openRoute } from "../../transports/route.ts";
+import { openTerminal } from "../../transports/terminal.ts";
 import {
   TransportError,
   type ByteChannel,
@@ -17,6 +18,8 @@ import {
   type RunOptions,
   type RunResult,
   type StreamOptions,
+  type Terminal,
+  type TerminalSize,
 } from "../../transports/types.ts";
 import type { DockerCli } from "./cli.ts";
 
@@ -124,5 +127,22 @@ export class DockerTransport implements CommandTransport {
    */
   spawn(script: string, signal?: AbortSignal): Promise<ByteChannel> {
     return openRoute({ type: "command", argv: this.#exec(["/bin/sh", "-c", `${PRELUDE}exec "\${SHELL:-/bin/sh}" -c ${quote(script)}`]) }, signal);
+  }
+
+  /** The box user's login shell through `docker exec -it`, on a PTY here. docker passes the size on. */
+  terminal(size: TerminalSize, signal?: AbortSignal): Promise<Terminal> {
+    const argv = this.#cli.argv([
+      "exec", "-it",
+      "-u", BOX_USER,
+      "-w", BOX_HOME,
+      "-e", "SHELL=/bin/bash",
+      "-e", `USER=${BOX_USER}`,
+      "-e", `LOGNAME=${BOX_USER}`,
+      "-e", "LANG=C.UTF-8",
+      "-e", "TERM=xterm-256color",
+      this.#container,
+      "/bin/sh", "-c", `${PRELUDE}exec "\${SHELL:-/bin/sh}" -l`,
+    ]);
+    return openTerminal(argv, size, signal);
   }
 }
