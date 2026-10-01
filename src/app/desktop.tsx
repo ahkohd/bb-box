@@ -486,7 +486,7 @@ function DesktopRow({ box, meta, onOpen, actions }: { box: BoxView; meta?: strin
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
           <span className="truncate text-xs text-muted-foreground">{osName(box.os)}</span>
-          <KindBadges desktop={box.desktop} gpu={box.gpu} docker={box.requires.includes("docker")} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
+          <KindBadges desktop={box.desktop} gpu={box.gpu} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
         </span>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
           <StatusDot tone={status.tone} className="mt-[0.3rem]" />

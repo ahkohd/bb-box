@@ -103,14 +103,47 @@ function kind(id, label, description, cores, desktop, gpu, spares = { target: 0,
     spares,
     backends: ["Proxmox LXC on pve"],
     forms: ["LXC"],
+    offers: [offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { ready: spares.ready, typicalReadyMs: desktop ? 3100 : 2200, resizable: desktop ? true : null })],
+    computerUse: desktop,
   };
 }
 
+/** One backend's offer of a kind, for the picker's pane. */
+function offer(type, label, hosts, form, extra = {}) {
+  return { backend: type, type, label, hosts, form, ready: 0, free: null, admin: true, resizable: null, typicalReadyMs: null, docker: true, ...extra };
+}
+
 export const KINDS = [
-  // Linux keeps a spare, ready, so the chooser shows "Ready now".
-  { ...kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false, { target: 1, ready: 1, making: 0 }), forms: ["LXC", "Physical", "Docker"] },
+  // Linux keeps a spare, ready, so the chooser shows "Ready now"; three backends offer it.
+  {
+    ...kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false, { target: 1, ready: 1, making: 0 }),
+    forms: ["LXC", "Physical", "Docker"],
+    admin: null,
+    offers: [
+      offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { ready: 1, typicalReadyMs: 2200 }),
+      offer("ssh-pool", "SSH host pool", [], "Physical", { free: 1, admin: false }),
+      offer("docker", "Docker", ["docker-host"], "Docker", { typicalReadyMs: 1800 }),
+    ],
+  },
   kind("linux-desktop", "Linux desktop", "A Linux desktop on the host's GPU, for computer use, browsers and app development.", 4, true, true),
-  kind("linux-desktop-cpu", "Linux desktop", "A Linux desktop drawn by the CPU. Graphics are slower; nothing else changes.", 4, true, false),
+  {
+    ...kind("linux-desktop-cpu", "Linux desktop", "A Linux desktop drawn by the CPU. Graphics are slower; nothing else changes.", 4, true, false),
+    forms: ["LXC", "Docker"],
+    offers: [offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { typicalReadyMs: 3100, resizable: true }), offer("docker", "Docker", ["docker-host"], "Docker", { resizable: true })],
+  },
+  {
+    ...kind("macos-desktop", "macOS desktop", "A macOS desktop on a Mac.", 4, true, false),
+    forms: ["VM"],
+    offers: [offer("tart", "Tart", ["mac-mini", "studio"], "VM", { typicalReadyMs: 26000, resizable: false })],
+  },
+  {
+    ...kind("windows-desktop", "Windows desktop", "A Windows desktop in a VM.", 4, true, false),
+    os: "windows",
+    arch: "x86_64",
+    enrol: false,
+    forms: ["VM"],
+    offers: [offer("proxmox-qemu", "Proxmox QEMU", ["pve"], "VM", { typicalReadyMs: 29000, resizable: true, docker: false })],
+  },
 ];
 
 const BACKENDS = [
@@ -227,10 +260,10 @@ const DRIVERS = [
   },
 ];
 const KIND_INFO = [
-  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
+  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
   { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: [], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
   { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, os: "macos", arch: "arm64", features: [], spares: { ready: 0, making: 0 }, drivers: ["tart"] },
   { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, os: "macos", arch: "arm64", features: [], spares: { ready: 0, making: 0 }, drivers: ["tart"] },
 ];
@@ -331,7 +364,48 @@ export const scenes = {
   "panel-chooser": {
     slot: "boxes",
     chrome: boxesChrome,
+    width: 720,
     height: 520,
+    rpc: rpc([]),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+    },
+  },
+  "panel-chooser-hover": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 640,
+    rpc: rpc([]),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      // The pointer over the GPU desktop: the pane follows it.
+      const row = [...document.querySelectorAll('[role="radio"]')].find((candidate) => candidate.textContent.startsWith("Desktop, GPU"));
+      row?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      await wait(200);
+    },
+  },
+  "panel-chooser-windows": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 640,
+    rpc: rpc([]),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      click(document.body, "radio", "DesktopNo DockerVMpve");
+      await wait(200);
+    },
+  },
+  "panel-chooser-narrow": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 568,
+    height: 980,
+    viewport: 600,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -341,12 +415,13 @@ export const scenes = {
   "panel-chooser-custom": {
     slot: "boxes",
     chrome: boxesChrome,
+    width: 720,
     height: 560,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      click(document.body, "radio", "LinuxDesktopGPULXC");
+      click(document.body, "radio", "Desktop, GPULXCpve");
       await wait(100);
       click(document.body, "radio", "Custom");
       await wait(300);
@@ -360,7 +435,7 @@ export const scenes = {
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      click(document.body, "radio", "LinuxDesktopGPULXC");
+      click(document.body, "radio", "Desktop, GPULXCpve");
       click(document.body, "radio", "Large");
       click(document.body, "button", "Create");
       await wait(300);

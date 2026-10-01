@@ -218,16 +218,16 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
 +----------------------------------------------------------------------------------------+
 |      Kind                   From         Small       Medium      Large       Largest  Warm |
 | (on) Linux [LXC]            Proxmox LXC  2 · 4 GiB*  4 · 8 GiB   8 · 16 GiB  16 · 32   0   |
-| (on) Linux [Docker inside] [LXC] Proxmox LXC 2 · 4 GiB* 4 · 8 GiB 8 · 16 GiB 16 · 32   0   |
+| (on) Linux [LXC] [Container]     Proxmox LXC 2 · 4 GiB* 4 · 8 GiB 8 · 16 GiB 16 · 32   0   |
 | (on) Linux [Desktop] [GPU] [LXC] Proxmox LXC 4 · 8 GiB* 8 · 16 GiB 16 · 32 GiB 32 · 64 1   |
 | (off) Linux [Desktop] [LXC] Proxmox LXC ...                                                |
 +----------------------------------------------------------------------------------------+
 ```
 
 - One row per kind, with its switch, its OS as its name, its badges
-  (Desktop, GPU, Docker inside, arm64, then what its boxes are on the
-  backends that offer it now: LXC, Docker, VM or Physical; see the panel
-  design),
+  (Desktop, GPU, No Docker, arm64, then what its boxes are on the
+  backends that offer it now: LXC, Container, VM or Physical; see the
+  panel design),
   the backends offering it, the three presets (cores · memory; the
   default marked), the largest custom size, and the warm count.
 - Clicking a row opens its editor: three fields per preset (cores, memory

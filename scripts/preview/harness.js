@@ -56,21 +56,22 @@ const ICONS = {
   Zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   Terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
 };
+// The plugin's own glyphs, as package.json declares them: stroked in BB's style, or filled (the provider marks from Simple Icons).
 const assets = {};
-for (const name of ["monitor", "server", "terminal", "icon"]) {
+for (const name of ["monitor", "server", "terminal", "icon", "laptop", "plug", "proxmox", "docker"]) {
   const svg = await fetch(`/assets/${name}.svg`).then((response) => response.text());
-  assets[name] = svg.replace(/^[\s\S]*?<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
+  assets[name] = { body: svg.replace(/^[\s\S]*?<svg[^>]*>/, "").replace(/<\/svg>\s*$/, ""), filled: /<svg[^>]*fill="currentColor"/.test(svg) };
 }
 function Icon({ name, className, fallback = "Zap", ...rest }) {
   const own = typeof name === "string" && name.startsWith("bb-box/") ? assets[name.slice("bb-box/".length)] : null;
-  const body = own ?? ICONS[name] ?? ICONS[fallback] ?? ICONS.Zap;
+  const body = own?.body ?? ICONS[name] ?? ICONS[fallback] ?? ICONS.Zap;
   return h("svg", {
     ...rest,
     "data-icon-root": "",
     className: `${className ?? ""}`,
     viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
+    fill: own?.filled ? "currentColor" : "none",
+    stroke: own?.filled ? "none" : "currentColor",
     strokeWidth: 1.5,
     strokeLinecap: "round",
     strokeLinejoin: "round",
@@ -179,6 +180,7 @@ document.documentElement.classList.toggle("light", theme === "light");
 const frame = document.getElementById("frame");
 const chrome = document.getElementById("chrome");
 const root = document.getElementById("root");
+window.__scene = scene;
 frame.style.width = `${scene.width ?? 560}px`;
 if (scene.height) frame.style.height = `${scene.height}px`;
 frame.style.display = "flex";

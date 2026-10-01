@@ -237,6 +237,7 @@ export class SshPoolBackend implements Backend {
   readonly id: string;
   readonly nature = "real" as const;
   readonly label: string;
+  readonly hosts: readonly string[] = [];
   readonly restores: "home" | "machine";
   readonly #config: SshPoolConfig;
   readonly #context: BackendContext;
@@ -840,8 +841,19 @@ export class SshPoolBackend implements Backend {
     }
   }
 
-  #survey(signal?: AbortSignal): Promise<View[]> {
-    return Promise.all(this.#config.machines.map((machine) => this.#look(machine, signal)));
+  async #survey(signal?: AbortSignal): Promise<View[]> {
+    const views = await Promise.all(this.#config.machines.map((machine) => this.#look(machine, signal)));
+    this.#surveyed = views;
+    return views;
+  }
+
+  /** The last survey, which `free` reads without reaching any machine. */
+  #surveyed: readonly View[] | null = null;
+
+  /** Free machines for `kind`, from the last survey (an acquire, capacity check or doctor); no SSH here. Null before the first. */
+  free(kind: string): number | null {
+    if (!this.#surveyed) return null;
+    return this.#surveyed.filter((view) => this.#lists(view.machine, kind) && view.state === "free" && this.#ready(view, kind) === null).length;
   }
 
   async #look(machine: SshPoolMachine, signal?: AbortSignal): Promise<View> {

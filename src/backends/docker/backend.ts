@@ -236,6 +236,7 @@ function hostWords(host: string | null): string {
 export class DockerBackend implements Backend {
   readonly id: string;
   readonly label: string;
+  readonly hosts: readonly string[];
   readonly nature = "virtual" as const;
   readonly #config: DockerConfig;
   readonly #context: BackendContext;
@@ -257,6 +258,7 @@ export class DockerBackend implements Backend {
     this.#kinds = dockerKinds(config);
     this.#cli = new DockerCli(config.host, options.binary);
     this.label = config.host ? `Docker on ${hostWords(config.host)}` : "Docker";
+    this.hosts = config.host ? [hostWords(config.host)] : [];
   }
 
   kinds(): BoxKind[] {

@@ -406,6 +406,7 @@ class HostError extends Error {
 export class TartBackend implements Backend {
   readonly id: string;
   readonly label: string;
+  readonly hosts: readonly string[];
   readonly nature = "virtual" as const;
   readonly #config: TartConfig;
   readonly #context: BackendContext;
@@ -434,6 +435,7 @@ export class TartBackend implements Backend {
     this.#options = options;
     this.#kinds = tartKinds(config);
     this.label = `Tart on ${config.hosts.map((host) => host.name).join(", ")}`;
+    this.hosts = config.hosts.map((host) => host.name);
     this.#warm = new ReadyPool<BoxIdentity>({
       members: (signal) => this.#members(signal),
       hold: (member, box, signal) => this.#hold(member, box, signal),

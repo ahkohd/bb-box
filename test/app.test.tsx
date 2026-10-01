@@ -11,6 +11,7 @@ import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
 import { forgetLive, isArm64Badge } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
+import { groupKinds, kindFacts, kindName, kindTitle, offerWhere, providerGlyph } from "../src/app/kind-picker.tsx";
 type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
@@ -242,6 +243,22 @@ function kindView(id: string, label: string, description: string, cores: number,
     admin: true,
     backends: ["Fake host"],
     forms: ["LXC"],
+    offers: [
+      {
+        backend: "fake",
+        type: "fake",
+        label: "Fake host",
+        hosts: ["pve"],
+        form: "LXC",
+        ready: 0,
+        free: null,
+        admin: true,
+        resizable: desktop ? true : null,
+        typicalReadyMs: desktop ? 3100 : 2200,
+        docker: true,
+      },
+    ],
+    computerUse: desktop,
   };
 }
 
@@ -556,9 +573,11 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   const form = await screen.findByRole("radiogroup", { name: "Kind" });
   expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
-  expect(within(form).getByText("GPU")).toBeTruthy();
+  // Rows are named by their tools within their OS group; GPU and arm64 go in the name, the badges say what the boxes are.
+  expect(within(form).getByRole("group", { name: "Linux" })).toBeTruthy();
+  expect(within(form).getByText("Desktop, GPU")).toBeTruthy();
   expect(within(form).getAllByText("LXC")).toHaveLength(2);
-  fireEvent.click(within(form).getByRole("radio", { name: /^LinuxDesktop/ }));
+  fireEvent.click(within(form).getByRole("radio", { name: /^Desktop, GPU/ }));
   expect(screen.getByText("4 cores · 8 GiB memory · base disk")).toBeTruthy();
   expect(screen.queryByText(/A desktop on the GPU/)).toBeNull();
   const sizes = screen.getByRole("radiogroup", { name: "Size" });
@@ -623,7 +642,7 @@ test("a custom size starts from the preset in view, sends only its filled fields
 
   // Custom fields belong to the kind: another kind starts from its own preset, and the edits come back with the kind.
   const kinds = screen.getByRole("radiogroup", { name: "Kind" });
-  fireEvent.click(within(kinds).getByRole("radio", { name: /^LinuxDesktop/ }));
+  fireEvent.click(within(kinds).getByRole("radio", { name: /^Desktop, GPU/ }));
   expect([(screen.getByLabelText(/^Cores/) as HTMLInputElement).value, (screen.getByLabelText(/^Memory, GiB/) as HTMLInputElement).value]).toEqual(["8", "16"]);
   expect(screen.getByText("up to 32")).toBeTruthy();
   fireEvent.click(within(kinds).getAllByRole("radio")[0]!);
@@ -1447,7 +1466,80 @@ test("an arm64 kind carries an arm64 badge, and macOS, always arm64, does not (0
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   const form = await screen.findByRole("radiogroup", { name: "Kind" });
-  expect(within(form).getAllByRole("radio").map((option) => option.textContent)).toEqual(["LinuxLXC", "LinuxDesktopGPULXC", "Linuxarm64LXC"]);
+  expect(within(form).getAllByRole("radio").map((option) => option.textContent)).toEqual(["TerminalLXCpve", "Desktop, GPULXCpve", "Terminal, arm64LXCpve"]);
+});
+
+test("the kind picker groups kinds by OS, names rows by their tools, and its pane follows the pointer and the focus", async () => {
+  const windows: KindView = {
+    ...kindView("windows-desktop", "Windows desktop", "A Windows desktop.", 4, true),
+    os: "windows",
+    gpu: false,
+    forms: ["VM"],
+    enrol: false,
+    computerUse: true,
+    offers: [{ backend: "proxmox-qemu", type: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve1"], form: "VM", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: 30000, docker: false }],
+  };
+  const pooled: KindView = {
+    ...KINDS[0]!,
+    offers: [
+      KINDS[0]!.offers[0]!,
+      { backend: "ssh-pool", type: "ssh-pool", label: "SSH host pool", hosts: [], form: "Physical", ready: 0, free: 1, admin: false, resizable: null, typicalReadyMs: null, docker: true },
+    ],
+    admin: null,
+    forms: ["LXC", "Physical"],
+  };
+  const { handlers } = server([], { kinds: [pooled, KINDS[1]!, windows] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const form = await screen.findByRole("radiogroup", { name: "Kind" });
+  expect(within(form).getAllByRole("group").map((group) => group.getAttribute("aria-label"))).toEqual(["Linux", "Windows"]);
+  const options = within(form).getAllByRole("radio");
+  expect(options.map((option) => option.textContent)).toEqual(["TerminalLXCPhysical", "Desktop, GPULXCpve", "DesktopNo DockerVMpve1"]);
+  // Each option describes itself by the pane, which shows the chosen kind until something is hovered or focused.
+  const pane = document.getElementById("new-box-kind-detail")!;
+  expect(options.map((option) => option.getAttribute("aria-describedby"))).toEqual(["new-box-kind-detail", "new-box-kind-detail", "new-box-kind-detail"]);
+  expect(pane.textContent).toContain("Linux terminal");
+  expect(pane.textContent).toContain("Fake host on pve · LXC container · usually about 2.2 s");
+  expect(pane.textContent).toContain("or SSH host pool · a physical machine · 1 free");
+  expect(pane.textContent).toContain("the first with room, in that order");
+  expect(pane.textContent).toContain("Linux x86_64 · root on some backends");
+  expect(pane.textContent).toContain("yes: Git credentials, machine variables, child threads");
+  fireEvent.mouseEnter(options[2]!);
+  expect(pane.textContent).toContain("Windows desktop");
+  expect(pane.textContent).toContain("Proxmox QEMU on pve1 · VM · usually about 30.0 s");
+  expect(pane.textContent).toContain("Windows x86_64 · Administrator");
+  expect(pane.textContent).toContain("a desktop · computer use · follows the panel's size");
+  expect(pane.textContent).toContain("LacksDocker");
+  expect(pane.textContent).toContain("no: no Git credentials, machine variables or threads on it");
+  fireEvent.mouseLeave(form);
+  expect(pane.textContent).toContain("Linux terminal");
+  fireEvent.focus(options[1]!);
+  expect(pane.textContent).toContain("Linux desktop on a GPU");
+  expect(pane.textContent).toContain("a desktop on the GPU · computer use · follows the panel's size · Docker");
+  expect(pane.textContent).toContain("Small 4 cores · 8 GiB (default) · Medium 8 cores · 16 GiB · Large 16 cores · 32 GiB · custom up to 32 cores · 64 GiB · 256 GiB disk");
+  // Arrows move through the grouped order and the pane follows the choice.
+  fireEvent.keyDown(form, { key: "ArrowDown" });
+  expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+});
+
+test("the kind picker's words: titles, names, groups, where an offer runs and its glyph", () => {
+  const linux = KINDS[0]!;
+  const desktop = KINDS[1]!;
+  const arm = { ...linux, id: "linux-arm64", arch: "arm64" as const };
+  const mac = { ...linux, id: "macos", os: "macos" as const, arch: "arm64" as const };
+  expect([linux, desktop, arm, mac].map(kindTitle)).toEqual(["Terminal", "Desktop, GPU", "Terminal, arm64", "Terminal"]);
+  expect([linux, desktop, arm, mac].map(kindName)).toEqual(["Linux terminal", "Linux desktop on a GPU", "Linux terminal, arm64", "macOS terminal"]);
+  expect(groupKinds([mac, linux, arm, desktop]).map((group) => [group.label, group.kinds.map((kind) => kind.id)])).toEqual([
+    ["Linux", ["linux", "linux-arm64", "linux-desktop"]],
+    ["macOS", ["macos"]],
+  ]);
+  const offer = linux.offers[0]!;
+  expect(offerWhere(offer)).toBe("Fake host on pve");
+  expect(offerWhere({ ...offer, type: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
+  expect(offerWhere({ ...offer, type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
+  expect(["proxmox-lxc", "proxmox-qemu", "docker", "tart", "ssh-pool", "fake"].map((type) => providerGlyph({ ...offer, type }))).toEqual(["proxmox", "proxmox", "docker", "laptop", "plug", "server"]);
+  expect(kindFacts({ ...linux, offers: [{ ...offer, docker: false }] }).map((fact) => fact.label)).toEqual(["System", "Has", "Lacks", "BB machine", "Sizes"]);
 });
 
 test("a field that takes a value from another backend names that backend when there are two of its type (#197)", () => {

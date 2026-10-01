@@ -367,6 +367,7 @@ export class ProxmoxLxcBackend implements Backend {
   readonly id: string;
   readonly nature = "virtual" as const;
   readonly label: string;
+  readonly hosts: readonly string[];
   readonly #config: LxcConfig;
   readonly #context: BackendContext;
   readonly #options: LxcBackendOptions;
@@ -404,6 +405,7 @@ export class ProxmoxLxcBackend implements Backend {
       ? { fetch: options.fetch, close: async () => {} }
       : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
     this.label = `Proxmox LXC on ${config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname}`;
+    this.hosts = [config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname];
     this.#warmStore = new WarmStore(this, config.proxmox.pool);
     this.#warm = new ReadyPool(this.#warmStore);
   }

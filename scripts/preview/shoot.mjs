@@ -12,7 +12,7 @@ import { join } from "node:path";
 const out = process.argv[2] ?? "scripts/preview/out";
 const only = process.argv[3] ? process.argv[3].split(",") : null;
 const SCENES = [
-  "panel-empty", "panel-nobackend", "panel-list", "panel-list-open", "panel-runs-on", "panel-problems", "panel-chooser", "panel-chooser-custom", "panel-refused", "panel-menu", "panel-release",
+  "panel-empty", "panel-nobackend", "panel-list", "panel-list-open", "panel-runs-on", "panel-problems", "panel-chooser", "panel-chooser-hover", "panel-chooser-windows", "panel-chooser-narrow", "panel-chooser-custom", "panel-refused", "panel-menu", "panel-release",
   "desktop-connecting", "desktop-stopped", "desktop-released", "desktop-chooser", "desktops-page", "terminal", "terminal-ended", "terminal-stopped", "settings", "settings-machines-empty", "settings-setup", "settings-setup-off", "settings-kind",
 ];
 const PORT = 8765;
@@ -90,7 +90,9 @@ for (const scene of SCENES) {
     // stays wider than BB's compact breakpoint, so menus and popovers keep
     // their desktop form rather than becoming bottom sheets.
     const box = await page.evaluate("(() => { const r = document.getElementById('frame').getBoundingClientRect(); return { x: 0, y: 0, width: Math.ceil(r.width + 32), height: Math.ceil(Math.min(r.height + 32, 1600)) }; })()");
-    await page.send("Emulation.setDeviceMetricsOverride", { width: Math.max(box.width, 820), height: box.height, deviceScaleFactor: 2, mobile: false });
+    // A scene may ask for a narrow viewport (`viewport`), for the layout under Tailwind's sm breakpoint.
+    const least = await page.evaluate("(window.__scene && window.__scene.viewport) || 820");
+    await page.send("Emulation.setDeviceMetricsOverride", { width: Math.max(box.width, least), height: box.height, deviceScaleFactor: 2, mobile: false });
     await sleep(300);
     const shot = await page.send("Page.captureScreenshot", { format: "png", clip: { ...box, scale: 2 } });
     await writeFile(`${out}/${scene}-${theme}.png`, Buffer.from(shot.data, "base64"));
