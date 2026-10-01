@@ -32,3 +32,4 @@ that changes gets a new record that supersedes the old one.
 | [025](025-a-restored-box-enrols-again.md) | A restored box enrols again, keyed by its box ID |
 | [026](026-a-restored-box-enrols-once-it-answers.md) | A restored box enrols once it answers |
 | [027](027-a-kind-says-when-it-has-a-desktop.md) | A kind says when it has a desktop, and a plain box has no qualifier |
+| [028](028-a-box-size-is-chosen-when-it-is-made.md) | A box's size is chosen when it is made, from presets per kind |

@@ -66,7 +66,7 @@ A backend declares its nature (virtual or real) and its kinds, and implements:
 | Method | Does |
 | --- | --- |
 | `kinds()` | the kinds it offers, with capabilities |
-| `capacity(kind, pending)` | whether one more box fits, with the limits of each host, and a message saying what is full |
+| `capacity(kind, size, pending)` | whether one more box of that size fits, with the limits of each host, and a message saying what is full |
 | `acquire(box, previous, hooks, signal)` | makes or claims a guest, starts it, and returns when its command transport answers, within the kind's `readyTimeoutMs` |
 | `release(guest, hooks)` | deletes a virtual guest, or resets a real machine and returns it to the pool |
 | `power(guest)` | `running`, `stopped` or `unknown` now, not from a listing that may lag; null when the guest is gone |
@@ -109,7 +109,7 @@ and `start` and `stop` throw `gone`.
   `gpu`, the computer-use driver, `enrol`, whether there is a desktop display,
   and the features the kind requires (`requires`). Each offer's `features`
   include the required ones and may add more, which the panel and `status`
-  show for each box. Size and transports may differ. `doctor` warns when
+  show for each box. Transports may differ. `doctor` warns when
   offers do not agree ([012](decisions/012-offers-may-add-features.md)).
 
 | Kind | Promises | Offered by |
@@ -314,6 +314,24 @@ So `capacity` reports named limits per host, plus the warm pool for the kind.
 Each limit has `used`, `total` (none when there is no known ceiling, as for
 Docker without a budget) and `reserve`, the part kept back for the host.
 
+### Sizes
+
+A box's size is chosen when it is made
+([028](decisions/028-a-box-size-is-chosen-when-it-is-made.md)): cores,
+memory and root disk, where a disk of null is the backend's base.
+
+- Each kind has the presets `small`, `medium` and `large`, a default preset
+  and a largest custom size, in bb-box's configuration, the same on every
+  offer. `box_acquire` and the panel take a preset or a custom size; core
+  refuses one above the largest.
+- The backend gets the size in `BoxIdentity.size`, and `capacity` is asked
+  about that size, with the kind and size of each box still being acquired.
+  An offer that cannot make it says so in capacity's message, and the
+  registry tries the next.
+- A virtual backend makes the size asked for. A pool claims its smallest
+  free machine of at least that size. `Guest.size` is what the box has, read
+  from the guest, so a restored record has it.
+
 ### Real pools and release
 
 - `release` gets hooks. `resetting()` records "being reset" before the
@@ -452,11 +470,28 @@ export interface BoxKind {
   readonly id: string;
   readonly label: string;
   readonly description: string;
-  readonly size: string;
   /** The features every offer of this kind has. */
   readonly requires: readonly string[];
   readonly capabilities: KindCapabilities;
   readonly readyTimeoutMs: number;
+}
+
+/** Cores, memory and root disk (028). */
+export interface BoxSize {
+  readonly cores: number;
+  readonly memoryMiB: number;
+  /** Null: the backend's base disk, the template's, image's or host's. */
+  readonly diskGiB: number | null;
+}
+
+export interface BoxIdentity {
+  readonly boxId: string;
+  readonly threadId: string;
+  readonly name: string;
+  readonly kind: string;
+  readonly createdAt: number;
+  /** The size asked for, always complete. */
+  readonly size: BoxSize;
 }
 
 export interface Guest {
@@ -464,6 +499,8 @@ export interface Guest {
   /** Which host of the backend: a Proxmox node, a Docker host, a Mac. */
   readonly host: string | null;
   readonly address: string | null;
+  /** The size the box has, read from the guest; null when unknown. */
+  readonly size: BoxSize | null;
   /**
    * Stored with the box and passed back. Never a secret. Where references
    * can be reused, `box` holds the box ID (018).
@@ -529,7 +566,12 @@ export interface Backend {
   /** Real backends: what a release restores. */
   readonly restores?: "home" | "machine";
   kinds(): readonly BoxKind[];
-  capacity(kind: string, pending: readonly string[], signal?: AbortSignal): Promise<Capacity>;
+  capacity(
+    kind: string,
+    size: BoxSize,
+    pending: readonly { readonly kind: string; readonly size: BoxSize }[],
+    signal?: AbortSignal,
+  ): Promise<Capacity>;
   acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
   release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void>;
   power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null>;
@@ -567,7 +609,7 @@ export interface BackendContext {
   logError(operation: string, error: unknown): void;
 }
 
-// Unchanged: BoxIdentity, BoxOwner, HeldGuest, AcquireHooks, DoctorReport,
+// Unchanged: BoxOwner, HeldGuest, AcquireHooks, DoctorReport,
 // BackendError, BackendStorage, ParsedSettings, RunOptions, RunResult.
 ```
 
@@ -584,7 +626,8 @@ any state -> releasing -> released     (release, or the thread is archived or de
 ```
 
 1. **Requested.** The registry asks each backend that offers the kind for
-   `capacity`, in the order of settings, and uses the first one with room.
+   `capacity` for the box's size, in the order of settings, and uses the
+   first one with room.
    If none has room you see the backend's message, which says what is full
    and what to release. The registry records the box and returns at once.
 2. **Acquiring.** In the background, the backend claims a guest with
@@ -625,7 +668,9 @@ real backend's pool of free, reset machines is the same thing
 - The target size is a setting per kind, off by default. `maintain()` tops the
   pool up after each claim and on every sweep, and never below the backend's
   memory and disk reserves.
-- A warm guest counts against capacity and always fits when claimed.
+- A warm guest counts against capacity and fits when claimed. One made
+  larger on claim needs room for the difference
+  ([028](decisions/028-a-box-size-is-chosen-when-it-is-made.md)).
 - A warm guest must be a clone of what its template is now. Proxmox LXC's
   `build.sh` tags each template with a build ID of its own, which warm
   guests copy when they are filled. A warm guest whose template has another

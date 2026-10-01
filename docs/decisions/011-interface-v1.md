@@ -7,7 +7,9 @@ requires and may add more, and Docker inside a box is a feature. Partly
 superseded by [015](015-computer-use-through-cua-driver.md): `computerUse`
 names the driver, and command transports gain `spawn`. Partly superseded
 by [016](016-changes-from-building-v1.md): guests carry facts to show, and a
-driver's setup is a guide with a list of scripts.
+driver's setup is a guide with a list of scripts. Partly superseded by
+[028](028-a-box-size-is-chosen-when-it-is-made.md): a box's size is chosen
+when it is made, and `capacity` is asked about that size.
 
 ## Context
 
