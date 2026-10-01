@@ -118,7 +118,9 @@ fi
 usermod -aG docker,adm,sudo "$user"
 passwd -l "$user" >/dev/null
 passwd -l root >/dev/null
-printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" >"/etc/sudoers.d/90-$user"
+# sudo resets the environment, which drops the DEBIAN_FRONTEND bb-box's
+# commands export, so `sudo apt-get install` would warn or prompt.
+printf 'Defaults env_keep += "DEBIAN_FRONTEND"\n%s ALL=(ALL) NOPASSWD:ALL\n' "$user" >"/etc/sudoers.d/90-$user"
 chmod 0440 "/etc/sudoers.d/90-$user"
 visudo -cf "/etc/sudoers.d/90-$user" >/dev/null
 # BB's host daemon runs as a systemd user service, so the user's manager

@@ -930,7 +930,7 @@ test("computer_launch opens apps and URLs and says which windows opened", async 
   const reused = text(await tool("computer_launch", { box: box.name, url: "https://example.org/" }));
   assert.match(reused, /^Opened https:\/\/example\.org\/ in a window that was already open:\n- window 103: browser "Welcome to example\.org - Browser", 1280 by 800\n\nNext/);
   const slow = text(await tool("computer_launch", { box: box.name, url: "https://example.net/slow" }));
-  assert.match(slow, /^Opened https:\/\/example\.net\/slow in a window that was already open:\n- window 103: browser "example\.net\/slow - Browser", 1280 by 800\n\nThe page is still loading: its window's title is still "example\.net\/slow - Browser"\./);
+  assert.match(slow, /^Opened https:\/\/example\.net\/slow in a window that was already open:\n- window 103: browser "example\.net\/slow - Browser", 1280 by 800\n\nThe page may still be loading, or it has no title of its own: its window's title is still "example\.net\/slow - Browser"\./);
 
   // Cua's advice names its own tools, which the agent does not have.
   const missing = await tool("computer_launch", { box: box.name, app: "missing" });
@@ -987,6 +987,41 @@ test("a text area keeps its reference when typing into it renames its document",
   assert.match(again, new RegExp(`${area} now reads: \\[${area}\\] text "Hello world" value="Hello world"`));
   assert.match(text(await tool("computer_observe", { box: box.name, window: id })), new RegExp(`- \\[${area}\\] text "Hello world" value="Hello world"`));
   assert.deepEqual(readDesktop(file).fields[id], "Hello world");
+});
+
+test("an action on a reference is refused once when its element was renamed where the agent did not see it", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  const opened = text(await tool("computer_launch", { box: box.name, app: "editor" }));
+  const id = Number(/window (\d+): editor "Untitled 1 - Editor"/.exec(opened)?.[1]);
+  const tree = text(await tool("computer_observe", { box: box.name, window: id }));
+  const tab = refOf(tree, 'page tab "Untitled 1"');
+  const area = refOf(tree, 'text "" value=""');
+
+  // The document changes. An action's list of changes shows the new names, so the agent has seen them.
+  editDesktop(file, (desktop) => {
+    desktop.fields[id] = "Draft";
+    desktop.windows.find((window) => window.id === id)!.title = "*Untitled 1 - Editor";
+  });
+  const clicked = text(await tool("computer_act", { box: box.name, action: "click", ref: tab }));
+  assert.match(clicked, new RegExp(`^Clicked ${tab} \\(page tab 'Untitled 1'\\)\\.`));
+  assert.match(clicked, new RegExp(`\\n~ \\[${area}\\] text "Draft" value="Draft"`));
+  assert.match(text(await tool("computer_type", { box: box.name, ref: area, text: "!" })), new RegExp(`^Typed 1 character into ${area} \\(text 'Draft'\\)\\.`));
+
+  // It changes again, and only an image shows it: the reads behind it carry the reference to the renamed element.
+  editDesktop(file, (desktop) => {
+    desktop.fields[id] = "Notes";
+  });
+  await tool("computer_screenshot", { box: box.name, window: id });
+  const refused = await tool("computer_type", { box: box.name, ref: area, text: "?" });
+  assert.equal(isError(refused), true);
+  assert.equal(
+    text(refused),
+    `${area} is now text 'Notes', but bb-box last showed it as text 'Draft!', so nothing was done.\n\nNext: Act on ${area} again if it is the one you want; otherwise call computer_observe.`,
+  );
+  assert.equal(readDesktop(file).fields[id], "Notes");
+  assert.match(text(await tool("computer_type", { box: box.name, ref: area, text: "?" })), new RegExp(`^Typed 1 character into ${area} \\(text 'Notes'\\)\\.`));
+  assert.equal(readDesktop(file).fields[id], "Notes?");
 });
 
 test("a button in a list whose rows all changed does not keep the old row's reference", async (t) => {
@@ -1086,6 +1121,55 @@ test("an action on the desktop says which windows opened, closed or changed, or 
   // Nothing is under (960, 540), and nothing changes.
   const nothing = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 }));
   assert.match(nothing, /\n\nNo window opened, closed or changed\. Anything else that changed shows only in pixels\.\n\nNext: Call computer_screenshot with window "desktop" to see the desktop now\.$/);
+});
+
+test("a closed popup is forgotten, so later actions on the desktop do not read its window", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_screenshot", { box: box.name });
+  // Task 3, at (400, 240) on the screen.
+  assert.match(text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 })), /Opened a context menu on list item 'Task 3' \(window 101\)/);
+  // It closes where bb-box does not see it, as when a person clicks elsewhere.
+  editDesktop(file, (desktop) => {
+    desktop.windows = desktop.windows.filter((window) => window.menuOf === undefined);
+  });
+  // Nothing is under (1714, 980) on the screen.
+  const away = { box: box.name, action: "click", window: "desktop", x: 1400, y: 800 };
+  assert.match(text(await tool("computer_act", away)), /No window opened, closed or changed\./);
+  const before = readDesktop(file).calls.length;
+  assert.match(text(await tool("computer_act", away)), /No window opened, closed or changed\./);
+  const reads = readDesktop(file).calls.slice(before).filter((call) => call.tool === "get_window_state");
+  assert.deepEqual(reads, [], "window 100 holds no popup now");
+});
+
+test("pixels of the desktop keep their meaning in a new session, and are refused when the screen changed size", async (t) => {
+  const { harness, app, box, file, tool } = await desktopBox({ computer: { idleMs: 100 } });
+  t.after(() => harness.lifecycle.dispose());
+  assert.match(text(await tool("computer_screenshot", { box: box.name })), /^The desktop\. Image 1568x882 of screen 1920x1080, scale 0\.817;/);
+  await until("the idle session to close", async () => !app.computer.connected(box.id));
+
+  // A new session has no image of the desktop to map pixels by, so bb-box takes one first.
+  // The Clear all button of window 100, at (850, 640) on the screen.
+  const opened = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 694, y: 523 }));
+  assert.match(opened, /^Clicked \(694, 523\) on the desktop, \(850, 640\) on the screen\./);
+  assert.match(opened, /A modal dialog "Clear all tasks\?", window 101, is open over this window\./);
+  const desktop = readDesktop(file);
+  assert.equal(desktop.sessions, 2);
+  assert.equal(desktop.calls.filter((call) => call.tool === "get_desktop_state").length, 2);
+
+  await until("the idle session to close", async () => !app.computer.connected(box.id));
+  editDesktop(file, (changed) => {
+    changed.screen = { width: 2560, height: 1440 };
+  });
+  const refused = await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 694, y: 523 });
+  assert.equal(isError(refused), true);
+  assert.equal(
+    text(refused),
+    'The screen changed size since your image of the desktop, so its pixels no longer match.\n\nNext: Take a new image with computer_screenshot, window "desktop".',
+  );
+  assert.equal(lastCall(file, "click")?.args.x, 694, "no second click");
+  assert.equal(readDesktop(file).calls.filter((call) => call.tool === "click").length, 1);
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 694, y: 523 })), /^You have no current image of the desktop/);
 });
 
 test("a click on the desktop reads only a small tree under the point, and says when it did not", async (t) => {
