@@ -102,6 +102,10 @@ const ID = /^[a-z0-9][a-z0-9-]*$/;
 const RECONNECT_MS = 3_000;
 /** Prints the SHA-256 of stdin, on Linux and macOS. */
 const SHA256 = "if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-64";
+/** Prints the SHA-256 of `path` under the home, on Windows. */
+function windowsSha256(path: string): string {
+  return `(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $HOME '${path.replaceAll("'", "''")}')).Hash.ToLower()`;
+}
 /** The stock editor each OS's desktop has, which the computer-use check opens. */
 const EDITOR: Readonly<Record<string, string>> = { linux: "mousepad", macos: "TextEdit", windows: "notepad" };
 /** How long an app's window may take to appear, a first start of the app included. */
@@ -518,24 +522,29 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             if (capabilities.command?.streaming) assert.ok(first !== null && first < Date.now() - started - 500, "output arrived before the command ended");
           });
 
-          it("copies 32 MiB in and out byte for byte", { timeout, skip: scripts }, async () => {
+          it("copies 32 MiB in and out byte for byte", { timeout }, async () => {
             const { command } = need();
             const data = randomBytes(32 * MiB);
             data[0] = 0;
             data[1] = 255;
             const path = `bb-box-conformance/dir with space/it's ${box.name}.bin`;
             await command.writeFile(path, data, { mode: "0600", signal: signal() });
-            const inBox = await command.run(`cd "$HOME" && cat -- ${quote(path)} | ${SHA256}`, { timeoutMs: 60_000 });
+            const inBox = await command.run(posix ? `cd "$HOME" && cat -- ${quote(path)} | ${SHA256}` : windowsSha256(path), { timeoutMs: 60_000 });
             assert.equal(inBox.stdout.trim(), sha256(data), "the file in the box matches");
-            const out = await command.run(`cd "$HOME" && head -c ${32 * MiB} /dev/urandom > bb-box-conformance/out.bin && cat bb-box-conformance/out.bin | ${SHA256}`, { timeoutMs: 60_000 });
+            const make = posix
+              ? `cd "$HOME" && head -c ${32 * MiB} /dev/urandom > bb-box-conformance/out.bin && cat bb-box-conformance/out.bin | ${SHA256}`
+              : `$b = [byte[]]::new(${32 * MiB}); [Random]::new().NextBytes($b); [IO.File]::WriteAllBytes((Join-Path $HOME 'bb-box-conformance/out.bin'), $b); ${windowsSha256("bb-box-conformance/out.bin")}`;
+            const out = await command.run(make, { timeoutMs: 60_000 });
             assert.equal(out.exitCode, 0, out.stderr);
             const read = await command.readFile("bb-box-conformance/out.bin", { maxBytes: 32 * MiB, signal: signal() });
             assert.equal(read.length, 32 * MiB);
             assert.equal(sha256(read), out.stdout.trim(), "the file read out matches");
             await assert.rejects(command.readFile(path, { maxBytes: 10 }), /larger than 10 bytes/);
-            const mode = await command.run(`cd "$HOME" && (stat -c %a ${quote(path)} 2>/dev/null || stat -f %Lp ${quote(path)})`);
-            assert.equal(mode.stdout.trim(), "600");
-            await command.run('cd "$HOME" && rm -rf bb-box-conformance');
+            if (posix) {
+              const mode = await command.run(`cd "$HOME" && (stat -c %a ${quote(path)} 2>/dev/null || stat -f %Lp ${quote(path)})`);
+              assert.equal(mode.stdout.trim(), "600");
+            }
+            await command.run(posix ? 'cd "$HOME" && rm -rf bb-box-conformance' : "Remove-Item -LiteralPath (Join-Path $HOME 'bb-box-conformance') -Recurse -Force");
           });
 
           if (capabilities.enrol) {

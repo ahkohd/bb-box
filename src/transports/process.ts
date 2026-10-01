@@ -197,17 +197,20 @@ export class CommandLine {
     return { exitCode: result.exitCode, timedOut: result.timedOut };
   }
 
-  /** Writes `data` to `path`, creating parent directories. */
-  async writeFile(path: string, data: Uint8Array, options: { mode?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
+  /**
+   * Writes `data` to `path`, creating parent directories. In a shell that is
+   * not POSIX, `script` writes stdin to the file, and `mode` is its concern.
+   */
+  async writeFile(path: string, data: Uint8Array, options: { mode?: string; script?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
     const target = quote(path);
     const chmod = options.mode ? ` && chmod ${quote(options.mode)} ${target}` : "";
-    const script = `mkdir -p -- "$(dirname -- ${target})" && cat > ${target}${chmod}`;
+    const script = options.script ?? `mkdir -p -- "$(dirname -- ${target})" && cat > ${target}${chmod}`;
     const result = await this.run(script, { stdin: data, timeoutMs: options.timeoutMs ?? 120_000, signal: options.signal });
     if (result.exitCode !== 0) throw this.#error(failure(`write ${path}`, result));
   }
 
-  /** Reads `path`. Fails when it is larger than `maxBytes`. */
-  async readFile(path: string, options: { maxBytes: number; timeoutMs?: number; signal?: AbortSignal }): Promise<Buffer> {
+  /** Reads `path`. Fails when it is larger than `maxBytes`. In a shell that is not POSIX, `script` writes the file to stdout. */
+  async readFile(path: string, options: { maxBytes: number; script?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<Buffer> {
     const chunks: Buffer[] = [];
     let size = 0;
     let tooLarge = false;
@@ -215,7 +218,7 @@ export class CommandLine {
     const controller = new AbortController();
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
     const result = await this.#spawn(
-      `cat -- ${quote(path)}`,
+      options.script ?? `cat -- ${quote(path)}`,
       { timeoutMs: options.timeoutMs ?? 120_000, signal },
       (chunk) => {
         size += chunk.length;

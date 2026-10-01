@@ -5,8 +5,9 @@ Status: accepted, 1 October 2026. Partly supersedes
 runs elevated. Extends [021](021-desktop-resize-through-the-backend.md),
 [028](028-a-box-size-is-chosen-when-it-is-made.md) and
 [030](030-a-mac-runs-desktop-commands-through-launchctl-asuser.md).
-Amended while it was built: the template's real-time clock is UTC, and a
-cold clone's time to its desktop as the first template build measured it.
+Amended while it was built: the template's real-time clock is UTC, a cold
+clone's time to its desktop as the first template build measured it, and
+file copies run in PowerShell rather than SFTP.
 
 ## Context
 
@@ -71,8 +72,13 @@ It also found that:
   Running warm VMs are an option where memory is plentiful. Warm and
   filling VMs stay out of `held()`, as on Proxmox LXC.
 - **Commands.** OpenSSH, transport `ssh`, shell `powershell`, `admin`
-  true, `streaming` true, `inDesktopSession` false. Files over SFTP. The
-  guest agent is used for readiness only.
+  true, `streaming` true, `inDesktopSession` false. The guest agent is
+  used for readiness only.
+- **Files.** A file copy is a PowerShell script over the same SSH, with
+  the file's bytes as its stdin or stdout, not SFTP. It takes the box's
+  shared connection and fails as a command does, and bb-box needs no SFTP
+  client or local file. Starting PowerShell costs about 0.2 s a copy. A
+  file's mode does not apply.
 - **Desktop commands.** Core runs `session: "desktop"` on Windows as a
   one-off scheduled task for `box` with an interactive logon, made and
   started over SSH and deleted after. Output comes back through files at

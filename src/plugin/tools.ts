@@ -309,7 +309,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
           const box = await boxes.writeFile(owner, found.id, target, bytes(file.content, file.contentEncoding), { signal });
           return `Copied ${source} (${file.sizeBytes} bytes) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
         }
-        const target = workspacePath(workspace.path, to ?? posix.basename(from));
+        const target = workspacePath(workspace.path, to ?? (found.capabilities.os === "windows" ? win32 : posix).basename(from));
         const { box, data } = await boxes.readFile(owner, found.id, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal });
         await bb.sdk.files.write({
           hostId: workspace.hostId,

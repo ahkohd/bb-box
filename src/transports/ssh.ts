@@ -27,8 +27,8 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CommandLine, PROBE, quote } from "./process.ts";
-import { COMMAND_LIMIT, powershellCommand, scriptText, stageCommand, stagedCommand, stagedName } from "./powershell.ts";
+import { CommandLine, PROBE, failure, quote } from "./process.ts";
+import { COMMAND_LIMIT, powershellCommand, readFileScript, scriptText, stageCommand, stagedCommand, stagedName, writeFileScript } from "./powershell.ts";
 import { openRoute } from "./route.ts";
 import { openTerminal } from "./terminal.ts";
 import {
@@ -355,14 +355,23 @@ export class Ssh {
     return staged.exitCode === 0 ? stagedCommand(name) : staged;
   }
 
-  /** Writes `data` to `path` in the box, creating parent directories. */
-  writeFile(access: SshAccess, path: string, data: Uint8Array, options: { mode?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
-    return this.#leased(access, options, (share) => this.#line(access, "linux", share).writeFile(path, data, options), () => false);
+  /** Writes `data` to `path` in the box, creating parent directories. On Windows, `mode` does not apply. */
+  async writeFile(access: SshAccess, path: string, data: Uint8Array, options: { mode?: string; timeoutMs?: number; signal?: AbortSignal } = {}, os?: GuestOs): Promise<void> {
+    const script = os === "windows" ? await this.#fileScript(access, writeFileScript(path), `write ${path}`, options) : undefined;
+    return this.#leased(access, options, (share) => this.#line(access, os, share).writeFile(path, data, { ...options, script }), () => false);
   }
 
   /** Reads `path` from the box. Fails when it is larger than `maxBytes`. */
-  readFile(access: SshAccess, path: string, options: { maxBytes: number; timeoutMs?: number; signal?: AbortSignal }): Promise<Buffer> {
-    return this.#leased(access, options, (share) => this.#line(access, "linux", share).readFile(path, options), () => false);
+  async readFile(access: SshAccess, path: string, options: { maxBytes: number; timeoutMs?: number; signal?: AbortSignal }, os?: GuestOs): Promise<Buffer> {
+    const script = os === "windows" ? await this.#fileScript(access, readFileScript(path), `read ${path}`, options) : undefined;
+    return this.#leased(access, options, (share) => this.#line(access, os, share).readFile(path, { ...options, script }), () => false);
+  }
+
+  /** The command for a Windows file copy's script, whose stdin or stdout is the file's bytes. */
+  async #fileScript(access: SshAccess, script: string, action: string, options: { timeoutMs?: number; signal?: AbortSignal }): Promise<string> {
+    const command = await this.#powershell(access, script, options);
+    if (typeof command !== "string") throw new SshError(failure(action, command));
+    return command;
   }
 
   /** True when SSH answers and the shell runs. */
@@ -389,7 +398,7 @@ function lost(result: { exitCode: number | null; timedOut: boolean }): boolean {
   return result.exitCode === 255 || result.timedOut;
 }
 
-/** A box's CommandTransport over SSH. File copies use POSIX tools, so Windows needs another transport for now. */
+/** A box's CommandTransport over SSH. File copies use POSIX tools, and PowerShell on Windows. */
 export class SshTransport implements CommandTransport {
   readonly #ssh: Ssh;
   readonly #access: SshAccess;
@@ -431,14 +440,9 @@ export class SshTransport implements CommandTransport {
     return result;
   }
 
-  #posixOnly(action: string): void {
-    if (this.#os === "windows") throw new TransportError("unsupported", `SSH cannot ${action} on a Windows box yet.`);
-  }
-
   async writeFile(path: string, data: Uint8Array, options: { mode?: string; signal?: AbortSignal } = {}): Promise<void> {
-    this.#posixOnly("write files");
     try {
-      await this.#ssh.writeFile(this.#access, path, data, options);
+      await this.#ssh.writeFile(this.#access, path, data, options, this.#os);
     } catch (error) {
       if (error instanceof SshError && !(await this.probe(options.signal))) throw this.#unreachable();
       throw error;
@@ -446,9 +450,8 @@ export class SshTransport implements CommandTransport {
   }
 
   async readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array> {
-    this.#posixOnly("read files");
     try {
-      return await this.#ssh.readFile(this.#access, path, options);
+      return await this.#ssh.readFile(this.#access, path, options, this.#os);
     } catch (error) {
       if (error instanceof SshError && !/larger than/.test(error.message) && !(await this.probe(options.signal))) throw this.#unreachable();
       throw error;

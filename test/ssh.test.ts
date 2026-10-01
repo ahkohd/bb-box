@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { readFileScript, scriptText, writeFileScript } from "../src/transports/powershell.ts";
 import { CommandLine, EndMark } from "../src/transports/process.ts";
 import { waitUntilAnswers } from "../src/transports/ready.ts";
 import { KeyFile, Ssh, SshError, SshTransport, generateKeyPair, publicKey, quote } from "../src/transports/ssh.ts";
@@ -136,7 +137,7 @@ test("waitUntilAnswers gives up at the deadline", async () => {
   assert.equal(await waitUntilAnswers(new SshTransport(ssh, at("192.0.2.8"), "linux"), { timeoutMs: 0, sleep: async () => {} }), false);
 });
 
-test("the SSH transport reports an unreachable box and refuses Windows file copies", async () => {
+test("the SSH transport reports an unreachable box", async () => {
   const { ssh, down } = fakeSsh();
   const up = new SshTransport(ssh, at("192.0.2.9"), "linux");
   assert.equal((await up.run("exit 255")).exitCode, 255);
@@ -144,8 +145,6 @@ test("the SSH transport reports an unreachable box and refuses Windows file copi
   const gone = new SshTransport(ssh, at("192.0.2.10"), "linux");
   await assert.rejects(gone.run("true"), (error: unknown) => error instanceof TransportError && error.code === "unreachable");
   await assert.rejects(gone.readFile("x", { maxBytes: 10 }), (error: unknown) => error instanceof TransportError && error.code === "unreachable");
-  const windows = new SshTransport(ssh, at("192.0.2.9"), "windows");
-  await assert.rejects(windows.writeFile("x", new Uint8Array()), (error: unknown) => error instanceof TransportError && error.code === "unsupported");
 });
 
 test("a Windows box runs each script in PowerShell, base64-encoded, so no quote reaches its command line", async () => {
@@ -220,6 +219,44 @@ test("a command spawned on a Windows box runs in PowerShell, with its stdin and 
   windows("192.0.2.34");
   down("192.0.2.34");
   await assert.rejects(ssh.spawn(at("192.0.2.34"), `: ${"x".repeat(40_000)}`, undefined, "windows"), (error: unknown) => error instanceof SshError && /could not start: .*Connection refused/.test(error.message));
+});
+
+/** A sh stand-in for PowerShell that writes and reads files as bb-box's Windows file copies do, and runs any other script with sh. */
+const FILES = String.raw`p=$(printf '%s' "$1" | sed -n "1s/^try{\$p=\$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('\(.*\)');if(\[IO.Directory\].*/\1/p" | sed "s/''/'/g")
+case "$1" in
+  *OpenStandardInput*) mkdir -p "$(dirname "$p")" && cat > "$p" ;;
+  *OpenStandardOutput*) cat -- "$p" ;;
+  *) exec sh -c "$1" ;;
+esac
+`;
+
+test("a Windows box's file copies run in PowerShell, with the file's bytes as their stdin and stdout", async () => {
+  const { ssh, log, home, windows, powershell, down } = fakeSsh();
+  windows("192.0.2.35");
+  powershell("192.0.2.35", FILES);
+  const box = new SshTransport(ssh, at("192.0.2.35"), "windows");
+  const data = Uint8Array.from({ length: 512 }, (_, i) => i % 256);
+  await box.writeFile("dir with space/it's.bin", data, { mode: "0600" });
+  assert.deepEqual(readFileSync(join(home("192.0.2.35"), "dir with space", "it's.bin")), Buffer.from(data));
+  const script = (command: string) => Buffer.from(/FromBase64String\('([^']+)'\)/.exec(command)![1]!, "base64").toString("utf8");
+  const [written] = log();
+  assert.doesNotMatch(written!.command, /chmod|["`]/, "PowerShell writes the file, and the mode does not apply");
+  assert.equal(script(written!.command), scriptText(writeFileScript("dir with space/it's.bin")));
+  assert.match(writeFileScript("it's"), /FromPSPath\('it''s'\)/, "a quote in the path is doubled");
+
+  assert.deepEqual(await box.readFile("dir with space/it's.bin", { maxBytes: 512 }), Buffer.from(data));
+  assert.equal(script(log()[1]!.command), scriptText(readFileScript("dir with space/it's.bin")));
+  await assert.rejects(box.readFile("dir with space/it's.bin", { maxBytes: 100 }), /^SshError: dir with space\/it's.bin is larger than 100 bytes\.$/);
+  await assert.rejects(box.readFile("missing.bin", { maxBytes: 100 }), (error: unknown) => error instanceof SshError && /^Could not read missing.bin: exit 1 \(.*No such file/.test(error.message));
+
+  // A path too long for the command line is staged first, and a failed staging is an error.
+  windows("192.0.2.36");
+  down("192.0.2.36");
+  const long = "x".repeat(30_000);
+  await assert.rejects(ssh.writeFile(at("192.0.2.36"), long, data, {}, "windows"), (error: unknown) => error instanceof SshError && error.message.startsWith(`Could not write ${long}: exit 255 (ssh: connect to host 192.0.2.36`));
+  assert.equal(log().filter((entry) => entry.target === "box@192.0.2.36").length, 1, "the copy is not run");
+  down("192.0.2.35");
+  await assert.rejects(box.writeFile("x", data), (error: unknown) => error instanceof TransportError && error.code === "unreachable");
 });
 
 test("commands to one box share a connection that bb-box opens once", async () => {

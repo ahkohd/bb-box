@@ -346,6 +346,9 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   its timeout runs out, as a Linux one does under GNU `timeout`: a watchdog
   in the job ends the run's PowerShell, and the job ends the rest. The run
   then exits 1, which counts as timed out once the timeout has passed.
+  File copies are PowerShell scripts too, with the file's bytes as their
+  stdin or stdout. A relative path, or one that starts with `~`, is under
+  the box user's home, and a file's mode does not apply.
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the
@@ -1263,10 +1266,9 @@ Push work to Git or copy it out before releasing a box.
 
 How each backend fits the interface. Proxmox LXC, the SSH host pool, Tart
 and Docker are built. Proxmox QEMU makes Windows boxes, runs their
-commands, shows and resizes their desktops, offers computer use,
-hibernates them on stop and keeps a hibernated warm pool; file copies come
-next (#46). The rest are planned, and the later-backends research fills in
-the details.
+commands, copies their files, shows and resizes their desktops, offers
+computer use, hibernates them on stop and keeps a hibernated warm pool. The
+rest are planned, and the later-backends research fills in the details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |

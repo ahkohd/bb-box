@@ -201,7 +201,9 @@ node --test test/conformance.test.ts
   administrator
   ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)).
   The box's key goes in
-  `C:\ProgramData\ssh\administrators_authorized_keys`.
+  `C:\ProgramData\ssh\administrators_authorized_keys`. File copies are
+  PowerShell scripts over the same SSH, with the file's bytes as their stdin
+  or stdout.
 - A larger disk grows before the VM starts, and the acquire then extends C:
   over it. Capacity is `memory`, `disk` on the template's storage, and
   `guests` in the VMID range. A box cannot enrol yet
@@ -256,9 +258,9 @@ node --test test/conformance.test.ts
   VMID or disk for such a box. One whose template has another build or is
   no longer listed, at another size, or running is deleted by
   `maintain()`. A warm VM does not start at the node's boot.
-- The conformance suite runs against the backend, but skips the checks
-  whose scripts are written for sh: commands, streaming, the architecture,
-  file copies and enrolment.
+- The conformance suite runs against the backend. It checks file copies
+  with PowerShell, and skips the checks whose scripts are written for sh:
+  commands, streaming, the architecture and enrolment.
 - The tests run against the fake API, and the fake ssh as a Windows host,
   with a sh stand-in for PowerShell where a test needs one
   ([test/proxmox-qemu.test.ts](../test/proxmox-qemu.test.ts)).
