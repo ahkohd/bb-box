@@ -99,12 +99,12 @@ and `start` and `stop` throw `gone`.
   ([027](decisions/027-a-kind-says-when-it-has-a-desktop.md)). The default
   kind is `linux`.
 - The IDs before 027, `linux-headless` and `linux-headless-docker`, stay
-  accepted wherever an ID comes in: tool input, settings, stored records and
-  guests' kind tags. Core maps them to the new IDs where they come in, so
-  backends and views see only the new ones.
+  accepted wherever an ID comes in: tool input, configuration, stored
+  records and guests' kind tags. Core maps them to the new IDs where they
+  come in, so backends and views see only the new ones.
 - An offer is a backend and a kind. The registry tries the offers of a kind
-  in the order the backends are listed in settings, and takes the first with
-  capacity. The box records both.
+  in the order the backends are listed in the configuration, and takes the
+  first with capacity. The box records both.
 - Offers of one kind must agree on what the agent relies on: `os`, `arch`,
   `gpu`, the computer-use driver, `enrol`, whether there is a desktop display,
   and the features the kind requires (`requires`). Each offer's `features`
@@ -296,6 +296,9 @@ small values the backend needs later, such as a per-claim user or published
 ports. The registry stores `data` with the box and passes it back. It never
 holds a secret. Where references can be reused, `data.box` holds the box ID
 from the claim on ([018](decisions/018-guests-name-their-install-and-box.md)).
+A backend with several hosts set up alike, such as Docker hosts or Tart's
+Macs, lists them in its configuration, and `host` names one
+([029](decisions/029-configuration-is-one-checked-document.md)).
 
 ### Capacity
 
@@ -365,7 +368,8 @@ memory and root disk, where a disk of null is the backend's base.
   checks fail, printing them.
 - Each driver names its setup guide and scripts. The guide is the entry
   point: the settings page links it first, then the scripts in the order the
-  guide runs them ([016](decisions/016-changes-from-building-v1.md)).
+  guide runs them ([016](decisions/016-changes-from-building-v1.md)). Drivers
+  give repository paths, and core makes the links from one repository URL.
 
 ### Types
 
@@ -597,9 +601,48 @@ export interface DoctorCheck {
 }
 
 export interface BackendDriver<C = unknown> {
-  // type, label, nature, settings, parse and create as built, plus:
+  // type, label and nature as built. `settings` gives way to (029):
+  /** The backend's fields, named within it; the settings page renders them. */
+  readonly fields: Readonly<Record<string, PluginSettingDescriptor>>;
+  /** The fields of each host, for a backend with several hosts set up alike. */
+  readonly hostFields?: Readonly<Record<string, PluginSettingDescriptor>>;
+  /** Reads the backend's part of the configuration. */
+  parse(part: BackendPart): ParsedSettings<C>;
+  /** `id` is the type for a type's first backend, else `<type>:<name>`. */
+  create(id: string, config: C, context: BackendContext): Backend;
   /** Paths in the repository, linked from the settings page, the guide first. */
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
+}
+
+/** One backend in the configuration document. */
+export interface BackendPart {
+  readonly id: string;
+  readonly type: string;
+  readonly name: string;
+  /** Off stops new boxes only. */
+  readonly enabled: boolean;
+  readonly fields: Readonly<Record<string, unknown>>;
+  /** Warm guests to keep, per kind. */
+  readonly warm: Readonly<Record<string, number>>;
+  readonly hosts: readonly HostPart[];
+}
+
+export interface HostPart {
+  /** `Guest.host`; cannot change while the host has boxes. */
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
+/** The switch moves to BackendPart, and each problem names its field. */
+export type ParsedSettings<C> =
+  | { readonly ok: true; readonly config: C }
+  | { readonly ok: false; readonly problems: readonly FieldProblem[] };
+
+export interface FieldProblem {
+  /** A path within the backend's part, such as `url` or `hosts.0.address`. */
+  readonly field: string | null;
+  readonly message: string;
 }
 
 export interface BackendContext {
@@ -610,7 +653,7 @@ export interface BackendContext {
 }
 
 // Unchanged: BoxOwner, HeldGuest, AcquireHooks, DoctorReport,
-// BackendError, BackendStorage, ParsedSettings, RunOptions, RunResult.
+// BackendError, BackendStorage, RunOptions, RunResult.
 ```
 
 ## A box's life
@@ -626,7 +669,7 @@ any state -> releasing -> released     (release, or the thread is archived or de
 ```
 
 1. **Requested.** The registry asks each backend that offers the kind for
-   `capacity` for the box's size, in the order of settings, and uses the
+   `capacity` for the box's size, in the configuration's order, and uses the
    first one with room.
    If none has room you see the backend's message, which says what is full
    and what to release. The registry records the box and returns at once.
@@ -665,9 +708,10 @@ real backend's pool of free, reset machines is the same thing
   member that can serve the kind and makes sure only one box holds it.
 - Each backend brings a `PoolStore` for membership. Proxmox LXC keeps it in
   guest tags; real backends keep it in the backend's plugin storage.
-- The target size is a setting per kind, off by default. `maintain()` tops the
-  pool up after each claim and on every sweep, and never below the backend's
-  memory and disk reserves.
+- The target size is set per backend and kind in the configuration, 0 by
+  default. `maintain()` tops the pool up after each claim and on every
+  sweep, and never below the backend's memory and disk reserves. An off
+  backend or kind keeps no warm guests.
 - A warm guest counts against capacity and fits when claimed. One made
   larger on claim needs room for the difference
   ([028](decisions/028-a-box-size-is-chosen-when-it-is-made.md)).
@@ -951,6 +995,29 @@ Nothing expires, so a box must never be forgotten.
   when BB shows it disconnected
   ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
 
+## Configuration
+
+bb-box's configuration is one checked document in its plugin storage
+([029](decisions/029-configuration-is-one-checked-document.md)).
+
+- The document lists the backends in the order the registry tries them,
+  each with its fields, switch, warm counts per kind and hosts; the kinds,
+  each with its switch, presets, default preset and largest size; and the
+  general settings: boxes per thread, enrolment and the default kind.
+- Hosts set up alike are a list inside one backend, tried in order. Separate
+  backends of one type are for configurations that differ in kind; the
+  first keeps the type as its ID, another is `<type>:<name>`.
+- Switches for a backend, a host or a kind stop new boxes only. An off
+  backend stays built, so its boxes keep working.
+- Secrets are stored apart from the document and are write-only: the page
+  and the CLI say whether each is set.
+- The settings page and `bb box config show | check | apply <file>` use the
+  same RPC: `config.get`, `config.check(draft, {test})` and
+  `config.apply(draft, revision)`. Every write is checked, and a revision
+  stops two people overwriting each other. `show --json` is the export.
+- The first start of the version that brings it moves BB's settings into
+  the document once, and leaves boxes and guests as they are.
+
 ## Data ownership
 
 | Data | Lives in | Owned by | Survives |
@@ -958,7 +1025,8 @@ Nothing expires, so a box must never be forgotten.
 | Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | restored by the sweep from the guests' labels if lost, while their threads are live; a restored box enrols again with the same key once it runs and answers |
 | Which guest belongs to which box and thread | the provider (tags, names), or a marker on a real machine | backend | the plugin's storage being lost |
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
-| Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |
+| Configuration | plugin storage, one document | operator | exported by `bb box config show --json`; deleted by `bb plugin remove` |
+| Provider credentials | plugin storage, apart from the configuration | operator | never shown in output, logs or errors, nor sent to the browser |
 | bb-box's SSH key | plugin storage; its public key is installed by setup | core | |
 | The install ID | plugin storage, and on every guest | core | the plugin's storage being lost: the doctor shows the old ID and an operator command restores it |
 | The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; read from BB's daemon in the box by each command, never written to disk or to bb-box's storage |
@@ -1027,8 +1095,8 @@ Notes:
 - **Tart** images are prepared ahead: Cua's permissions written offline into
   the image's TCC database, automatic login, Xcode and the iOS Simulator
   warmed, background indexing off. They are pulled from an OCI registry with
-  `tart pull`. Several Macs can be listed in settings, or managed by Orchard
-  later.
+  `tart pull`. Several Macs are the backend's hosts in the configuration
+  (029), or are managed by Orchard later.
   - Apple's macOS licence (section 2B(iii)) allows two macOS VMs per Mac you
     own or control, for software development, testing during development,
     macOS Server or personal non-commercial use, and not as a service bureau
@@ -1067,9 +1135,10 @@ Notes:
 - **Setup**, per backend: a short guide and the scripts it runs, which
   prepare the provider: templates or images, the network, a restricted
   credential, and bb-box's public key.
-- **Settings page.** Each backend has its own section with an enable switch.
-  After you save, the page runs `doctor()` and shows each check with what to
-  do when it fails.
+- **Settings page.** bb-box's own section on its page in BB's Tools, with a
+  part per backend and its switch and hosts, and the kinds and their
+  presets. A backend's guided setup tests the draft with its doctor before
+  saving, and shows each check with what to do when it fails (029).
 - **`doctor`** also runs from the panel and from the command line, and prints
   notes such as the public key to install. It never prints a credential.
 
