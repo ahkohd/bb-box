@@ -10,7 +10,8 @@ import {
   type LxcBackendOptions,
 } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
@@ -49,10 +50,14 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
   return { ssh, proxmox, context, storage, make, backend: make() };
 }
 
+/** The size a box of the kind gets by default. */
+const sized = (kind: string): BoxSize => defaultSize(kindSizes(kind));
+const waiting = (...kinds: string[]) => kinds.map((kind) => ({ kind, size: sized(kind) }));
+
 let boxCounter = 0;
-function identity(kind = "linux", threadId = "thr_abc123"): BoxIdentity {
+function identity(kind = "linux", threadId = "thr_abc123", size = sized(kind)): BoxIdentity {
   boxCounter++;
-  return { boxId: `box_${boxCounter}`, threadId, name: `calm-otter-${boxCounter}`, kind, createdAt: 1_790_000_000_000 };
+  return { boxId: `box_${boxCounter}`, threadId, name: `calm-otter-${boxCounter}`, kind, createdAt: 1_790_000_000_000, size };
 }
 
 function hooks() {
@@ -103,23 +108,13 @@ test("kinds lists only kinds with a template", () => {
   assert.deepEqual(kinds[0]!.capabilities.displays, []);
   assert.equal(kinds[0]!.capabilities.arch, "x86_64");
   assert.equal(kinds[0]!.readyTimeoutMs, 30_000);
-  assert.equal(kinds[0]!.size, "2 cores, 4 GiB memory, the template's disk");
   const desktop = setup().backend.kinds().find((kind) => kind.id === "linux-desktop")!;
   assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "xrandr resizes the GPU's screen");
   assert.equal(desktop.capabilities.gpu, true);
-  assert.equal(desktop.size, "4 cores, 8 GiB memory, the template's disk");
   const cpu = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.kinds().find((kind) => kind.id === "linux-desktop-cpu")!;
   assert.equal(cpu.capabilities.gpu, false);
   assert.deepEqual(cpu.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "Xtigervnc resizes");
   assert.deepEqual(cpu.capabilities.computerUse, desktop.capabilities.computerUse);
-});
-
-test("a kind's size shows the template's disk once it is known, or the larger size set", async () => {
-  const { backend } = setup();
-  await backend.capacity("linux", [], signal());
-  assert.equal(backend.kinds()[0]!.size, "2 cores, 4 GiB memory, 8 GiB disk");
-  const bigger = setup({ "proxmox-lxc-linux-disk-gib": 20 }).backend;
-  assert.equal(bigger.kinds()[0]!.size, "2 cores, 4 GiB memory, 20 GiB disk");
 });
 
 test("the node is found when there is only one", async () => {
@@ -138,7 +133,7 @@ test("the node is found when there is only one", async () => {
 
 test("capacity keeps the memory and disk reserves", async () => {
   const { backend, proxmox } = setup();
-  const ok = await backend.capacity("linux", [], signal());
+  const ok = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.warm, { ready: 0, target: 0 });
   assert.equal(ok.hosts.length, 1);
@@ -150,14 +145,14 @@ test("capacity keeps the memory and disk reserves", async () => {
   ]);
 
   proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
-  const pending = await backend.capacity("linux", ["linux"], signal());
+  const pending = await backend.capacity("linux", sized("linux"), waiting("linux"), signal());
   assert.equal(pending.ok, false);
-  assert.match(pending.message!, /pve has 6 GiB of memory free\. A linux box needs 4 GiB and 4 GiB is kept free/);
-  assert.match(pending.message!, /bb-box's settings/);
+  assert.match(pending.message!, /pve has 6 GiB of memory free\. A linux box with 4 GiB memory needs it all, and 4 GiB is kept free/);
+  assert.match(pending.message!, /ask for less memory, or lower the memory kept free in bb-box's settings/);
 
   proxmox.memory = { total: 64 * GiB, available: 48 * GiB };
   proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 20 * GiB });
-  const disk = await backend.capacity("linux", [], signal());
+  const disk = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.equal(disk.ok, false);
   assert.equal(disk.hosts[0]!.ok, false);
   assert.match(disk.message!, /local-lvm storage on pve has 20 GiB free, less than the 50 GiB kept free/);
@@ -166,26 +161,54 @@ test("capacity keeps the memory and disk reserves", async () => {
 test("capacity refuses when the VMID range is full", async () => {
   const { backend, proxmox } = setup({ "proxmox-lxc-vmid-last": 7000 });
   proxmox.guests.set(7000, { vmid: 7000, name: "x", pool: "bbbox", status: "running", template: false, config: {} });
-  const full = await backend.capacity("linux", [], signal());
+  const full = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.equal(full.ok, false);
   assert.match(full.message!, /Every VMID from 7000 to 7000 is in use/);
 });
 
+test("capacity refuses more cores than the node has, more memory than is free and a disk the storage cannot grow to (028)", async () => {
+  const { backend, proxmox } = setup();
+  const cores = await backend.capacity("linux", { cores: 32, memoryMiB: 4096, diskGiB: null }, waiting(), signal());
+  assert.equal(cores.ok, false);
+  assert.equal(cores.message, "pve has 16 CPU threads, fewer than the 32 cores asked for. Ask for at most 16 cores.");
+  assert.equal((await backend.capacity("linux", { cores: 16, memoryMiB: 4096, diskGiB: null }, waiting(), signal())).ok, true);
+
+  const memory = await backend.capacity("linux", { cores: 2, memoryMiB: 48 * 1024, diskGiB: null }, waiting(), signal());
+  assert.equal(memory.ok, false);
+  assert.match(memory.message!, /pve has 48 GiB of memory free\. A linux box with 48 GiB memory needs it all, and 4 GiB is kept free/);
+
+  proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 100 * GiB });
+  assert.equal((await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: 50 }, waiting(), signal())).ok, true, "42 GiB more leaves 58 GiB free");
+  const disk = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: 60 }, waiting(), signal());
+  assert.equal(disk.ok, false);
+  assert.match(disk.message!, /^The local-lvm storage on pve has 100 GiB free\. A 60 GiB disk needs 52 GiB more than the template's, and 50 GiB is kept free\. Ask for a smaller disk/);
+});
+
+test("pending boxes count with the memory of their own size (028)", async () => {
+  const { backend, proxmox } = setup();
+  proxmox.memory = { total: 64 * GiB, available: 20 * GiB };
+  const large = { kind: "linux", size: { cores: 8, memoryMiB: 13 * 1024, diskGiB: null } };
+  assert.equal((await backend.capacity("linux", sized("linux"), waiting("linux"), signal())).ok, true, "4 GiB pending leaves room");
+  const refused = await backend.capacity("linux", sized("linux"), [large], signal());
+  assert.equal(refused.ok, false, "13 GiB pending does not");
+  assert.equal(refused.hosts[0]!.limits[0]!.used, 44 * 1024 + 13 * 1024);
+});
+
 test("capacity counts desktops on each GPU against the limit per GPU", async () => {
   const { backend } = setup({ "proxmox-lxc-desktops-per-gpu": 2 });
-  const headless = await backend.capacity("linux", [], signal());
+  const headless = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.equal(headless.hosts[0]!.limits.find((limit) => limit.resource === "gpu-desktops"), undefined);
 
   await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
-  const one = await backend.capacity("linux-desktop", [], signal());
+  const one = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(one.ok, true);
   assert.deepEqual(one.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 1, total: 2, reserve: 0, unit: "count" });
 
-  const full = await backend.capacity("linux-desktop", ["linux-desktop", "linux"], signal());
+  const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting("linux-desktop", "linux"), signal());
   assert.equal(full.ok, false);
   assert.match(full.message!, /Every GPU on pve runs 2 desktop boxes, the most bb-box's settings allow\. Release a desktop box, or raise the desktops per GPU/);
 
-  const unlimited = await setup().backend.capacity("linux-desktop", [], signal());
+  const unlimited = await setup().backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.deepEqual(unlimited.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 0, total: null, reserve: 0, unit: "count" });
 });
 
@@ -202,18 +225,18 @@ test("desktops spread across GPUs, and a full set of GPUs points to CPU desktops
   assert.deepEqual([second.data?.template, second.facts], [9002, [{ label: "GPU", value: "gpu-b" }, ...display]]);
   assert.ok(parseTags(proxmox.guests.get(Number(second.ref))!.config.tags).includes("template.9002"));
 
-  const full = await backend.capacity("linux-desktop", [], signal());
+  const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(full.ok, false);
   assert.deepEqual(full.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 2, total: 2, reserve: 0, unit: "count" });
   assert.match(full.message!, /Every GPU on pve runs 1 desktop box, .* Use a linux-desktop-cpu box, or release a desktop box/);
-  assert.equal((await backend.capacity("linux-desktop-cpu", [], signal())).ok, true, "CPU desktops use no GPU");
+  assert.equal((await backend.capacity("linux-desktop-cpu", sized("linux-desktop-cpu"), waiting(), signal())).ok, true, "CPU desktops use no GPU");
 
   const cpu = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
   assert.equal(cpu.data?.template, 9003);
   assert.deepEqual(cpu.facts, display, "a CPU desktop names no GPU");
 
   await backend.release(first, releasing());
-  assert.equal((await backend.capacity("linux-desktop", [], signal())).ok, true, "gpu-a has room again");
+  assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, true, "gpu-a has room again");
   const third = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   assert.equal(third.data?.template, 9001);
 });
@@ -324,7 +347,7 @@ test("a desktop still being acquired counts once against the GPU limit", async (
   let during: number | undefined;
   const hook = hooks();
   const acquired = backend.acquire(box, null, { ...hook.value, starting: async () => {
-    const capacity = await backend.capacity("linux-desktop", ["linux-desktop"], signal());
+    const capacity = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting("linux-desktop"), signal());
     during = capacity.hosts[0]!.limits.find((limit) => limit.resource === "gpu-desktops")?.used;
   } }, signal());
   await acquired;
@@ -334,7 +357,7 @@ test("a desktop still being acquired counts once against the GPU limit", async (
 
 test("an unknown kind is refused", async () => {
   const { backend } = setup({ "proxmox-lxc-desktop-templates": "" });
-  await assert.rejects(backend.capacity("linux-desktop", [], signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
+  await assert.rejects(backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
 });
 
 test("acquire claims the VMID before it clones, then configures and starts the box", async () => {
@@ -346,7 +369,13 @@ test("acquire claims the VMID before it clones, then configures and starts the b
     return undefined;
   };
   const guest = await backend.acquire(box, null, hook.value, signal());
-  assert.deepEqual(guest, { ref: "7000", host: "pve", address: "192.0.2.100", data: { template: 9000, box: box.boxId } });
+  assert.deepEqual(guest, {
+    ref: "7000",
+    host: "pve",
+    address: "192.0.2.100",
+    size: { cores: 2, memoryMiB: 4096, diskGiB: 8 },
+    data: { template: 9000, box: box.boxId },
+  });
   assert.deepEqual(hook.claimed[0]?.data, { template: 9000, box: box.boxId }, "the claim records the box");
   assert.deepEqual(hook.events, ["claim 7000", "clone 7000", "starting"]);
   assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags", "warm"]);
@@ -453,23 +482,47 @@ test("the capacity check waits for a template that answers 403 while it is repla
     if (call.method !== "GET" || call.path !== "/nodes/pve/lxc/9000/config" || ++reads > 2) return undefined;
     return { ok: false, status: 403, statusText: "Permission check failed (/vms/9000, VM.Audit)", text: async () => JSON.stringify({ data: null }) };
   };
-  const capacity = await backend.capacity("linux", [], signal());
+  const capacity = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.equal(capacity.ok, true);
   assert.equal(reads, 4, "two refused, one to see it back, one to read it");
 });
 
 test("a larger disk is applied once the box runs", async () => {
-  const { backend, proxmox } = setup({ "proxmox-lxc-linux-disk-gib": 20 });
+  const { backend, proxmox } = setup();
   const states: string[] = [];
   proxmox.intercept = (call) => {
     if (call.path.endsWith("/resize")) states.push(proxmox.guests.get(Number(call.path.split("/")[4]))!.status);
     return undefined;
   };
   const hook = hooks();
-  await backend.acquire(identity(), null, hook.value, signal());
+  const guest = await backend.acquire(identity("linux", "thr_abc123", { cores: 2, memoryMiB: 4096, diskGiB: 20 }), null, hook.value, signal());
   assert.deepEqual(states, ["running"]);
   assert.match(proxmox.guests.get(7000)!.config.rootfs!, /size=20G/);
+  assert.equal(guest.size?.diskGiB, 20, "the size is read back from the guest");
   assert.equal(typeof hook.timings.resize, "number");
+});
+
+test("a box is made at the size asked for, and held reads its size from the guest (028)", async () => {
+  const { backend, proxmox, make } = setup();
+  const guest = await backend.acquire(identity("linux", "thr_abc123", { cores: 4, memoryMiB: 8192, diskGiB: 20 }), null, hooks().value, signal());
+  const made = proxmox.guests.get(7000)!;
+  assert.equal(made.config.cores, "4");
+  assert.equal(made.config.memory, "8192");
+  assert.match(made.config.rootfs!, /size=20G/);
+  assert.deepEqual(guest.size, { cores: 4, memoryMiB: 8192, diskGiB: 20 });
+
+  // Changed on the host, as an operator might: the guest says what the box has.
+  made.config.cores = "6";
+  const held = await make().held();
+  assert.deepEqual(held.find((other) => other.ref === guest.ref)?.size, { cores: 6, memoryMiB: 8192, diskGiB: 20 });
+});
+
+test("a disk smaller than the template's keeps the template's", async () => {
+  const { backend, proxmox } = setup();
+  const guest = await backend.acquire(identity("linux", "thr_abc123", { cores: 2, memoryMiB: 4096, diskGiB: 4 }), null, hooks().value, signal());
+  assert.match(proxmox.guests.get(7000)!.config.rootfs!, /size=8G/);
+  assert.equal(proxmox.calls.some((call) => call.path.endsWith("/resize")), false);
+  assert.equal(guest.size?.diskGiB, 8);
 });
 
 test("VMIDs are handed out round-robin, so a deleted box's address waits its turn", async () => {
@@ -562,7 +615,7 @@ test("release deletes the guest, and a missing guest counts as released", async 
   assert.equal(proxmox.guests.has(7000), false);
   assert.equal(await backend.power(guest), null);
   await backend.release(guest, releasing());
-  await assert.rejects(backend.release({ ref: "9000", host: null, address: null }, releasing()), /outside bb-box's VMID range/);
+  await assert.rejects(backend.release({ ref: "9000", host: null, address: null, size: null }, releasing()), /outside bb-box's VMID range/);
   assert.equal(proxmox.guests.has(9000), true);
 });
 
@@ -627,7 +680,7 @@ test("another install's guests count against capacity, and this one leaves them 
   await other.maintain();
   assert.equal(proxmox.guests.get(7001)?.status, "running", "the other install's release left the desktop alone");
   assert.ok(proxmox.guests.has(7000), "the other install, with no warm pool, leaves this one's warm guest");
-  assert.equal((await other.capacity("linux-desktop", [], signal())).ok, false, "this install's desktop still uses the GPU");
+  assert.equal((await other.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, false, "this install's desktop still uses the GPU");
 
   const theirs = await other.acquire(identity(), null, hooks().value, signal());
   assert.equal(theirs.ref, "7002", "the other install clones rather than take this one's warm guest");
@@ -648,7 +701,7 @@ test("stamp records this install on its guest from before install IDs, and leave
     config: { tags, description: "bb-box old\nbox box_old\nthread thr_x" },
   });
   proxmox.guests.set(7006, { vmid: 7006, name: "theirs", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;install.other;box.box_old" } });
-  const guest: Guest = { ref: "7005", host: "pve", address: "192.0.2.105", data: { template: 9000 } };
+  const guest: Guest = { ref: "7005", host: "pve", address: "192.0.2.105", size: null, data: { template: 9000 } };
   assert.deepEqual(await backend.held(), [], "a guest with no install ID is not this install's yet");
 
   const wrong = await backend.stamp("box_other", guest);
@@ -667,7 +720,7 @@ test("stamp records this install on its guest from before install IDs, and leave
   );
   assert.equal(await backend.power(stamped), "running");
 
-  await backend.stamp("box_old", { ref: "7006", host: "pve", address: null });
+  await backend.stamp("box_old", { ref: "7006", host: "pve", address: null, size: null });
   assert.equal(proxmox.guests.get(7006)!.config.tags, "bb-box;install.other;box.box_old", "another install's guest is not stamped");
 });
 
@@ -811,7 +864,7 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   // Claiming a warm guest starts a refill; maintain returns the one in flight.
   await backend.maintain();
   assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
-  const capacity = await backend.capacity("linux", [], signal());
+  const capacity = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
 
   // linux and linux-docker are clones of one template, so the warm guest serves either.
@@ -825,8 +878,48 @@ test("a warm guest satisfies capacity even when memory is short", async () => {
   const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 });
   await backend.maintain();
   proxmox.memory = { total: 64 * GiB, available: 1 * GiB };
-  assert.equal((await backend.capacity("linux", [], signal())).ok, true);
-  assert.equal((await backend.capacity("linux", ["linux"], signal())).ok, false);
+  assert.equal((await backend.capacity("linux", sized("linux"), waiting(), signal())).ok, true);
+  assert.equal((await backend.capacity("linux", sized("linux"), waiting("linux"), signal())).ok, false);
+});
+
+test("a warm guest waits at its template's size, and a claim gives it the box's (028)", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 });
+  await backend.maintain();
+  const fill = proxmox.calls.filter((call) => call.method === "PUT" && call.path === "/nodes/pve/lxc/7000/config");
+  assert.equal(
+    fill.some((call) => "cores" in call.params || "memory" in call.params),
+    false,
+  );
+  assert.equal(proxmox.guests.get(7000)!.config.memory, "4096");
+
+  const guest = await backend.acquire(identity("linux", "thr_abc123", { cores: 8, memoryMiB: 16384, diskGiB: 30 }), null, hooks().value, signal());
+  assert.equal(guest.ref, "7000");
+  const claimed = proxmox.guests.get(7000)!;
+  assert.equal(claimed.config.cores, "8");
+  assert.equal(claimed.config.memory, "16384");
+  assert.match(claimed.config.rootfs!, /size=30G/);
+  assert.deepEqual(guest.size, { cores: 8, memoryMiB: 16384, diskGiB: 30 });
+});
+
+test("a warm guest needs only the memory a claim adds (028)", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 });
+  await backend.maintain();
+  // The warm guest has the template's 4 GiB, and 4 GiB is kept free.
+  proxmox.memory = { total: 64 * GiB, available: 9 * GiB };
+  const medium = await backend.capacity("linux", { cores: 4, memoryMiB: 8192, diskGiB: null }, waiting(), signal());
+  assert.equal(medium.ok, true, "4 GiB more leaves 5 GiB free");
+  assert.equal(medium.hosts[0]!.ok, false, "a new guest with 8 GiB would not fit");
+  const more = await backend.capacity("linux", { cores: 4, memoryMiB: 10 * 1024, diskGiB: null }, waiting(), signal());
+  assert.equal(more.ok, false);
+  assert.match(more.message!, /^pve has 9 GiB of memory free\. A warm linux box given 10 GiB needs 6 GiB more, and 4 GiB is kept free\./);
+
+  // A warm guest has no more cores or disk room than a new one.
+  proxmox.memory = { total: 64 * GiB, available: 32 * GiB };
+  const cores = await backend.capacity("linux", { cores: 32, memoryMiB: 4096, diskGiB: null }, waiting(), signal());
+  assert.equal(cores.message, "pve has 16 CPU threads, fewer than the 32 cores asked for. Ask for at most 16 cores.");
+  proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 100 * GiB });
+  const disk = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: 60 }, waiting(), signal());
+  assert.match(disk.message!, /^The local-lvm storage on pve has 100 GiB free\. A 60 GiB disk needs 52 GiB more than the template's/);
 });
 
 test("warm guests beyond the target are removed", async () => {
@@ -856,11 +949,11 @@ test("warm guests of a template that build.sh replaced are retired, not handed o
 
   // While build.sh --replace copies the new build to the template's VMID, that is not yet a template.
   template.template = false;
-  assert.deepEqual((await backend.capacity("linux", [], signal())).warm, { ready: 0, target: 1 });
+  assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 0, target: 1 });
   // Then it is, with an ID of its own.
   template.template = true;
   template.config.tags = "build.two";
-  assert.deepEqual((await backend.capacity("linux", [], signal())).warm, { ready: 0, target: 1 });
+  assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 0, target: 1 });
   const guest = await backend.acquire(identity(), null, hooks().value, signal());
   assert.notEqual(guest.ref, "7000", "the old build's warm guest is not handed out");
 
@@ -879,24 +972,24 @@ test("a warm guest is not ready while its template is away, nor once a template 
   // Outside the pool, so read on its own.
   await backend.maintain();
   assert.deepEqual(parseTags(proxmox.guests.get(7000)!.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
-  assert.deepEqual((await backend.capacity("linux", [], signal())).warm, { ready: 1, target: 1 });
+  assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 1, target: 1 });
 
   // As between build.sh removing the old template and making the new one a template.
   const template = proxmox.guests.get(9000)!;
   proxmox.guests.delete(9000);
-  assert.deepEqual((await backend.capacity("linux", [], signal())).warm, { ready: 0, target: 1 });
+  assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 0, target: 1 });
   const cloning: Record<string, string> = { ...template.config, lock: "create" };
   delete cloning.template;
   proxmox.guests.set(9000, { ...template, template: false, config: cloning });
-  assert.deepEqual((await backend.capacity("linux", [], signal())).warm, { ready: 0, target: 1 });
+  assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 0, target: 1 });
 
   // The first build.sh that stamps it.
   proxmox.guests.set(9000, { ...template, config: { ...template.config, tags: "build.one" } });
-  assert.deepEqual((await backend.capacity("linux", [], signal())).warm, { ready: 0, target: 1 });
+  assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 0, target: 1 });
   await backend.maintain();
   assert.equal(proxmox.guests.has(7000), false);
   assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000", "build.one"]);
-  assert.deepEqual((await backend.capacity("linux", [], signal())).warm, { ready: 1, target: 1 });
+  assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 1, target: 1 });
   assert.deepEqual(context.errors, []);
 });
 
@@ -906,7 +999,7 @@ test("a warm guest stays ready while a backup locks its template", async () => {
   await backend.maintain();
   const template = proxmox.guests.get(9000)!;
   proxmox.guests.set(9000, { ...template, config: { ...template.config, lock: "backup" } });
-  assert.deepEqual((await backend.capacity("linux", [], signal())).warm, { ready: 1, target: 1 });
+  assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 1, target: 1 });
   await backend.maintain();
   assert.deepEqual(parseTags(proxmox.guests.get(7000)?.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 1);
@@ -1006,7 +1099,7 @@ test("doctor with a wrong token skips the rest and never shows the secret", asyn
 
 test("errors never contain the token secret", async () => {
   const { backend } = setup({ "proxmox-lxc-token-secret": "wrong-secret-value" });
-  await assert.rejects(backend.capacity("linux", [], signal()), (error: unknown) => {
+  await assert.rejects(backend.capacity("linux", sized("linux"), waiting(), signal()), (error: unknown) => {
     assert.doesNotMatch(String(error), /wrong-secret-value/);
     return true;
   });

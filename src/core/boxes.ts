@@ -21,6 +21,7 @@ import {
   type BackendStorage,
   type BoxIdentity,
   type BoxKind,
+  type BoxSize,
   type BoxTransports,
   type Guest,
   type HeldGuest,
@@ -33,6 +34,7 @@ import { TransportError, type CommandTransport, type RunResult } from "../transp
 import type { GeneralConfig } from "./config.ts";
 import { TIMED_OUT_EXITS, canRunInDesktop, command, envScript, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
+import { chooseSize, defaultSize, kindSizes, type SizeRequest } from "./sizes.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -69,6 +71,12 @@ export interface BoxRecord {
   readonly backendLabel: string;
   readonly nature: MachineNature;
   readonly role: BoxRole;
+  /**
+   * The size asked for (028). Absent for a box recorded before sizes, which
+   * was made at what is now the default preset, and for a restored box,
+   * whose guest says its size.
+   */
+  readonly size?: BoxSize;
   /** Set by the backend's claim, before it makes or changes anything. */
   readonly guest: Guest | null;
   readonly state: BoxState;
@@ -141,6 +149,7 @@ export interface BoxesDeps {
 export type BoxErrorCode =
   | "not_found"
   | "unknown_kind"
+  | "invalid_size"
   | "limit_reached"
   | "no_capacity"
   | "not_ready"
@@ -185,8 +194,8 @@ function observed(current: BoxRecord, power: PowerState | null, moving = false):
   return current.state === state ? {} : { state, error: null };
 }
 
-export function identity(box: BoxRecord): BoxIdentity {
-  return { boxId: box.id, threadId: box.threadId, name: box.name, kind: box.kind, createdAt: box.createdAt };
+export function identity(box: BoxRecord, size: BoxSize): BoxIdentity {
+  return { boxId: box.id, threadId: box.threadId, name: box.name, kind: box.kind, createdAt: box.createdAt, size };
 }
 
 /** The message a user sees for an error: bb-box's and backends' own messages as they are. */
@@ -376,7 +385,7 @@ export class Boxes {
    * backend has said the box fits; the box is ready when its command
    * transport answers.
    */
-  async acquire(input: { threadId: string; projectId: string | null; kind: string; role?: BoxRole }): Promise<BoxRecord> {
+  async acquire(input: { threadId: string; projectId: string | null; kind: string; size?: SizeRequest; role?: BoxRole }): Promise<BoxRecord> {
     const wanted = currentKindId(input.kind);
     const offered = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
     if (!offered.length) {
@@ -390,6 +399,8 @@ export class Boxes {
     }
     const role = input.role ?? "box";
     const general = await this.#deps.general();
+    const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
+    if (!sized.ok) throw new BoxError("invalid_size", sized.message);
     const box = await this.#admission.run(() =>
       this.#locked(input.threadId, async () => {
         const existing = await this.list(input.threadId);
@@ -400,7 +411,7 @@ export class Boxes {
             `This thread already has ${active.length} boxes, the most allowed: ${active.map((box) => box.name).join(", ")}. Release one first.`,
           );
         }
-        const chosen = await this.#choose(offered);
+        const chosen = await this.#choose(offered, sized.size);
         const box: BoxRecord = {
           id: newBoxId(this.#random),
           threadId: input.threadId,
@@ -414,6 +425,7 @@ export class Boxes {
           backendLabel: chosen.backend.label,
           nature: chosen.backend.nature,
           role,
+          size: sized.size,
           guest: null,
           state: "acquiring",
           error: null,
@@ -432,14 +444,15 @@ export class Boxes {
     return box;
   }
 
-  /** The first backend with room for the kind, or the reasons none has. */
-  async #choose(offered: OfferedKind[]): Promise<OfferedKind> {
+  /** The first backend with room for a box of the kind and size, or the reasons none has. */
+  async #choose(offered: OfferedKind[], size: BoxSize): Promise<OfferedKind> {
     const all = await this.all();
     const reasons: string[] = [];
     for (const candidate of offered) {
-      const pending = all.filter((box) => box.backend === candidate.backend.id && isAcquiring(box)).map((box) => box.kind);
+      const acquiring = all.filter((box) => box.backend === candidate.backend.id && isAcquiring(box));
+      const pending = await Promise.all(acquiring.map(async (box) => ({ kind: box.kind, size: await this.#size(box) })));
       try {
-        const capacity = await candidate.backend.capacity(candidate.kind.id, pending);
+        const capacity = await candidate.backend.capacity(candidate.kind.id, size, pending);
         if (capacity.ok) return candidate;
         reasons.push(capacity.message ?? `${candidate.backend.label} has no room.`);
       } catch (error) {
@@ -448,6 +461,11 @@ export class Boxes {
       }
     }
     throw new BoxError("no_capacity", reasons.join(" "));
+  }
+
+  /** The size a box was asked to be. One recorded before sizes was made at the default preset. */
+  async #size(box: BoxRecord): Promise<BoxSize> {
+    return box.size ?? defaultSize(kindSizes(box.kind, (await this.#deps.general()).sizes));
   }
 
   #startAcquire(box: BoxRecord): void {
@@ -492,7 +510,7 @@ export class Boxes {
     };
     let guest: Guest;
     try {
-      guest = await backend.acquire(identity(box), box.guest, hooks, signal);
+      guest = await backend.acquire(identity(box, await this.#size(box)), box.guest, hooks, signal);
     } catch (error) {
       // The backend released whatever it claimed before it threw.
       const next = await this.update(box, (current) => {

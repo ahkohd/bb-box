@@ -145,6 +145,8 @@ Working on the Proxmox LXC backend:
 - Linux desktop boxes on the GPU or the CPU, shown live in the thread's panel,
   with shared control and resizing.
 - Computer use for agents, through the accessibility tree and screenshots.
+- Box sizes: each kind has small, medium and large presets, and an agent or
+  person can ask for a custom size up to the kind's largest.
 - A warm pool: a warm box is handed out in about 0.1 s; BB's enrolment then
   takes a few seconds (see [what bb-box asks of BB](docs/bb-requests.md)).
 

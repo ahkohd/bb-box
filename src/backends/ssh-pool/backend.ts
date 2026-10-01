@@ -27,6 +27,7 @@ import {
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
+  type BoxSize,
   type BoxTransports,
   type Capacity,
   type CommandCapability,
@@ -66,7 +67,6 @@ const OFFERS: readonly BoxKind[] = [
     id: "linux",
     label: "Linux",
     description: "A Linux machine of its own, for builds, backend services and the agent's own work.",
-    size: "A whole machine from the pool",
     requires: [],
     capabilities: { os: "linux", arch: ARCH, gpu: false, features: [], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
     readyTimeoutMs: READY_TIMEOUT_MS,
@@ -75,7 +75,6 @@ const OFFERS: readonly BoxKind[] = [
     id: "linux-docker",
     label: "Linux with Docker",
     description: "A Linux machine of its own with Docker, and root through sudo, for builds and services that need them.",
-    size: "A whole machine from the pool",
     requires: ["docker"],
     capabilities: {
       os: "linux",
@@ -173,6 +172,46 @@ function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
+function gib(mib: number): string {
+  return `${Number((mib / 1024).toFixed(1))} GiB`;
+}
+
+/** A size in words, as core gives it. */
+function sizeWords(size: BoxSize): string {
+  return [plural(size.cores, "core"), `${gib(size.memoryMiB)} memory`, ...(size.diskGiB !== null ? [`${size.diskGiB} GiB disk`] : [])].join(", ");
+}
+
+/** What a machine says it has, in words. */
+function hasWords(status: MachineStatus | null): string[] {
+  return [
+    status?.cores ? plural(status.cores, "core") : "",
+    status?.memoryMiB ? `${gib(status.memoryMiB)} memory` : "",
+    status?.diskGiB !== null && status?.diskGiB !== undefined ? `${status.diskGiB} GiB free disk` : "",
+  ].filter(Boolean);
+}
+
+/** A machine's cores and memory. The disk is the machine's, so it is null. */
+function machineSize(status: MachineStatus | null): BoxSize | null {
+  return status?.cores && status.memoryMiB ? { cores: status.cores, memoryMiB: status.memoryMiB, diskGiB: null } : null;
+}
+
+/**
+ * The machine is at least the size. The kernel keeps some memory from
+ * MemTotal, so a machine has memory M when it shows 90% of it, the margin
+ * the conformance suite allows. A disk size needs that much free.
+ */
+function fits(status: MachineStatus | null, size: BoxSize): boolean {
+  const has = machineSize(status);
+  if (!has || has.cores < size.cores || has.memoryMiB < size.memoryMiB * 0.9) return false;
+  return size.diskGiB === null || (status!.diskGiB ?? 0) >= size.diskGiB;
+}
+
+/** Fewer cores first, then less memory. */
+function bySize(a: View, b: View): number {
+  const [x, y] = [machineSize(a.probe.status), machineSize(b.probe.status)];
+  return (x?.cores ?? 0) - (y?.cores ?? 0) || (x?.memoryMiB ?? 0) - (y?.memoryMiB ?? 0);
+}
+
 export class SshPoolBackend implements Backend {
   readonly id = "ssh-pool";
   readonly nature = "real" as const;
@@ -212,40 +251,44 @@ export class SshPoolBackend implements Backend {
     return offer;
   }
 
-  async capacity(kind: string, pending: readonly string[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
     this.#offer(kind);
     const views = (await this.#survey(signal)).filter((view) => this.#lists(view.machine, kind));
-    const free = views.filter((view) => view.state === "free" && this.#ready(view, kind) === null);
+    const free = views.filter((view) => view.state === "free" && this.#ready(view, kind) === null && fits(view.probe.status, size));
     // Acquires of kinds that share a machine with this one wait for the same machines; those that have claimed one show as held.
     const shares = (other: string) => views.some((view) => this.#lists(view.machine, other));
-    const waiting = Math.max(0, pending.filter(shares).length - [...this.#claimed.values()].filter(shares).length);
+    const waiting = Math.max(0, pending.filter((box) => shares(box.kind)).length - [...this.#claimed.values()].filter(shares).length);
     const ok = free.length > waiting;
     const used = Math.min(views.length, views.length - free.length + waiting);
     return {
       ok,
-      message: ok ? null : this.#full(kind, views, free.length),
+      message: ok ? null : this.#full(kind, size, views, free.length),
       warm: null,
       hosts: [{ host: POOL_HOST, ok, limits: [{ resource: "machines", used, total: views.length, reserve: 0, unit: "count" }] }],
     };
   }
 
-  /** Why no machine is free for `kind`, in words for the user. */
-  #full(kind: string, views: readonly View[], free: number): string {
+  /** Why no machine is free for `kind` at `size`, in words for the user. */
+  #full(kind: string, size: BoxSize, views: readonly View[], free: number): string {
     const held = views.filter((view) => view.state === "held" && view.probe.status?.owner?.install === this.#context.installId).length;
     const others = views.filter((view) => view.state === "held").length - held;
     const resetting = views.filter((view) => view.state === "resetting").length;
     const out = views.filter((view) => view.state === "out-of-service");
     const unready = views.filter((view) => view.state === "free" && this.#ready(view, kind) !== null);
+    const small = views.filter((view) => view.state === "free" && this.#ready(view, kind) === null && !fits(view.probe.status, size));
     const parts = [
       held ? `${plural(held, "is", "are")} held by this install's boxes` : "",
       others ? `${others} by another install` : "",
       resetting ? `${resetting} resetting` : "",
       out.length ? `${out.length} out of service (${out.map((view) => `${view.machine.name}: ${view.reason}`).join("; ")})` : "",
       unready.length ? `${unready.length} not ready for ${kind} (${unready.map((view) => `${view.machine.name}: ${this.#ready(view, kind)}`).join("; ")})` : "",
+      small.length
+        ? `${small.length} smaller than ${sizeWords(size)} (${small.map((view) => `${view.machine.name}: ${hasWords(view.probe.status).join(", ") || "it did not say its size"}`).join("; ")})`
+        : "",
     ].filter(Boolean);
     const all = `${plural(views.length, "machine")} that serve${views.length === 1 ? "s" : ""} ${kind}`;
     const why = parts.length ? ` Of the ${all}, ${parts.join(", ")}.` : free ? ` Other boxes are waiting for the ${free === 1 ? "free one" : `${free} free ones`}.` : "";
-    return `No machine in the SSH host pool is free for ${kind}.${why} Release a box to free one.`;
+    return `No machine in the SSH host pool is free for ${kind} at ${sizeWords(size)}.${why} Release a box to free one${small.length ? ", or ask for a smaller size" : ""}.`;
   }
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
@@ -298,7 +341,7 @@ export class SshPoolBackend implements Backend {
     return null;
   }
 
-  /** Claims the first free machine for the kind, with the fewest other kinds, free longest. */
+  /** Claims the smallest free machine of at least the box's size, then the one with the fewest other kinds, free longest. */
   #claim(
     box: BoxIdentity,
     kind: BoxKind,
@@ -309,15 +352,15 @@ export class SshPoolBackend implements Backend {
     return this.#exclusive(async () => {
       const views = (await this.#survey(signal)).filter((view) => this.#lists(view.machine, kind.id));
       const candidates = views
-        .filter((view) => view.state === "free" && this.#ready(view, kind.id) === null)
-        .sort((a, b) => a.machine.kinds.length - b.machine.kinds.length || a.since - b.since);
+        .filter((view) => view.state === "free" && this.#ready(view, kind.id) === null && fits(view.probe.status, box.size))
+        .sort((a, b) => bySize(a, b) || a.machine.kinds.length - b.machine.kinds.length || a.since - b.since);
       const { publicKey } = await this.#keys();
       if (!publicKey) throw new Error("ssh-keygen cannot read the SSH private key in bb-box's settings. Paste the whole key, or clear it so bb-box makes one.");
       for (const view of candidates) {
         const { machine } = view;
         const generation = view.probe.status!.generation!;
         const user = `${USER_PREFIX}${generation}`;
-        const guest = this.#guest(machine, box.boxId, generation, user);
+        const guest = this.#guest(machine, box.boxId, generation, user, machineSize(view.probe.status));
         await hooks.claim(guest);
         onClaim(guest);
         signal.throwIfAborted();
@@ -339,7 +382,7 @@ export class SshPoolBackend implements Backend {
           this.#claiming.delete(machine.name);
         }
       }
-      throw new BackendError("no_capacity", this.#full(kind.id, views, 0));
+      throw new BackendError("no_capacity", this.#full(kind.id, box.size, views, 0));
     });
   }
 
@@ -459,7 +502,7 @@ export class SshPoolBackend implements Backend {
       if (!status) {
         // The record names the box on a machine that does not answer, so the sweep keeps it.
         if (record?.state === "held" && record.owner && record.user) {
-          held.push({ ...this.#guest(machine, record.owner.boxId, record.generation, record.user), owner: record.owner, power: "unknown" });
+          held.push({ ...this.#guest(machine, record.owner.boxId, record.generation, record.user, null), owner: record.owner, power: "unknown" });
         }
         continue;
       }
@@ -468,7 +511,7 @@ export class SshPoolBackend implements Backend {
       const user = marker.user ?? `${USER_PREFIX}${marker.generation}`;
       const owner = status.marker === "owner" ? markerOwner(marker) : null;
       // A machine part-way through its reset has no owner, so the sweep finishes the reset.
-      held.push({ ...this.#guest(machine, owner?.boxId ?? null, marker.generation, user), owner, power: "running" });
+      held.push({ ...this.#guest(machine, owner?.boxId ?? null, marker.generation, user, machineSize(status)), owner, power: "running" });
     }
     return held;
   }
@@ -650,11 +693,7 @@ export class SshPoolBackend implements Backend {
   #describe(view: View): string {
     const status = view.probe.status;
     const owner = status?.owner;
-    const size = [
-      status?.cores ? plural(status.cores, "core") : "",
-      status?.memoryMiB ? `${(status.memoryMiB / 1024).toFixed(1)} GiB memory` : "",
-      status?.diskGiB !== null && status?.diskGiB !== undefined ? `${status.diskGiB} GiB free disk` : "",
-    ].filter(Boolean);
+    const size = hasWords(status ?? null);
     const has = size.length ? ` It has ${size.join(", ")}.` : "";
     if (view.state === "held") {
       const by = owner?.install === this.#context.installId ? `box ${owner.name ?? owner.box}` : `install ${owner?.install || "with no ID"}`;
@@ -683,7 +722,7 @@ export class SshPoolBackend implements Backend {
     return null;
   }
 
-  #guest(machine: SshPoolMachine, box: string | null, generation: number, user: string): Guest {
+  #guest(machine: SshPoolMachine, box: string | null, generation: number, user: string, size: BoxSize | null): Guest {
     const facts: GuestFact[] = [
       { label: "Machine", value: machine.name },
       { label: "Reset", value: machine.reset === "machine" ? "Whole machine" : "User and home" },
@@ -693,6 +732,7 @@ export class SshPoolBackend implements Backend {
       ref: machine.name,
       host: machine.name,
       address: machine.admin.host,
+      size,
       data: { ...(box ? { box } : {}), generation, user },
       facts,
     };

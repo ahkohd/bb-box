@@ -55,7 +55,7 @@ export interface DisplayCapability {
 /**
  * What a box of one offer has. Offers of one kind agree exactly on os, arch,
  * gpu, computerUse, enrol and having a desktop display; doctor warns when
- * they do not. Size and transports may differ.
+ * they do not. Transports may differ.
  */
 export interface KindCapabilities {
   readonly os: GuestOs;
@@ -86,13 +86,19 @@ export interface BoxKind {
   readonly label: string;
   /** One sentence for agents and the panel. */
   readonly description: string;
-  /** Resources in words, for example "2 cores, 4 GiB memory, 16 GiB disk". */
-  readonly size: string;
   /** The features every offer of this kind has. The agent relies on these only. */
   readonly requires: readonly string[];
   readonly capabilities: KindCapabilities;
   /** The longest an acquire of this kind may take, to ready. */
   readonly readyTimeoutMs: number;
+}
+
+/** Cores, memory and root disk (028). */
+export interface BoxSize {
+  readonly cores: number;
+  readonly memoryMiB: number;
+  /** Null: the backend's base disk, the template's, image's or host's. */
+  readonly diskGiB: number | null;
 }
 
 /** The box a backend acquires for, as the registry knows it. */
@@ -103,6 +109,11 @@ export interface BoxIdentity {
   readonly name: string;
   readonly kind: string;
   readonly createdAt: number;
+  /**
+   * The size asked for, always complete. A virtual backend makes it; a pool
+   * claims its smallest free machine of at least that size.
+   */
+  readonly size: BoxSize;
 }
 
 /** A backend's handle on the machine behind a box. */
@@ -113,6 +124,8 @@ export interface Guest {
   readonly host: string | null;
   /** Where the box answers on the network, when known. Shown to users. */
   readonly address: string | null;
+  /** The size the box has, read from the guest; null when unknown. */
+  readonly size: BoxSize | null;
   /**
    * Small values the backend needs later, stored with the box and passed
    * back. Never a secret. A backend whose references can be reused keeps the
@@ -177,7 +190,7 @@ export interface Capacity {
 /** A box needs all its resources on one host, so limits are per host. */
 export interface HostCapacity {
   readonly host: string;
-  /** One more box of the kind fits on this host. */
+  /** One more box of the kind and size fits on this host. */
   readonly ok: boolean;
   readonly limits: readonly Limit[];
 }
@@ -273,10 +286,17 @@ export interface Backend {
   kinds(): readonly BoxKind[];
 
   /**
-   * Whether one more box of `kind` fits. `pending` lists the kinds of this
-   * backend's boxes still being acquired, which may not show in host figures yet.
+   * Whether one more box of `kind` and `size` fits. `pending` gives the kind
+   * and size of each of this backend's boxes still being acquired, which may
+   * not show in host figures yet. A backend that cannot make the size says
+   * so in the message, and the registry tries the next offer.
    */
-  capacity(kind: string, pending: readonly string[], signal?: AbortSignal): Promise<Capacity>;
+  capacity(
+    kind: string,
+    size: BoxSize,
+    pending: readonly { readonly kind: string; readonly size: BoxSize }[],
+    signal?: AbortSignal,
+  ): Promise<Capacity>;
 
   /**
    * Makes or claims the guest for `box`, starts it and waits until its

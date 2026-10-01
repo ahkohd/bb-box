@@ -27,10 +27,10 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   bb.rpc.register(contract, {
     async state({ threadId }) {
       const list = await boxes.list(threadId);
-      return { boxes: list.map(app.view), kinds: app.kinds(), backends: app.backendViews(), desktopPath: app.desktops.path };
+      return { boxes: list.map(app.view), kinds: await app.kinds(), backends: app.backendViews(), desktopPath: app.desktops.path };
     },
-    acquire: ({ threadId, kind }) =>
-      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind })),
+    acquire: ({ threadId, kind, size }) =>
+      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size })),
     release: ({ threadId, box }) => change("Releasing the box", () => boxes.release(threadId, box)),
     stop: ({ threadId, box }) => change("Stopping the box", () => boxes.stop(threadId, box)),
     start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box)),

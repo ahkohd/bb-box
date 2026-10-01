@@ -322,8 +322,12 @@ the machine when it answers again. Its power shows as unknown meanwhile.
   The reset turns it off. Without systemd, BB's daemon runs without linger.
 - **Boot.** `/etc/tmpfiles.d/bb-box.conf` clears BB's lock and PID files in
   box homes at boot, so BB's daemon starts again after a hard stop.
-- **Sizes.** Every machine is lent whole. The doctor shows each machine's
-  cores, memory and free disk.
+- **Sizes.** Every machine is lent whole. bb-box claims the smallest free
+  machine of at least the size a box asks for: as many online cores, 90%
+  of the memory or more (the kernel keeps some of it), and, when the size
+  names a disk, that much free under `/home`. The doctor shows each
+  machine's cores, memory and free disk. If your machines are smaller than
+  the presets, change them with the `box-sizes` setting.
 - **Desktops.** The pool lends headless machines only. Desktops are not
   supported yet.
 

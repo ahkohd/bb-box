@@ -325,7 +325,8 @@ memory and root disk, where a disk of null is the backend's base.
 
 - Each kind has the presets `small`, `medium` and `large`, a default preset
   and a largest custom size, in bb-box's configuration, the same on every
-  offer. `box_acquire` and the panel take a preset or a custom size; core
+  offer. The general `box-sizes` setting changes them per kind.
+  `box_acquire` and `bb box acquire` take a preset or a custom size; core
   refuses one above the largest.
 - The backend gets the size in `BoxIdentity.size`, and `capacity` is asked
   about that size, with the kind and size of each box still being acquired.

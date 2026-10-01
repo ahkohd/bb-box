@@ -21,9 +21,13 @@
 // The Linux flavour was called headless before 027. Its keys declare no
 // default, so an unset one can be told apart and its proxmox-lxc-headless-
 // key read instead: saved values carry over.
+//
+// Each flavour's cores, memory and disk were settings until 028, when box
+// sizes replaced them. Their keys stay declared, without defaults, so that
+// bb-box can read saved values once into the box-sizes setting.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
-import type { ParsedSettings } from "../types.ts";
+import type { BoxSize, ParsedSettings } from "../types.ts";
 
 export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu"] as const;
 export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
@@ -49,10 +53,6 @@ export interface LxcTemplate {
 export interface LxcFlavourConfig {
   /** In the order the settings list them. Empty when the flavour's kinds are off. */
   readonly templates: readonly LxcTemplate[];
-  readonly cores: number;
-  readonly memoryMiB: number;
-  /** Root disk size, or null to keep the template's. A larger size is applied while the box runs. */
-  readonly diskGiB: number | null;
   /** Ready boxes kept in the warm pool. */
   readonly warm: number;
 }
@@ -92,9 +92,6 @@ export const LXC_DEFAULTS = {
   linuxTemplate: 9100,
   vmidFirst: 9900,
   vmidLast: 9999,
-  linux: { cores: 2, memoryMiB: 4096 },
-  desktop: { cores: 4, memoryMiB: 8192 },
-  "desktop-cpu": { cores: 4, memoryMiB: 8192 },
   bridge: "vmbr200",
   subnet: "10.200.0.0/24",
   gateway: "10.200.0.1",
@@ -127,8 +124,11 @@ export const LXC_KEYS = {
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
 } as const;
 
-type FlavourField = "templates" | "cores" | "memory-mib" | "disk-gib" | "warm";
-const FLAVOUR_FIELDS: readonly FlavourField[] = ["templates", "cores", "memory-mib", "disk-gib", "warm"];
+/** The cores, memory and disk keys are those replaced by box sizes (028). */
+type FlavourField = "templates" | "warm" | SizeField;
+type SizeField = "cores" | "memory-mib" | "disk-gib";
+const SIZE_FIELDS: readonly SizeField[] = ["cores", "memory-mib", "disk-gib"];
+const FLAVOUR_FIELDS: readonly FlavourField[] = ["templates", "warm", ...SIZE_FIELDS];
 
 export function flavourKey(flavour: LxcFlavour, field: FlavourField): string {
   return `proxmox-lxc-${flavour}-${field}`;
@@ -166,7 +166,6 @@ const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readon
 };
 
 function flavourSettings(flavour: LxcFlavour): Record<string, PluginSettingDescriptor> {
-  const defaults = LXC_DEFAULTS[flavour];
   const { name, templates } = FLAVOUR_WORDS[flavour];
   const linux = flavour === "linux";
   // The Linux keys declare no default (see the top of this file), so their descriptions give it.
@@ -180,24 +179,6 @@ function flavourSettings(flavour: LxcFlavour): Record<string, PluginSettingDescr
       ...(flavour === "desktop" ? { experimental_multiline: true } : {}),
       ...otherwise(""),
     },
-    [flavourKey(flavour, "cores")]: {
-      type: "number",
-      label: `Proxmox LXC: ${name} cores`,
-      ...(linux ? { description: unset(defaults.cores).trim() } : {}),
-      ...otherwise(defaults.cores),
-    },
-    [flavourKey(flavour, "memory-mib")]: {
-      type: "number",
-      label: `Proxmox LXC: ${name} memory (MiB)`,
-      ...(linux ? { description: unset(defaults.memoryMiB).trim() } : {}),
-      ...otherwise(defaults.memoryMiB),
-    },
-    [flavourKey(flavour, "disk-gib")]: {
-      type: "number",
-      label: `Proxmox LXC: ${name} disk (GiB)`,
-      description: `0 keeps the template's size, which is quickest. A larger size is applied after the box starts, in about a second.${unset(0)}`,
-      ...otherwise(0),
-    },
     [flavourKey(flavour, "warm")]: {
       type: "number",
       label: `Proxmox LXC: warm ${name} boxes`,
@@ -207,16 +188,34 @@ function flavourSettings(flavour: LxcFlavour): Record<string, PluginSettingDescr
   };
 }
 
+const SIZE_WORDS: Readonly<Record<SizeField, string>> = { cores: "cores", "memory-mib": "memory (MiB)", "disk-gib": "disk (GiB)" };
+
+/** A flavour's size keys before 028, declared so their saved values can be read once. */
+function replacedSizeSettings(flavour: LxcFlavour): Record<string, PluginSettingDescriptor> {
+  const kinds = FLAVOUR_KINDS[flavour].join(" and ");
+  return Object.fromEntries(
+    SIZE_FIELDS.map((field) => [
+      flavourKey(flavour, field),
+      {
+        type: "number",
+        label: `Proxmox LXC: ${FLAVOUR_WORDS[flavour].name} ${SIZE_WORDS[field]} (replaced)`,
+        description: `Replaced by Box sizes, which took a saved value once as the default size of ${kinds} boxes. Changing it does nothing.`,
+      } satisfies PluginSettingDescriptor,
+    ]),
+  );
+}
+
 /** The Linux flavour's keys before 027, declared so their saved values can still be read. */
 function earlierFlavourSettings(): Record<string, PluginSettingDescriptor> {
-  const current = flavourSettings("linux");
+  const current = { ...flavourSettings("linux"), ...replacedSizeSettings("linux") };
   return Object.fromEntries(
     FLAVOUR_FIELDS.map((field) => {
-      const { type, label } = current[flavourKey("linux", field)]!;
+      const { type, label, description } = current[flavourKey("linux", field)]!;
+      const size = (SIZE_FIELDS as readonly string[]).includes(field);
       const earlier = {
         type,
-        label: `${label.replace("Linux", "headless")} (replaced)`,
-        description: `Replaced by ${flavourKey("linux", field)}, and read only while that is unset. Move the value there.`,
+        label: size ? label.replace("Linux", "headless") : `${label.replace("Linux", "headless")} (replaced)`,
+        description: size ? description : `Replaced by ${flavourKey("linux", field)}, and read only while that is unset. Move the value there.`,
       } as PluginSettingDescriptor;
       return [earlierFlavourKey(field), earlier];
     }),
@@ -335,8 +334,33 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "A new box is refused if the template's storage has less free space than this.",
     default: LXC_DEFAULTS.reserveDiskGiB,
   },
+  ...replacedSizeSettings("linux"),
+  ...replacedSizeSettings("desktop"),
+  ...replacedSizeSettings("desktop-cpu"),
   ...earlierFlavourSettings(),
 };
+
+/**
+ * The size each kind's boxes had under the settings before 028, for the
+ * kinds whose flavour had any of them saved. Unset parts are what bb-box
+ * made then: 2 cores and 4 GiB for Linux boxes, 4 cores and 8 GiB for
+ * desktops, and the template's disk.
+ */
+export function earlierLxcSizes(input: Readonly<Record<string, unknown>>): Record<string, BoxSize> {
+  const values = withEarlierKeys(input);
+  const sizes: Record<string, BoxSize> = {};
+  for (const flavour of LXC_FLAVOURS) {
+    const saved = SIZE_FIELDS.filter((field) => values[flavourKey(flavour, field)] !== undefined && values[flavourKey(flavour, field)] !== null);
+    if (!saved.length) continue;
+    const linux = flavour === "linux";
+    const cores = number(values, flavourKey(flavour, "cores"), linux ? 2 : 4);
+    const memoryMiB = number(values, flavourKey(flavour, "memory-mib"), linux ? 4096 : 8192);
+    const diskGiB = number(values, flavourKey(flavour, "disk-gib"), 0);
+    if (!wholeInRange(cores, 1, 1024) || !wholeInRange(memoryMiB, 256, 16_777_216) || !wholeInRange(diskGiB, 0, 65_536)) continue;
+    for (const kind of FLAVOUR_KINDS[flavour]) sizes[kind] = { cores, memoryMiB, diskGiB: diskGiB === 0 ? null : diskGiB };
+  }
+  return sizes;
+}
 
 export function parseIpv4(value: string): number | null {
   const parts = value.trim().split(".");
@@ -480,17 +504,10 @@ export function parseLxcSettings(input: Readonly<Record<string, unknown>>): Pars
   const flavours = {} as Record<LxcFlavour, LxcFlavourConfig>;
   for (const flavour of LXC_FLAVOURS) {
     const name = FLAVOUR_WORDS[flavour].name;
-    const diskGiB = number(values, flavourKey(flavour, "disk-gib"), 0);
     const config: LxcFlavourConfig = {
       templates: templateList(values, flavour, problems),
-      cores: number(values, flavourKey(flavour, "cores"), LXC_DEFAULTS[flavour].cores),
-      memoryMiB: number(values, flavourKey(flavour, "memory-mib"), LXC_DEFAULTS[flavour].memoryMiB),
-      diskGiB: diskGiB === 0 ? null : diskGiB,
       warm: number(values, flavourKey(flavour, "warm"), 0),
     };
-    if (!wholeInRange(config.cores, 1, 128)) problems.push(`Use 1 to 128 cores for ${name} boxes.`);
-    if (!wholeInRange(config.memoryMiB, 256, 1_048_576)) problems.push(`Use 256 MiB or more of memory for ${name} boxes.`);
-    if (config.diskGiB !== null && !wholeInRange(config.diskGiB, 1, 16_384)) problems.push(`Use 0, or a disk of 1 GiB or more, for ${name} boxes.`);
     if (!wholeInRange(config.warm, 0, 20)) problems.push(`Keep 0 to 20 warm ${name} boxes.`);
     flavours[flavour] = config;
   }

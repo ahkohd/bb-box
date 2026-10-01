@@ -76,13 +76,37 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     timings: { clone: 700, total: 2100, enrol: 5300 },
     enrol: { state: "enrolled", hostId: "host_1", error: null },
     canStopStart: true,
+    size: "2 cores, 4 GiB memory",
     ...overrides,
   };
 }
 
+function size(cores: number, memoryGiB: number, diskGiB: number | null = null) {
+  return { cores, memoryGiB, diskGiB, words: `${cores} cores, ${memoryGiB} GiB memory${diskGiB === null ? "" : `, ${diskGiB} GiB disk`}` };
+}
+
+function kindView(id: string, label: string, description: string, cores: number, desktop: boolean): KindView {
+  return {
+    id,
+    label,
+    description,
+    size: size(cores, cores * 2).words,
+    presets: [
+      { name: "small", ...size(cores, cores * 2) },
+      { name: "medium", ...size(cores * 2, cores * 4) },
+      { name: "large", ...size(cores * 4, cores * 8) },
+    ],
+    defaultPreset: "small",
+    largest: size(cores * 8, cores * 16, 256),
+    gpu: desktop,
+    desktop,
+    backends: ["Fake host"],
+  };
+}
+
 const KINDS: KindView[] = [
-  { id: "linux", label: "Linux", description: "For builds, servers, Docker and the agent's own work.", size: "2 cores, 4 GiB memory, 16 GiB disk", gpu: false, desktop: false, backends: ["Fake host"] },
-  { id: "linux-desktop", label: "Linux desktop", description: "A desktop on the GPU.", size: "4 cores, 8 GiB memory, 32 GiB disk", gpu: true, desktop: true, backends: ["Fake host"] },
+  kindView("linux", "Linux", "For builds, servers, Docker and the agent's own work.", 2, false),
+  kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true),
 ];
 
 const BACKENDS: BackendView[] = [
@@ -256,7 +280,7 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
   const form = await screen.findByRole("radiogroup", { name: "Kind" });
   expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
   fireEvent.click(within(form).getByRole("radio", { name: /Linux desktop/ }));
-  expect(screen.getByText("4 cores, 8 GiB memory, 32 GiB disk")).toBeTruthy();
+  expect(screen.getByText("4 cores, 8 GiB memory")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Make box" }));
 
   expect(await slot.findByText("new-box")).toBeTruthy();

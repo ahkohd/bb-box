@@ -22,6 +22,7 @@ import {
   type BackendStorage,
   type BoxIdentity,
   type BoxKind,
+  type BoxSize,
   type BoxTransports,
   type Capacity,
   type CommandCapability,
@@ -67,6 +68,12 @@ export interface FakeBackendOptions {
   readonly host?: BackendStorage;
   /** What sets a desktop's size: the stream server's SetDesktopSize (the default), or the display's resize. */
   readonly resize?: "stream" | "backend";
+  /**
+   * Virtual: the largest guest it makes; capacity refuses a larger size. Real:
+   * every machine's size, which a box of any size up to it gets. 16 cores,
+   * 64 GiB memory and 256 GiB disk by default.
+   */
+  readonly largest?: BoxSize;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -91,6 +98,7 @@ interface GuestRecord {
 type Holder = BoxIdentity & { readonly install: string };
 
 const HOST = "fake";
+const LARGEST: BoxSize = { cores: 16, memoryMiB: 65536, diskGiB: 256 };
 /** Where the fake `cua-driver` command is. */
 export const FAKE_CUA_BIN = fileURLToPath(new URL("./fake-cua", import.meta.url));
 
@@ -104,7 +112,6 @@ export const FAKE_KINDS: readonly BoxKind[] = [
     id: "linux",
     label: "Linux",
     description: "A fake box: a directory on the test machine.",
-    size: "1 core",
     requires: [],
     capabilities: { os: "linux", arch: ARCH, gpu: false, features: [], command: COMMAND, displays: [], computerUse: null, enrol: true },
     readyTimeoutMs: 10_000,
@@ -113,7 +120,6 @@ export const FAKE_KINDS: readonly BoxKind[] = [
     id: "linux-desktop",
     label: "Linux desktop",
     description: "A fake box with a fake desktop stream.",
-    size: "2 cores",
     requires: [],
     capabilities: {
       os: "linux",
@@ -200,8 +206,19 @@ export class FakeBackend implements Backend {
     return [...this.#kinds];
   }
 
-  async capacity(kind: string, pending: readonly string[]): Promise<Capacity> {
+  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[]): Promise<Capacity> {
     this.#kind(kind);
+    const largest = this.#largest();
+    const larger = size.cores > largest.cores || size.memoryMiB > largest.memoryMiB || (size.diskGiB ?? 0) > (largest.diskGiB ?? 0);
+    if (larger) {
+      const what = this.nature === "real" ? "No machine in the pool is" : "The fake host makes guests of at most";
+      return {
+        ok: false,
+        message: `${what} ${largest.cores} cores, ${largest.memoryMiB / 1024} GiB memory and ${largest.diskGiB} GiB disk.`,
+        warm: this.nature === "real" ? null : { ready: 0, target: 0 },
+        hosts: [{ host: HOST, ok: false, limits: [] }],
+      };
+    }
     if (this.nature === "real") {
       const members = (await this.#pool.members()).filter((member) => member.kinds.includes(kind));
       const free = members.filter((member) => member.state === "free").length;
@@ -236,7 +253,7 @@ export class FakeBackend implements Backend {
       if (!guest && this.nature === "real") {
         const member = await this.#ready.claim(box.kind, { ...box, install: this.#installId }, {
           before: async (candidate) => {
-            guest = this.#guest(candidate.ref, candidate.generation, null);
+            guest = this.#guest(candidate.ref, candidate.generation, null, this.#largest());
             await hooks.claim(guest);
           },
           signal,
@@ -246,7 +263,7 @@ export class FakeBackend implements Backend {
       if (!guest) {
         const counter = ((await this.#storage.get<number>("counter")) ?? 0) + 1;
         await this.#storage.set("counter", counter);
-        guest = this.#guest(`g${counter}`, null, box.boxId);
+        guest = this.#guest(`g${counter}`, null, box.boxId, box.size);
         await hooks.claim(guest);
         signal.throwIfAborted();
         await this.#storage.set(`guest/${guest.ref}`, { install: this.#installId, owner: box, power: "stopped" } satisfies GuestRecord);
@@ -295,7 +312,9 @@ export class FakeBackend implements Backend {
       if (this.nature === "virtual" && (await this.#record(ref))?.install !== this.#installId) continue;
       if (this.nature === "real" && !owner) continue;
       const generation = this.nature === "real" ? (await this.#pool.state(ref)).generation : null;
-      const guest = this.#guest(ref, generation, owner?.boxId ?? null);
+      // As a guest would say: a machine's own size, or what a guest was made at.
+      const size = this.nature === "real" ? this.#largest() : (owner?.size ?? null);
+      const guest = this.#guest(ref, generation, owner?.boxId ?? null, size);
       const power = await this.power(guest);
       if (!power) continue;
       held.push({
@@ -381,10 +400,14 @@ export class FakeBackend implements Backend {
    * a stale release cannot reset the next box's machine. A virtual guest
    * carries its box, as a reference can be reused.
    */
-  #guest(ref: string, generation: number | null, box: string | null): Guest {
+  #guest(ref: string, generation: number | null, box: string | null, size: BoxSize | null): Guest {
     const address = this.machines().find((machine) => machine.ref === ref)?.address ?? null;
-    if (generation !== null) return { ref, host: HOST, address, data: { generation } };
-    return box === null ? { ref, host: HOST, address } : { ref, host: HOST, address, data: { box } };
+    if (generation !== null) return { ref, host: HOST, address, size, data: { generation } };
+    return box === null ? { ref, host: HOST, address, size } : { ref, host: HOST, address, size, data: { box } };
+  }
+
+  #largest(): BoxSize {
+    return this.#options.largest ?? LARGEST;
   }
 
   async #record(ref: string): Promise<GuestRecord | undefined> {

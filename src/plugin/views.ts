@@ -2,9 +2,10 @@
 // for the panel, and short text for agents. Nothing here holds a credential.
 
 import type { BackendStatus, OfferedKind } from "../backends/index.ts";
-import type { DoctorReport } from "../backends/types.ts";
+import type { BoxSize, DoctorReport } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
+import { PRESETS, describeSize, kindSizes, type Preset, type SizeChanges } from "../core/sizes.ts";
 import type { DisplayProtocol } from "../transports/types.ts";
 
 export interface BoxView {
@@ -15,6 +16,8 @@ export interface BoxView {
   readonly backendLabel: string;
   readonly nature: "virtual" | "real";
   readonly role: "box" | "machine";
+  /** In words: what the box has, or else what it was asked to be. Null when neither is known. */
+  readonly size: string | null;
   readonly state: BoxState;
   readonly error: string | null;
   readonly createdAt: number;
@@ -38,6 +41,16 @@ export interface BoxView {
   readonly canStopStart: boolean;
 }
 
+/** What the box has, read from its guest, or else the size it was asked to be. */
+export function boxSize(box: BoxRecord): BoxSize | null {
+  return box.guest?.size ?? box.size ?? null;
+}
+
+function sizeWords(box: BoxRecord): string | null {
+  const size = boxSize(box);
+  return size ? describeSize(size) : null;
+}
+
 export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView): BoxView {
   const [display] = box.capabilities.displays;
   return {
@@ -48,6 +61,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     backendLabel: box.backendLabel,
     nature: box.nature,
     role: box.role,
+    size: sizeWords(box),
     state: box.state,
     error: box.error,
     createdAt: box.createdAt,
@@ -69,18 +83,36 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
   };
 }
 
+export interface SizeView {
+  readonly cores: number;
+  readonly memoryGiB: number;
+  /** Null: the base disk. */
+  readonly diskGiB: number | null;
+  readonly words: string;
+}
+
+function sizeView(size: BoxSize): SizeView {
+  return { cores: size.cores, memoryGiB: size.memoryMiB / 1024, diskGiB: size.diskGiB, words: describeSize(size) };
+}
+
 export interface KindView {
   readonly id: string;
   readonly label: string;
   readonly description: string;
+  /** The default preset in words. */
   readonly size: string;
+  /** Small, medium and large (028). */
+  readonly presets: readonly ({ readonly name: Preset } & SizeView)[];
+  readonly defaultPreset: Preset;
+  /** The largest custom size. */
+  readonly largest: SizeView;
   readonly gpu: boolean;
   readonly desktop: boolean;
   /** The backends that offer it, in the order acquire tries them. */
   readonly backends: readonly string[];
 }
 
-export function kindViews(offered: readonly OfferedKind[]): KindView[] {
+export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges): KindView[] {
   const views = new Map<string, KindView>();
   for (const { kind, backend } of offered) {
     const existing = views.get(kind.id);
@@ -88,11 +120,15 @@ export function kindViews(offered: readonly OfferedKind[]): KindView[] {
       views.set(kind.id, { ...existing, backends: [...existing.backends, backend.label] });
       continue;
     }
+    const sizes = kindSizes(kind.id, changes);
     views.set(kind.id, {
       id: kind.id,
       label: kind.label,
       description: kind.description,
-      size: kind.size,
+      size: describeSize(sizes.presets[sizes.default]),
+      presets: PRESETS.map((name) => ({ name, ...sizeView(sizes.presets[name]) })),
+      defaultPreset: sizes.default,
+      largest: sizeView(sizes.largest),
       gpu: kind.capabilities.gpu,
       desktop: kind.capabilities.displays.length > 0,
       backends: [backend.label],
@@ -133,7 +169,8 @@ function seconds(ms: number): string {
 
 /** One line per box, for lists. */
 export function boxLine(box: BoxRecord): string {
-  const parts = [`${box.name}: ${box.kindLabel} (${box.kind}), ${STATE_WORDS[box.state]}`];
+  const size = sizeWords(box);
+  const parts = [`${box.name}: ${box.kindLabel} (${box.kind}${size ? `, ${size}` : ""}), ${STATE_WORDS[box.state]}`];
   if (box.state === "ready" && box.timings.total !== undefined) parts.push(`ready in ${seconds(box.timings.total)}`);
   if (box.enrol.state === "enrolled") parts.push(`enrolled as a BB machine${box.timings.enrol !== undefined ? ` in ${seconds(box.timings.enrol)}` : ""}`);
   if (box.error) parts.push(box.error);
@@ -153,6 +190,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     `Box ${box.name} (${box.id})`,
     `State: ${STATE_WORDS[box.state]}${box.error ? `. ${box.error}` : ""}`,
     `Kind: ${box.kindLabel} (${box.kind}) from ${box.backendLabel}`,
+    ...(sizeWords(box) ? [`Size: ${sizeWords(box)}`] : []),
     `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${capabilities.displays.length ? ", with a desktop" : ""}`,
   ];
   if (box.requires.length) lines.push(`Features: ${box.requires.join(", ")}`);

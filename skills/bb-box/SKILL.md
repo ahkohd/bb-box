@@ -15,7 +15,7 @@ Every result ends with a `Next:` line that says what to do next.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `box_acquire` | `kind?`, `wait?` | Makes a box and waits until it answers. `kind` defaults to `linux`. |
+| `box_acquire` | `kind?`, `size?`, `cores?`, `memory_gib?`, `disk_gib?`, `wait?` | Makes a box and waits until it answers. `kind` defaults to `linux`, and `size` to the kind's default preset. |
 | `box_list` | | Lists the thread's boxes and the kinds on offer. |
 | `box_status` | `box` | Shows one box, checking its power state with the backend. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
@@ -77,6 +77,28 @@ A `linux-desktop` box always has its GPU. One whose desktop started without
 it is released and made again on another GPU; when no GPU is left, the
 refusal suggests `linux-desktop-cpu`. `box_status` shows each desktop's GPU,
 display mode and the reason for it.
+
+## Sizes
+
+A box's size is chosen when it is made. Each kind has three presets. These
+are bb-box's own; the `box-sizes` setting can change them, and `box_list`
+and `bb box kinds` show the ones in use:
+
+| Kind | small (the default) | medium | large | largest custom size |
+| --- | --- | --- | --- | --- |
+| `linux`, `linux-docker` | 2 cores, 4 GiB | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB, 256 GiB disk |
+| `linux-desktop`, `linux-desktop-cpu` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB | 32 cores, 64 GiB, 256 GiB disk |
+
+A preset keeps the kind's own disk. For a custom size, give `cores`,
+`memory_gib` or `disk_gib`; the parts you leave out come from `size`, or
+from the default preset. A size above the largest is refused. A backend that
+cannot make a size says so, and bb-box tries the next backend that offers
+the kind. `box_status` shows the size the box has, read from its guest. The
+SSH host pool lends the smallest free machine of at least the size, so its
+box may have more.
+
+`bb box acquire <kind>` takes `--size`, `--cores`, `--memory-gib` and
+`--disk-gib`.
 
 ## Desktops
 
@@ -172,13 +194,26 @@ and what it still needs, and runs the doctor. The design is in
 | --- | --- | --- |
 | `boxes-per-thread` | `0` | The most boxes one thread may hold. 0 means no limit. |
 | `enrol-boxes` | `true` | Adds ready boxes to BB as machines. |
+| `box-sizes` | empty | Changes to each kind's presets, default preset and largest size, as JSON. |
+
+`box-sizes` holds an entry per kind ID. Each entry may set `default` to
+`small`, `medium` or `large`, and change any of `small`, `medium`, `large`
+and `largest` with `cores`, `memoryMiB` and `diskGiB` (`null` keeps the
+kind's own disk). Parts left out keep bb-box's own. For example:
+
+```json
+{"linux": {"default": "medium", "large": {"cores": 12, "memoryMiB": 24576}, "largest": {"diskGiB": 512}}}
+```
+
+An entry with a mistake is ignored, and the doctor names it.
 
 Each backend's settings start with its name, for example `proxmox-lxc-url`.
 `setup/proxmox-lxc/README.md` explains how to set up a Proxmox host, and its
 section 7 lists every `proxmox-lxc-` setting.
 
 A backend refuses a new box when the host would fall below its memory or disk
-reserve, or has no free address or GPU. The refusal says what to do instead.
+reserve, cannot make the size asked for, or has no free address or GPU. The
+refusal says what to do instead.
 
 ## Clean-up
 

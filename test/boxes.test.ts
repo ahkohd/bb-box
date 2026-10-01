@@ -5,13 +5,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, type Backend, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type Backend, type BoxSize, type ReleaseHooks } from "../src/backends/types.ts";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BoxError, Boxes, extraFeatures, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { accessSetup, accessSetupMs, envScript } from "../src/core/in-box.ts";
+import { parseSizeChanges } from "../src/core/sizes.ts";
+import { boxView } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -29,7 +31,7 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
     backend: make() as FakeBackend,
     /** False when the backend is off in settings. */
     active: true,
-    general: { perThreadLimit: null, enrol: true } as GeneralConfig,
+    general: { perThreadLimit: null, enrol: true, sizes: {} } as GeneralConfig,
     threads: new Map<string, ThreadLiveness>(),
     notified: [] as string[],
     errors: [] as string[],
@@ -192,6 +194,129 @@ test("capacity counts boxes still being acquired, and the backend's message reac
   gate.resolve();
   await world.boxes.idle();
   assert.equal((await world.boxes.all()).length, 1);
+});
+
+const GiB = 1024;
+
+test("a box is made at its kind's default size, a preset or a custom size, and records it (028)", async () => {
+  const world = setup();
+  const made = async (size?: Parameters<Boxes["acquire"]>[0]["size"]) => {
+    const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", size }));
+    assert.deepEqual(box.guest?.size, box.size, "the backend was asked for the size");
+    return box.size;
+  };
+  assert.deepEqual(await made(), { cores: 2, memoryMiB: 4 * GiB, diskGiB: null });
+  assert.deepEqual(await made({ preset: "large" }), { cores: 8, memoryMiB: 16 * GiB, diskGiB: null });
+  assert.deepEqual(await made({ cores: 3, diskGiB: 40 }), { cores: 3, memoryMiB: 4 * GiB, diskGiB: 40 });
+  assert.deepEqual(await made({ preset: "medium", memoryGiB: 12 }), { cores: 4, memoryMiB: 12 * GiB, diskGiB: null });
+  world.general = { ...world.general, sizes: parseSizeChanges({ linux: { default: "medium", medium: { diskGiB: 30 } } }).changes };
+  assert.deepEqual(await made(), { cores: 4, memoryMiB: 8 * GiB, diskGiB: 30 }, "the box-sizes setting changes the default");
+  const views = (await world.boxes.all()).map((box) => boxView(box, true, { owner: "agent", holder: null }).size);
+  assert.deepEqual(views.sort(), [
+    "2 cores, 4 GiB memory",
+    "3 cores, 4 GiB memory, 40 GiB disk",
+    "4 cores, 12 GiB memory",
+    "4 cores, 8 GiB memory, 30 GiB disk",
+    "8 cores, 16 GiB memory",
+  ]);
+});
+
+test("a size that is not a preset or is above the largest is refused before any backend is asked (028)", async () => {
+  const world = setup();
+  const refused = async (size: Parameters<Boxes["acquire"]>[0]["size"]) => {
+    const error = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", size }).then(
+      () => assert.fail("acquired"),
+      (caught: unknown) => caught,
+    );
+    assert.ok(error instanceof BoxError && error.code === "invalid_size", String(error));
+    return error.message;
+  };
+  assert.match(await refused({ preset: "huge" }), /^There is no "huge" size for a linux box\. Its presets are small \(2 cores, 4 GiB memory, the default\)/);
+  assert.match(await refused({ cores: 17 }), /^A linux box can be at most 16 cores, 32 GiB memory, 256 GiB disk, not 17 cores, 4 GiB memory\./);
+  assert.match(await refused({ memoryGiB: 0 }), /whole numbers of at least 1/);
+  assert.deepEqual(await world.boxes.all(), []);
+  assert.deepEqual(world.backend.calls, []);
+});
+
+test("a backend that cannot make a size refuses it through capacity, and the next backend that can is chosen (028)", async () => {
+  const root = tempDir("sizes");
+  const kv = new MemoryStorage();
+  const small = new FakeBackend({ root, storage: scopedStorage(kv, "backend/small/"), id: "small", largest: { cores: 4, memoryMiB: 8 * GiB, diskGiB: 64 } });
+  const big = new FakeBackend({ root, storage: scopedStorage(kv, "backend/big/"), id: "big", largest: { cores: 8, memoryMiB: 16 * GiB, diskGiB: 128 } });
+  const all = [small, big];
+  const boxes = new Boxes({
+    kv,
+    backends: {
+      get: (id) => all.find((backend) => backend.id === id) ?? null,
+      active: () => all,
+      kinds: () => all.flatMap((backend) => backend.kinds().map((kind) => ({ kind, backend }))),
+    },
+    general: async () => ({ perThreadLimit: null, enrol: false, sizes: {} }),
+    notify: () => {},
+    thread: async () => "live",
+    logError: () => {},
+  });
+  const medium = await ready(boxes, await boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", size: { preset: "medium" } }));
+  assert.equal(medium.backend, "small", "the first backend with room");
+  const large = await ready(boxes, await boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", size: { preset: "large" } }));
+  assert.equal(large.backend, "big");
+  await assert.rejects(
+    boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", size: { cores: 12 } }),
+    (error: unknown) => {
+      assert.ok(error instanceof BoxError && error.code === "no_capacity");
+      assert.equal(
+        error.message,
+        "The fake host makes guests of at most 4 cores, 8 GiB memory and 64 GiB disk. The fake host makes guests of at most 8 cores, 16 GiB memory and 128 GiB disk.",
+      );
+      return true;
+    },
+  );
+  await boxes.releaseThread(THREAD);
+  await boxes.idle();
+});
+
+test("capacity is told each pending box's kind and size, and a box recorded before sizes counts at its kind's default (028)", async () => {
+  const world = setup();
+  const asked: { size: BoxSize; pending: readonly { kind: string; size: BoxSize }[] }[] = [];
+  const capacity = world.backend.capacity.bind(world.backend);
+  world.backend.capacity = async (kind, size, pending) => {
+    asked.push({ size, pending });
+    return capacity(kind, size, pending);
+  };
+  const gate = deferred();
+  world.backend.gate = gate.promise;
+  const first = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", size: { preset: "large" } });
+  await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux-desktop", size: { cores: 6 } });
+  // As a record from before sizes: no size.
+  const { size: _, ...before } = (await world.boxes.find(first.id))!;
+  await world.kv.set(`box/${THREAD}/${first.id}`, before);
+  await world.boxes.acquire({ threadId: "thr_three", projectId: null, kind: "linux" });
+  assert.deepEqual(asked.map((call) => call.size), [
+    { cores: 8, memoryMiB: 16 * GiB, diskGiB: null },
+    { cores: 6, memoryMiB: 8 * GiB, diskGiB: null },
+    { cores: 2, memoryMiB: 4 * GiB, diskGiB: null },
+  ]);
+  assert.deepEqual(asked[1]!.pending, [{ kind: "linux", size: { cores: 8, memoryMiB: 16 * GiB, diskGiB: null } }]);
+  assert.deepEqual(
+    [...asked[2]!.pending].sort((a, b) => a.kind.localeCompare(b.kind)),
+    [
+      { kind: "linux", size: { cores: 2, memoryMiB: 4 * GiB, diskGiB: null } },
+      { kind: "linux-desktop", size: { cores: 6, memoryMiB: 8 * GiB, diskGiB: null } },
+    ],
+  );
+  gate.resolve();
+  await world.boxes.idle();
+});
+
+test("a box's view shows the size its guest says, else the size asked for (028)", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const control = { owner: "agent", holder: null } as const;
+  assert.equal(boxView(box, true, control).size, "2 cores, 4 GiB memory");
+  assert.equal(boxView({ ...box, guest: { ...box.guest!, size: { cores: 6, memoryMiB: 6 * GiB, diskGiB: 20 } } }, true, control).size, "6 cores, 6 GiB memory, 20 GiB disk");
+  assert.equal(boxView({ ...box, guest: { ...box.guest!, size: null } }, true, control).size, "2 cores, 4 GiB memory");
+  const { size: _, ...before } = box;
+  assert.equal(boxView({ ...before, guest: null }, true, control).size, null, "a box from before sizes, with no guest yet");
 });
 
 test("concurrent acquires from different threads never share the last room", async () => {
@@ -724,7 +849,7 @@ async function fromBeforeInstallIds(world: ReturnType<typeof setup>, box: BoxRec
   const { install: _, ...record } = (await world.kv.get<Record<string, unknown>>(key))!;
   await world.kv.set(key, record);
   const { ref, host, address } = box.guest!;
-  await world.boxes.update(box, () => ({ guest: { ref, host, address } }));
+  await world.boxes.update(box, () => ({ guest: { ref, host, address, size: null } }));
   return key;
 }
 
