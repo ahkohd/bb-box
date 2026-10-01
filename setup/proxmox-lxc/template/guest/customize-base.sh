@@ -90,8 +90,9 @@ EOF
 systemctl enable containerd.service docker.service >/dev/null
 
 # SSH: a plain service, keys only. The template holds no host keys; the
-# service makes them before its first start in each clone. Only ed25519 and
-# ECDSA: an RSA key costs 200 ms at first boot.
+# service makes them before its first start in each clone, and again when a
+# hard stop left them empty. Only ed25519 and ECDSA: an RSA key costs 200 ms
+# at first boot.
 systemctl disable ssh.socket >/dev/null 2>&1 || true
 systemctl enable ssh.service >/dev/null
 install -d -m 0755 /etc/ssh/sshd_config.d /etc/systemd/system/ssh.service.d
@@ -106,8 +107,8 @@ EOF
 cat >/etc/systemd/system/ssh.service.d/50-bb-box-host-keys.conf <<'EOF'
 [Service]
 ExecStartPre=
-ExecStartPre=/bin/sh -c 'test -s /etc/ssh/ssh_host_ed25519_key || ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key'
-ExecStartPre=/bin/sh -c 'test -s /etc/ssh/ssh_host_ecdsa_key || ssh-keygen -q -t ecdsa -N "" -f /etc/ssh/ssh_host_ecdsa_key'
+ExecStartPre=/bin/sh -c 'test -s /etc/ssh/ssh_host_ed25519_key || { rm -f /etc/ssh/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key.pub; ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key; }'
+ExecStartPre=/bin/sh -c 'test -s /etc/ssh/ssh_host_ecdsa_key || { rm -f /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_ecdsa_key.pub; ssh-keygen -q -t ecdsa -N "" -f /etc/ssh/ssh_host_ecdsa_key; }'
 ExecStartPre=/usr/sbin/sshd -t
 EOF
 install -d -m 0755 /run/sshd

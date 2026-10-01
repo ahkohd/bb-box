@@ -43,6 +43,11 @@ mine() {
 state() {
   tart list --source local | awk -v n="$1" '$2 == n { print $NF }'
 }
+# The guest OS in VM $1's config: darwin or linux (040).
+os_of() {
+  h=$HOME/.tart; [ -z "$TART_HOME" ] || h=$TART_HOME
+  sed -n 's/.*"os" *: *"\([^"]*\)".*/\1/p' "$h/vms/$1/config.json" 2>/dev/null | head -n 1
+}
 # Waits up to $2 tenths of a second for VM $1 to leave the running state:
 # tart suspend returns before the VM is saved.
 settled() {
@@ -344,9 +349,12 @@ echo @config; tr -d '\n' < "$home/vms/$vm/config.json"; echo
 
 /**
  * Starts the VM unless it runs, detached from the SSH session, and waits
- * until Tart's VNC server is up, which is when the VM has started. A
- * suspended VM resumes. Prints "running" or "started"; when Tart exits
- * first, exits 3 with its output, such as the system's limit on VMs.
+ * until it has started. A macOS VM runs with Tart's VNC server and can be
+ * suspended, and has started when the VNC server is up; a suspended one
+ * resumes. A Linux VM runs with neither, since Tart cannot resume one (040),
+ * and has started when Tart lists it running. Prints "running" or "started";
+ * when Tart exits first, exits 3 with its output, such as the system's limit
+ * on VMs.
  */
 export function startScript(vm: string, waitSeconds: number): string {
   return script(String.raw`vm=${quote(vm)}; out="$d/run/$vm.out"
@@ -355,13 +363,19 @@ case "$(state "$vm")" in
   "") echo "There is no VM $vm." >&2; exit 1 ;;
 esac
 : > "$out"
-nohup tart run --no-graphics --vnc-experimental --suspendable "$vm" >>"$out" 2>&1 </dev/null &
+if [ "$(os_of "$vm")" = linux ]; then
+  nohup tart run --no-graphics "$vm" >>"$out" 2>&1 </dev/null &
+  up() { [ "$(state "$vm")" = running ]; }
+else
+  nohup tart run --no-graphics --vnc-experimental --suspendable "$vm" >>"$out" 2>&1 </dev/null &
+  up() { grep -q 'VNC server is running' "$out"; }
+fi
 pid=$!
 i=0
 while [ "$i" -lt ${waitSeconds * 10} ]; do
-  if grep -q 'VNC server is running' "$out"; then echo started; exit 0; fi
+  if up; then echo started; exit 0; fi
   if ! kill -0 "$pid" 2>/dev/null; then
-    grep -q 'VNC server is running' "$out" && { echo started; exit 0; }
+    up && { echo started; exit 0; }
     cat "$out" >&2; exit 3
   fi
   sleep 0.1; i=$((i + 1))
@@ -396,16 +410,23 @@ state "$vm" | grep . || echo gone
 
 /**
  * Stops the VM when it names the box: suspends it, which keeps its memory on
- * disk and frees its slot, or shuts it down. Prints "gone" when it is not
- * there or not this box's.
+ * disk and frees its slot, or stops it. "shutdown" waits up to a minute for
+ * a VM shutting itself down (a Linux box's, which bb-box asked) before it
+ * stops it. A Linux VM is never suspended, since Tart cannot resume one
+ * (040). Prints "gone" when it is not there or not this box's.
  */
-export function stopScript(vm: string, installId: string, boxId: string | null, how: "suspend" | "stop"): string {
+export function stopScript(vm: string, installId: string, boxId: string | null, how: "suspend" | "stop" | "shutdown"): string {
   return script(String.raw`vm=${quote(vm)}
 mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} || { echo gone; exit 0; }
 now=$(state "$vm"); [ -n "$now" ] || { echo gone; exit 0; }
 if [ "$now" = running ]; then
-  ${how === "suspend" ? `tart suspend "$vm"` : `tart stop "$vm" --timeout 30`} || exit 1
-  settled "$vm" 1200 || { echo "$vm is still running a minute after tart ${how}." >&2; exit 1; }
+  how=${how}; [ "$how" != suspend ] || [ "$(os_of "$vm")" != linux ] || how=stop
+  case "$how" in
+    suspend) tart suspend "$vm" || exit 1 ;;
+    shutdown) settled "$vm" 600 || tart stop "$vm" --timeout 30 || exit 1 ;;
+    *) tart stop "$vm" --timeout 30 || exit 1 ;;
+  esac
+  settled "$vm" 1200 || { echo "$vm is still running two minutes after tart $how." >&2; exit 1; }
 fi
 echo stopped
 `);

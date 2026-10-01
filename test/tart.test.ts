@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { TartBackend, hostnameOf, nameScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
+import { TartBackend, hostnameOf, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { parseState, parseVnc } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
@@ -180,6 +180,92 @@ test("stop suspends the VM and start resumes it; the VM counts against its Mac o
   await backend.release(guest, releasing);
 });
 
+/** The Linux kinds' small preset (028, 040). */
+const LINUX_SMALL: BoxSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
+
+/** A fake Mac with the Linux image too, and linux-arm64 boxes on (040). */
+function linuxSetup(values: Record<string, unknown> = {}) {
+  const made = setup({ "tart-linux-image": "bb-box-linux", ...values });
+  addImage(made.mac, "bb-box-linux", "linux");
+  return made;
+}
+
+/** What the fake tart on the Mac was asked to do, in order, from its log. */
+function tartCalls(mac: string): string[][] {
+  const file = join(mac, ".fake-tart-log");
+  return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]) : [];
+}
+
+test("offers linux-arm64 and linux-arm64-docker only with a Linux image, as arm64 (040)", () => {
+  const kinds = new TartBackend(tartConfig({ "tart-linux-image": "bb-box-linux" }), testContext()).kinds();
+  assert.deepEqual(kinds.map((kind) => kind.id), ["macos", "macos-desktop", "linux-arm64", "linux-arm64-docker"]);
+  const linux = kinds.find((kind) => kind.id === "linux-arm64")!;
+  assert.deepEqual([linux.capabilities.os, linux.capabilities.arch, linux.capabilities.displays.length, linux.capabilities.computerUse, linux.capabilities.enrol], ["linux", "arm64", 0, null, true]);
+  assert.match(linux.description, /amd64 container images and x86_64 binaries do not run there/);
+  assert.deepEqual(kinds.find((kind) => kind.id === "linux-arm64-docker")!.requires, ["docker"]);
+  // Off by default, and on alone.
+  assert.deepEqual(new TartBackend(tartConfig(), testContext()).kinds().map((kind) => kind.id), ["macos", "macos-desktop"]);
+  const alone = tartConfig({ "tart-linux-image": "bb-box-linux", "tart-macos-image": "", "tart-macos-desktop-image": "" });
+  assert.deepEqual(new TartBackend(alone, testContext()).kinds().map((kind) => kind.id), ["linux-arm64", "linux-arm64-docker"]);
+  const none = parseTartSettings({ "tart-enabled": true, "tart-hosts": "mac1 a@b", "tart-host-keys": "b ssh-ed25519 AAAA", "tart-macos-image": "", "tart-macos-desktop-image": "" });
+  assert.ok(none.enabled && !none.ok && none.problems.some((problem) => /an image for macOS or Linux boxes/.test(problem)));
+});
+
+test("a Linux box runs as box, boots with no saved state or VNC, and stop shuts it down (040)", async () => {
+  const { ssh, mac, make, backend } = linuxSetup();
+  const box = identity("linux-arm64", "thr_abc123", LINUX_SMALL);
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.deepEqual(guest.data, { box: box.boxId, os: "linux" });
+  const runs = () => tartCalls(mac).filter((call) => call[0] === "tart" && call[1] === "run" && call.at(-1) === guest.ref);
+  assert.deepEqual(runs(), [["tart", "run", "--no-graphics", guest.ref]], "neither --suspendable nor --vnc-experimental");
+  assert.ok(ssh.log().some((entry) => entry.target === `box@${guest.address}`), "the VM is reached as box");
+  assert.ok(!ssh.log().some((entry) => entry.target === `admin@${guest.address}`));
+
+  const { command, access } = await backend.transports(guest, "linux-arm64");
+  assert.equal(access?.ssh?.user, "box");
+  assert.equal((await command!.run("echo hello")).stdout, "hello\n");
+  // A new instance finds it as a Linux box.
+  assert.deepEqual((await make().held()).find((held) => held.ref === guest.ref)?.data, { box: box.boxId, os: "linux" });
+
+  // The macOS VMs' two are untouched while it runs.
+  const guests = (await backend.capacity("macos", SMALL, [])).hosts[0]!.limits.find((limit) => limit.resource === "guests")!;
+  assert.equal(guests.used, 0);
+
+  // Another install's stop finds it gone, and never asks it to shut down.
+  const poweroffs = () => ssh.log().filter((entry) => entry.command.includes("systemctl poweroff")).length;
+  const asked = poweroffs();
+  const other = make(testContext(new MemoryStorage(), "other-install"));
+  await assert.rejects(other.stop(guest), (error: unknown) => error instanceof BackendError && error.code === "gone");
+  assert.equal(poweroffs(), asked);
+  assert.equal(await backend.power(guest), "running");
+
+  await backend.stop(guest);
+  assert.equal(poweroffs(), asked + 1, "its own install asks it to shut down first");
+  assert.equal(await backend.power(guest), "stopped");
+  assert.equal(existsSync(join(mac, ".tart", "vms", guest.ref, "state.vzvmsave")), false, "shut down, not suspended");
+  assert.ok(tartCalls(mac).some((call) => call[1] === "stop" && call[2] === guest.ref));
+  assert.ok(!tartCalls(mac).some((call) => call[1] === "suspend" && call[2] === guest.ref));
+  await backend.start(guest);
+  assert.equal(await backend.power(guest), "running");
+  assert.equal(runs().length, 2, "it booted again");
+  await backend.release(guest, releasing);
+});
+
+test("Linux boxes take memory on a Mac but none of its two macOS VMs, and have no warm pool (040)", async () => {
+  const { make, backend } = linuxSetup();
+  const asked = make(testContext(new MemoryStorage(), "test", { warm: { "linux-arm64": 1 } }));
+  assert.equal((await asked.capacity("linux-arm64", LINUX_SMALL, [])).warm?.target, 0, "Tart cannot suspend a Linux VM");
+  const first = await backend.acquire(identity("macos"), null, hooks().hooks, signal());
+  const second = await backend.acquire(identity("macos"), null, hooks().hooks, signal());
+  assert.equal((await backend.capacity("macos", SMALL, [])).ok, false);
+  const linux = await backend.capacity("linux-arm64", LINUX_SMALL, [{ kind: "macos", size: SMALL }]);
+  assert.equal(linux.ok, true, linux.message ?? "");
+  const memory = linux.hosts[0]!.limits.find((limit) => limit.resource === "memory")!;
+  assert.equal(memory.used, 2 * 8192 + 8192, "both macOS VMs and the pending box");
+  const third = await backend.acquire(identity("linux-arm64-docker", "thr_abc123", LINUX_SMALL), null, hooks().hooks, signal());
+  for (const guest of [first, second, third]) await backend.release(guest, releasing);
+});
+
 test("a Mac takes two macOS VMs; the third is refused with what to release", async () => {
   const { owners, backend } = setup();
   const first = await backend.acquire(identity(), null, hooks().hooks, signal());
@@ -195,9 +281,9 @@ test("a Mac takes two macOS VMs; the third is refused with what to release", asy
   await backend.release(second, releasing);
 });
 
-test("a VM the framework refuses to run, as when another app runs VMs, is no_capacity and leaves nothing", async () => {
+test("a VM the framework refuses to run, as when another app runs macOS VMs, is no_capacity and leaves nothing", async () => {
   const { mac, owners, backend } = setup({ "tart-vms-per-host": 2 });
-  // Two running VMs Tart lists as Linux, which capacity does not count but the framework does.
+  // Two running Linux VMs, which neither capacity nor the framework counts against the two, but whose memory counts.
   for (const name of ["other-a", "other-b"]) {
     addImage(mac, name, "linux");
     writeFileSync(join(mac, ".tart", "vms", name, "running"), String(process.pid));
@@ -205,6 +291,8 @@ test("a VM the framework refuses to run, as when another app runs VMs, is no_cap
   const room = (await backend.capacity("macos", SMALL, [])).hosts[0]!;
   assert.equal(room.limits.find((limit) => limit.resource === "guests")!.used, 0, "Linux VMs do not count against the two");
   assert.equal(room.limits.find((limit) => limit.resource === "memory")!.used, 16384, "but their memory does");
+  // Two macOS VMs another app runs, which Tart does not list but the framework counts.
+  writeFileSync(join(mac, ".fake-other-macos-vms"), "2");
   const box = identity();
   await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError && error.code === "no_capacity", String(error));
@@ -297,8 +385,14 @@ test("a box's hostname comes from its name, and only a VM is renamed", () => {
   assert.equal(hostnameOf("Calm Otter_3!"), "calm-otter-3");
   assert.equal(hostnameOf("--"), "box");
   assert.equal(hostnameOf("a".repeat(80)).length, 63);
-  // The test machine is not a Virtualization framework VM, so this renames nothing.
-  assert.match(nameScript("calm-otter-3"), /^case "\$\(sysctl -n hw\.model 2>\/dev\/null\)" in VirtualMac\*\)/);
+  // The test machine is not a VM, so this renames nothing: Linux only in a VM, macOS only in a Virtualization framework VM.
+  const script = nameScript("calm-otter-3");
+  assert.match(script, /^if \[ "\$\(uname -s\)" = Linux \]; then\n {2}\[ "\$\(systemd-detect-virt --vm 2>\/dev\/null\)" = apple \] \|\| \{ echo "not a VM"; exit 0; \}\n/);
+  // Shutting a Linux VM down is guarded the same way, and by the VM's own name.
+  const off = powerOffScript("bb-box-bx1");
+  assert.match(off, /^\[ "\$\(systemd-detect-virt --vm 2>\/dev\/null\)" = apple \] \|\| \{ echo "not a VM"; exit 0; \}\n/);
+  assert.match(off, /\n\[ "\$\(cat "\$HOME\/\.config\/bb-box\/vm" 2>\/dev\/null\)" = 'bb-box-bx1' \] \|\| \{ echo "not bb-box-bx1"; exit 0; \}\nsync\nsudo -n systemctl poweroff --no-block/);
+  assert.match(script, /\ncase "\$\(sysctl -n hw\.model 2>\/dev\/null\)" in VirtualMac\*\) ;; \*\) echo "not a VM"; exit 0 ;; esac\n/);
 });
 
 test("a VM that changes hands gets its new owner in its owner file, and its new name inside (036)", async () => {

@@ -1,15 +1,18 @@
-# Tart backend (macOS VMs)
+# Tart backend (VMs on a Mac)
 
-This backend runs macOS boxes as VMs on your Macs with Apple silicon, with
-[Tart](https://tart.run) on Apple's Virtualization framework. A box is a
-copy-on-write clone of an image you prepare once on each Mac. It offers two
-kinds:
+This backend runs macOS boxes, and Linux boxes on arm64, as VMs on your Macs
+with Apple silicon, with [Tart](https://tart.run) on Apple's Virtualization
+framework. A box is a copy-on-write clone of an image you prepare once on
+each Mac. It offers these kinds:
 
 - **macos**: a macOS VM for builds and commands, its desktop not shown;
 - **macos-desktop**: the same VM with its desktop shown in the thread's panel,
-  shared control, and computer use through Cua Driver.
+  shared control, and computer use through Cua Driver;
+- **linux-arm64** and **linux-arm64-docker**: Ubuntu on arm64 with what a
+  Linux box on Proxmox has, Docker included, from a second image (040). Off
+  until you give its image.
 
-Both enrol in BB as machines, as Linux boxes do.
+All enrol in BB as machines, as other Linux boxes do.
 
 The bb-box plugin, on the BB server, reaches each Mac over SSH as a host user
 of its own and runs `tart` there. The VMs sit on the Mac's own NAT, which
@@ -250,7 +253,8 @@ keeps its boxes and takes no new ones. The backend's own fields:
 | --- | --- | --- |
 | `ssh-private-key` | empty | A secret. Empty makes bb-box generate one; its public key is in `bb box doctor` |
 | `macos-image`, `macos-desktop-image` | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
-| `vm-user` | `admin` | The image's user |
+| `linux-image` | empty | The Tart VM `linux-arm64` and `linux-arm64-docker` boxes are cloned from, such as `bb-box-linux`. Empty, the default, turns them off |
+| `vm-user` | `admin` | The macOS images' user. Linux boxes work as `box` |
 | `vms-per-host` | 2 | At most 2 |
 | `reserve-memory-mib`, `reserve-disk-gib` | 16384, 50 | A new box is refused when the Mac would have less. With 16 GiB kept free, a 16 GiB Mac takes no box and a 32 GiB Mac takes two 8 GiB boxes, so lower it on a small Mac you do not use yourself |
 
