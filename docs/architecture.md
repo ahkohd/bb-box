@@ -845,6 +845,15 @@ planned, and the later-backends research fills in the details.
 
 Notes:
 
+- **Proxmox LXC** waits for a template that `build.sh --replace` is
+  swapping, which leaves its VMID without a template for about 3 s. When a
+  clone fails and the template is missing, not yet a template or locked,
+  the backend waits up to 10 s for it, then clones again on the next VMID.
+  The token reaches only the pool's guests, so a missing template may
+  answer 403. When the template is there after a failure, the clone is
+  tried once more at once, as the template may have come back meanwhile.
+  The box's timings show the wait as `template`, apart from `clone`. Warm
+  guests and the capacity check wait the same way.
 - **Docker** reaches its daemon through a local socket or a remote Docker
   host. GPU desktops use NVIDIA's container toolkit. Boxes run unprivileged
   with `--init` and a start script, ready in 0.78 s as measured

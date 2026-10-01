@@ -180,7 +180,9 @@ template's VMID only then, so a failure leaves the old template as it was.
 `--replace` replaces only a bb-box template of the same kind. The old
 template is removed and the new one put in its place: on LVM-thin as a
 linked clone, which leaves the VMID without a template for about 3 s, and
-elsewhere as a full copy, which takes longer.
+elsewhere as a full copy, which takes longer. A clone that fails meanwhile
+waits up to 10 s for the template and tries again, and the box's timings
+show the wait.
 
 Boxes cloned from the old template keep running. On LVM-thin a linked clone
 is a thin snapshot that needs nothing of its template's volume, so boxes

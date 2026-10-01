@@ -84,6 +84,9 @@ const NEXT_VMID = "next-vmid";
 const READY_TIMEOUT_MS = 30_000;
 /** How long new desktops avoid a GPU whose desktop started without it. */
 const AVOID_GPU_MS = 10 * 60_000;
+/** build.sh --replace leaves a template missing, then not yet a template, for about 3 s. A clone waits this long for it. */
+const TEMPLATE_WAIT_MS = 10_000;
+const TEMPLATE_POLL_MS = 250;
 
 /** The Cua Driver the desktop template pins, run by the box user's service. */
 const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socket: "/home/box/.cache/cua-driver/cua-driver.sock" };
@@ -283,6 +286,10 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isTemplate(config: Record<string, unknown>): boolean {
+  return config.template === 1 || config.template === "1";
+}
+
 /**
  * A fetch for the Proxmox API. With a fingerprint it trusts that certificate
  * alone, which suits Proxmox's self-signed one; otherwise it trusts `ca`, or
@@ -328,6 +335,8 @@ export interface LxcBackendOptions {
   readonly portCheck?: PortCheck;
   /** Replaces each kind's readyTimeoutMs, for tests. */
   readonly readyTimeoutMs?: number;
+  /** Replaces how long a clone waits for a template that is being replaced, for tests. */
+  readonly templateWaitMs?: number;
 }
 
 /** Times one step of an acquire. */
@@ -583,13 +592,20 @@ export class ProxmoxLxcBackend implements Backend {
       let started = false;
       for (;;) {
         if (vmid === null) {
-          vmid = await step("clone", async () => {
+          // Time spent waiting for a template that is being replaced shows apart from the clone.
+          let away: number | null = null;
+          const cloning = performance.now();
+          try {
             const guests = await api.listPool(this.#config.proxmox.pool, signal);
             const choice = this.#choose(offer, guests, [], api.node, this.#placing(offer, new Set(failed.keys())));
             if (failed.size && choice.problem) throw noGpu(failed, choice.problem);
             acquiring.template = choice.template.vmid;
-            return this.#clone(api, guests, acquiring.template, box.name, describe(box, this.#context.installId), claim, signal);
-          });
+            const description = describe(box, this.#context.installId);
+            vmid = await this.#clone(api, guests, acquiring.template, box.name, description, claim, signal, (ms) => (away = (away ?? 0) + ms));
+          } finally {
+            if (away !== null) hooks.timing("template", away);
+            hooks.timing("clone", Math.round(performance.now() - cloning - (away ?? 0)));
+          }
         }
         const id = vmid;
         const template = acquiring.template;
@@ -834,7 +850,7 @@ export class ProxmoxLxcBackend implements Backend {
           const config = await api.config(template, signal);
           const storage = String(config.rootfs ?? "").split(":")[0];
           const diskGiB = rootDiskGiB(config);
-          if (config.template !== 1 && config.template !== "1") {
+          if (!isTemplate(config)) {
             fail(name, `CT ${template} is not a template.`, `Convert it with pct template ${template}.`);
           } else if (docker && !/(?:^|,)nesting=1(?:,|$)/.test(String(config.features ?? ""))) {
             fail(name, `CT template ${template} does not have nesting, which Docker needs.`, `Run pct set ${template} --features nesting=1 as root.`);
@@ -1162,8 +1178,13 @@ export class ProxmoxLxcBackend implements Backend {
     try {
       config = await api.config(template, signal);
     } catch (error) {
-      if (error instanceof ProxmoxError && error.notFound) throw new Error(`CT template ${template} does not exist on ${api.node}. Run the doctor check in bb-box's panel.`);
-      throw error;
+      if (!(error instanceof ProxmoxError && (error.notFound || error.forbidden))) throw error;
+      // It may be away while build.sh --replace swaps it.
+      if ((await this.#templateBack(api, template, Date.now() + this.#templateWaitMs, signal)) === "away") {
+        if (error.notFound) throw new Error(`CT template ${template} does not exist on ${api.node}. Run the doctor check in bb-box's panel.`);
+        throw error;
+      }
+      config = await api.config(template, signal);
     }
     const storage = String(config.rootfs ?? "").split(":")[0];
     if (!storage) throw new Error(`CT template ${template} has no root disk.`);
@@ -1173,8 +1194,44 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   /**
+   * Whether `template` is away: missing, not yet a template or locked, as
+   * while build.sh --replace swaps it. The token reaches only the pool's
+   * guests, so Proxmox may answer 403 for a VMID that is not there.
+   */
+  async #away(api: Proxmox, template: number, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const config = await api.config(template, signal);
+      return !isTemplate(config) || config.lock !== undefined;
+    } catch (error) {
+      if (error instanceof ProxmoxError && (error.notFound || error.forbidden)) return true;
+      throw error;
+    }
+  }
+
+  /**
+   * Waits for `template` until `deadline`: "there" when it was there at
+   * once, "back" when it came back, "away" when it was still away.
+   */
+  async #templateBack(api: Proxmox, template: number, deadline: number, signal?: AbortSignal): Promise<"there" | "back" | "away"> {
+    const sleep = this.#options.sleep ?? pause;
+    if (!(await this.#away(api, template, signal))) return "there";
+    for (;;) {
+      if (Date.now() >= deadline) return "away";
+      await sleep(TEMPLATE_POLL_MS, signal);
+      if (!(await this.#away(api, template, signal))) return "back";
+    }
+  }
+
+  get #templateWaitMs(): number {
+    return this.#options.templateWaitMs ?? TEMPLATE_WAIT_MS;
+  }
+
+  /**
    * Linked-clones `template` into the next free VMID, round-robin. `before`
    * runs before each attempt. A VMID another guest has taken is skipped.
+   * When the clone fails while the template is away, as while build.sh
+   * --replace swaps it, it waits for the template, tells `waited` how long,
+   * and tries again on the next VMID.
    */
   async #clone(
     api: Proxmox,
@@ -1184,12 +1241,15 @@ export class ProxmoxLxcBackend implements Backend {
     description: string,
     before: (vmid: number) => Promise<void>,
     signal: AbortSignal,
+    waited: (ms: number) => void = () => {},
   ): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
     }
     const skipped = new Set<number>();
+    const deadline = Date.now() + this.#templateWaitMs;
+    let again = false;
     for (;;) {
       const vmid = this.#freeVmid([...guests, ...[...skipped].map((id) => ({ vmid: id }) as PoolGuest)], this.#nextVmid);
       if (vmid === null) {
@@ -1210,7 +1270,26 @@ export class ProxmoxLxcBackend implements Backend {
           skipped.add(vmid);
           continue;
         }
-        throw error;
+        if (!(error instanceof ProxmoxError)) throw error;
+        const started = performance.now();
+        // When bb-box cannot read the template, the clone's error stands.
+        const state = await this.#templateBack(api, template, deadline, signal).catch(() => null);
+        signal.throwIfAborted();
+        if (state === null) throw error;
+        if (state === "away") {
+          throw new Error(
+            `CT template ${template} on ${api.node} was still missing, or not yet a template, after ${Math.round(this.#templateWaitMs / 1000)} s ` +
+              `(${message(error)}). Run the doctor check in bb-box's panel.`,
+          );
+        }
+        if (state === "back") {
+          waited(Math.round(performance.now() - started));
+          continue;
+        }
+        // The template is there: try once more, as it may have come back since the clone failed.
+        if (again) throw error;
+        again = true;
+        continue;
       } finally {
         this.#reserved.delete(vmid);
       }

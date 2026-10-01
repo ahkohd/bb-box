@@ -124,8 +124,8 @@ const STATE_WORDS: Record<BoxState, string> = {
   releasing: "being released",
 };
 
-/** Words for timings bb-box adds after the start-up steps. */
-const STEP_WORDS: Readonly<Record<string, string>> = { enrol: "BB enrolment" };
+/** Words for timings whose names alone do not say what they are. */
+const STEP_WORDS: Readonly<Record<string, string>> = { template: "waiting for the template", enrol: "BB enrolment" };
 
 function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;

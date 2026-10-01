@@ -376,6 +376,83 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.equal(ownerFromDescription(made.config.description)?.boxId, box.boxId);
 });
 
+/** Swaps template `vmid` as build.sh --replace does: gone, then a copy that is not yet a template, then a template, a step per read of its config. */
+function replacing(proxmox: FakeProxmox, vmid: number, gone = 1): { reads: () => number } {
+  const template = proxmox.guests.get(vmid)!;
+  const { template: _flag, ...copy } = template.config;
+  proxmox.guests.delete(vmid);
+  let reads = 0;
+  proxmox.intercept = (call) => {
+    if (call.method !== "GET" || call.path !== `/nodes/pve/lxc/${vmid}/config`) return undefined;
+    reads++;
+    if (reads === gone + 1) proxmox.guests.set(vmid, { ...template, template: false, config: copy });
+    if (reads === gone + 2) proxmox.guests.set(vmid, template);
+    return undefined;
+  };
+  return { reads: () => reads };
+}
+
+test("an acquire waits for a template that is being replaced, and says so in the timings", async () => {
+  const { backend, proxmox } = setup();
+  const swap = replacing(proxmox, 9000);
+  const hook = hooks();
+  const guest = await backend.acquire(identity(), null, hook.value, signal());
+  assert.equal(guest.ref, "7001", "the failed clone's VMID is left behind");
+  assert.deepEqual(hook.events, ["claim 7000", "claim 7001", "starting"]);
+  assert.equal(swap.reads(), 3, "missing, then not yet a template, then back");
+  assert.equal(typeof hook.timings.template, "number");
+  assert.deepEqual(Object.keys(hook.timings).slice(0, 3), ["warm", "template", "clone"]);
+  assert.equal(proxmox.guests.has(7000), false);
+});
+
+test("a clone of the copy that is not yet a template waits for it too", async () => {
+  const { backend, proxmox } = setup();
+  const swap = replacing(proxmox, 9000, 0);
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(guest.ref, "7001");
+  assert.equal(swap.reads(), 2);
+  const tasks = proxmox.calls.filter((call) => call.path.endsWith("/clone")).length;
+  assert.equal(tasks, 2, "the clone of the copy failed, and the next one worked");
+});
+
+test("an acquire fails when the template stays away, naming it and Proxmox's error", async () => {
+  const { backend, proxmox } = setup({}, undefined, { templateWaitMs: 0 });
+  proxmox.guests.delete(9000);
+  await assert.rejects(
+    backend.acquire(identity(), null, hooks().value, signal()),
+    /^Error: CT template 9000 on pve was still missing, or not yet a template, after 0 s \(.*does not exist\)\. Run the doctor check/,
+  );
+  assert.equal(proxmox.calls.filter((call) => call.path.endsWith("/clone")).length, 1);
+});
+
+test("a clone that fails while its template is there is tried once more, then fails", async () => {
+  const { backend, proxmox } = setup();
+  proxmox.nextTaskExit.set("vzclone", "no space left on device");
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(guest.ref, "7001", "a template may come back between the failure and the check");
+
+  proxmox.intercept = (call) =>
+    call.path.endsWith("/clone")
+      ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => JSON.stringify({ data: null, message: "no space left on device" }) }
+      : undefined;
+  const hook = hooks();
+  await assert.rejects(backend.acquire(identity(), null, hook.value, signal()), /no space left on device/);
+  assert.equal(proxmox.calls.filter((call) => call.path.endsWith("/clone")).length, 4);
+  assert.equal(hook.timings.template, undefined);
+});
+
+test("the capacity check waits for a template that answers 403 while it is replaced", async () => {
+  const { backend, proxmox } = setup();
+  let reads = 0;
+  proxmox.intercept = (call) => {
+    if (call.method !== "GET" || call.path !== "/nodes/pve/lxc/9000/config" || ++reads > 2) return undefined;
+    return { ok: false, status: 403, statusText: "Permission check failed (/vms/9000, VM.Audit)", text: async () => JSON.stringify({ data: null }) };
+  };
+  const capacity = await backend.capacity("linux-headless", [], signal());
+  assert.equal(capacity.ok, true);
+  assert.equal(reads, 4, "two refused, one to see it back, one to read it");
+});
+
 test("a larger disk is applied once the box runs", async () => {
   const { backend, proxmox } = setup({ "proxmox-lxc-headless-disk-gib": 20 });
   const states: string[] = [];
