@@ -19,6 +19,7 @@ import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
+import { Keepers, type KeeperTerminals } from "./keeper.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { ThreadOnBox } from "./contract.ts";
 import { newBoxHost, registerNewBox } from "./new-box.ts";
@@ -229,6 +230,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     return [...new Set([...DAEMON_NAMES, ...system, ...project])];
   };
 
+  // A BB terminal on each enrolled box whose process carries the thread's access, as BB's workers come and go.
+  const keepers = new Keepers({ terminals: () => bb.sdk.terminals as unknown as KeeperTerminals, logError });
   let enrolment: Enrolment;
   let desktops: Desktops | undefined;
   let terminals: Terminals | undefined;
@@ -269,7 +272,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       void names(box).catch(() => {});
       return enrolment.claimed(box);
     },
-    access: async (box) => ({ names: await names(box), parent: options.daemonParent ?? DAEMON_PARENT }),
+    access: async (box) => {
+      const [listed] = await Promise.all([names(box), box.enrol.hostId ? keepers.ensure(box.enrol.hostId) : undefined]);
+      return { names: listed, parent: options.daemonParent ?? DAEMON_PARENT };
+    },
     logError,
     log: (message) => bb.log.info(message),
   });
@@ -339,6 +345,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     void boxes.releaseThread(thread.id).catch((error) => logError("thread deleted", error));
   });
   bb.events.on("experimental_host.deleted", ({ host }) => {
+    keepers.forget(host.id);
     void enrolment.forgetHost(host.id).catch((error) => logError("host deleted", error));
   });
 

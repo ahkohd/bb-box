@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -149,7 +150,9 @@ function quote(value: string): string {
  * and this returns without waiting for them. With `parent`, the program is
  * there, so a box can be told of it before the daemon runs. With `agent`,
  * the newest worker starts a process with those variables, as BB's provider
- * workers start a thread's agent. Stop it when the test ends.
+ * workers start a thread's agent. `start` has it start a process of its
+ * own with the given variables, as BB's daemon starts a terminal. Stop it
+ * when the test ends.
  */
 export async function fakeDaemon(
   workers: readonly Readonly<Record<string, string>>[],
@@ -169,7 +172,11 @@ export async function fakeDaemon(
   const { startOn } = options;
   const wait = startOn ? `while [ ! -e ${quote(startOn.file)} ]; do sleep 0.05; done\nsleep ${startOn.seconds}\n` : "";
   const started = `: > ${quote(join(dir, "started"))}\n`;
-  writeFileSync(parent, startOn ? `${started}${wait}${lines.join("\n")}\nwait\n` : `${lines.join("\n")}\n${started}wait\n`);
+  const requests = join(dir, "start");
+  mkdirSync(requests, { recursive: true });
+  // Starts what `start` asks for, as its own child, and keeps running.
+  const serve = `while :; do for f in ${quote(requests)}/*.sh; do [ -e "$f" ] || continue; mv "$f" "$f.started"; sh "$f.started" & done; sleep 0.05; done\n`;
+  writeFileSync(parent, startOn ? `${started}${wait}${lines.join("\n")}\n${serve}` : `${lines.join("\n")}\n${started}${serve}`);
   const daemon = spawn("sh", [parent], { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } });
   const pid = daemon.pid!;
   const running = () => {
@@ -189,6 +196,15 @@ export async function fakeDaemon(
   }
   return {
     parent,
+    /**
+     * Has the daemon start a process with `variables`, and returns whether it
+     * has started it yet, each time it is asked.
+     */
+    start: (variables: Readonly<Record<string, string>>) => {
+      const file = join(requests, `${randomUUID()}.sh`);
+      writeFileSync(file, `exec env -i ${assignments(variables)} sleep 301\n`);
+      return () => existsSync(`${file}.started`);
+    },
     /** The workers' process IDs, oldest first. */
     workers: () => running().map((line) => Number(line.trim().split(/\s+/)[0])).sort((a, b) => a - b),
     stop: () => {

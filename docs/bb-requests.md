@@ -323,8 +323,9 @@ no plugin's server side sees them.
 - bb-box's dependence on where BB installs its daemon
   (`host-daemon/dist/daemon-bundle`), which a BB release can change.
 
-**Until then.** Linux boxes read the environment of the processes below
-the daemon from `/proc`, and macOS boxes parse `ps -E`, choosing the process
+**Until then.** bb-box keeps a BB terminal running `sleep` on each
+enrolled box, since BB's own workers come and go. Linux boxes read the
+environment of the processes below the daemon from `/proc`, and macOS boxes parse `ps -E`, choosing the process
 the same way
 (`src/core/in-box.ts`). Windows boxes get none of the variables.
 
