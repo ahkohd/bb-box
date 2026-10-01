@@ -250,7 +250,8 @@ computer_* tools  --call-->   control check                                 cua-
   the box is released. A failed session is reopened once, then the tool
   reports the error.
 - **The kind** declares `computerUse: { driver: "cua", version, socket }`, or
-  none for headless kinds, so the tools appear only for desktop boxes.
+  none for kinds without a desktop, so the tools appear only for desktop
+  boxes.
 
 ### Agent tools
 

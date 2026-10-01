@@ -121,7 +121,7 @@ Xtigervnc 1.13.1, XFCE, socat and xdotool, and a `box` user with sudo
 - **Computer use.** As for LXC: the Linux helper, with the accessibility bus
   and XTEST, and no permissions to grant.
 - **Images.** Built by the setup script from Dockerfiles in this repository
-  (`bbbox/linux-desktop`, `bbbox/linux-headless`), with the version in the
+  (`bbbox/linux-desktop`, `bbbox/linux`), with the version in the
   tag. Published images can come later.
 - **Setup for a new user.** Docker Engine on Linux, or Docker Desktop; a
   setting for the Docker host (a socket or `ssh://`); run the setup script to
@@ -134,8 +134,8 @@ Xtigervnc 1.13.1, XFCE, socat and xdotool, and a `box` user with sudo
   use, stop and start, release, and `held()` after a crash.
 
 Kinds ([012](../decisions/012-offers-may-add-features.md)):
-`linux-headless` and `linux-desktop-cpu` always; `linux-desktop` with NVIDIA's
-container toolkit; `linux-headless-docker` only when privileged.
+`linux` and `linux-desktop-cpu` always; `linux-desktop` with NVIDIA's
+container toolkit; `linux-docker` only when privileged.
 
 ## SSH host pool (real; early)
 
@@ -186,8 +186,8 @@ it is released.
   operator supplies that reset command, for example a Btrfs or ZFS snapshot
   rollback and a reboot, or a network reinstall. bb-box runs it and then runs
   the same check.
-- **Kinds.** `linux-headless` and `linux-desktop-cpu`, and `linux-desktop` on
-  a machine with a GPU. `linux-headless-docker` needs one of two things:
+- **Kinds.** `linux` and `linux-desktop-cpu`, and `linux-desktop` on a
+  machine with a GPU. `linux-docker` needs one of two things:
   - a whole-machine reset, since a box user in the `docker` group is root on
     the machine; or
   - rootless Docker for the box user. Its daemon runs as the box user and
@@ -599,9 +599,11 @@ The review of Interface v1, a comment on pull request #4, is folded in by #5:
   ([012](../decisions/012-offers-may-add-features.md)).
 - Docker inside a box is the feature `docker`, and the `docker` capability is
   gone.
-- The kinds are `linux-headless`, `linux-headless-docker`, `linux-desktop`
-  (GPU), `linux-desktop-cpu`, `windows-desktop` and `macos-desktop`. Kind IDs
-  name what a kind promises, never what it lacks.
+- The kinds are `linux`, `linux-docker`, `linux-desktop` (GPU),
+  `linux-desktop-cpu`, `windows-desktop`, `macos` and `macos-desktop`. Kind
+  IDs name what a kind promises, never what it lacks, and only desktop kinds
+  say `desktop` ([027](../decisions/027-a-kind-says-when-it-has-a-desktop.md);
+  012 named the first two `linux-headless` and `linux-headless-docker`).
 - `CommandTransport.kind` is dropped, so `transport` is the one name.
 - Docker kinds run unprivileged, with `--init` and a start script. Only
   privileged kinds, which the operator turns on, offer `systemd` and
@@ -627,7 +629,7 @@ None of these change a type.
 2. **`gpu` on macOS kinds.** Physical Macs and Tart VMs both render with
    Metal, Tart through its paravirtualised GPU. Neither takes a scarce GPU
    from a pool, so both should offer `gpu: false`, to agree exactly.
-3. **Docker in the SSH pool.** The pool offers `linux-headless-docker` only
+3. **Docker in the SSH pool.** The pool offers `linux-docker` only
    with a whole-machine reset, or with rootless Docker for the box user,
    which a home reset removes. Rootless Docker needs testing before the pool
    claims the kind.

@@ -64,7 +64,7 @@ Each enrolment used BB's manual machine command, fed to `sh -s` in the box
 as the box user, with a timestamp on each installer line. "Connected" is
 when BB first reported the machine connected and active.
 
-**On a real host**, with systemd: boxes linked-cloned from the headless
+**On a real host**, with systemd: boxes linked-cloned from the Linux
 template on Proxmox VE 9.2 (Ubuntu 24.04, Node 24.21), with the BB server on
 the same LAN.
 
