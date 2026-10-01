@@ -9,7 +9,7 @@ import type { BackendDriver, DoctorReport, MachineAccess } from "../backends/typ
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
-import { emptyDocument, type ConfigDocument } from "../core/document.ts";
+import { emptyDocument, type BackendConfig, type ConfigDocument } from "../core/document.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
 import type { ControlView } from "../core/control.ts";
@@ -77,6 +77,8 @@ export interface BbBox {
   readonly dockerHosts: DockerHosts;
   /** Builds bb-box's images on BB machines that host Docker boxes (042). */
   readonly dockerImages: DockerImages;
+  /** BB machine `machine`, by ID or name, and its Docker backend, from BB's record and the configuration, with no call to it. */
+  dockerHostOf(machine: string): Promise<{ hostId: string; name: string; backend: BackendConfig | null } | null>;
   /** Turns a BB machine on or off as a Docker host (042), through the configuration. */
   setDockerHost(hostId: string, enabled: boolean): Promise<ApplyResult>;
   /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
@@ -518,6 +520,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     relay,
     dockerHosts,
     dockerImages,
+    async dockerHostOf(machine) {
+      const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];
+      const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);
+      return found ? { hostId: found.id, name: found.name, backend: backendOn(configuration.document, found.id) } : null;
+    },
     async setDockerHost(hostId, enabled) {
       const machine = (await dockerHosts.list()).find((candidate) => candidate.hostId === hostId);
       if (!machine) throw new BoxError("not_found", `BB machine ${hostId} cannot host boxes: it is not a connected, persistent machine of BB's that bb-box did not make.`);
