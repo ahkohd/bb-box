@@ -12,8 +12,9 @@ export function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Under 0.1 s in milliseconds, which a claim of a spare takes (#186). */
 export function seconds(ms: number): string {
-  return `${(ms / 1000).toFixed(1)} s`;
+  return ms < 100 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
 /** "just now", "3 minutes ago", "2 hours ago", "yesterday", "4 days ago". */

@@ -17,7 +17,13 @@ export interface Status {
 }
 
 /** Words for timings whose names alone do not say what they are. */
-export const STEP_WORDS: Readonly<Record<string, string>> = { template: "waiting for the template", enrol: "BB enrolment", total: "total" };
+export const STEP_WORDS: Readonly<Record<string, string>> = {
+  template: "waiting for the template",
+  enrol: "BB enrolment",
+  total: "total",
+  spare: "claiming a spare",
+  relabel: "naming it for its owner",
+};
 
 /** A warning when a GPU desktop's display runs on the CPU, from its facts; null otherwise, since the row's badge says what the kind has. */
 export function displayWord(box: BoxView): StatusItem | null {

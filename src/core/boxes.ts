@@ -727,16 +727,25 @@ export class Boxes {
    * After a spare changed owner, and perhaps name (`from` was its name): the
    * backend records them on the guest and names it inside, BB's machine is
    * renamed, and reconnected if BB shows it disconnected. Commands wait for
-   * the guest's new name only when it changed (#128).
+   * the guest's new name only when it changed (#128), so a claim's total
+   * then counts the relabel too (#186).
    */
   #renamed(box: BoxRecord, from: string): void {
     const backend = this.#deps.backends.get(box.backend);
     if (backend?.relabel && box.guest) {
       const guest = box.guest;
+      const renamed = from !== box.name;
+      const started = this.#now();
       const relabel = this.#size(box)
         .then((size) => backend.relabel!(guest, identity(box, size), from))
+        .then(async () => {
+          const ms = this.#now() - started;
+          await this.update(box, ({ timings }) => ({
+            timings: { ...timings, relabel: ms, ...(renamed && timings.spare !== undefined ? { total: timings.spare + ms } : {}) },
+          }));
+        })
         .catch((error) => this.#deps.logError("relabel", error));
-      if (from !== box.name) this.#waitFor(box.id, relabel);
+      if (renamed) this.#waitFor(box.id, relabel);
     }
     const { claimed, reconnect } = this.#deps;
     if (!box.enrol.hostId || !claimed) return;

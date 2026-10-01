@@ -1277,6 +1277,25 @@ test("a claimed spare's guest is relabelled for its new owner, and renamed when 
   );
 });
 
+test("a claimed spare's timings count the relabel when its name changes, and show a short claim in milliseconds (#186)", async () => {
+  const world = setup();
+  world.general = { ...world.general, spares: { linux: 2 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  world.backend.relabelMs = 150;
+  // Your machine takes the name you give it, so its commands wait for the relabel; the thread's keeps the spare's.
+  const mine = await world.boxes.enrolled(await world.boxes.acquire({ threadId: OPERATOR, projectId: null, kind: "linux", name: "build-1" }));
+  const theirs = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  await until(async () => (await world.boxes.find(theirs.id))?.timings.relabel !== undefined);
+
+  const { spare, relabel, total } = mine.timings;
+  assert.ok(spare! < 100 && relabel! >= 150, JSON.stringify(mine.timings));
+  assert.equal(total, spare! + relabel!, "the claim is ready once its guest has the new name");
+  assert.match(boxDetail(mine), new RegExp(`\\nTimings: claiming a spare ${spare} ms, total ${(total! / 1000).toFixed(1)} s, naming it for its owner ${(relabel! / 1000).toFixed(1)} s$`));
+  const kept = (await world.boxes.find(theirs.id))!.timings;
+  assert.equal(kept.total, kept.spare, "a spare that keeps its name is ready on the claim");
+});
+
 test("the sweep keeps your machines, and restores a lost one to you under its name, asking BB for no project (036)", async () => {
   const projects: string[] = [];
   const world = setup({}, { projectOf: async (threadId) => (projects.push(threadId), null) });

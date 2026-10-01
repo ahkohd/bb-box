@@ -211,10 +211,16 @@ const STATE_WORDS: Record<BoxState, string> = {
 };
 
 /** Words for timings whose names alone do not say what they are. */
-const STEP_WORDS: Readonly<Record<string, string>> = { template: "waiting for the template", enrol: "BB enrolment", spare: "claiming a spare" };
+const STEP_WORDS: Readonly<Record<string, string>> = {
+  template: "waiting for the template",
+  enrol: "BB enrolment",
+  spare: "claiming a spare",
+  relabel: "naming it for its owner",
+};
 
+/** Under 0.1 s in milliseconds, which a claim of a spare takes (#186). */
 function seconds(ms: number): string {
-  return `${(ms / 1000).toFixed(1)} s`;
+  return ms < 100 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
 /** One line per box, for lists. */

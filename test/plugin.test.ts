@@ -366,7 +366,7 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   // box_acquire waits for enrolment, as box_run would, and says how long it took.
   const acquired = text(await tool("box_acquire", { kind: "linux" }));
   assert.match(acquired, /BB machine: enrolled/);
-  assert.match(acquired, /Timings: .*total \d+\.\d s, BB enrolment \d+\.\d s/);
+  assert.match(acquired, /Timings: .*total \d+(?: ms|\.\d s), BB enrolment \d+(?: ms|\.\d s)/);
   const box = await only(app);
   const enrolled = await until("enrolment", async () => {
     const current = await app.boxes.find(box.id);
@@ -395,8 +395,8 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   // BB's installer ran in the box, and commands see the box's identity.
   const installed = await tool("box_run", { box: box.name, command: 'cat bb-installed; echo "$BB_BOX_NAME $BB_THREAD_ID $BB_HOST_ID"' });
   assert.match(text(installed), new RegExp(`installed\n${box.name} ${THREAD} host-${box.id}`));
-  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolled\n.*BB enrolment \d+\.\d s/);
-  assert.match(text(await tool("box_list", {})), /enrolled as a BB machine in \d+\.\d s/);
+  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolled\n.*BB enrolment \d+(?: ms|\.\d s)/);
+  assert.match(text(await tool("box_list", {})), /enrolled as a BB machine in \d+(?: ms|\.\d s)/);
 
   // Commands take the listed variables from BB's daemon, and nothing else.
   const access = await tool("box_run", { box: box.name, command: 'printf "%s|" "${GH_TOKEN:+token}" "$MACHINE_VAR" "$PROJECT_VAR" "${UNLISTED-unset}"' });
@@ -672,7 +672,7 @@ test("a kind keeps a spare box as a BB machine, which box_acquire claims, rename
   const acquired = text(await tool("box_acquire", { kind: "linux" }));
   assert.match(acquired, new RegExp(`\\b${spare.name}\\b`));
   assert.match(acquired, /BB machine: enrolled/);
-  assert.match(acquired, /Timings: claiming a spare \d+\.\d s, total \d+\.\d s/);
+  assert.match(acquired, /Timings: claiming a spare \d+(?: ms|\.\d s), total \d+(?: ms|\.\d s)/);
   const box = await only(app);
   assert.equal(box.id, spare.id);
   assert.equal(world.hosts.get(hostId)?.name, box.name);
