@@ -24,6 +24,8 @@ export interface MachineRecord {
   readonly type: string;
   readonly machineProviderId: string | null;
   readonly lifecycle: { readonly phase: string };
+  /** When BB last heard from the machine, in ms since the epoch. */
+  readonly lastSeenAt?: number | null;
 }
 
 export interface DockerHostView {
@@ -40,6 +42,26 @@ export interface DockerHostView {
   readonly backend: { readonly id: string; readonly enabled: boolean; readonly boxes: number } | null;
   /** Its last image build, or the one running (src/plugin/docker-images.ts). */
   readonly images: ImageBuild | null;
+}
+
+/**
+ * How long BB may go without hearing from a machine it shows connected
+ * before bb-box takes it as offline. BB hears from each about every 5 s, but
+ * showed a PC that restarted, which said nothing as it went, connected until
+ * it was back (#233).
+ */
+export const SILENT_MS = 60_000;
+
+/**
+ * Why the machine cannot be reached now, as the end of a sentence about it,
+ * or null when BB shows it connected and has heard from it lately.
+ */
+export function machineOffline(machine: Pick<MachineRecord, "status" | "lastSeenAt">, now: number): string | null {
+  if (machine.status !== "connected") return "is offline in BB.";
+  const silent = machine.lastSeenAt == null ? 0 : now - machine.lastSeenAt;
+  if (silent <= SILENT_MS) return null;
+  const minutes = Math.max(1, Math.round(silent / 60_000));
+  return `is offline: BB has not heard from it for ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`;
 }
 
 /** The host field of a Docker backend on BB machine `hostId`. */
@@ -107,9 +129,10 @@ export class DockerHosts {
     const listed = machineHosts(machines, document, this.#deps.providers);
     return Promise.all(
       listed.map(async (machine): Promise<DockerHostView> => {
-        const connected = machine.status === "connected";
+        const offline = machineOffline(machine, this.#deps.now?.() ?? Date.now());
+        const connected = offline === null;
         const backend = backendOn(document, machine.id);
-        const checked = connected ? await this.#check(machine.id) : { docker: null, problem: "The machine is offline in BB.", absent: false };
+        const checked = connected ? await this.#check(machine.id) : { docker: null, problem: `The machine ${offline}`, absent: false };
         return {
           hostId: machine.id,
           name: machine.name,

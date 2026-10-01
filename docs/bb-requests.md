@@ -19,6 +19,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | draft | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
 | [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | draft | a box has its thread's project variables only while a thread of the project runs on it |
 | [Make a plugin's host call quick](#12-make-a-plugins-host-call-quick) | draft | each call to bb-box's host entry takes about 0.4 s, so it cannot carry commands |
+| [Mark a machine offline when it stops checking in](#13-mark-a-machine-offline-when-it-stops-checking-in) | draft | a machine that goes with no word, such as a PC that restarts, shows as connected for about 16 minutes, so bb-box judges it by when BB last heard from it |
 
 ## 1. BB's host app on Windows
 
@@ -515,6 +516,31 @@ it enrols or after a reload, and from each opening of a Docker relay.
 box's access at most every 30 s, in the background once a call has worked,
 and once each time a relay opens.
 Commands themselves go through SSH, `docker exec` or the relay.
+
+## 13. Mark a machine offline when it stops checking in
+
+**What bb-box needs.** BB's word on whether a machine is connected, kept up
+to date. bb-box asks it before it places a box on a Docker host that is a BB
+machine, and before it opens the relay there, so it can say at once when the
+machine has gone ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)).
+
+**What BB does now.** Measured on 1 October 2026 (#233):
+
+- Each machine's `lastSeenAt` moves on about every 5 s, idle or not.
+- A Windows PC with its BB machine in WSL restarted, and said nothing as it
+  went. BB showed it `connected` for 16 min 20 s after it last heard from
+  it, until the connection timed out. That is about how long Linux takes to
+  give up on a TCP connection whose data goes unanswered.
+- Meanwhile each call to the machine waited for its own timeout, and failed.
+
+**What we ask.** Mark a machine disconnected after a few missed check-ins,
+for example after 15 to 30 s with no word.
+
+**What it would remove.** bb-box's own rule, and up to 16 minutes in which
+BB and its plugins take a machine that has gone as connected.
+
+**Until then.** bb-box takes a machine that BB shows connected, but has not
+heard from for 60 s, as offline.
 
 ## Checked, no request needed
 

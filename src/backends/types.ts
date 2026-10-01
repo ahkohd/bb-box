@@ -496,7 +496,7 @@ export interface MachineAccess {
   ready(hostId: string): Promise<void>;
   /** The machine's name as BB has it, or null while bb-box does not know it. */
   name(hostId: string): string | null;
-  /** Whether BB shows the machine connected now, with no call to it. Null when BB has no such machine. */
+  /** Whether BB shows the machine connected now and has heard from it lately, with no call to it. Null when BB has no such machine. */
   connected(hostId: string): Promise<boolean | null>;
 }
 

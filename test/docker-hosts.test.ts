@@ -9,7 +9,7 @@ import type { DockerInfo } from "../src/backends/docker/cli.ts";
 import { DRIVERS } from "../src/backends/index.ts";
 import { checkDocument, emptyDocument, type ConfigDocument } from "../src/core/document.ts";
 import { hostEntry } from "../src/host/entry.ts";
-import { DockerHosts, machineHosts, withDockerHost, type MachineRecord } from "../src/plugin/docker-hosts.ts";
+import { DockerHosts, SILENT_MS, machineHosts, machineOffline, withDockerHost, type MachineRecord } from "../src/plugin/docker-hosts.ts";
 import { tempDir } from "./helpers.ts";
 
 const machine = (id: string, name: string, more: Partial<MachineRecord> = {}): MachineRecord => ({
@@ -102,6 +102,36 @@ test("each machine shows Docker as it answers through the relay, kept a while, a
   clock += 60_000;
   await hosts.list();
   assert.equal(calls, 5);
+});
+
+test("a machine BB shows connected but has not heard from for a minute is offline, saying why, and is not called", async () => {
+  // A PC that restarted with nobody signed in said nothing as it went, and BB showed it connected until it was back (#233).
+  const now = 60 * 60_000;
+  assert.equal(machineOffline({ status: "connected", lastSeenAt: now - 5_000 }, now), null);
+  assert.equal(machineOffline({ status: "connected", lastSeenAt: now - SILENT_MS }, now), null);
+  assert.equal(machineOffline({ status: "connected", lastSeenAt: null }, now), null, "never heard from is BB's to judge");
+  assert.equal(machineOffline({ status: "disconnected", lastSeenAt: now }, now), "is offline in BB.");
+  assert.equal(machineOffline({ status: "connected", lastSeenAt: now - SILENT_MS - 1_000 }, now), "is offline: BB has not heard from it for 1 minute.");
+
+  const asked: string[] = [];
+  const hosts = new DockerHosts({
+    machines: async () => [machine("host_r", "restarted", { lastSeenAt: now - 15 * 60_000 }), machine("host_b", "devpc", { lastSeenAt: now - 3_000 })],
+    document: () => emptyDocument(1),
+    providers: ["bb-box"],
+    found: async (hostId) => (asked.push(hostId), null),
+    docker: async () => info(),
+    boxes: async () => new Map(),
+    now: () => now,
+  });
+  const listed = await hosts.list();
+  assert.deepEqual(
+    listed.map((each) => [each.name, each.connected, each.problem]),
+    [
+      ["restarted", false, "The machine is offline: BB has not heard from it for 15 minutes."],
+      ["devpc", true, null],
+    ],
+  );
+  assert.deepEqual(asked, ["host_b"]);
 });
 
 test("turning a machine on adds a Docker backend on it, last, named after it; off removes it, or turns it off while it has boxes", () => {
