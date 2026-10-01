@@ -27,7 +27,7 @@
 // in memory until the VM resumes or goes. A claim resumes the VM, gives it
 // the box's tags, name and description, waits for SSH and sets the clock.
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
 import {
   BUILD,
@@ -73,8 +73,8 @@ import {
 } from "../types.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import { desktopScript } from "../../transports/powershell.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
+import { CUA_PIPE, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
 import type { QemuConfig } from "./config.ts";
 
 const MiB = 2 ** 20;
@@ -84,15 +84,11 @@ const SSH_KEY = "ssh-key";
 const NEXT_VMID = "next-vmid";
 /** A linked clone of Windows boots and starts sshd in about 20 s; this leaves room for a busy host. */
 const READY_TIMEOUT_MS = 180_000;
-/** How long setting the desktop's mode may take, in the desktop session. */
-const RESIZE_TIMEOUT_MS = 15_000;
-/** How long setting Windows' clock may take, over SSH. */
-const CLOCK_TIMEOUT_MS = 30_000;
 /** build.sh --replace swaps the template for its new build, which leaves it missing for a moment. A clone waits this long for it. */
 const TEMPLATE_WAIT_MS = 10_000;
 const TEMPLATE_POLL_MS = 250;
 /** Cua Driver as build.sh pins it (039). A task at logon starts its daemon, elevated, on this named pipe. */
-const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" };
+const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.30.4", socket: CUA_PIPE };
 /** Where boot.ps1 logs how it set the box's address. */
 const BOOT_LOG = "C:\\bb-box\\boot.log";
 /** Tags of a warm VM: filling while bb-box makes it, warm once it is ready. */
@@ -121,139 +117,6 @@ const KIND: BoxKind = {
   },
   readyTimeoutMs: READY_TIMEOUT_MS,
 };
-
-/**
- * Extends C: to the end of its disk. The template's C: is its disk's last
- * partition, so it can. Windows refuses a resize by less than 1 MB.
- */
-export const EXTEND_C = String.raw`try {
-  Update-HostStorageCache
-  $max = (Get-PartitionSupportedSize -DriveLetter C -ErrorAction Stop).SizeMax
-  $size = (Get-Partition -DriveLetter C -ErrorAction Stop).Size
-  if ($max - $size -gt 1MB) { Resize-Partition -DriveLetter C -Size $max -ErrorAction Stop }
-} catch {
-  [Console]::Error.WriteLine("$_")
-  exit 1
-}`;
-
-/**
- * BbDisplay.Fit sets the desktop to `width` by `height`. QEMU passes a
- * viewer's size on to the display driver, which then takes it beside the
- * modes Windows lists, though Windows does not switch to it. That can take a
- * moment, so it tries for up to 2 s. Else it sets the smallest listed mode
- * that covers the size, which the viewer scales down and so stays sharp, else
- * the largest. The list can hold an earlier viewer's size that the driver no
- * longer takes, so it tries them in turn. Each keeps the colour depth, and the
- * mode is kept for the user's next logon.
- */
-const DISPLAY_SOURCE = String.raw`using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using System.Threading;
-public static class BbDisplay {
-  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-  public struct Mode {
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
-    public short SpecVersion, DriverVersion, Size, DriverExtra;
-    public int Fields, PositionX, PositionY, Orientation, FixedOutput;
-    public short Color, Duplex, YResolution, TTOption, Collate;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FormName;
-    public short LogPixels;
-    public int BitsPerPel, Width, Height, Flags, Frequency;
-    public int ICMMethod, ICMIntent, MediaType, DitherType, Reserved1, Reserved2, PanningWidth, PanningHeight;
-  }
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplaySettings(string device, int index, ref Mode mode);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string device, ref Mode mode, IntPtr window, int flags, IntPtr param);
-  static long Area(Mode mode) { return (long)mode.Width * mode.Height; }
-  static int Set(Mode mode, int width, int height) {
-    mode.Width = width;
-    mode.Height = height;
-    mode.Fields = 0x80000 | 0x100000; // DM_PELSWIDTH | DM_PELSHEIGHT
-    return ChangeDisplaySettingsEx(null, ref mode, IntPtr.Zero, 1, IntPtr.Zero); // CDS_UPDATEREGISTRY
-  }
-  public static string Fit(int width, int height) {
-    var current = new Mode();
-    current.Size = (short)Marshal.SizeOf(typeof(Mode));
-    if (!EnumDisplaySettings(null, -1, ref current)) return "Windows gave no mode for the display.";
-    if (current.Width == width && current.Height == height) return null;
-    for (var deadline = DateTime.UtcNow.AddSeconds(2); ; Thread.Sleep(250)) {
-      if (Set(current, width, height) == 0) return null;
-      if (DateTime.UtcNow > deadline) break;
-    }
-    var modes = new List<Mode>();
-    var mode = current;
-    for (int i = 0; EnumDisplaySettings(null, i, ref mode); i++) if (mode.BitsPerPel == current.BitsPerPel) modes.Add(mode);
-    modes.Sort((a, b) => {
-      bool coversA = a.Width >= width && a.Height >= height, coversB = b.Width >= width && b.Height >= height;
-      if (coversA != coversB) return coversA ? -1 : 1;
-      return coversA ? Area(a).CompareTo(Area(b)) : Area(b).CompareTo(Area(a));
-    });
-    int result = -2; // DISP_CHANGE_BADMODE
-    foreach (var chosen in modes) {
-      if (chosen.Width == current.Width && chosen.Height == current.Height) return null;
-      result = Set(current, chosen.Width, chosen.Height);
-      if (result == 0) return null;
-    }
-    return "Windows refused " + width + "x" + height + " and the modes it lists, with " + result + ".";
-  }
-}`;
-
-/** Named for its source, so a new source compiles afresh. */
-const DISPLAY_DLL = `display-${createHash("sha256").update(DISPLAY_SOURCE).digest("hex").slice(0, 12)}.dll`;
-
-/**
- * Loads BbDisplay as $bbDisplay, from a file in the box user's local app
- * data, compiling it there first if it is missing. Add-Type takes up to 3 s
- * in a new PowerShell, and loading the file a few milliseconds. Scripts that
- * compile at once each write a file of their own, and the first to move it
- * into place wins.
- */
-export const DISPLAY_HELPER = String.raw`$ErrorActionPreference = 'Stop'
-$bbDll = [IO.Path]::Combine([Environment]::GetFolderPath('LocalApplicationData'), 'bb-box', '${DISPLAY_DLL}')
-if (-not (Test-Path -LiteralPath $bbDll)) {
-  $bbTemp = "$bbDll.$PID"
-  New-Item -ItemType Directory -Force -Path (Split-Path $bbDll) | Out-Null
-  try {
-    Add-Type -OutputAssembly $bbTemp -TypeDefinition @'
-${DISPLAY_SOURCE}
-'@
-    [IO.File]::Move($bbTemp, $bbDll)
-  } catch {
-    if (-not (Test-Path -LiteralPath $bbDll)) { throw }
-  } finally {
-    Remove-Item -LiteralPath $bbTemp -ErrorAction Ignore
-  }
-}
-$bbDisplay = [Reflection.Assembly]::LoadFile($bbDll).GetType('BbDisplay')`;
-
-/**
- * Sets the desktop to `width` by `height`, or the listed mode that best
- * covers it. It runs in the box user's desktop session, as the session SSH
- * gives has another display.
- */
-export function setMode(width: number, height: number): string {
-  return `${DISPLAY_HELPER}
-$bbRefused = $bbDisplay::Fit(${width}, ${height})
-if ($bbRefused) { [Console]::Error.WriteLine($bbRefused); exit 1 }`;
-}
-
-/**
- * Sets Windows' clock to `ms` after the epoch, plus the time PowerShell took
- * to start. A VM resumed from disk keeps the time it stopped at, and Windows
- * does not correct it for a while (039).
- */
-export function setClock(ms: number): string {
-  return `$bbNow = [DateTimeOffset]::FromUnixTimeMilliseconds(${ms}).LocalDateTime + ((Get-Date) - [Diagnostics.Process]::GetCurrentProcess().StartTime)
-Set-Date -Date $bbNow -ErrorAction Stop | Out-Null`;
-}
-
-/**
- * Exits 0 once Windows' desktop is up: Explorer runs in a desktop session
- * and Cua's daemon listens on its pipe. A fill hibernates a warm VM then, so
- * a claim resumes a desktop that is ready for computer use.
- */
-export const DESKTOP_UP = `if ((Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0) -and (Test-Path -LiteralPath '${CUA_DRIVER.socket}')) { exit 0 }
-exit 1`;
 
 /** A doctor check's stable ID and its name. */
 type Check = readonly [id: string, name: string];
@@ -1050,11 +913,7 @@ export class ProxmoxQemuBackend implements Backend {
 
   /** Extends C: over the space its disk grew by. */
   async #extend(vmid: number, signal?: AbortSignal): Promise<void> {
-    const command = await this.#command(vmid);
-    const result = await command.run(EXTEND_C, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 });
-    if (result.exitCode !== 0) {
-      throw new Error(`The box's disk grew, but Windows could not extend C: over it: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
-    }
+    await extendC(await this.#command(vmid), signal);
   }
 
   /**
@@ -1064,11 +923,8 @@ export class ProxmoxQemuBackend implements Backend {
    */
   #compileDisplay(vmid: number): void {
     const compiling = this.#command(vmid)
-      .then((command) => command.run(DISPLAY_HELPER, { timeoutMs: RESIZE_TIMEOUT_MS, maxOutputBytes: 4096 }))
-      .then(
-        () => undefined,
-        () => undefined,
-      )
+      .then((command) => compileDisplay(command))
+      .catch(() => undefined)
       .finally(() => this.#compiling.delete(vmid));
     this.#compiling.set(vmid, compiling);
   }
@@ -1079,15 +935,8 @@ export class ProxmoxQemuBackend implements Backend {
    * a viewer's size.
    */
   async #resize(vmid: number, command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
-    const { width, height } = size;
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
-      throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
-    }
     await this.#compiling.get(vmid);
-    const result = await command.run(desktopScript(setMode(width, height), RESIZE_TIMEOUT_MS), { timeoutMs: RESIZE_TIMEOUT_MS + 5_000, signal, maxOutputBytes: 4096 });
-    if (result.exitCode !== 0) {
-      throw new Error(`Windows could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}.`}`);
-    }
+    await setMode(command, size, signal);
   }
 
   async #templateOf(api: Proxmox, template: number, signal?: AbortSignal): Promise<TemplateInfo> {
@@ -1226,11 +1075,7 @@ export class ProxmoxQemuBackend implements Backend {
 
   /** Sets Windows' clock from BB's server's. */
   async #setClock(vmid: number, signal?: AbortSignal): Promise<void> {
-    const command = await this.#command(vmid);
-    const result = await command.run(setClock(Date.now()), { timeoutMs: CLOCK_TIMEOUT_MS, signal, maxOutputBytes: 4096 });
-    if (result.exitCode !== 0) {
-      throw new Error(`Windows could not set its clock: ${result.stderr.trim() || `exit code ${result.exitCode}.`}`);
-    }
+    await setClock(await this.#command(vmid), signal);
   }
 
   /** Waits for port 22 to open, which is cheap to poll, then for SSH to answer. */
@@ -1410,9 +1255,7 @@ export class ProxmoxQemuBackend implements Backend {
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal);
       if (grew) await this.#extend(id, signal);
       await this.#desktopUp(id, Math.max(1_000, deadline - Date.now()), signal);
-      // A failure is left to the box's first resize, which compiles it again.
-      const command = await this.#command(id);
-      await command.run(DISPLAY_HELPER, { timeoutMs: RESIZE_TIMEOUT_MS, signal, maxOutputBytes: 4096 }).catch(() => undefined);
+      await compileDisplay(await this.#command(id), signal);
       await api.configure(id, { tags: tags(WARM) }, signal);
       await this.#forget(id);
       await api.hibernate(id, signal);
@@ -1427,13 +1270,10 @@ export class ProxmoxQemuBackend implements Backend {
     }
   }
 
-  /** Waits until DESKTOP_UP says Windows' desktop is up. */
+  /** Waits until Windows' desktop is up. */
   async #desktopUp(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
     const command = await this.#command(vmid);
-    const up = {
-      probe: async (signal?: AbortSignal) =>
-        (await command.run(DESKTOP_UP, { timeoutMs: 10_000, signal, maxOutputBytes: 4096 }).catch(() => null))?.exitCode === 0,
-    };
+    const up = { probe: (signal?: AbortSignal) => desktopUp(command, signal) };
     if (!(await waitUntilAnswers(up, { timeoutMs, intervalMs: DESKTOP_POLL_MS, signal, sleep: this.#options.sleep }))) {
       throw new Error(
         `Windows' desktop in warm VM ${vmid} was not up within ${Math.round(timeoutMs / 1000)} s: Explorer did not run in a desktop session, ` +

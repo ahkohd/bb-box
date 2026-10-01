@@ -73,7 +73,7 @@ Across the table:
 | --- | --- | --- |
 | Core | `src/core/` | the registry, lifecycle, sweep, in-box scripts, tools and panel. It never names a provider or transport |
 | Transports | `src/transports/` | SSH, routes and `openRoute`, and the ready check. They never know which provider made a box |
-| Backends | `src/backends/<type>/` | one driver per provider, plus what several share: `ReadyPool` and `KvPoolStore` in `pool.ts`, the Proxmox API client in `proxmox/` |
+| Backends | `src/backends/<type>/` | one driver per provider, plus what several share: `ReadyPool` and `KvPoolStore` in `pool.ts`, the Proxmox API client in `proxmox/`, and what bb-box runs in a Windows guest in `windows.ts` |
 
 The core uses only [src/backends/types.ts](../src/backends/types.ts) and
 [src/transports/types.ts](../src/transports/types.ts).
