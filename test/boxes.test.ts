@@ -163,7 +163,7 @@ test("a box is released while a command still writes in it, as BB's installer ma
     // Writes files for about 150 ms; release does not wait for it, as a real delete would not.
     const writing = world.boxes.run(THREAD, box.name, "i=0; while [ $i -lt 150 ]; do : > f$i; i=$((i+1)); sleep 0.001; done").catch(() => null);
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const left = await world.boxes.release(THREAD, box.name);
+    const left = await world.boxes.release(THREAD, box.name, "the test asked");
     assert.equal(left, null, `round ${round}: ${left?.error}`);
     await writing;
   }
@@ -295,7 +295,7 @@ test("a backend that cannot make a size refuses it through capacity, and the nex
       return true;
     },
   );
-  await boxes.releaseThread(THREAD);
+  for (const box of await boxes.list(THREAD)) await boxes.release(THREAD, box.id, "the test asked");
   await boxes.idle();
 });
 
@@ -458,7 +458,7 @@ test("releasing a box while it is acquired cancels the acquire and leaves nothin
   world.backend.gate = gate.promise;
   const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await until(async () => !!(await world.boxes.find(box.id))?.guest);
-  const release = world.boxes.release(THREAD, box.name);
+  const release = world.boxes.release(THREAD, box.name, "the test asked");
   gate.resolve();
   assert.equal(await release, null);
   assert.deepEqual(await world.boxes.list(THREAD), []);
@@ -911,7 +911,7 @@ test("a stop or start that ends during a release leaves the box releasing", asyn
     const moving = world.boxes[action](THREAD, box.name);
     await until(async () => (await world.boxes.find(box.id))?.state === (action === "stop" ? "stopping" : "starting"));
     world.backend.faults.release = new Error("the host is busy");
-    const release = world.boxes.release(THREAD, box.name);
+    const release = world.boxes.release(THREAD, box.name, "the test asked");
     gate.resolve();
     await moving;
     const left = await release;
@@ -972,25 +972,25 @@ test("a guest deleted outside bb-box marks the box gone, and release still works
   assert.equal(refreshed.state, "gone");
   assert.match(refreshed.error!, /deleted outside bb-box/);
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /no longer exists/);
-  assert.equal(await world.boxes.release(THREAD, box.name), null);
+  assert.equal(await world.boxes.release(THREAD, box.name, "the test asked"), null);
   assert.deepEqual(await world.boxes.list(THREAD), []);
 });
 
 test("release removes the BB machine first, then the guest", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
-  assert.equal(await world.boxes.release(THREAD, box.name), null);
+  assert.equal(await world.boxes.release(THREAD, box.name, "the test asked"), null);
   assert.deepEqual(world.unenrolled, [`host-${box.id}`]);
   assert.deepEqual(await world.backend.held(), []);
   assert.equal(await world.boxes.find(box.id), null);
-  await assert.rejects(world.boxes.release(THREAD, box.name), /has no box/);
+  await assert.rejects(world.boxes.release(THREAD, box.name, "the test asked"), /has no box/);
 });
 
 test("a failed release keeps the box releasing with the reason, and the sweep finishes it", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   world.backend.faults.release = new Error("the provider is busy");
-  const kept = await world.boxes.release(THREAD, box.name);
+  const kept = await world.boxes.release(THREAD, box.name, "the test asked");
   assert.equal(kept?.state, "releasing");
   assert.match(kept!.error!, /the provider is busy. bb-box tries again/);
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /being released/);
@@ -1000,21 +1000,29 @@ test("a failed release keeps the box releasing with the reason, and the sweep fi
   assert.deepEqual(await world.backend.held(), []);
 });
 
-test("releasing a thread releases all its boxes and forgets failed ones", async () => {
-  const world = setup();
-  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+test("a thread BB says was archived loses all its boxes, failed ones forgotten, but not while BB says it is live, and each release is logged with why", async () => {
+  const logs: string[] = [];
+  const world = setup({}, { log: (line) => logs.push(line) });
+  const first = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" });
   await world.boxes.idle();
   world.backend.faults.acquire = { at: "claimed", error: new Error("boom") };
   await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   const other = await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" });
   await world.boxes.idle();
-  assert.equal(await world.boxes.releaseThread(THREAD), 2);
+  assert.equal(await world.boxes.releaseThread(THREAD, "archived"), 0);
+  assert.equal((await world.boxes.list(THREAD)).length, 3);
+  assert.ok(logs.includes(`Kept the boxes of thread ${THREAD}: BB said it was archived, but says now that it is live.`));
+  world.threads.set(THREAD, "ended");
+  assert.equal(await world.boxes.releaseThread(THREAD, "archived"), 2);
   assert.deepEqual(await world.boxes.list(THREAD), []);
+  assert.ok(logs.includes(`Releasing box ${first.name} of thread ${THREAD}: its thread was archived.`));
   assert.deepEqual(
     (await world.backend.held()).map((guest) => guest.owner?.boxId),
     [other.id],
   );
+  await world.boxes.release("thr_two", other.name, "its thread released it with box_release");
+  assert.ok(logs.includes(`Releasing box ${other.name} of thread thr_two: its thread released it with box_release.`));
 });
 
 test("the sweep releases the boxes of ended threads and keeps live and unknown ones", async () => {
@@ -1025,12 +1033,40 @@ test("the sweep releases the boxes of ended threads and keeps live and unknown o
   await world.boxes.idle();
   world.threads.set("thr_ended", "ended");
   world.threads.set("thr_unknown", "unknown");
+  assert.equal((await world.boxes.sweep()).ending, 1);
   const report = await world.boxes.sweep();
   assert.equal(report.released, 1);
   assert.equal(await world.boxes.find(ended.id), null);
   assert.ok(await world.boxes.find(live.id));
   assert.ok(await world.boxes.find(unknown.id));
   assert.ok(world.backend.calls.includes("maintain"));
+});
+
+test("a box goes for its thread ending only when BB says so at two sweeps running, so one wrong answer, as after a restart, takes no live thread's box", async () => {
+  const logs: string[] = [];
+  const world = setup({}, { log: (line) => logs.push(line) });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  // BB says once that the thread is gone, at the first sweep after a restart.
+  world.threads.set(THREAD, "ended");
+  const first = await world.boxes.sweep();
+  assert.equal(first.released, 0);
+  assert.equal(first.ending, 1);
+  assert.equal((await world.boxes.find(box.id))?.state, "ready");
+  assert.ok(logs.includes(`Kept box ${box.name} of thread ${THREAD}: BB says its thread was archived or deleted, and the next sweep releases it if BB says so again.`));
+  world.threads.delete(THREAD);
+  await world.boxes.sweep();
+  world.threads.set(THREAD, "ended");
+  assert.equal((await world.boxes.sweep()).released, 0, "a live answer between starts it over");
+  // A restart forgets what BB said: the new registry's first sweep releases nothing.
+  const boxes = world.restart();
+  assert.equal((await boxes.sweep()).released, 0);
+  assert.deepEqual(await world.backend.held().then((held) => held.map((guest) => guest.owner?.boxId)), [box.id]);
+  assert.ok(!logs.some((line) => line.startsWith("Releasing")));
+
+  assert.equal((await boxes.sweep()).released, 1);
+  assert.equal(await boxes.find(box.id), null);
+  assert.deepEqual(await world.backend.held(), []);
+  assert.ok(logs.includes(`Releasing box ${box.name} of thread ${THREAD}: BB says its thread was archived or deleted, at this sweep and the last.`));
 });
 
 test("the sweep releases guests no box owns and adopts guests of live threads", async () => {
@@ -1050,7 +1086,8 @@ test("the sweep releases guests no box owns and adopts guests of live threads", 
   const report = await world.boxes.sweep();
   assert.equal(world.enrolled.length, enrolled);
   assert.equal(report.adopted, 1);
-  assert.equal(report.leftovers, 1);
+  assert.equal(report.ending, 1, "BB says its thread ended at this sweep, not the last");
+  assert.equal((await world.boxes.sweep()).leftovers, 1);
   const adopted = await world.boxes.find(lost.id);
   assert.equal(adopted?.name, lost.name);
   assert.equal(adopted?.state, "ready");
@@ -1098,7 +1135,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   world.enrolled.length = 0;
 
   const report = await boxes.sweep();
-  assert.deepEqual({ ...report }, { released: 0, leftovers: 1, adopted: 3, kept: 1, resumed: 0 });
+  assert.deepEqual({ ...report }, { released: 0, leftovers: 0, adopted: 3, kept: 1, ending: 1, resumed: 0 });
   assert.deepEqual(world.enrolled, [`${running.name}, restored`], "only the box that runs and answers enrols again");
 
   for (const [before, state] of [[running, "ready"], [stopped, "stopped"]] as const) {
@@ -1119,8 +1156,8 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   assert.match(quiet?.error ?? "", /did not answer when bb-box restored/);
   assert.ok(quiet?.restoredAt, "it enrols once it answers");
   assert.equal(quiet?.enrol.state, "off");
-  // A sweep while it is still silent leaves it.
-  await boxes.sweep();
+  // A sweep while it is still silent leaves it, and releases the guest whose thread BB says ended again.
+  assert.equal((await boxes.sweep()).leftovers, 1);
   assert.equal((await boxes.find(silent.id))?.enrol.state, "off");
   assert.deepEqual(world.enrolled, [`${running.name}, restored`]);
   delete world.backend.faults.silent;
@@ -1136,7 +1173,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   // Records restored once are left alone; a thread BB confirms later gets its box back.
   // The silent box answers now, so it enrols, and its error goes.
   world.threads.set("thr_unsure", "live");
-  assert.deepEqual({ ...(await boxes.sweep()) }, { released: 0, leftovers: 0, adopted: 1, kept: 0, resumed: 0 });
+  assert.deepEqual({ ...(await boxes.sweep()) }, { released: 0, leftovers: 0, adopted: 1, kept: 0, ending: 0, resumed: 0 });
   assert.equal((await boxes.find(unsure.id))?.name, unsure.name);
   assert.deepEqual(world.enrolled, [`${running.name}, restored`, `${unsure.name}, restored`, `${silent.name}, restored`]);
   const answering = await boxes.find(silent.id);
@@ -1149,7 +1186,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   assert.equal((await boxes.find(stopped.id))?.restoredAt, null);
   await boxes.sweep();
   assert.equal(world.enrolled.length, 4);
-  assert.equal(await boxes.release("thr_live", running.name), null);
+  assert.equal(await boxes.release("thr_live", running.name, "the test asked"), null);
   assert.deepEqual(
     (await world.backend.held()).map((guest) => guest.owner?.boxId).sort(),
     [stopped.id, silent.id, unsure.id].sort(),
@@ -1376,7 +1413,7 @@ test("a claim takes only a ready, enrolled spare of the kind and size whose BB m
     assert.equal(box.state, "acquiring");
     assert.notEqual(box.id, spare.id);
     assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => spare.id), [spare.id]);
-    await world.boxes.release(THREAD, box.name);
+    await world.boxes.release(THREAD, box.name, "the test asked");
   };
   await notClaimed({ kind: "linux-desktop" });
   await notClaimed({ size: { preset: "large" } });
@@ -1408,7 +1445,7 @@ test("a spare released by hand is replaced at once, not at the next sweep (#129)
   const [spare] = await world.boxes.list(SPARES);
   assert.equal(spare?.enrol.state, "enrolled");
 
-  assert.equal(await world.boxes.release(SPARES, spare.name), null);
+  assert.equal(await world.boxes.release(SPARES, spare.name, "the test asked"), null);
   await until(async () => (await world.boxes.list(SPARES)).some((other) => other.id !== spare.id && other.enrol.state === "enrolled"));
   assert.equal((await world.boxes.list(SPARES)).length, 1);
   assert.deepEqual(world.errors, []);
@@ -1439,7 +1476,7 @@ test("a spare gives its room to a thread's box that finds none, and comes back o
   assert.ok(logs.some((line) => line.startsWith("bb-box keeps 0 of 1 spare linux boxes for now: ")));
   assert.equal((await world.boxes.list("a"))[0]?.state, "ready");
 
-  assert.equal(await world.boxes.release("a", first.name), null);
+  assert.equal(await world.boxes.release("a", first.name, "the test asked"), null);
   await world.boxes.keepSpares();
   await world.boxes.idle();
   assert.equal((await world.boxes.list(SPARES))[0]?.enrol.state, "enrolled");
@@ -1636,7 +1673,7 @@ test("a reused reference is the new box's: the old box goes, and its release lea
   await world.boxes.sweep();
   assert.equal((await world.boxes.find(old.id))?.state, "gone");
   assert.equal((await world.boxes.find(next.id))?.state, "ready");
-  assert.equal(await world.boxes.release(THREAD, old.id), null);
+  assert.equal(await world.boxes.release(THREAD, old.id, "the test asked"), null);
   assert.deepEqual(
     (await world.backend.held()).map((guest) => guest.owner?.boxId),
     [next.id],
@@ -1700,7 +1737,7 @@ test("stopping or releasing a box from before install IDs records the install fi
   assert.equal(stopped.guest?.data?.box, box.id);
   const other = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await fromBeforeInstallIds(world, other);
-  assert.equal(await world.boxes.release(THREAD, other.id), null);
+  assert.equal(await world.boxes.release(THREAD, other.id, "the test asked"), null);
   assert.deepEqual(world.backend.calls.slice(-2), [`stamp ${other.guest!.ref}`, `release ${other.guest!.ref}`]);
   assert.deepEqual(
     (await world.backend.held()).map((guest) => guest.owner?.boxId),
@@ -1748,7 +1785,7 @@ test("a real backend's release resets the machine and returns it for the next bo
   assert.equal(first.nature, "real");
   await world.boxes.writeFile(THREAD, first.name, "left-behind", Buffer.from("x"));
   await assert.rejects(world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" }), /All 1 machines are in use/);
-  assert.equal(await world.boxes.release(THREAD, first.name), null);
+  assert.equal(await world.boxes.release(THREAD, first.name, "the test asked"), null);
   const second = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" }));
   assert.equal(second.guest?.ref, first.guest?.ref);
   assert.equal((await world.boxes.run("thr_two", second.name, "ls")).result.stdout, "");
@@ -1759,7 +1796,7 @@ test("a box whose backend is off can be seen but says what to fix, and is kept",
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   world.active = false;
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /backend that holds box .* is not in bb-box.s settings, or its settings need fixing/);
-  const kept = await world.boxes.release(THREAD, box.name);
+  const kept = await world.boxes.release(THREAD, box.name, "the test asked");
   assert.equal(kept?.state, "releasing");
   assert.match(kept!.error!, /its settings need fixing/);
   await world.boxes.sweep();
@@ -1938,7 +1975,7 @@ test("a real backend's release records the reset, and a failed reset takes the m
       },
     });
   world.backend.faults.reset = "the box user's processes would not stop";
-  assert.equal(await world.boxes.release(THREAD, box.name), null);
+  assert.equal(await world.boxes.release(THREAD, box.name, "the test asked"), null);
   assert.equal(seen!.state, "releasing");
   assert.ok(seen!.resetAt);
   const [member] = await world.backend.members!();
@@ -1952,7 +1989,7 @@ test("a real backend's release records the reset, and a failed reset takes the m
 test("a stale release of a real machine does not reset the next box's machine", async () => {
   const world = setup({ nature: "real", machines: 1 });
   const first = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
-  await world.boxes.release(THREAD, first.name);
+  await world.boxes.release(THREAD, first.name, "the test asked");
   const second = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" }));
   assert.equal(second.guest?.ref, first.guest?.ref);
   await world.backend.release(first.guest!, QUIET);

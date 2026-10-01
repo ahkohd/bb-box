@@ -181,7 +181,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             guard("Removing the machine", async () => {
               const box = await boxes.get(OPERATOR, positionals.machine);
               const idle = options.force ? await app.threadsOn(box) : await app.checkInUse(box, "Releasing");
-              const left = await boxes.release(OPERATOR, box.id);
+              const left = await boxes.release(OPERATOR, box.id, "removed with bb box machines remove");
               if (left) return { exitCode: 1, stderr: `Machine ${left.name} is still being removed: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
               return out(`Removed machine ${box.name}.${idleWords(idle, false)}`);
             }),
@@ -205,7 +205,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const threadId = threadOf(options.thread, ctx);
               const box = await boxes.get(threadId, positionals.box);
               const idle = options.force ? await app.threadsOn(box) : await app.checkInUse(box, "Releasing");
-              const left = await boxes.release(threadId, positionals.box);
+              const left = await boxes.release(threadId, positionals.box, "released with bb box release");
               if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
               return out(`Released box ${positionals.box}.${idleWords(idle, false)}`);
             }),
@@ -336,6 +336,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
                   `Leftover guests removed: ${report.leftovers}`,
                   `Boxes restored from their guests: ${report.adopted}`,
                   `Guests kept until BB says whether their thread ended: ${report.kept}`,
+                  `Boxes and guests kept until the next sweep, as BB says their thread ended only now: ${report.ending}`,
                   `Interrupted acquires and releases carried on: ${report.resumed}`,
                 ].join("\n"),
               );

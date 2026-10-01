@@ -1044,6 +1044,8 @@ test("New box: the sweep releases the box of a thread that ended, and BB's remov
   const { removal, hostId } = await newBox(harness, world);
   world.threads.delete(THREAD);
   await within(app.boxes.sweep(), "the sweep");
+  assert.equal((await app.boxes.list(THREAD)).length, 1, "BB has said so at one sweep");
+  await within(app.boxes.sweep(), "the next sweep");
   assert.deepEqual(await app.boxes.list(THREAD), []);
   assert.ok(!world.events.includes(`delete ${hostId}`), "bb-box leaves BB's machine to BB");
   assert.deepEqual(await within(removal(), "BB's removal"), { status: "removed" });
@@ -1261,15 +1263,23 @@ test("enrolment can be switched off", async (t) => {
   assert.equal(world.hosts.size, 0);
 });
 
-test("archiving or deleting a thread releases its boxes", async (t) => {
+test("archiving or deleting a thread releases its boxes, once BB says so when asked", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   world.threads.set("thr_two", makeThreadResponse({ id: "thr_two", projectId: PROJECT }));
 
   await tool("box_acquire", {});
   await tool("box_acquire", {}, "thr_two");
-  await harness.behavior.emitThreadEvent("thread.archived", { thread: makeThreadResponse({ id: THREAD, archivedAt: Date.now() }) });
+  const archived = makeThreadResponse({ id: THREAD, projectId: PROJECT, archivedAt: Date.now() });
+  const logs = () => harness.inspection.logEntries.map((entry) => entry.message);
+  await harness.behavior.emitThreadEvent("thread.archived", { thread: archived });
+  await until("the check with BB", async () => logs().includes(`Kept the boxes of thread ${THREAD}: BB said it was archived, but says now that it is live.`));
+  assert.equal((await app.boxes.list(THREAD)).length, 1);
+  world.threads.set(THREAD, archived);
+  await harness.behavior.emitThreadEvent("thread.archived", { thread: archived });
   await until("the archived thread's box to go", async () => (await app.boxes.list(THREAD)).length === 0);
+  assert.ok(logs().some((line) => line.startsWith("Releasing box ") && line.endsWith(` of thread ${THREAD}: its thread was archived.`)));
+  world.threads.delete("thr_two");
   await harness.behavior.emitThreadEvent("thread.deleted", { thread: makeThreadResponse({ id: "thr_two" }) });
   await until("the deleted thread's box to go", async () => (await app.boxes.list("thr_two")).length === 0);
   await app.boxes.idle();
@@ -1295,6 +1305,9 @@ test("the sweep releases boxes of threads that are gone, but not when BB does no
   }
 
   world.threadsError = null;
+  const first = (await harness.behavior.runCli(["sweep"])).stdout ?? "";
+  assert.match(first, /Boxes of ended threads released: 0/);
+  assert.match(first, /Boxes and guests kept until the next sweep, as BB says their thread ended only now: 1/);
   assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Boxes of ended threads released: 1/);
   assert.deepEqual(await app.boxes.list(THREAD), []);
 });
@@ -1321,8 +1334,10 @@ test("after bb-box loses its storage, the sweep restores a live thread's box fro
 
   const swept = (await harness.behavior.runCli(["sweep"])).stdout ?? "";
   assert.match(swept, /Boxes restored from their guests: 1/);
-  assert.match(swept, /Leftover guests removed: 1/);
+  assert.match(swept, /Leftover guests removed: 0/);
   assert.match(swept, /Guests kept until BB says whether their thread ended: 1/);
+  assert.match(swept, /Boxes and guests kept until the next sweep, as BB says their thread ended only now: 1/);
+  assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Leftover guests removed: 1/);
 
   const restored = (await app.boxes.list(THREAD))[0]!;
   assert.equal(restored.id, live!.id);

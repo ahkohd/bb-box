@@ -267,7 +267,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
     log(`Releasing box ${box.name}...`);
     started = performance.now();
     try {
-      const left = await boxes.release(SMOKE_THREAD, box.id);
+      const left = await boxes.release(SMOKE_THREAD, box.id, "the smoke run is done with it");
       timings.release = performance.now() - started;
       if (left) problems.push(`Box ${box.name} was not released: ${left.error ?? "the backend has not finished"}. Delete it by hand.`);
     } catch (error) {

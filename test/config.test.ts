@@ -762,7 +762,7 @@ test("switches stop new boxes only: an off backend or kind keeps its boxes worki
   assert.deepEqual(await app().kinds(), [], "no kind is offered from an off backend");
   assert.equal((await app().boxes.run(THREAD, box.name, "echo on an off backend")).result.stdout.trim(), "on an off backend");
   await assert.rejects(app().boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }), /No backend is set up/);
-  assert.equal(await app().boxes.release(THREAD, box.name), null, "a box of an off backend can be released");
+  assert.equal(await app().boxes.release(THREAD, box.name, "the test asked"), null, "a box of an off backend can be released");
 });
 
 test("the sweep retires the warm guests of a backend turned off, and leaves its boxes alone (#85)", async () => {

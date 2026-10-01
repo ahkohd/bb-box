@@ -54,13 +54,13 @@ export async function newBoxHost(lookup: MachineLookup, boxId: string): Promise<
 
 /** Releases the thread's own boxes that failed, so a retry starts on a new one. */
 async function releaseFailed(boxes: Boxes, threadId: string): Promise<void> {
-  for (const box of await boxes.list(threadId)) if (box.role === "machine" && box.state === "failed") await boxes.release(threadId, box.id);
+  for (const box of await boxes.list(threadId)) if (box.role === "machine" && box.state === "failed") await boxes.release(threadId, box.id, "it failed, and its thread asked BB for another");
 }
 
 export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclaration<typeof newBoxInputs> {
   const { boxes } = deps;
-  const release = async (box: BoxRecord | null) => {
-    if (box) await boxes.release(box.threadId, box.id);
+  const release = async (box: BoxRecord | null, why: string) => {
+    if (box) await boxes.release(box.threadId, box.id, why);
   };
   return {
     id: NEW_BOX_PROVIDER_ID,
@@ -102,13 +102,13 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
     },
     // A create cut short: the thread's box, if bb-box made one, goes.
     async reconcileCleanup({ key }) {
-      await release(await machineOf(boxes, key));
+      await release(await machineOf(boxes, key), "BB cut short making it the thread's machine");
       await releaseFailed(boxes, key);
       return { status: "removed" };
     },
     async remove({ resource }) {
       const boxId = (resource as { boxId?: unknown }).boxId;
-      if (typeof boxId === "string") await release(await boxes.find(boxId));
+      if (typeof boxId === "string") await release(await boxes.find(boxId), "BB removed the thread's machine");
       return { status: "removed" };
     },
   };
