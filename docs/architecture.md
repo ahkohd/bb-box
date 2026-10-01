@@ -728,7 +728,9 @@ any state -> releasing -> released     (release, or the thread is archived or de
 6. **Released.** You or the agent release the box, or its thread is archived
    or deleted ([003](decisions/003-boxes-live-until-released.md)). bb-box
    removes the machine from BB, then the backend releases the guest. A missing
-   guest counts as released.
+   guest counts as released. A box a thread is working on is released or
+   stopped only when forced
+   ([034](decisions/034-a-working-thread-holds-its-box.md)).
 
 | | Virtual | Real |
 | --- | --- | --- |

@@ -1,6 +1,8 @@
 # 033: A thread can start on a new box, from BB's new-thread screen
 
-Status: accepted, 1 October 2026.
+Status: accepted, 1 October 2026. Partly superseded by
+[034](034-a-working-thread-holds-its-box.md): only a thread that is
+working stops a release or a stop, and a person can force one.
 
 ## Context
 

@@ -38,3 +38,4 @@ that changes gets a new record that supersedes the old one.
 | [031](031-docker-boxes-are-reached-through-docker-exec.md) | Docker boxes are reached through `docker exec` |
 | [032](032-spare-boxes-are-enrolled-ahead.md) | Spare boxes are enrolled ahead, and BB shows them until claimed |
 | [033](033-a-thread-can-start-on-a-new-box.md) | A thread can start on a new box, from BB's new-thread screen |
+| [034](034-a-working-thread-holds-its-box.md) | A box a thread is working on is released or stopped only when forced |
