@@ -116,9 +116,24 @@ function SecretControl({ id, field, value, onChange }: { id: string; field: Fiel
  * the backend its driver inherits from: shown as a chip, and for text as the
  * placeholder.
  */
-export function FieldControl({ field, value, onChange, problem, inherited }: { field: FieldView; value: FormValue; onChange: (value: FormValue) => void; problem: string | null; inherited?: FieldValue | SecretState }) {
+export function FieldControl({
+  field,
+  value,
+  onChange,
+  problem,
+  inherited,
+  from,
+}: {
+  field: FieldView;
+  value: FormValue;
+  onChange: (value: FormValue) => void;
+  problem: string | null;
+  inherited?: FieldValue | SecretState;
+  /** The lending backend's name, when the driver's label alone does not say which. */
+  from?: string;
+}) {
   const id = useId();
-  const from = inherited !== undefined && field.inherits ? <Chip>from {field.inherits.label}</Chip> : null;
+  const chip = inherited !== undefined && field.inherits ? <Chip>from {from ?? field.inherits.label}</Chip> : null;
   const shown = inherited !== undefined && !isSecretState(inherited) ? inherited : field.default;
   const placeholder = shown !== undefined && shown !== "" ? String(shown) : undefined;
   if (isSecretField(field)) {
@@ -130,7 +145,7 @@ export function FieldControl({ field, value, onChange, problem, inherited }: { f
         chips={
           <>
             <Chip>secret</Chip>
-            {from ?? <Chip tone={set ? "muted" : "warn"}>{set ? "set" : "not set"}</Chip>}
+            {chip ?? <Chip tone={set ? "muted" : "warn"}>{set ? "set" : "not set"}</Chip>}
           </>
         }
         description={field.description}
@@ -168,13 +183,13 @@ export function FieldControl({ field, value, onChange, problem, inherited }: { f
   const text = typeof value === "string" || typeof value === "number" ? String(value) : "";
   if (field.type === "string" && field.experimental_multiline) {
     return (
-      <FieldShell label={field.label} htmlFor={id} chips={from} description={field.description} problem={problem} wide>
+      <FieldShell label={field.label} htmlFor={id} chips={chip} description={field.description} problem={problem} wide>
         <Textarea id={id} className="min-h-16 font-mono text-xs" rows={3} value={text} placeholder={placeholder} aria-invalid={problem ? true : undefined} onChange={(event) => onChange(event.target.value)} />
       </FieldShell>
     );
   }
   return (
-    <FieldShell label={field.label} htmlFor={id} chips={from} description={field.description} problem={problem}>
+    <FieldShell label={field.label} htmlFor={id} chips={chip} description={field.description} problem={problem}>
       <Input id={id} className="h-8 text-xs" inputMode={field.type === "number" ? "numeric" : undefined} value={text} placeholder={placeholder} aria-invalid={problem ? true : undefined} onChange={(event) => onChange(event.target.value)} />
     </FieldShell>
   );

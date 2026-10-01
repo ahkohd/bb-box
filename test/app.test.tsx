@@ -2,7 +2,7 @@
 // SDK's slot harness against fake RPC handlers and a fake noVNC. Run with
 // vitest: npm run test:app.
 
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
@@ -14,6 +14,10 @@ type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "you
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
+import { sourceName } from "../src/app/config.ts";
+import { FieldControl } from "../src/app/settings-fields.tsx";
+import type { BackendConfig } from "../src/core/document.ts";
+import type { FieldView } from "../src/plugin/configuration.ts";
 
 /** noVNC's RFB, recording each client the viewer makes. */
 const novnc = vi.hoisted(() => {
@@ -1362,4 +1366,23 @@ test("an arm64 kind carries an arm64 badge, and macOS, always arm64, does not (0
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   const form = await screen.findByRole("radiogroup", { name: "Kind" });
   expect(within(form).getAllByRole("radio").map((option) => option.textContent)).toEqual(["LinuxLXC", "LinuxDesktopGPULXC", "Linuxarm64LXC"]);
+});
+
+test("a field that takes a value from another backend names that backend when there are two of its type (#197)", () => {
+  const lxc = (id: string, label?: string): BackendConfig => ({ id, type: "proxmox-lxc", ...(label ? { label } : {}), enabled: true, fields: {} });
+  const document = (...backends: BackendConfig[]) => ({ schema: 1, revision: 1, backends, kinds: {}, general: {} }) as unknown as ConfigDocument;
+  expect(sourceName(document(lxc("proxmox-lxc")), lxc("proxmox-lxc"), "Proxmox LXC")).toBe("Proxmox LXC");
+  const two = document(lxc("proxmox-lxc"), lxc("proxmox-lxc:lab", "Lab"));
+  expect(sourceName(two, lxc("proxmox-lxc"), "Proxmox LXC")).toBe("proxmox-lxc");
+  expect(sourceName(two, lxc("proxmox-lxc:lab", "Lab"), "Proxmox LXC")).toBe("Lab");
+
+  const inherits = { from: "proxmox-lxc", label: "Proxmox LXC", set: ["url", "token-secret"] };
+  const url: FieldView = { key: "url", type: "string", label: "API URL", group: "connection", inherits } as unknown as FieldView;
+  const secret: FieldView = { key: "token-secret", type: "string", secret: true, label: "Token secret", group: "credentials", inherits } as unknown as FieldView;
+  render(<FieldControl field={url} value="" onChange={() => {}} problem={null} inherited="https://lab.example.com:8006/" from="Lab" />);
+  render(<FieldControl field={secret} value="" onChange={() => {}} problem={null} inherited={{ set: true }} from="Lab" />);
+  expect(screen.getAllByText("from Lab")).toHaveLength(2);
+  cleanup();
+  render(<FieldControl field={url} value="" onChange={() => {}} problem={null} inherited="https://pve.example.com:8006/" />);
+  expect(screen.getByText("from Proxmox LXC")).toBeTruthy();
 });

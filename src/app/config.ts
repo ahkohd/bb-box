@@ -165,6 +165,16 @@ function isEmpty(value: FormValue | undefined): boolean {
 }
 
 /** The backend a driver's empty fields take values from, as the server picks it: the first other backend of the type they name. */
+/**
+ * How the page names `source`, the backend a form's empty fields take from:
+ * by its driver's label, as "from Proxmox LXC", unless the configuration has
+ * more than one backend of its type, when by its own label or ID (#197).
+ */
+export function sourceName(document: ConfigDocument, source: BackendConfig, typeLabel: string): string {
+  const several = document.backends.filter((backend) => backend.type === source.type).length > 1;
+  return several ? (source.label ?? source.id) : typeLabel;
+}
+
 export function inheritSource(document: ConfigDocument, fields: readonly FieldView[], id: string): BackendConfig | null {
   const from = fields.find((field) => field.inherits)?.inherits?.from;
   return (from && document.backends.find((other) => other.type === from && other.id !== id)) || null;
