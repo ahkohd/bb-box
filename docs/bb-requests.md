@@ -13,6 +13,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | draft | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
 | [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | draft | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
 | [Find a machine by its key](#6-find-a-machine-by-its-key) | draft | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
+| [Reach a port on a machine](#7-reach-a-port-on-a-machine) | draft | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already |
 | [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box reads the thread's variables and GH_TOKEN from BB's workers in the box: from `/proc` on Linux, inexactly from `ps -E` on macOS once core adds it, and not at all on Windows |
 
 ## 1. BB's host app on Windows
@@ -224,6 +225,50 @@ that answers only the plugin whose provider made the machine, or the key on
 **Until then.** Such a machine stays in BB until someone removes it
 ([026](decisions/026-a-restored-box-enrols-once-it-answers.md)). It
 follows only lost plugin storage, which upgrades no longer cause.
+
+## 7. Reach a port on a machine
+
+**What bb-box needs.** To drive a Mac that is already a BB machine without
+SSH. The Tart backend runs `tart` on a Mac host, and reaches each VM through
+it, since the VMs sit on the Mac's own NAT: commands over SSH with the Mac as
+the jump host, and the desktop through Tart's VNC server on the Mac's
+loopback. Today all three need SSH from the BB server to the Mac: a host user
+with Remote Login, bb-box's key in its `authorized_keys`, and the Mac's host
+key pinned in bb-box's settings. When the Mac runs BB's host daemon, BB
+already has an authenticated connection to it.
+
+**What BB does now.** Checked in the plugin SDK 0.5.29 and 0.6.5:
+
+- A plugin can declare one host entry (`bb.host`, an
+  `ExperimentalHostEntry`), which BB's daemon runs as a worker on each
+  machine. The server side calls it with `bb.hosts.experimental_client`:
+  request and response with JSON in and out, up to 30 minutes a call, plus
+  ephemeral signals from the worker and `experimental_retainWorker` for work
+  in the background. That is enough to run `tart clone`, `run`, `ip`,
+  `suspend` and `delete` on the Mac.
+- Nothing carries bytes both ways with backpressure. Calls and signals are
+  JSON messages, and machine terminals (`terminals.create`, `input`,
+  `output`) are PTY sessions whose output is read back, which change bytes
+  and suit people, not protocols. So neither can carry the VNC stream or an
+  SSH connection to a VM.
+
+**What we ask.** A way for a plugin's server side to open a two-way byte
+stream to a TCP address as a machine sees it, with backpressure: for example
+`bb.hosts.experimental_connect({ hostId, host, port, signal })`, returning a
+`ReadableStream` and a `WritableStream`, and allowed only to addresses the
+host entry's machine can reach. It could be limited to the loopback and
+private ranges, or to what a plugin's host entry allows.
+
+**What it would remove.** For a Mac that is a BB machine, all of bb-box's
+SSH to the Mac: the host user's Remote Login, bb-box's key on the Mac and
+its pinned host key. `tart` would run through the host entry; the VNC route
+would be a stream to `127.0.0.1:<port>` on the Mac; each VM's SSH would be a
+stream to `<VM address>:22` from the Mac, so the VMs need no jump host. The
+VMs' own SSH, with bb-box's key in the image, would stay, until the VMs
+enrol and bb-box can run commands through BB too.
+
+**Until then.** The Tart backend reaches Macs over SSH, which is also the
+general path for Macs that do not run BB.
 
 ## 8. Give a machine's own commands its variables
 
