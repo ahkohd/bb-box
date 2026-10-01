@@ -19,6 +19,11 @@ export const RELAY_ROUTE = "/docker-relay";
 export const ACCEPT_MS = 10_000;
 /** How long a relay with no channel stays open when bb-box has no box on the machine. */
 export const IDLE_MS = 5 * 60_000;
+/**
+ * A relay that has heard nothing for this long, a ping and some, may be to a
+ * machine that slept: a new connection asks BB about the machine first.
+ */
+export const STALE_MS = 20_000;
 
 /** The parts of BB's plugin WebSocket the hub uses. */
 export interface RelaySocket {
@@ -34,6 +39,8 @@ export interface RelayHubDeps {
   open(hostId: string, secret: string, signal: AbortSignal): Promise<unknown>;
   /** Whether bb-box needs the machine's relay with no channel open: it has a box there. */
   keep(hostId: string): Promise<boolean>;
+  /** Why the machine is offline, as BB shows it now with no call to it, or null while it is connected. */
+  offline?(hostId: string): Promise<string | null>;
   logError(operation: string, error: unknown): void;
   log?(message: string): void;
   /** Where the sockets go; a private directory of its own by default. */
@@ -42,6 +49,7 @@ export interface RelayHubDeps {
   readonly idleMs?: number;
   readonly pingMs?: number;
   readonly deadMs?: number;
+  readonly staleMs?: number;
 }
 
 interface Machine {
@@ -52,6 +60,8 @@ interface Machine {
   relay: Promise<Mux> | null;
   /** The docker CLI's connections, which closing the server would wait for. */
   readonly sockets: Set<Socket>;
+  /** Resolves once the socket listens. */
+  readonly listening: Promise<void>;
   idle: ReturnType<typeof setTimeout> | null;
 }
 
@@ -89,27 +99,42 @@ export class RelayHub {
     chmodSync(this.#dir, 0o700);
   }
 
+  /** The docker CLI's host for machine `hostId`, the same each time. It listens once `endpoint` resolves. */
+  address(hostId: string): string {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(hostId)) throw new Error(`"${hostId}" is not a BB machine ID.`);
+    return `unix://${join(this.#dir, `${hostId}.sock`)}`;
+  }
+
   /** The docker CLI's host for machine `hostId`, listening once this resolves. */
   async endpoint(hostId: string): Promise<string> {
     if (this.#disposed) throw new Error("The Docker relay has stopped.");
+    const address = this.address(hostId);
     const known = this.#machines.get(hostId);
-    if (known) return `unix://${known.path}`;
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(hostId)) throw new Error(`"${hostId}" is not a BB machine ID.`);
-    const path = join(this.#dir, `${hostId}.sock`);
+    if (known) {
+      await known.listening;
+      return address;
+    }
+    const path = address.slice("unix://".length);
     rmSync(path, { force: true });
     // Half-open, so a client's end of input reaches Docker as its end of input, not of the connection.
     const server = createServer({ allowHalfOpen: true }, (socket) => this.#connection(machine, socket));
-    const machine: Machine = { hostId, path, server, relay: null, idle: null, sockets: new Set() };
-    this.#machines.set(hostId, machine);
-    await new Promise<void>((resolve, reject) => {
+    const listening = new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(path, () => {
         server.off("error", reject);
+        chmodSync(path, 0o600);
         resolve();
       });
     });
-    chmodSync(path, 0o600);
-    return `unix://${path}`;
+    const machine: Machine = { hostId, path, server, relay: null, idle: null, sockets: new Set(), listening };
+    this.#machines.set(hostId, machine);
+    try {
+      await listening;
+    } catch (error) {
+      this.#machines.delete(hostId);
+      throw error;
+    }
+    return address;
   }
 
   /** The handler for bb-box's WebSocket route, which the machine's worker connects to. */
@@ -150,6 +175,17 @@ export class RelayHub {
     };
   }
 
+  /**
+   * Ends the machine's relay, as when BB says its worker exited, so the next
+   * connection finds out at once rather than when the pings stop.
+   */
+  drop(hostId: string, reason: string): void {
+    void this.#machines.get(hostId)?.relay?.then(
+      (mux) => mux.close(reason),
+      () => {},
+    );
+  }
+
   /** Closes the machine's relay and socket, as when it is no longer a Docker host. */
   async forget(hostId: string): Promise<void> {
     const machine = this.#machines.get(hostId);
@@ -174,7 +210,7 @@ export class RelayHub {
     machine.sockets.add(socket);
     socket.on("close", () => machine.sockets.delete(socket));
     socket.on("error", () => {});
-    this.#relay(machine).then(
+    this.#fresh(machine).then(
       (mux) => {
         if (socket.destroyed) return;
         let channel: Channel;
@@ -196,6 +232,20 @@ export class RelayHub {
       },
       (error) => refuse(socket, message(error)),
     );
+  }
+
+  /**
+   * The machine's relay, checked first when it has gone quiet. One to a
+   * machine BB shows offline ends at once with the reason; a quiet one to a
+   * connected machine is replaced, which costs one host call.
+   */
+  async #fresh(machine: Machine): Promise<Mux> {
+    const mux = await this.#relay(machine);
+    if (mux.quietMs <= (this.#deps.staleMs ?? STALE_MS)) return mux;
+    const offline = (await this.#deps.offline?.(machine.hostId).catch(() => null)) ?? null;
+    mux.close(offline ?? `nothing came over it for ${Math.round(mux.quietMs / 1000)} s`);
+    if (offline) throw new Error(offline);
+    return this.#relay(machine);
   }
 
   /** The machine's relay, opening it when there is none. */

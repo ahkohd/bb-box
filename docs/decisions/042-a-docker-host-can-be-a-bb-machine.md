@@ -53,7 +53,7 @@ sweep all work as they are. The backend interface does not change.
   would: `DOCKER_HOST`, else the current context's endpoint, else the
   default socket or named pipe.
 - Each side of a channel sends only as much as the other side has granted,
-  256 KiB at first, and grants more as its own socket drains. This keeps a
+  1 MiB at first, and grants more as its own socket drains. This keeps a
   slow side from filling memory, as BB's plugin socket gives no
   backpressure
   ([request 2](../bb-requests.md#2-send-backlog-on-plugin-websockets)).

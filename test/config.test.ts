@@ -904,3 +904,16 @@ test("a field a backend does not have names the backend, and the key it has now 
     ],
   );
 });
+
+test("the configuration takes several Docker backends, one per host, and still one of any other type (042)", () => {
+  const docker = (id: string, host?: string) => ({ id, type: "docker", enabled: true, fields: host === undefined ? {} : { host } });
+  const problems = (backends: unknown[]) =>
+    checkDocument(readDraft({ schema: 1, backends, kinds: {}, general: {} }, DRIVERS).document, {}, DRIVERS).filter((problem) => /both Docker|one .* backend for now/.test(problem.message));
+  assert.deepEqual(problems([docker("docker"), docker("docker:devpc", "bb:host_m1"), docker("docker:lab", "ssh://me@lab")]), []);
+  assert.deepEqual(problems([docker("docker:one", "bb:host_m1"), docker("docker:two", "bb:host_m1")]).map((problem) => `${problem.path}: ${problem.message}`), [
+    "backends.docker:two: docker:two and docker:one are both Docker on bb:host_m1. Give each its own host, or remove one.",
+  ]);
+  assert.match(problems([docker("docker"), docker("docker:local", "")])[0]?.message ?? "", /both Docker on the default host/);
+  const lxc = { id: "proxmox-lxc", type: "proxmox-lxc", enabled: false, fields: {} };
+  assert.match(problems([lxc, { ...lxc, id: "proxmox-lxc:two" }])[0]?.message ?? "", /bb-box runs one Proxmox LXC backend for now/);
+});

@@ -5,7 +5,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
-import type { BackendDriver, DoctorReport } from "../backends/types.ts";
+import type { BackendDriver, DoctorReport, MachineAccess } from "../backends/types.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -47,6 +47,8 @@ const DAEMON_NAMES = ["GH_TOKEN", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_CO
 const NAMES_FRESH_MS = 60_000;
 /** How long the host call that opens a Docker relay may take, the worker's start included. */
 const RELAY_CALL_TIMEOUT_MS = 15_000;
+/** How long BB's word on a machine's connection is trusted, so each docker command does not ask again. */
+const MACHINE_STATE_MS = 2_000;
 /** bb-box's version, which the move from BB's settings records. */
 export const VERSION: string = packageJson.version;
 
@@ -196,7 +198,65 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   }
   if (settings) await clearSettings(kv, settings, earlier).catch((error) => logError("clear the settings bb-box moved", error));
 
-  const backends = new Backends({ storage: kv, installId: await loadInstallId(kv), logError, drivers });
+  // bb-box's host entry on BB machines (src/host/entry.ts).
+  const host = bb.hosts.experimental_client({ contract: hostContract });
+
+  // The Docker API relay (042): a socket per BB machine for the docker CLI, each
+  // connection a channel on one WebSocket the machine's worker opens out to this route.
+  const machineNames = new Map<string, string>();
+  const machineStates = new Map<string, { at: number; connected: boolean | null }>();
+  /** Whether BB shows the machine connected, from BB with no call to it, for a moment at a time. Null for no such machine. */
+  const machineConnected = async (hostId: string): Promise<boolean | null> => {
+    const known = machineStates.get(hostId);
+    if (known && Date.now() - known.at < MACHINE_STATE_MS) return known.connected;
+    let connected: boolean | null;
+    try {
+      const found = await bb.sdk.hosts.get({ hostId });
+      machineNames.set(hostId, found.name);
+      connected = found.status === "connected";
+    } catch (error) {
+      if (status(error).status !== 404) throw error;
+      connected = null;
+    }
+    machineStates.set(hostId, { at: Date.now(), connected });
+    return connected;
+  };
+  const offline = (hostId: string, connected: boolean | null) =>
+    new Error(connected === null ? `BB has no machine ${hostId}.` : `${machineNames.get(hostId) ?? `BB machine ${hostId}`} is offline in BB.`);
+  const relay = new RelayHub({
+    async open(hostId, secret, signal) {
+      const connected = await machineConnected(hostId);
+      if (connected !== true) throw offline(hostId, connected);
+      return host.call("relay", { secret, path: `/api/v1/plugins/${bb.pluginId}/http${RELAY_ROUTE}` }, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+    },
+    // While bb-box has a box on a Docker backend on the machine, its relay stays open.
+    async keep(hostId) {
+      const ids = new Set(configuration.document.backends.filter((backend) => backend.fields.host === `bb:${hostId}`).map((backend) => backend.id));
+      return ids.size > 0 && (await boxes.all()).some((box) => ids.has(box.backend) && box.state !== "gone");
+    },
+    async offline(hostId) {
+      // BB's word now, not a moment ago: this is asked when a relay has gone quiet.
+      machineStates.delete(hostId);
+      const connected = await machineConnected(hostId);
+      return connected === true ? null : offline(hostId, connected).message;
+    },
+    logError,
+    log: (message) => bb.log.info(message),
+  });
+  bb.http.experimental_websocket(RELAY_ROUTE, ({ url }) => relay.route(url), { auth: "none" });
+  bb.onDispose(() => relay.dispose());
+  const machines: MachineAccess = {
+    dockerHost: (hostId) => relay.address(hostId),
+    async ready(hostId) {
+      const connected = await machineConnected(hostId);
+      if (connected !== true) throw offline(hostId, connected);
+      await relay.endpoint(hostId);
+    },
+    name: (hostId) => machineNames.get(hostId) ?? null,
+    connected: machineConnected,
+  };
+
+  const backends = new Backends({ storage: kv, installId: await loadInstallId(kv), logError, drivers, machines });
   const configuration = await Configuration.load({
     kv,
     backends,
@@ -243,27 +303,17 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   };
 
   // bb-box's host entry on each enrolled box keeps a process with the thread's access, as BB's workers come and go.
-  const host = bb.hosts.experimental_client({ contract: hostContract });
   const holders = new Holders({
     access: (hostId, names) => host.call("access", { names: [...names] }, { hostId, timeoutMs: CALL_TIMEOUT_MS }),
     terminals: () => bb.sdk.terminals as unknown as RetiredTerminals,
     logError,
     log: (message) => bb.log.info(message),
   });
-  host.experimental_onWorkerExit(({ hostId }) => holders.forget(hostId));
-
-  // The Docker API relay (042): a socket per BB machine for the docker CLI, each
-  // connection a channel on one WebSocket the machine's worker opens out to this route.
-  const relay = new RelayHub({
-    open: (hostId, secret, signal) =>
-      host.call("relay", { secret, path: `/api/v1/plugins/${bb.pluginId}/http${RELAY_ROUTE}` }, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS }),
-    // No box uses the relay yet, so an idle one closes.
-    keep: async () => false,
-    logError,
-    log: (message) => bb.log.info(message),
+  host.experimental_onWorkerExit(({ hostId }) => {
+    holders.forget(hostId);
+    relay.drop(hostId, "the machine's worker exited");
   });
-  bb.http.experimental_websocket(RELAY_ROUTE, ({ url }) => relay.route(url), { auth: "none" });
-  bb.onDispose(() => relay.dispose());
+
   let enrolment: Enrolment;
   let desktops: Desktops | undefined;
   let terminals: Terminals | undefined;

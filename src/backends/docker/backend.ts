@@ -39,11 +39,12 @@ import {
   type HeldGuest,
   type HostCapacity,
   type Limit,
+  type MachineAccess,
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
 import { DockerCli, LABELS, NO_SUCH, type ContainerInfo, type DockerInfo } from "./cli.ts";
-import { DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
+import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
@@ -228,21 +229,17 @@ export function dockerKinds(config: DockerConfig): BoxKind[] {
   return DOCKER_KINDS.filter((kind) => config.images[kind]).map((kind) => kinds[kind]);
 }
 
-/** Where the docker CLI goes, for people: the host of an ssh:// address, or the local daemon. */
-function hostWords(host: string | null): string {
+/** Where the docker CLI goes, for people: the host of an ssh:// address, a BB machine's name, or the local daemon. */
+function hostWords(host: string | null, machines?: MachineAccess): string {
   if (!host) return "the local Docker host";
+  const machine = BB_MACHINE.exec(host)?.[1];
+  if (machine) return machines?.name(machine) ?? `BB machine ${machine}`;
   if (host.startsWith("ssh://")) return host.slice(6).replace(/^[^@]*@/, "");
   return host;
 }
 
 export class DockerBackend implements Backend {
   readonly id: string;
-  readonly label: string;
-  /** The Docker host by its own name once the daemon has answered (docker info's Name), else by its address; none for a local daemon not yet asked. */
-  get hosts(): readonly string[] {
-    if (this.#info?.name) return [this.#info.name];
-    return this.#config.host ? [hostWords(this.#config.host)] : [];
-  }
   readonly nature = "virtual" as const;
   readonly #config: DockerConfig;
   readonly #context: BackendContext;
@@ -262,8 +259,29 @@ export class DockerBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#kinds = dockerKinds(config);
-    this.#cli = new DockerCli(config.host, options.binary);
-    this.label = config.host ? `Docker on ${hostWords(config.host)}` : "Docker";
+    const machine = config.machine;
+    const machines = context.machines;
+    this.#cli = machine
+      ? new DockerCli(machines?.dockerHost(machine) ?? null, options.binary, async () => {
+          if (!machines) throw new Error(`bb-box reaches BB machine ${machine} only when it runs in BB.`);
+          await machines.ready(machine);
+        })
+      : new DockerCli(config.host, options.binary);
+  }
+
+  get label(): string {
+    return this.#config.host ? `Docker on ${hostWords(this.#config.host, this.#context.machines)}` : "Docker";
+  }
+
+  /**
+   * The Docker host for people: a BB machine by its name in BB, else by its
+   * own name once the daemon has answered (docker info's Name), else by its
+   * address; none for a local daemon not yet asked.
+   */
+  get hosts(): readonly string[] {
+    if (this.#config.machine) return [hostWords(this.#config.host, this.#context.machines)];
+    if (this.#info?.name) return [this.#info.name];
+    return this.#config.host ? [hostWords(this.#config.host)] : [];
   }
 
   kinds(): BoxKind[] {
@@ -276,13 +294,19 @@ export class DockerBackend implements Backend {
     return kind;
   }
 
-  /** The host's name for people, as the daemon gives it once it has answered. */
+  /** The host's name for people: a BB machine's as BB has it, else as the daemon gives it once it has answered. */
   get #host(): string {
+    if (this.#config.machine) return hostWords(this.#config.host, this.#context.machines);
     return this.#info?.name || hostWords(this.#config.host);
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     this.#kind(kind);
+    // A BB machine that is offline takes no box, said at once from BB's view of it, with no call to it (042).
+    const machine = this.#config.machine;
+    if (machine && (await this.#context.machines?.connected(machine)) !== true) {
+      return { ok: false, message: `${this.#host} is offline in BB.`, warm: null, hosts: [{ host: this.#host, ok: false, limits: [] }] };
+    }
     let state: HostState;
     try {
       state = await this.#state(signal);
@@ -503,6 +527,8 @@ export class DockerBackend implements Backend {
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
+    // The transport's commands go straight to the CLI, so a BB machine's relay is made ready first.
+    await this.#cli.prepare();
     const command = new DockerTransport(this.#cli, guest.ref);
     const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
     const displays = (capabilities?.displays ?? []).map(
@@ -547,7 +573,9 @@ export class DockerBackend implements Backend {
         state = await this.#state(signal);
       } catch (error) {
         if (signal?.aborted) throw error;
-        const fix = !this.#config.host
+        const fix = this.#config.machine
+          ? `Check that ${this.#host} is connected in BB and that Docker runs there. bb box docker-check ${this.#config.machine} reaches it through bb-box's relay.`
+          : !this.#config.host
           ? "Start Docker on BB's server, and let the user BB runs as use it (on Linux, add it to the docker group), or set the Docker host in bb-box's settings."
           : this.#config.host.startsWith("ssh://")
             ? `Check that the user BB runs as logs in to ${hostWords(this.#config.host)} over SSH without a prompt, and that the user it logs in as may use Docker there.`

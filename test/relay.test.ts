@@ -17,7 +17,11 @@ function pair(options: { pingMs?: number; deadMs?: number; drop?: () => boolean 
       const copy = Uint8Array.from(data);
       setImmediate(() => to().receive(copy));
     },
-    close: () => setImmediate(() => to().close("the other side closed")),
+    // A silent link carries no close either, so each side finds it dead on its own.
+    close: () => {
+      if (options.drop?.()) return;
+      setImmediate(() => to().close("the other side closed"));
+    },
   });
   const opened: Channel[] = [];
   a = new Mux(link("a", () => b), { opener: true, pingMs: options.pingMs, deadMs: options.deadMs });
@@ -294,4 +298,52 @@ test("the worker finds Docker as the docker CLI would", () => {
   assert.deepEqual(endpointOf("npipe:////./pipe/docker_engine"), { path: "\\\\.\\pipe\\docker_engine" });
   assert.deepEqual(endpointOf("tcp://127.0.0.1:2375"), { host: "127.0.0.1", port: 2375 });
   assert.equal(endpointOf("ssh://me@host"), null);
+});
+
+test("a connection to a relay that went quiet asks BB first: it fails at once when the machine is offline, and gets a new relay when it is not; a worker's exit drops the relay", async (t) => {
+  const dir = tempDir("relay-stale");
+  const docker = await fakeDocker(join(dir, "docker.sock"));
+  t.after(() => docker.close());
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  let hub!: RelayHub;
+  const { connectTo } = joined(() => hub);
+  // Pings far apart, so a relay goes quiet quickly in this test.
+  const worker = experimental_createHostEntryHarness(hostEntry({ relay: { connect: connectTo, endpoint: async () => ({ path: join(dir, "docker.sock") }), pingMs: 60_000 } }));
+  t.after(() => worker.experimental_dispose());
+  let offline: string | null = null;
+  let opens = 0;
+  hub = new RelayHub({
+    dir: tempDir("relay-hub"),
+    open: (_hostId, secret) => (opens++, worker.experimental_call("relay", { secret, path: "/api/v1/plugins/bb-box/http/docker-relay" })),
+    keep: async () => true,
+    offline: async () => offline,
+    logError: () => {},
+    pingMs: 60_000,
+    staleMs: 50,
+  });
+  t.after(() => hub.dispose());
+  const path = (await hub.endpoint("host_pc")).slice("unix://".length);
+  assert.equal((await get(path, "/_ping")).status, 200);
+  assert.equal(opens, 1);
+
+  await new Promise((r) => setTimeout(r, 100));
+  offline = "devpc is offline in BB.";
+  const started = Date.now();
+  const refused = await get(path, "/_ping");
+  assert.deepEqual([refused.status, refused.text], [503, "bb-box could not reach Docker on the BB machine: devpc is offline in BB."]);
+  assert.ok(Date.now() - started < 1_000, "at once, not when the pings stop");
+
+  // Back online: a new relay serves it.
+  offline = null;
+  assert.equal((await get(path, "/_ping")).status, 200);
+  assert.equal(opens, 2);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await get(path, "/_ping")).status, 200, "a quiet relay to a connected machine is replaced");
+  assert.equal(opens, 3);
+
+  // BB says the machine's worker exited: the relay goes, and the next connection opens another.
+  hub.drop("host_pc", "the machine's worker exited");
+  await new Promise((r) => setImmediate(r));
+  assert.equal((await get(path, "/_ping")).status, 200);
+  assert.equal(opens, 4);
 });

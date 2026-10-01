@@ -613,6 +613,8 @@ export function checkDocument(
 
   const seen = new Set<string>();
   const types = new Set<string>();
+  /** Backends of a type that may have several, by type and host. */
+  const hosts = new Map<string, string>();
   for (const backend of document.backends) {
     const path = `backends.${backend.id}`;
     const driver = drivers.find((candidate) => candidate.type === backend.type);
@@ -630,8 +632,13 @@ export function checkDocument(
       else if (!driver.kinds.includes(kind)) problem(`${path}.warm.${kind}`, `${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
       else if (!isWhole(count, 0, MAX_WARM)) problem(`${path}.warm.${kind}`, `Keep 0 to ${MAX_WARM} warm ${kind} boxes.`);
     }
-    // Drivers still name their guests by type, so two of one type would share them.
-    if (types.has(backend.type)) problem(path, `bb-box runs one ${driver.label} backend for now. Remove ${backend.id}.`);
+    // Drivers name their guests by type, so two of one type would share them, unless each is on a host of its own (042).
+    if (driver.several) {
+      const host = `${backend.type} ${driver.several(backend.fields ?? {})}`;
+      const other = hosts.get(host);
+      if (other !== undefined) problem(path, `${backend.id} and ${other} are both ${driver.label} on ${driver.several(backend.fields ?? {}) || "the default host"}. Give each its own host, or remove one.`);
+      else hosts.set(host, backend.id);
+    } else if (types.has(backend.type)) problem(path, `bb-box runs one ${driver.label} backend for now. Remove ${backend.id}.`);
     types.add(backend.type);
     const names = new Set<string>();
     for (const [n, host] of (backend.hosts ?? []).entries()) {

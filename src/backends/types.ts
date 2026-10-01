@@ -476,7 +476,28 @@ export interface BackendContext {
   hostOn(name: string): boolean;
   /** What the configuration says now about a kind here. Read each time, like `warm`. */
   kind(id: string): KindSettings;
+  /** BB machines bb-box reaches through BB (042). Absent where there is no BB, as in the conformance run. */
+  readonly machines?: MachineAccess;
   logError(operation: string, error: unknown): void;
+}
+
+/**
+ * How a backend reaches a BB machine through bb-box (042): Docker there,
+ * through bb-box's relay, and the machine as BB has it, with no call to it.
+ */
+export interface MachineAccess {
+  /**
+   * The docker CLI's host for BB machine `hostId`: a unix socket on BB's
+   * server that bb-box relays to Docker on the machine. It is the same each
+   * time; await `ready` before the first use.
+   */
+  dockerHost(hostId: string): string;
+  /** Listens on the machine's socket, and fails at once, saying so, when BB shows the machine offline. */
+  ready(hostId: string): Promise<void>;
+  /** The machine's name as BB has it, or null while bb-box does not know it. */
+  name(hostId: string): string | null;
+  /** Whether BB shows the machine connected now, with no call to it. Null when BB has no such machine. */
+  connected(hostId: string): Promise<boolean | null>;
 }
 
 /** A kind as the configuration has it now (028, 029). Its sizes are the same on every backend. */
@@ -577,6 +598,12 @@ export interface BackendDriver<C = unknown> {
    * here, so a connection is never part one backend's and part the other's.
    */
   readonly inherits?: { readonly from: string; readonly sets: readonly (readonly string[])[] };
+  /**
+   * For a type the configuration may have several backends of, each on a
+   * host of its own (042): the host its fields name, which no two of them
+   * may share, since each lists its guests on its host.
+   */
+  readonly several?: (fields: Readonly<Record<string, unknown>>) => string;
   /**
    * Paths in bb-box's repository. The guide is the entry point: the settings
    * page links it first, then the scripts in the order the guide runs them.

@@ -12,7 +12,7 @@ import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
 import { backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
-import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm } from "./types.ts";
+import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess } from "./types.ts";
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver];
 
@@ -198,6 +198,7 @@ export class Backends {
   #document: ConfigDocument | null = null;
   #secrets: Secrets = {};
   #statuses: BackendStatus[] = [];
+  readonly #machines: MachineAccess | undefined;
 
   constructor(options: {
     storage: BackendStorage;
@@ -205,7 +206,10 @@ export class Backends {
     installId: string;
     logError(operation: string, error: unknown): void;
     drivers?: readonly BackendDriver<any>[];
+    /** BB machines backends reach through bb-box (042). */
+    machines?: MachineAccess;
   }) {
+    this.#machines = options.machines;
     this.#drivers = options.drivers ?? DRIVERS;
     this.#storage = options.storage;
     this.#installId = options.installId;
@@ -233,6 +237,7 @@ export class Backends {
       storage,
       installId: this.#installId,
       logError: this.#logError,
+      ...(this.#machines ? { machines: this.#machines } : {}),
       warm: (kind) => {
         const document = this.#document;
         const backend = document?.backends.find((candidate) => candidate.id === id);
