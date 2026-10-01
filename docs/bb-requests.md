@@ -14,7 +14,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | draft | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
 | [Find a machine by its key](#6-find-a-machine-by-its-key) | draft | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
 | [Reach a port on a machine](#7-reach-a-port-on-a-machine) | draft | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already |
-| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box reads the thread's variables and GH_TOKEN from BB's workers in the box: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
+| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box keeps a BB terminal on each box and reads the thread's variables and GH_TOKEN from BB's processes there: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
 | [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | draft | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
 | [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | draft | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
 | [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | draft | a box has its thread's project variables only while a thread of the project runs on it |
@@ -294,6 +294,11 @@ its own over SSH. They need what BB's workers in the box have: GH_TOKEN for
 - BB's daemon on a machine gives the values, and GH_TOKEN, to the processes
   it starts for threads, in their environment. The daemon's own process has
   none of them, and some workers have only some.
+- The daemon holds the current values in memory. BB's server sends it the
+  variables set for all projects, with GH_TOKEN and the git identity, when
+  it connects and whenever BB's settings change
+  (`machine-environment.replace`, checked in BB's source of September
+  2026). These are what the daemon gives the processes it starts.
 - No command on the machine prints them.
 
 **What we ask.** A way for the machine's own user to get the variables a
@@ -309,8 +314,16 @@ For example:
 Either way, the values stay on the machine BB already gives them to, and
 no plugin's server side sees them.
 
+The daemon already holds the values, so this only asks it to let the
+machine's user read what it holds, and to keep that current when the
+server sends a change. Giving them to the daemon's own process would not
+do: a process's environment is fixed when it starts, so the daemon would
+need a restart to pass on a changed token or variable.
+
 **What it would remove.**
 
+- The BB terminal that bb-box keeps on each enrolled box, which shows in
+  BB's terminal list and is replaced every 10 minutes.
 - On Linux, bb-box's scan of `/proc/<pid>/environ` for the processes
   below the daemon, which picks the newest with the most variables.
 - On macOS, bb-box's parsing of `ps -E`. It prints a newline as `\012`
@@ -324,10 +337,11 @@ no plugin's server side sees them.
   (`host-daemon/dist/daemon-bundle`), which a BB release can change.
 
 **Until then.** bb-box keeps a BB terminal running `sleep` on each
-enrolled box, since BB's own workers come and go. Linux boxes read the
-environment of the processes below the daemon from `/proc`, and macOS boxes parse `ps -E`, choosing the process
-the same way
-(`src/core/in-box.ts`). Windows boxes get none of the variables.
+enrolled box, since BB's own workers come and go
+(`src/plugin/keeper.ts`). Linux boxes read the environment of the
+processes below the daemon from `/proc`, and macOS boxes parse `ps -E`,
+choosing the process the same way (`src/core/in-box.ts`). Windows boxes
+get none of the variables.
 
 ## 9. Open BB's terminal on a machine from a plugin
 
