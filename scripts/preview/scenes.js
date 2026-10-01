@@ -31,6 +31,7 @@ function box(overrides = {}) {
     timings: { clone: 750, start: 1000, ssh: 450, total: 2200, enrol: 5300 },
     enrol: { state: "enrolled", hostId: "host_1", error: null },
     canStopStart: true,
+    size: "2 cores, 4 GiB memory",
     ...overrides,
   };
 }
@@ -46,6 +47,7 @@ const desktop = box({
   control: { owner: "agent", holder: null },
   computerUse: true,
   address: "10.200.0.14",
+  size: "4 cores, 8 GiB memory, 32 GiB disk",
   facts: [
     { label: "GPU", value: "GPU-0a1b2c3d" },
     { label: "Display mode", value: "gpu" },
@@ -53,7 +55,7 @@ const desktop = box({
   ],
 });
 const starting = box({ id: "box_3", name: "quiet-fern", state: "acquiring", createdAt: now - 1400, address: null, facts: [], timings: {}, enrol: { state: "off", hostId: null, error: null } });
-const stopped = box({ id: "box_4", name: "wild-cove", kind: "linux-docker", kindLabel: "Linux with Docker", state: "stopped" });
+const stopped = box({ id: "box_4", name: "wild-cove", kind: "linux-docker", kindLabel: "Linux with Docker", state: "stopped", size: "8 cores, 16 GiB memory, 64 GiB disk" });
 const failed = box({
   id: "box_5",
   name: "brisk-elm",
@@ -71,10 +73,33 @@ const failed = box({
 const gone = box({ id: "box_6", name: "soft-reed", state: "gone", enrol: { state: "off", hostId: null, error: null } });
 const refused = box({ id: "box_7", name: "quiet-fern", error: "Stopping the box failed: the host did not answer.", enrol: { state: "failed", hostId: null, error: "BB did not answer within 10 s." } });
 
+function size(cores, memoryGiB, diskGiB = null) {
+  return { cores, memoryGiB, diskGiB, words: `${cores} cores, ${memoryGiB} GiB memory${diskGiB === null ? "" : `, ${diskGiB} GiB disk`}` };
+}
+
+function kind(id, label, description, cores, desktop, gpu) {
+  return {
+    id,
+    label,
+    description,
+    size: size(cores, cores * 2).words,
+    presets: [
+      { name: "small", ...size(cores, cores * 2) },
+      { name: "medium", ...size(cores * 2, cores * 4) },
+      { name: "large", ...size(cores * 4, cores * 8) },
+    ],
+    defaultPreset: "small",
+    largest: size(cores * 8, cores * 16, 256),
+    gpu,
+    desktop,
+    backends: ["Proxmox LXC on pve"],
+  };
+}
+
 export const KINDS = [
-  { id: "linux", label: "Linux", description: "A Linux box for builds, servers, Docker and the agent's own work.", size: "2 cores, 4 GiB memory, 16 GiB disk", gpu: false, desktop: false, backends: ["Proxmox LXC on pve"] },
-  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on the host's GPU, for computer use, browsers and app development.", size: "4 cores, 8 GiB memory, 32 GiB disk", gpu: true, desktop: true, backends: ["Proxmox LXC on pve"] },
-  { id: "linux-desktop-cpu", label: "Linux desktop (no GPU)", description: "A Linux desktop drawn by the CPU. Graphics are slower; nothing else changes.", size: "4 cores, 8 GiB memory, 32 GiB disk", gpu: false, desktop: true, backends: ["Proxmox LXC on pve"] },
+  kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false),
+  kind("linux-desktop", "Linux desktop", "A Linux desktop on the host's GPU, for computer use, browsers and app development.", 4, true, true),
+  kind("linux-desktop-cpu", "Linux desktop (no GPU)", "A Linux desktop drawn by the CPU. Graphics are slower; nothing else changes.", 4, true, false),
 ];
 
 const BACKENDS = [
@@ -159,6 +184,20 @@ export const scenes = {
       await wait(300);
     },
   },
+  "panel-chooser-custom": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 560,
+    rpc: rpc([]),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      click(document.body, "radio", "Linux desktopA Linux desktop on the host's GPU, for computer use, browsers and app development.");
+      await wait(100);
+      click(document.body, "radio", "Custom");
+      await wait(300);
+    },
+  },
   "panel-refused": {
     slot: "boxes",
     chrome: boxesChrome,
@@ -168,6 +207,7 @@ export const scenes = {
       click(root, "button", "New box");
       await wait(300);
       click(document.body, "radio", "Linux desktopA Linux desktop on the host's GPU, for computer use, browsers and app development.");
+      click(document.body, "radio", "Large");
       click(document.body, "button", "Make box");
       await wait(300);
     },

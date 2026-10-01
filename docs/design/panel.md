@@ -112,7 +112,7 @@ progress.
 | gone | (red) Gone · deleted outside bb-box |
 
 After the state come the size ("4 cores · 8 GiB · 32 GiB"; the disk is left
-out when it is the template's), "GPU" or "CPU" for a desktop, and for a
+out when it is the base disk), "GPU" or "CPU" for a desktop, and for a
 desktop someone controls, "You have control" or "Someone else has control"
 in foreground text. A refused change ("Stopping the box failed: the host did
 not answer.") shows as a second line in destructive text until the next
@@ -189,11 +189,13 @@ Size
   descriptions are the backends' `description`, so a new backend's kinds
   need no panel change.
 - **Size** follows decision 028: Small, Medium and Large are the kind's
-  presets, and the kind's default preset is chosen at first. The chosen
-  size's words sit under the control. Custom shows three fields, cores,
-  memory in GiB and disk in GiB, each with "up to" the kind's largest; a
-  field left empty takes the default preset's value. Until the kinds view
-  carries presets, the Size block shows the kind's size words alone.
+  presets, and the kind's default preset is chosen at first, marked "the
+  default". The chosen size's words sit under the control ("2 cores · 4 GiB
+  memory · base disk"). Custom shows three fields, cores, memory in GiB and
+  disk in GiB, each with "up to" the kind's largest, starting from the
+  preset the person was looking at; a field left empty takes the default
+  preset's value, and an empty disk keeps the base disk. The form sends a
+  preset by name, or the custom fields, and nothing for the default.
 - **Make box** is the one primary button. Enter does the same. The popover
   closes, and the new row appears with "Starting".
 - The form remembers the last kind and size in the browser, keyed by plugin
@@ -305,7 +307,7 @@ every scene with headless Chrome. The screenshots in
 
 - Nothing for the first version: it reads `PanelState`, `BoxView` and
   `KindView` as they are.
-- For sizes (028): `KindView.presets`, `defaultPreset` and `largest`;
+- Sizes (028) are in: `KindView.presets`, `defaultPreset` and `largest`;
   `BoxView.size`; `size` on the `acquire` RPC.
 - For "Open terminal" (#51): a way to open a BB terminal on the box's
   machine from the panel.

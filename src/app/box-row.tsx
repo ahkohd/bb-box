@@ -129,6 +129,7 @@ export function BoxRow({
         {open ? (
           <dl className="mt-2 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs leading-snug">
             {box.address ? <Detail label="Address">{box.address}</Detail> : null}
+            {box.size ? <Detail label="Size">{box.size}</Detail> : null}
             <Detail label="Backend">{box.backendLabel}</Detail>
             <Detail label="System">
               {box.os} {box.arch}
