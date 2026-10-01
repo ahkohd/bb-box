@@ -27,7 +27,8 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CommandLine, quote } from "./process.ts";
+import { CommandLine, PROBE, quote } from "./process.ts";
+import { COMMAND_LIMIT, powershellCommand, scriptText, stageCommand, stagedCommand, stagedName } from "./powershell.ts";
 import { openRoute } from "./route.ts";
 import { openTerminal } from "./terminal.ts";
 import {
@@ -322,13 +323,34 @@ export class Ssh {
   }
 
   /** Runs `remoteCommand` in the box user's shell. It returns when that shell exits, even if it left something running. */
-  run(access: SshAccess, remoteCommand: string, options: RunOptions = {}, os?: GuestOs): Promise<RunResult> {
-    return this.#leased(access, options, (share) => this.#line(access, os, share).run(remoteCommand, options), lost);
+  async run(access: SshAccess, remoteCommand: string, options: RunOptions = {}, os?: GuestOs): Promise<RunResult> {
+    const command = os === "windows" ? await this.#powershell(access, remoteCommand, options) : remoteCommand;
+    if (typeof command !== "string") return command;
+    return this.#leased(access, options, (share) => this.#line(access, os, share).run(command, options), lost);
   }
 
   /** Runs `remoteCommand` and passes its output on as it arrives. */
-  stream(access: SshAccess, remoteCommand: string, options: StreamOptions, os?: GuestOs): Promise<{ exitCode: number | null; timedOut: boolean }> {
-    return this.#leased(access, options, (share) => this.#line(access, os, share).stream(remoteCommand, options), lost);
+  async stream(access: SshAccess, remoteCommand: string, options: StreamOptions, os?: GuestOs): Promise<{ exitCode: number | null; timedOut: boolean }> {
+    const command = os === "windows" ? await this.#powershell(access, remoteCommand, options) : remoteCommand;
+    if (typeof command !== "string") {
+      if (command.stderr) options.onOutput(Buffer.from(command.stderr), "stderr");
+      return { exitCode: command.exitCode, timedOut: command.timedOut };
+    }
+    return this.#leased(access, options, (share) => this.#line(access, os, share).stream(command, options), lost);
+  }
+
+  /**
+   * The command that runs a PowerShell script. One too long for Windows'
+   * command line is first written to a file in the box, over stdin; when
+   * that fails, its result stands for the script's.
+   */
+  async #powershell(access: SshAccess, script: string, options: { timeoutMs?: number; signal?: AbortSignal }): Promise<string | RunResult> {
+    const command = powershellCommand(script);
+    if (command.length <= COMMAND_LIMIT) return command;
+    const name = stagedName();
+    const staging = { stdin: Buffer.from(scriptText(script), "utf8"), timeoutMs: options.timeoutMs, signal: options.signal };
+    const staged = await this.#leased(access, staging, (share) => this.#line(access, "windows", share).run(stageCommand(name), staging), lost);
+    return staged.exitCode === 0 ? stagedCommand(name) : staged;
   }
 
   /** Writes `data` to `path` in the box, creating parent directories. */
@@ -342,8 +364,8 @@ export class Ssh {
   }
 
   /** True when SSH answers and the shell runs. */
-  probe(access: SshAccess, signal?: AbortSignal): Promise<boolean> {
-    return this.#line(access).probe(signal);
+  probe(access: SshAccess, signal?: AbortSignal, os?: GuestOs): Promise<boolean> {
+    return this.#line(access, os).probe(signal);
   }
 
   /**
@@ -351,8 +373,8 @@ export class Ssh {
    * opens. The connection costs a probe's handshake, and the box's next
    * commands skip theirs. Without one, it dials afresh as a probe does.
    */
-  async answers(access: SshAccess, signal?: AbortSignal): Promise<boolean> {
-    return (await this.run(access, "true", { timeoutMs: 5_000, signal })).exitCode === 0;
+  async answers(access: SshAccess, signal?: AbortSignal, os?: GuestOs): Promise<boolean> {
+    return (await this.run(access, PROBE, { timeoutMs: 5_000, signal }, os)).exitCode === 0;
   }
 }
 
@@ -378,12 +400,12 @@ export class SshTransport implements CommandTransport {
   }
 
   probe(signal?: AbortSignal): Promise<boolean> {
-    return this.#ssh.probe(this.#access, signal);
+    return this.#ssh.probe(this.#access, signal, this.#os);
   }
 
   /** True when the box answers on its shared connection, which this opens. */
   answers(signal?: AbortSignal): Promise<boolean> {
-    return this.#ssh.answers(this.#access, signal);
+    return this.#ssh.answers(this.#access, signal, this.#os);
   }
 
   #unreachable(): TransportError {
