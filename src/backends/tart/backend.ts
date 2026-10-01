@@ -54,6 +54,7 @@ import {
   deleteScript,
   discardStateScript,
   holdScript,
+  relabelScript,
   ownerScript,
   ipScript,
   ownerText,
@@ -636,6 +637,19 @@ export class TartBackend implements Backend {
     await this.#forget(host, guest.ref);
     const result = await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), "suspend"), { timeoutMs: 120_000, signal });
     if (result.stdout.trim() === "gone") throw this.#gone(guest);
+  }
+
+  /**
+   * Gives a box's VM a new owner and name, as when a spare becomes yours or
+   * a thread's (036): its owner file names them, and the VM takes the name
+   * inside when it changed. Best effort, as core logs a failure.
+   */
+  async relabel(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void> {
+    const host = this.#hostOf(guest);
+    const owner = ownerText({ install: this.#context.installId, kind: box.kind, box: box.boxId, thread: box.threadId, name: box.name, created: box.createdAt });
+    const result = (await this.#run(host, relabelScript(guest.ref, this.#context.installId, box.boxId, owner), { signal })).stdout.trim();
+    if (result !== "relabelled") throw new Error(`The owner file of ${guest.ref} on ${host.name} does not name box ${box.boxId}.`);
+    if (from !== box.name && guest.address) await this.#name(host, guest.address, guest.ref, box.name, signal);
   }
 
   /** This install's VMs on every Mac that answers, from their owner files. */

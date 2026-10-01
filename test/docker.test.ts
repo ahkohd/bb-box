@@ -639,3 +639,15 @@ test("streams the desktop through socat under docker exec, with the box's VNC pa
   await gpuDisplay!.resize!({ width: 1280, height: 800 }, signal());
   await assert.rejects(gpuDisplay!.resize!({ width: 0, height: 800 }, signal()), /cannot be 0 by 800 pixels/);
 });
+
+test("a box that changes hands keeps its new owner and name for the sweep, though its labels cannot change (036)", async () => {
+  const { backend } = setup();
+  const box = identity("linux", SMALL, "spare");
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.equal((await backend.held()).find((held) => held.ref === guest.ref)?.owner?.threadId, "spare");
+  await backend.relabel(guest, { ...box, threadId: "operator", name: "build-1" });
+  const owner = (await backend.held()).find((held) => held.ref === guest.ref)?.owner;
+  assert.deepEqual([owner?.threadId, owner?.name, owner?.boxId], ["operator", "build-1", box.boxId]);
+  await backend.release(guest, releasing);
+  assert.deepEqual(await backend.held(), []);
+});
