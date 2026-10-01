@@ -11,7 +11,7 @@ One row per host and box OS. A box is a container, a VM or a physical
 machine; its kinds are plain or with a desktop. "Working" means merged and
 in daily use. Linux boxes have Docker, except Docker backend boxes with its
 `privileged` field off or on rootless Docker, its GPU desktops, and SSH host
-pool boxes unless every machine lists `linux-docker`
+pool boxes unless every machine has a whole-machine reset
 ([041](decisions/041-every-linux-box-has-docker.md)).
 
 | Host | Box | Form | Backend | Kinds | Status | Arch | GPU |
@@ -295,9 +295,10 @@ node --test test/conformance.test.ts
   to claim does not stop a large one. `Guest.size` is the machine's cores
   and memory, with `diskGiB` null. There is no warm pool.
 - `restores` is `machine` only when every machine has a whole-machine
-  reset (`reset=machine`). Only those machines may list `linux-docker`,
-  and the pool's one offer, `linux`, has Docker only when every machine
-  does (041). Otherwise its boxes say No Docker, and the doctor warns.
+  reset (`reset=machine`). Then the pool's one offer, `linux`, has Docker
+  (041), and the doctor checks each machine has Docker. Otherwise its
+  boxes say No Docker, and the doctor warns. A line may still list
+  `linux-docker` only with `reset=machine`.
 - `members()` reads each machine now, and shows a machine whose marker
   names a box as held, even when its helper is too old to lend it again.
   `returnToService(ref)` resets an out-of-service machine again; an

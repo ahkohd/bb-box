@@ -9,8 +9,8 @@
 # The machines, each reached from this computer on 127.0.0.1:
 #
 #   plain    port 2221  sshd only, no systemd: linux, with the home reset
-#   systemd  port 2222  systemd and Docker, privileged: linux and
-#                       linux-docker, with reset-machine-docker.sh as its
+#   systemd  port 2222  systemd and Docker, privileged: linux with
+#                       Docker, as reset-machine-docker.sh is its
 #                       whole-machine reset
 #   bastion  port 2220  a jump host, whose user "jump" may forward only to
 #                       plain's sshd
