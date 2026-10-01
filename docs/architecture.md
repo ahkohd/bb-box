@@ -850,7 +850,10 @@ Nothing expires, so a box must never be forgotten.
   box, or, with no owner yet, when the box is still acquiring. So a reused
   reference never makes the sweep treat a new box's guest as an old one's.
   No guest is released because its record is missing, and the sweep logs
-  each guest it releases, restores or keeps, with the reason.
+  each guest it releases, restores or keeps, with the reason. The power
+  `held()` lists can be older than the box, which may have started or
+  stopped since, and a provider's listing can lag, so the sweep changes a
+  box's state only when `power()` confirms the change.
 - **A guest deleted outside bb-box** makes `power` return nothing; the box is
   marked gone and the panel says so. It stays gone when its reference is
   reused, since the new guest names another box.

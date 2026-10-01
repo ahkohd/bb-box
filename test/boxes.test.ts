@@ -18,7 +18,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "enrolWaitMs"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "enrolWaitMs" | "recorded"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -593,6 +593,31 @@ test("the sweep notices power changes and deleted guests", async () => {
   await world.boxes.sweep();
   assert.equal((await world.boxes.find(a.id))?.state, "stopped");
   assert.equal((await world.boxes.find(b.id))?.state, "gone");
+});
+
+test("the sweep acts on a guest's power only once the guest confirms it, so a box that started meanwhile stays ready", async () => {
+  /** What the box was recorded as, other than ready, as computer use forgets the box then. */
+  const states: string[] = [];
+  const world = setup({}, { recorded: (box, deleted) => (deleted || box.state !== "ready") && states.push(deleted ? "deleted" : box.state) });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  await world.boxes.stop(THREAD, box.name);
+  const held = world.backend.held.bind(world.backend);
+  // The listing says stopped, and the box starts before the sweep reads the records.
+  world.backend.held = async () => {
+    const listing = await held();
+    await world.boxes.start(THREAD, box.name);
+    states.length = 0;
+    return listing;
+  };
+  await world.boxes.sweep();
+  assert.equal((await world.boxes.find(box.id))?.state, "ready");
+  assert.deepEqual(states, [], "the box was only ever recorded as ready");
+
+  // A provider's listing that lags behind a running guest.
+  world.backend.held = async () => (await held()).map((guest) => ({ ...guest, power: "stopped" as const }));
+  await world.boxes.sweep();
+  assert.equal((await world.boxes.find(box.id))?.state, "ready");
+  assert.deepEqual(states, []);
 });
 
 test("a reused reference is the new box's: the old box goes, and its release leaves the new box alone", async () => {

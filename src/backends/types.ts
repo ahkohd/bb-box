@@ -144,6 +144,7 @@ export interface HeldGuest extends Guest {
    * `data.box` is this box's ID, or absent when there is no owner.
    */
   readonly owner: BoxOwner | null;
+  /** May lag behind the guest: the sweep asks `power()` before it acts on a change. */
   readonly power: PowerState;
 }
 
