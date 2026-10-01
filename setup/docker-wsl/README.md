@@ -53,9 +53,11 @@ suite passes against it.
   box takes 4 GiB and a desktop box 8 GiB. On a PC with 16 GB, run
   `setup.ps1` with `-Memory 12GB`: that runs one desktop box or two small
   linux boxes at a time.
-- Disk: about 3 GB for the distribution, then the images (about 10 GB) and
-  the boxes. Boxes report about 1 TB free, since WSL's disk is a sparse file
-  of up to 1 TB, so watch the free space on the PC's drive instead.
+- Disk: about 3 GB for the distribution, then about 25 GB free to build the
+  images, of which about 17 GB stays used, then the boxes. Boxes report
+  about 1 TB free, since WSL's disk is a sparse file of up to 1 TB, so
+  watch the free space on the PC's drive instead. `build.sh`'s check of
+  free disk sees that 1 TB too.
 - The PC must not sleep. In Settings, under Power, set the screen and sleep
   times on mains power to Never, or run `powercfg /change standby-timeout-ac 0`.
 - BB's server must reach the PC on TCP port 2222.

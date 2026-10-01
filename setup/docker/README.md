@@ -79,8 +79,12 @@ stream 0.6 s.
 - Memory for the boxes: by default bb-box keeps 4 GiB of the host's memory
   free, and a small linux box has a 4 GiB limit, so the host needs at least
   8 GiB.
-- Disk for the images: about 3 GB for the linux image and 6.5 GB for the
-  desktop image.
+- Disk to build the images: about 25 GB free on the Docker host for both,
+  10 GB for the linux image alone and 18 GB for the desktop image alone.
+  From an empty cache, building both used about 17 GB, for the images and
+  Docker's build cache; the rest leaves room for an earlier build's.
+  `build.sh` does not start with less free, and says how much is free.
+  Once the images are built, `docker builder prune` frees the build cache.
 
 ## 1. Build the images
 
@@ -95,6 +99,10 @@ setup/docker/build.sh
 https://bb.example.com` puts BB's host app in the images, so a box enrols
 without downloading it. To build on a Docker host over SSH, run it with
 `DOCKER_HOST=ssh://user@host`, or with that host's Docker context in use.
+
+Before it builds, `build.sh` checks that the Docker host has the disk free
+that the build needs, as Requirements says, with `df` in a container from
+Ubuntu's image.
 
 The build starts from Ubuntu's container image, pinned by digest, installs
 Ubuntu's packages from a pinned snapshot on snapshot.ubuntu.com, and checks
