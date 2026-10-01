@@ -337,6 +337,11 @@ and macOS boxes parse `ps -E`, choosing the worker the same way
   ask for a way to keep a machine out of both, such as a flag that
   `hosts.update` can set and clear. BB now hides only ephemeral machines.
   Only BB makes those, and it removes them once no thread uses them.
+- **The thread in a machine provider's `create`.** For a thread on a new
+  box ([033](decisions/033-a-thread-can-start-on-a-new-box.md)), bb-box
+  finds the thread from `create`'s key, which BB sets to the thread's ID.
+  That is not documented. bb-box would ask for the thread's ID, or none,
+  in `create`'s context.
 - **Linger in the installer.** Where the installer makes a systemd user
   service, it could enable linger, so the service outlives the session that
   installed it. bb-box does this in its templates meanwhile.
