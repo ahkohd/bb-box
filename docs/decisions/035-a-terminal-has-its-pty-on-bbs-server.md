@@ -1,6 +1,8 @@
 # 035: A box's terminal has its PTY on BB's server, and the plugin keeps the shell
 
-Status: accepted, 1 October 2026.
+Status: accepted, 1 October 2026. Extended by
+[037](037-a-panel-keeps-a-boxs-desktop-and-terminal.md): the panel keeps a
+hidden tab's terminal for 10 minutes.
 
 ## Context
 

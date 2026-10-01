@@ -3,7 +3,9 @@
 Status: accepted, 30 September 2026. Partly supersedes
 [008](008-shared-control.md) and [011](011-interface-v1.md). Partly
 superseded by [022](022-references-follow-renames-not-rows.md): how an old
-reference is found again.
+reference is found again. Extended by
+[038](038-the-agent-can-take-control-back.md): the agent can take control
+back when asked.
 
 ## Context
 

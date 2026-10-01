@@ -887,7 +887,7 @@ A box is a resource of its thread and gets what the thread's own machine has.
 | Panel | list the thread's boxes, acquire one by kind, see status, GPU or CPU, and timings, stop, start and release | not used |
 | Tools | not used | acquire, list, status, run, copy files in and out, stop, start, release, start a child thread on a box |
 | Desktop | the viewer in the panel, over the relayed stream | six computer tools: the accessibility tree first, screenshots when appearance matters |
-| Control | take and hand back | its computer tools refuse while you hold control |
+| Control | take and hand back | its computer tools refuse while you hold control; it takes control back when you ask |
 
 - **Desktop viewer.** Each desktop box in the panel has "Open desktop", which
   opens the box's desktop in a thread panel tab of its own, and "Open desktop
@@ -906,7 +906,11 @@ A box is a resource of its thread and gets what the thread's own machine has.
   session storage, so a panel tab that remounts keeps the control it took.
   Two viewers open at once never share an ID. Control belongs to one viewer,
   not to you, so another tab of yours shows the desktop without input
-  ([020](decisions/020-control-belongs-to-a-viewer.md)).
+  ([020](decisions/020-control-belongs-to-a-viewer.md)). The app keeps each
+  desktop's and terminal's connection while its tab is hidden, for up to 10
+  minutes, so switching back shows it at once. A hidden tab that holds
+  control hands it back after 60 s
+  ([037](decisions/037-a-panel-keeps-a-boxs-desktop-and-terminal.md)).
 - **Shared control.** One owner of input at a time, the agent by default,
   held in the plugin's memory. The relay parses what each viewer sends and
   drops keys, pointer, clipboard writes and resizes from any viewer that is
@@ -925,7 +929,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
   computer-use session; the panel shows control as yours only after that.
   Handing back drops every reference and image, and the agent's next call
   tells it to observe again. This is cooperative: the agent can still reach
-  the box over SSH.
+  the box over SSH. When you ask it to continue, the agent takes control
+  back with `computer_take_control`, which works as a hand-back, and your
+  viewer says so ([038](decisions/038-the-agent-can-take-control-back.md)).
 
 **Computer use** ([015](decisions/015-computer-use-through-cua-driver.md),
 [research](research/computer-use.md)).

@@ -9,6 +9,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/p
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
+import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
 
@@ -23,8 +24,10 @@ const novnc = vi.hoisted(() => {
     disconnected = false;
     readonly url: string;
     readonly options: unknown;
-    constructor(_target: HTMLElement, url: string, options: unknown) {
+    readonly target: HTMLElement;
+    constructor(target: HTMLElement, url: string, options: unknown) {
       super();
+      this.target = target;
       this.url = url;
       this.options = options;
       FakeRfb.made.push(this);
@@ -50,10 +53,13 @@ const xterm = vi.hoisted(() => {
     written: string[] = [];
     data: ((text: string) => void) | null = null;
     resized: ((size: { cols: number; rows: number }) => void) | null = null;
+    target: HTMLElement | null = null;
     constructor() {
       FakeTerminal.made.push(this);
     }
-    open() {}
+    open(target: HTMLElement) {
+      this.target = target;
+    }
     loadAddon() {}
     focus() {}
     reset() {}
@@ -117,6 +123,8 @@ const TERMINAL_PATH = "/api/v1/plugins/bb-box/http/terminal";
 const app = await loadPluginApp(() => import("../app.tsx"));
 afterEach(() => {
   cleanup();
+  dropAllKept();
+  vi.useRealTimers();
   applied = null;
   novnc.FakeRfb.made = [];
   xterm.FakeTerminal.made = [];
@@ -925,9 +933,52 @@ test("a desktop tab keeps its viewer ID when it remounts, and two tabs never sha
 
   first.unmount();
   second.unmount();
-  desktopTab(handlers);
-  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(3));
-  expect(new URL(novnc.FakeRfb.made[2]!.url).searchParams.get("viewer")).toBe(b);
+  expect(novnc.FakeRfb.made.map((client) => client.disconnected)).toEqual([false, false]);
+  const again = desktopTab(handlers);
+  await again.findByText("Connecting to the desktop…");
+  // The tab takes back the kept session for its viewer ID; no new client, no handshake.
+  expect(novnc.FakeRfb.made).toHaveLength(2);
+  expect(again.getByTestId("desktop-screen").contains(novnc.FakeRfb.made[1]!.target)).toBe(true);
+  expect(new URL(novnc.FakeRfb.made[1]!.url).searchParams.get("viewer")).toBe(b);
+});
+
+test("a hidden desktop tab keeps its stream, hands control back after a minute, and closes after ten", async () => {
+  const { handlers, changes } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await slot.findByText("Connecting to the desktop…");
+  const [client] = novnc.FakeRfb.made;
+  act(() => void client!.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText("You have control. The desktop follows this tab's size.");
+
+  vi.useFakeTimers();
+  slot.unmount();
+  expect(client!.disconnected).toBe(false);
+  await vi.advanceTimersByTimeAsync(HAND_BACK_MS + 50);
+  expect(changes).toEqual(["takeControl box_2", "handBack box_2"]);
+  expect(client!.disconnected).toBe(false);
+  vi.advanceTimersByTime(HIDDEN_MS);
+  expect(client!.disconnected).toBe(true);
+  vi.useRealTimers();
+
+  // Coming back within the minute keeps control.
+  const back = desktopTab(handlers);
+  await back.findByText("Connecting to the desktop…");
+  const [, next] = novnc.FakeRfb.made;
+  act(() => void next!.dispatchEvent(new Event("connect")));
+  fireEvent.click(back.getByRole("button", { name: "Take control" }));
+  await back.findByText("You have control. The desktop follows this tab's size.");
+  vi.useFakeTimers();
+  back.unmount();
+  vi.advanceTimersByTime(HAND_BACK_MS / 2);
+  const returned = desktopTab(handlers);
+  // The tab's state loads over promises; give the fake clock a few turns before the minute runs out.
+  for (let turn = 0; turn < 5; turn++) await act(() => vi.advanceTimersByTimeAsync(5));
+  expect(returned.getByText("You have control. The desktop follows this tab's size.")).toBeTruthy();
+  await vi.advanceTimersByTimeAsync(HAND_BACK_MS);
+  expect(changes).toEqual(["takeControl box_2", "handBack box_2", "takeControl box_2"]);
+  expect(novnc.FakeRfb.made).toHaveLength(2);
+  returned.unmount();
 });
 
 test("a desktop tab shows why the desktop refused it, and reconnects", async () => {
@@ -1058,16 +1109,24 @@ test("a remounted terminal tab attaches to the same shell, and a stopped box off
   await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
   const session = new URL(FakeSocket.made[0]!.url).searchParams.get("session");
   first.unmount();
+  expect(FakeSocket.made[0]!.readyState).toBe(0);
   const again = terminalTab(handlers);
-  await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
-  expect(new URL(FakeSocket.made[1]!.url).searchParams.get("session")).toBe(session);
+  await again.findByText("Connecting…");
+  // The tab takes back the kept shell: the same socket, no new connection.
+  expect(FakeSocket.made).toHaveLength(1);
+  expect(again.getByTestId("terminal-screen").contains(xterm.FakeTerminal.made[0]!.target)).toBe(true);
+  expect(session).toBeTruthy();
+  vi.useFakeTimers();
   again.unmount();
+  vi.advanceTimersByTime(HIDDEN_MS + 50);
+  expect(FakeSocket.made[0]!.readyState).toBe(3);
+  vi.useRealTimers();
 
   // Another box, so the tab does not start from the first box's remembered state.
   const { handlers: stoppedHandlers, changes } = server([box({ id: "box_3", name: "wild-cove", state: "stopped" })]);
   const stopped = terminalTab(stoppedHandlers, "box_3");
   expect(await stopped.findByText("wild-cove is stopped.")).toBeTruthy();
-  expect(FakeSocket.made).toHaveLength(2);
+  expect(FakeSocket.made).toHaveLength(1);
   fireEvent.click(stopped.getByRole("button", { name: "Start" }));
   await waitFor(() => expect(changes).toEqual(["start box_3"]));
 
@@ -1075,5 +1134,5 @@ test("a remounted terminal tab attaches to the same shell, and a stopped box off
   const none = terminalTab(server([box({ id: "box_5", name: "no-shell", terminal: false })]).handlers, "box_5");
   expect(await none.findByText("no-shell has no terminal.")).toBeTruthy();
   // Start made wild-cove ready, so its tab connected; no-shell never does.
-  expect(FakeSocket.made.map((made) => new URL(made.url).searchParams.get("box"))).toEqual(["box_1", "box_1", "box_3"]);
+  expect(FakeSocket.made.map((made) => new URL(made.url).searchParams.get("box"))).toEqual(["box_1", "box_3"]);
 });

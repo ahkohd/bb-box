@@ -339,11 +339,13 @@ box runs. Issue [#51](https://github.com/moonstead/bb-box/issues/51).
   state with a status dot: "Connecting…", "Connected", "Ended", or the
   box's state. Nothing else while it works.
 - **The shell outlives the tab**. BB remounts a panel tab when a person
-  switches tabs. The plugin keeps the shell; the tab keeps a session ID
-  per box for the browser tab, as the desktop keeps its viewer ID, and
-  attaches to the same shell with the last 256 KiB of output, then its
-  size, so full-screen programs redraw. Two tabs on one box never share a
-  shell. A shell with no tab for ten minutes ends.
+  switches tabs. The panel keeps the terminal itself across the switch
+  (see "Kept across tab switches" below), and the plugin keeps the shell
+  behind it: the tab keeps a session ID per box for the browser tab, as
+  the desktop keeps its viewer ID, and a new socket attaches to the same
+  shell with the last 256 KiB of output, then its size, so full-screen
+  programs redraw. Two tabs on one box never share a shell. A shell with
+  no socket for ten minutes ends.
 - **Size** follows the tab: the fit addon sizes xterm to the tab, and a
   change in columns or rows goes to the shell once it has settled for
   100 ms.
@@ -360,6 +362,43 @@ box runs. Issue [#51](https://github.com/moonstead/bb-box/issues/51).
 - BB's own terminal tab would be better still, with its history and its
   place in BB's terminal list; that is BB request 9 in
   [bb-requests.md](../bb-requests.md).
+
+## Kept across tab switches
+
+BB remounts a panel tab whenever a person switches tabs, and the SDK has
+no way to keep one mounted, so a desktop and a terminal used to reconnect
+on every switch: a handshake, a blank frame, a shell that had to be
+re-attached. The operator asked for them to be kept in memory so switching
+back is instant (1 October 2026). The app bundle keeps them
+([src/app/kept.ts](../../src/app/kept.ts)):
+
+- Each desktop's noVNC client and canvas, and each terminal's xterm and
+  socket, live in a module-level registry keyed by box and viewer or
+  session. The session owns an element; a tab puts that element inside
+  its screen area on mount and takes it out on unmount, leaving the
+  session alive. Switching back re-parents the element: no handshake, no
+  blank frame, the same frame and the same scrollback.
+- A session rests hidden for ten minutes after its tab goes, then closes.
+  A session that ends while hidden (the relay closed it, the shell exited)
+  is dropped at once; a hidden desktop does not reconnect on its own.
+- A box that stops or is released closes its sessions at once, and the
+  tab says so. The plugin reloading drops the bundle and its registry.
+- **Control** (008, 022): a hidden tab must not hold a desktop's control
+  for ever. When the tab holding control is hidden, the panel starts the
+  clock a closed viewer gets, one minute, and then hands control back to
+  the agent, unless the person comes back first or someone else took it
+  meanwhile. The server's control model is unchanged; this is 008's rule
+  applied on the client.
+- **Two places at once**: a box can show on the Desktops page and in a
+  thread's panel, or in two threads' panels. A second place gets a session
+  of its own; it never takes the first's element.
+- **What a hidden desktop costs**: its stream keeps flowing from the box's
+  VNC server through the relay to a canvas nobody sees, so it costs the
+  box and the network what a visible viewer costs, for at most ten
+  minutes. noVNC cannot pause a stream, so the choice was keep or close.
+  A hidden terminal costs nothing beyond its idle shell; its server-side
+  idle clock starts only when the socket closes, so a hidden shell can
+  live up to twenty minutes in all.
 
 ## The Desktops page
 
