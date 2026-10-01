@@ -9,12 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { Badge } from "./common.tsx";
 import type { FieldView } from "../plugin/configuration.ts";
 import { isSecretField, isSecretState, type FormValue } from "./config.ts";
 
 /** BB's small badge beside a setting's label. */
 export function Chip({ children, tone = "muted" }: { children: ReactNode; tone?: "muted" | "warn" }) {
-  return <span className={cn("shrink-0 rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-2xs leading-none", tone === "warn" ? "text-warning-text" : "text-subtle-foreground")}>{children}</span>;
+  return <Badge tone={tone}>{children}</Badge>;
 }
 
 export function FieldShell({ label, chips, description, problem, children, wide, htmlFor }: { label: string; chips?: ReactNode; description?: string; problem?: string | null; children: ReactNode; wide?: boolean; htmlFor?: string }) {

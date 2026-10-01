@@ -46,7 +46,7 @@ Machines page does.
 
 ```
 Backends
-Where boxes come from. Turn one on and set it up; the check says what is still missing.
+Where boxes come from.
 +--------------------------------------------------------------------------------+
 | Proxmox LXC  [pve]                                       [Check] [Set up v] (on) |
 | (green) Ready · Proxmox VE 9.2 on pve · 3 kinds on offer · checked 2 min ago   |
@@ -157,15 +157,16 @@ Kinds
 What a thread can ask for. A kind is offered when it is on and a backend has it.
 +----------------------------------------------------------------------------------------+
 |      Kind                   From         Small       Medium      Large       Largest  Warm |
-| (on) Linux                  Proxmox LXC  2 · 4 GiB*  4 · 8 GiB   8 · 16 GiB  16 · 32   0   |
-| (on) Linux with Docker      Proxmox LXC  2 · 4 GiB*  4 · 8 GiB   8 · 16 GiB  16 · 32   0   |
-| (on) Linux desktop  [GPU]   Proxmox LXC  4 · 8 GiB*  8 · 16 GiB  16 · 32 GiB 32 · 64   1   |
-| (off) Linux desktop (no GPU) Proxmox LXC ...                                               |
+| (on) Linux [LXC]            Proxmox LXC  2 · 4 GiB*  4 · 8 GiB   8 · 16 GiB  16 · 32   0   |
+| (on) Linux with Docker [LXC] Proxmox LXC 2 · 4 GiB*  4 · 8 GiB   8 · 16 GiB  16 · 32   0   |
+| (on) Linux desktop [GPU] [LXC] Proxmox LXC 4 · 8 GiB* 8 · 16 GiB 16 · 32 GiB 32 · 64   1   |
+| (off) Linux desktop [LXC]   Proxmox LXC ...                                                |
 +----------------------------------------------------------------------------------------+
 ```
 
-- One row per kind, with its switch, label, a GPU chip where the kind takes
-  one, the backends offering it, the three presets (cores · memory; the
+- One row per kind, with its switch, label, its badges (GPU where the kind
+  takes one, then what its boxes are on the backends that can make it: LXC,
+  Docker, VM or Physical; see the panel design), the backends offering it, the three presets (cores · memory; the
   default marked), the largest custom size, and the warm count.
 - Clicking a row opens its editor: three fields per preset (cores, memory
   GiB, disk GiB with "0 keeps the base disk"), which preset is the default,

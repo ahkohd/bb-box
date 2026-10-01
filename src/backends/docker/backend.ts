@@ -196,7 +196,7 @@ export function dockerKinds(config: DockerConfig): BoxKind[] {
     },
     "linux-desktop-cpu": {
       id: "linux-desktop-cpu",
-      label: "Linux desktop (no GPU)",
+      label: "Linux desktop",
       description:
         "A Linux desktop drawn by the CPU, for computer use and browsers when no GPU is needed or free. Graphics are slower; WebGL and Vulkan still work.",
       requires: [],

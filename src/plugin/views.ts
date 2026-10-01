@@ -1,8 +1,8 @@
 // What the panel, the tools and the CLI show about boxes: plain JSON views
 // for the panel, and short text for agents. Nothing here holds a credential.
 
-import type { BackendStatus, OfferedKind } from "../backends/index.ts";
-import type { BoxSize, DoctorReport } from "../backends/types.ts";
+import { boxForm, type BackendStatus, type OfferedKind } from "../backends/index.ts";
+import type { BoxForm, BoxSize, DoctorReport } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
@@ -18,6 +18,8 @@ export interface BoxView {
   readonly kindLabel: string;
   readonly backendLabel: string;
   readonly nature: "virtual" | "real";
+  /** What the box is, as a badge: an LXC or Docker container, a VM or a physical machine. Null when its backend's driver is gone. */
+  readonly form: BoxForm | null;
   readonly role: "box" | "machine";
   /** In words: what the box has, or else what it was asked to be. Null when neither is known. */
   readonly size: string | null;
@@ -63,6 +65,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     kindLabel: box.kindLabel,
     backendLabel: box.backendLabel,
     nature: box.nature,
+    form: boxForm(box.backend),
     role: box.role,
     size: sizeWords(box),
     state: box.state,
@@ -115,6 +118,8 @@ export interface KindView {
   readonly admin: boolean | null;
   /** The backends that offer it, in the order acquire tries them. */
   readonly backends: readonly string[];
+  /** What its boxes are on those backends, as badges, each once. */
+  readonly forms: readonly BoxForm[];
 }
 
 export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges): KindView[] {
@@ -122,8 +127,14 @@ export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges)
   for (const { kind, backend } of offered) {
     const existing = views.get(kind.id);
     const admin = kind.capabilities.command?.admin ?? false;
+    const form = boxForm(backend.id);
     if (existing) {
-      views.set(kind.id, { ...existing, admin: existing.admin === admin ? admin : null, backends: [...existing.backends, backend.label] });
+      views.set(kind.id, {
+        ...existing,
+        admin: existing.admin === admin ? admin : null,
+        backends: [...existing.backends, backend.label],
+        forms: form && !existing.forms.includes(form) ? [...existing.forms, form] : existing.forms,
+      });
       continue;
     }
     const sizes = kindSizes(kind.id, changes);
@@ -139,6 +150,7 @@ export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges)
       desktop: kind.capabilities.displays.length > 0,
       admin,
       backends: [backend.label],
+      forms: form ? [form] : [],
     });
   }
   return [...views.values()];
@@ -177,7 +189,7 @@ function seconds(ms: number): string {
 /** One line per box, for lists. */
 export function boxLine(box: BoxRecord): string {
   const size = sizeWords(box);
-  const parts = [`${box.name}: ${box.kindLabel} (${box.kind}${size ? `, ${size}` : ""}), ${STATE_WORDS[box.state]}`];
+  const parts = [`${box.name}: ${box.kindLabel} (${box.kind}${box.capabilities.gpu ? ", GPU" : ""}${size ? `, ${size}` : ""}), ${STATE_WORDS[box.state]}`];
   if (box.state === "ready" && box.timings.total !== undefined) parts.push(`ready in ${seconds(box.timings.total)}`);
   if (box.enrol.state === "enrolled") parts.push(`enrolled as a BB machine${box.timings.enrol !== undefined ? ` in ${seconds(box.timings.enrol)}` : ""}`);
   if (box.error) parts.push(box.error);

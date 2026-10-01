@@ -150,7 +150,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
   {
     id: "linux-desktop-cpu",
     flavour: "desktop-cpu",
-    label: "Linux desktop (no GPU)",
+    label: "Linux desktop",
     description:
       "A Linux desktop drawn by the CPU, for computer use and browsers when no GPU is needed or free. Graphics are slower; WebGL and Vulkan still work.",
     requires: [],
