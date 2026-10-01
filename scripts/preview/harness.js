@@ -5,7 +5,7 @@
 
 const REACT = "19.2.0";
 const deps = `deps=react@${REACT},react-dom@${REACT}`;
-const [React, ReactDOMClient, ReactDOM, jsxRuntime, radixAlertDialog, radixDropdownMenu, radixPopover, radixTooltip, clsx, tailwindMerge, cva] = await Promise.all([
+const [React, ReactDOMClient, ReactDOM, jsxRuntime, radixAlertDialog, radixDropdownMenu, radixPopover, radixTooltip, radixSelect, clsx, tailwindMerge, cva] = await Promise.all([
   import(`https://esm.sh/react@${REACT}`),
   import(`https://esm.sh/react-dom@${REACT}/client?${deps}`),
   import(`https://esm.sh/react-dom@${REACT}?${deps}`),
@@ -14,6 +14,7 @@ const [React, ReactDOMClient, ReactDOM, jsxRuntime, radixAlertDialog, radixDropd
   import(`https://esm.sh/@radix-ui/react-dropdown-menu@2.1.20?${deps}`),
   import(`https://esm.sh/@radix-ui/react-popover@1.1.19?${deps}`),
   import(`https://esm.sh/@radix-ui/react-tooltip@1.2.12?${deps}`),
+  import(`https://esm.sh/@radix-ui/react-select@2.3.3?${deps}`),
   import("https://esm.sh/clsx@2.1.1"),
   import("https://esm.sh/tailwind-merge@3.4.0"),
   import("https://esm.sh/class-variance-authority@0.7.1"),
@@ -115,6 +116,7 @@ globalThis.__bbPluginRuntime = {
   radixDropdownMenu,
   radixPopover,
   radixTooltip,
+  radixSelect,
   clsx,
   tailwindMerge,
   classVarianceAuthority: cva,

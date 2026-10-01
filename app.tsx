@@ -27,9 +27,7 @@ export default definePluginApp((app) => {
     component: DesktopsPage,
   });
   app.slots.settingsSection({
-    id: "backends",
-    title: "Backends",
-    description: "Where boxes come from, and what each backend still needs.",
+    id: "configuration",
     component: SettingsSection,
   });
 });

@@ -1,0 +1,185 @@
+// Pure helpers for the settings page: reading the configuration state the
+// server gives, and building the drafts the page sends back (029).
+
+import type { BoxSize, FieldValue } from "../backends/types.ts";
+import type { BackendConfig, ConfigDocument, KindConfig, Problem, SecretState } from "../core/document.ts";
+import type { Preset } from "../core/sizes.ts";
+import type { ConfigState, FieldView } from "../plugin/configuration.ts";
+
+export const PRESET_NAMES: readonly Preset[] = ["small", "medium", "large"];
+export const PRESET_LABELS: Readonly<Record<Preset, string>> = { small: "Small", medium: "Medium", large: "Large" };
+
+export type FieldGroup = FieldView["group"];
+export const GROUPS: readonly { readonly id: FieldGroup; readonly title: string }[] = [
+  { id: "connection", title: "Connection" },
+  { id: "credentials", title: "Credentials" },
+  { id: "boxes", title: "Boxes" },
+  { id: "advanced", title: "Advanced" },
+];
+
+export function isSecretField(field: FieldView): boolean {
+  return field.type === "string" && field.secret === true;
+}
+
+export function isSecretState(value: unknown): value is SecretState {
+  return typeof value === "object" && value !== null && "set" in value && typeof (value as SecretState).set === "boolean";
+}
+
+/** The fields of each group, in the driver's order; groups with none are left out. */
+export function groupFields(fields: readonly FieldView[]): { readonly id: FieldGroup; readonly title: string; readonly fields: FieldView[] }[] {
+  return GROUPS.map((group) => ({ ...group, fields: fields.filter((field) => field.group === group.id) })).filter((group) => group.fields.length > 0);
+}
+
+/** Problems at a path, or under it. */
+export function problemsUnder(problems: readonly Problem[], path: string): Problem[] {
+  return problems.filter((problem) => problem.path === path || problem.path.startsWith(`${path}.`));
+}
+
+/** The first problem at exactly a path. */
+export function problemAt(problems: readonly Problem[], path: string): string | null {
+  return problems.find((problem) => problem.path === path)?.message ?? null;
+}
+
+/** Problems under a path that no field of the form shows. */
+export function problemsLeft(problems: readonly Problem[], path: string, shown: readonly string[]): Problem[] {
+  return problemsUnder(problems, path).filter((problem) => !shown.includes(problem.path));
+}
+
+export interface KindSizes {
+  readonly enabled: boolean;
+  readonly presets: Readonly<Record<Preset, BoxSize>>;
+  readonly default: Preset;
+  readonly largest: BoxSize;
+}
+
+/** A kind's sizes as they are: the shipped defaults with the document's changes. */
+export function effectiveKind(state: ConfigState, id: string): KindSizes {
+  const shipped = state.defaults.kinds[id];
+  const change = state.document.kinds[id];
+  const presets = {} as Record<Preset, BoxSize>;
+  for (const preset of PRESET_NAMES) {
+    const base = shipped?.presets[preset] ?? { cores: 2, memoryMiB: 4096, diskGiB: null };
+    const part = change?.presets?.[preset];
+    presets[preset] = { cores: part?.cores ?? base.cores, memoryMiB: part?.memoryMiB ?? base.memoryMiB, diskGiB: part?.diskGiB === undefined ? base.diskGiB : part.diskGiB };
+  }
+  const largestBase = shipped?.largest ?? { cores: 16, memoryMiB: 32768, diskGiB: 256 };
+  return {
+    enabled: change?.enabled ?? shipped?.enabled ?? true,
+    presets,
+    default: change?.default ?? shipped?.default ?? "small",
+    largest: {
+      cores: change?.largest?.cores ?? largestBase.cores,
+      memoryMiB: change?.largest?.memoryMiB ?? largestBase.memoryMiB,
+      diskGiB: change?.largest?.diskGiB ?? largestBase.diskGiB,
+    },
+  };
+}
+
+/** The kind's entry for the document: only what differs from the shipped defaults, or undefined when nothing does. */
+export function kindChanges(state: ConfigState, id: string, sizes: KindSizes): KindConfig | undefined {
+  const shipped = state.defaults.kinds[id];
+  const entry: { enabled?: boolean; presets?: Partial<Record<Preset, BoxSize>>; default?: Preset; largest?: BoxSize } = {};
+  if (!sizes.enabled) entry.enabled = false;
+  if (shipped) {
+    const presets: Partial<Record<Preset, BoxSize>> = {};
+    for (const preset of PRESET_NAMES) {
+      const base = shipped.presets[preset];
+      const size = sizes.presets[preset];
+      if (size.cores !== base.cores || size.memoryMiB !== base.memoryMiB || size.diskGiB !== base.diskGiB) presets[preset] = size;
+    }
+    if (Object.keys(presets).length) entry.presets = presets;
+    if (sizes.default !== shipped.default) entry.default = sizes.default;
+    const largest = sizes.largest;
+    if (largest.cores !== shipped.largest.cores || largest.memoryMiB !== shipped.largest.memoryMiB || largest.diskGiB !== shipped.largest.diskGiB) entry.largest = largest;
+  } else {
+    entry.presets = sizes.presets;
+    entry.default = sizes.default;
+    entry.largest = sizes.largest;
+  }
+  return Object.keys(entry).length ? entry : undefined;
+}
+
+/** "2 cores · 4 GiB · base disk". */
+export function sizeWords(size: BoxSize): string {
+  return [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${gib(size.memoryMiB)} GiB`, size.diskGiB === null ? "base disk" : `${size.diskGiB} GiB`].join(" · ");
+}
+
+/** Memory in GiB with at most one decimal, for fields. */
+export function gib(memoryMiB: number): number {
+  return Math.round((memoryMiB / 1024) * 10) / 10;
+}
+
+export function mib(memoryGiB: number): number {
+  return Math.round(memoryGiB * 1024);
+}
+
+/** A backend's entry as the page sends it: a secret may be a new value, kept, or null to clear it. */
+export type DraftBackend = Omit<BackendConfig, "fields"> & { readonly fields: Readonly<Record<string, FieldValue | SecretState | null>> };
+
+/** The document with one backend replaced, or added at the end. A draft entry's cleared secrets go to the server as null. */
+export function withBackend(document: ConfigDocument, backend: BackendConfig | DraftBackend): ConfigDocument {
+  const entry = backend as BackendConfig;
+  const present = document.backends.some((candidate) => candidate.id === entry.id);
+  return { ...document, backends: present ? document.backends.map((candidate) => (candidate.id === entry.id ? entry : candidate)) : [...document.backends, entry] };
+}
+
+export function withoutBackend(document: ConfigDocument, id: string): ConfigDocument {
+  return { ...document, backends: document.backends.filter((candidate) => candidate.id !== id) };
+}
+
+/** The document with one kind's entry set, or removed when undefined. */
+export function withKind(document: ConfigDocument, id: string, config: KindConfig | undefined): ConfigDocument {
+  const kinds = { ...document.kinds };
+  if (config) kinds[id] = config;
+  else delete kinds[id];
+  return { ...document, kinds };
+}
+
+export function withGeneral(document: ConfigDocument, patch: Partial<ConfigDocument["general"]>): ConfigDocument {
+  const general: Record<string, unknown> = { ...document.general, ...patch };
+  for (const key of Object.keys(general)) if (general[key] === undefined) delete general[key];
+  return { ...document, general };
+}
+
+/** A backend's warm count for a kind, as the document has it. */
+export function warmOf(backend: BackendConfig | undefined, kind: string): number {
+  return backend?.warm?.[kind] ?? 0;
+}
+
+/** What a field's control holds while the form is open. A secret is kept, replaced by a string, or cleared by null. */
+export type FormValue = FieldValue | SecretState | null;
+
+/** The value a field's control shows: the set value, else empty, with the default as the placeholder. */
+export function formValue(fields: Readonly<Record<string, FieldValue | SecretState>>, field: FieldView): FormValue {
+  const value = fields[field.key];
+  if (value === undefined) return isSecretField(field) ? { set: false } : field.type === "boolean" ? (field.default ?? false) : "";
+  return value;
+}
+
+/** The fields for the draft: empty text takes the default, numbers are numbers, and secrets go as the control holds them. */
+export function draftFields(values: Readonly<Record<string, FormValue>>, fields: readonly FieldView[]): Record<string, FieldValue | SecretState | null> {
+  const out: Record<string, FieldValue | SecretState | null> = {};
+  for (const field of fields) {
+    const value = values[field.key];
+    if (value === undefined) continue;
+    if (isSecretField(field)) {
+      if (value === null || typeof value === "string" || isSecretState(value)) out[field.key] = value === "" ? { set: false } : value;
+      continue;
+    }
+    if (value === null || isSecretState(value)) continue;
+    if (field.type === "number") {
+      const text = String(value).trim();
+      if (text === "") continue;
+      const number = Number(text);
+      out[field.key] = Number.isFinite(number) ? number : (value as FieldValue);
+      continue;
+    }
+    if (field.type === "boolean") {
+      if (typeof value === "boolean" && value !== (field.default ?? false)) out[field.key] = value;
+      continue;
+    }
+    if (typeof value === "string" && value.trim() === "") continue;
+    out[field.key] = value as FieldValue;
+  }
+  return out;
+}

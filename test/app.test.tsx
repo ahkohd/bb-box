@@ -6,7 +6,8 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
-import type { BoxResult, Contract, DesktopState, PanelState } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState } from "../src/plugin/contract.ts";
+import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
 import { statusOf } from "../src/app/status.ts";
 
@@ -44,6 +45,7 @@ const DESKTOP_PATH = "/api/v1/plugins/bb-box/http/desktop";
 const app = await loadPluginApp(() => import("../app.tsx"));
 afterEach(() => {
   cleanup();
+  applied = null;
   novnc.FakeRfb.made = [];
   window.sessionStorage.clear();
   window.localStorage.clear();
@@ -128,7 +130,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string } = {}) {
+function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
   let boxes = [...initial];
   const changes: string[] = [];
   const result = (found: BoxView | null): BoxResult => (options.failWith ? { box: null, error: options.failWith } : { box: found, error: null });
@@ -177,18 +179,93 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
         },
       ],
     }),
-    // The settings page that uses these is not built yet.
-    "config.get": () => {
-      throw new Error("not used by the panel");
+    "config.get": () => configState(options.config ?? {}),
+    "config.check": ({ draft, test }): CheckResult => {
+      changes.push(`check ${test ?? "-"} ${JSON.stringify(draft)}`);
+      return options.checkWith ?? { problems: [], doctor: null };
     },
-    "config.check": () => {
-      throw new Error("not used by the panel");
-    },
-    "config.apply": () => {
-      throw new Error("not used by the panel");
+    "config.apply": ({ draft, revision }): ApplyResult => {
+      changes.push(`apply ${revision} ${JSON.stringify(draft)}`);
+      if (options.applyWith) return options.applyWith;
+      applied = draft as ConfigDocument;
+      return { ok: true, state: configState({ ...options.config, document: applied, revision: revision + 1 }), problems: options.savedWith ?? [] };
     },
   };
   return { handlers, changes };
+}
+
+let applied: ConfigDocument | null = null;
+
+/** The configuration as the server gives it: one Proxmox-like driver set up with problems, one driver not set up, and two kinds. */
+function configState(overrides: Partial<ConfigState> & { document?: ConfigDocument }): ConfigState {
+  const document: ConfigDocument = overrides.document ??
+    applied ?? {
+      schema: 1,
+      revision: 3,
+      backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: false }, key: { set: true } }, warm: { linux: 1 } }],
+      kinds: {},
+      general: {},
+    };
+  const size = (cores: number, memoryGiB: number, diskGiB: number | null = null) => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB });
+  return {
+    document,
+    revision: document.revision,
+    defaults: {
+      general: { boxesPerThread: 0, enrol: true, defaultKind: "linux" },
+      kinds: {
+        linux: { enabled: true, presets: { small: size(2, 4), medium: size(4, 8), large: size(8, 16) }, default: "small", largest: size(16, 32, 256) },
+        "linux-desktop": { enabled: true, presets: { small: size(4, 8), medium: size(8, 16), large: size(16, 32) }, default: "small", largest: size(32, 64, 256) },
+      },
+    },
+    kinds: [
+      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, drivers: ["fake", "other"] },
+      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, drivers: ["fake"] },
+    ],
+    drivers: [
+      {
+        type: "fake",
+        label: "Fake host",
+        description: "Boxes on a fake host.",
+        nature: "virtual",
+        kinds: ["linux", "linux-desktop"],
+        fields: [
+          { key: "url", type: "string", label: "API URL", description: "For example https://192.0.2.10:8006.", group: "connection", default: "" },
+          { key: "token", type: "string", label: "API token", secret: true, group: "credentials" },
+          { key: "key", type: "string", label: "SSH key", secret: true, group: "credentials" },
+          { key: "templates", type: "string", label: "Templates", description: "VMIDs, separated by spaces.", group: "boxes", default: "9100" },
+          { key: "reserve", type: "number", label: "Memory kept free (MiB)", group: "advanced", default: 4096 },
+        ],
+        hostFields: [],
+        setup: { guide: "setup/fake/README.md", scripts: ["setup/fake/one.sh"] },
+      },
+      {
+        type: "other",
+        label: "Other pool",
+        description: "Your own machines over SSH.",
+        nature: "real",
+        kinds: ["linux"],
+        fields: [{ key: "machines", type: "string", label: "Machines", group: "boxes", experimental_multiline: true, default: "" }],
+        hostFields: [
+          { key: "address", type: "string", label: "Address", group: "connection", default: "" },
+          { key: "user", type: "string", label: "User", group: "connection", default: "" },
+        ],
+        setup: { guide: "setup/other/README.md", scripts: [] },
+      },
+    ],
+    backends: document.backends.map((backend) => ({
+      id: backend.id,
+      type: backend.type,
+      label: "Fake host",
+      state: backend.enabled && (backend.fields.token as { set: boolean } | undefined)?.set === false ? "misconfigured" : backend.enabled ? "active" : "off",
+      problems: backend.enabled && (backend.fields.token as { set: boolean } | undefined)?.set === false ? [{ path: "backends.fake.token", message: "Set the API token." }] : [],
+      boxes: 2,
+      kinds: backend.enabled ? ["linux", "linux-desktop"] : [],
+      doctor: null,
+    })),
+    problems: document.backends.some((backend) => backend.enabled && (backend.fields.token as { set: boolean } | undefined)?.set === false) ? [{ path: "backends.fake.token", message: "Set the API token." }] : [],
+    migrated: { at: 1_790_000_000_000, version: "0.2.0" },
+    ...overrides,
+  };
 }
 
 function panel(handlers: PluginRpcTestHandlers<Contract>) {
@@ -231,7 +308,7 @@ test("the app registers the Boxes panel, a desktop tab, the Desktops page and th
     ["desktop", "Desktop"],
   ]);
   expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["desktops", "Desktops", "desktop"]]);
-  expect(app.settingsSections.map((section) => section.id)).toEqual(["backends"]);
+  expect(app.settingsSections.map((section) => section.id)).toEqual(["configuration"]);
 });
 
 test("the status line says the state, the timings, BB enrolment and the display", () => {
@@ -434,25 +511,150 @@ test("the panel refetches on its thread's change signals and after a reconnect",
   await waitFor(() => expect(stateCalls(slot)).toBe(4));
 });
 
-test("the settings section shows each backend's state, problems and guide, and runs the doctor", async () => {
-  const { handlers } = server([]);
+function settings(handlers: PluginRpcTestHandlers<Contract>) {
   const [section] = app.settingsSections;
-  const slot = renderSlot(section!, {}, { rpc: handlers, pluginId: "bb-box" });
+  return renderSlot(section!, {}, { rpc: handlers, pluginId: "bb-box" });
+}
 
+test("the settings page lists each backend's state, the kinds and the general settings", async () => {
+  const slot = settings(server([]).handlers);
   expect(await slot.findByText("Fake host")).toBeTruthy();
   expect(slot.getByText("Needs setting up")).toBeTruthy();
-  expect(slot.getByText("Set the API URL.")).toBeTruthy();
   expect(slot.getByText("Set the API token.")).toBeTruthy();
-  expect(slot.getByRole("link", { name: "Fake host setup guide" }).getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/README.md");
-  expect(slot.getByRole("link", { name: "two.sh" }).getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/two.sh");
+  expect(slot.getByText("2 boxes")).toBeTruthy();
+  expect(slot.getByText("Other pool")).toBeTruthy();
+  expect(slot.getByText("Not set up")).toBeTruthy();
+  expect(slot.getByText("Your own machines over SSH.")).toBeTruthy();
+  expect((slot.getByRole("switch", { name: "Fake host on" }) as HTMLButtonElement).getAttribute("aria-checked")).toBe("true");
+  expect((slot.getByRole("switch", { name: "Other pool on" }) as HTMLButtonElement).getAttribute("aria-checked")).toBe("false");
 
-  fireEvent.click(slot.getByRole("button", { name: "Check the backends" }));
-  expect(await slot.findByText("No answer from the API.")).toBeTruthy();
-  expect(slot.getByText("Fix: Check the URL.")).toBeTruthy();
-  expect(slot.getByText("120 GiB free.")).toBeTruthy();
-  expect(slot.getByText("Install this public key in the templates: ssh-ed25519 AAAA bb-box")).toBeTruthy();
-  expect(slot.getByText("Fake host 1.0")).toBeTruthy();
-  expect(slot.getByText("checked just now")).toBeTruthy();
+  expect(slot.getByText("Linux desktop")).toBeTruthy();
+  expect(slot.getByText("GPU")).toBeTruthy();
+  expect(slot.getAllByText("From Fake host")).toHaveLength(2);
+  expect(slot.getByText("1 warm on Fake host")).toBeTruthy();
+  expect(slot.getByText("Small 2 cores · 4 GiB · base disk (default) · Medium 4 cores · 8 GiB · base disk · Large 8 cores · 16 GiB · base disk · up to 16 cores · 32 GiB · 256 GiB")).toBeTruthy();
+
+  expect(slot.getByRole("combobox", { name: "Default kind" }).textContent).toBe("Linux");
+  expect((slot.getByRole("textbox", { name: "Boxes per thread" }) as HTMLInputElement).value).toBe("0");
+  expect(slot.getByRole("switch", { name: "Enrol boxes as BB machines" }).getAttribute("aria-checked")).toBe("true");
+  expect(slot.getByText(/bb-box moved its settings from BB/)).toBeTruthy();
+});
+
+test("a backend's switch saves the document with the switch changed, and a problem shows", async () => {
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers);
+  fireEvent.click(await slot.findByRole("switch", { name: "Fake host on" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  const [method, revision, draft] = [changes[0]!.split(" ")[0], changes[0]!.split(" ")[1], JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")))];
+  expect([method, revision]).toEqual(["apply", "3"]);
+  expect(draft.backends[0]).toEqual({ id: "fake", type: "fake", enabled: false, fields: { url: "https://192.0.2.10:8006", token: { set: false }, key: { set: true } }, warm: { linux: 1 } });
+  expect(await slot.findByText("Off")).toBeTruthy();
+
+  // A driver that is not set up opens its setup instead of switching on.
+  fireEvent.click(slot.getByRole("switch", { name: "Other pool on" }));
+  expect(await slot.findByRole("heading", { name: "Hosts" }).catch(() => slot.findByText("Hosts"))).toBeTruthy();
+  expect(changes).toHaveLength(1);
+});
+
+test("a backend's setup shows its fields by group with problems, saves the whole document, and checks a draft", async () => {
+  const { handlers, changes } = server([], {
+    checkWith: { problems: [], doctor: { ok: true, summary: "Fake host 1.0", checks: [{ id: "api", name: "API", status: "ok", detail: "Answers.", fix: null }], notes: ["Install this key: ssh-ed25519 AAAA"] } },
+  });
+  const slot = settings(handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
+  expect(slot.getByRole("link", { name: "Fake host setup guide" }).getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/README.md");
+  expect(slot.getByText("Connection")).toBeTruthy();
+  expect(slot.getByText("Credentials")).toBeTruthy();
+  expect(slot.getByText("Boxes")).toBeTruthy();
+  const url = slot.getByLabelText(/API URL/) as HTMLInputElement;
+  expect(url.value).toBe("https://192.0.2.10:8006");
+  expect((slot.getByLabelText(/Templates/) as HTMLInputElement).placeholder).toBe("9100");
+  expect(slot.getAllByText("secret")).toHaveLength(2);
+  expect(slot.getByText("not set")).toBeTruthy();
+  expect(slot.getByText("set")).toBeTruthy();
+  expect(slot.getAllByRole("alert").map((alert) => alert.textContent)).toContain("Set the API token.");
+  expect(slot.queryByLabelText(/Memory kept free/)).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Advanced" }));
+  expect((slot.getByLabelText(/Memory kept free/) as HTMLInputElement).placeholder).toBe("4096");
+
+  fireEvent.change(slot.getByLabelText(/API token/), { target: { value: "s3cret" } });
+  fireEvent.click(slot.getByRole("button", { name: "Clear" }));
+  expect(slot.getByText("Will be cleared when you save.")).toBeTruthy();
+  fireEvent.change(slot.getByLabelText(/Memory kept free/), { target: { value: "2048" } });
+
+  fireEvent.click(slot.getByRole("button", { name: "Check" }));
+  expect(await slot.findByText("Answers.")).toBeTruthy();
+  expect(slot.getByText("Install this key: ssh-ed25519 AAAA")).toBeTruthy();
+  expect(slot.getByText(/checked just now, against the form/)).toBeTruthy();
+  const check = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
+  expect(changes[0]!.startsWith("check fake ")).toBe(true);
+  expect(check.backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", token: "s3cret", key: null, reserve: 2048 });
+
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(changes[1]!.startsWith("apply 3 ")).toBe(true);
+  const saved = JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{")));
+  expect(saved.backends[0]).toEqual({ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: "s3cret", key: null, reserve: 2048 }, warm: { linux: 1 } });
+  await waitFor(() => expect(slot.queryByRole("button", { name: "Save" })).toBeNull());
+});
+
+test("a refused save shows each problem at its field, and a stale revision reloads", async () => {
+  const { handlers } = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.url", message: "Use an https URL." }, { path: "backends.fake", message: "bb-box runs one Fake host backend for now." }] } });
+  const slot = settings(handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect(await slot.findByText("Use an https URL.")).toBeTruthy();
+  expect(slot.getByText("bb-box runs one Fake host backend for now.")).toBeTruthy();
+  cleanup();
+
+  const stale = settings(server([], { applyWith: { ok: false, reason: "revision", state: configState({}) } }).handlers);
+  fireEvent.click(await stale.findByRole("switch", { name: "Fake host on" }));
+  expect(await stale.findByText(/Someone saved the configuration first/)).toBeTruthy();
+});
+
+test("a backend that is off saves part way, and the form says what is still missing", async () => {
+  const { handlers } = server([], { savedWith: [{ path: "backends.fake.url", message: "Set the API URL." }] });
+  const slot = settings(handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect(await slot.findByText("Saved. It stays off until these are fixed.")).toBeTruthy();
+  expect(slot.getByText("Set the API URL.")).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Save" })).toBeTruthy();
+});
+
+test("a kind's editor saves its presets, default, largest size and warm counts as changes from the shipped sizes", async () => {
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers);
+  const edits = await slot.findAllByRole("button", { name: "Edit" });
+  fireEvent.click(edits[0]!);
+  expect((slot.getByRole("textbox", { name: "Small cores" }) as HTMLInputElement).value).toBe("2");
+  expect((slot.getByRole("textbox", { name: "Largest disk" }) as HTMLInputElement).value).toBe("256");
+  fireEvent.change(slot.getByRole("textbox", { name: "Large cores" }), { target: { value: "12" } });
+  fireEvent.change(slot.getByRole("textbox", { name: "Large memory" }), { target: { value: "24" } });
+  fireEvent.click(slot.getByRole("radio", { name: "Medium is the default" }));
+  fireEvent.change(slot.getByRole("textbox", { name: "Warm Linux boxes on Fake host" }), { target: { value: "2" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  const saved = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
+  expect(saved.kinds).toEqual({ linux: { presets: { large: { cores: 12, memoryMiB: 24576, diskGiB: null } }, default: "medium" } });
+  expect(saved.backends[0].warm).toEqual({ linux: 2 });
+
+  fireEvent.click(slot.getByRole("switch", { name: "Linux desktop on" }));
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).kinds["linux-desktop"]).toEqual({ enabled: false });
+});
+
+test("the general settings save at once, leaving out a value at its default", async () => {
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers);
+  const limit = await slot.findByRole("textbox", { name: "Boxes per thread" });
+  fireEvent.change(limit, { target: { value: "3" } });
+  fireEvent.blur(limit);
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3 });
+  fireEvent.click(slot.getByRole("switch", { name: "Enrol boxes as BB machines" }));
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3, enrol: false });
 });
 
 function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") {
