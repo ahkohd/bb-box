@@ -19,13 +19,15 @@
 // Setting up that access runs alongside BB's bootstrap, which touches
 // neither ~/.bashrc nor git's settings. bb-box asks BB about the machine
 // every 500 ms, and every 100 ms once bootstrap has returned, since BB shows
-// the machine connected soon after. Each enrolment logs how long its steps
-// took.
+// the machine connected soon after. BB starts the daemon's workers, which
+// carry the variables, a moment after that, so the enrolment ends once the
+// box's commands find one, or 10 s later, and the box's first command has
+// them. Each enrolment logs how long its steps took.
 
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { describeError, type BoxRecord, type Boxes } from "../core/boxes.ts";
-import { accessSetup, accessSetupMs } from "../core/in-box.ts";
+import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 
 export const MACHINE_PROVIDER_ID = "bb-box";
@@ -60,10 +62,14 @@ export interface EnrolmentDeps {
   readonly pollMs?: number;
   /** How often to ask once bootstrap has returned. */
   readonly fastPollMs?: number;
+  /** How long to wait, once the machine connects, for a worker with the thread's variables. */
+  readonly variablesWaitMs?: number;
 }
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
 const ACCESS_SETUP_TIMEOUT_MS = 60_000;
+const ACCESS_CHECK_TIMEOUT_MS = 10_000;
+const VARIABLES_POLL_MS = 250;
 
 function sh(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
@@ -125,7 +131,8 @@ const STEPS: readonly Step[] = [
   { end: "bootstrapped", after: ["installed"], label: "BB waiting for the daemon" },
   { end: "connected", after: ["bootstrapped"], label: "BB showing the machine connected" },
   { end: "accessed", after: ["connected"], label: "waiting for the access setup", optional: true },
-  { end: "enrolled", after: ["connected", "accessed"], label: "finishing" },
+  { end: "variables", after: ["connected", "accessed"], label: "waiting for a worker with the thread's variables", optional: true },
+  { end: "enrolled", after: ["connected", "accessed", "variables"], label: "finishing" },
 ];
 
 /**
@@ -204,6 +211,7 @@ export class Enrolment {
   readonly #timeoutMs: number;
   readonly #pollMs: number;
   readonly #fastPollMs: number;
+  readonly #variablesWaitMs: number;
   /** Boxes whose enrolment this process is following. */
   readonly #following = new Set<string>();
   /** Boxes whose BB daemon this process is starting again. */
@@ -216,6 +224,7 @@ export class Enrolment {
     this.#timeoutMs = deps.timeoutMs ?? 5 * 60_000;
     this.#pollMs = deps.pollMs ?? 500;
     this.#fastPollMs = deps.fastPollMs ?? 100;
+    this.#variablesWaitMs = deps.variablesWaitMs ?? 10_000;
   }
 
   /** The machine provider BB calls to create and remove a box's machine. */
@@ -331,6 +340,7 @@ export class Enrolment {
       if (phase === "active" && host.status === "connected") {
         phases.mark("connected");
         await access;
+        await this.#variables(current, phases);
         // A resumed enrolment's own time is only its last part, so the box shows none.
         const enrolled = await this.#deps.boxes.update(box, (latest) => ({
           enrol: { state: "enrolled", hostId, error: null },
@@ -382,6 +392,40 @@ export class Enrolment {
     // env file; it is shown before the script.
     const sent = phases.marks.get("names");
     if (scriptMs !== null && sent !== undefined) phases.mark("env", Math.max(sent, phases.marks.get("accessed")! - scriptMs));
+  }
+
+  /**
+   * Waits, once the machine connects, until the box's commands find a worker
+   * of BB's daemon with the thread's variables, which BB starts a moment
+   * later. A box with no names to take, or in which bb-box finds no daemon,
+   * does not wait. A failure leaves the box enrolled.
+   */
+  async #variables(box: BoxRecord, phases: Phases): Promise<void> {
+    const deadline = Date.now() + this.#variablesWaitMs;
+    try {
+      const access = await this.#deps.boxes.access(box);
+      const script = access ? accessCheck(box.capabilities.os, access) : null;
+      if (!script) return;
+      for (;;) {
+        const current = await this.#deps.boxes.find(box.id);
+        if (!current || current.state !== "ready") return;
+        const { result } = await this.#deps.boxes.run(box.threadId, box.id, script, { timeoutMs: ACCESS_CHECK_TIMEOUT_MS, waitForEnrolment: false });
+        if (result.exitCode === ACCESS_CHECK_EXITS.found || result.exitCode === ACCESS_CHECK_EXITS.noDaemon) return;
+        if (result.exitCode !== ACCESS_CHECK_EXITS.waiting) {
+          throw new Error(`Looking for the thread's variables in box ${box.name} exited with ${result.exitCode ?? "no code"}: ${result.stderr.trim()}`);
+        }
+        if (Date.now() >= deadline) {
+          const waited = `${Number((this.#variablesWaitMs / 1000).toFixed(1))} s`;
+          this.#deps.log?.(`BB's daemon in box ${box.name} had no worker with the thread's variables ${waited} after the machine connected. Its commands take them once one has.`);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, VARIABLES_POLL_MS));
+      }
+    } catch (error) {
+      this.#deps.logError("enrol variables", error);
+    } finally {
+      phases.mark("variables");
+    }
   }
 
   /** Removes a box's machine from BB, before its release. */

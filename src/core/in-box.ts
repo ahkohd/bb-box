@@ -259,6 +259,29 @@ export function accessSetupMs(stdout: string): number | null {
   return ms === undefined ? null : Number(ms);
 }
 
+/** What the access check exits with. */
+export const ACCESS_CHECK_EXITS = { found: 0, waiting: 1, noDaemon: 2 } as const;
+
+/**
+ * Run with the env file sourced, once a box's BB daemon connects: whether
+ * the box's commands have the thread's access yet. BB starts the workers
+ * that carry the variables a moment after its daemon connects. Exits 0 when
+ * the env file set any of the names, 1 while the daemon runs without such a
+ * worker, and 2 when nothing runs the daemon's program, so there is nothing
+ * to wait for. Null for Windows, or when there are no names.
+ */
+export function accessCheck(os: GuestOs, access: Access): string | null {
+  const names = accessNames(access);
+  if (os === "windows" || !names.length) return null;
+  const set = names.map((name) => `[ -n "\${${name}:-}" ]`).join(" || ");
+  return (
+    `if ${set}; then exit ${ACCESS_CHECK_EXITS.found}; fi\n` +
+    `ps -ww -U "$(id -u)" -o command= 2>/dev/null |\n` +
+    `  awk -v parent=${sh(access.parent)} 'index($2, parent) { found = 1 } END { exit !found }' && exit ${ACCESS_CHECK_EXITS.waiting}\n` +
+    `exit ${ACCESS_CHECK_EXITS.noDaemon}\n`
+  );
+}
+
 /**
  * Runs the computer-use driver's MCP proxy (015), whose stdin and stdout
  * carry the session. The driver's daemon listens on `socket` in the box's

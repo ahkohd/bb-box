@@ -51,7 +51,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[] } & Pick<FakeBackendOptions, "resize"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number } & Pick<FakeBackendOptions, "resize"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -181,6 +181,7 @@ async function start(
     drivers: [fakeDriver(root, world, options.resize ? { resize: options.resize } : {}), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
+    variablesWaitMs: options.variablesWaitMs,
   };
   const app = await setup(bb, setupOptions);
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
@@ -356,6 +357,39 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   assert.deepEqual(world.events, [`create host-${box.id}`, `delete host-${box.id}`]);
   assert.equal(world.hosts.size, 0);
   assert.deepEqual(world.backend!.calls.filter((call) => call.startsWith("release")).length, 1);
+});
+
+test("the enrolment waits for BB's daemon to start a worker with the thread's variables, so the first command has them", async (t) => {
+  const connected = join(tempDir("connected"), "connected");
+  const daemon = await fakeDaemon([{ GH_TOKEN: "value-token", MACHINE_VAR: "value-machine" }], { startOn: { file: connected, seconds: 1 } });
+  t.after(daemon.stop);
+  const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent });
+  t.after(() => harness.lifecycle.dispose());
+  // BB shows the machine connected as its installer returns, and its daemon starts the workers a second later.
+  world.installer = `: > '${connected}'`;
+
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  const box = await only(app);
+  const run = await tool("box_run", { box: box.name, command: 'printf "%s|%s\\n" "${GH_TOKEN:+token}" "$MACHINE_VAR"' });
+  assert.match(text(run), /stdout:\ntoken\|value-machine\n/);
+  const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
+  assert.match(logged ?? "", /, waiting for a worker with the thread's variables (0\.[5-9]|[1-4]\.\d)\d s, finishing /);
+});
+
+test("the enrolment waits only so long for a worker with the thread's variables", async (t) => {
+  const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
+  t.after(daemon.stop);
+  const { harness, app, tool } = await start(undefined, { daemonParent: daemon.parent, variablesWaitMs: 300 });
+  t.after(() => harness.lifecycle.dispose());
+
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  const box = await only(app);
+  const messages = harness.inspection.logEntries.map((entry) => entry.message);
+  assert.ok(
+    messages.includes(`BB's daemon in box ${box.name} had no worker with the thread's variables 0.3 s after the machine connected. Its commands take them once one has.`),
+    messages.join("\n"),
+  );
+  assert.match(messages.find((line) => line.startsWith(`Enrolled box ${box.name} `)) ?? "", /, waiting for a worker with the thread's variables 0\.[3-9]\d s, finishing /);
 });
 
 test("the enrolment's log lists its steps in the order they started, with the access setup's parts", () => {

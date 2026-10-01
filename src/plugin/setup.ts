@@ -104,6 +104,8 @@ export interface SetupOptions {
   readonly daemonParent?: string;
   /** How long a viewer holding control may be gone before the agent has it again. */
   readonly controlStaleMs?: number;
+  /** How long an enrolment waits for a worker of BB's daemon with the thread's variables. */
+  readonly variablesWaitMs?: number;
   /** Computer use's waits, shorter in tests. */
   readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree">;
 }
@@ -221,6 +223,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     bootstrap: (request) => bb.experimental_machines.bootstrap(request),
     logError,
     log: (message) => bb.log.info(message),
+    variablesWaitMs: options.variablesWaitMs,
   });
   bb.experimental_machines.register(enrolment.provider());
   const computing = new Computer({
