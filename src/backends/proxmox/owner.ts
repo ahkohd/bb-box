@@ -4,8 +4,8 @@
 // storage is lost, and an install acts only on its own guests. Shared by the
 // Proxmox backends.
 
-import type { BoxIdentity, BoxOwner } from "../types.ts";
-import { parseTags } from "./api.ts";
+import type { BoxIdentity, BoxOwner, Guest } from "../types.ts";
+import { ProxmoxError, parseTags, type PoolGuest, type Proxmox } from "./api.ts";
 
 export const TAG = "bb-box";
 export const INSTALL = "install.";
@@ -24,6 +24,18 @@ export function templateFromTags(tags: readonly string[]): number | null {
 /** The build ID build.sh tags a template with, which its warm guests copy: null without one. */
 export function buildFromTags(tags: readonly string[]): string | null {
   return tags.find((tag) => tag.startsWith(BUILD))?.slice(BUILD.length) || null;
+}
+
+/**
+ * When a build ID's build began, from its build.<YYYYMMDD-HHMMSS>-<id> form
+ * (UTC), in milliseconds; null for another form.
+ */
+export function builtAt(build: string): number | null {
+  const match = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-/.exec(build);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second] = match.map(Number);
+  const at = Date.UTC(year!, month! - 1, day!, hour!, minute!, second!);
+  return Number.isNaN(at) ? null : at;
 }
 
 const tagPattern = /^[a-z0-9_][a-z0-9_+.-]*$/i;
@@ -103,4 +115,40 @@ export function namesOf(config: Record<string, unknown>): { install: string | nu
 /** Whether a guest's config is a template's. */
 export function isTemplate(config: Record<string, unknown>): boolean {
   return config.template === 1 || config.template === "1";
+}
+
+/**
+ * The build ID of `template` as it is now: null without one, undefined
+ * while it is missing or not yet a template. From `guests` when the
+ * template is in the pool, which the setup guide's templates are;
+ * otherwise read on its own. A lock, as during a backup, changes nothing.
+ */
+export async function templateBuild(api: Proxmox, guests: readonly PoolGuest[], template: number, signal?: AbortSignal): Promise<string | null | undefined> {
+  const listed = guests.find((guest) => guest.vmid === template);
+  if (listed) return listed.template ? buildFromTags(listed.tags) : undefined;
+  let config: Record<string, unknown>;
+  try {
+    config = await api.config(template, signal);
+  } catch (error) {
+    if (error instanceof ProxmoxError && error.gone) return undefined;
+    throw error;
+  }
+  return isTemplate(config) ? buildFromTags(parseTags(config.tags)) : undefined;
+}
+
+/**
+ * Whether a guest made at `createdAt` came from its template's build
+ * `current` (#227). build.sh --replace keeps the template's VMID, and on
+ * LVM-thin a clone of the old build keeps running, so the VMID alone does
+ * not say. A guest records the build it was cloned from in `data.build`. One
+ * made before bb-box recorded it came from the build if made after the
+ * build began; the replace comes at the build's end, so one made during the
+ * build counts too. With no build to compare, it did not.
+ */
+export function fromBuild(guest: Guest, current: string | null | undefined, createdAt: number): boolean {
+  if (!current) return false;
+  const recorded = guest.data?.build;
+  if (typeof recorded === "string") return recorded === current;
+  const at = builtAt(current);
+  return at !== null && createdAt >= at;
 }

@@ -1778,3 +1778,26 @@ test("a stale release of a real machine does not reset the next box's machine", 
     [second.id],
   );
 });
+
+test("a box gains what a release adds to its kind, where its backend says the guest comes from what it offers, keeping its guest as made (#215)", async () => {
+  const options: { kinds: BoxKind[] } = { kinds: [...FAKE_KINDS] };
+  const world = setup(options);
+  const kept = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const other = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  assert.equal(kept.capabilities.computerUse, null);
+  assert.equal(await world.boxes.refreshCapabilities(), 0, "nothing changed");
+
+  // A release whose linux kind has computer use, after a restart.
+  const computerUse = { driver: "cua" as const, version: "1.0.0", socket: "/tmp/cua.sock" };
+  options.kinds = FAKE_KINDS.map((kind) => (kind.id === "linux" ? { ...kind, capabilities: { ...kind.capabilities, computerUse } } : kind));
+  const boxes = world.restart();
+  // The backend made `other` from something it no longer offers the kind from.
+  world.backend.asOffered = async (guest) => guest.ref !== other.guest!.ref;
+  assert.equal(await boxes.refreshCapabilities(), 1);
+
+  const gained = (await boxes.find(kept.id))!;
+  assert.deepEqual(gained.capabilities.computerUse, computerUse);
+  assert.deepEqual({ ...gained, capabilities: kept.capabilities }, kept, "the rest of the record, its guest and size among it, stays");
+  assert.equal((await boxes.find(other.id))!.capabilities.computerUse, null);
+  assert.equal(await boxes.refreshCapabilities(), 0, "once is enough");
+});
