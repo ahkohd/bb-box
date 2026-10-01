@@ -214,10 +214,16 @@ node --test test/conformance.test.ts
   it exits. What it opens stays open, unless its timeout ends it.
 - The VirtIO GPU driver takes a viewer's size from QEMU but does not
   switch to it, and Windows lists it late, if at all. So the backend sets
-  the desktop to that size through a desktop command, which takes 1 to
-  2 s. If the driver does not take it within 2 s, the backend sets the
-  smallest listed mode that covers the viewer, which the viewer scales
-  down, or else the largest. The mode is kept for the next logon.
+  the desktop to that size through a desktop command, which takes about
+  1 s. The command's code is compiled once per box, in the background
+  during the acquire, and kept in the box user's local app data. If the
+  driver does not take the size within 2 s, the backend sets the smallest
+  listed mode that covers the viewer, which the viewer scales down, or
+  else the largest. The mode is kept for the next logon.
+- The driver offers a size from QEMU only if it is at least 640x480, and
+  Windows is hard to use below 800x600. So the display's `minSize` is
+  800x600: the relay raises a smaller size to it, in each dimension, and
+  the viewer scales the desktop down to fit its pane.
 - Computer use goes through Cua Driver, at the version `build.sh` installs.
   A task at logon starts its daemon in the box user's session, on the pipe
   `\\.\pipe\cua-driver`. It runs elevated, as SSH sessions do, since an
@@ -228,7 +234,9 @@ node --test test/conformance.test.ts
 - A stop hibernates the VM: Windows' memory goes to a state volume on the
   disk's storage, and the VM stops. A start resumes it, with its apps
   open, then sets Windows' clock over SSH, as the resume leaves it at the
-  time the VM stopped. Proxmox locks a hibernated VM's config until it
+  time the VM stopped. The box's details show the start's own timings:
+  resume (or boot, for a VM shut down from Windows), network, SSH and the
+  clock. Proxmox locks a hibernated VM's config until it
   starts, but a release deletes it, with its state. Hibernation needs
   VM.PowerMgmt and VM.Config.Disk, which the setup's role has, and
   Datastore.AllocateSpace on that storage, which the token has.

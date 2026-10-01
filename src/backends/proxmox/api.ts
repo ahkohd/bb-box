@@ -118,6 +118,8 @@ export interface GuestStatus {
   readonly status: "running" | "stopped" | string;
   readonly name?: string;
   readonly uptime?: number;
+  /** The guest's lock, such as "suspended" for a VM hibernated to disk. */
+  readonly lock?: string;
 }
 
 export interface NodeStatus {
@@ -351,6 +353,7 @@ export class Proxmox {
         status: String(data?.status ?? "unknown"),
         name: typeof data?.name === "string" ? data.name : undefined,
         uptime: typeof data?.uptime === "number" ? data.uptime : undefined,
+        lock: typeof data?.lock === "string" ? data.lock : undefined,
       };
     } catch (error) {
       if (error instanceof ProxmoxError && error.gone) return null;

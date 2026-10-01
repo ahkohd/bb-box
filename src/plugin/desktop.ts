@@ -130,6 +130,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             open,
             mayInput: () => control.mayInput(boxId, viewer),
             onServerInit: (size) => control.seen(boxId, size),
+            minSize: () => shown?.minSize ?? null,
             onResize: (size, screen) => {
               control.resized(boxId, viewer, screen);
               // The SetDesktopSize still reaches the box, which answers the viewer.

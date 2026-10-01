@@ -892,6 +892,17 @@ test("stop and start, and a stopped box says so instead of timing out", async ()
   assert.equal((await world.boxes.start(THREAD, box.name)).state, "ready");
   assert.equal(world.reconnected.length, 1, "a running box is not reconnected again");
   assert.equal((await world.boxes.run(THREAD, box.name, "echo up")).result.stdout, "up\n");
+
+  // The start's own timings, beside the acquire's, and the next start's in their place.
+  const starts = (timings: Readonly<Record<string, number>>) => Object.keys(timings).filter((step) => step.startsWith("start."));
+  assert.deepEqual(starts(started.timings), ["start.boot", "start.total"]);
+  assert.equal(started.timings.total, box.timings.total, "the acquire's are kept");
+  assert.match(boxDetail(started), /\nTimings: (?:(?!boot)[^\n])*\nLast start: boot 1\.2 s, total [^\n]+$/);
+  await world.boxes.stop(THREAD, box.name);
+  world.backend.startSteps = { resume: 300 };
+  const again = await world.boxes.start(THREAD, box.name);
+  assert.deepEqual(starts(again.timings), ["start.resume", "start.total"]);
+  assert.match(boxDetail(again), /\nLast start: resume 0\.3 s, total [^\n]+$/);
 });
 
 test("a box that is not enrolled is not reconnected after a start", async () => {

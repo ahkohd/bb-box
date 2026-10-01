@@ -21,7 +21,7 @@
 // hibernates the VM, and a start resumes it and sets Windows' clock, which
 // the resume leaves behind. The warm pool is still to come.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
 import {
   TAG,
@@ -75,6 +75,13 @@ const NEXT_VMID = "next-vmid";
 const READY_TIMEOUT_MS = 180_000;
 /** How long setting the desktop's mode may take, in the desktop session. */
 const RESIZE_TIMEOUT_MS = 15_000;
+/**
+ * The smallest desktop a viewer sets: Windows is hard to use below it. QEMU
+ * passes a viewer's size on to the display driver, which offers it as a mode
+ * if it is at least 640x480. QEMU answers that it passed the size on, not
+ * that it set it, so noVNC does not ask again.
+ */
+const MIN_DESKTOP = { width: 800, height: 600 };
 /** How long setting Windows' clock may take, over SSH. */
 const CLOCK_TIMEOUT_MS = 30_000;
 /** build.sh --replace swaps the template for its new build, which leaves it missing for a moment. A clone waits this long for it. */
@@ -119,20 +126,16 @@ export const EXTEND_C = String.raw`try {
 }`;
 
 /**
- * Sets the desktop to `width` by `height`. QEMU passes a viewer's size on to
- * the display driver, which then takes it beside the modes Windows lists,
- * though Windows does not switch to it. That can take a moment, so this tries
- * for up to 2 s. Else it sets the smallest listed mode that covers the size,
- * which the viewer scales down and so stays sharp, else the largest. The list
- * can hold an earlier viewer's size that the driver no longer takes, so it
- * tries them in turn. Each keeps the colour depth, and the mode is kept for
- * the user's next logon. It runs in the box user's desktop session, as the
- * session SSH gives has another display.
+ * BbDisplay.Fit sets the desktop to `width` by `height`. QEMU passes a
+ * viewer's size on to the display driver, which then takes it beside the
+ * modes Windows lists, though Windows does not switch to it. That can take a
+ * moment, so it tries for up to 2 s. Else it sets the smallest listed mode
+ * that covers the size, which the viewer scales down and so stays sharp, else
+ * the largest. The list can hold an earlier viewer's size that the driver no
+ * longer takes, so it tries them in turn. Each keeps the colour depth, and the
+ * mode is kept for the user's next logon.
  */
-export function setMode(width: number, height: number): string {
-  return String.raw`$ErrorActionPreference = 'Stop'
-Add-Type @'
-using System;
+const DISPLAY_SOURCE = String.raw`using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -182,9 +185,44 @@ public static class BbDisplay {
     }
     return "Windows refused " + width + "x" + height + " and the modes it lists, with " + result + ".";
   }
-}
+}`;
+
+/** Named for its source, so a new source compiles afresh. */
+const DISPLAY_DLL = `display-${createHash("sha256").update(DISPLAY_SOURCE).digest("hex").slice(0, 12)}.dll`;
+
+/**
+ * Loads BbDisplay as $bbDisplay, from a file in the box user's local app
+ * data, compiling it there first if it is missing. Add-Type takes up to 3 s
+ * in a new PowerShell, and loading the file a few milliseconds. Scripts that
+ * compile at once each write a file of their own, and the first to move it
+ * into place wins.
+ */
+export const DISPLAY_HELPER = String.raw`$ErrorActionPreference = 'Stop'
+$bbDll = [IO.Path]::Combine([Environment]::GetFolderPath('LocalApplicationData'), 'bb-box', '${DISPLAY_DLL}')
+if (-not (Test-Path -LiteralPath $bbDll)) {
+  $bbTemp = "$bbDll.$PID"
+  New-Item -ItemType Directory -Force -Path (Split-Path $bbDll) | Out-Null
+  try {
+    Add-Type -OutputAssembly $bbTemp -TypeDefinition @'
+${DISPLAY_SOURCE}
 '@
-$bbRefused = [BbDisplay]::Fit(${width}, ${height})
+    [IO.File]::Move($bbTemp, $bbDll)
+  } catch {
+    if (-not (Test-Path -LiteralPath $bbDll)) { throw }
+  } finally {
+    Remove-Item -LiteralPath $bbTemp -ErrorAction Ignore
+  }
+}
+$bbDisplay = [Reflection.Assembly]::LoadFile($bbDll).GetType('BbDisplay')`;
+
+/**
+ * Sets the desktop to `width` by `height`, or the listed mode that best
+ * covers it. It runs in the box user's desktop session, as the session SSH
+ * gives has another display.
+ */
+export function setMode(width: number, height: number): string {
+  return `${DISPLAY_HELPER}
+$bbRefused = $bbDisplay::Fit(${width}, ${height})
 if ($bbRefused) { [Console]::Error.WriteLine($bbRefused); exit 1 }`;
 }
 
@@ -281,6 +319,18 @@ export interface QemuBackendOptions {
 type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 const untimed: Step = (_name, run) => run();
 
+/** Runs steps, giving `timing` the time each took, whether it succeeded or not. */
+function timed(timing: (step: string, ms: number) => void): Step {
+  return async (name, run) => {
+    const started = performance.now();
+    try {
+      return await run();
+    } finally {
+      timing(name, Math.round(performance.now() - started));
+    }
+  };
+}
+
 interface SshKeys {
   readonly ssh: Ssh;
   readonly publicKey: string | null;
@@ -315,6 +365,8 @@ export class ProxmoxQemuBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Where the next VMID search starts, so a deleted box's VMID and address are not reused at once. */
   #nextVmid: number | null = null;
+  /** Display helpers compiling for new boxes, by VMID, which a resize waits for. */
+  readonly #compiling = new Map<number, Promise<void>>();
 
   constructor(config: QemuConfig, context: BackendContext, options: QemuBackendOptions = {}) {
     this.id = context.id;
@@ -400,14 +452,7 @@ export class ProxmoxQemuBackend implements Backend {
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs);
     const api = await this.client();
     const installId = this.#context.installId;
-    const step: Step = async (name, run) => {
-      const started = performance.now();
-      try {
-        return await run();
-      } finally {
-        hooks.timing(name, Math.round(performance.now() - started));
-      }
-    };
+    const step = timed((name, ms) => hooks.timing(name, ms));
     let vmid: number | null = null;
     let claimed: number | null = null;
     let template: number | null = null;
@@ -457,6 +502,7 @@ export class ProxmoxQemuBackend implements Backend {
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step);
       // A resumed acquire may have grown the disk before it stopped.
       if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
+      this.#compileDisplay(id);
       return this.#guest(api.node, id, template, box.boxId, await size, build);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
@@ -490,14 +536,16 @@ export class ProxmoxQemuBackend implements Backend {
    * Resumes a hibernated VM, or boots a stopped one, and waits for SSH. Then
    * sets Windows' clock, which a resume leaves at the time it stopped (039).
    */
-  async start(guest: Guest, signal?: AbortSignal): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}): Promise<void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
     if (!status) throw gone(vmid);
-    if (status.status !== "running") await api.start(vmid, signal);
-    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal);
-    await this.#setClock(vmid, signal);
+    const step = timed(timing);
+    // A hibernated VM resumes; one shut down from Windows boots.
+    if (status.status !== "running") await step(status.lock === "suspended" ? "resume" : "boot", () => api.start(vmid, signal));
+    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step);
+    await step("clock", () => this.#setClock(vmid, signal));
   }
 
   /** Hibernates the VM, so a start resumes Windows' session as it was, with its apps open (039). */
@@ -547,7 +595,8 @@ export class ProxmoxQemuBackend implements Backend {
       ...KIND.capabilities.displays[0]!,
       label: "Desktop",
       open: (signal) => this.#console(vmid, signal),
-      resize: (size, signal) => this.#resize(command, size, signal),
+      resize: (size, signal) => this.#resize(vmid, command, size, signal),
+      minSize: MIN_DESKTOP,
     };
     return { command, displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };
   }
@@ -875,15 +924,32 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /**
+   * Compiles the display helper in the background while the box is new, so
+   * its first resize is as quick as the rest. A failure is left to the first
+   * resize, which compiles it again.
+   */
+  #compileDisplay(vmid: number): void {
+    const compiling = this.#command(vmid)
+      .then((command) => command.run(DISPLAY_HELPER, { timeoutMs: RESIZE_TIMEOUT_MS, maxOutputBytes: 4096 }))
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => this.#compiling.delete(vmid));
+    this.#compiling.set(vmid, compiling);
+  }
+
+  /**
    * Sets the desktop to `size`, or to the listed mode that best covers it,
    * through Windows itself (021), as the display driver does not switch to
    * a viewer's size.
    */
-  async #resize(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+  async #resize(vmid: number, command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
     const { width, height } = size;
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
       throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
     }
+    await this.#compiling.get(vmid);
     const result = await command.run(desktopScript(setMode(width, height), RESIZE_TIMEOUT_MS), { timeoutMs: RESIZE_TIMEOUT_MS + 5_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) {
       throw new Error(`Windows could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}.`}`);

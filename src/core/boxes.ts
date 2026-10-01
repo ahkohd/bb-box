@@ -1062,13 +1062,18 @@ export class Boxes {
       if (current.state === "ready") return current;
       this.#require(current, "stopped");
       this.#require((await this.#move(current, "starting")) ?? { ...current, state: "releasing" }, "starting");
+      const timings: Record<string, number> = {};
+      const began = this.#now();
       try {
-        await start(current.guest!, signal);
+        await start(current.guest!, signal, (step, ms) => {
+          timings[`start.${step}`] = ms;
+        });
       } catch (error) {
         await this.#observe(current, { signal, moving: true }).catch(() => null);
         throw error;
       }
-      const started = (await this.#move(current, "ready")) ?? current;
+      timings["start.total"] = this.#now() - began;
+      const started = (await this.#move(current, "ready", timings)) ?? current;
       if (started.state === "ready" && started.restoredAt) {
         await this.#enrol(started, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
         return (await this.#read(started.threadId, started.id)) ?? started;
@@ -1081,10 +1086,19 @@ export class Boxes {
     });
   }
 
-  /** Moves a box to `state` for a stop or start, unless its release began meanwhile. */
-  #move(box: BoxRecord, state: "stopping" | "stopped" | "starting" | "ready"): Promise<BoxRecord | null> {
+  /**
+   * Moves a box to `state` for a stop or start, unless its release began
+   * meanwhile. A start's timings replace the last start's.
+   */
+  #move(box: BoxRecord, state: "stopping" | "stopped" | "starting" | "ready", started?: Readonly<Record<string, number>>): Promise<BoxRecord | null> {
     const moving = state === "stopping" || state === "starting";
-    return this.update(box, (current) => (current.state === "releasing" ? {} : moving ? { state, error: null } : { state }));
+    return this.update(box, (current) => {
+      if (current.state === "releasing") return {};
+      if (moving) return { state, error: null };
+      if (!started) return { state };
+      const kept = Object.entries(current.timings).filter(([step]) => !step.startsWith("start."));
+      return { state, timings: { ...Object.fromEntries(kept), ...started } };
+    });
   }
 
   /** Throws the reason a box is not in `state`, in words for the user. */

@@ -23,6 +23,7 @@ export const STEP_WORDS: Readonly<Record<string, string>> = {
   total: "total",
   spare: "claiming a spare",
   relabel: "naming it for its owner",
+  clock: "setting the clock",
 };
 
 /** A warning when a GPU desktop's display runs on the CPU, from its facts; null otherwise, since the row's badge says what the kind has. */
@@ -89,12 +90,18 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
   }
 }
 
-/** The box's timings as words, in the order they happened, for its details. */
+function stepWords(timings: [string, number][]): string {
+  return timings.map(([step, ms]) => `${STEP_WORDS[step] ?? step} ${seconds(ms)}`).join(" · ");
+}
+
+/** The box's acquire timings as words, in the order they happened, for its details. */
 export function timingWords(box: BoxView): string {
-  return Object.entries(box.timings)
-    .filter(([step]) => !step.startsWith("release."))
-    .map(([step, ms]) => `${STEP_WORDS[step] ?? step} ${seconds(ms)}`)
-    .join(" · ");
+  return stepWords(Object.entries(box.timings).filter(([step]) => !step.startsWith("release.") && !step.startsWith("start.")));
+}
+
+/** The timings of the box's last start as words, in the order they happened. */
+export function startWords(box: BoxView): string {
+  return stepWords(Object.entries(box.timings).flatMap(([step, ms]): [string, number][] => (step.startsWith("start.") ? [[step.slice("start.".length), ms]] : [])));
 }
 
 /** What the BB machine row of the details says. */

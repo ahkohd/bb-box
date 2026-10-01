@@ -329,7 +329,7 @@ export class FakeProxmox {
       if (!guest) return this.#missing(vmid, type);
       const prefix = type === "qemu" ? "qm" : "vz";
       if (action === "current" && method === "GET") {
-        return ok({ vmid, name: guest.name, status: guest.status, uptime: guest.status === "running" ? 5 : 0 });
+        return ok({ vmid, name: guest.name, status: guest.status, uptime: guest.status === "running" ? 5 : 0, ...(guest.config.lock ? { lock: guest.config.lock } : {}) });
       }
       if (method === "POST" && action === "start") {
         if (!this.nextTaskExit.has(`${prefix}start`)) {

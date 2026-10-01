@@ -181,6 +181,28 @@ test("the relay answers the box's VNC password and passes only the holder's inpu
   await until("the box's side to close", () => box!.closed);
 });
 
+test("a resize below the display's smallest size is raised to it, in each dimension", async () => {
+  const server = new FakeRfb();
+  const relay = relayTo(server, { minSize: () => ({ width: 800, height: 600 }) });
+  await relay.init();
+  relay.give(true);
+  const [box] = server.connections;
+  // noVNC's resize, and one with no screens.
+  const sent = [setDesktopSize(518, 722, SCREEN), setDesktopSize(1024, 500, SCREEN), setDesktopSize(1280, 800, SCREEN), bytes(251, 0, 2, 0, 1, 144, 0, 0)];
+  const raised = [setDesktopSize(800, 722, SCREEN), setDesktopSize(1024, 600, SCREEN), setDesktopSize(1280, 800, SCREEN), bytes(251, 0, 3, 32, 2, 88, 0, 0)];
+  await relay.relay.receive(sent.reduce(concat));
+  const length = raised.reduce(concat).byteLength;
+  await until("the resizes", () => box!.received.byteLength >= length);
+  assert.equal(hex(box!.received), hex(raised.reduce(concat)));
+  assert.deepEqual(relay.resizes, [
+    [{ width: 800, height: 722 }, SCREEN],
+    [{ width: 1024, height: 600 }, SCREEN],
+    [{ width: 1280, height: 800 }, SCREEN],
+    [{ width: 800, height: 600 }, null],
+  ]);
+  await relay.relay.close();
+});
+
 test("release lets go of held keys and buttons without closing", async () => {
   const server = new FakeRfb();
   const relay = relayTo(server);

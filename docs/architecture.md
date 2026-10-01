@@ -242,7 +242,12 @@ The command capability:
 authentication the box expects (none, or a VNC password). A display whose
 stream server cannot resize may offer `resize()`, which the relay calls
 beside the viewer's own request, one at a time per box with the latest size
-last ([021](decisions/021-desktop-resize-through-the-backend.md)).
+last ([021](decisions/021-desktop-resize-through-the-backend.md)). A display
+may set `minSize`, the smallest size a viewer may set: the relay raises a
+smaller SetDesktopSize to it, and the viewer scales the desktop down. It is
+only for a stream server that passes the size on and does not answer with
+the size it set, as QEMU does. noVNC asks again while the size Xvnc answers
+with differs from its pane.
 
 - For RFB the relay does the security handshake with the box itself: it
   answers VNC authentication (security type 2) with the password, then offers
@@ -258,7 +263,7 @@ last ([021](decisions/021-desktop-resize-through-the-backend.md)).
   route trusts the API's certificate as the backend's API calls do, by its
   fingerprint or its CA, not the `cert` in `vncproxy`'s answer. Windows'
   VirtIO GPU driver ignores a viewer's resize, so the backend sets the mode
-  in the desktop session
+  in the desktop session, no smaller than 800x600
   ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)).
   RDP is not planned. It needs a gateway and a second client, and an RDP
   login moves the session off the console, so you and the agent could not

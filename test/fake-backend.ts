@@ -73,6 +73,8 @@ export interface FakeBackendOptions {
   readonly host?: BackendStorage;
   /** What sets a desktop's size: the stream server's SetDesktopSize (the default), or the display's resize. */
   readonly resize?: "stream" | "backend";
+  /** The smallest size a viewer may set a desktop to. None by default. */
+  readonly minSize?: DisplaySize;
   /**
    * Virtual: the largest guest it makes; capacity refuses a larger size. Real:
    * every machine's size, which a box of any size up to it gets. 16 cores,
@@ -166,7 +168,9 @@ export class FakeBackend implements Backend {
   /** Stops and starts wait here while it is set. */
   powerGate: Promise<void> | null = null;
   readonly calls: string[] = [];
-  readonly start?: (guest: Guest) => Promise<void>;
+  /** The steps a start reports, with the time each took. */
+  startSteps: Readonly<Record<string, number>> = { boot: 1_200 };
+  readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void) => Promise<void>;
   readonly stop?: (guest: Guest) => Promise<void>;
   readonly members?: () => Promise<readonly PoolMember[]>;
   readonly returnToService?: (ref: string) => Promise<void>;
@@ -202,7 +206,10 @@ export class FakeBackend implements Backend {
     this.#pool = new KvPoolStore(this.#storage, () => this.machines());
     this.#ready = new ReadyPool(this.#pool);
     if (options.stopStart ?? true) {
-      this.start = (guest) => this.#power(guest, "running");
+      this.start = async (guest, _signal, timing) => {
+        await this.#power(guest, "running");
+        for (const [step, ms] of Object.entries(this.startSteps)) timing?.(step, ms);
+      };
       this.stop = (guest) => this.#power(guest, "stopped");
     }
     if (this.nature === "real") {
@@ -373,6 +380,7 @@ export class FakeBackend implements Backend {
           auth: { type: "vnc-password", password: "fakepass" },
         }),
         ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
+        ...(this.#options.minSize ? { minSize: this.#options.minSize } : {}),
       }),
     );
     const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);

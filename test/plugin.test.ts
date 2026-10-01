@@ -52,7 +52,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -269,7 +269,7 @@ async function start(
     },
   });
   const setupOptions: SetupOptions = {
-    drivers: [fakeDriver(root, world, { resize: options.resize, kinds: options.kinds, shell: options.shell }), ...(options.drivers ?? [])],
+    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell }), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
@@ -1556,8 +1556,8 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal" });
 });
 
-test("the backend resizes a desktop whose stream server cannot, one resize at a time and the latest last (021)", async (t) => {
-  const { harness, app, world } = await start(undefined, { resize: "backend" });
+test("the backend resizes a desktop whose stream server cannot, one resize at a time and the latest last, and not below the display's smallest size (021)", async (t) => {
+  const { harness, app, world } = await start(undefined, { resize: "backend", minSize: { width: 800, height: 600 } });
   t.after(() => harness.lifecycle.dispose());
   await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
   await app.boxes.idle();
@@ -1595,6 +1595,11 @@ test("the backend resizes a desktop whose stream server cannot, one resize at a 
   assert.deepEqual(backend.resizes.at(-1), { width: 1600, height: 1000 }, "the latest waiting request replaced the one before");
   assert.equal(backend.mostResizing, 1);
   assert.deepEqual([backend.rfb.width, backend.rfb.height], [1600, 1000]);
+
+  await session.receive(setDesktopSize(518, 722, screen));
+  await until("the smallest size", async () => backend.resizes.length === 3 && backend.resizing === 0);
+  assert.deepEqual(backend.resizes.at(-1), { width: 800, height: 722 }, "a narrow pane gets the smallest width");
+  assert.deepEqual([backend.rfb.width, backend.rfb.height], [800, 722]);
 
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name });
   assert.deepEqual(backend.resizes.at(-1), { width: 1280, height: 800 }, "hand-back gives the agent its size back");
