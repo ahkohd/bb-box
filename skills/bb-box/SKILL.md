@@ -44,6 +44,11 @@ Limits:
   a server in the background with its output redirected,
   `nohup <cmd> >server.log 2>&1 &`. Without the redirect, the server's
   writes fail once `box_run` returns, and it may stop answering.
+- On Windows, commands run in PowerShell 7, and what a command starts with
+  `Start-Process`, `Start-Job` or `cmd /c start` ends with it. Start a
+  server with `Start-Detached { <cmd> } server.log` instead, which returns
+  its process ID. It gets the command's directory and environment
+  variables, but not its PowerShell variables: pass values in `$env:`.
 - A command that exits with a non-zero code is not a tool error. A command
   that times out is.
 - `box_copy` moves one file of up to 16 MiB. Tar a directory first. A

@@ -158,6 +158,8 @@ test("a Windows box runs each script in PowerShell, base64-encoded, so no quote 
   const [entry] = log();
   assert.doesNotMatch(entry!.command, /["`]/);
   assert.match(entry!.command, /^\$ProgressPreference='SilentlyContinue';.*;exit 0$/);
+  assert.match(entry!.command, /if\(\$PSStyle\)\{\$PSStyle\.OutputRendering='PlainText'\}/, "output has no colours");
+  assert.match(entry!.command, /;function Start-Detached\{.*;\$r\.ProcessId\};\$global:LASTEXITCODE=0;& \(\[scriptblock\]::Create\(/, "the script can start commands outside its job");
   const encoded = /FromBase64String\('([^']+)'\)/.exec(entry!.command)![1]!;
   assert.equal(Buffer.from(encoded, "base64").toString("utf8"), `${script}\nif(-not $?){if($LASTEXITCODE){exit $LASTEXITCODE};exit 1}`);
   assert.equal(await box.probe(), true);
@@ -173,7 +175,7 @@ test("a script too long for Windows' command line goes to a file in the box firs
   assert.deepEqual([result.exitCode, result.stdout, result.stderr], [4, "in", ""]);
   const entries = log();
   assert.equal(entries.length, 2);
-  assert.ok(entries.every((entry) => entry.command.length < 1_000));
+  assert.ok(entries.every((entry) => entry.command.length < 4_000), "the script is not on the command line");
   const name = /'(bb-box-[0-9a-f]{16}\.ps1)'/.exec(entries[0]!.command)![1];
   assert.equal(/'(bb-box-[0-9a-f]{16}\.ps1)'/.exec(entries[1]!.command)![1], name);
   assert.deepEqual(readdirSync(join(home("192.0.2.31"), "tmp")), [], "the staged script is deleted before it runs");

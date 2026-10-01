@@ -73,7 +73,8 @@ const BOOT_LOG = "C:\\bb-box\\boot.log";
 const KIND: BoxKind = {
   id: "windows-desktop",
   label: "Windows desktop",
-  description: "A Windows 11 VM for Windows apps, browsers and builds. Commands run in PowerShell 7 as an administrator.",
+  description:
+    "A Windows 11 VM for Windows apps, browsers and builds. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running.",
   requires: [],
   capabilities: {
     os: "windows",
