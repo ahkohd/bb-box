@@ -603,9 +603,9 @@ export interface DoctorCheck {
 export interface BackendDriver<C = unknown> {
   // type, label and nature as built. `settings` gives way to (029):
   /** The backend's fields, named within it; the settings page renders them. */
-  readonly fields: Readonly<Record<string, PluginSettingDescriptor>>;
+  readonly fields: Readonly<Record<string, FieldDescriptor>>;
   /** The fields of each host, for a backend with several hosts set up alike. */
-  readonly hostFields?: Readonly<Record<string, PluginSettingDescriptor>>;
+  readonly hostFields?: Readonly<Record<string, FieldDescriptor>>;
   /** Reads the backend's part of the configuration. */
   parse(part: BackendPart): ParsedSettings<C>;
   /** `id` is the type for a type's first backend, else `<type>:<name>`. */
@@ -613,6 +613,15 @@ export interface BackendDriver<C = unknown> {
   /** Paths in the repository, linked from the settings page, the guide first. */
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
 }
+
+/**
+ * BB's setting descriptor, including `secret: true`, plus where the page
+ * puts the field. Fields show in the order they are declared.
+ */
+export type FieldDescriptor = PluginSettingDescriptor & {
+  /** `boxes`: what boxes are made from or run on, such as templates or images. */
+  readonly group: "connection" | "credentials" | "boxes" | "advanced";
+};
 
 /** One backend in the configuration document. */
 export interface BackendPart {

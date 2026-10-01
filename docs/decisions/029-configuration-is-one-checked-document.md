@@ -166,10 +166,12 @@ document, bb-box builds it from BB's settings:
 - One place sets everything, and every write is checked. bb-box's page in
   Tools shows only its own section from the next start.
 - Drivers change shape. Their settings become fields named within the
-  backend, in the shape of BB's setting descriptors, plus fields per host
-  for a backend with hosts. `parse` reads the backend's part of the document
-  and gives each problem with its field. `create` gets the backend's ID.
-  Drivers ship no UI: the page renders their fields.
+  backend, in the shape of BB's setting descriptors with a group
+  (`connection`, `credentials`, `boxes` or `advanced`), shown in the order
+  they are declared, plus fields per host for a backend with hosts.
+  `parse` reads the backend's part of the document and gives each problem
+  with its field. `create` gets the backend's ID. Drivers ship no UI: the
+  page renders their fields.
 - Core changes: an off backend stays built, hosts and kinds get switches,
   and the registry's order comes from the document.
 - Backends that land before the document declare BB settings as today, and
