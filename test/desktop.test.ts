@@ -316,6 +316,36 @@ test("a person takes control from the agent in one viewer, and hands it back", a
   assert.equal(value.mayInput("box1", "viewer-a"), false);
 });
 
+test("the agent takes control back as a hand-back, and the view names the viewer it took it from until a person takes it (038)", async () => {
+  const { value, events, restores, connect } = control();
+  assert.equal(await value.takeBack("box1"), false, "nothing to take while the agent has it");
+  const a = connect("viewer-a");
+  connect("viewer-b");
+  value.seen("box1", { width: 1280, height: 800 });
+  await value.take("box1", "viewer-a");
+  value.resized("box1", "viewer-a", SCREEN);
+
+  assert.equal(await value.takeBack("box1"), true);
+  assert.equal(a.releases, 1, "the holder's held keys go up");
+  assert.deepEqual(restores, [[{ width: 1280, height: 800 }, SCREEN]], "the size from before the person took control");
+  assert.deepEqual(value.view("box1"), { owner: "agent", holder: null, takenFrom: "viewer-a" });
+  assert.deepEqual(events, ["box1 none", "box1 human", "box1 none", "box1 agent"]);
+  assert.equal(await value.takeBack("box1"), false, "the agent has it already");
+  assert.equal(events.length, 4);
+
+  await value.take("box1", "viewer-b");
+  assert.deepEqual(value.view("box1"), { owner: "human", holder: "viewer-b" }, "a person taking control again clears it");
+  await value.handBack("box1");
+  assert.deepEqual(value.view("box1"), { owner: "agent", holder: null }, "a person's own hand-back says nothing of the agent");
+
+  await value.take("box1", "viewer-a");
+  await value.takeBack("box1");
+  const before = events.length;
+  value.forget("box1");
+  assert.deepEqual(value.view("box1"), { owner: "agent", holder: null }, "a box that stops forgets it");
+  assert.deepEqual(events.slice(before), ["box1 agent"], "and its panels hear of it");
+});
+
 test("another viewer taking control stops the first viewer's input, then lets go of it", async () => {
   const { value, connect } = control();
   const a = connect("viewer-a");

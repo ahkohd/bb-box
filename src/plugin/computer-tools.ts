@@ -14,7 +14,8 @@ const INSTRUCTIONS =
   "then act with computer_act or computer_type, giving an element's reference such as e12. Each action says what changed, so observe again only to see the whole window. " +
   "An action that opens a menu or popup says so, with its items' references; press keys in it with its window ID, or window \"desktop\". " +
   "Use computer_screenshot when appearance matters, and give pixels only from your latest image. " +
-  "When a tool says a person has taken control of the desktop, stop using the computer tools until they hand it back.";
+  "When a tool says a person has taken control of the desktop, stop using the computer tools until they hand it back. " +
+  "If they ask you to continue, or the thread makes clear they have finished, take control back with computer_take_control.";
 
 const windowId = z.number().int().nonnegative();
 // Some agents' harnesses send a number as a string where it may also be "desktop".
@@ -174,6 +175,22 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
         return result(await computer.launch((await app.resolve(thread(threadId), ref, signal)).box, { app: name, url }, signal));
       } catch (error) {
         return refusal(error, "Opening the app");
+      }
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "computer_take_control",
+    description:
+      "Take control of a desktop box's desktop back from a person who took it in BB, so the computer tools work again. Keys they held down are let go, and the desktop gets back its size. " +
+      "Use it when the person asks you to continue, or when the thread makes clear they have finished; otherwise wait for them to hand control back.",
+    presentation: { label: { pending: "Taking control", completed: "Took control" } },
+    parameters: z.object({ box: boxParam }),
+    async execute({ box: ref }, { threadId, signal }) {
+      try {
+        return result(await computer.takeControl((await app.resolve(thread(threadId), ref, signal)).box));
+      } catch (error) {
+        return refusal(error, "Taking control");
       }
     },
   });

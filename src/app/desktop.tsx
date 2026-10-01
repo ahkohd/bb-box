@@ -75,15 +75,15 @@ function useViewerId(boxId: string): string {
 
 type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "disconnected"; readonly reason: string; readonly retryMs: number };
 
-/** The toolbar's words for who has control. */
-function controlText(box: BoxView, mine: boolean): string {
+/** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038). */
+function controlText(box: BoxView, mine: boolean, taken: boolean): string {
   switch (box.control?.owner) {
     case "human":
       return mine ? "You have control. The desktop follows this tab's size." : "Another viewer has control.";
     case "none":
       return "Control is changing hands…";
     default:
-      return "The agent has control.";
+      return taken ? "The agent took control." : "The agent has control.";
   }
 }
 
@@ -98,6 +98,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const path = state?.desktopPath ?? null;
   const showing = box !== null && box.state === "ready" && box.display !== null;
   const mine = box?.control?.owner === "human" && box.control.holder === viewer;
+  const taken = box?.control?.owner === "agent" && box.control.takenFrom === viewer;
   const resizable = box?.display?.resizable ?? false;
 
   const target = useRef<HTMLDivElement>(null);
@@ -192,7 +193,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     words = "Disconnected";
   } else if (box) {
     tone = "ok";
-    words = controlText(box, mine);
+    words = controlText(box, mine, taken);
   }
 
   return (
@@ -201,14 +202,14 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         {onBack ? <IconButton label="Back to desktops" icon="ArrowLeft" onClick={onBack} className="-ml-1" /> : null}
         <Icon name={`${pluginId}/monitor`} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="font-medium text-foreground">{box?.name ?? "Desktop"}</span>
-        <span className={cn("inline-flex min-w-0 items-center gap-1.5", mine ? "text-foreground" : "text-muted-foreground")}>
+        <span className={cn("inline-flex min-w-0 items-center gap-1.5", mine || taken ? "text-foreground" : "text-muted-foreground")}>
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
         </span>
         <span className="ml-auto flex items-center gap-1.5">
           {showing && !mine ? (
             <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
-              Take control
+              {taken ? "Take control again" : "Take control"}
             </Button>
           ) : null}
           {showing && mine ? (

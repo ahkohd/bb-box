@@ -868,6 +868,52 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
   expect(changes).toEqual(["takeControl box_2", "handBack box_2"]);
 });
 
+test("the tab the agent took control back from says so, and takes it again; another tab does not (038)", async () => {
+  const { handlers } = server([desktopBox()]);
+  // No RPC makes the agent's take: the server shows it in the box's control.
+  let takenFrom: string | undefined;
+  const live: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    desktop: async (input): Promise<DesktopState> => {
+      const state = await handlers.desktop!(input);
+      return takenFrom && state.box ? { ...state, box: { ...state.box, control: { owner: "agent", holder: null, takenFrom } } } : state;
+    },
+    takeControl: (input) => {
+      takenFrom = undefined;
+      return handlers.takeControl!(input);
+    },
+  };
+  const slot = desktopTab(live);
+  await slot.findByText("Connecting to the desktop…");
+  const other = desktopTab(live);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
+  const [mine, theirs] = [within(slot.container), within(other.container)];
+  const [client, otherClient] = novnc.FakeRfb.made;
+  const viewer = new URL(client!.url).searchParams.get("viewer")!;
+  act(() => {
+    client!.dispatchEvent(new Event("connect"));
+    otherClient!.dispatchEvent(new Event("connect"));
+  });
+  fireEvent.click(mine.getByRole("button", { name: "Take control" }));
+  expect(await mine.findByText("You have control. The desktop follows this tab's size.")).toBeTruthy();
+
+  takenFrom = viewer;
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  await other.behavior.emitRealtime("changed", { threadId: THREAD });
+  expect(await mine.findByText("The agent took control.")).toBeTruthy();
+  expect([client!.viewOnly, client!.resizeSession]).toEqual([true, false]);
+  expect(mine.queryByTestId("control-ring")).toBeNull();
+  expect(await theirs.findByText("The agent has control.")).toBeTruthy();
+  expect(theirs.getByRole("button", { name: "Take control" })).toBeTruthy();
+
+  fireEvent.click(mine.getByRole("button", { name: "Take control again" }));
+  expect(await mine.findByText("You have control. The desktop follows this tab's size.")).toBeTruthy();
+  expect(slot.inspection.rpcCalls.filter((call) => call.method === "takeControl").map((call) => call.input)).toEqual([
+    { threadId: THREAD, box: "box_2", viewer },
+    { threadId: THREAD, box: "box_2", viewer },
+  ]);
+});
+
 test("a desktop tab keeps its viewer ID when it remounts, and two tabs never share one", async () => {
   const { handlers } = server([desktopBox()]);
   const first = desktopTab(handlers);

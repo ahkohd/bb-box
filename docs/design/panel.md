@@ -294,6 +294,7 @@ titled after the box.
   | the agent | The agent has control | Take control (outline) |
   | you, in this tab | You have control. The desktop follows this tab's size. | Hand back to the agent (filled) |
   | another viewer | Another viewer has control | Take control |
+  | the agent, which took it from you (038) | The agent took control | Take control again |
   | nobody, for a moment | Control is changing hands… | none |
 
   While you hold control, the screen area has a two-pixel inset ring in the
@@ -381,7 +382,7 @@ from a thread's Box panel."
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |
 | actions | Open desktop · Open desktop in a browser tab · Open terminal · Copy address · Start · Stop · Check now · Release… |
 | release | Release bold-heron? · Its disk and everything on it will be deleted. Copy out anything you want to keep first. · Cancel · Release |
-| control | The agent has control · You have control. The desktop follows this tab's size. · Another viewer has control · Control is changing hands… · Take control · Hand back to the agent |
+| control | The agent has control · You have control. The desktop follows this tab's size. · Another viewer has control · Control is changing hands… · The agent took control · Take control · Take control again · Hand back to the agent |
 | connection | Connecting… · Disconnected · Reconnect · The connection to the desktop ended. Trying again in 4 s. |
 
 Agent-facing text is unchanged by the panel; the tools keep saying

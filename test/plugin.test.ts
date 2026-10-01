@@ -2119,6 +2119,47 @@ test("while a person holds a desktop the computer tools wait, and afterwards the
   await session.close();
 });
 
+test("computer_take_control takes a desktop back from a person as a hand-back does, and the computer tools work again (038)", async (t) => {
+  const { harness, app, world, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const already = await tool("computer_take_control", { box: box.name });
+  assert.equal(isError(already), false);
+  assert.equal(text(already), `You already have control of box ${box.name}'s desktop.`);
+  await tool("computer_windows", { box: box.name });
+
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await until("the viewer to join", async () => app.desktops.control.connected(box.id, viewer));
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  const rfb = world.backend!.rfb;
+  const [relayed] = rfb.connections;
+  await session.receive(setDesktopSize(1600, 1000, { id: 7, flags: 0 }));
+  await session.receive(Uint8Array.of(4, 1, 0, 0, 0, 0, 0, 0x61));
+  await until("the viewer's size and key", async () => rfb.width === 1600 && relayed!.received.at(-1) === 0x61);
+  assert.equal(text(await tool("computer_windows", { box: box.name })), PAUSED);
+
+  const took = await tool("computer_take_control", { box: box.name });
+  assert.equal(isError(took), false);
+  assert.equal(
+    text(took),
+    `You took control of box ${box.name}'s desktop back. Keys the person held down were let go, and the desktop has the size it had before they took control. It may have changed, and earlier references and images are gone.\n\nNext: Call computer_windows or computer_observe before acting.`,
+  );
+  assert.deepEqual([rfb.width, rfb.height], [1280, 800], "the agent's size");
+  assert.deepEqual([...relayed!.received.subarray(-8)], [4, 0, 0, 0, 0, 0, 0, 0x61], "the person's key is let go");
+  const state = (await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { box: { control: unknown } };
+  assert.deepEqual(state.box.control, { owner: "agent", holder: null, takenFrom: viewer });
+  assert.match(text(await tool("computer_windows", { box: box.name })), /^Windows on box/, "the take's answer says the desktop may have changed, so no notice follows");
+
+  // The person can take it straight back.
+  const again = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { box: { control: unknown }; error: null };
+  assert.equal(again.error, null);
+  assert.deepEqual(again.box.control, { owner: "human", holder: viewer });
+  await session.close();
+});
+
 test("a click on the desktop says it was done when a person takes control while bb-box looks for changes", async (t) => {
   const { harness, app, box, file, tool } = await desktopBox({ computer: { desktopWaitMs: 5_000 } });
   t.after(() => harness.lifecycle.dispose());
@@ -2138,7 +2179,7 @@ test("a click on the desktop says it was done when a person takes control while 
   assert.equal(took.error, null);
   const clicked = await click;
   assert.equal(isError(clicked), false, text(clicked));
-  assert.match(text(clicked), /^Clicked \(784, 441\) on the desktop, \(960, 540\) on the screen\. .*\n\nA person took control of the desktop before bb-box could read what changed\.\n\nNext: Wait until they hand control back, then call computer_observe\.$/);
+  assert.match(text(clicked), /^Clicked \(784, 441\) on the desktop, \(960, 540\) on the screen\. .*\n\nA person took control of the desktop before bb-box could read what changed\.\n\nNext: Wait until they hand control back, or take it back with computer_take_control once they ask you to continue; then call computer_observe\.$/);
   await session.close();
 });
 
@@ -2161,4 +2202,7 @@ test("a computer-use session closes when idle, opens again when needed, and goes
   const refused = await tool("computer_windows", { box: headless.name });
   assert.equal(isError(refused), true);
   assert.match(text(refused), /has no computer use: its kind, linux, has no desktop the computer tools can drive\./);
+  const notTaken = await tool("computer_take_control", { box: headless.name });
+  assert.equal(isError(notTaken), true);
+  assert.equal(text(notTaken), text(refused));
 });
