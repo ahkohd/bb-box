@@ -135,7 +135,11 @@ export function SettingsSection() {
     }
   };
   const now = Date.now();
-  const reportOf = (label: string) => doctor?.view.sections.find((section) => section.title === label)?.report;
+  // A section is titled with the live backend's label, "Proxmox LXC on pve",
+  // while the row has the driver's, "Proxmox LXC"; a misconfigured backend's
+  // section has the driver's. Both start with the driver's label.
+  const reportOf = (label: string) =>
+    (doctor?.view.sections.find((section) => section.title === label) ?? doctor?.view.sections.find((section) => section.title.startsWith(`${label} `)))?.report;
   const kinds = doctor?.view.sections.find((section) => section.title === "Kinds")?.report;
   return (
     <div className="space-y-3">
