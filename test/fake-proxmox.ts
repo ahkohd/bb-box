@@ -46,8 +46,8 @@ export class FakeProxmox {
   #taskCounter = 0;
   /**
    * Exit status for the next task of this type, for example "WARNINGS: 1" or
-   * an error. A start, stop, suspend or delete given one leaves the guest as
-   * it was.
+   * an error. A start, stop, suspend, disk resize or delete given one leaves
+   * the guest as it was.
    */
   readonly nextTaskExit = new Map<string, string>();
   /** Polls before a task stops. */
@@ -318,7 +318,7 @@ export class FakeProxmox {
       if (!guest) return this.#missing(vmid, match[1]);
       const disk = params.disk ?? "";
       if (!guest.config[disk]) return respond(500, `disk '${disk}' does not exist`, { data: null });
-      guest.config[disk] = guest.config[disk]!.replace(/size=[^,]+/, `size=${params.size}`);
+      if (!this.nextTaskExit.has("resize")) guest.config[disk] = guest.config[disk]!.replace(/size=[^,]+/, `size=${params.size}`);
       return ok(this.#task("resize", vmid));
     }
 

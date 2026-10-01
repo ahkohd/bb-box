@@ -133,6 +133,55 @@ test("destroy tries again while another task holds the guest's lock, until lockW
   assert.equal(api.guests.has(7011), false);
 });
 
+test("every change to a VM tries again while another task holds its lock, as qmeventd's cleanup does after a resume", async () => {
+  const api = new FakeProxmox();
+  api.addVmTemplate(9001);
+  const sleeps: number[] = [];
+  const proxmox = new Proxmox({
+    apiUrl: "https://pve.example.com:8006",
+    ...FAKE_TOKEN,
+    node: api.node,
+    type: "qemu",
+    fetch: api.fetch,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
+  });
+  const locked = "can't lock file '/var/lock/qemu-server/lock-7102.conf' - got timeout";
+  const tries = (method: string, path: string) => api.calls.filter((call) => call.method === method && call.path === `/nodes/pve/qemu/7102${path}`).length;
+  await proxmox.cloneLinked({ template: 9001, vmid: 7102, hostname: "busy-heron" });
+
+  // A config change answers at once, with no task.
+  let refusals = 1;
+  api.intercept = (call) =>
+    call.method === "PUT" && call.path.endsWith("/config") && refusals-- > 0
+      ? { ok: false, status: 500, statusText: locked, text: async () => JSON.stringify({ data: null }) }
+      : undefined;
+  await proxmox.configure(7102, { cores: 4 });
+  assert.equal(api.guests.get(7102)!.config.cores, "4");
+  api.intercept = undefined;
+  api.nextTaskExit.set("resize", locked);
+  assert.equal(await proxmox.growRootDisk(7102, 80), true);
+  assert.match(api.guests.get(7102)!.config.scsi0!, /size=80G/);
+
+  api.nextTaskExit.set("qmstart", locked);
+  await proxmox.start(7102);
+  api.nextTaskExit.set("qmsuspend", locked);
+  await proxmox.hibernate(7102);
+  assert.equal(api.guests.get(7102)!.config.lock, "suspended");
+  api.nextTaskExit.set("qmstart", locked);
+  await proxmox.start(7102);
+  api.nextTaskExit.set("qmstop", locked);
+  await proxmox.stop(7102);
+  assert.equal(api.guests.get(7102)!.status, "stopped");
+
+  assert.deepEqual(
+    [tries("PUT", "/config"), tries("PUT", "/resize"), tries("POST", "/status/start"), tries("POST", "/status/suspend"), tries("POST", "/status/stop")],
+    [2, 2, 4, 2, 2],
+  );
+  assert.equal(sleeps.filter((ms) => ms === 1_000).length, 6);
+});
+
 test("listPool returns only the pool's guests with their tags", async () => {
   const { proxmox } = setup();
   await proxmox.cloneLinked({ template: 9000, vmid: 7007, hostname: "wise-moss", pool: "bbbox" });
