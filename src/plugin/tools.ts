@@ -126,21 +126,21 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
   bb.agents.registerTool({
     name: "box_acquire",
     description:
-      "Get a fresh Linux box (a small computer) for this thread, to run commands, builds, tests, servers or Docker away from the thread's own machine. Boxes start in seconds and are yours until you release them or the thread ends.",
+      "Get a fresh box for this thread: a Linux or macOS computer for commands, builds, tests, servers or Docker, away from the thread's own machine. It starts in seconds and stays until you release it or the thread ends.",
     instructions:
-      "bb-box: use box_acquire when you need a clean Linux machine, root-level installs (box_list shows which kinds give root), Docker, or to run something you would not run on the thread's machine. Release boxes you no longer need with box_release; the thread's boxes go when it is archived or deleted.",
+      "bb-box: use box_acquire when you need a clean machine, root (box_list says which kinds give it), Docker, or to run what you would not run on the thread's machine. Release a box with box_release when you are done; a thread's boxes go when it is archived or deleted.",
     presentation: { label: { pending: "Acquiring a box", completed: "Acquired a box" } },
     parameters: z.object({
       kind: z
         .string()
         .min(1)
         .optional()
-        .describe("The kind of box, for example linux, linux-docker or linux-desktop. Defaults to the user's default kind, linux unless they changed it. box_list shows every kind."),
+        .describe("The kind, from box_list: linux, linux-docker, linux-desktop and the rest. Defaults to the user's default kind."),
       size: z
         .string()
         .min(1)
         .optional()
-        .describe("A preset: small, medium or large. Defaults to the kind's default preset, small unless the user changed it. box_list shows each kind's sizes."),
+        .describe("small, medium or large. Defaults to the kind's default preset; box_list shows each kind's sizes."),
       cores: z.number().int().positive().optional().describe("Cores, for a custom size. Parts you leave out come from the preset."),
       memory_gib: z.number().int().positive().optional().describe("Memory in GiB, for a custom size."),
       disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, for a custom size. Presets keep the kind's own disk."),
@@ -195,7 +195,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         lines.push(
           kinds.length
             ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${adminText(kind.admin)}`).join("\n")}`
-            : "No backend is set up, so there are no kinds to acquire. Ask the user to set one up in bb-box's settings.",
+            : "No backend is set up, so there are no kinds. Ask the user to set one up in BB Box's settings in BB.",
         );
         const hints = list.length
           ? ["Call box_status for a box's details.", "box_acquire gets another box, at a preset or a custom size."]
@@ -282,7 +282,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
   bb.agents.registerTool({
     name: "box_copy",
     description:
-      "Copy one file between this thread's workspace and a box. A relative workspace path is under the workspace's directory. A relative box path, or one that starts with ~/, is under the box user's home. For a directory, tar it first with box_run or a shell command.",
+      "Copy one file between this thread's workspace and a box. A relative workspace path is under the workspace; a relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
     presentation: { label: { pending: "Copying a file", completed: "Copied a file" } },
     parameters: z.object({
       box: boxParam,
@@ -361,7 +361,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
   bb.agents.registerTool({
     name: "box_thread",
     description:
-      "Start a child thread that runs on a box, as a BB machine, with this thread's project. Give it the task as its prompt. It works in a worktree of the project's repository on the box, cloned there for the first thread, and is archived with this thread.",
+      "Start a child thread on a box, as a BB machine, in this thread's project, with the task as its prompt. It works in a worktree of the project's repository on the box, cloned there once, and is archived with this thread.",
     presentation: { label: { pending: "Starting a thread on a box", completed: "Started a thread on a box" } },
     parameters: z.object({
       box: boxParam,
