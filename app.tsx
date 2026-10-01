@@ -10,7 +10,7 @@ import { SettingsSection } from "./src/app/settings.tsx";
 export default definePluginApp((app) => {
   app.slots.threadPanelAction({
     id: "boxes",
-    title: "Boxes",
+    title: "Box",
     component: BoxesPanel,
   });
   app.slots.threadPanelAction({

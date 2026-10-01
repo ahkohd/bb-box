@@ -304,7 +304,7 @@ function openMenu(trigger: HTMLElement) {
 
 test("the app registers the Boxes panel, a desktop tab, the Desktops page and the Backends settings section", () => {
   expect(app.threadPanelActions.map((action) => [action.id, action.title])).toEqual([
-    ["boxes", "Boxes"],
+    ["boxes", "Box"],
     ["desktop", "Desktop"],
   ]);
   expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["desktops", "Desktops", "desktop"]]);
@@ -372,15 +372,15 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
 
   expect(await slot.findByText("No boxes yet")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  const form = await screen.findByRole("radiogroup", { name: "Kind" });
+  const form = await screen.findByRole("radiogroup", { name: "Kind:" });
   expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
   fireEvent.click(within(form).getByRole("radio", { name: /Linux desktop/ }));
   expect(screen.getByText("4 cores · 8 GiB memory · base disk · the default")).toBeTruthy();
-  const sizes = screen.getByRole("radiogroup", { name: "Size" });
+  const sizes = screen.getByRole("radiogroup", { name: "Size:" });
   expect(within(sizes).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["Small:true", "Medium:false", "Large:false", "Custom:false"]);
   fireEvent.click(within(sizes).getByRole("radio", { name: "Large" }));
   expect(screen.getByText("16 cores · 32 GiB memory · base disk")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Make box" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
   expect(await slot.findByText("new-box")).toBeTruthy();
   expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}']);
@@ -391,8 +391,8 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
 
   // The default preset sends no size at all.
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: "Small" }));
-  fireEvent.click(screen.getByRole("button", { name: "Make box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Size:" })).getByRole("radio", { name: "Small" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}', "acquire linux-desktop"]));
 });
 
@@ -401,7 +401,7 @@ test("a custom size starts from the preset in view, sends only its filled fields
   const slot = panel(handlers);
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  const sizes = await screen.findByRole("radiogroup", { name: "Size" });
+  const sizes = await screen.findByRole("radiogroup", { name: "Size:" });
   fireEvent.click(within(sizes).getByRole("radio", { name: "Medium" }));
   fireEvent.click(within(sizes).getByRole("radio", { name: "Custom" }));
   const cores = screen.getByLabelText(/^Cores/) as HTMLInputElement;
@@ -412,19 +412,19 @@ test("a custom size starts from the preset in view, sends only its filled fields
   expect(screen.getByText("up to 256")).toBeTruthy();
 
   fireEvent.change(cores, { target: { value: "six" } });
-  expect((screen.getByRole("button", { name: "Make box" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.change(cores, { target: { value: "6" } });
   fireEvent.change(memory, { target: { value: "12" } });
 
   // Custom fields belong to the kind: another kind starts from its own preset, and the edits come back with the kind.
-  const kinds = screen.getByRole("radiogroup", { name: "Kind" });
+  const kinds = screen.getByRole("radiogroup", { name: "Kind:" });
   fireEvent.click(within(kinds).getByRole("radio", { name: /Linux desktop/ }));
   expect([(screen.getByLabelText(/^Cores/) as HTMLInputElement).value, (screen.getByLabelText(/^Memory, GiB/) as HTMLInputElement).value]).toEqual(["8", "16"]);
   expect(screen.getByText("up to 32")).toBeTruthy();
   fireEvent.click(within(kinds).getAllByRole("radio")[0]!);
   expect([(screen.getByLabelText(/^Cores/) as HTMLInputElement).value, (screen.getByLabelText(/^Memory, GiB/) as HTMLInputElement).value]).toEqual(["6", "12"]);
 
-  fireEvent.click(screen.getByRole("button", { name: "Make box" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux {"cores":6,"memoryGiB":12}']));
   expect(JSON.parse(window.localStorage.getItem("bb-box:new-box") ?? "{}")).toEqual({ kind: "linux", size: "custom", custom: { linux: { cores: "6", memoryGiB: "12", diskGiB: "" } } });
 });
@@ -434,9 +434,9 @@ test("a refused box stays in the form with the reason", async () => {
   const slot = panel(handlers);
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Make box" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create" }));
   expect((await screen.findByRole("alert")).textContent).toBe("pve has no memory left. Release a box you no longer need.");
-  expect(screen.getByRole("radiogroup", { name: "Kind" })).toBeTruthy();
+  expect(screen.getByRole("radiogroup", { name: "Kind:" })).toBeTruthy();
 });
 
 test("releasing a box asks first", async () => {
