@@ -78,6 +78,8 @@ async function start(
     names: [] as string[],
     /** Threads bb-box asked BB to start. */
     spawned: [] as unknown[],
+    /** Changes bb-box made to threads. */
+    updated: [] as unknown[],
     /** The project's sources, by machine, as BB keeps them. */
     sources: [] as { hostId: string; type: string }[],
     /** The thread's project's kind: BB's personal project has no repository. */
@@ -96,6 +98,10 @@ async function start(
           const thread = threads.get(threadId);
           if (!thread) throw threadNotFound();
           return thread;
+        },
+        update: async (args: unknown) => {
+          world.updated.push(args);
+          return makeThreadResponse({ id: (args as { threadId: string }).threadId, projectId: PROJECT });
         },
         spawn: async (args: unknown) => {
           world.spawned.push(args);
@@ -631,7 +637,6 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
   const [args] = world.spawned as Record<string, unknown>[];
   assert.deepEqual(args, {
     projectId: PROJECT,
-    parentThreadId: THREAD,
     lifecycleOwnerThreadId: THREAD,
     environment: { type: "host", hostId: box.boxes[0]!.enrol.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
     prompt: "Run uname -a",
@@ -657,8 +662,12 @@ test("in BB's personal project, a thread on a box takes a personal workspace the
   const { boxes } = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { boxes: { name: string; enrol: { hostId: string } }[] };
   const started = text(await tool("box_thread", { box: boxes[0]!.name, prompt: "Run uname -a" }));
   assert.match(started, /^Started thread thr_child1 on box /);
-  const [args] = world.spawned as { environment: unknown }[];
+  const [args] = world.spawned as { environment: { hostId: string }; parentThreadId?: string }[];
+  assert.equal(args!.environment.hostId, boxes[0]!.enrol.hostId, "the child's machine is the box's");
   assert.deepEqual(args!.environment, { type: "host", hostId: boxes[0]!.enrol.hostId, workspace: { type: "personal" } });
+  // Spawned with a parent, BB would give it the parent's environment; it is linked afterwards.
+  assert.equal(args!.parentThreadId, undefined);
+  assert.deepEqual(world.updated, [{ threadId: "thr_child1", parentThreadId: THREAD }]);
   assert.deepEqual(world.sources, [], "nothing is cloned");
 });
 
