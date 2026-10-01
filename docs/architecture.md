@@ -333,8 +333,10 @@ memory and root disk, where a disk of null is the backend's base.
   An offer that cannot make it says so in capacity's message, and the
   registry tries the next.
 - A virtual backend makes the size asked for. A pool claims its smallest
-  free machine of at least that size. `Guest.size` is what the box has, read
-  from the guest, so a restored record has it.
+  free machine of at least that size. A machine has a size's memory when
+  its OS reports at least 90% of it, since the firmware and kernel keep
+  some. `Guest.size` is what the box has, read from the guest, so a
+  restored record has it.
 
 ### Real pools and release
 

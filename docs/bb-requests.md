@@ -13,6 +13,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | draft | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
 | [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | draft | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
 | [Find a machine by its key](#6-find-a-machine-by-its-key) | draft | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
+| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box reads the thread's variables and GH_TOKEN from BB's workers in the box: from `/proc` on Linux, inexactly from `ps -E` on macOS once core adds it, and not at all on Windows |
 
 ## 1. BB's host app on Windows
 
@@ -223,6 +224,56 @@ that answers only the plugin whose provider made the machine, or the key on
 **Until then.** Such a machine stays in BB until someone removes it
 ([026](decisions/026-a-restored-box-enrols-once-it-answers.md)). It
 follows only lost plugin storage, which upgrades no longer cause.
+
+## 8. Give a machine's own commands its variables
+
+**What bb-box needs.** The thread's machine variables and GitHub token in
+every command that runs in its box, not only in the processes BB's daemon
+starts. bb-box runs commands through the box's own transport, SSH or
+`docker exec`, for `box_run` and the other box tools, and a thread may run
+its own over SSH. They need what BB's workers in the box have: GH_TOKEN for
+`gh` and git, and the variables a project sets for its builds and tests.
+
+**What BB does now.** Checked in BB 0.44.0 and the plugin SDK 0.5.29:
+
+- A plugin can list machine variables, for all projects
+  (`system.machineEnvironment`) and for one (`projects.machineEnvironment`),
+  and set or replace them, but cannot read a value. Every variable comes
+  back with `secret: true` and `value: null`. `bb machine env list --json`
+  gives the same.
+- BB's daemon on a machine gives the values, and GH_TOKEN, to the processes
+  it starts for threads, in their environment. The daemon's own process has
+  none of them, and some workers have only some.
+- No command on the machine prints them.
+
+**What we ask.** A way for the machine's own user to get the variables a
+thread of a given project has on that machine, in a form a shell can
+source. bb-box would read them before every command, so it must be quick.
+For example:
+
+- the daemon keeps them, per project, in a file in its data directory that
+  only the machine's user can read, and rewrites it when they change; or
+- a command of BB's host app that asks the daemon and prints
+  `export NAME='value'` lines for a project, in a few milliseconds.
+
+Either way, the values stay on the machine BB already gives them to, and
+no plugin's server side sees them.
+
+**What it would remove.**
+
+- On Linux, bb-box's scan of `/proc/<pid>/environ` for the daemon's
+  workers, which picks the newest worker with the most variables.
+- On macOS, parsing `ps -E`, which core plans next. It cannot read exactly
+  a value that holds a newline, or a space followed by a name and `=`.
+- On Windows, which has neither `/proc` nor `ps -E`, the gap: once
+  request 1 lets a Windows box enrol, it would get the variables the same
+  way.
+- bb-box's dependence on where BB installs its daemon
+  (`host-daemon/dist/daemon-bundle`), which a BB release can change.
+
+**Until then.** Linux boxes read the workers' environment from `/proc`
+(`src/core/in-box.ts`). macOS boxes will parse `ps -E` the same way once
+core adds it. Windows boxes get none of the variables.
 
 ## Checked, no request needed
 

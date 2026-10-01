@@ -44,6 +44,10 @@ installs can share machines: each leaves alone the boxes of the other.
 
 - BB's server, where bb-box runs, must reach the machine's sshd, directly or
   through a jump host.
+- At least the default size of the kinds it serves, or no box made at that
+  size fits it: 2 cores and 4 GiB of memory for `linux` and
+  `linux-docker`. For smaller machines, make the presets smaller with the
+  `box-sizes` setting (see Sizes under Notes).
 
 A machine that is itself an unprivileged container, such as a Proxmox LXC
 container, works. Box users there take user IDs 60706 to 61183, as the
