@@ -17,6 +17,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box reads the thread's variables and GH_TOKEN from BB's workers in the box: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
 | [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | draft | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
 | [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | draft | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
+| [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | draft | a box has its thread's project variables only while a thread of the project runs on it |
 
 ## 1. BB's host app on Windows
 
@@ -310,8 +311,8 @@ no plugin's server side sees them.
 
 **What it would remove.**
 
-- On Linux, bb-box's scan of `/proc/<pid>/environ` for the daemon's
-  workers, which picks the newest worker with the most variables.
+- On Linux, bb-box's scan of `/proc/<pid>/environ` for the processes
+  below the daemon, which picks the newest with the most variables.
 - On macOS, bb-box's parsing of `ps -E`. It prints a newline as `\012`
   but leaves a backslash as it is, so it cannot read exactly a value that
   holds a backslash and three digits, or a space followed by a name and
@@ -322,8 +323,9 @@ no plugin's server side sees them.
 - bb-box's dependence on where BB installs its daemon
   (`host-daemon/dist/daemon-bundle`), which a BB release can change.
 
-**Until then.** Linux boxes read the workers' environment from `/proc`,
-and macOS boxes parse `ps -E`, choosing the worker the same way
+**Until then.** Linux boxes read the environment of the processes below
+the daemon from `/proc`, and macOS boxes parse `ps -E`, choosing the process
+the same way
 (`src/core/in-box.ts`). Windows boxes get none of the variables.
 
 ## 9. Open BB's terminal on a machine from a plugin
@@ -388,6 +390,39 @@ machine" under the machines, or before them.
 
 **Until then.** The operator scrolls the Machines list to its end, or types
 "new" in the picker's search. The skill says so.
+
+## 11. Give a machine a project's variables without a thread there
+
+**What bb-box needs.** A box has everything its thread has (#109),
+including the variables set for the thread's project. Most boxes serve a
+thread that runs on another machine, so no thread of the project runs on
+the box.
+
+**What BB does now.** Checked in BB 0.44.0 and the plugin SDK 0.5.29,
+with a project variable set for a test project only:
+
+- BB's server sends a machine's daemon the variables set for all projects
+  (`machine-environment.replace`). It sends a project's variables only in
+  the request that starts a thread of the project on that machine
+  (`contributedEnv`), and the daemon gives them to that thread's agent
+  alone, not to its own workers.
+- In a box acquired by a thread on another machine, the variable was unset
+  in `box_run`, in a BB terminal on the box, and in bb-box's terminal.
+- With a thread of the project on the box, its agent had the variable.
+  bb-box now reads it from there (`src/core/in-box.ts`).
+- No API makes the daemon hold a project's variables without a thread, an
+  environment or a terminal of that project on the machine.
+
+**What we ask.** A way for a plugin to tell BB that a machine serves a
+project, for example `hosts.update({ hostId, projectIds })`, so that BB
+sends the machine those projects' variables as it sends the ones for every
+project. With request 8, commands in the box would then read them from
+BB's daemon. The values stay on machines BB gives them to, and no plugin
+sees them.
+
+**Until then.** A box has its project's variables only while a thread of
+the project runs on it, as with `box_thread` or "New box". The skill says
+so.
 
 ## Checked, no request needed
 

@@ -883,6 +883,11 @@ A box is a resource of its thread and gets what the thread's own machine has.
     and keeps them for a minute. After that, a command gets the names it
     has while bb-box asks again in the background, so a variable added in
     BB reaches commands a minute or so later.
+  - A project's own variables are only in the agent that a worker of the
+    daemon starts for a thread of the project on the box, so commands take
+    the variables from any process below the daemon, not only its workers.
+    A box with no such thread has none of them
+    ([BB requests](bb-requests.md), request 11).
 - **Child threads.** A child thread can run on an enrolled box. You can
   also start a thread on a new box from BB's new-thread screen, which BB
   removes with the thread
