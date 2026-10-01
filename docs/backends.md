@@ -22,10 +22,11 @@ means merged and in daily use.
 | Mac | macOS | physical | physical Mac | desktop | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
 | Mac | Linux | VM | Tart | plain, Docker, desktop | research, #148 | arm64; x86_64 programs through Rosetta | to research |
 | Mac | Windows | VM | QEMU with HVF, UTM or Parallels | desktop | research, #150 | arm64 | to research |
-| Windows | Linux | VM | Hyper-V | plain, Docker, desktop | research, #158 | x86_64 | to research |
-| Windows | Linux | WSL2 distribution | WSL2 | plain, Docker | research, #158 | x86_64 | to research |
-| Windows | Linux | container | Docker Desktop | plain, Docker, desktop | research, #158 | x86_64 | to research |
-| Windows | Windows | VM | Hyper-V | desktop | research, #158 | x86_64 | to research |
+| Windows | Linux | container | Docker, in one WSL2 distribution | plain, Docker, desktop | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | `linux-desktop-cpu`; CUDA through `/dev/dxg` to research |
+| Windows | Linux | VM | Hyper-V | plain, Docker, desktop | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
+| Windows | Linux | WSL2 distribution | WSL2 | plain, Docker | not planned: distributions share one VM and network, #158 | x86_64 | to research |
+| Windows | Linux | container | Docker Desktop | plain, Docker, desktop | not planned: `ssh://` fails, and it runs only while someone is signed in, #158 | x86_64 | to research |
+| Windows | Windows | VM | Hyper-V | desktop | later, after #46; see #158 | x86_64 | to research |
 | Windows | macOS | - | - | - | not possible | - | - |
 
 Across the table:
@@ -304,6 +305,9 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   on BB's server, against the local daemon or one over `ssh://`, and reaches
   a box only through `docker exec`
   ([031](decisions/031-docker-boxes-are-reached-through-docker-exec.md)).
+- On a Windows PC, `setup/docker-wsl/` runs Docker Engine in one WSL2
+  distribution with its own sshd, which the backend reaches as
+  `ssh://box@<pc>:2222` like any other host.
 - Ownership lives in container labels set at creation (`bbbox.backend`,
   `bbbox.install`, `bbbox.box`, `bbbox.thread`, `bbbox.name`, `bbbox.kind`),
   and the container's name is `bbbox-<box ID>`, so references are never
