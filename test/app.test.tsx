@@ -133,7 +133,7 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
       ok: false,
       sections: [
         {
-          title: "Fake host",
+          title: "Fake host on pve",
           report: {
             ok: false,
             summary: "Fake host 1.0",
