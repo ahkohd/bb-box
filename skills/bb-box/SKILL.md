@@ -163,7 +163,8 @@ with `computer_observe` first, and act on its references. Take an image with
 When enrolment is on, a ready box is added to BB as a machine, so threads
 and terminals can use it and BB's own secrets and Git credentials reach it.
 This takes a few seconds after the box is ready; `box_acquire` and `box_run`
-wait up to 10 s for it, and `box_status` shows how long it took.
+wait up to 20 s for it, and `box_status` shows how long it took. A box you
+start again joins BB again, and `box_start` and `box_run` wait for that too.
 `bb plugin logs bb-box` shows how long each step of it took.
 bb-box removes the machine before it releases the box.
 

@@ -22,7 +22,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "enrolWaitMs" | "recorded"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "enrolWaitMs" | "recorded" | "reconnect"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -695,6 +695,33 @@ test("a command runs anyway when enrolment takes longer than the wait", async ()
   const { box: after, result } = await world.boxes.run(THREAD, box.name, "echo ran");
   assert.equal(after.enrol.state, "enrolling");
   assert.equal(result.stdout, "ran\n");
+});
+
+test("after a start, a command waits a while for the box's BB machine to reconnect", async () => {
+  const gate = deferred();
+  const world = setup({}, { enrolWaitMs: 5_000, reconnect: () => gate.promise });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  await world.boxes.stop(THREAD, box.name);
+  await world.boxes.start(THREAD, box.name);
+  setTimeout(gate.resolve, 300);
+  const started = Date.now();
+  assert.equal((await world.boxes.run(THREAD, box.name, "echo up")).result.stdout, "up\n");
+  assert.ok(Date.now() - started >= 250, "it waited for the reconnect");
+  const again = Date.now();
+  await world.boxes.run(THREAD, box.name, "true");
+  assert.ok(Date.now() - again < 250, "a reconnect that ended is not waited for");
+});
+
+test("a command runs anyway when a reconnect takes longer than the wait, or fails", async () => {
+  for (const reconnect of [() => new Promise<void>(() => {}), async () => Promise.reject(new Error("the daemon did not start"))]) {
+    const world = setup({}, { enrolWaitMs: 100, reconnect });
+    const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+    await world.boxes.stop(THREAD, box.name);
+    await world.boxes.start(THREAD, box.name);
+    const started = Date.now();
+    assert.equal((await world.boxes.run(THREAD, box.name, "echo ran")).result.stdout, "ran\n");
+    assert.ok(Date.now() - started < 1_000);
+  }
 });
 
 test("a stop or start that ends during a release leaves the box releasing", async () => {
