@@ -270,9 +270,22 @@ still carries the title "New box".
   root or Administrator), Has (a desktop and how it is drawn, computer
   use, follows the panel's size, Docker), Lacks when something is missing
   (Docker on Windows), BB machine (yes with what that gives, or no with
-  what that costs), and Sizes. Every option describes itself by the pane
-  (`aria-describedby`), so a screen reader hears the details after the
-  name on focus; the pane is not a live region, so hovering says nothing.
+  what that costs), and Sizes, each fact a row with a dim small label
+  above its words (two columns wrapped into a mess at the pane's width,
+  the operator's note of 1 October 2026). Names read at full strength: the
+  kind's, and each provider's in its brand colour (Proxmox orange, Docker
+  blue, a neutral for a Mac's laptop and a pool machine's plug, shades
+  that read on light and dark); the rest is dim: "or", what the boxes
+  are, the usual start, the sizes; "ready now" is green. Every option
+  describes itself by the pane (`aria-describedby`), so a screen reader
+  hears the details after the name on focus; the pane is not a live
+  region, so hovering says nothing.
+- **Glyphs** the panel draws itself (`src/app/glyphs.tsx`): the server,
+  monitor, terminal, laptop and plug, and the Proxmox and Docker marks,
+  are inline SVG with their size reserved, so they show at once and nothing
+  moves when they appear (the operator's note of 1 October 2026). The same
+  drawings sit in `assets/` for BB's own places, the tab and the settings
+  page.
 - **Where the box goes** (044): when the pane shows the chosen kind and
   the kind has more than one offer, its offers are a choice, a radiogroup
   named Provider: "First with room · in this order" comes first and is

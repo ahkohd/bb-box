@@ -523,7 +523,7 @@ test("capacity says when the daemon does not answer", async () => {
 });
 
 test("the doctor checks the CLI, the daemon, the images, the network and the room, and names the install", async () => {
-  const { fake, make, backend } = setup();
+  const { fake, make, backend, context } = setup();
   // The host is named by its address until the daemon answers, then by its own name (docker info's Name); a local daemon has no address.
   // The label names it the same way, so the kinds' text agrees with the picker.
   assert.deepEqual([backend.hosts, backend.label], [[], "Docker"]);
@@ -531,6 +531,10 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
   assert.deepEqual([remote.hosts, remote.label], [["docker.example"], "Docker on docker.example"]);
   const report = await backend.doctor(signal());
   assert.deepEqual([backend.hosts, backend.label], [["fake-docker"], "Docker on fake-docker"]);
+  // The name is kept, so a backend built again on the same storage, as after a restart, shows it before asking (#265).
+  const later = new DockerBackend(dockerConfig(), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.deepEqual([later.hosts, later.label], [["fake-docker"], "Docker on fake-docker"]);
   assert.equal(report.ok, true, JSON.stringify(report));
   assert.equal(report.summary, "Docker 29.0.0 on fake-docker");
   assert.deepEqual(

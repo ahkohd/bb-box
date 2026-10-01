@@ -4,6 +4,7 @@
 
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { DockerGlyph, LaptopGlyph, MonitorGlyph, PlugGlyph, ProxmoxGlyph, ServerGlyph } from "./glyphs.tsx";
 import type { BoxForm } from "../backends/types.ts";
 import type { KindView, OfferView, SizeView } from "../plugin/views.ts";
 import { cn } from "@/lib/utils";
@@ -48,8 +49,8 @@ export function kindHasDocker(kind: KindView): boolean {
   return kind.offers.length ? kind.offers.some((offer) => offer.docker) : kind.features.includes("docker");
 }
 
-/** The glyph for an offer's provider, from the plugin's own assets. */
-export function providerGlyph(offer: OfferView): string {
+/** The glyph for an offer's provider: Proxmox, Docker, a laptop for a Mac, a plug for a pool machine, a server otherwise. */
+export function providerGlyph(offer: Pick<OfferView, "type">): "proxmox" | "docker" | "laptop" | "plug" | "server" {
   switch (offer.type) {
     case "proxmox-lxc":
     case "proxmox-qemu":
@@ -62,6 +63,40 @@ export function providerGlyph(offer: OfferView): string {
       return "plug";
     default:
       return "server";
+  }
+}
+
+/**
+ * The provider's brand colour on its glyph and name, so providers tell apart
+ * at a glance (the operator's note of 1 October 2026): Proxmox orange and
+ * Docker blue, each a shade that reads on light and dark; a neutral for a
+ * Mac and a pool machine.
+ */
+export function providerTone(offer: Pick<OfferView, "type">): string {
+  switch (providerGlyph(offer)) {
+    case "proxmox":
+      return "text-orange-700 dark:text-orange-400";
+    case "docker":
+      return "text-sky-700 dark:text-sky-400";
+    default:
+      return "text-foreground";
+  }
+}
+
+/** The provider's glyph, inline, with its room reserved. */
+export function ProviderGlyph({ offer, className }: { offer: Pick<OfferView, "type">; className?: string }) {
+  const props = { className: cn(providerTone(offer), className) };
+  switch (providerGlyph(offer)) {
+    case "proxmox":
+      return <ProxmoxGlyph {...props} />;
+    case "docker":
+      return <DockerGlyph {...props} />;
+    case "laptop":
+      return <LaptopGlyph {...props} />;
+    case "plug":
+      return <PlugGlyph {...props} />;
+    default:
+      return <ServerGlyph {...props} />;
   }
 }
 
@@ -79,23 +114,25 @@ function hostWords(offer: OfferView): string | null {
 
 const FORM_WORDS: Record<BoxForm, string> = { LXC: "LXC container", Docker: "container", VM: "VM", Physical: "a physical machine" };
 
-/** The readiness words of an offer: spares ready, free machines, and the usual start. */
-function offerReadiness(offer: OfferView): string[] {
-  const words: string[] = [];
-  if (offer.ready) words.push(`${offer.ready} ready now`);
-  if (offer.free !== null) words.push(`${offer.free} free`);
-  if (offer.typicalReadyMs !== null) words.push(`usually about ${seconds(offer.typicalReadyMs)}`);
-  return words;
+/** The readiness words of an offer, as parts: spares ready (green), free machines, and the usual start (muted). */
+function offerReadiness(offer: OfferView): ReactNode[] {
+  const parts: ReactNode[] = [];
+  if (offer.ready) parts.push(<span key="ready" className="text-emerald-700 dark:text-emerald-400">{offer.ready} ready now</span>);
+  if (offer.free !== null) parts.push(<span key="free">{offer.free} free</span>);
+  if (offer.typicalReadyMs !== null) parts.push(<span key="usually">usually about {seconds(offer.typicalReadyMs)}</span>);
+  return parts;
 }
 
-/** The provider marks at the right of a row: a glyph per offer, with the host's name when there is one offer. */
-export function OfferMarks({ offers, pluginId }: { offers: readonly OfferView[]; pluginId: string }) {
+/** The provider marks at the right of a row: a glyph per offer, in its colour, with the host's name when there is one offer. */
+export function OfferMarks({ offers }: { offers: readonly OfferView[] }) {
   if (!offers.length) return null;
   const single = offers.length === 1 ? offers[0]! : null;
   return (
     <span className="inline-flex shrink-0 items-center gap-1 text-2xs leading-none text-subtle-foreground">
       {offers.map((offer) => (
-        <Icon key={offer.backend} name={`${pluginId}/${providerGlyph(offer)}`} className="size-3.5" aria-label={offerWhere(offer)} />
+        <span key={offer.backend} role="img" aria-label={offerWhere(offer)} className="inline-flex">
+          <ProviderGlyph offer={offer} className="size-3.5" />
+        </span>
       ))}
       {single && hostWords(single) ? <span aria-hidden>{hostWords(single)}</span> : null}
     </span>
@@ -150,9 +187,12 @@ export interface ProviderChoice {
  * The detail pane: who provides the kind and where, how soon, and what it has
  * and lacks. `id` lets each kind option describe itself by it. With `choice`,
  * for the chosen kind with more than one offer, the offers are a choice with
- * "First with room" first (044); otherwise they are plain text.
+ * "First with room" first (044); otherwise they are plain text. Facts are
+ * rows, a dim label above its words, since two columns wrap into a mess at
+ * the pane's width (the operator's note of 1 October 2026).
  */
 export function KindDetail({ kind, pluginId, id, className, choice }: { kind: KindView; pluginId: string; id: string; className?: string; choice?: ProviderChoice }) {
+  void pluginId;
   const offers = kind.offers;
   const choosing = choice !== undefined && offers.length > 1;
   const options = useRef<(HTMLButtonElement | null)[]>([]);
@@ -168,14 +208,24 @@ export function KindDetail({ kind, pluginId, id, className, choice }: { kind: Ki
     event.preventDefault();
     pick((chosenIndex + step + values.length) % values.length);
   };
+  /** The offer's line: its glyph and name in the provider's colour, then what the boxes are and how soon, dim. */
   const offerLine = (offer: OfferView) => {
-    const words = [offer.form ? FORM_WORDS[offer.form] : null, ...offerReadiness(offer)].filter(Boolean);
+    const rest: ReactNode[] = [...(offer.form ? [<span key="form">{FORM_WORDS[offer.form]}</span>] : []), ...offerReadiness(offer)];
     return (
       <>
-        <Icon name={`${pluginId}/${providerGlyph(offer)}`} className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <ProviderGlyph offer={offer} className="mt-0.5 size-3.5" />
         <span className="min-w-0">
-          {offerWhere(offer)}
-          {words.length ? <span className="text-muted-foreground"> · {words.join(" · ")}</span> : null}
+          <span className={cn("font-medium", providerTone(offer))}>{offerWhere(offer)}</span>
+          {rest.length ? (
+            <span className="text-muted-foreground">
+              {rest.map((part, index) => (
+                <span key={index}>
+                  {" · "}
+                  {part}
+                </span>
+              ))}
+            </span>
+          ) : null}
         </span>
       </>
     );
@@ -183,11 +233,11 @@ export function KindDetail({ kind, pluginId, id, className, choice }: { kind: Ki
   return (
     <div id={id} className={cn("min-w-0 text-xs leading-snug text-foreground", className)}>
       <p className="flex items-center gap-2 font-medium">
-        <Icon name={`${pluginId}/${kind.desktop ? "monitor" : "server"}`} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        {kind.desktop ? <MonitorGlyph className="text-muted-foreground" /> : <ServerGlyph className="text-muted-foreground" />}
         <span className="min-w-0">{kindName(kind)}</span>
       </p>
       {choosing ? (
-        <div role="radiogroup" aria-label="Provider" className="mt-1.5 space-y-0.5" onKeyDown={arrows}>
+        <div role="radiogroup" aria-label="Provider" className="mt-2 space-y-0.5" onKeyDown={arrows}>
           {values.map((value, position) => {
             const selected = position === chosenIndex;
             const offer = value === null ? null : offers.find((candidate) => candidate.backend === value)!;
@@ -213,7 +263,7 @@ export function KindDetail({ kind, pluginId, id, className, choice }: { kind: Ki
                   <>
                     <Icon name="Check" className={cn("mt-0.5 size-3.5 shrink-0", selected ? "text-foreground" : "invisible")} aria-hidden />
                     <span className="min-w-0">
-                      First with room
+                      <span className="font-medium">First with room</span>
                       <span className="text-muted-foreground"> · in this order</span>
                     </span>
                   </>
@@ -223,7 +273,7 @@ export function KindDetail({ kind, pluginId, id, className, choice }: { kind: Ki
           })}
         </div>
       ) : offers.length ? (
-        <ul className="mt-1.5 space-y-0.5">
+        <ul className="mt-2 space-y-1">
           {offers.map((offer, index) => (
             <li key={offer.backend} className="flex items-start gap-1.5">
               {index > 0 ? <span className="mt-0.5 w-3.5 shrink-0 text-muted-foreground">or</span> : null}
@@ -233,9 +283,9 @@ export function KindDetail({ kind, pluginId, id, className, choice }: { kind: Ki
           {offers.length > 1 ? <li className="pl-5 text-muted-foreground">the first with room, in that order</li> : null}
         </ul>
       ) : kind.backends.length ? (
-        <p className="mt-1.5 text-muted-foreground">{kind.backends.join(", or ")}</p>
+        <p className="mt-2 text-muted-foreground">{kind.backends.join(", or ")}</p>
       ) : null}
-      <dl className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2 gap-y-1">
+      <dl className="mt-3 space-y-2">
         {kindFacts(kind).map((fact) => (
           <Fact key={fact.label} label={fact.label}>
             {fact.words}
@@ -246,11 +296,12 @@ export function KindDetail({ kind, pluginId, id, className, choice }: { kind: Ki
   );
 }
 
+/** One fact as a row: a dim small label, its words under it. */
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 break-words">{children}</dd>
-    </>
+    <div className="min-w-0">
+      <dt className="text-2xs font-medium text-subtle-foreground">{label}</dt>
+      <dd className="min-w-0 break-words text-muted-foreground">{children}</dd>
+    </div>
   );
 }

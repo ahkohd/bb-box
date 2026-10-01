@@ -147,7 +147,8 @@ export function IconButton({
   className,
 }: {
   label: string;
-  icon: string;
+  /** BB's icon by name, or one of the plugin's own glyphs. */
+  icon: string | ReactNode;
   onClick: () => void;
   disabled?: boolean;
   loading?: boolean;
@@ -167,7 +168,7 @@ export function IconButton({
             disabled={disabled}
             onClick={onClick}
           >
-            <Icon name={loading ? "Loading" : icon} className={cn("size-4", loading && "animate-spin")} aria-hidden />
+            {loading ? <Icon name="Loading" className="size-4 animate-spin" aria-hidden /> : typeof icon === "string" ? <Icon name={icon} className="size-4" aria-hidden /> : icon}
           </Button>
         </TooltipTrigger>
         <TooltipContent>{label}</TooltipContent>

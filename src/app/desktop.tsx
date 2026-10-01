@@ -14,6 +14,7 @@ import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocke
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal } from "./terminal.tsx";
+import { MonitorGlyph } from "./glyphs.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
@@ -340,7 +341,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <IconButton label={onBack.label} icon="ArrowLeft" onClick={onBack.go} className="-ml-1" /> : null}
-        <Icon name={`${pluginId}/monitor`} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <MonitorGlyph className="text-muted-foreground" />
         <span className="font-medium text-foreground">{box?.name ?? "Desktop"}</span>
         <span className={cn("inline-flex min-w-0 items-center gap-1.5", mine || taken ? "text-foreground" : "text-muted-foreground")}>
           <StatusDot tone={tone} />
@@ -480,7 +481,7 @@ function DesktopRow({ box, meta, onOpen, actions }: { box: BoxView; meta?: strin
   return (
     <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
       <span className="flex size-6 items-center justify-center text-muted-foreground">
-        <Icon name={`${pluginId}/monitor`} className="size-4" aria-hidden />
+        <MonitorGlyph />
       </span>
       <div className="min-w-0">
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">

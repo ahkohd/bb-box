@@ -27,6 +27,7 @@ import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { Section } from "./settings-fields.tsx";
 import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
+import { MonitorGlyph, ServerGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 /** The reserved thread your machines belong to (036). */
 export const OPERATOR = "operator";
@@ -160,7 +161,7 @@ function MachineRow({ entry, now, busy, onStop, onStart, onRemove }: { entry: Ma
   return (
     <div data-resource-row className={cn("grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3 first:pt-0 last:pb-0", box.state === "releasing" && "opacity-60")}>
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-        <Icon name={`${pluginId}/${box.desktop ? "monitor" : "server"}`} className="size-4" aria-hidden />
+        {box.desktop ? <MonitorGlyph /> : <ServerGlyph />}
       </span>
       <div className="min-w-0">
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -184,8 +185,8 @@ function MachineRow({ entry, now, busy, onStop, onStart, onRemove }: { entry: Ma
         {box.error ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
       </div>
       <span data-row-action className="flex shrink-0 items-center gap-0.5">
-        {box.desktop && ready ? <IconButton label="Open desktop" icon={`${pluginId}/monitor`} onClick={openDesktop} /> : null}
-        {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={`${pluginId}/terminal`} onClick={openTerminal} /> : null}
+        {box.desktop && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={openDesktop} /> : null}
+        {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={openTerminal} /> : null}
         {box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={onStart} loading={busy === `start:${box.id}`} disabled={acting} /> : null}
         {box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={onStop} loading={busy === `stop:${box.id}`} disabled={acting} /> : null}
         <DropdownMenu>
@@ -197,13 +198,13 @@ function MachineRow({ entry, now, busy, onStop, onStart, onRemove }: { entry: Ma
           <DropdownMenuContent align="end" className="w-max min-w-40 max-w-72" mobileTitle={box.name}>
             {box.desktop && ready ? (
               <DropdownMenuItem onSelect={openDesktop}>
-                <Icon name={`${pluginId}/monitor`} aria-hidden />
+                <MonitorGlyph />
                 Open desktop
               </DropdownMenuItem>
             ) : null}
             {canOpenTerminal(box) ? (
               <DropdownMenuItem onSelect={openTerminal}>
-                <Icon name={`${pluginId}/terminal`} aria-hidden />
+                <TerminalGlyph />
                 Open terminal
               </DropdownMenuItem>
             ) : null}

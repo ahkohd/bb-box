@@ -12,6 +12,7 @@ import type { Contract } from "../plugin/contract.ts";
 import type { DockerHostView } from "../plugin/docker-hosts.ts";
 import { EmptyPanel, message, Meta, StatusDot, useLive, type Tone } from "./common.tsx";
 import { Section } from "./settings-fields.tsx";
+import { ServerGlyph } from "./glyphs.tsx";
 
 /** How often the list looks again while a machine builds its images. */
 const BUILD_POLL_MS = 3_000;
@@ -102,7 +103,7 @@ export function DockerHostsSection() {
         return (
           <div key={host.hostId} data-resource-row className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3 first:pt-0 last:pb-0">
             <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-              <Icon name={`${pluginId}/server`} className="size-4" aria-hidden />
+              <ServerGlyph />
             </span>
             <div className="min-w-0">
               <span className="min-w-0 truncate text-sm font-medium text-foreground">{host.name}</span>
