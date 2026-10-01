@@ -24,6 +24,9 @@ const h = React.createElement;
 // blocks become :root rules so the utilities' var(--color-*) resolve.
 const THEME_URL = "https://raw.githubusercontent.com/get-bb/bb/desktop-v0.44.0/apps/web/src/components/ui/theme.css";
 const themeCss = await fetch(THEME_URL).then((response) => response.text());
+// Tailwind's preflight, which BB's app carries and a plugin bundle does not.
+const PREFLIGHT_URL = "https://unpkg.com/tailwindcss@4.1.13/preflight.css";
+document.getElementById("bb-base").textContent = `@layer base {\n${await fetch(PREFLIGHT_URL).then((response) => response.text())}\n}`;
 document.getElementById("bb-theme").textContent = themeCss.replace(/@theme(?:\s+inline)?\s*\{/g, ":root {");
 
 const ICONS = {

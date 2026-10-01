@@ -108,7 +108,7 @@ progress.
 | ready, after a restart | (green) Ready |
 | stopping, releasing | (spinner) Stopping… / Releasing… |
 | stopped | (ring) Stopped |
-| failed | (red) Failed · the backend's reason, in destructive text |
+| failed | (red) Failed, with the backend's reason on a line below, in destructive text |
 | gone | (red) Gone · deleted outside bb-box |
 
 After the state come the size ("4 cores · 8 GiB · 32 GiB"; the disk is left

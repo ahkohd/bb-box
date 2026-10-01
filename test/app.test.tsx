@@ -201,10 +201,7 @@ test("the status line says the state, the timings, BB enrolment and the display"
   expect(statusOf(box({ enrol: { state: "off", hostId: null, error: null }, timings: {} }), now).items.map((item) => item.text)).toEqual(["Ready"]);
   expect(statusOf(box({ state: "acquiring", createdAt: now - 1400 }), now)).toEqual({ tone: "busy", items: [{ text: "Starting" }, { text: "1.4 s" }] });
   expect(statusOf(box({ state: "stopped" }), now)).toEqual({ tone: "off", items: [{ text: "Stopped" }] });
-  expect(statusOf(box({ state: "failed", error: "No GPU is left." }), now).items).toEqual([
-    { text: "Failed", tone: "danger" },
-    { text: "No GPU is left.", tone: "danger" },
-  ]);
+  expect(statusOf(box({ state: "failed", error: "No GPU is left." }), now).items).toEqual([{ text: "Failed", tone: "danger" }]);
   expect(statusOf(box({ state: "gone" }), now).items.map((item) => item.text)).toEqual(["Gone", "deleted outside bb-box"]);
   expect(statusOf(desktopBox(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "GPU"]);
   expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items.at(-1)).toEqual({ text: "CPU" });

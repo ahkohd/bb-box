@@ -52,7 +52,7 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
     case "stopped":
       return { tone: "off", items: [{ text: "Stopped" }, ...rest] };
     case "failed":
-      return { tone: "bad", items: [{ text: "Failed", tone: "danger" }, ...(box.error ? [{ text: box.error, tone: "danger" as const }] : [])] };
+      return { tone: "bad", items: [{ text: "Failed", tone: "danger" }] };
     case "gone":
       return { tone: "bad", items: [{ text: "Gone" }, { text: "deleted outside bb-box" }] };
     case "ready": {

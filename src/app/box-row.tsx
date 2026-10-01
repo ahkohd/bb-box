@@ -89,7 +89,7 @@ export function BoxRow({
   const settling = box.state === "acquiring" || box.state === "starting" || box.state === "stopping" || box.state === "releasing";
   const status = statusOf(box, now, myViewers());
   const ready = box.state === "ready";
-  const showsError = box.error !== null && box.state !== "failed";
+  const showsError = box.error !== null;
 
   return (
     <div

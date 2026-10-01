@@ -79,8 +79,12 @@ for (const scene of SCENES) {
       continue;
     }
     await sleep(300);
-    const box = await page.evaluate("(() => { const r = document.getElementById('frame').getBoundingClientRect(); return { x: r.x - 16, y: r.y - 16, width: r.width + 32, height: Math.min(r.height + 32, 1200) }; })()");
-    const shot = await page.send("Page.captureScreenshot", { format: "png", clip: { ...box, scale: 2 }, captureBeyondViewport: true });
+    // The viewport is sized to the frame, so fixed overlays such as menus and
+    // popovers land where they would in BB, and the clip is the frame.
+    const box = await page.evaluate("(() => { const r = document.getElementById('frame').getBoundingClientRect(); return { x: 0, y: 0, width: Math.ceil(r.width + 32), height: Math.ceil(Math.min(r.height + 32, 1600)) }; })()");
+    await page.send("Emulation.setDeviceMetricsOverride", { width: box.width, height: box.height, deviceScaleFactor: 2, mobile: false });
+    await sleep(300);
+    const shot = await page.send("Page.captureScreenshot", { format: "png", clip: { ...box, scale: 2 } });
     await writeFile(`${out}/${scene}-${theme}.png`, Buffer.from(shot.data, "base64"));
     count++;
   }
