@@ -141,7 +141,8 @@ of a second, and a desktop in under a second.
 
 - **Images**: built on the Docker host by `setup/docker/build.sh`, from the
   same guest scripts as the Proxmox LXC templates, so a box has the same
-  tools. bb-box never pulls an image.
+  tools. bb-box never pulls an image. Building both needs about 25 GB free
+  there.
 - **Reach**: commands, file copies and the desktop stream all go through
   `docker exec`, so BB's server needs no network path to a box, and a
   Docker host over SSH works as the local one does.

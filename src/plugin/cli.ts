@@ -8,6 +8,7 @@ import { BoxError, OPERATOR, describeError } from "../core/boxes.ts";
 import type { DoctorReport } from "../backends/types.ts";
 import type { Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
+import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, movedText, problemsText } from "./views.ts";
 
@@ -227,7 +228,9 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "docker-build": cliCommand({
-          summary: "Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout, through bb-box's relay (042). Waits for the build.",
+          summary:
+            "Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout, through bb-box's relay (042). Waits for the build. " +
+            `Building both needs about ${BUILD_FREE_GB} GB free there; with less, it does not start.`,
           positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list. It must be turned on under Docker on BB machines.", required: true }],
           run: ({ positionals }) =>
             guard("Building the images", async () => {

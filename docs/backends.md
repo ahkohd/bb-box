@@ -409,7 +409,8 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   switch. Turning one on adds a Docker backend whose host is
   `bb:<machine ID>`, last in acquire order and named "Docker on" and the
   machine's name, and builds there any image it lacks;
-  `bb box docker-build <machine>` builds them again.
+  `bb box docker-build <machine>` builds them again. Building both needs
+  about 25 GB free on the machine, and `build.sh` does not start with less.
 - For such a host the CLI's `-H` is a unix socket on BB's server. bb-box
   relays it over one WebSocket that the machine's worker opens out to
   bb-box with a one-time secret: each connection is a channel, with 1 MiB

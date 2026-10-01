@@ -28,6 +28,29 @@ while [ $# -gt 0 ]; do
 done
 [ ${#targets[@]} -gt 0 ] || targets=(linux desktop)
 
+# A build needs this much of the Docker host's disk free, in GB. From an
+# empty cache, on Docker 29 with its containerd image store, the linux image
+# took about 6 GB, the desktop 12 and both 17: the images and Docker's build
+# cache. The rest leaves room for an earlier build's. With less, a build
+# fails part way, so it does not start. A container from the Dockerfile's
+# base image says how much is free where the layers go.
+case "${targets[*]}" in
+  linux) need=10 what="the linux image" ;;
+  desktop) need=18 what="the desktop image" ;;
+  *) need=25 what="both images" ;;
+esac
+base=$(sed -n 's/^ARG UBUNTU=//p' "$here/Dockerfile")
+if df=$(docker run --rm --quiet --network none --platform linux/amd64 --entrypoint df "$base" -Pk / 2>&1) &&
+  free=$(awk '$NF == "/" && $4 ~ /^[0-9]+$/ { print $4 }' <<<"$df") && [ -n "$free" ]; then
+  if [ "$free" -lt $((need * 1000000000 / 1024)) ]; then
+    echo "The Docker host has $((free * 1024 / 1000000000)) GB of disk free, and building $what needs about $need GB." \
+      "Free some, for example with docker builder prune, then build again." >&2
+    exit 1
+  fi
+else
+  echo "build.sh could not see how much disk the Docker host has free, so it builds anyway: ${df##*$'\n'}" >&2
+fi
+
 for target in "${targets[@]}"; do
   image=bbbox/linux:$version
   [ "$target" = linux ] || image=bbbox/linux-desktop:$version

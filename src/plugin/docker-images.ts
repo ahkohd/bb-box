@@ -4,7 +4,8 @@
 // runs on BB's server with DOCKER_HOST at the machine's relay socket, as
 // `docker build` sends its files through Docker's API. Images are built, not
 // copied, as everywhere. One build at a time per machine; the settings row
-// shows it until it ends.
+// shows it until it ends. build.sh does not start with less disk free than
+// the build needs, about 25 GB for both images, and says how much is free.
 
 import { spawn } from "node:child_process";
 import { IMAGE_VERSION } from "../backends/docker/config.ts";
@@ -14,6 +15,9 @@ export const BUILT_IMAGES: Readonly<Record<string, "linux" | "desktop">> = {
   [`bbbox/linux:${IMAGE_VERSION}`]: "linux",
   [`bbbox/linux-desktop:${IMAGE_VERSION}`]: "desktop",
 };
+
+/** The disk a machine needs free to build both images, in GB, as build.sh checks before it starts. */
+export const BUILD_FREE_GB = 25;
 
 export interface ImageBuild {
   readonly state: "checking" | "building" | "built" | "failed";
@@ -130,7 +134,9 @@ export class DockerImages {
         this.#deps.log?.(`Built ${targets.join(" and ")} on BB machine ${hostId} in ${Math.round((now() - startedAt) / 1000)} s.`);
         return set({ state: "built", detail: null, endedAt: now() });
       }
-      return set({ state: "failed", detail: `build.sh exited with ${code ?? "no code"}: ${tail.join(" ").slice(-500)}`, endedAt: now() });
+      const why = tail.join(" ").slice(-500);
+      const full = /no space left on device/i.test(why) ? ` The machine ran out of disk: building both images needs about ${BUILD_FREE_GB} GB free.` : "";
+      return set({ state: "failed", detail: `build.sh exited with ${code ?? "no code"}: ${why}${full}`, endedAt: now() });
     } catch (error) {
       this.#deps.logError("docker images", error);
       return set({ state: "failed", detail: message(error), endedAt: now() });
