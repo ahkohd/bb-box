@@ -10,9 +10,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { cn } from "@/lib/utils";
 import type { BoxResult, Contract, DesktopEntry, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { EmptyPanel, forThread, IconButton, KindBadges, message, Meta, Notice, osName, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
+import { EmptyPanel, forThread, IconButton, KindBadges, message, Meta, Notice, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
+import { BoxTerminal } from "./terminal.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
@@ -195,7 +196,7 @@ function controlText(box: BoxView, mine: boolean, taken: boolean): string {
 }
 
 /** A box's desktop, live, with its control bar. */
-export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: string; boxId: string; newTab: boolean; onBack?: () => void }) {
+export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: string; boxId: string; newTab: boolean; onBack?: { label: string; go: () => void } }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -310,7 +311,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
-        {onBack ? <IconButton label="Back to desktops" icon="ArrowLeft" onClick={onBack} className="-ml-1" /> : null}
+        {onBack ? <IconButton label={onBack.label} icon="ArrowLeft" onClick={onBack.go} className="-ml-1" /> : null}
         <Icon name={`${pluginId}/monitor`} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="font-medium text-foreground">{box?.name ?? "Desktop"}</span>
         <span className={cn("inline-flex min-w-0 items-center gap-1.5", mine || taken ? "text-foreground" : "text-muted-foreground")}>
@@ -507,8 +508,15 @@ export function DesktopsPage({ subPath }: { subPath: string }) {
       return "";
     }
   });
-  if (threadId && boxId && !rest.length) {
-    return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} onBack={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" })} />;
+  // A view opened from the settings page goes back there: a machine with no desktop is not on the list here.
+  const fromSettings = rest.at(-1) === "from-settings";
+  const parts = fromSettings ? rest.slice(0, -1) : rest;
+  const back = fromSettings ? { label: "Back to settings", go: () => void navigate.openUrl(SETTINGS_PATH) } : { label: "Back to desktops", go: () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" }) };
+  if (threadId && boxId && parts.length === 1 && parts[0] === "terminal") {
+    return <BoxTerminal key={`${threadId}/${boxId}/terminal`} threadId={threadId} boxId={boxId} onBack={back} />;
+  }
+  if (threadId && boxId && !parts.length) {
+    return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} onBack={back} />;
   }
   return <DesktopList />;
 }
@@ -540,29 +548,49 @@ function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
   return titles;
 }
 
+/** Where the Desktops page shows one box's desktop, or its terminal; from settings, the back arrow returns there. */
+export function desktopSubPath(threadId: string, boxId: string, view: "desktop" | "terminal" = "desktop", from?: "settings"): string {
+  const base = `${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
+  return [base, ...(view === "terminal" ? ["terminal"] : []), ...(from === "settings" ? ["from-settings"] : [])].join("/");
+}
+
 function DesktopList() {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
   const { value: desktops, error } = useLive<DesktopEntry[]>("desktops", () => rpc.call("desktops"), () => true);
-  const titles = useThreadTitles([...new Set((desktops ?? []).map((entry) => entry.threadId))]);
+  const yours = desktops?.filter((entry) => entry.owner === "yours") ?? [];
+  const threads = desktops?.filter((entry) => entry.owner !== "yours") ?? [];
+  const titles = useThreadTitles([...new Set(threads.map((entry) => entry.threadId))]);
+  const card = (entries: readonly DesktopEntry[], own: boolean) => (
+    <div className="rounded-lg border border-border bg-card px-4 py-1">
+      <div className="divide-y divide-border">
+        {entries.map(({ threadId, box }) => (
+          <DesktopRow
+            key={box.id}
+            box={box}
+            meta={own ? null : (titles[threadId] ?? null)}
+            onOpen={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id) })}
+            actions={own ? undefined : <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />}
+          />
+        ))}
+      </div>
+    </div>
+  );
   return (
     <div className="h-full overflow-y-auto p-4 md:p-5">
       <div className="mx-auto w-full max-w-3xl space-y-4">
         {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
         {desktops && !desktops.length ? <EmptyPanel title="No desktops">No thread has a desktop box. Make one from a thread's Box panel.</EmptyPanel> : null}
-        {desktops?.length ? (
-          <div className="rounded-lg border border-border bg-card px-4 py-1">
-            <div className="divide-y divide-border">
-              {desktops.map(({ threadId, box }) => (
-                <DesktopRow
-                  key={box.id}
-                  box={box}
-                  meta={titles[threadId] ?? null}
-                  onOpen={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: `${encodeURIComponent(threadId)}/${encodeURIComponent(box.id)}` })}
-                  actions={<IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />}
-                />
-              ))}
-            </div>
+        {yours.length ? (
+          <div className="space-y-2">
+            <h3 className="text-xs font-medium text-foreground">Your machines</h3>
+            {card(yours, true)}
+          </div>
+        ) : null}
+        {threads.length ? (
+          <div className="space-y-2">
+            {yours.length ? <h3 className="text-xs font-medium text-foreground">Threads</h3> : null}
+            {card(threads, false)}
           </div>
         ) : null}
       </div>

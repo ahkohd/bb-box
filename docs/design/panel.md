@@ -407,11 +407,16 @@ back is instant (1 October 2026). The app bundle keeps them
 
 ## The Desktops page
 
-The sidebar entry lists every desktop box in every thread, as rows: glyph,
-name, kind, then the state, who has control, and the thread's title, with
-"Open" and a menu with "Open thread". Opening shows the same viewer with a
-back arrow in the toolbar. Empty: "No thread has a desktop box. Make one
-from a thread's Box panel."
+The sidebar entry lists every desktop box, as rows: glyph, name, the OS
+and badges, then the state, who has control, and the thread's title, with
+"Open" and an "Open thread" action. Your machines (036) come first, under
+"Your machines", titled by machine name and without "Open thread"; the
+threads' desktops follow under "Threads". Opening shows the same viewer
+with a back arrow in the toolbar, at `<thread>/<box>`; a box's terminal
+shows the same way at `<thread>/<box>/terminal`, which is how the settings
+page opens a machine's terminal, since it has no thread panel to open a
+tab in. Empty: "No thread has a desktop box. Make one from a thread's Box
+panel."
 
 ## Copy
 

@@ -37,17 +37,17 @@ interface Remembered {
   readonly custom?: Readonly<Record<string, Fields>>;
 }
 
-function remembered(pluginId: string): Remembered {
+function remembered(key: string): Remembered {
   try {
-    return JSON.parse(window.localStorage.getItem(`${pluginId}:new-box`) ?? "{}") as Remembered;
+    return JSON.parse(window.localStorage.getItem(key) ?? "{}") as Remembered;
   } catch {
     return {};
   }
 }
 
-function remember(pluginId: string, value: Remembered): void {
+function remember(key: string, value: Remembered): void {
   try {
-    window.localStorage.setItem(`${pluginId}:new-box`, JSON.stringify(value));
+    window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // Storage may be off. Then the form starts from the kind's default each time.
   }
@@ -82,17 +82,32 @@ export function customSize(fields: Fields): SizeRequest | null {
   return { ...(cores !== null ? { cores } : {}), ...(memoryGiB !== null ? { memoryGiB } : {}), ...(diskGiB !== null ? { diskGiB } : {}) };
 }
 
+/** A machine's name (036): a hostname label of up to 32 characters, unique among your machines, which the server checks. */
+export const MACHINE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+/** Why a typed name will not do, or null when it will; an empty name lets bb-box pick one. */
+export function nameProblem(name: string): string | null {
+  if (!name) return null;
+  if (!MACHINE_NAME.test(name)) return "Lowercase letters, digits and hyphens, starting with a letter, up to 32 characters.";
+  if (name.endsWith("-")) return "A name cannot end with a hyphen.";
+  return null;
+}
+
 export function NewBox({
   kinds,
   make,
+  machine = false,
 }: {
   kinds: readonly KindView[];
-  /** Makes a box; resolves with the refusal to show, or null when the box was made. */
-  make: (kind: string, size?: SizeRequest) => Promise<string | null>;
+  /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036). */
+  make: (kind: string, size?: SizeRequest, name?: string) => Promise<string | null>;
+  /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
+  machine?: boolean;
 }) {
   const pluginId = experimental_usePluginId();
   const [open, setOpen] = useState(false);
-  const [last] = useState(() => remembered(pluginId));
+  const [last] = useState(() => remembered(`${pluginId}:${machine ? "new-machine" : "new-box"}`));
+  const [name, setName] = useState("");
   const [chosenKind, setChosenKind] = useState<string>(last.kind ?? "");
   const [choice, setChoice] = useState<Choice | null>(last.size ?? null);
   /** The preset last chosen, which Custom starts from. */
@@ -144,15 +159,18 @@ export function NewBox({
     event.preventDefault();
     pick((index + step + count) % count);
   };
+  const typedName = name.trim();
+  const nameWrong = machine ? nameProblem(typedName) : null;
   const submit = async () => {
-    if (!kind || making || (size === CUSTOM && !custom)) return;
+    if (!kind || making || (size === CUSTOM && !custom) || nameWrong) return;
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = await make(kind.id, request);
+      const refused = await make(kind.id, request, machine && typedName ? typedName : undefined);
       setProblem(refused);
       if (!refused) {
-        remember(pluginId, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
+        remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
+        setName("");
         setOpen(false);
       }
     } finally {
@@ -178,19 +196,28 @@ export function NewBox({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <TooltipProvider delayDuration={250}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label="New box" disabled={!kinds.length}>
-                <Icon name="Plus" className="size-4" aria-hidden />
-              </Button>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent>New box</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-      <PopoverContent align="end" className="w-80 p-4" mobileTitle="New box">
+      {machine ? (
+        <PopoverTrigger asChild>
+          <Button type="button" variant="outline" size="sm" className="h-7" disabled={!kinds.length}>
+            <Icon name="Plus" aria-hidden />
+            Add machine
+          </Button>
+        </PopoverTrigger>
+      ) : (
+        <TooltipProvider delayDuration={250}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label="New box" disabled={!kinds.length}>
+                  <Icon name="Plus" className="size-4" aria-hidden />
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent>New box</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+      <PopoverContent align="end" className="w-80 p-4" mobileTitle={machine ? "Add machine" : "New box"}>
         <form
           className="space-y-3"
           onSubmit={(event) => {
@@ -273,9 +300,35 @@ export function NewBox({
               )}
             </div>
           ) : null}
-          <Button type="submit" size="sm" className="w-full" disabled={!kind || making || (size === CUSTOM && !custom)}>
+          {machine ? (
+            <div>
+              <label htmlFor="new-machine-name" className="mb-1.5 block text-xs font-medium text-foreground">
+                Name
+              </label>
+              <Input
+                id="new-machine-name"
+                className="h-7 px-2 text-xs"
+                value={name}
+                placeholder="a name, or leave it to bb-box"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                aria-invalid={nameWrong !== null || undefined}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setProblem(null);
+                }}
+              />
+              {nameWrong ? (
+                <p role="alert" className="mt-1 text-xs leading-snug text-destructive-text">
+                  {nameWrong}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          <Button type="submit" size="sm" className="w-full" disabled={!kind || making || (size === CUSTOM && !custom) || nameWrong !== null}>
             {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-            Create
+            {machine ? "Add" : "Create"}
           </Button>
           {problem ? (
             <p role="alert" className="text-xs leading-snug text-destructive-text">

@@ -1,6 +1,7 @@
-// bb-box's settings page (029): the backends with their switches and setup,
-// the kinds with their sizes, and the general settings, all one checked
-// document the page reads with config.get and writes with config.apply.
+// bb-box's settings page: your machines (036), then the configuration
+// (029): the backends with their switches and setup, the kinds with their
+// sizes, and the general settings, all one checked document the page reads
+// with config.get and writes with config.apply.
 // The design is in docs/design/settings.md.
 
 import { useRpc } from "@get-bb/plugin-sdk/app";
@@ -13,7 +14,9 @@ import type { ConfigState, Contract } from "../plugin/contract.ts";
 import { EmptyPanel, message, relativeTime, useLive } from "./common.tsx";
 import { effectiveKind, kindChanges, withBackend, withGeneral, withKind } from "./config.ts";
 import { BackendForm, BackendRow, backendId, type BackendRowModel } from "./settings-backends.tsx";
+import { Section } from "./settings-fields.tsx";
 import { KindForm, KindRow, kindRowModel } from "./settings-kinds.tsx";
+import { MachinesSection } from "./settings-machines.tsx";
 
 const STALE = "Someone saved the configuration first. It has been reloaded; make your change again.";
 
@@ -21,21 +24,6 @@ const STALE = "Someone saved the configuration first. It has been reloaded; make
 export interface Saved {
   readonly saved: boolean;
   readonly problems: readonly Problem[];
-}
-
-/** A block of the page, titled as BB titles a plugin's settings sections. */
-function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-xs font-medium text-foreground">{title}</h3>
-        {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
-      </div>
-      <div className="rounded-lg border border-border bg-card px-4 py-3.5">
-        <div className="divide-y divide-border">{children}</div>
-      </div>
-    </section>
-  );
 }
 
 function GeneralRow({ label, description, children, problem }: { label: string; description?: string; children: ReactNode; problem?: string | null }) {
@@ -124,6 +112,7 @@ export function SettingsSection() {
           {notice}
         </p>
       ) : null}
+      <MachinesSection />
       <Section title="Backends" description="Where boxes come from.">
         {backends.map((model) => {
           const id = backendId(model);

@@ -6,10 +6,11 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
-import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
+type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
@@ -221,8 +222,9 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
+function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
   let boxes = [...initial];
+  let machines = [...(options.machines ?? [])];
   const changes: string[] = [];
   const result = (found: BoxView | null): BoxResult => (options.failWith ? { box: null, error: options.failWith } : { box: found, error: null });
   const change = (method: string, ref: string, next: (found: BoxView) => BoxView | null): BoxResult => {
@@ -237,16 +239,38 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
   const find = (ref: string) => boxes.find((candidate) => candidate.id === ref || candidate.name === ref) ?? null;
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: null }),
-    desktop: ({ box: ref }): DesktopState => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
+    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? null, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktops: () => boxes.filter((candidate) => candidate.desktop).map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
-    // Your machines' section is the UI/UX worker's; these answer as an install with none.
-    "machines.list": () => ({ machines: [], kinds: options.kinds ?? KINDS }),
-    "machines.add": () => result(null),
-    "machines.remove": () => result(null),
-    "machines.stop": () => result(null),
-    "machines.start": () => result(null),
+    // Your machines (036): `options.machines` to start with, kept as the tests add, stop, start and remove them.
+    "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol) }),
+    "machines.add": ({ kind, name }) => {
+      changes.push(`machines.add ${kind}${name ? ` ${name}` : ""}`);
+      if (options.failWith) return result(null);
+      const made = box({ id: `box_m${machines.length + 1}`, name: name ?? "swift-crane", kind, kindLabel: KINDS.find((candidate) => candidate.id === kind)?.label ?? kind, state: "acquiring", createdAt: Date.now(), timings: {}, enrol: { state: "off", hostId: null, error: null } });
+      machines = [...machines, { box: made, threads: [] }];
+      return result(made);
+    },
+    "machines.remove": ({ box: ref, force }) => {
+      const entry = machines.find((candidate) => candidate.box.id === ref || candidate.box.name === ref);
+      if (entry && entry.threads.some((thread) => thread.running) && !force) return { box: entry.box, error: null, threads: entry.threads.filter((thread) => thread.running) };
+      changes.push(`machines.remove${force ? " (forced)" : ""} ${ref}`);
+      machines = machines.filter((candidate) => candidate !== entry);
+      return result(null);
+    },
+    "machines.stop": ({ box: ref, force }) => {
+      const entry = machines.find((candidate) => candidate.box.id === ref || candidate.box.name === ref);
+      if (entry && entry.threads.some((thread) => thread.running) && !force) return { box: entry.box, error: null, threads: entry.threads.filter((thread) => thread.running) };
+      changes.push(`machines.stop${force ? " (forced)" : ""} ${ref}`);
+      machines = machines.map((candidate) => (candidate === entry ? { ...candidate, box: { ...candidate.box, state: "stopped" } } : candidate));
+      return result(entry ? { ...entry.box, state: "stopped" } : null);
+    },
+    "machines.start": ({ box: ref }) => {
+      changes.push(`machines.start ${ref}`);
+      machines = machines.map((candidate) => (candidate.box.id === ref ? { ...candidate, box: { ...candidate.box, state: "ready" } } : candidate));
+      return result(machines.find((candidate) => candidate.box.id === ref)?.box ?? null);
+    },
     kinds: () => options.kinds ?? KINDS,
     thread: ({ box: ref, prompt }) => {
       changes.push(`thread ${ref} ${prompt}`);
@@ -1145,4 +1169,79 @@ test("a remounted terminal tab attaches to the same shell, and a stopped box off
   expect(await none.findByText("no-shell has no terminal.")).toBeTruthy();
   // Start made wild-cove ready, so its tab connected; no-shell never does.
   expect(FakeSocket.made.map((made) => new URL(made.url).searchParams.get("box"))).toEqual(["box_1", "box_3"]);
+});
+
+/** One of your machines: a ready desktop a thread is working on. */
+function machine(overrides: Partial<BoxView> = {}, threads: ThreadOnBox[] = [{ id: "thr_a", title: "Fix the login form", running: true }, { id: "thr_b", title: "Docs pass", running: false }]): MachineEntry {
+  return { box: desktopBox({ id: "box_m1", name: "build-1", ...overrides }), threads };
+}
+
+test("the settings page lists your machines with their threads and actions, and offers Add machine", async () => {
+  const { handlers, changes } = server([], { machines: [machine(), machine({ id: "box_m2", name: "scratch", desktop: false, display: null, gpu: false, state: "stopped" }, [])] });
+  const slot = settings(handlers);
+  expect(await slot.findByText("build-1")).toBeTruthy();
+  expect(slot.getByText("Your machines")).toBeTruthy();
+  expect(slot.getByText("Working: Fix the login form · 1 more")).toBeTruthy();
+  expect(slot.getByText("scratch")).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Open desktop" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Open terminal" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Stop" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Start" })).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Open desktop" }));
+  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "operator/box_m1/from-settings" } });
+  fireEvent.click(slot.getByRole("button", { name: "Open terminal" }));
+  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "operator/box_m1/terminal/from-settings" } });
+
+  // Stopping a machine a thread works on asks first, then sends force.
+  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
+  expect(await screen.findByText("Stop build-1 anyway?")).toBeTruthy();
+  expect(screen.getByText("Fix the login form is working on it, and would lose its machine.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Stop anyway" }));
+  await waitFor(() => expect(changes).toEqual(["machines.stop (forced) box_m1"]));
+
+  // Removing asks, and again when a thread works on it.
+  const menu = await openMenu(slot.getByRole("button", { name: "scratch actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove…" }));
+  expect(await screen.findByText("Remove scratch?")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(changes).toEqual(["machines.stop (forced) box_m1", "machines.remove box_m2"]));
+  await waitFor(() => expect(slot.queryByText("scratch")).toBeNull());
+});
+
+test("Add machine takes a kind, a size and a name it checks as you type, and the empty state says what a machine is", async () => {
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers);
+  expect(await slot.findByText(/Add a box as a BB machine of your own/)).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Add machine" }));
+  const name = await screen.findByRole("textbox", { name: "Name" });
+  fireEvent.change(name, { target: { value: "Build 1" } });
+  expect(screen.getByText("Lowercase letters, digits and hyphens, starting with a letter, up to 32 characters.")).toBeTruthy();
+  expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(name, { target: { value: "build-" } });
+  expect(screen.getByText("A name cannot end with a hyphen.")).toBeTruthy();
+  fireEvent.change(name, { target: { value: "build-1" } });
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  await waitFor(() => expect(changes).toEqual(["machines.add linux build-1"]));
+  expect(await slot.findByText("build-1")).toBeTruthy();
+  expect(slot.getByText("Starting")).toBeTruthy();
+});
+
+test("the Desktops page lists your machines first, without Open thread, and shows a machine's terminal", async () => {
+  const { handlers } = server([desktopBox()], { machines: [machine()] });
+  const mine = { threadId: "operator", box: desktopBox({ id: "box_m1", name: "build-1" }), owner: "yours" as const };
+  const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, desktops: () => [...(handlers.desktops as () => DesktopEntryLike[])(), mine] };
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  expect(await list.findByText("Your machines")).toBeTruthy();
+  const rows = list.getAllByRole("button", { name: "Open" });
+  expect(rows).toHaveLength(2);
+  expect(list.getAllByRole("button", { name: "Open thread" })).toHaveLength(1);
+  const names = list.getAllByText(/build-1|bold-heron/).map((node) => node.textContent);
+  expect(names[0]).toBe("build-1");
+
+  const terminal = renderSlot(page!, { subPath: "operator/box_m1/terminal/from-settings" }, { rpc: withMine, pluginId: "bb-box" });
+  fireEvent.click(await terminal.findByRole("button", { name: "Back to settings" }));
+  expect(terminal.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "/settings/plugins/bb-box" });
+  await waitFor(() => expect(FakeSocket.made.at(-1)?.url).toContain("box=box_m1"));
 });
