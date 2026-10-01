@@ -134,20 +134,19 @@ kinds.
 
 ## The conformance suite
 
-[test/conformance/suite.ts](../test/conformance/suite.ts) runs the same
-checks against any backend: doctor first, then for each kind acquire,
-transports, a spawned channel, commands with 1 MiB of stdin, streaming,
-32 MiB copied each way, enrolment, Docker, displays, stop and start (with
-the box connected to BB again within 3 s of being ready), recovery by a new
-instance, repeated release and interrupted acquires. It also checks that
-two installs on one backend leave each other's guests alone, and, given a
-`reuse` hook that makes the backend hand out a reference again, that the old
-box reads as gone and its release leaves the new box alone. The size check
-measures a box as soon as it is ready, after filling any warm pool the run's
-settings ask for, so the box can come from it; the pool stays for the next
-run, and a run with a target of 0 removes it. Steps a kind
-does not declare are skipped by its capabilities; any other skip gives its
-reason.
+[test/conformance/suite.ts](../test/conformance/suite.ts) runs the same checks
+against any backend: doctor first, then for each kind acquire, transports, a
+spawned channel, commands with 1 MiB of stdin, streaming, 32 MiB copied each
+way, enrolment, Docker, displays, stop and start (with the box's clock right,
+and connected to BB again within 3 s of being ready), recovery by a new
+instance, repeated release and interrupted acquires. It also checks that two
+installs on one backend leave each other's guests alone, and, given a `reuse`
+hook that makes the backend hand out a reference again, that the old box reads
+as gone and its release leaves the new box alone. The size check measures a
+box as soon as it is ready, after filling any warm pool the run's settings ask
+for, so the box can come from it; the pool stays for the next run, and a run
+with a target of 0 removes it. Steps a kind does not declare are skipped by
+its capabilities; any other skip gives its reason.
 
 [test/fake-backend.ts](../test/fake-backend.ts) is an in-memory backend,
 virtual or real, that passes the suite and backs the core's own tests.
@@ -219,10 +218,16 @@ node --test test/conformance.test.ts
   run unelevated. bb-box runs `cua-driver mcp` over SSH, in PowerShell.
   Cua's cursor overlay, a window over the whole screen, is left out of the
   window lists.
-- Still to come: stop and start, and a hibernated warm pool. The
-  conformance suite runs against it, but skips the checks whose scripts are
-  written for sh: commands, streaming, the architecture, file copies and
-  enrolment.
+- A stop hibernates the VM: Windows' memory goes to a state volume on the
+  disk's storage, and the VM stops. A start resumes it, with its apps
+  open, then sets Windows' clock over SSH, as the resume leaves it at the
+  time the VM stopped. Proxmox locks a hibernated VM's config until it
+  starts. Hibernation needs VM.PowerMgmt and VM.Config.Disk, which the
+  setup's role has, and Datastore.AllocateSpace on that storage, which the
+  token has.
+- Still to come: a hibernated warm pool. The conformance suite runs against
+  it, but skips the checks whose scripts are written for sh: commands,
+  streaming, the architecture, file copies and enrolment.
 - The tests run against the fake API, and the fake ssh as a Windows host,
   with a sh stand-in for PowerShell where a test needs one
   ([test/proxmox-qemu.test.ts](../test/proxmox-qemu.test.ts)).

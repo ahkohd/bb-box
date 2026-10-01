@@ -2,7 +2,8 @@
 // containers and VMs: linked clones that reject `storage`, need a template
 // that is not locked and inherit its protection, "already exists" for used
 // VMIDs, asynchronous tasks, tags, pools, /cluster/resources with the status
-// daemon's lag, each node's own guest lists and a VM console's VNC proxy.
+// daemon's lag, each node's own guest lists, a VM console's VNC proxy and a
+// VM's suspend to disk, whose lock refuses config changes until a start.
 
 import { rootDiskGiB, type FetchLike, type FetchResponse } from "../src/backends/proxmox/api.ts";
 
@@ -294,8 +295,13 @@ export class FakeProxmox {
       if (!guest) return this.#missing(vmid, match[1]);
       if (method === "GET") return ok({ ...guest.config });
       if (method === "PUT") {
+        // Deleting `vmstate` discards a suspended VM's state, and so its lock.
+        if (match[1] === "qemu" && guest.config.lock && !params.delete?.split(",").includes("vmstate")) {
+          return respond(500, `VM is locked (${guest.config.lock})`, { data: null });
+        }
         for (const [key, value] of Object.entries(params)) if (key !== "delete") guest.config[key] = value;
         for (const key of params.delete?.split(",") ?? []) delete guest.config[key];
+        if (params.delete?.split(",").includes("vmstate")) delete guest.config.lock;
         if (params.hostname) guest.name = params.hostname;
         if (params.name) guest.name = params.name;
         return ok(null);
@@ -312,7 +318,7 @@ export class FakeProxmox {
       return ok(this.#task("resize", vmid));
     }
 
-    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/status\/(start|stop|current)$/.exec(path))) {
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/status\/(start|stop|suspend|current)$/.exec(path))) {
       const [, type = "lxc", id, action] = match;
       const vmid = Number(id);
       const guest = this.#of(type, vmid);
@@ -324,6 +330,9 @@ export class FakeProxmox {
       if (method === "POST" && action === "start") {
         if (!this.nextTaskExit.has(`${prefix}start`)) {
           guest.status = "running";
+          // A suspended VM resumes.
+          delete guest.config.lock;
+          delete guest.config.vmstate;
           // ext4 keeps about 2.5% of a disk for itself.
           if (type === "lxc") guest.filesystem = Math.floor((rootDiskGiB(guest.config) ?? 0) * 0.975 * 2 ** 30);
         }
@@ -332,6 +341,16 @@ export class FakeProxmox {
       if (method === "POST" && action === "stop") {
         guest.status = "stopped";
         return ok(this.#task(`${prefix}stop`, vmid));
+      }
+      if (method === "POST" && action === "suspend" && type === "qemu") {
+        if (guest.status !== "running") return respond(500, `VM ${vmid} not running`, { data: null });
+        if (params.todisk !== "1") return respond(501, "the fake suspends only to disk", { data: null });
+        if (!this.nextTaskExit.has("qmsuspend")) {
+          guest.status = "stopped";
+          guest.config.lock = "suspended";
+          guest.config.vmstate = `local-lvm:vm-${vmid}-state-suspend-2026-10-01`;
+        }
+        return ok(this.#task("qmsuspend", vmid));
       }
     }
 

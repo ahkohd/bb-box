@@ -331,6 +331,43 @@ test("the desktop resizes to the viewer's size, else to the listed mode that bes
   assert.equal(existsSync(join(home, "desktop")), false, "a size that is not one runs nothing");
 });
 
+test("a stop hibernates the VM, and a start resumes it and sets Windows' clock, or gives Windows' reason", async () => {
+  const { backend, proxmox, ssh } = setup();
+  const home = ssh.home("192.0.2.150");
+  // A stand-in for PowerShell that keeps the clock script, and exits as $HOME/exit says.
+  ssh.powershell("192.0.2.150", `case "$1" in\n  *Set-Date*) printf "%s" "$1" > "$HOME/clock"; [ -f "$HOME/exit" ] && . "$HOME/exit"; exit 0;;\n  *) exec sh -c "$1";;\nesac\n`);
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  const vm = proxmox.guests.get(9700)!;
+  const suspends = () => proxmox.calls.filter((call) => call.method === "POST" && call.path.endsWith("/status/suspend"));
+
+  await backend.stop(guest, signal());
+  assert.deepEqual([vm.status, vm.config.lock], ["stopped", "suspended"], "suspended to disk");
+  assert.equal(suspends()[0]!.params.todisk, "1");
+  assert.equal(await backend.power(guest, signal()), "stopped");
+  await backend.stop(guest, signal());
+  assert.equal(suspends().length, 1, "a stopped VM is left as it is");
+
+  const before = Date.now();
+  await backend.start(guest, signal());
+  const after = Date.now();
+  assert.deepEqual([vm.status, vm.config.lock, vm.config.vmstate], ["running", undefined, undefined], "resumed");
+  const clock = readFileSync(join(home, "clock"), "utf8");
+  const ms = Number(/FromUnixTimeMilliseconds\((\d+)\)/.exec(clock)?.[1]);
+  assert.ok(ms >= before && ms <= after, "set to BB's server's time");
+  assert.match(clock, /\[Diagnostics\.Process\]::GetCurrentProcess\(\)\.StartTime\)/, "plus the time PowerShell took to start");
+
+  writeFileSync(join(home, "exit"), `echo "Set-Date: A required privilege is not held by the client." >&2; exit 1\n`);
+  await backend.stop(guest, signal());
+  await assert.rejects(backend.start(guest, signal()), { message: "Windows could not set its clock: Set-Date: A required privilege is not held by the client." });
+  assert.equal(await backend.power(guest, signal()), "running");
+
+  await backend.stop(guest, signal());
+  await backend.release(guest, releasing(), signal());
+  assert.equal(proxmox.guests.has(9700), false, "a hibernated VM is deleted with its state");
+  await assert.rejects(backend.start(guest, signal()), { name: "BackendError", code: "gone" });
+  await assert.rejects(backend.stop(guest, signal()), { name: "BackendError", code: "gone" });
+});
+
 test("a larger disk grows before the box starts, and C: is extended over it", async () => {
   const { backend, proxmox, ssh } = setup();
   ssh.powershell("192.0.2.150", extending('echo "$1" > "$HOME/extended"; exit 0'));
