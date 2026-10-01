@@ -505,6 +505,19 @@ test("commands in an enrolled box take the thread's access from BB's daemon as t
   assert.equal(asked.length, 2);
 });
 
+test("commands in an enrolled box take a project's variables from the agent of a thread of the project on the box (#109)", async (t) => {
+  // BB gives a project's variables only to the agent its worker starts for the thread, not to the worker.
+  const daemon = await fakeDaemon([{ GH_TOKEN: "value-token" }, { GH_TOKEN: "value-token" }], {
+    agent: { GH_TOKEN: "value-token", PROJECT_VAR: "value-project" },
+  });
+  t.after(daemon.stop);
+  const world = setup({}, { access: async () => ({ names: ["GH_TOKEN", "PROJECT_VAR"], parent: daemon.parent }) });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const show = 'printf "%s|%s|" "${GH_TOKEN-unset}" "${PROJECT_VAR-unset}"';
+  // The newest worker started the agent before it ran on, so the agent is there.
+  assert.equal((await world.boxes.run(THREAD, box.name, show)).result.stdout, "value-token|value-project|");
+});
+
 interface MacProcess {
   readonly pid: number;
   readonly ppid: number;
@@ -607,6 +620,24 @@ test("in a macOS box, the env file takes the thread's access from the daemon's n
     assert.equal(none, "|||unset|unset|box|", shell);
   }
   assert.deepEqual(ps.read(), shells.map(() => [501, 502, 503, 504]), "only the daemon's workers' environments are read");
+});
+
+test("in a macOS box, the env file takes a project's variables from the agent of a thread of the project on the box (#109)", () => {
+  const parent = "host-daemon/dist/daemon-bundle";
+  const ps = fakeMacPs([
+    { pid: 1, ppid: 0, etime: "3-01:02:03", command: "/sbin/launchd" },
+    { pid: 500, ppid: 1, etime: "2-00:00:00", command: `node /app/${parent}.mjs` },
+    { pid: 501, ppid: 500, etime: "00:05", command: "node /app/bb-provider-bridge-worker.mjs", env: [["GH_TOKEN", "value-token"]] },
+    { pid: 502, ppid: 501, etime: "00:04", command: "/usr/local/bin/claude", env: [["GH_TOKEN", "value-token"], ["PROJECT_VAR", "value-project"]] },
+  ]);
+  const dir = tempDir("env");
+  writeFileSync(join(dir, "env"), envScript("macos", {}, { names: ["GH_TOKEN", "PROJECT_VAR"], parent }));
+  const out = execFileSync("sh", ["-c", `PATH='${ps.dir}':$PATH; . ./env && printf "%s|%s|" "\${GH_TOKEN-unset}" "\${PROJECT_VAR-unset}"`], {
+    cwd: dir,
+    encoding: "utf8",
+    env: { PATH: process.env.PATH },
+  });
+  assert.equal(out, "value-token|value-project|");
 });
 
 test("when bb-box cannot tell which variables to take, commands keep the env file they had", async () => {
