@@ -886,7 +886,7 @@ A box is a resource of its thread and gets what the thread's own machine has.
 | --- | --- | --- |
 | Panel | list the thread's boxes, acquire one by kind, see status, GPU or CPU, and timings, stop, start and release | not used |
 | Tools | not used | acquire, list, status, run, copy files in and out, stop, start, release, start a child thread on a box |
-| Desktop | the viewer in the panel, over the relayed stream | six computer tools: the accessibility tree first, screenshots when appearance matters |
+| Desktop | the viewer in the panel, over the relayed stream | seven computer tools: the accessibility tree first, screenshots when appearance matters |
 | Control | take and hand back | its computer tools refuse while you hold control; it takes control back when you ask |
 
 - **Desktop viewer.** Each desktop box in the panel has "Open desktop", which
@@ -957,6 +957,7 @@ A box is a resource of its thread and gets what the thread's own machine has.
   | `computer_act` | clicks, double-clicks, right-clicks, scrolls or sets a value, by reference or by pixel, or presses a key chord |
   | `computer_type` | types text or a key chord, into a reference, a window's focused element, a menu or the desktop |
   | `computer_launch` | opens an app or URL and returns its window ID |
+  | `computer_take_control` | takes the desktop back from a person who has finished with it, as a hand-back ([038](decisions/038-the-agent-can-take-control-back.md)) |
 
 - **Tree text** has no frames, and uses the plugin's references such as
   `e26`. Chrome gives each word, or each letter, of a page its own `static`
