@@ -180,6 +180,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     drivers,
     // Read only once setup is done.
     boxes: () => boxes.all(),
+    spareCounts: () => boxes.spareCounts(),
     changed: () => {
       notify(null);
       needsConfiguration();
@@ -349,7 +350,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     general,
     view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id)),
     control: (box) => control.view(box.id),
-    kinds: async () => kindViews(backends.kinds(), (await general()).sizes),
+    kinds: async () => {
+      const config = await general();
+      return kindViews(backends.kinds(), config.sizes, await boxes.spareCounts(), config.spares);
+    },
     backendViews: () =>
       backends.statuses().map((backend) => ({
         ...backend,

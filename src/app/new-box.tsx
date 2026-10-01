@@ -224,7 +224,7 @@ export function NewBox({
                     <Icon name={`${pluginId}/${candidate.desktop ? "monitor" : "server"}`} className="size-4 text-muted-foreground" aria-hidden />
                     <span className="flex min-w-0 items-center gap-1.5">
                       <span className="truncate text-xs text-foreground">{candidate.label}</span>
-                      <KindBadges gpu={candidate.gpu} forms={candidate.forms} />
+                      <KindBadges gpu={candidate.gpu} forms={candidate.forms} ready={candidate.spares.ready > 0} />
                     </span>
                     {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
                   </button>

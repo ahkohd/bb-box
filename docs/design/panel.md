@@ -62,6 +62,9 @@ New box options and the desktop lists:
   text; otherwise the status line does not repeat the badge.
 - **What the box is**, one word from its backend's driver: LXC, Docker, VM
   or Physical. A kind on offer from several backends shows each once.
+- **Ready now**, in the New box options only, last, on a kind with a spare
+  box ready (032), so a box of it comes at once. A box claimed from a spare
+  needs nothing more: its status line says "Ready in 0.1 s".
 
 Nothing else is a badge: "desktop" and "with Docker" are in the label, and
 the backend's name is in the row's details. Calm, not stacked.

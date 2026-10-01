@@ -33,11 +33,21 @@ export function kindRowModel(state: ConfigState, info: KindInfoView, sizes: Kind
   return { info, sizes, backends, problems: state.problems.filter((problem) => problem.path === `kinds.${info.id}` || problem.path.startsWith(`kinds.${info.id}.`)) };
 }
 
+/** A kind's spares in its status line (032): "2 spares ready", "1 of 2 spares ready" or "2 spares, being made". */
+export function sparesWords(target: number, now: { readonly ready: number; readonly making: number }): string[] {
+  if (target <= 0) return [];
+  const spares = `${target} ${target === 1 ? "spare" : "spares"}`;
+  if (now.ready >= target) return [`${spares} ready`];
+  if (now.ready > 0) return [`${now.ready} of ${spares} ready`];
+  // None ready and none being made, as while its backend is off: the row's state says why.
+  return now.making > 0 ? [`${spares}, being made`] : [];
+}
+
 export function KindRow({ model, open, onToggle, onSwitch, switching, children }: { model: KindRowModel; open: boolean; onToggle: () => void; onSwitch: (on: boolean) => void; switching: boolean; children?: ReactNode }) {
   const { info, sizes, backends } = model;
   const offering = backends.filter((backend) => backend.offers);
   const warm = backends.filter((backend) => backend.warm > 0).map((backend) => `${backend.warm} warm on ${backend.label}`);
-  const spares = sizes.spares > 0 ? [`${sizes.spares} ${sizes.spares === 1 ? "spare" : "spares"}`] : [];
+  const spares = sparesWords(sizes.spares, info.spares);
   const presets = PRESET_NAMES.map((preset) => `${PRESET_LABELS[preset]} ${sizeWords(sizes.presets[preset])}${preset === sizes.default ? " (default)" : ""}`);
   // The badges say what its boxes are on the backends that offer it now, as the "From" line names them.
   const forms = [...new Set(offering.map((backend) => backend.form).filter((form): form is BoxForm => form !== null))];

@@ -540,6 +540,18 @@ export class Boxes {
     });
   }
 
+  /** Each kind's spares now (032): ready to claim, and being made or made ready. */
+  async spareCounts(): Promise<Record<string, { readonly ready: number; readonly making: number }>> {
+    const counts: Record<string, { ready: number; making: number }> = {};
+    for (const spare of await this.list(SPARES)) {
+      if (!isActive(spare)) continue;
+      const count = (counts[spare.kind] ??= { ready: 0, making: 0 });
+      if (await this.#claimable(spare)) count.ready++;
+      else count.making++;
+    }
+    return counts;
+  }
+
   /** Whether a spare can be claimed now: ready, answering, enrolled when it enrols, and with no task running. */
   async #claimable(spare: BoxRecord): Promise<boolean> {
     if (spare.state !== "ready" || spare.restoredAt || spare.error || this.#work.has(spare.id) || this.#reconnects.has(spare.id)) return false;

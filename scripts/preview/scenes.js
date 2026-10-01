@@ -80,7 +80,7 @@ function size(cores, memoryGiB, diskGiB = null) {
   return { cores, memoryGiB, diskGiB, words: `${cores} cores, ${memoryGiB} GiB memory${diskGiB === null ? "" : `, ${diskGiB} GiB disk`}` };
 }
 
-function kind(id, label, description, cores, desktop, gpu) {
+function kind(id, label, description, cores, desktop, gpu, spares = { target: 0, ready: 0, making: 0 }) {
   return {
     id,
     label,
@@ -95,13 +95,16 @@ function kind(id, label, description, cores, desktop, gpu) {
     largest: size(cores * 8, cores * 16, 256),
     gpu,
     desktop,
+    enrol: true,
+    spares,
     backends: ["Proxmox LXC on pve"],
     forms: ["LXC"],
   };
 }
 
 export const KINDS = [
-  kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false),
+  // Linux keeps a spare, ready, so the chooser shows "Ready now".
+  kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false, { target: 1, ready: 1, making: 0 }),
   kind("linux-desktop", "Linux desktop", "A Linux desktop on the host's GPU, for computer use, browsers and app development.", 4, true, true),
   kind("linux-desktop-cpu", "Linux desktop", "A Linux desktop drawn by the CPU. Graphics are slower; nothing else changes.", 4, true, false),
 ];
@@ -220,12 +223,12 @@ const DRIVERS = [
   },
 ];
 const KIND_INFO = [
-  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
-  { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, drivers: ["proxmox-lxc", "docker"] },
-  { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, drivers: ["tart"] },
-  { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, drivers: ["tart"] },
+  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
+  { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, spares: { ready: 0, making: 0 }, drivers: ["tart"] },
+  { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, spares: { ready: 0, making: 0 }, drivers: ["tart"] },
 ];
 const LINUX_SIZES = { enabled: true, presets: { small: sizeOf(2, 4), medium: sizeOf(4, 8), large: sizeOf(8, 16) }, default: "small", largest: sizeOf(16, 32, 256) };
 const DESKTOP_SIZES = { enabled: true, presets: { small: sizeOf(4, 8), medium: sizeOf(8, 16), large: sizeOf(16, 32) }, default: "small", largest: sizeOf(32, 64, 256) };

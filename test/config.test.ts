@@ -595,6 +595,7 @@ test("config.get gives the document with each secret as set or not, the defaults
     gpu: true,
     desktop: true,
     drivers: ["fake", "proxmox-lxc"],
+    spares: { ready: 0, making: 0 },
   });
   assert.deepEqual(state.drivers[0]!.fields.map((field) => [field.key, field.group]), [["address", "connection"], ["token", "credentials"]]);
   assert.deepEqual(state.backends, [{ id: "fake", type: "fake", label: "Fake host", form: "VM", state: "active", problems: [], boxes: 0, kinds: ["linux", "linux-desktop"], doctor: null }]);

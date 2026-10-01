@@ -57,6 +57,8 @@ export interface KindInfoView {
   readonly desktop: boolean;
   /** Driver types that can make it. */
   readonly drivers: readonly string[];
+  /** Its spare boxes now (032): ready to claim, and being made. */
+  readonly spares: { readonly ready: number; readonly making: number };
 }
 
 export interface DoctorRun {
@@ -115,6 +117,8 @@ export interface ConfigurationDeps {
   readonly drivers: readonly BackendDriver<any>[];
   /** Every box record. */
   boxes(): Promise<readonly BoxRecord[]>;
+  /** Each kind's spares now, ready and being made. */
+  spareCounts?(): Promise<Readonly<Record<string, { readonly ready: number; readonly making: number }>>>;
   /** Tells open panels and pages that the configuration changed. */
   changed(): void;
   logError(operation: string, error: unknown): void;
@@ -247,11 +251,17 @@ export class Configuration {
     const inUse = await this.inUse();
     const statuses = this.#deps.backends.statuses();
     const copy = await this.migrated();
+    const spares = (await this.#deps.spareCounts?.()) ?? {};
     return {
       document: this.exported(),
       revision: this.#document.revision,
       defaults: { general: GENERAL_DEFAULTS, kinds: kindDefaults(drivers) },
-      kinds: knownKinds(drivers).map((id) => ({ id, ...kindInfo(id), drivers: drivers.filter((driver) => driver.kinds.includes(id)).map((driver) => driver.type) })),
+      kinds: knownKinds(drivers).map((id) => ({
+        id,
+        ...kindInfo(id),
+        drivers: drivers.filter((driver) => driver.kinds.includes(id)).map((driver) => driver.type),
+        spares: spares[id] ?? { ready: 0, making: 0 },
+      })),
       drivers: drivers.map((driver) => ({
         type: driver.type,
         label: driver.label,
