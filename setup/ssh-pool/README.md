@@ -36,18 +36,30 @@ installs can share machines: each leaves alone the boxes of the other.
 - root, to run `setup.sh`.
 - `sshd`, accepting key logins.
 - `sudo`, `flock` and `setsid` (util-linux), `useradd` (passwd), `pgrep`
-  (procps), `find`, `tar`, and `curl` or `wget`. On Debian or Ubuntu:
-
-  ```sh
-  sudo apt-get install sudo util-linux procps findutils passwd tar curl openssh-server
-  ```
-
+  (procps), `find`, `tar`, and `curl` or `wget`.
+- `git` and `gh`. A box uses them for the thread's GitHub access: `git`
+  takes the thread's token through `gh`.
+- Node.js 22.19 or newer, with npm, on the default `PATH`. BB's installer
+  needs it to enrol a box. Debian's and Ubuntu's own `nodejs` is too old,
+  so install Node.js 24 from NodeSource or nodejs.org.
 - BB's server, where bb-box runs, must reach the machine's sshd, directly or
   through a jump host.
 - At least the default size of the kinds it serves, or no box made at that
   size fits it: 2 cores and 4 GiB of memory for `linux` and
   `linux-docker`. For smaller machines, make the presets smaller with the
   `box-sizes` setting (see Sizes under Notes).
+
+On Debian or Ubuntu, this installs the tools, then Node.js 24 from
+NodeSource:
+
+```sh
+sudo apt-get install sudo util-linux procps findutils passwd tar curl openssh-server git gh
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt-get install nodejs
+```
+
+`setup.sh` warns if one of these is missing. bb-box's check fails without
+Node.js 22.19 or newer and npm, and warns without `git` or `gh`.
 
 A machine that is itself an unprivileged container, such as a Proxmox LXC
 container, works. Box users there take user IDs 60706 to 61183, as the

@@ -172,6 +172,13 @@ status() {
   done
   command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || missing="$missing curl-or-wget"
   echo "missing=${missing# }"
+  # What BB's installer and a box's GitHub access need: Node.js with npm, git and gh.
+  echo "node=$(node --version 2>/dev/null | head -n 1)"
+  lacks=''
+  for tool in npm git gh; do
+    command -v "$tool" >/dev/null 2>&1 || lacks="$lacks $tool"
+  done
+  echo "lacks=${lacks# }"
   if [ "$marker" = none ]; then echo "dirty=$(dirt | head -n 1)"; else echo dirty=; fi
 }
 

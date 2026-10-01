@@ -213,6 +213,16 @@ function fits(status: MachineStatus | null, size: BoxSize): boolean {
   return size.diskGiB === null || (status!.diskGiB ?? 0) >= size.diskGiB;
 }
 
+/** BB's installer needs Node.js 22.19 or newer. */
+function nodeFits(version: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  return major > 22 || (major === 22 && minor >= 19);
+}
+
+const NODE_FIX =
+  "Install Node.js 22.19 or newer with npm, such as Node.js 24 from NodeSource or nodejs.org. Debian's and Ubuntu's own nodejs is too old. BB's installer needs it to enrol a box.";
+const GIT_FIX = "Install git and gh. On Debian or Ubuntu: sudo apt-get install git gh.";
+
 function sameSize(a: BoxSize, b: BoxSize): boolean {
   return a.cores === b.cores && a.memoryMiB === b.memoryMiB && a.diskGiB === b.diskGiB;
 }
@@ -684,9 +694,29 @@ export class SshPoolBackend implements Backend {
       } else pass(HELPER, `Version ${status.helper}, reset generation ${status.generation}.`);
       if (status.arch === ARCH) pass(ARCH_CHECK, ARCH);
       else fail(ARCH_CHECK, `${name} is ${status.arch || "of unknown architecture"}, but its kinds promise ${ARCH}.`, `Take ${name} out of the machines list: every machine that serves a kind must be ${ARCH}.`);
-      if (status.missing.length) {
-        fail(TOOLS, `${name} lacks ${status.missing.join(", ")}.`, `Install them on ${name}. curl-or-wget means either. Boxes need sh, tar and curl or wget to enrol in BB.`);
-      } else pass(TOOLS, status.systemd ? "Everything the helper and enrolment need, with systemd for linger." : "Everything the helper and enrolment need. There is no systemd, so BB's daemon runs without linger.");
+      const { missing, enrolment } = status;
+      const node = enrolment?.node ?? null;
+      const forBB = enrolment ? [...(node === null ? ["node"] : []), ...enrolment.lacks.filter((tool) => tool === "npm")] : [];
+      const forGit = enrolment ? enrolment.lacks.filter((tool) => tool !== "npm") : [];
+      const oldNode = node !== null && !nodeFits(node);
+      const lacks = [...missing, ...forBB, ...forGit];
+      const found = [
+        ...(lacks.length ? [`${name} lacks ${lacks.join(", ")}.`] : []),
+        ...(oldNode ? [`${name} has Node.js ${node}, but BB's installer needs 22.19 or newer.`] : []),
+      ].join(" ");
+      const fixes = [
+        ...(missing.length ? [`Install ${missing.join(", ")}. curl-or-wget means either. Boxes need sh, tar and curl or wget to enrol in BB.`] : []),
+        ...(forBB.length || oldNode ? [NODE_FIX] : []),
+        ...(forGit.length ? [GIT_FIX] : []),
+      ];
+      if (missing.length || forBB.length || oldNode) fail(TOOLS, found, `On ${name}: ${fixes.join(" ")}`);
+      else if (forGit.length) warn(TOOLS, `${found} Boxes there enrol in BB, but cannot use the thread's GitHub access, which git takes through gh.`, `On ${name}: ${GIT_FIX}`);
+      else if (!enrolment) {
+        warn(TOOLS, `The helper does not say whether ${name} has Node.js, npm, git and gh, which enrolment and the thread's GitHub access need.`, `Run this bb-box's setup/ssh-pool/setup.sh on ${name} as root.`);
+      } else {
+        const linger = status.systemd ? "It has systemd, so BB's daemon lingers." : "There is no systemd, so BB's daemon runs without linger.";
+        pass(TOOLS, `Everything the helper, enrolment and the thread's GitHub access need, with Node.js ${node}. ${linger}`);
+      }
       if (machine.kinds.includes("linux-docker")) {
         const problem = this.#ready(view, "linux-docker");
         if (problem) fail(DOCKER, problem, `Install Docker on ${name}, and its reset-machine command with setup.sh --reset-hook, or take linux-docker off its line.`);
