@@ -88,8 +88,10 @@ const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 /** The desktop's display service writes the path it took, gpu or cpu, and why. */
 const DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
 const DISPLAY_REASON_FILE = "/run/bb-box/display-reason";
+/** The cookie a desktop's display :99 writes at each start. */
+const DISPLAY_AUTH_FILE = "/run/bb-box/Xauthority";
 /** What a program needs to reach the desktop's display as the box user. */
-const DISPLAY_ENV = "DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority";
+const DISPLAY_ENV = `DISPLAY=:99 XAUTHORITY=${DISPLAY_AUTH_FILE}`;
 const SSH_KEY = "ssh-key";
 /** The hostname a warm guest has until a box claims it. */
 const WARM_HOSTNAME = "bb-box-warm";
@@ -370,12 +372,17 @@ export interface LxcBackendOptions {
  * /etc/hostname, and the 127.0.1.1 line Proxmox writes in /etc/hosts, so
  * sudo still finds the name. As root, through the sudo every template gives
  * the box user. Only in a guest still named WARM_HOSTNAME, never on a
- * machine a command reaches by mistake, such as a test machine. `etc` is for
- * tests.
+ * machine a command reaches by mistake, such as a test machine.
+ *
+ * A desktop's display wrote its cookie for WARM_HOSTNAME, and X clients look
+ * it up by the hostname, so after the new name no window could open and
+ * xrandr could not resize the desktop. So the script also gives the cookie
+ * an entry for any hostname, as the box user, whose file it is. `etc` and
+ * `auth` are for tests.
  */
-export function warmNameScript(name: string, etc = "/etc"): string {
+export function warmNameScript(name: string, etc = "/etc", auth = DISPLAY_AUTH_FILE): string {
   return String.raw`[ "$(hostname)" = ${WARM_HOSTNAME} ] || exit 0
-sudo -n sh -s -- ${quote(name)} ${quote(etc)} <<'NAME'
+sudo -n sh -s -- ${quote(name)} ${quote(etc)} <<'NAME' || exit
 set -e
 awk -v old=${WARM_HOSTNAME} -v new="$1" '
   $1 == "127.0.1.1" {
@@ -392,7 +399,10 @@ cat "$2/hosts.bb-box" > "$2/hosts"
 rm -f "$2/hosts.bb-box"
 printf '%s\n' "$1" > "$2/hostname"
 hostname "$1"
-NAME`;
+NAME
+[ -s ${quote(auth)} ] || exit 0
+entries=$(xauth -q -f ${quote(auth)} nlist)
+printf '%s\n' "$entries" | sed 's/^..../ffff/' | xauth -q -f ${quote(auth)} nmerge -`;
 }
 
 /** Times one step of an acquire. */
@@ -1513,7 +1523,7 @@ export class ProxmoxLxcBackend implements Backend {
     } catch (error) {
       signal?.throwIfAborted();
       const why = error instanceof Error ? error.message : String(error);
-      this.#context.logError("name the box", new Error(`Box ${name} keeps the warm guest's hostname, ${WARM_HOSTNAME}, inside: ${why}`));
+      this.#context.logError("name the box", new Error(`Naming box ${name} inside failed, so it may keep the warm guest's hostname, ${WARM_HOSTNAME}, or its desktop may open no windows: ${why}`));
     }
   }
 
