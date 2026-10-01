@@ -148,10 +148,11 @@ export interface BoxesDeps {
   /** Whether no thread uses a spare's BB machine, so an acquire may claim the spare. */
   claimable?(box: BoxRecord): Promise<boolean>;
   /**
-   * Gives a claimed spare's BB machine the box's name, and reconnects it if
-   * BB shows it disconnected. Commands wait for it a while, as after a start.
+   * Gives a claimed spare's BB machine the box's name, and says whether BB
+   * shows it disconnected, so it must reconnect. Commands wait a while only
+   * for that reconnect, as after a start.
    */
-  claimed?(box: BoxRecord): Promise<void>;
+  claimed?(box: BoxRecord): Promise<boolean>;
   /**
    * Which of BB's variables commands in a box enrolled as a BB machine take
    * from its daemon, so they have the thread's access. Null for none.
@@ -545,11 +546,20 @@ export class Boxes {
     return spare.enrol.state === "enrolled" || (spare.enrol.state === "off" && !(await this.#enrols(spare)));
   }
 
-  /** After a claim: renames the box's BB machine while its commands wait, and makes another spare. */
+  /**
+   * After a claim: renames the box's BB machine, and makes another spare.
+   * Its commands wait only when its machine must reconnect (#128).
+   */
   #claimed(box: BoxRecord): void {
     this.#deps.log?.(`Claimed spare box ${box.name} for thread ${box.threadId}.`);
-    if (box.enrol.hostId && this.#deps.claimed) {
-      this.#waitFor(box.id, this.#deps.claimed(box).catch((error) => this.#deps.logError("claim", error)));
+    const { claimed, reconnect } = this.#deps;
+    if (box.enrol.hostId && claimed) {
+      void claimed(box).then(
+        (disconnected) => {
+          if (disconnected && reconnect) this.#waitFor(box.id, reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));
+        },
+        (error) => this.#deps.logError("claim", error),
+      );
     }
     void this.keepSpares();
   }

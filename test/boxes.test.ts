@@ -1001,12 +1001,17 @@ test("a kind's spares are made and enrolled ahead, and an acquire of the kind at
   const gate = deferred();
   const claimed: string[] = [];
   const logs: string[] = [];
+  /** Whether BB shows a claimed spare's machine disconnected. */
+  let disconnected = false;
   const world = setup(
     {},
     {
       enrolWaitMs: 5_000,
       claimed: async (box) => {
         claimed.push(`${machineName(box)} of ${box.threadId}`);
+        return disconnected;
+      },
+      reconnect: async () => {
         await gate.promise;
       },
       log: (line) => logs.push(line),
@@ -1041,10 +1046,10 @@ test("a kind's spares are made and enrolled ahead, and an acquire of the kind at
   assert.ok(logs.includes(`Claimed spare box ${box.name} for thread ${THREAD}.`));
   assert.ok(world.notified.includes(SPARES) && world.notified.includes(THREAD));
 
-  // Its commands wait a while for the machine's rename, as after a start.
-  setTimeout(gate.resolve, 300);
+  // Its first command does not wait for the machine's rename (#128).
+  const ran = Date.now();
   assert.equal((await world.boxes.run(THREAD, box.name, "echo claimed")).result.stdout, "claimed\n");
-  assert.ok(Date.now() - started >= 250, "the command waited for the claim");
+  assert.ok(Date.now() - ran < 250, "the command did not wait for the claim");
 
   // Another spare takes its place; the claimed box does not enrol again.
   await until(async () => (await world.boxes.list(SPARES)).filter((spare) => spare.enrol.state === "enrolled").length === 2);
@@ -1055,6 +1060,32 @@ test("a kind's spares are made and enrolled ahead, and an acquire of the kind at
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }), /already has 1 boxes/);
   assert.equal((await world.boxes.list(SPARES)).length, 2, "a claim keeps to the thread's limit");
   assert.deepEqual(world.errors, []);
+});
+
+test("a claimed spare whose BB machine BB shows disconnected reconnects, and its commands wait for that (#128)", async () => {
+  const gate = deferred();
+  const reconnected: string[] = [];
+  const world = setup(
+    {},
+    {
+      enrolWaitMs: 5_000,
+      claimed: async () => true,
+      reconnect: async (box) => {
+        reconnected.push(box.name);
+        await gate.promise;
+      },
+    },
+  );
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
+  await until(async () => reconnected.length === 1);
+  const ran = Date.now();
+  setTimeout(gate.resolve, 300);
+  assert.equal((await world.boxes.run(THREAD, box.name, "echo after")).result.stdout, "after\n");
+  assert.ok(Date.now() - ran >= 250, "the command waited for the reconnect");
+  assert.deepEqual(reconnected, [box.name]);
 });
 
 test("a claim takes only a ready, enrolled spare of the kind and size whose BB machine no thread uses, and keeps names unique (032)", async () => {

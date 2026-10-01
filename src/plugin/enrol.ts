@@ -495,19 +495,19 @@ export class Enrolment {
 
   /**
    * After an acquire claims a spare (032): gives its machine the box's name,
-   * and starts BB's daemon again if BB shows the machine disconnected.
+   * and says whether BB shows the machine disconnected, so bb-box starts
+   * BB's daemon again.
    */
-  async claimed(box: BoxRecord): Promise<void> {
+  async claimed(box: BoxRecord): Promise<boolean> {
     const hostId = box.enrol.hostId;
-    if (!hostId) return;
-    const [, host] = await Promise.all([
-      this.#deps
-        .hosts()
-        .update({ hostId, name: machineName(box) })
-        .catch((error) => this.#deps.logError("rename machine", error)),
-      this.#deps.hosts().get({ hostId }),
-    ]);
-    if (host.lifecycle.phase === "active" && host.status !== "connected") await this.reconnect(box);
+    if (!hostId) return false;
+    // The rename goes on in the background: nothing in the box needs it.
+    void this.#deps
+      .hosts()
+      .update({ hostId, name: machineName(box) })
+      .catch((error) => this.#deps.logError("rename machine", error));
+    const host = await this.#deps.hosts().get({ hostId });
+    return host.lifecycle.phase === "active" && host.status !== "connected";
   }
 
   /**
