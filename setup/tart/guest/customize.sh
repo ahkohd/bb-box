@@ -3,7 +3,7 @@
 # prepare-image.sh builds the image. The user has passwordless sudo, as in
 # Cirrus Labs' images. Settings come in the environment:
 #
-#   BBBOX_SSH_PUBLIC_KEY  bb-box's public key, which the user accepts
+#   BBBOX_SSH_PUBLIC_KEY  bb-box's public keys, one per line, which the user accepts
 #   CUA_VERSION           Cua Driver release to install, for example 0.30.4
 #   CUA_SHA256            SHA-256 of its darwin-arm64 archive
 #   BB_URL                optional: BB's server URL, to pre-install bb-app
@@ -18,8 +18,10 @@ sudo -n true 2>/dev/null || die "$user needs passwordless sudo while the image i
 # bb-box's key, marked so it is easy to find. SSH takes keys only.
 mkdir -p "$home/.ssh" && chmod 700 "$home/.ssh"
 touch "$home/.ssh/authorized_keys" && chmod 600 "$home/.ssh/authorized_keys"
-grep -qF "$(echo "$BBBOX_SSH_PUBLIC_KEY" | awk '{print $2}')" "$home/.ssh/authorized_keys" ||
-  printf '%s\n' "$BBBOX_SSH_PUBLIC_KEY" >>"$home/.ssh/authorized_keys"
+printf '%s\n' "$BBBOX_SSH_PUBLIC_KEY" | while read -r line; do
+  [ -n "$line" ] || continue
+  grep -qF "$(echo "$line" | awk '{print $2}')" "$home/.ssh/authorized_keys" || printf '%s\n' "$line" >>"$home/.ssh/authorized_keys"
+done
 printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' | sudo tee /etc/ssh/sshd_config.d/100-bb-box.conf >/dev/null
 
 # Commands over SSH run in a non-login zsh, which reads only ~/.zshenv: give

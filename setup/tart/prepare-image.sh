@@ -2,7 +2,7 @@
 # Builds the Tart image macOS boxes are cloned from. Run on each Mac as the
 # user bb-box logs in as (see README.md):
 #
-#   ./prepare-image.sh --key '<bb-box public key>' [--from <image>] [--name <vm>] [--bb-url <url>] [--replace]
+#   ./prepare-image.sh --key '<bb-box public key>' [--key <another>]... [--from <image>] [--name <vm>] [--bb-url <url>] [--replace]
 #
 # It clones the base image to <name>-build, boots it, runs guest/customize.sh
 # in it as its user, shuts it down, grants Cua Driver Accessibility and Screen
@@ -24,14 +24,17 @@ while [ $# -gt 0 ]; do
   case $1 in
     --from) from=$2; shift 2 ;;
     --name) name=$2; shift 2 ;;
-    --key) key=$2; shift 2 ;;
+    --key)
+      case $2 in ssh-*) ;; *) die "--key must be an OpenSSH public key" ;; esac
+      key="${key:+$key
+}$2"
+      shift 2 ;;
     --bb-url) bb_url=$2; shift 2 ;;
     --replace) replace=1; shift ;;
     *) die "unknown option $1 (see the top of this script)" ;;
   esac
 done
 [ -n "$key" ] || die "give bb-box's public key with --key, as bb box doctor shows it"
-case $key in ssh-*) ;; *) die "--key must be an OpenSSH public key" ;; esac
 
 here=$(cd "$(dirname "$0")" && pwd)
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:/run/current-system/sw/bin:$PATH" TART_NO_AUTO_PRUNE=1
@@ -101,6 +104,6 @@ shutdown
 if exists "$name"; then tart delete "$name"; fi
 tart rename "$build" "$name"
 mkdir -p "$HOME/.bb-box/tart/images"
-printf 'from=%s\ncua=%s\nbuilt=%s\nkey=%s\n' "$from" "$CUA_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$key" | awk '{print $2}')" \
+printf 'from=%s\ncua=%s\nbuilt=%s\n%s\n' "$from" "$CUA_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s\n' "$key" | awk '{print "key=" $2}')" \
   >"$HOME/.bb-box/tart/images/$name"
 step "done: $name is ready to clone ($(du -sh "${TART_HOME:-$HOME/.tart}/vms/$name" | cut -f1) on disk)"
