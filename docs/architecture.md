@@ -24,9 +24,9 @@ BB app (panel, desktop viewer)          BB server
 |------------------------------+-------------------------------------------|
 | Transports                   | Backends                                  |
 |  command: SSH, docker exec   |  built: proxmox-lxc, ssh-pool, tart,      |
-|    (guest agent later)       |    docker                                 |
-|  routes: tcp, command,       |  planned: proxmox-qemu, mac (physical),   |
-|    websocket                 |    clouds, ...                            |
+|    (guest agent later)       |    docker; being built: proxmox-qemu      |
+|  routes: tcp, command,       |  planned: mac (physical), clouds, ...     |
+|    websocket                 |                                           |
 +------------------------------+-------------------------------------------+
           |                                 |
           v                                 v
@@ -643,9 +643,15 @@ export interface BackendDriver<C = unknown> {
   readonly fields: Readonly<Record<string, FieldDescriptor>>;
   /** The fields of each host, for a backend with several hosts set up alike. */
   readonly hostFields?: Readonly<Record<string, FieldDescriptor>>;
+  /**
+   * Sets of fields that, all empty, take the values of the first other
+   * backend of type `from`, such as Proxmox QEMU's connection from Proxmox
+   * LXC. A set goes whole, so no connection mixes values from both.
+   */
+  readonly inherits?: { readonly from: string; readonly sets: readonly (readonly string[])[] };
   /** Reads the backend's part of the configuration. */
   parse(part: BackendPart): ParsedBackend<C>;
-  /** Built again only when the backend's fields or the install ID change. */
+  /** Built again only when its fields, inherited too, or the install ID change. */
   create(config: C, context: BackendContext): Backend;
   /** Paths in the repository, linked from the settings page, the guide first. */
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
@@ -672,7 +678,7 @@ export type FieldDescriptor = PluginSettingDescriptor & {
  */
 export interface BackendPart {
   readonly id: string;
-  /** Every declared field: the operator's value or its default, secrets included. */
+  /** Every declared field: set, inherited or its default, secrets included. */
   readonly fields: Readonly<Record<string, string | number | boolean | undefined>>;
   /** `name` is `Guest.host`; it cannot change while the host has boxes. */
   readonly hosts: readonly { readonly name: string; readonly fields: Readonly<Record<string, string | number | boolean | undefined>> }[];
@@ -1140,6 +1146,12 @@ bb-box's configuration is one checked document in its plugin storage
 - A backend's part holds its fields and its hosts' fields. It reads its
   switches, warm counts and kinds' sizes through its context, as they are
   at the call, so changing them does not build it again.
+- A driver may inherit sets of fields from a backend of another type. A set
+  left all empty takes that backend's values, even while that backend is
+  off, and the settings page says where each value comes from. Proxmox
+  QEMU takes Proxmox LXC's connection and SSH key this way, since Windows
+  boxes on a host use the same API token and the key `build.sh` put in the
+  template.
 - Secrets are stored apart from the document and are write-only: the page
   and the CLI say whether each is set.
 - The settings page and `bb box config show | check | apply <file>` use the
@@ -1172,8 +1184,10 @@ Push work to Git or copy it out before releasing a box.
 ## Backends
 
 How each backend fits the interface. Proxmox LXC, the SSH host pool, Tart
-and Docker are built; the rest are planned, and the later-backends research
-fills in the details.
+and Docker are built. Proxmox QEMU makes Windows boxes and runs their
+commands; its desktop, computer use, warm pool and file copies come next
+(#46). The rest are planned, and the later-backends research fills in the
+details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
