@@ -534,6 +534,13 @@ export interface BackendDriver<C = unknown> {
   /** Fields of each host, for a backend whose hosts are set up alike. Hosts have a name and a switch besides. */
   readonly hostFields?: Readonly<Record<string, FieldDescriptor>>;
   /**
+   * Fields a backend may leave empty to take the values of the first backend
+   * of type `from`, such as the connection to a host another backend already
+   * uses. Each set goes together, and only when all its fields are empty
+   * here, so a connection is never part one backend's and part the other's.
+   */
+  readonly inherits?: { readonly from: string; readonly sets: readonly (readonly string[])[] };
+  /**
    * Paths in bb-box's repository. The guide is the entry point: the settings
    * page links it first, then the scripts in the order the guide runs them.
    */

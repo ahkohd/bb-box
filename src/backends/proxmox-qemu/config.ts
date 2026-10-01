@@ -4,9 +4,10 @@
 //
 // Boxes are Windows desktops, linked clones of a QEMU template that
 // setup/proxmox-qemu/build.sh makes. The template uses the same host set-up as
-// the Proxmox LXC backend: its bridge, pool and SSH key. Each VMID in the
-// owned range has a fixed address, as for Proxmox LXC, so the defaults give
-// this backend its own VMIDs and addresses on the same bridge and subnet.
+// the Proxmox LXC backend: its bridge, pool and SSH key. So the connection and
+// the SSH key, left empty, take Proxmox LXC's (QEMU_INHERITS). Each VMID in
+// the owned range has a fixed address, as for Proxmox LXC, so the defaults
+// give this backend its own VMIDs and addresses on the same bridge and subnet.
 
 import {
   checkConnection,
@@ -21,7 +22,7 @@ import {
   type ProxmoxNetwork,
   type VmidRange,
 } from "../proxmox/settings.ts";
-import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
+import type { BackendDriver, BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
 export const QEMU_KINDS = ["windows-desktop"] as const;
 
@@ -76,7 +77,8 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [QEMU_KEYS.url]: {
     type: "string",
     label: "API URL",
-    description: "For example https://192.0.2.10:8006/api2/json, as the Proxmox LXC setup guide's token file gives it.",
+    description:
+      "For example https://192.0.2.10:8006/api2/json, as the Proxmox LXC setup guide's token file gives it. Leave it, the token, the fingerprint and the CA certificate empty to use Proxmox LXC's.",
     group: "connection",
     default: "",
   },
@@ -115,7 +117,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "SSH private key",
     description:
-      "The unencrypted OpenSSH private key the template was built with: the Proxmox LXC setup guide's BBBOX_SSH_KEY, as for Proxmox LXC. Leave empty and bb-box makes one and shows its public key, which the template must then accept.",
+      "Paste BBBOX_SSH_KEY, the private key build.sh put in the template, or leave it empty to use Proxmox LXC's. With neither, bb-box makes a key, which the template does not accept until you add its public key.",
     secret: true,
     group: "credentials",
   },
@@ -192,6 +194,17 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "advanced",
     default: QEMU_DEFAULTS.reserveDiskGiB,
   },
+};
+
+/**
+ * Fields that, left empty, take Proxmox LXC's values: a host with Linux boxes
+ * already has the connection and key that Windows boxes need. The connection
+ * goes together, so a URL set here never meets Proxmox LXC's token or
+ * certificate.
+ */
+export const QEMU_INHERITS: NonNullable<BackendDriver["inherits"]> = {
+  from: "proxmox-lxc",
+  sets: [[QEMU_KEYS.url, QEMU_KEYS.tokenId, QEMU_KEYS.tokenSecret, QEMU_KEYS.tlsFingerprint, QEMU_KEYS.caCertificate], [QEMU_KEYS.sshPrivateKey]],
 };
 
 /** The template list: VMIDs separated by spaces or commas. A settings file may give a lone VMID as a number. */

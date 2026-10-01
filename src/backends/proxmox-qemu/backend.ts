@@ -534,12 +534,19 @@ export class ProxmoxQemuBackend implements Backend {
       const keys = await this.#keys();
       if (keys.publicKey) {
         notes.push(`The template must accept this SSH key in C:\\ProgramData\\ssh\\administrators_authorized_keys: ${keys.publicKey}`);
-        pass(SSH_KEY_CHECK, keys.generated ? "bb-box made a key; its public key is below." : "From bb-box's settings; its public key is below.");
+        // build.sh puts BBBOX_SSH_KEY in the template, so a key bb-box made is one it lacks.
+        if (keys.generated) {
+          warn(
+            SSH_KEY_CHECK,
+            "bb-box made a key, which a template from build.sh does not accept; its public key is below.",
+            "Paste BBBOX_SSH_KEY, the key build.sh put in the template, here or in Proxmox LXC's settings. Or add the public key below to the template.",
+          );
+        } else pass(SSH_KEY_CHECK, "From bb-box's settings; its public key is below.");
       } else {
-        fail(SSH_KEY_CHECK, "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole private key, or clear the setting so bb-box makes one.");
+        fail(SSH_KEY_CHECK, "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole of BBBOX_SSH_KEY, the private key build.sh put in the template.");
       }
     } catch (error) {
-      fail(SSH_KEY_CHECK, message(error), "Check the SSH private key in bb-box's settings, or clear it so bb-box makes one.");
+      fail(SSH_KEY_CHECK, message(error), "Check the SSH private key in bb-box's settings: paste the whole of BBBOX_SSH_KEY, the private key build.sh put in the template.");
     }
 
     const ok = checks.every((check) => check.status !== "fail");

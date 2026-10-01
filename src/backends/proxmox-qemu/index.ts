@@ -1,6 +1,6 @@
 import type { BackendDriver } from "../types.ts";
 import { ProxmoxQemuBackend } from "./backend.ts";
-import { QEMU_FIELDS, QEMU_KINDS, parseQemuPart, type QemuConfig } from "./config.ts";
+import { QEMU_FIELDS, QEMU_INHERITS, QEMU_KINDS, parseQemuPart, type QemuConfig } from "./config.ts";
 
 export const proxmoxQemuDriver: BackendDriver<QemuConfig> = {
   type: "proxmox-qemu",
@@ -10,6 +10,7 @@ export const proxmoxQemuDriver: BackendDriver<QemuConfig> = {
   form: "VM",
   kinds: QEMU_KINDS,
   fields: QEMU_FIELDS,
+  inherits: QEMU_INHERITS,
   setup: { guide: "setup/proxmox-qemu/README.md", scripts: ["setup/proxmox-qemu/build.sh"] },
   parse: parseQemuPart,
   create: (config, context) => new ProxmoxQemuBackend(config, context),

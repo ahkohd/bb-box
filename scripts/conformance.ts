@@ -35,7 +35,7 @@ const configuration = toConfiguration(readSettings(values.settings));
 if (configuration.problems.length) throw new Error(configuration.problems.join(" "));
 const backend = configuration.document.backends.find((other) => other.type === driver.type);
 if (!backend?.enabled) throw new Error(`${driver.label} is off in ${values.settings}.`);
-const parsed = driver.parse(backendPart(backend, driver, configuration.secrets));
+const parsed = driver.parse(backendPart(backend, driver, configuration.secrets, configuration.document.backends));
 if (!parsed.ok) throw new Error(`${driver.label}: ${parsed.problems.map((problem) => problem.message).join(" ")}`);
 const skip: Partial<Record<ConformanceCheck, string>> = {};
 for (const item of values.skip ?? []) {

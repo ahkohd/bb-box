@@ -421,8 +421,13 @@ export function withSecretChanges(stored: Secrets, changes: SecretChanges, docum
   return next;
 }
 
-/** A backend's part for its driver: every declared field, set or default, with its secrets. */
-export function backendPart(backend: BackendConfig, driver: BackendDriver<any>, secrets: Secrets): BackendPart {
+/**
+ * A backend's part for its driver: every declared field, set or default, with
+ * its secrets. A set of fields the driver inherits, all empty here, takes the
+ * values of the first other backend of the type it names among `backends`,
+ * the document's.
+ */
+export function backendPart(backend: BackendConfig, driver: BackendDriver<any>, secrets: Secrets, backends: readonly BackendConfig[] = []): BackendPart {
   const filled = (descriptors: Readonly<Record<string, FieldDescriptor>>, set: Readonly<Record<string, unknown>>, secret: Readonly<Record<string, string>>) => {
     const fields: Record<string, FieldValue | undefined> = {};
     for (const [key, descriptor] of Object.entries(descriptors)) {
@@ -434,9 +439,23 @@ export function backendPart(backend: BackendConfig, driver: BackendDriver<any>, 
     }
     return fields;
   };
+  const fields = filled(driver.fields, backend.fields, secrets[backend.id] ?? {});
+  const inherits = driver.inherits;
+  const source = inherits && backends.find((other) => other.type === inherits.from && other.id !== backend.id);
+  if (inherits && source) {
+    const empty = (value: FieldValue | undefined) => value === undefined || (typeof value === "string" && !value.trim());
+    for (const set of inherits.sets) {
+      if (!set.every((key) => empty(fields[key]))) continue;
+      for (const key of set) {
+        const descriptor = driver.fields[key];
+        const value = descriptor && isSecret(descriptor) ? secrets[source.id]?.[key] : source.fields[key];
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") fields[key] = value;
+      }
+    }
+  }
   return {
     id: backend.id,
-    fields: filled(driver.fields, backend.fields, secrets[backend.id] ?? {}),
+    fields,
     hosts: (backend.hosts ?? []).map((host) => ({ name: host.name, fields: filled(driver.hostFields ?? {}, host.fields, {}) })),
   };
 }
@@ -550,7 +569,7 @@ export function checkDocument(
       if (names.has(host.name)) problem(`${path}.hosts.${n}.name`, `Host ${host.name} is listed twice. Give each host its own name.`);
       names.add(host.name);
     }
-    const parsed = driver.parse(backendPart(backend, driver, secrets));
+    const parsed = driver.parse(backendPart(backend, driver, secrets, document.backends));
     if (!parsed.ok) for (const each of parsed.problems) problem(each.path ? `${path}.${each.path}` : path, each.message);
   }
 

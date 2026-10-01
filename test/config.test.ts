@@ -127,7 +127,7 @@ function lxcLike(root: string, built: FakeBackend[]): BackendDriver<any> {
  * Starts the plugin with the fake backend, a Proxmox LXC driver whose
  * backends are fake ones, and the SSH host pool, as the plugin's drivers.
  */
-async function start(settings: Record<string, PluginSettingValue>, options: { faults?: Faults; seed?: Record<string, unknown> } = {}) {
+async function start(settings: Record<string, PluginSettingValue>, options: { faults?: Faults; seed?: Record<string, unknown>; drivers?: BackendDriver<any>[] } = {}) {
   const root = tempDir("config");
   const threads = new Map([[THREAD, makeThreadResponse({ id: THREAD, projectId: "prj_config", environmentId: "env_config" })]]);
   const { bb, harness } = createFakePluginHost({
@@ -162,7 +162,7 @@ async function start(settings: Record<string, PluginSettingValue>, options: { fa
       return driver.create(config, context);
     },
   });
-  const drivers = [fakeDriver(root, world), recorded(lxcLike(root, world.built)), recorded(sshPoolDriver), recorded(tartDriver)];
+  const drivers = [fakeDriver(root, world), recorded(lxcLike(root, world.built)), recorded(sshPoolDriver), recorded(tartDriver), ...(options.drivers ?? [])];
   const options_ = { drivers, daemonParent: join(root, "no-daemon") };
   const begin = (on: BbPluginApi, faults: Faults = {}) => setup(withFaults(on, faults, world.handles), options_);
   let app: BbBox | null = null;
@@ -624,6 +624,48 @@ test("config.check finds problems without saving, and with test runs the backend
 
   await rpc<CheckResult>("config.check", { draft: app().configuration.exported(), test: "fake" });
   assert.equal((await rpc<ConfigState>("config.get", null)).backends[0]!.doctor?.report.ok, true, "the saved backend's own check is kept as its last report");
+});
+
+/** A driver whose address and token, left empty, take the fake host's, as Proxmox QEMU's take Proxmox LXC's. */
+function heirDriver(root: string): BackendDriver<{ address: string }> {
+  return {
+    type: "heir",
+    label: "Heir",
+    description: "Guests on the fake host's machine.",
+    nature: "virtual",
+    form: "VM",
+    kinds: [],
+    fields: {
+      address: { type: "string", label: "Address", group: "connection", default: "" },
+      token: { type: "string", label: "Token", group: "credentials", secret: true },
+    },
+    inherits: { from: "fake", sets: [["address", "token"]] },
+    setup: { guide: "setup/fake/README.md", scripts: [] },
+    parse(part) {
+      if (!part.fields.address || !part.fields.token) return { ok: false, problems: [{ path: "address", message: "Set the address and token, or the fake host's." }] };
+      return { ok: true, config: { address: String(part.fields.address) } };
+    },
+    create: (_config, context) => new FakeBackend({ root, id: context.id, storage: context.storage, installId: context.installId, warm: context.warm }),
+  };
+}
+
+test("config.check fills a backend's empty fields from the draft's backend it inherits from, and keeps the saved one's report", async () => {
+  const { rpc, app } = await start({ "fake-enabled": true, "fake-token": "t0ken", "enrol-boxes": false }, { drivers: [heirDriver(tempDir("heir"))] });
+  const fake = { id: "fake", type: "fake", enabled: true, fields: { address: "there", token: { set: true } } };
+  const heir = { id: "heir", type: "heir", enabled: false, fields: {} };
+  const alone = await rpc<CheckResult>("config.check", { draft: { backends: [{ ...fake, fields: { address: "there", token: null } }, heir] }, test: "heir" });
+  assert.deepEqual(alone.problems.map((problem) => problem.path), ["backends.heir.address"], "the draft clears the fake host's token, so none comes");
+  assert.equal(alone.doctor, null);
+
+  const tested = await rpc<CheckResult>("config.check", { draft: { backends: [fake, heir] }, test: "heir" });
+  assert.deepEqual(tested.problems, []);
+  assert.equal(tested.doctor?.ok, true, "the check took the fake host's address and its stored token");
+
+  const saved = await rpc<ApplyResult>("config.apply", { draft: { ...app().configuration.exported(), backends: [fake, heir] }, revision: 1 });
+  assert.ok(saved.ok, JSON.stringify(saved));
+  await rpc<CheckResult>("config.check", { draft: app().configuration.exported(), test: "heir" });
+  const state = await rpc<ConfigState>("config.get", null);
+  assert.equal(state.backends.find((backend) => backend.id === "heir")!.doctor?.report.ok, true, "the saved backend's own check is kept as its last report");
 });
 
 test("config.apply saves a checked draft whole, and refuses an old revision, problems where they matter, and removing a backend with boxes", async () => {

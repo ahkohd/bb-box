@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import type { BackendConfig, ConfigDocument, Problem } from "../core/document.ts";
 import type { ConfigState, Contract } from "../plugin/contract.ts";
 import { EmptyPanel, message, relativeTime, useLive } from "./common.tsx";
-import { effectiveKind, kindChanges, withBackend, withGeneral, withKind } from "./config.ts";
+import { effectiveKind, inheritSource, kindChanges, withBackend, withGeneral, withKind } from "./config.ts";
 import { BackendForm, BackendRow, backendId, type BackendRowModel } from "./settings-backends.tsx";
 import { Section } from "./settings-fields.tsx";
 import { KindForm, KindRow, kindRowModel } from "./settings-kinds.tsx";
@@ -97,10 +97,13 @@ export function SettingsSection() {
     ...document.backends.map((config) => ({
       driver: state.drivers.find((driver) => driver.type === config.type)!,
       config,
+      source: inheritSource(document, state.drivers.find((driver) => driver.type === config.type)?.fields ?? [], config.id),
       state: state.backends.find((candidate) => candidate.id === config.id) ?? null,
       problems: state.problems.filter((problem) => problem.path === `backends.${config.id}` || problem.path.startsWith(`backends.${config.id}.`)),
     })),
-    ...state.drivers.filter((driver) => !document.backends.some((config) => config.type === driver.type)).map((driver) => ({ driver, config: null, state: null, problems: [] })),
+    ...state.drivers
+      .filter((driver) => !document.backends.some((config) => config.type === driver.type))
+      .map((driver) => ({ driver, config: null, source: inheritSource(document, driver.fields, driver.type), state: null, problems: [] })),
   ].filter((model) => model.driver);
   const general = { ...state.defaults.general, ...document.general };
   const kindsOn = state.kinds.filter((kind) => effectiveKind(state, kind.id).enabled);
