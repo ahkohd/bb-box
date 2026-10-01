@@ -110,6 +110,13 @@ one too.
 `bb box acquire <kind>` takes `--size`, `--cores`, `--memory-gib` and
 `--disk-gib`.
 
+A kind can keep spare boxes: boxes made and added to BB ahead, at the kind's
+default size, that no thread owns yet. An acquire of the kind at its default
+size takes a spare when there is one, so the box is ready, with the thread's
+access, at once, and bb-box makes another spare. Any other size makes a new
+box. BB lists a spare as a machine named "<name> (spare)", and the machine
+takes the box's name when a thread takes it.
+
 ## Desktops
 
 A person can watch each desktop box live from the panel and take control of
@@ -210,7 +217,8 @@ has control. The Desktops page lists every desktop box. The design is in
 bb-box's settings page in BB has three parts: Backends, each with a switch,
 its state in words and a setup area with the driver's fields, hosts,
 write-only secrets and a check that runs the doctor against the form;
-Kinds, each with a switch, its presets, largest size and warm counts; and
+Kinds, each with a switch, its presets, largest size, warm counts and
+spares; and
 General, the default kind, boxes per thread and enrolment. The design is in
 `docs/design/settings.md`.
 
@@ -239,8 +247,9 @@ The document has three parts:
   and `warm`, the ready boxes to keep per kind.
 - `kinds`: each kind's `enabled`, its `presets` (`small`, `medium` and
   `large`, each with `cores`, `memoryMiB` and `diskGiB`, where `null` keeps
-  the kind's own disk), its `default` preset and its `largest` custom size.
-  Parts left out keep bb-box's own.
+  the kind's own disk), its `default` preset, its `largest` custom size and
+  `spares`, the boxes to keep ready and enrolled for the next acquire at the
+  default size (0 to 10, 0 by default). Parts left out keep bb-box's own.
 - `general`: `boxesPerThread` (0 means no limit), `enrol` (adds ready boxes
   to BB as machines, `true` by default) and `defaultKind` (`linux` by
   default).

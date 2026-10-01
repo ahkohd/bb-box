@@ -46,6 +46,8 @@ export interface KindConfig {
   readonly presets?: Partial<Readonly<Record<Preset, SizeChange>>>;
   readonly default?: Preset;
   readonly largest?: SizeChange;
+  /** Spare boxes to keep: ready, enrolled and owned by no thread (032). */
+  readonly spares?: number;
 }
 
 export interface GeneralSettings {
@@ -75,6 +77,7 @@ export interface Problem {
 export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux" } as const;
 
 export const MAX_WARM = 20;
+export const MAX_SPARES = 10;
 
 export function emptyDocument(revision = 0): ConfigDocument {
   return { schema: SCHEMA, revision, backends: [], kinds: {}, general: {} };
@@ -90,6 +93,8 @@ export interface GeneralConfig {
   readonly defaultKind: string;
   /** Changes to the shipped box sizes, by kind (028). */
   readonly sizes: SizeChanges;
+  /** Spare boxes to keep, by kind (032). A kind that is off keeps none. */
+  readonly spares: Readonly<Record<string, number>>;
 }
 
 export function generalConfig(document: ConfigDocument): GeneralConfig {
@@ -99,6 +104,9 @@ export function generalConfig(document: ConfigDocument): GeneralConfig {
     enrol: document.general.enrol ?? GENERAL_DEFAULTS.enrol,
     defaultKind: document.general.defaultKind ?? GENERAL_DEFAULTS.defaultKind,
     sizes: sizeChanges(document.kinds),
+    spares: Object.fromEntries(
+      Object.entries(document.kinds).flatMap(([kind, config]) => (config.spares && kindOn(document, kind) ? [[kind, config.spares]] : [])),
+    ),
   };
 }
 
@@ -223,10 +231,10 @@ function readSize(path: string, value: unknown, largest: boolean, problem: (path
 
 function readKind(path: string, value: unknown, problem: (path: string, message: string) => void): KindConfig | undefined {
   if (!isRecord(value)) {
-    problem(path, "A kind is an object with enabled, presets, default and largest.");
+    problem(path, "A kind is an object with enabled, presets, default, largest and spares.");
     return undefined;
   }
-  const kind: { enabled?: boolean; presets?: Partial<Record<Preset, SizeChange>>; default?: Preset; largest?: SizeChange } = {};
+  const kind: { enabled?: boolean; presets?: Partial<Record<Preset, SizeChange>>; default?: Preset; largest?: SizeChange; spares?: number } = {};
   for (const [key, part] of Object.entries(value)) {
     if (part === undefined || part === null) continue;
     if (key === "enabled") {
@@ -237,6 +245,9 @@ function readKind(path: string, value: unknown, problem: (path: string, message:
       else problem(`${path}.default`, "The default preset is small, medium or large.");
     } else if (key === "largest") {
       kind.largest = readSize(`${path}.largest`, part, true, problem);
+    } else if (key === "spares") {
+      if (typeof part === "number") kind.spares = part;
+      else problem(`${path}.spares`, "Give the spare boxes as a number.");
     } else if (key === "presets") {
       if (!isRecord(part)) {
         problem(`${path}.presets`, "presets is an object with small, medium and large.");
@@ -249,7 +260,7 @@ function readKind(path: string, value: unknown, problem: (path: string, message:
         else presets[name as Preset] = readSize(`${path}.presets.${name}`, size, false, problem);
       }
       kind.presets = presets;
-    } else problem(`${path}.${key}`, `A kind has enabled, presets, default and largest, not "${key}".`);
+    } else problem(`${path}.${key}`, `A kind has enabled, presets, default, largest and spares, not "${key}".`);
   }
   return kind;
 }
@@ -503,6 +514,7 @@ export function checkDocument(
         problem(`${path}.presets.${preset}`, `The ${preset} ${id} preset, ${describeSize(sizes.presets[preset])}, is above the largest size, ${describeSize(sizes.largest)}.`);
       }
     }
+    if (kind.spares !== undefined && !isWhole(kind.spares, 0, MAX_SPARES)) problem(`${path}.spares`, `Keep 0 to ${MAX_SPARES} spare ${id} boxes.`);
   }
 
   const defaultKind = document.general.defaultKind;

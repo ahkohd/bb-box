@@ -2,7 +2,7 @@
 // panel to show, not as an RPC error.
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { BoxError, describeError, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, SPARES, describeError, type BoxRecord } from "../core/boxes.ts";
 import { ControlError } from "../core/control.ts";
 import { contract, type BoxResult } from "./contract.ts";
 import type { BbBox } from "./setup.ts";
@@ -58,7 +58,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async desktops() {
       const all = await boxes.all();
       return all
-        .filter((box) => box.capabilities.displays.length > 0 && box.state !== "releasing")
+        .filter((box) => box.capabilities.displays.length > 0 && box.state !== "releasing" && box.threadId !== SPARES)
         .sort((a, b) => a.createdAt - b.createdAt)
         .map((box) => ({ threadId: box.threadId, box: app.view(box) }));
     },

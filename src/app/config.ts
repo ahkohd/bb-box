@@ -50,6 +50,8 @@ export interface KindSizes {
   readonly presets: Readonly<Record<Preset, BoxSize>>;
   readonly default: Preset;
   readonly largest: BoxSize;
+  /** Spare boxes to keep (032). */
+  readonly spares: number;
 }
 
 /** A kind's sizes as they are: the shipped defaults with the document's changes. */
@@ -72,14 +74,16 @@ export function effectiveKind(state: ConfigState, id: string): KindSizes {
       memoryMiB: change?.largest?.memoryMiB ?? largestBase.memoryMiB,
       diskGiB: change?.largest?.diskGiB ?? largestBase.diskGiB,
     },
+    spares: change?.spares ?? 0,
   };
 }
 
 /** The kind's entry for the document: only what differs from the shipped defaults, or undefined when nothing does. */
 export function kindChanges(state: ConfigState, id: string, sizes: KindSizes): KindConfig | undefined {
   const shipped = state.defaults.kinds[id];
-  const entry: { enabled?: boolean; presets?: Partial<Record<Preset, BoxSize>>; default?: Preset; largest?: BoxSize } = {};
+  const entry: { enabled?: boolean; presets?: Partial<Record<Preset, BoxSize>>; default?: Preset; largest?: BoxSize; spares?: number } = {};
   if (!sizes.enabled) entry.enabled = false;
+  if (sizes.spares) entry.spares = sizes.spares;
   if (shipped) {
     const presets: Partial<Record<Preset, BoxSize>> = {};
     for (const preset of PRESET_NAMES) {

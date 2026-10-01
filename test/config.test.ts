@@ -16,7 +16,7 @@ import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
 import { parseTartSettings } from "../src/backends/tart/config.ts";
 import { tartDriver } from "../src/backends/tart/index.ts";
 import type { BackendContext, BackendDriver, DoctorReport } from "../src/backends/types.ts";
-import { backendPart, checkDocument, exported, readDraft, withSecretChanges, type ConfigDocument, type Secrets } from "../src/core/document.ts";
+import { backendPart, checkDocument, exported, generalConfig, readDraft, withSecretChanges, type ConfigDocument, type Secrets } from "../src/core/document.ts";
 import { CLEARED_KEY, COPY_KEY, DOCUMENT_KEY, SECRETS_KEY, SIZES_ADOPTED_KEY, fromSettings, type MovedCopy } from "../src/core/move.ts";
 import { boundedDoctor, type ApplyResult, type CheckResult, type ConfigState } from "../src/plugin/configuration.ts";
 import { setup, type BbBox } from "../src/plugin/setup.ts";
@@ -491,7 +491,13 @@ test("a draft's problems are at their fields' paths", () => {
   const draft = readDraft(
     {
       general: { boxesPerThread: -1, defaultKind: "linux-headless" },
-      kinds: { "linux-headless": {}, linux: { presets: { small: { cores: 64 } }, default: "huge" }, "linux-desktop": { enabled: false } },
+      kinds: {
+        "linux-headless": {},
+        linux: { presets: { small: { cores: 64 } }, default: "huge" },
+        "linux-desktop": { enabled: false },
+        "linux-docker": { spares: 11 },
+        "linux-desktop-cpu": { spares: "two" },
+      },
       backends: [
         { id: "proxmox-lxc", type: "proxmox-lxc", enabled: true, fields: { url: "", nope: 1 }, warm: { linux: 50, macos: 1 } },
         { id: "ssh-pool:lab", type: "proxmox-lxc", enabled: false },
@@ -504,6 +510,7 @@ test("a draft's problems are at their fields' paths", () => {
   for (const path of [
     "general.boxesPerThread",
     "kinds.linux.default",
+    "kinds.linux-desktop-cpu.spares",
     "backends.proxmox-lxc.nope",
     "backends.1.id",
     "backends.fake.hosts.2.name",
@@ -514,6 +521,7 @@ test("a draft's problems are at their fields' paths", () => {
   assert.ok(checked.includes("kinds.linux-headless: linux-headless is now called linux. Use that."));
   assert.ok(checked.includes("general.defaultKind: linux-headless is now called linux. Use that."));
   assert.ok(checked.some((line) => line.startsWith("kinds.linux.presets.small: The small linux preset, 64 cores")));
+  assert.ok(checked.includes("kinds.linux-docker.spares: Keep 0 to 10 spare linux-docker boxes."));
   assert.ok(checked.includes("backends.proxmox-lxc.url: Set the Proxmox API URL."));
   assert.ok(checked.includes("backends.proxmox-lxc.warm.linux: Keep 0 to 20 warm linux boxes."));
   assert.ok(checked.some((line) => line.startsWith("backends.proxmox-lxc.warm.macos: Proxmox LXC makes ")));
@@ -523,6 +531,13 @@ test("a draft's problems are at their fields' paths", () => {
   assert.deepEqual(off.map((problem) => problem.path), ["general.defaultKind"], "a default kind that is off is a problem");
   const unoffered = checkDocument(readDraft({ general: { defaultKind: "linux-docker" } }, DRIVERS).document, {}, DRIVERS);
   assert.deepEqual(unoffered, [], "a kind no backend offers just now is fine");
+});
+
+test("only a kind that is on keeps spare boxes (032)", () => {
+  const { document, problems } = readDraft({ kinds: { linux: { spares: 2 }, "linux-docker": { spares: 0 }, "linux-desktop": { enabled: false, spares: 1 } } }, DRIVERS);
+  assert.deepEqual(problems, []);
+  assert.deepEqual(generalConfig(document).spares, { linux: 2 });
+  assert.deepEqual(generalConfig(readDraft({}, DRIVERS).document).spares, {}, "none by default");
 });
 
 test("a secret in a draft is kept, replaced or cleared, and never leaves bb-box", () => {

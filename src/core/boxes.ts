@@ -8,6 +8,11 @@
 // nothing expires. The sweep is the safety net for missed thread events and
 // finishes work that a restart interrupted.
 //
+// A kind can keep spare boxes (032): boxes of the thread SPARES, made at the
+// kind's default size and enrolled ahead like any other. An acquire of the
+// kind at that size claims one, which moves its record to the thread, and
+// core makes another in the background.
+//
 // Storage keys: box/<threadId>/<boxId> holds a BoxRecord, and index/<boxId>
 // holds the thread ID, so a box can be found by its ID alone.
 
@@ -34,7 +39,7 @@ import { TransportError, type CommandTransport, type RunResult } from "../transp
 import type { GeneralConfig } from "./config.ts";
 import { TIMED_OUT_EXITS, canRunInDesktop, command, envScript, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
-import { chooseSize, defaultSize, kindSizes, type SizeRequest } from "./sizes.ts";
+import { chooseSize, defaultSize, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -100,6 +105,14 @@ export interface BoxRecord {
 
 export type ThreadLiveness = "live" | "ended" | "unknown";
 
+/** The thread of spare boxes, which no thread owns yet (032). BB's thread IDs never take this form. */
+export const SPARES = "spare";
+
+/** The name of a box's BB machine. A spare's says it is one. */
+export function machineName(box: Pick<BoxRecord, "name" | "threadId">): string {
+  return box.threadId === SPARES ? `${box.name} (spare)` : box.name;
+}
+
 export interface BoxesDeps {
   readonly kv: BackendStorage;
   readonly backends: {
@@ -132,13 +145,20 @@ export interface BoxesDeps {
    * BB's bootstrap with the box ID as the key. Commands wait for it a while.
    */
   reconnect?(box: BoxRecord): Promise<void>;
+  /** Whether no thread uses a spare's BB machine, so an acquire may claim the spare. */
+  claimable?(box: BoxRecord): Promise<boolean>;
+  /**
+   * Gives a claimed spare's BB machine the box's name, and reconnects it if
+   * BB shows it disconnected. Commands wait for it a while, as after a start.
+   */
+  claimed?(box: BoxRecord): Promise<void>;
   /**
    * Which of BB's variables commands in a box enrolled as a BB machine take
    * from its daemon, so they have the thread's access. Null for none.
    */
   access?(box: BoxRecord): Promise<Access | null>;
   logError(operation: string, error: unknown): void;
-  /** Records what the sweep did to a guest, and why. */
+  /** Records what the sweep did to a guest, and what became of spares, and why. */
   log?(message: string): void;
   /** How long a command waits for its box to finish enrolling, or reconnecting after a start. */
   readonly enrolWaitMs?: number;
@@ -291,8 +311,11 @@ export class Boxes {
   readonly #work = new Map<string, Promise<unknown>>();
   /** Acquires running in this process, so a release can cancel them. */
   readonly #acquiring = new Map<string, AbortController>();
-  /** Reconnects of BB machines after a start in this process, while they run. */
+  /** Reconnects of BB machines after a start or a claim in this process, while they run. */
   readonly #reconnects = new Map<string, Promise<void>>();
+  /** The run of keepSpares in progress, and whether a call asked for another after it. */
+  #keeping: Promise<void> | null = null;
+  #keepAgain = false;
   #disposed = false;
 
   constructor(deps: BoxesDeps) {
@@ -405,6 +428,7 @@ export class Boxes {
    * transport answers.
    */
   async acquire(input: { threadId: string; projectId: string | null; kind: string; size?: SizeRequest; role?: BoxRole }): Promise<BoxRecord> {
+    const requested = this.#now();
     const wanted = currentKindId(input.kind);
     const offered = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
     if (!offered.length) {
@@ -417,25 +441,31 @@ export class Boxes {
       );
     }
     const role = input.role ?? "box";
+    const owned = role === "box" && input.threadId !== SPARES;
     const general = await this.#deps.general();
+    // Spares left over from a kind that keeps none now are released, not claimed.
+    const claims = owned && (general.spares[wanted] ?? 0) > 0;
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
-    const box = await this.#admission.run(() =>
+    const { box, claimed } = await this.#admission.run(() =>
       this.#locked(input.threadId, async () => {
         const existing = await this.list(input.threadId);
         const active = existing.filter((box) => isActive(box) && box.role === "box");
-        if (role === "box" && general.perThreadLimit !== null && active.length >= general.perThreadLimit) {
+        if (owned && general.perThreadLimit !== null && active.length >= general.perThreadLimit) {
           throw new BoxError(
             "limit_reached",
             `This thread already has ${active.length} boxes, the most allowed: ${active.map((box) => box.name).join(", ")}. Release one first.`,
           );
         }
+        const taken = new Set(existing.map((box) => box.name));
+        const spare = claims ? await this.#claim(input, offered, sized.size, taken, requested) : null;
+        if (spare) return { box: spare, claimed: true };
         const chosen = await this.#choose(offered, sized.size);
         const box: BoxRecord = {
           id: newBoxId(this.#random),
           threadId: input.threadId,
           projectId: input.projectId,
-          name: generateName(new Set(existing.map((box) => box.name)), this.#random),
+          name: generateName(taken, this.#random),
           kind: chosen.kind.id,
           kindLabel: chosen.kind.label,
           requires: chosen.kind.requires,
@@ -456,11 +486,149 @@ export class Boxes {
           enrol: { state: "off", hostId: null, error: null },
         };
         await this.#deps.kv.set(indexKey(box.id), box.threadId);
-        return this.#write(box);
+        return { box: await this.#write(box), claimed: false };
       }),
     );
-    this.#startAcquire(box);
+    if (claimed) this.#claimed(box);
+    else this.#startAcquire(box);
     return box;
+  }
+
+  /**
+   * Moves a spare of an offered kind and the size to the thread, or returns
+   * null when none suits (032). Runs in the thread's turn; `taken` holds the
+   * names of its boxes. The box's timings are the claim's, from `requested`.
+   */
+  async #claim(
+    input: { threadId: string; projectId: string | null },
+    offered: OfferedKind[],
+    size: BoxSize,
+    taken: Set<string>,
+    requested: number,
+  ): Promise<BoxRecord | null> {
+    return this.#locked(SPARES, async () => {
+      for (const spare of await this.list(SPARES)) {
+        if (!offered.some((candidate) => candidate.backend.id === spare.backend && candidate.kind.id === spare.kind)) continue;
+        if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), size)) continue;
+        try {
+          if (this.#deps.claimable && !(await this.#deps.claimable(spare))) {
+            this.#deps.log?.(`Skipped spare box ${spare.name}: a thread uses its BB machine.`);
+            continue;
+          }
+        } catch (error) {
+          this.#deps.logError("claim", error);
+          continue;
+        }
+        const ms = this.#now() - requested;
+        const box: BoxRecord = {
+          ...spare,
+          threadId: input.threadId,
+          projectId: input.projectId,
+          name: taken.has(spare.name) ? generateName(taken, this.#random) : spare.name,
+          timings: { spare: ms, total: ms },
+        };
+        await this.#deps.kv.set(indexKey(box.id), box.threadId);
+        await this.#write(box);
+        await this.#deps.kv.delete(recordKey(SPARES, box.id));
+        this.#deps.notify(SPARES);
+        return box;
+      }
+      return null;
+    });
+  }
+
+  /** Whether a spare can be claimed now: ready, answering, enrolled when it enrols, and with no task running. */
+  async #claimable(spare: BoxRecord): Promise<boolean> {
+    if (spare.state !== "ready" || spare.restoredAt || spare.error || this.#work.has(spare.id) || this.#reconnects.has(spare.id)) return false;
+    return spare.enrol.state === "enrolled" || (spare.enrol.state === "off" && !(await this.#enrols(spare)));
+  }
+
+  /** After a claim: renames the box's BB machine while its commands wait, and makes another spare. */
+  #claimed(box: BoxRecord): void {
+    this.#deps.log?.(`Claimed spare box ${box.name} for thread ${box.threadId}.`);
+    if (box.enrol.hostId && this.#deps.claimed) {
+      this.#waitFor(box.id, this.#deps.claimed(box).catch((error) => this.#deps.logError("claim", error)));
+    }
+    void this.keepSpares();
+  }
+
+  /** Makes the box's commands wait a while for `task`, which never rejects. */
+  #waitFor(boxId: string, task: Promise<void>): void {
+    this.#reconnects.set(boxId, task);
+    void task.then(() => {
+      if (this.#reconnects.get(boxId) === task) this.#reconnects.delete(boxId);
+    });
+  }
+
+  /**
+   * Keeps each kind's spares (032): makes those missing, at the kind's
+   * default size, and releases those no kind keeps now, those of another
+   * size and those no claim can take. One run at a time; a call during a run
+   * starts another after it.
+   */
+  keepSpares(): Promise<void> {
+    if (this.#keeping) {
+      this.#keepAgain = true;
+      return this.#keeping;
+    }
+    const keeping = (async () => {
+      do {
+        this.#keepAgain = false;
+        await this.#keepSpares().catch((error) => this.#deps.logError("spares", error));
+      } while (this.#keepAgain && !this.#disposed);
+    })().finally(() => {
+      this.#keeping = null;
+    });
+    this.#keeping = keeping;
+    return keeping;
+  }
+
+  async #keepSpares(): Promise<void> {
+    if (this.#disposed) return;
+    const general = await this.#deps.general();
+    const kept = new Map<string, number>();
+    for (const spare of await this.list(SPARES)) {
+      // Claimed, but this record outlived the move.
+      if ((await this.#deps.kv.get<string>(indexKey(spare.id))) !== SPARES) {
+        await this.#deps.kv.delete(recordKey(SPARES, spare.id));
+        continue;
+      }
+      if (spare.state === "releasing") continue;
+      const count = kept.get(spare.kind) ?? 0;
+      if (this.#work.has(spare.id) && isActive(spare)) {
+        kept.set(spare.kind, count + 1);
+        continue;
+      }
+      if (this.#holdsNothing(spare)) {
+        await this.#forget(spare);
+        continue;
+      }
+      // No claim takes these: stopped, or not enrolled when it should be, as when its machine was removed in BB.
+      const failed =
+        spare.state === "gone" ||
+        spare.state === "stopped" ||
+        spare.enrol.state === "failed" ||
+        (spare.state === "ready" && spare.enrol.state === "off" && !spare.restoredAt && (await this.#enrols(spare)));
+      const unwanted = count >= (general.spares[spare.kind] ?? 0);
+      const resized = !sameSize(await this.#size(spare), defaultSize(kindSizes(spare.kind, general.sizes)));
+      if (failed || unwanted || resized) {
+        this.#deps.log?.(`Releasing spare box ${spare.name}: ${failed ? `no claim can take it, as it is ${spare.state} and its enrolment ${spare.enrol.state}` : unwanted ? `bb-box keeps ${count} spare ${spare.kind} boxes` : "its kind's default size changed"}.`);
+        await this.#release(spare);
+        continue;
+      }
+      kept.set(spare.kind, count + 1);
+    }
+    for (const [kind, wanted] of Object.entries(general.spares)) {
+      for (let count = kept.get(kind) ?? 0; count < wanted && !this.#disposed; count++) {
+        try {
+          await this.acquire({ threadId: SPARES, projectId: null, kind });
+        } catch (error) {
+          if (error instanceof BoxError) this.#deps.log?.(`bb-box keeps ${count} of ${wanted} spare ${kind} boxes for now: ${error.message}`);
+          else this.#deps.logError("spares", error);
+          break;
+        }
+      }
+    }
   }
 
   /** The first backend with room for a box of the kind and size, or the reasons none has. */
@@ -725,11 +893,7 @@ export class Boxes {
       }
       // A hard stop ends BB's daemon, and nothing in the box starts it again (017).
       if (started.state === "ready" && started.enrol.state === "enrolled" && this.#deps.reconnect) {
-        const reconnect = this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error));
-        this.#reconnects.set(started.id, reconnect);
-        void reconnect.then(() => {
-          if (this.#reconnects.get(started.id) === reconnect) this.#reconnects.delete(started.id);
-        });
+        this.#waitFor(started.id, this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error)));
       }
       return started;
     });
@@ -953,12 +1117,13 @@ export class Boxes {
    * The safety net, run at start and every few minutes. In order: releases
    * the boxes of threads that ended, finishes interrupted releases and
    * acquires, restores the records of guests whose record was lost, releases
-   * guests no box can own, checks power, and lets each backend do its upkeep.
-   * Nothing is released for age or idleness, and no guest because its record
-   * is missing: only when BB says its thread was archived or deleted.
+   * guests no box can own, checks power, keeps the spares, and lets each
+   * backend do its upkeep. Nothing is released for age or idleness, and no
+   * guest because its record is missing: only when BB says its thread was
+   * archived or deleted. Spares belong to no thread, so their thread lives.
    */
   async sweep(signal?: AbortSignal): Promise<SweepReport> {
-    const liveness = new Map<string, Promise<ThreadLiveness>>();
+    const liveness = new Map<string, Promise<ThreadLiveness>>([[SPARES, Promise.resolve("live")]]);
     const thread = (threadId: string) => {
       let state = liveness.get(threadId);
       if (!state) {
@@ -1067,6 +1232,9 @@ export class Boxes {
         await this.#enrolAnswering(backend, box, signal).catch((error) => this.#deps.logError("sweep", error));
       }
     }
+
+    signal?.throwIfAborted();
+    await this.keepSpares();
 
     // Every built backend, off ones too: an off backend's warm counts read 0, so its upkeep retires its warm guests (029).
     for (const backend of this.#deps.backends.active()) {

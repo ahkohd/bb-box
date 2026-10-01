@@ -652,7 +652,7 @@ test("a backend that is off saves part way, and the form says what is still miss
   expect(slot.getByRole("button", { name: "Save" })).toBeTruthy();
 });
 
-test("a kind's editor saves its presets, default, largest size and warm counts as changes from the shipped sizes", async () => {
+test("a kind's editor saves its presets, default, largest size, warm counts and spares as changes from the shipped sizes", async () => {
   const { handlers, changes } = server([]);
   const slot = settings(handlers);
   const edits = await slot.findAllByRole("button", { name: "Edit" });
@@ -663,10 +663,12 @@ test("a kind's editor saves its presets, default, largest size and warm counts a
   fireEvent.change(slot.getByRole("textbox", { name: "Large memory" }), { target: { value: "24" } });
   fireEvent.click(slot.getByRole("radio", { name: "Medium is the default" }));
   fireEvent.change(slot.getByRole("textbox", { name: "Warm Linux boxes on Fake host" }), { target: { value: "2" } });
+  expect((slot.getByRole("textbox", { name: "Spare Linux boxes" }) as HTMLInputElement).value).toBe("0");
+  fireEvent.change(slot.getByRole("textbox", { name: "Spare Linux boxes" }), { target: { value: "1" } });
   fireEvent.click(slot.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(changes).toHaveLength(1));
   const saved = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
-  expect(saved.kinds).toEqual({ linux: { presets: { large: { cores: 12, memoryMiB: 24576, diskGiB: null } }, default: "medium" } });
+  expect(saved.kinds).toEqual({ linux: { spares: 1, presets: { large: { cores: 12, memoryMiB: 24576, diskGiB: null } }, default: "medium" } });
   expect(saved.backends[0].warm).toEqual({ linux: 2 });
 
   fireEvent.click(slot.getByRole("switch", { name: "Linux desktop on" }));
