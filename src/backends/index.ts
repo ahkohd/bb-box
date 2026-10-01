@@ -107,6 +107,41 @@ const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
  * differ in size, transports and extra features. A problem is a warning,
  * since each box still works.
  */
+/**
+ * Warnings for backends whose boxes would take the same guest IDs or
+ * addresses in one scope, such as Proxmox QEMU and Proxmox LXC on one
+ * cluster and bridge (#194). None when nothing overlaps.
+ */
+export function overlapChecks(backends: readonly Pick<Backend, "id" | "label" | "footprint">[]): DoctorCheck[] {
+  const checks: DoctorCheck[] = [];
+  const marks = backends.flatMap((backend) => (backend.footprint ? [{ backend, footprint: backend.footprint() }] : []));
+  for (const [i, a] of marks.entries()) {
+    for (const b of marks.slice(i + 1)) {
+      const problems: string[] = [];
+      const ids = [a.footprint.ids, b.footprint.ids];
+      if (ids[0] && ids[1] && ids[0].scope === ids[1].scope && ids[0].first <= ids[1].last && ids[1].first <= ids[0].last) {
+        const [from, to] = [Math.max(ids[0].first, ids[1].first), Math.min(ids[0].last, ids[1].last)];
+        problems.push(`both use ${from === to ? `ID ${from}` : `IDs ${from} to ${to}`}`);
+      }
+      const addresses = [a.footprint.addresses, b.footprint.addresses];
+      if (addresses[0] && addresses[1] && addresses[0].scope === addresses[1].scope) {
+        const theirs = new Set(addresses[1].list);
+        const shared = addresses[0].list.filter((address) => theirs.has(address));
+        if (shared.length) problems.push(`both give boxes ${shared.length === 1 ? `address ${shared[0]}` : `${shared.length} addresses, from ${shared[0]} to ${shared.at(-1)}`}`);
+      }
+      if (!problems.length) continue;
+      checks.push({
+        id: `overlap.${a.backend.id}.${b.backend.id}`,
+        name: `${a.backend.label} and ${b.backend.label}`,
+        status: "warn",
+        detail: `They ${problems.join(", and ")}, so a box of one could take what a box of the other has.`,
+        fix: "Give them ranges that do not overlap, in their settings.",
+      });
+    }
+  }
+  return checks;
+}
+
 export function offerChecks(offered: readonly OfferedKind[]): DoctorCheck[] {
   const byKind = new Map<string, OfferedKind[]>();
   for (const offer of offered) byKind.set(offer.kind.id, [...(byKind.get(offer.kind.id) ?? []), offer]);

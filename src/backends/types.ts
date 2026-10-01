@@ -376,6 +376,9 @@ export interface Backend {
    */
   asOffered?(guest: Guest, kind: string, createdAt: number, signal?: AbortSignal): Promise<boolean>;
 
+  /** What its boxes take that another backend's must not, for the doctor. */
+  footprint?(): Footprint;
+
   /** The command transport, the displays, and how the thread reaches a box of `kind`. */
   transports(guest: Guest, kind: string): Promise<BoxTransports>;
 
@@ -394,6 +397,17 @@ export interface Backend {
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   dispose?(): Promise<void>;
+}
+
+/**
+ * What a backend's boxes take that another backend in the same scope must
+ * not, so the doctor can warn when two backends overlap (#194).
+ */
+export interface Footprint {
+  /** Guest IDs it may use, such as a Proxmox cluster's VMIDs. */
+  readonly ids?: { readonly scope: string; readonly first: number; readonly last: number };
+  /** Addresses its boxes may get, such as those on one node's bridge. */
+  readonly addresses?: { readonly scope: string; readonly list: readonly string[] };
 }
 
 export interface DoctorCheck {
