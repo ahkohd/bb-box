@@ -1,7 +1,7 @@
 // One box in the Box panel: its name, kind and status line, its details
 // when open, its quick actions and its menu, and the release confirmation.
 
-import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, UrlLink } from "@get-bb/plugin-sdk/app";
 import { useState, type MouseEvent, type ReactNode } from "react";
 import {
   AlertDialog,
@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { IconButton, KindBadges, Meta, osName, relativeTime, StatusDot } from "./common.tsx";
+import { Badge, IconButton, KindBadges, Meta, osName, relativeTime, SETTINGS_PATH, StatusDot } from "./common.tsx";
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
@@ -60,6 +60,13 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** The box a thread runs on, when it is not the thread's own (036): yours, or another thread's. */
+export interface Held {
+  readonly owner: "yours" | "thread";
+  readonly threadId: string | null;
+  readonly threadTitle: string | null;
+}
+
 export function BoxRow({
   box,
   threadId,
@@ -67,6 +74,7 @@ export function BoxRow({
   onToggle,
   act,
   now,
+  held = null,
 }: {
   box: BoxView;
   threadId: string;
@@ -74,6 +82,8 @@ export function BoxRow({
   onToggle: () => void;
   act: (method: BoxAction, box: BoxView) => Promise<void>;
   now: number;
+  /** Set for the box this thread runs on: its row offers no Release or Stop, and says where they are. */
+  held?: Held | null;
 }) {
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -133,6 +143,7 @@ export function BoxRow({
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
             <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{osName(box.os)}</span>
             <KindBadges desktop={box.desktop} gpu={box.gpu} docker={box.requires.includes("docker")} forms={box.form ? [box.form] : []} />
+            {held?.owner === "yours" ? <Badge>Yours</Badge> : null}
           </span>
         </button>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
@@ -146,6 +157,31 @@ export function BoxRow({
           />
         </div>
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
+        {held ? (
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+            {held.owner === "yours" ? (
+              <>
+                Remove or stop it in{" "}
+                <UrlLink href={SETTINGS_PATH} className="text-foreground underline-offset-2 hover:underline">
+                  BB Box's settings
+                </UrlLink>
+                .
+              </>
+            ) : (
+              <>
+                Held by{" "}
+                {held.threadId ? (
+                  <button type="button" className="text-foreground underline-offset-2 hover:underline" onClick={() => navigate.toThread(held.threadId!)}>
+                    {held.threadTitle ?? held.threadId}
+                  </button>
+                ) : (
+                  "another thread"
+                )}
+                .
+              </>
+            )}
+          </p>
+        ) : null}
         {open ? (
           <dl className="mt-2 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs leading-snug">
             {box.address ? <Detail label="Address">{box.address}</Detail> : null}
@@ -169,8 +205,8 @@ export function BoxRow({
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
         {box.desktop && ready ? <IconButton label="Open desktop" icon={`${pluginId}/monitor`} onClick={() => openDesktop(box)} /> : null}
         {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={`${pluginId}/terminal`} onClick={() => openTerminal(box)} /> : null}
-        {box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} /> : null}
-        {box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} /> : null}
+        {!held && box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} /> : null}
+        {!held && box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} /> : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={`${box.name} actions`}>
@@ -202,20 +238,20 @@ export function BoxRow({
                 Copy address
               </DropdownMenuItem>
             ) : null}
-            {ready && box.enrol.state === "enrolled" ? (
+            {!held && ready && box.enrol.state === "enrolled" ? (
               <DropdownMenuItem onSelect={() => setThreading({ prompt: "", starting: false, error: null })}>
                 <Icon name="MessageSquarePlus" fallback="Plus" aria-hidden />
                 New thread on this box…
               </DropdownMenuItem>
             ) : null}
-            {(box.desktop && ready) || canOpenTerminal(box) || box.address || (ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
-            {box.canStopStart && ready ? (
+            {(box.desktop && ready) || canOpenTerminal(box) || box.address || (!held && ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
+            {!held && box.canStopStart && ready ? (
               <DropdownMenuItem onSelect={() => void run("stop")}>
                 <Icon name="Square" aria-hidden />
                 Stop
               </DropdownMenuItem>
             ) : null}
-            {box.canStopStart && box.state === "stopped" ? (
+            {!held && box.canStopStart && box.state === "stopped" ? (
               <DropdownMenuItem onSelect={() => void run("start")}>
                 <Icon name="Play" aria-hidden />
                 Start
@@ -225,11 +261,15 @@ export function BoxRow({
               <Icon name="ArrowReloadHorizontal" aria-hidden />
               Check now
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" disabled={box.state === "releasing"} onSelect={() => setConfirming(true)}>
+            {held ? null : (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" disabled={box.state === "releasing"} onSelect={() => setConfirming(true)}>
               <Icon name="Trash2" aria-hidden />
-              Release…
-            </DropdownMenuItem>
+                  Release…
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </span>

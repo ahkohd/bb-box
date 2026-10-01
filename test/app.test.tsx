@@ -222,7 +222,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
+function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   const changes: string[] = [];
@@ -238,7 +238,7 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
   };
   const find = (ref: string) => boxes.find((candidate) => candidate.id === ref || candidate.name === ref) ?? null;
   const handlers: PluginRpcTestHandlers<Contract> = {
-    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: null }),
+    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? null, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
@@ -399,7 +399,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
 
 function panel(handlers: PluginRpcTestHandlers<Contract>) {
   const [action] = app.threadPanelActions;
-  return renderSlot(action!, { threadId: THREAD, params: null }, { rpc: handlers, pluginId: "bb-box" });
+  return renderSlot(action!, { threadId: THREAD, params: null }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
 }
 
 function stateCalls(slot: ReturnType<typeof panel>): number {
@@ -878,6 +878,7 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
   const slot = desktopTab(handlers);
 
   expect(await slot.findByText("Connecting to the desktop…")).toBeTruthy();
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
   const [client] = novnc.FakeRfb.made;
   const url = new URL(client!.url);
   expect(url.protocol).toBe("ws:");
@@ -1244,4 +1245,27 @@ test("the Desktops page lists your machines first, without Open thread, and show
   fireEvent.click(await terminal.findByRole("button", { name: "Back to settings" }));
   expect(terminal.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "/settings/plugins/bb-box" });
   await waitFor(() => expect(FakeSocket.made.at(-1)?.url).toContain("box=box_m1"));
+});
+
+test("the panel shows the box this thread runs on first, without Release or Stop, and says where they are", async () => {
+  const yours = desktopBox({ id: "box_m1", name: "build-1" });
+  const { handlers } = server([box()], { runsOn: { box: yours, owner: "yours", threadId: null } });
+  const slot = panel(handlers);
+  expect(await slot.findByText("This thread runs on it")).toBeTruthy();
+  expect(slot.getByText("build-1")).toBeTruthy();
+  expect(slot.getByText("Yours")).toBeTruthy();
+  expect(slot.getByText(/Remove or stop it in/)).toBeTruthy();
+  expect(slot.getByRole("link", { name: "BB Box's settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
+  expect(slot.getByText("1 box")).toBeTruthy();
+  const rows = slot.getAllByRole("button", { name: /: details$/ }).map((node) => node.getAttribute("aria-label"));
+  expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
+  expect(slot.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
+  const menu = await openMenu(slot.getByRole("button", { name: "build-1 actions" }));
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open desktop in a browser tab", "Open terminal", "Copy address", "Check now"]);
+
+  cleanup();
+  const theirs = panel(server([], { runsOn: { box: yours, owner: "thread", threadId: "thr_other" } }).handlers);
+  expect(await theirs.findByText(/Held by/)).toBeTruthy();
+  expect(await theirs.findByRole("button", { name: "UI thread" })).toBeTruthy();
+  expect(theirs.queryByText("Yours")).toBeNull();
 });

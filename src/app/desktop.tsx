@@ -522,7 +522,7 @@ export function DesktopsPage({ subPath }: { subPath: string }) {
 }
 
 /** The titles of the threads that have desktops, fetched once each; a thread that cannot be read shows its ID. */
-function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
+export function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
   const sdk = useSdk();
   const [titles, setTitles] = useState<Record<string, string>>({});
   const key = threadIds.join(" ");

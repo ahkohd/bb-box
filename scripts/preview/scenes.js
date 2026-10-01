@@ -277,7 +277,7 @@ function rpc(boxes, options = {}) {
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
-    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: null }),
+    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null }),
     desktop: ({ box: ref }) => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     desktops: () => [
       ...(options.machines ?? []).filter((entry) => entry.box.desktop).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
@@ -318,6 +318,7 @@ export const scenes = {
   "panel-empty": { slot: "boxes", chrome: boxesChrome, rpc: rpc([]) },
   "panel-nobackend": { slot: "boxes", chrome: boxesChrome, rpc: rpc([], { kinds: [] }) },
   "panel-list": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting, desktop, stopped]) },
+  "panel-runs-on": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },
   "panel-list-open": {
     slot: "boxes",
     chrome: boxesChrome,

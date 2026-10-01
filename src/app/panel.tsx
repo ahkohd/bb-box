@@ -19,6 +19,7 @@ import type { BoxResult, Contract, PanelState, ThreadOnBox } from "../plugin/con
 import type { BoxView } from "../plugin/views.ts";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
+import { useThreadTitles } from "./desktop.tsx";
 import { NewBox, type SizeRequest } from "./new-box.tsx";
 
 /** bb-box's page under BB's settings. */
@@ -39,7 +40,9 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     setOpen(null);
   }, [threadId]);
   const boxes = state?.boxes ?? [];
-  const now = useNow(boxes.some(isMoving));
+  const runsOn = state?.runsOn ?? null;
+  const titles = useThreadTitles(runsOn?.threadId ? [runsOn.threadId] : []);
+  const now = useNow(boxes.some(isMoving) || (runsOn !== null && isMoving(runsOn.box)));
 
   const settle = async (result: Promise<BoxResult>, onThreads?: (threads: readonly ThreadOnBox[]) => void): Promise<string | null> => {
     let refused: string | null;
@@ -111,6 +114,22 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
         <p role="alert" className="text-xs leading-snug text-destructive-text">
           {problem}
         </p>
+      ) : null}
+      {runsOn ? (
+        <div className="space-y-1.5">
+          <p className="text-xs font-medium text-foreground">This thread runs on it</p>
+          <div className="rounded-lg border border-border bg-card px-4 py-1">
+            <BoxRow
+              box={runsOn.box}
+              threadId={threadId}
+              open={open === runsOn.box.id}
+              onToggle={() => setOpen((current) => (current === runsOn.box.id ? null : runsOn.box.id))}
+              act={act}
+              now={now}
+              held={{ owner: runsOn.owner, threadId: runsOn.threadId, threadTitle: runsOn.threadId ? (titles[runsOn.threadId] ?? null) : null }}
+            />
+          </div>
+        </div>
       ) : null}
       {boxes.length ? (
         <div className="rounded-lg border border-border bg-card px-4 py-1">
