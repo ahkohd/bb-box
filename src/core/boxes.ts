@@ -616,6 +616,35 @@ export class Boxes {
   }
 
   /**
+   * Gives each box the capabilities its kind has now, where its backend
+   * still offers the kind and says the guest comes from what it offers it
+   * from. A box keeps the capabilities it was acquired with otherwise, so a
+   * release that adds one, such as computer use, reaches long-lived boxes
+   * too (#215). What describes the guest as it was made, such as its size
+   * and address, is the guest's and stays. Returns how many changed.
+   */
+  async refreshCapabilities(): Promise<number> {
+    let changed = 0;
+    for (const box of await this.all()) {
+      if (!box.guest || box.state === "gone" || box.state === "releasing") continue;
+      const backend = this.#deps.backends.get(box.backend);
+      const kind = backend?.kinds().find((candidate) => candidate.id === box.kind);
+      if (!backend || !kind) continue;
+      if (JSON.stringify(box.capabilities) === JSON.stringify(kind.capabilities) && JSON.stringify(box.requires) === JSON.stringify(kind.requires)) continue;
+      if (backend.asOffered && !(await backend.asOffered(box.guest, kind.id, box.createdAt).catch((error) => (this.#deps.logError("capabilities", error), false)))) continue;
+      const updated = await this.update(box, () => ({ capabilities: kind.capabilities, requires: kind.requires, kindLabel: kind.label })).catch((error) => {
+        this.#deps.logError("capabilities", error);
+        return null;
+      });
+      if (!updated) continue;
+      changed++;
+      this.#deps.log?.(`Box ${box.name} has the capabilities of its kind ${kind.id} now.`);
+      this.#deps.notify(box.threadId);
+    }
+    return changed;
+  }
+
+  /**
    * Keeps each kind's spares (032): makes those missing, at the kind's
    * default size, and releases those no kind keeps now, those of another
    * size and those no claim can take. One run at a time; a call during a run

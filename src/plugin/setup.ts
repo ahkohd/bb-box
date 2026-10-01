@@ -197,8 +197,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     changed: () => {
       notify(null);
       needsConfiguration();
-      // A kind may keep more or fewer spares now.
+      // A kind may keep more or fewer spares now, and offer what older boxes lack.
       void boxes.keepSpares();
+      void boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
     },
     logError,
   });
@@ -360,6 +361,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.background.service("sweeper", {
     async start(signal) {
       await enrolment.resume().catch((error) => logError("resume enrolment", error));
+      // What this release adds to a kind reaches boxes made before it (#215).
+      await boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
       while (!signal.aborted) {
         await boxes.sweep(signal).catch((error) => {
           if (!signal.aborted) logError("sweep", error);
