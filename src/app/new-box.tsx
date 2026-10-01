@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
 import { KindBadges, lacksDocker } from "./common.tsx";
 import { groupKinds, KindDetail, kindTitle, OfferMarks } from "./kind-picker.tsx";
+import { MonitorGlyph, ServerGlyph } from "./glyphs.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -279,13 +280,13 @@ export function NewBox({
                           selected && "bg-state-active",
                         )}
                       >
-                        <Icon name={`${pluginId}/${candidate.desktop ? "monitor" : "server"}`} className="size-4 text-muted-foreground" aria-hidden />
+                        {candidate.desktop ? <MonitorGlyph className="text-muted-foreground" /> : <ServerGlyph className="text-muted-foreground" />}
                         <span className="min-w-0">
                           <span className="block truncate text-xs text-foreground">{kindTitle(candidate)}</span>
                           {/* Badges on a line of their own: what the boxes are, and whether one is ready; the title says the rest. */}
                           <KindBadges gpu={false} noDocker={lacksDocker(candidate)} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-0.5 flex-wrap" />
                         </span>
-                        <OfferMarks offers={candidate.offers} pluginId={pluginId} />
+                        <OfferMarks offers={candidate.offers} />
                         {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
                       </button>
                     );

@@ -143,6 +143,9 @@ interface Relabelled {
   readonly name: string;
 }
 
+/** The storage key of the host's last known name (#265). */
+const NAME_KEY = "host-name";
+
 function relabelKey(ref: string): string {
   return `relabel/${ref}`;
 }
@@ -256,6 +259,8 @@ export class DockerBackend implements Backend {
   readonly #cli: DockerCli;
   /** The daemon's facts, as it last gave them. */
   #info: DockerInfo | null = null;
+  /** The host's name as last known, kept in storage so a restart shows it before the daemon or BB has answered again (#265). */
+  #knownName: string | null = null;
   /** Containers being acquired, by box ID, until their acquire ends. */
   readonly #placing = new Map<string, Placing>();
   /** Placement is one at a time, so two acquires never take the last room on the host. */
@@ -276,6 +281,29 @@ export class DockerBackend implements Backend {
           await machines.ready(machine);
         })
       : new DockerCli(config.host, options.binary);
+    void this.#recallName();
+  }
+
+  /** Reads the name kept from the last run, and asks the daemon once when none is kept and the host is not a BB machine. */
+  async #recallName(): Promise<void> {
+    try {
+      const kept = await this.#context.storage.get<string>(NAME_KEY);
+      if (kept && !this.#info && !this.#config.machine) this.#knownName = kept;
+      if (!kept && !this.#config.machine && this.#config.host) {
+        const info = await this.#cli.info();
+        if (!this.#info) this.#info = info;
+        await this.#keepName(info.name);
+      }
+    } catch {
+      // The name shows once the doctor or a capacity check has asked.
+    }
+  }
+
+  /** Remembers the host's name for the next start, when it changed. */
+  async #keepName(name: string | null): Promise<void> {
+    if (!name || name === this.#knownName) return;
+    this.#knownName = name;
+    await this.#context.storage.set(NAME_KEY, name).catch(() => {});
   }
 
   /** "Docker on" the host as hosts names it, so the kinds' text and the picker agree; "Docker" for a local daemon not yet asked. */
@@ -290,8 +318,17 @@ export class DockerBackend implements Backend {
    * address; none for a local daemon not yet asked.
    */
   get hosts(): readonly string[] {
-    if (this.#config.machine) return [hostWords(this.#config.host, this.#context.machines)];
-    if (this.#info?.name) return [this.#info.name];
+    if (this.#config.machine) {
+      // The machine's name as BB has it (042); the last known one while BB's list has not answered yet.
+      const named = this.#context.machines?.name(this.#config.machine) ?? null;
+      if (named) void this.#keepName(named);
+      return [named ?? this.#knownName ?? hostWords(this.#config.host, this.#context.machines)];
+    }
+    if (this.#info?.name) {
+      void this.#keepName(this.#info.name);
+      return [this.#info.name];
+    }
+    if (this.#knownName) return [this.#knownName];
     return this.#config.host ? [hostWords(this.#config.host)] : [];
   }
 

@@ -23,14 +23,9 @@ import { Badge, IconButton, isArm64Badge, KindBadges, lacksDocker, Meta, osName,
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
+import { MonitorGlyph, ServerGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh";
-
-/** The icon for a box's kind: a monitor for a desktop, a server otherwise. */
-export function useBoxGlyph(): (box: Pick<BoxView, "desktop">) => string {
-  const pluginId = experimental_usePluginId();
-  return (box) => `${pluginId}/${box.desktop ? "monitor" : "server"}`;
-}
 
 /** The viewer IDs this browser tab holds, one per box, as the desktop tabs keep them. */
 export function myViewers(): Set<string> {
@@ -89,7 +84,6 @@ export function BoxRow({
   const navigate = useBbNavigate();
   const openDesktop = useOpenDesktop();
   const openTerminal = useOpenTerminal();
-  const glyph = useBoxGlyph();
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [confirming, setConfirming] = useState(false);
   const rpc = useRpc<Contract>();
@@ -129,7 +123,7 @@ export function BoxRow({
       }}
     >
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-        <Icon name={glyph(box)} className="size-4" aria-hidden />
+        {box.desktop ? <MonitorGlyph /> : <ServerGlyph />}
       </span>
       <div className="min-w-0">
         <button
@@ -204,8 +198,8 @@ export function BoxRow({
         ) : null}
       </div>
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
-        {box.desktop && ready ? <IconButton label="Open desktop" icon={`${pluginId}/monitor`} onClick={() => openDesktop(box)} /> : null}
-        {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={`${pluginId}/terminal`} onClick={() => openTerminal(box)} /> : null}
+        {box.desktop && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={() => openDesktop(box)} /> : null}
+        {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => openTerminal(box)} /> : null}
         {!held && box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} /> : null}
         {!held && box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} /> : null}
         <DropdownMenu>
@@ -218,7 +212,7 @@ export function BoxRow({
             {box.desktop && ready ? (
               <>
                 <DropdownMenuItem onSelect={() => openDesktop(box)}>
-                  <Icon name={`${pluginId}/monitor`} aria-hidden />
+                  <MonitorGlyph />
                   Open desktop
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => void navigate.openUrl(pageHref(pluginId, threadId, box.id))}>
@@ -229,7 +223,7 @@ export function BoxRow({
             ) : null}
             {canOpenTerminal(box) ? (
               <DropdownMenuItem onSelect={() => openTerminal(box)}>
-                <Icon name={`${pluginId}/terminal`} aria-hidden />
+                <TerminalGlyph />
                 Open terminal
               </DropdownMenuItem>
             ) : null}

@@ -17,6 +17,7 @@ import type { BoxView } from "../plugin/views.ts";
 import { forThread, IconButton, message, Notice, StatusDot, useLive, type Tone } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { XTERM_CSS } from "./xterm-css.ts";
+import { TerminalGlyph } from "./glyphs.tsx";
 
 export const TERMINAL_ACTION = "terminal";
 
@@ -349,7 +350,7 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <IconButton label={onBack.label} icon="ArrowLeft" onClick={onBack.go} className="-ml-1" /> : null}
-        <Icon name={`${pluginId}/terminal`} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <TerminalGlyph className="text-muted-foreground" />
         <span className="font-medium text-foreground">{box?.name ?? "Terminal"}</span>
         <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
           <StatusDot tone={tone} />
