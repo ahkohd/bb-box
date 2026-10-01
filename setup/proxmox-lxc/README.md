@@ -197,9 +197,10 @@ own, such as `build.20260101-120000-3f62`, which it keeps through
 bb-box hands out no warm box whose template now has another ID, or is away
 while it is replaced, and replaces those boxes with clones of the new
 template. A template made some other way has no ID. If you replace a
-template by other means, tag the new one with a new ID, for example
-`pct set 9100 --tags build.$(date -u +%s)`, so bb-box replaces the warm boxes
-of the old one.
+template by other means, tag the new one with a new ID, so bb-box replaces
+the warm boxes of the old one: `pct set 9100 --tags build.$(date -u +%s)`,
+for example. `--tags` replaces all of the template's tags, so add any others
+it should keep, separated by `;`.
 
 Everything a build downloads is checked against a pinned SHA-256 and kept in
 `/var/cache/bb-box/artifacts`:
