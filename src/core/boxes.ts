@@ -37,7 +37,7 @@ import {
 } from "../backends/types.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
-import { canRunInDesktop, command, envScript, timedOutExits, type Access, type Session } from "./in-box.ts";
+import { command, envScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
 import { chooseSize, defaultSize, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
 
@@ -1175,9 +1175,6 @@ export class Boxes {
     }
     // A transport that already runs commands in the desktop session needs no wrapper.
     const session = options.session === "desktop" && !capabilities.command?.inDesktopSession ? "desktop" : "default";
-    if (session === "desktop" && !canRunInDesktop(capabilities.os)) {
-      throw new BoxError("unsupported", `bb-box cannot run commands in box ${box.name}'s desktop session yet: its OS is ${capabilities.os}.`);
-    }
     const env = await this.#envFile(box);
     options.onSend?.();
     const stops = timedOutExits(capabilities.os);

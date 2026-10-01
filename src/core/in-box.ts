@@ -3,6 +3,7 @@
 // core sends them through the box's command transport.
 
 import { posix } from "node:path";
+import { powershellCommand } from "../transports/powershell.ts";
 import type { GuestOs } from "../transports/types.ts";
 
 /**
@@ -52,11 +53,11 @@ const LINUX_DESKTOP =
   'export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"; ';
 
 /**
- * What a macOS desktop command exits with when the box user is not logged in
- * to the desktop, and when sudo does not allow the wrapper: sysexits'
+ * What a desktop command exits with when the box user is not logged in to
+ * the desktop, and on a Mac when sudo does not allow the wrapper: sysexits'
  * EX_UNAVAILABLE and EX_NOPERM.
  */
-export const MAC_DESKTOP_EXITS = { noSession: 69, refused: 77 } as const;
+export const DESKTOP_EXITS = { noSession: 69, refused: 77 } as const;
 
 /**
  * Puts a macOS command in the box user's desktop session (030). sudo gives
@@ -72,21 +73,89 @@ function macDesktop(script: string): string {
     `bb_uid=$(id -u) bb_user=$(id -un) bb_console=$(stat -f %Su /dev/console 2>/dev/null); ` +
     `if [ "$bb_console" != "$bb_user" ]; then ` +
     `printf 'bb-box: there is no desktop session to join: %s is not logged in to the desktop (the console belongs to %s).\\n' "$bb_user" "\${bb_console:-nobody}" >&2; ` +
-    `exit ${MAC_DESKTOP_EXITS.noSession}; fi; ` +
+    `exit ${DESKTOP_EXITS.noSession}; fi; ` +
     `if ! sudo -n ${wrapper} /usr/bin/true </dev/null >/dev/null 2>&1; then ` +
     `printf 'bb-box: sudo does not let %s run commands in the desktop session. Mac setup adds this rule as /etc/sudoers.d/bb-box-desktop:\\n%s ALL=(root) NOPASSWD: /bin/launchctl asuser %s /usr/bin/sudo -n -u %s -- *\\n' "$bb_user" "$bb_user" "$bb_uid" "$bb_user" >&2; ` +
-    `exit ${MAC_DESKTOP_EXITS.refused}; fi; ` +
+    `exit ${DESKTOP_EXITS.refused}; fi; ` +
     `exec sudo -n ${wrapper} "\${SHELL:-/bin/sh}" -c ${sh(script)}`
   );
 }
 
 /**
- * Whether bb-box can put a command in the desktop session of a box with this
- * OS, when its transport runs outside it. Windows needs a scheduled task with
- * /IT, which bb-box does not have yet.
+ * Puts a Windows command in the box user's desktop session (039): a one-off
+ * scheduled task with the user's interactive logon, made through Task
+ * Scheduler's COM API, which needs no module loaded. The task runs at the
+ * limited run level, as an app the user opens does. It runs a batch file in
+ * a headless console, so no window shows, and the batch file runs the
+ * command's PowerShell with its stdin, stdout and stderr in files, then
+ * writes its exit status to another. This waits for that file, passes the
+ * output on and deletes the task. What the command opened stays open, but at
+ * `timeoutMs` the command and everything it started end. Task Scheduler
+ * leaves the task of a user who is not logged on as it was, with the result
+ * SCHED_S_TASK_HAS_NOT_RUN.
  */
-export function canRunInDesktop(os: GuestOs): boolean {
-  return os === "linux" || os === "macos";
+function windowsDesktop(script: string, timeoutMs: number | undefined): string {
+  const timeout =
+    timeoutMs === undefined
+      ? ""
+      : String.raw`  elseif ($bbClock.ElapsedMilliseconds -ge ${timeoutMs}) {
+    $bbKill = @(Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%$bbId%'" | ForEach-Object { '/PID'; $_.ProcessId })
+    if ($bbKill) { taskkill /F /T @bbKill *> $null }
+    $bbExit = 1
+  }
+`;
+  return String.raw`$ErrorActionPreference = 'Stop'
+$bbId = 'bb-box-' + [guid]::NewGuid().ToString('n')
+$bbDir = Join-Path ([IO.Path]::GetTempPath()) $bbId
+New-Item -ItemType Directory -Path $bbDir | Out-Null
+$bbFile = [IO.File]::Create("$bbDir\in")
+[Console]::OpenStandardInput().CopyTo($bbFile)
+$bbFile.Close()
+Set-Content -LiteralPath "$bbDir\run.ps1" -Value ${ps(powershellCommand(script))}
+Set-Content -LiteralPath "$bbDir\run.cmd" -Value (
+  '@"' + [Environment]::ProcessPath + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $bbDir + '\run.ps1" <"' + $bbDir + '\in" >"' + $bbDir + '\out" 2>"' + $bbDir + '\err"'),
+  ('@>"' + $bbDir + '\code.tmp" echo %errorlevel%'),
+  ('@move /y "' + $bbDir + '\code.tmp" "' + $bbDir + '\code" >nul')
+$bbService = New-Object -ComObject Schedule.Service
+$bbService.Connect()
+$bbFolder = $bbService.GetFolder('\')
+$bbTask = $bbService.NewTask(0)
+$bbTask.Principal.UserId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$bbTask.Principal.LogonType = 3
+$bbTask.Settings.DisallowStartIfOnBatteries = $false
+$bbTask.Settings.StopIfGoingOnBatteries = $false
+$bbAction = $bbTask.Actions.Create(0)
+$bbAction.Path = "$env:WINDIR\System32\conhost.exe"
+$bbAction.Arguments = '--headless "' + $env:WINDIR + '\System32\cmd.exe" /d /c "' + $bbDir + '\run.cmd"'
+$bbAction.WorkingDirectory = $HOME
+$bbRegistered = $bbFolder.RegisterTaskDefinition($bbId, $bbTask, 6, $null, $null, 3)
+$null = $bbRegistered.Run($null)
+$bbClock = [Diagnostics.Stopwatch]::StartNew()
+$bbExit = $null
+while ($null -eq $bbExit) {
+  if (Test-Path -LiteralPath "$bbDir\code") { $bbExit = [int](Get-Content -LiteralPath "$bbDir\code" -Raw).Trim() }
+  elseif ($bbRegistered.State -ne 4 -and -not (Test-Path -LiteralPath "$bbDir\code")) {
+    if ($bbRegistered.LastTaskResult -eq 0x41303) {
+      [Console]::Error.WriteLine("bb-box: there is no desktop session to join: $([Environment]::UserName) is not logged in to the desktop.")
+      $bbExit = ${DESKTOP_EXITS.noSession}
+    } else {
+      [Console]::Error.WriteLine('bb-box: the desktop command ended without an exit status. Task Scheduler gave {0:x}.' -f $bbRegistered.LastTaskResult)
+      $bbExit = 1
+    }
+  }
+${timeout}  else { Start-Sleep -Milliseconds 50 }
+}
+$bbFolder.DeleteTask($bbId, 0)
+foreach ($bbOutput in ('out', [Console]::OpenStandardOutput()), ('err', [Console]::OpenStandardError())) {
+  if (-not (Test-Path -LiteralPath "$bbDir\$($bbOutput[0])")) { continue }
+  $bbFile = [IO.FileStream]::new("$bbDir\$($bbOutput[0])", 'Open', 'Read', 'ReadWrite, Delete')
+  $bbFile.CopyTo($bbOutput[1])
+  $bbOutput[1].Flush()
+  $bbFile.Close()
+}
+Remove-Item -LiteralPath $bbDir -Recurse -Force -ErrorAction Ignore
+exit $bbExit
+`;
 }
 
 export interface CommandOptions {
@@ -112,7 +181,6 @@ export function timedOutExits(os: GuestOs): readonly number[] | undefined {
  * given. The whole script runs in `cwd`, or none of it does.
  */
 export function command(os: GuestOs, script: string, options: CommandOptions = {}): string {
-  if (options.session === "desktop" && !canRunInDesktop(os)) throw new Error(`bb-box cannot run commands in a ${os} desktop session yet.`);
   if (os === "windows") {
     const file = `$bbBoxEnv = Join-Path $HOME ${ps(envFile(os))}; `;
     const write =
@@ -121,6 +189,7 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
         : `New-Item -ItemType Directory -Force -Path (Split-Path $bbBoxEnv) | Out-Null; Set-Content -LiteralPath $bbBoxEnv -NoNewline -Value ${ps(options.env)}; `;
     const env = "if (Test-Path -LiteralPath $bbBoxEnv) { . $bbBoxEnv }; ";
     const cd = options.cwd ? `Set-Location -LiteralPath ${ps(options.cwd)} -ErrorAction Stop; ` : "";
+    if (options.session === "desktop") return `${write && file + write}${windowsDesktop(`${file}${env}${cd}${script}`, options.timeoutMs)}`;
     return `${windowsTimeout(options.timeoutMs)}${file}${write}${env}${cd}${script}`;
   }
   const file = `"$HOME/${envFile(os)}"`;

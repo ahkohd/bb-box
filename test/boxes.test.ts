@@ -5,14 +5,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, type Backend, type BoxSize, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type Backend, type BoxKind, type BoxSize, type ReleaseHooks } from "../src/backends/types.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { ACCESS_CHECK_EXITS, MAC_DESKTOP_EXITS, accessCheck, accessSetup, accessSetupMs, canRunInDesktop, command, envScript } from "../src/core/in-box.ts";
+import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, accessCheck, accessSetup, accessSetupMs, command, envScript } from "../src/core/in-box.ts";
+import { powershellCommand } from "../src/transports/powershell.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
 import { adminText, boxDetail, boxView, kindViews } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
@@ -747,6 +748,33 @@ test("a Windows command starts a watchdog that stops it in the box at its timeou
   // A command that fails before its timeout did not time out.
   const failed = await world.boxes.run(THREAD, box.name, "Start-Sleep 1; exit 1", { timeoutMs: 10_000 });
   assert.deepEqual([failed.result.exitCode, failed.result.timedOut], [1, false]);
+});
+
+test("a Windows desktop command runs as a one-off scheduled task in the box user's session", async () => {
+  const env = envScript("windows", { BBX_ONE: "one" });
+  const script = command("windows", "Get-Process", { session: "desktop", cwd: "C:\\work", env, timeoutMs: 1_500 });
+  // The env file is written before the task starts, and the task's PowerShell reads it.
+  assert.ok(script.startsWith(`$bbBoxEnv = Join-Path $HOME '.config/bb-box/env.ps1'; New-Item -ItemType Directory -Force -Path (Split-Path $bbBoxEnv) | Out-Null; Set-Content`));
+  const inner = `$bbBoxEnv = Join-Path $HOME '.config/bb-box/env.ps1'; if (Test-Path -LiteralPath $bbBoxEnv) { . $bbBoxEnv }; Set-Location -LiteralPath 'C:\\work' -ErrorAction Stop; Get-Process`;
+  assert.ok(script.includes(`Set-Content -LiteralPath "$bbDir\\run.ps1" -Value '${powershellCommand(inner).replaceAll("'", "''")}'\n`), "the task runs the script as SSH would");
+  assert.ok(script.includes("$bbTask.Principal.LogonType = 3\n"), "with the user's interactive logon");
+  assert.ok(!script.includes("RunLevel"), "at the limited run level");
+  // The task is outside sshd's job, so the script ends it itself.
+  assert.ok(!script.includes("taskkill /F /PID"));
+  assert.ok(script.includes("elseif ($bbClock.ElapsedMilliseconds -ge 1500) {\n"));
+  const plain = command("windows", "Get-Process", { session: "desktop" });
+  assert.ok(plain.startsWith("$ErrorActionPreference = 'Stop'\n"), "no env file to write");
+  assert.ok(!plain.includes("$bbClock.ElapsedMilliseconds -ge"), "no timeout");
+
+  const desktop: BoxKind = {
+    ...FAKE_KINDS[1]!,
+    id: "windows-desktop",
+    capabilities: { ...FAKE_KINDS[1]!.capabilities, os: "windows", computerUse: null, enrol: false },
+  };
+  const world = setup({ kinds: [desktop], shell: FAKE_PWSH });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "windows-desktop" }));
+  const { result } = await world.boxes.run(THREAD, box.name, "notepad", { session: "desktop", timeoutMs: 10_000 });
+  assert.deepEqual([result.stdout, result.exitCode, result.timedOut], ["a scheduled task\n", 1, false]);
 });
 
 test("a command waits a few seconds for its box to finish enrolling", async () => {
@@ -1698,19 +1726,16 @@ exec env -i HOME="$HOME" PATH="$PATH" BBX_SESSION=Aqua "$@"
     assert.deepEqual(ran.calls[1]!.slice(0, -1), [...wrapper, shell, "-c"], `${shell}: the command runs through the wrapper`);
 
     const away = run({ FAKE_CONSOLE: "root" });
-    assert.equal(away.status, MAC_DESKTOP_EXITS.noSession, shell);
+    assert.equal(away.status, DESKTOP_EXITS.noSession, shell);
     assert.equal(away.stderr, `bb-box: there is no desktop session to join: ${username} is not logged in to the desktop (the console belongs to root).\n`);
     assert.deepEqual([away.stdout, away.calls.length], ["", 0]);
 
     const refused = run({ FAKE_REFUSES: "1" });
-    assert.equal(refused.status, MAC_DESKTOP_EXITS.refused, shell);
+    assert.equal(refused.status, DESKTOP_EXITS.refused, shell);
     assert.match(refused.stderr, /^bb-box: sudo does not let \S+ run commands in the desktop session\. Mac setup adds this rule as \/etc\/sudoers\.d\/bb-box-desktop:\n/);
     assert.ok(refused.stderr.endsWith(`\n${username} ALL=(root) NOPASSWD: /bin/launchctl asuser ${uid} /usr/bin/sudo -n -u ${username} -- *\n`), refused.stderr);
     assert.deepEqual([refused.stdout, refused.calls.length], ["", 1]);
   }
-  assert.ok(canRunInDesktop("macos"));
-  assert.ok(!canRunInDesktop("windows"));
-  assert.throws(() => command("windows", "Get-Process", { session: "desktop" }), /cannot run commands in a windows desktop session/);
 });
 
 test("a real backend's release records the reset, and a failed reset takes the machine out of service", async () => {
