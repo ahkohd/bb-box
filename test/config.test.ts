@@ -474,6 +474,17 @@ test("apply answers once the backends are rebuilt, and lists the problems an off
   assert.deepEqual(partway.problems.map((problem) => problem.path), ["backends.fake.address"], "a field it could not save is named");
 });
 
+test("every driver's fields have labels for the settings page: a capital first, and no backend name in front", () => {
+  for (const driver of DRIVERS) {
+    for (const [key, field] of [...Object.entries(driver.fields), ...Object.entries(driver.hostFields ?? {})]) {
+      assert.match(field.label, /^(?:[A-Z]|macOS)/, `${driver.type}.${key}: "${field.label}"`);
+      assert.doesNotMatch(field.label, /^[^:]+: /, `${driver.type}.${key}: "${field.label}"`);
+    }
+  }
+  assert.equal(proxmoxLxcDriver.fields["reserve-memory-mib"]!.label, "Memory kept free (MiB)");
+  assert.equal(tartDriver.fields["macos-desktop-image"]!.label, "macOS desktop image");
+});
+
 // The document and its checks.
 
 test("a draft's problems are at their fields' paths", () => {

@@ -12,7 +12,7 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { hostKeysFor } from "../ssh-pool/config.ts";
-import { isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
+import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
 export const TART_KINDS = ["macos", "macos-desktop"] as const;
 export type TartKind = (typeof TART_KINDS)[number];
@@ -246,6 +246,9 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
 
 export const TART_PREFIX = "tart-";
 
+/** The image fields name their kinds in words, where the settings named them by ID. */
+const IMAGE_LABELS: Readonly<Record<string, string>> = { [TART_KEYS.macosImage]: "macOS image", [TART_KEYS.desktopImage]: "macOS desktop image" };
+
 /** The backend's fields in bb-box's configuration: the settings above without the prefix, but the Macs. */
 export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
   ([
@@ -258,7 +261,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.reserveDiskGiB, "advanced"],
   ] as const).map(([key, group]) => {
     const setting = TART_SETTINGS[key]!;
-    return [key.slice(TART_PREFIX.length), { ...setting, label: setting.label.replace(/^Tart: /, ""), group } as FieldDescriptor];
+    return [key.slice(TART_PREFIX.length), { ...setting, label: IMAGE_LABELS[key] ?? fieldLabel(setting.label), group } as FieldDescriptor];
   }),
 );
 

@@ -16,7 +16,7 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { currentKindId } from "../kinds.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
-import { isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
+import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
 export const SSH_POOL_KINDS = ["linux", "linux-docker"] as const;
 export type SshPoolKind = (typeof SSH_POOL_KINDS)[number];
@@ -203,7 +203,7 @@ export const SSH_POOL_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object
     [SSH_POOL_KEYS.sshPrivateKey, "credentials"],
   ] as const).map(([key, group]) => {
     const setting = SSH_POOL_SETTINGS[key]!;
-    return [key.slice(SSH_POOL_PREFIX.length), { ...setting, label: setting.label.replace(/^SSH host pool: /, ""), group } as FieldDescriptor];
+    return [key.slice(SSH_POOL_PREFIX.length), { ...setting, label: fieldLabel(setting.label), group } as FieldDescriptor];
   }),
 );
 

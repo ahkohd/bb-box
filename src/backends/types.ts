@@ -453,6 +453,16 @@ export type FieldDescriptor = PluginSettingDescriptor & { readonly group: FieldG
 
 export type FieldValue = string | number | boolean;
 
+/**
+ * A field's label from the BB setting it was before 029: without the
+ * backend's name in front, such as "Proxmox LXC: ", and with a capital, as
+ * the settings page shows it under the backend's own heading.
+ */
+export function fieldLabel(settingLabel: string): string {
+  const label = settingLabel.replace(/^[^:]+: /, "");
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 /** A field BB would keep as a secret: write-only, and kept apart from the configuration. */
 export function isSecret(field: PluginSettingDescriptor): boolean {
   return field.type === "string" && field.secret === true;

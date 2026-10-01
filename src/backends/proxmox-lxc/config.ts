@@ -29,6 +29,7 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import {
+  fieldLabel,
   isSecret,
   type BackendPart,
   type BoxSize,
@@ -383,7 +384,7 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
 export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
   FIELD_GROUPS.map(([key, group]) => {
     const setting = LXC_SETTINGS[key]!;
-    const field = { ...setting, label: setting.label.replace(/^Proxmox LXC: /, ""), group } as FieldDescriptor;
+    const field = { ...setting, label: fieldLabel(setting.label), group } as FieldDescriptor;
     // The Linux templates have a default of their own now that no earlier key stands in for it.
     if (key === flavourKey("linux", "templates")) {
       Object.assign(field, { default: String(LXC_DEFAULTS.linuxTemplate), description: FLAVOUR_WORDS.linux.templates });
