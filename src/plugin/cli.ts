@@ -22,6 +22,8 @@ const sizeOptions = {
   "memory-gib": { type: "integer", min: 1, max: 65536, description: "Memory in GiB, for a custom size." },
   "disk-gib": { type: "integer", min: 1, max: 65536, description: "Root disk in GiB, for a custom size. Presets keep the kind's own disk." },
 } as const;
+/** Where a box goes (044): a provider by its name from bb box kinds, its backend ID or its one host. */
+const onOption = { on: { type: "string", description: "The provider to use, from bb box kinds, such as \"Docker on devpc\": only it is tried. Without it, the first with room." } } as const;
 const boxPositional = [{ name: "box", description: "The box's name or ID.", required: true }] as const;
 
 function out(text: string): PluginCliResult {
@@ -107,7 +109,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               kinds
                 .map((kind) => {
                   const presets = kind.presets.map((preset) => `  ${preset.name}${preset.name === kind.defaultPreset ? " (default)" : ""}: ${preset.words}`);
-                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, from ${kind.backends.join(", ")}. ${kind.description} ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
+                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, on ${kind.offers.map((offer) => offer.name).join(", ")}. ${kind.description} ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
                 })
                 .join("\n"),
             );
@@ -126,13 +128,13 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         acquire: cliCommand({
           summary: "Acquire a box for a thread and wait until it answers.",
           positionals: [{ name: "kind", description: "The kind of box, from bb box kinds.", required: true }],
-          options: { ...threadOption, ...jsonOption, ...sizeOptions, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
+          options: { ...threadOption, ...jsonOption, ...sizeOptions, ...onOption, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
           run: ({ positionals, options }, ctx) =>
             guard("Acquiring a box", async () => {
               const threadId = threadOf(options.thread, ctx);
               const projectId = ctx.projectId ?? (await app.projectOf(threadId));
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size });
+              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: options.on } : {}) });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
               return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };
@@ -161,11 +163,11 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         "machines add": cliCommand({
           summary: "Add a machine of your own: a box of the kind, kept as a BB machine under the name until you remove it.",
           positionals: [{ name: "kind", description: "The kind of box, from bb box kinds. It must be able to become a BB machine.", required: true }],
-          options: { ...jsonOption, ...sizeOptions, name: { type: "string", description: "Its name, which is also its BB machine's: a lower-case letter first, then letters, digits and \"-\". bb-box picks one when left out." }, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
+          options: { ...jsonOption, ...sizeOptions, ...onOption, name: { type: "string", description: "Its name, which is also its BB machine's: a lower-case letter first, then letters, digits and \"-\". bb-box picks one when left out." }, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
           run: ({ positionals, options }) =>
             guard("Adding the machine", async () => {
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}) });
+              let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}), ...(options.on ? { on: options.on } : {}) });
               if (!options["no-wait"]) box = await boxes.enrolled((await boxes.settled(box)) ?? box);
               if (options.json) return json(app.view(box));
               return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };

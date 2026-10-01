@@ -104,7 +104,7 @@ export function NewBox({
 }: {
   kinds: readonly KindView[];
   /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036). */
-  make: (kind: string, size?: SizeRequest, name?: string) => Promise<string | null>;
+  make: (kind: string, size?: SizeRequest, name?: string, on?: string) => Promise<string | null>;
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
   machine?: boolean;
 }) {
@@ -126,6 +126,8 @@ export function NewBox({
 
   /** The kind under the pointer or the keyboard focus, which the pane shows; the chosen kind otherwise. */
   const [peek, setPeek] = useState<string | null>(null);
+  /** Where the box goes (044): a provider's backend ID, or null for the first with room. Not remembered; another kind resets it. */
+  const [on, setOn] = useState<string | null>(null);
   const groups = groupKinds(kinds);
   const ordered = groups.flatMap((group) => group.kinds);
 
@@ -148,6 +150,7 @@ export function NewBox({
 
   const chooseKind = (next: KindView, focus = false) => {
     setChosenKind(next.id);
+    setOn(null);
     setProblem(null);
     if (focus) kindOptions.current[ordered.indexOf(next)]?.focus();
   };
@@ -176,7 +179,7 @@ export function NewBox({
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = await make(kind.id, request, machine && typedName ? typedName : undefined);
+      const refused = await make(kind.id, request, machine && typedName ? typedName : undefined, on ?? undefined);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -293,7 +296,7 @@ export function NewBox({
           </div>
           {shown ? (
             <div className="sm:col-start-1 sm:row-span-4 sm:row-start-1 sm:border-r sm:border-border sm:pr-4">
-              <KindDetail kind={shown} pluginId={pluginId} id={DETAIL_ID} />
+              <KindDetail kind={shown} pluginId={pluginId} id={DETAIL_ID} choice={shown.id === kind?.id ? { value: on, onChange: setOn } : undefined} />
             </div>
           ) : null}
           {kind ? (

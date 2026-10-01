@@ -48,8 +48,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
           : null;
       return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn };
     },
-    acquire: ({ threadId, kind, size }) =>
-      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size })),
+    acquire: ({ threadId, kind, size, on }) =>
+      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}) })),
     release: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Releasing the box", () => boxes.release(threadId, box))),
     stop: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Stopping the box", () => boxes.stop(threadId, box))),
     start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box)),
@@ -92,8 +92,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       ]);
       return { machines, kinds: kinds.filter((kind) => kind.enrol) };
     },
-    "machines.add": ({ kind, size, name }) =>
-      change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}) })),
+    "machines.add": ({ kind, size, name, on }) =>
+      change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) })),
     "machines.remove": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Removing the machine", () => boxes.release(OPERATOR, box))),
     "machines.stop": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Stopping the machine", () => boxes.stop(OPERATOR, box))),
     "machines.start": ({ box }) => change("Starting the machine", () => boxes.start(OPERATOR, box)),

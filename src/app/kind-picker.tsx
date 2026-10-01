@@ -3,7 +3,7 @@
 // pointer or the keyboard (the operator's notes of 1 October 2026).
 
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import type { ReactNode } from "react";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import type { BoxForm } from "../backends/types.ts";
 import type { KindView, OfferView, SizeView } from "../plugin/views.ts";
 import { cn } from "@/lib/utils";
@@ -65,17 +65,9 @@ export function providerGlyph(offer: OfferView): string {
   }
 }
 
-/** The driver's name without its aside: "Tart (VMs on a Mac)" reads "Tart" before "on mac-mini". */
-function shortLabel(offer: OfferView): string {
-  return offer.label.replace(/\s*\([^)]*\)\s*$/, "");
-}
-
-/** "Proxmox LXC on pve1", "Tart on 2 Macs", "SSH host pool". */
+/** "Proxmox LXC on pve1", "Tart on 2 Macs", "SSH host pool": the name the server made, which `on` takes too (044). */
 export function offerWhere(offer: OfferView): string {
-  const label = shortLabel(offer);
-  if (offer.hosts.length === 1) return `${label} on ${offer.hosts[0]}`;
-  if (offer.hosts.length > 1) return `${label} on ${offer.hosts.length} ${offer.type === "tart" ? "Macs" : "hosts"}`;
-  return label;
+  return offer.name;
 }
 
 /** The host's short name for a row's mark: one host's name, or a count. */
@@ -148,33 +140,96 @@ export function kindFacts(kind: KindView): { readonly label: string; readonly wo
   return facts;
 }
 
+/** Where the box goes (044): a provider's backend ID, or null for the first with room. */
+export interface ProviderChoice {
+  readonly value: string | null;
+  readonly onChange: (value: string | null) => void;
+}
+
 /**
  * The detail pane: who provides the kind and where, how soon, and what it has
- * and lacks. `id` lets each kind option describe itself by it.
+ * and lacks. `id` lets each kind option describe itself by it. With `choice`,
+ * for the chosen kind with more than one offer, the offers are a choice with
+ * "First with room" first (044); otherwise they are plain text.
  */
-export function KindDetail({ kind, pluginId, id, className }: { kind: KindView; pluginId: string; id: string; className?: string }) {
+export function KindDetail({ kind, pluginId, id, className, choice }: { kind: KindView; pluginId: string; id: string; className?: string; choice?: ProviderChoice }) {
   const offers = kind.offers;
+  const choosing = choice !== undefined && offers.length > 1;
+  const options = useRef<(HTMLButtonElement | null)[]>([]);
+  const values: (string | null)[] = [null, ...offers.map((offer) => offer.backend)];
+  const chosenIndex = Math.max(0, values.indexOf(choice?.value ?? null));
+  const pick = (position: number) => {
+    choice?.onChange(values[position] ?? null);
+    options.current[position]?.focus();
+  };
+  const arrows = (event: KeyboardEvent<HTMLElement>) => {
+    const step = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    pick((chosenIndex + step + values.length) % values.length);
+  };
+  const offerLine = (offer: OfferView) => {
+    const words = [offer.form ? FORM_WORDS[offer.form] : null, ...offerReadiness(offer)].filter(Boolean);
+    return (
+      <>
+        <Icon name={`${pluginId}/${providerGlyph(offer)}`} className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0">
+          {offerWhere(offer)}
+          {words.length ? <span className="text-muted-foreground"> · {words.join(" · ")}</span> : null}
+        </span>
+      </>
+    );
+  };
   return (
     <div id={id} className={cn("min-w-0 text-xs leading-snug text-foreground", className)}>
       <p className="flex items-center gap-2 font-medium">
         <Icon name={`${pluginId}/${kind.desktop ? "monitor" : "server"}`} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="min-w-0">{kindName(kind)}</span>
       </p>
-      {offers.length ? (
-        <ul className="mt-1.5 space-y-0.5">
-          {offers.map((offer, index) => {
-            const words = [offer.form ? FORM_WORDS[offer.form] : null, ...offerReadiness(offer)].filter(Boolean);
+      {choosing ? (
+        <div role="radiogroup" aria-label="Provider" className="mt-1.5 space-y-0.5" onKeyDown={arrows}>
+          {values.map((value, position) => {
+            const selected = position === chosenIndex;
+            const offer = value === null ? null : offers.find((candidate) => candidate.backend === value)!;
             return (
-              <li key={offer.backend} className="flex items-start gap-1.5">
-                <Icon name={`${pluginId}/${providerGlyph(offer)}`} className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="min-w-0">
-                  {index > 0 ? <span className="text-muted-foreground">or </span> : null}
-                  {offerWhere(offer)}
-                  {words.length ? <span className="text-muted-foreground"> · {words.join(" · ")}</span> : null}
-                </span>
-              </li>
+              <button
+                key={value ?? "first"}
+                ref={(element) => {
+                  options.current[position] = element;
+                }}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => pick(position)}
+                className={cn(
+                  "flex w-full items-start gap-1.5 rounded-sm px-1.5 py-1 text-left outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
+                  selected && "bg-state-active",
+                )}
+              >
+                {offer ? (
+                  offerLine(offer)
+                ) : (
+                  <>
+                    <Icon name="Check" className={cn("mt-0.5 size-3.5 shrink-0", selected ? "text-foreground" : "invisible")} aria-hidden />
+                    <span className="min-w-0">
+                      First with room
+                      <span className="text-muted-foreground"> · in this order</span>
+                    </span>
+                  </>
+                )}
+              </button>
             );
           })}
+        </div>
+      ) : offers.length ? (
+        <ul className="mt-1.5 space-y-0.5">
+          {offers.map((offer, index) => (
+            <li key={offer.backend} className="flex items-start gap-1.5">
+              {index > 0 ? <span className="mt-0.5 w-3.5 shrink-0 text-muted-foreground">or</span> : null}
+              {offerLine(offer)}
+            </li>
+          ))}
           {offers.length > 1 ? <li className="pl-5 text-muted-foreground">the first with room, in that order</li> : null}
         </ul>
       ) : kind.backends.length ? (

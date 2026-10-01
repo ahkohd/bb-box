@@ -1374,6 +1374,18 @@ test("refusals say what to do next", async (t) => {
   assert.match(text(noDesktop), /has no desktop/);
 });
 
+test("box_acquire takes the provider in the words box_list gives after On:, and a wrong name is refused with them (044)", async (t) => {
+  const { harness, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const listed = text(await tool("box_list", {}));
+  assert.match(listed, /- linux: .* On: Fake host\./);
+  const refused = text(await tool("box_acquire", { kind: "linux", on: "elsewhere" }));
+  assert.match(refused, /No provider is called "elsewhere"\. linux comes from: Fake host\. Leave "on" out for the first with room\./);
+  assert.match(refused, /each kind's line ends with its providers/);
+  const acquired = text(await tool("box_acquire", { kind: "linux", on: "fake host", wait: false }));
+  assert.match(acquired, /^Acquiring box \S+ \(linux/);
+});
+
 test("with no backend on, the plugin asks for its settings, and a saved configuration takes effect at once", async (t) => {
   const { harness, app, tool } = await start({});
   t.after(() => harness.lifecycle.dispose());
@@ -1689,7 +1701,7 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   const kinds = await harness.behavior.runCli(["kinds"]);
   assert.match(
     kinds.stdout ?? "",
-    /^linux: Linux, from Fake host\. .* Root: no, the box user cannot use sudo\. Docker: no\.\n  small \(default\): 2 cores, 4 GiB memory\n  medium: 4 cores, 8 GiB memory\n  large: 8 cores, 16 GiB memory\n  largest: 16 cores, 32 GiB memory, 256 GiB disk\n/,
+    /^linux: Linux, on Fake host\. .* Root: no, the box user cannot use sudo\. Docker: no\.\n  small \(default\): 2 cores, 4 GiB memory\n  medium: 4 cores, 8 GiB memory\n  large: 8 cores, 16 GiB memory\n  largest: 16 cores, 32 GiB memory, 256 GiB disk\n/,
   );
   const acquired = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD, "--size", "medium", "--disk-gib", "20"]);
   assert.equal(acquired.exitCode, 0, acquired.stderr);

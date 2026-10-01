@@ -112,7 +112,8 @@ function kind(id, label, description, cores, desktop, gpu, spares = { target: 0,
 
 /** One backend's offer of a kind, for the picker's pane. */
 function offer(type, label, hosts, form, extra = {}) {
-  return { backend: type, type, label, hosts, form, ready: 0, free: null, admin: true, resizable: null, typicalReadyMs: null, docker: true, ...extra };
+  const name = hosts.length === 1 ? `${label} on ${hosts[0]}` : hosts.length > 1 ? `${label} on ${hosts.length} ${type === "tart" ? "Macs" : "hosts"}` : label;
+  return { backend: type, name, type, label, hosts, form, ready: 0, free: null, admin: true, resizable: null, typicalReadyMs: null, docker: true, ...extra };
 }
 
 export const KINDS = [
@@ -373,6 +374,21 @@ export const scenes = {
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
+    },
+  },
+  "panel-chooser-on": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 640,
+    rpc: rpc([]),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      // The chosen kind has three offers: the pane's choice, with Docker picked.
+      const option = [...document.querySelectorAll('[role="radiogroup"][aria-label="Provider"] [role="radio"]')].find((candidate) => candidate.textContent.startsWith("Docker on"));
+      option?.click();
+      await wait(200);
     },
   },
   "panel-chooser-hover": {

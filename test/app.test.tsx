@@ -13,6 +13,7 @@ import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
 import { groupKinds, kindFacts, kindName, kindTitle, offerWhere, providerGlyph } from "../src/app/kind-picker.tsx";
+import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
@@ -249,6 +250,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     offers: [
       {
         backend: "fake",
+        name: "Fake host on pve",
         type: "fake",
         label: "Fake host",
         hosts: ["pve"],
@@ -343,8 +345,8 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
       changes.push(`thread ${ref} ${prompt}`);
       return { threadId: "thr_child", error: null };
     },
-    acquire: ({ kind, size }) => {
-      changes.push(`acquire ${kind}${size ? ` ${JSON.stringify(size)}` : ""}`);
+    acquire: ({ kind, size, on }) => {
+      changes.push(`acquire ${kind}${size ? ` ${JSON.stringify(size)}` : ""}${on ? ` on ${on}` : ""}`);
       if (options.failWith) return result(null);
       const made = box({ id: `box_${boxes.length + 2}`, name: "new-box", kind, kindLabel: KINDS.find((candidate) => candidate.id === kind)?.label ?? kind, state: "acquiring", createdAt: Date.now(), timings: {}, enrol: { state: "off", hostId: null, error: null } });
       boxes = [...boxes, made];
@@ -1490,13 +1492,13 @@ test("the kind picker groups kinds by OS, names rows by their tools, and its pan
     enrol: false,
     computerUse: true,
     docker: false,
-    offers: [{ backend: "proxmox-qemu", type: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve1"], form: "VM", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: 30000, docker: false }],
+    offers: [{ backend: "proxmox-qemu", name: "Proxmox QEMU on pve1", type: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve1"], form: "VM", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: 30000, docker: false }],
   };
   const pooled: KindView = {
     ...KINDS[0]!,
     offers: [
       KINDS[0]!.offers[0]!,
-      { backend: "ssh-pool", type: "ssh-pool", label: "SSH host pool", hosts: [], form: "Physical", ready: 0, free: 1, admin: false, resizable: null, typicalReadyMs: null, docker: true },
+      { backend: "ssh-pool", name: "SSH host pool", type: "ssh-pool", label: "SSH host pool", hosts: [], form: "Physical", ready: 0, free: 1, admin: false, resizable: null, typicalReadyMs: null, docker: true },
     ],
     admin: null,
     forms: ["LXC", "Physical"],
@@ -1514,9 +1516,10 @@ test("the kind picker groups kinds by OS, names rows by their tools, and its pan
   const pane = document.getElementById("new-box-kind-detail")!;
   expect(options.map((option) => option.getAttribute("aria-describedby"))).toEqual(["new-box-kind-detail", "new-box-kind-detail", "new-box-kind-detail"]);
   expect(pane.textContent).toContain("Linux terminal");
+  // The chosen kind's offers are a choice (044); a kind under the pointer shows them as text, with "or" between.
+  expect(pane.textContent).toContain("First with room · in this order");
   expect(pane.textContent).toContain("Fake host on pve · LXC container · usually about 2.2 s");
-  expect(pane.textContent).toContain("or SSH host pool · a physical machine · 1 free");
-  expect(pane.textContent).toContain("the first with room, in that order");
+  expect(pane.textContent).toContain("SSH host pool · a physical machine · 1 free");
   expect(pane.textContent).toContain("Linux x86_64 · root on some backends");
   expect(pane.textContent).toContain("yes: Git credentials, machine variables, child threads");
   fireEvent.mouseEnter(options[2]!);
@@ -1537,6 +1540,46 @@ test("the kind picker groups kinds by OS, names rows by their tools, and its pan
   expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
 });
 
+test("the chosen kind's offers are a provider choice, First with room first, which goes with the request and resets with the kind (044)", async () => {
+  const pooled: KindView = {
+    ...KINDS[0]!,
+    offers: [
+      KINDS[0]!.offers[0]!,
+      { backend: "ssh-pool", name: "SSH host pool", type: "ssh-pool", label: "SSH host pool", hosts: [], form: "Physical", ready: 0, free: 1, admin: false, resizable: null, typicalReadyMs: null, docker: true },
+    ],
+    admin: null,
+    forms: ["LXC", "Physical"],
+  };
+  const { handlers, changes } = server([], { kinds: [pooled, KINDS[1]!] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const form = await screen.findByRole("radiogroup", { name: "Kind" });
+  // The chosen kind has two offers, so the pane offers the choice; First with room is chosen at first.
+  const providers = screen.getByRole("radiogroup", { name: "Provider" });
+  expect(within(providers).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual([
+    "First with room · in this order:true",
+    "Fake host on pve · LXC container · usually about 2.2 s:false",
+    "SSH host pool · a physical machine · 1 free:false",
+  ]);
+  // A kind under the pointer shows its offers as plain text.
+  fireEvent.mouseEnter(within(form).getByRole("radio", { name: /^Desktop, GPU/ }));
+  expect(screen.queryByRole("radiogroup", { name: "Provider" })).toBeNull();
+  fireEvent.mouseLeave(form);
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Provider" })).getByRole("radio", { name: /^SSH host pool/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(changes).toEqual(["acquire linux on ssh-pool"]));
+
+  // Another kind puts the choice back to First with room.
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const again = await screen.findByRole("radiogroup", { name: "Provider" });
+  fireEvent.click(within(again).getByRole("radio", { name: /^SSH host pool/ }));
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Kind" })).getByRole("radio", { name: /^Desktop, GPU/ }));
+  expect(screen.queryByRole("radiogroup", { name: "Provider" })).toBeNull();
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Kind" })).getByRole("radio", { name: /^Terminal/ }));
+  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+});
+
 test("the kind picker's words: titles, names, groups, where an offer runs and its glyph", () => {
   const linux = KINDS[0]!;
   const desktop = KINDS[1]!;
@@ -1550,9 +1593,11 @@ test("the kind picker's words: titles, names, groups, where an offer runs and it
   ]);
   const offer = linux.offers[0]!;
   expect(offerWhere(offer)).toBe("Fake host on pve");
-  expect(offerWhere({ ...offer, type: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
-  expect(offerWhere({ ...offer, type: "tart", label: "Tart (VMs on a Mac)", hosts: ["mac-mini"] })).toBe("Tart on mac-mini");
-  expect(offerWhere({ ...offer, type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
+  // The name the server made, which `on` takes too (044).
+  expect(providerName({ type: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
+  expect(providerName({ type: "tart", label: "Tart (VMs on a Mac)", hosts: ["mac-mini"] })).toBe("Tart on mac-mini");
+  expect(providerName({ type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
+  expect(providerKeys("docker:devpc", { type: "docker", label: "Docker", hosts: ["devpc"] })).toEqual(["docker on devpc", "docker:devpc", "devpc"]);
   expect(["proxmox-lxc", "proxmox-qemu", "docker", "tart", "ssh-pool", "fake"].map((type) => providerGlyph({ ...offer, type }))).toEqual(["proxmox", "proxmox", "docker", "laptop", "plug", "server"]);
   expect(kindFacts({ ...linux, offers: [{ ...offer, docker: false }] }).map((fact) => fact.label)).toEqual(["System", "Has", "Lacks", "BB machine", "Sizes"]);
   // The badge: a Linux kind or box without Docker, not one whose offers differ, nor another OS (041).
