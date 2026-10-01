@@ -115,6 +115,8 @@ export interface KindView {
   readonly largest: SizeView;
   readonly gpu: boolean;
   readonly desktop: boolean;
+  /** A box of it can become a BB machine, so a thread can run on it. */
+  readonly enrol: boolean;
   /** The box user can become root on every backend that offers the kind, on none, or, when null, on some. */
   readonly admin: boolean | null;
   /** The backends that offer it, in the order acquire tries them. */
@@ -149,6 +151,7 @@ export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges)
       largest: sizeView(sizes.largest),
       gpu: kind.capabilities.gpu,
       desktop: kind.capabilities.displays.length > 0,
+      enrol: kind.capabilities.enrol,
       admin,
       backends: [backend.label],
       forms: form ? [form] : [],
@@ -192,7 +195,8 @@ export function boxLine(box: BoxRecord): string {
   const size = sizeWords(box);
   const parts = [`${box.name}: ${box.kindLabel} (${box.kind}${box.capabilities.gpu ? ", GPU" : ""}${size ? `, ${size}` : ""}), ${STATE_WORDS[box.state]}`];
   if (box.state === "ready" && box.timings.total !== undefined) parts.push(`ready in ${seconds(box.timings.total)}`);
-  if (box.enrol.state === "enrolled") parts.push(`enrolled as a BB machine${box.timings.enrol !== undefined ? ` in ${seconds(box.timings.enrol)}` : ""}`);
+  if (box.role === "machine") parts.push("this thread's machine");
+  else if (box.enrol.state === "enrolled") parts.push(`enrolled as a BB machine${box.timings.enrol !== undefined ? ` in ${seconds(box.timings.enrol)}` : ""}`);
   if (box.error) parts.push(box.error);
   return `- ${parts.join("; ")}`;
 }

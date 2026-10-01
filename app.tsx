@@ -5,6 +5,7 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { DESKTOP_ACTION, DESKTOP_PAGE, DesktopPanel, DesktopsPage } from "./src/app/desktop.tsx";
 import { BoxesPanel } from "./src/app/panel.tsx";
+import { NewBoxInputs } from "./src/app/new-box-inputs.tsx";
 import { SettingsSection } from "./src/app/settings.tsx";
 
 export default definePluginApp((app) => {
@@ -29,5 +30,10 @@ export default definePluginApp((app) => {
   app.slots.settingsSection({
     id: "configuration",
     component: SettingsSection,
+  });
+  // "New box" in BB's new-thread screen (033): the kind and size of a thread's own box.
+  app.slots.experimental_machineProviderInputs({
+    machineProviderId: "bb-box-new",
+    component: NewBoxInputs,
   });
 });

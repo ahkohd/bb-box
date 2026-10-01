@@ -20,6 +20,7 @@ import { registerDesktop, type Desktops } from "./desktop.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { ThreadOnBox } from "./contract.ts";
+import { registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
 import { boxView, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type KindView } from "./views.ts";
@@ -256,6 +257,18 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     variablesWaitMs: options.variablesWaitMs,
   });
   bb.experimental_machines.register(enrolment.provider());
+  registerNewBox(bb, {
+    boxes,
+    async thread(threadId) {
+      try {
+        const thread = await bb.sdk.threads.get({ threadId });
+        return { id: thread.id, projectId: thread.projectId };
+      } catch {
+        return null;
+      }
+    },
+    bootstrap: (request) => bb.experimental_machines.bootstrap(request),
+  });
   const computing = new Computer({
     async spawn(box, script, signal) {
       const { command } = await boxes.transports(box);

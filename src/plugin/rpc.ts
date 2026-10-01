@@ -83,6 +83,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         return { threadId: null, error: describeError(error, "Starting a thread on the box") };
       }
     },
+    kinds: () => app.kinds(),
     backends: () => app.backendViews(),
     doctor: () => app.doctor(),
     "config.get": () => app.configuration.state(),

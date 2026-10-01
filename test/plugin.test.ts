@@ -78,6 +78,11 @@ async function start(
     names: [] as string[],
     /** Threads bb-box asked BB to start. */
     spawned: [] as unknown[],
+    /**
+     * Machines BB owns, as for "New box": deleting one runs BB's removal, which
+     * calls the provider's remove and waits for it, with no time limit.
+     */
+    bbRemovals: new Map<string, () => Promise<unknown>>(),
     /** Changes bb-box made to threads. */
     updated: [] as unknown[],
     /** Threads that run on each BB machine, by host ID. */
@@ -184,6 +189,11 @@ async function start(
         },
         delete: async ({ hostId }: { hostId: string }) => {
           world.events.push(`delete ${hostId}`);
+          const removal = world.bbRemovals.get(hostId);
+          if (removal) {
+            await removal();
+            return {} as never;
+          }
           if (!hosts.delete(hostId)) throw notFound("Host");
           return {} as never;
         },
@@ -784,6 +794,117 @@ test("a box that is not a BB machine cannot run a thread, and says why (#55)", a
   assert.ok(isError(refused));
   assert.match(text(refused), /A thread cannot run on box \S+: it is not a BB machine\. Its kind does not enrol, or enrolment is off in bb-box's settings\./);
   assert.deepEqual(world.spawned, []);
+});
+
+/** BB's call of a machine provider's create: the key, inputs and steps it reports. */
+function createContext(key: string, inputs: unknown) {
+  const steps: string[] = [];
+  const checkpoints: unknown[] = [];
+  return {
+    steps,
+    checkpoints,
+    context: {
+      inputs,
+      key,
+      attempt: 1,
+      checkpoint: async (resource: unknown) => void checkpoints.push(resource),
+      report: { step: (step: string) => void steps.push(step), log: () => {} },
+      signal: new AbortController().signal,
+    } as never,
+  };
+}
+
+test("New box: BB's new-thread screen makes a box that is the thread's own machine, and removes it with the thread (033)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "boxes-per-thread": 1 });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
+  assert.ok(provider, "the provider is registered");
+  assert.equal(provider.ephemeral, true);
+
+  assert.deepEqual(await provider.validate!({ inputs: { kind: "linux" } } as never), { action: "accept" });
+  assert.equal((await provider.validate!({ inputs: { kind: "macos" } } as never)).action, "refuse");
+
+  const { context, steps, checkpoints } = createContext(THREAD, { kind: "linux", size: "medium" });
+  const created = (await provider.create(context)) as { status: string; name: string; resource: { boxId: string } };
+  assert.equal(created.status, "created", JSON.stringify(created));
+  const [box] = await app.boxes.list(THREAD);
+  assert.equal(box!.role, "machine");
+  assert.deepEqual(box!.size, { cores: 4, memoryMiB: 8192, diskGiB: null });
+  assert.deepEqual(created.resource, { boxId: box!.id });
+  assert.deepEqual(checkpoints, [{ boxId: box!.id }]);
+  assert.deepEqual(world.bootstraps, [THREAD], "BB's daemon joins under the thread's key, once");
+  assert.deepEqual(box!.enrol, { state: "enrolled", hostId: `host-${THREAD}`, error: null });
+  assert.deepEqual(steps, ["Making a box", `Installing BB in box ${box!.name}`]);
+  assert.match(text(await tool("box_list", {})), /this thread's machine/);
+  // It does not count against the per-thread limit of 1.
+  assert.ok(!isError(await tool("box_acquire", {})));
+
+  assert.deepEqual(await provider.remove({ resource: created.resource, hostId: `host-${THREAD}` } as never), { status: "removed" });
+  assert.deepEqual((await app.boxes.list(THREAD)).map((each) => each.role), ["box"], "the thread's machine went");
+});
+
+/** Fails rather than hangs when `promise` does not settle in time. */
+function within<T>(promise: Promise<T>, what: string, ms = 3_000): Promise<T> {
+  return Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${what} did not finish in ${ms} ms`)), ms))]);
+}
+
+/** A "New box" box made for the thread as BB would, with BB owning its machine. */
+async function newBox(harness: Awaited<ReturnType<typeof start>>["harness"], world: Awaited<ReturnType<typeof start>>["world"]) {
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
+  const created = (await provider.create(createContext(THREAD, { kind: "linux" }).context)) as unknown as { resource: { boxId: string } };
+  const hostId = `host-${THREAD}`;
+  // BB's removal of the machine, started once, as BB's removeMachine does.
+  let removing: Promise<unknown> | null = null;
+  const removal = () => (removing ??= provider.remove({ resource: created.resource, hostId } as never));
+  world.bbRemovals.set(hostId, removal);
+  return { removal, hostId };
+}
+
+test("New box: archiving the thread removes its box without waiting on itself (033)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const { removal, hostId } = await newBox(harness, world);
+  assert.deepEqual(await within(removal(), "BB's removal"), { status: "removed" });
+  assert.deepEqual(await app.boxes.list(THREAD), []);
+  assert.ok(!world.events.includes(`delete ${hostId}`), "bb-box leaves BB's machine to BB");
+});
+
+test("New box: the sweep releases the box of a thread that ended, and BB's removal after it finds nothing left (033)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const { removal, hostId } = await newBox(harness, world);
+  world.threads.delete(THREAD);
+  await within(app.boxes.sweep(), "the sweep");
+  assert.deepEqual(await app.boxes.list(THREAD), []);
+  assert.ok(!world.events.includes(`delete ${hostId}`), "bb-box leaves BB's machine to BB");
+  assert.deepEqual(await within(removal(), "BB's removal"), { status: "removed" });
+});
+
+test("New box: a retry makes a new box rather than reuse one that failed (033)", async (t) => {
+  const { harness, app } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
+  const failed = await app.boxes.acquire({ threadId: THREAD, projectId: PROJECT, kind: "linux", role: "machine" });
+  await app.boxes.settled(failed);
+  await app.boxes.update((await app.boxes.find(failed.id))!, () => ({ state: "failed", error: "it did not start" }));
+  const created = (await provider.create(createContext(THREAD, { kind: "linux" }).context)) as unknown as { status: string; resource: { boxId: string } };
+  assert.equal(created.status, "created");
+  assert.notEqual(created.resource.boxId, failed.id);
+  assert.deepEqual((await app.boxes.list(THREAD)).map((box) => box.id), [created.resource.boxId], "the failed box was released");
+});
+
+test("New box: a create cut short is cleaned up, and a key that is no thread fails with a message (033)", async (t) => {
+  const { harness, app } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
+
+  const none = (await provider.create(createContext("thr_nope", { kind: "linux" }).context)) as { status: string; message: string };
+  assert.equal(none.status, "failed");
+  assert.match(none.message, /BB named none \(key thr_nope\)/);
+
+  await app.boxes.acquire({ threadId: THREAD, projectId: PROJECT, kind: "linux", role: "machine" });
+  assert.deepEqual(await provider.reconcileCleanup({ key: THREAD, report: { step: () => {}, log: () => {} }, signal: new AbortController().signal } as never), { status: "removed" });
+  assert.deepEqual(await app.boxes.list(THREAD), []);
 });
 
 test("enrolment can be switched off", async (t) => {

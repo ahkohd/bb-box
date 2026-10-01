@@ -473,7 +473,9 @@ export class Enrolment {
       const transport = await this.#transport(box);
       const signal = AbortSignal.timeout(this.#timeoutMs);
       try {
-        await this.#deps.bootstrap({ key: box.id, executor: executor(transport), report: QUIET, signal });
+        // A thread's own box joined BB under the thread's key; any other under its own ID.
+        const key = box.role === "machine" ? box.threadId : box.id;
+        await this.#deps.bootstrap({ key, executor: executor(transport), report: QUIET, signal });
       } catch (error) {
         await this.#deps.boxes.update(box, (current) =>
           current.enrol.hostId !== hostId ? {} : { enrol: { ...current.enrol, error: describeError(error, "Reconnecting the box's BB machine") } },
