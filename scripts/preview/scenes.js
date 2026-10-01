@@ -312,6 +312,16 @@ function rpc(boxes, options = {}) {
   const find = (ref) => boxes.find((candidate) => candidate.id === ref) ?? null;
   return {
     "machines.list": () => ({ machines: options.machines ?? [], kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol) }),
+    // Docker on BB machines (042): one hosting boxes, one that could, one with no Docker, one offline.
+    "docker.hosts": () => ({
+      hosts: options.dockerHosts ?? [
+        { hostId: "host_1", name: "devpc", connected: true, docker: { version: "29.8.1", os: "Ubuntu 24.04", arch: "x86_64", cpus: 16, memoryMiB: 64 * 1024 }, problem: null, absent: false, backend: { id: "docker:host_1", enabled: true, boxes: 1 }, images: null },
+        { hostId: "host_2", name: "mac-mini", connected: true, docker: { version: "29.8.1", os: "Docker Desktop", arch: "arm64", cpus: 10, memoryMiB: 32 * 1024 }, problem: null, absent: false, backend: null, images: null },
+        { hostId: "host_3", name: "laptop", connected: true, docker: null, problem: null, absent: true, backend: null, images: null },
+        { hostId: "host_4", name: "attic", connected: false, docker: null, problem: "The machine is offline in BB.", absent: false, backend: { id: "docker:host_4", enabled: true, boxes: 0 }, images: null },
+      ],
+    }),
+    "docker.host.set": () => ({ result: { ok: true, problems: [] }, hosts: [] }),
     "machines.add": () => ({ box: null, error: options.refuse ?? null }),
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
