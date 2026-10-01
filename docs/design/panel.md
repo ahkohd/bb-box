@@ -312,7 +312,7 @@ titled after the box.
   | Who | Text | Action |
   | --- | --- | --- |
   | the agent | The agent has control | Take control (outline) |
-  | you, in this tab | You have control. The desktop follows this tab's size. | Hand back to the agent (filled) |
+  | you, in this tab | You have control. The desktop follows this tab's size. (Just "You have control." for a desktop that cannot be resized, such as a Windows or macOS VM's.) | Hand back to the agent (filled) |
   | another viewer | Another viewer has control | Take control |
   | the agent, which took it from you (038) | The agent took control | Take control again |
   | nobody, for a moment | Control is changing hands… | none |
