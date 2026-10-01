@@ -4,11 +4,7 @@ This backend runs Linux boxes as containers on one Docker host: the Docker on
 BB's server, or another machine's over SSH. It is the quickest way to try
 bb-box, as it needs only Docker. It offers three kinds:
 
-- **linux**: Ubuntu 24.04 with the same tools as a Proxmox LXC linux box.
-  With `privileged` on, each has a Docker daemon of its own, in a
-  privileged container. Otherwise it says No Docker, and an agent that asks
-  for linux-docker, linux with Docker, gets another backend's box
-  ([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md));
+- **linux**: Ubuntu 24.04 with the same tools as a Proxmox LXC linux box;
 - **linux-desktop-cpu**: XFCE and Chrome, drawn by the CPU, shown in the
   thread's panel with shared control, and computer use through Cua Driver;
 - **linux-desktop**: the same desktop on one of the host's NVIDIA GPUs,
@@ -16,15 +12,23 @@ bb-box, as it needs only Docker. It offers three kinds:
 
 All of them enrol in BB as machines, as Proxmox LXC boxes do.
 
+Each box but a GPU desktop has a Docker daemon of its own, in a privileged
+container, which its first `docker` command starts. With `privileged` off,
+or on rootless Docker, boxes are unprivileged and say No Docker, and an
+agent that asks for linux-docker, linux with Docker, gets another backend's
+box ([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md)).
+A GPU desktop is never privileged, since it would see every GPU on the host.
+
 The bb-box plugin, on BB's server, runs the `docker` CLI for every call. It
 runs commands and copies files in a box with `docker exec`, and streams the
 desktop through `socat` under `docker exec`. No SSH server runs in a box, and
 BB's server needs no network path to the containers, so a Docker host over
 SSH works as the local one does ([decision 031](../../docs/decisions/031-docker-boxes-are-reached-through-docker-exec.md)).
 
-On a Linux host with local Docker, a linux box was ready 0.3 s after it was
-asked for, and a linux box with Docker or a linux-desktop-cpu box 0.6 s, its desktop
-running. Its desktop stream opened in under 0.1 s. Over `ssh://`, every
+On a Linux host with local Docker, a linux box was ready 0.4 s after it was
+asked for, and a linux-desktop-cpu box 0.6 s, its desktop running. Neither
+waits for Docker: a box's first `docker` command took 0.3 s, as it started
+the daemon. A desktop stream opened in under 0.1 s. Over `ssh://`, every
 `docker` call opens an SSH session, so a box took about 1.5 s, and its
 stream 0.6 s.
 
@@ -38,9 +42,9 @@ stream 0.6 s.
 ## Limits
 
 - **Not a security boundary.** A box is a container: it shares the host's
-  kernel, and its user may use `sudo` in it. With `privileged` on, a linux
-  box is a privileged container, which can take over the Docker host, so
-  turn it on only where the agents may do that.
+  kernel, and its user may use `sudo` in it. By default a box is a
+  privileged container, which can take over the Docker host. Turn
+  `privileged` off where the agents may not do that.
 - **No systemd.** A box runs no init system, so `systemctl` does not work in
   it. The image's main process starts what a box needs. Use a Proxmox LXC box
   for work that needs systemd.
@@ -63,7 +67,8 @@ stream 0.6 s.
 - Docker Engine with BuildKit, on Linux, or Docker Desktop. bb-box was tested
   with Docker 29.8, rootful, on Linux. Docker Desktop and rootless Docker
   have not yet been tested. Rootless Docker cannot run the privileged
-  containers that give linux boxes Docker, and the doctor says so.
+  containers that give boxes Docker, so there boxes say No Docker, and the
+  doctor warns.
 - The `docker` CLI on BB's server, on the PATH of the user BB runs as, and
   that user allowed to use Docker. On Linux, add it to the `docker` group.
   For a Docker host over SSH, that user must log in to it with a key and no
@@ -107,7 +112,7 @@ In BB, on BB Box's settings page, set up the Docker backend and turn it on. Its 
 | `host` | empty | `unix:///path/to/docker.sock` or `ssh://user@host`. Empty uses the `docker` CLI's own default on BB's server: `DOCKER_HOST`, its current context, or the local socket |
 | `linux-image` | `bbbox/linux:1` | The image of linux boxes. Empty turns them off |
 | `desktop-image` | `bbbox/linux-desktop:1` | The image of linux-desktop-cpu and linux-desktop boxes. Empty turns them off |
-| `privileged` | off | Docker in linux boxes: each is a privileged container with a Docker daemon of its own. Off, linux boxes say No Docker |
+| `privileged` | on | Docker in boxes: each box but a GPU desktop is a privileged container with a Docker daemon of its own, started by its first `docker` command. Off, boxes say No Docker |
 | `gpu-desktops` | off | Offers linux-desktop boxes, on the GPUs the NVIDIA Container Toolkit lists |
 | `desktops-per-gpu` | 4 | The most linux-desktop boxes on one GPU |
 | `network` | `bbbox` | The network bb-box makes for its boxes |
@@ -118,11 +123,11 @@ From a terminal, `bb box config show --json` prints the configuration and
 `bb box config apply <file>` saves it. The Docker backend's entry is:
 
 ```json
-{ "id": "docker", "type": "docker", "enabled": true, "fields": { "privileged": true } }
+{ "id": "docker", "type": "docker", "enabled": true, "fields": {} }
 ```
 
 Then `bb box doctor` checks the `docker` CLI, the daemon, each image, the
-network, Docker in linux boxes and GPU desktops when they are on, and the room on the
+network, Docker in boxes, GPU desktops when they are on, and the room on the
 host. It also gives bb-box's install ID, which labels its containers.
 
 ### Trying it without BB
@@ -131,7 +136,7 @@ The conformance suite runs against the backend without BB. With a
 configuration file such as `docker.json`:
 
 ```json
-{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": { "privileged": true } }] }
+{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": {} }] }
 ```
 
 ```sh
@@ -178,15 +183,18 @@ GPU desktops have not yet been tested on a Docker host with a GPU.
   beyond it. `/dev/shm` is half the memory, at least 1 GiB, for Chrome. Each
   box runs under Docker's `--init`, with at most 16384 processes.
 - **Start.** The image's main process, `bb-box-start`, clears what a hard
-  stop leaves behind, starts Docker's daemon in a linux box with Docker and the
-  display, the session and Cua Driver in a desktop box, then writes
-  `/run/bb-box/ready`. bb-box waits for that file, then runs BB's bootstrap,
-  which starts BB's daemon in the box.
+  stop leaves behind. In a box with Docker it listens on Docker's socket
+  with `systemd-socket-activate`, so the first `docker` command starts
+  Docker's daemon; a box with containers starts it at once, so their restart
+  policies work. In a desktop box it starts the display, the session and Cua
+  Driver. Then it writes `/run/bb-box/ready`, without waiting for Docker.
+  bb-box waits for that file, then runs BB's bootstrap, which starts BB's
+  daemon in the box.
 - **Stop and start.** `docker stop` and `docker start`. The restart policy is
   `unless-stopped`, so after a Docker or host restart a running box starts
   again and a stopped box stays stopped.
-- **Release.** `docker rm --force --volumes`, which also removes a
-  linux box's Docker data.
+- **Release.** `docker rm --force --volumes`, which also removes a box's
+  Docker data.
 - **Other containers.** bb-box acts only on a container whose labels name its
   install and the box. It leaves other containers alone, and other installs'
   boxes too, though they count against the most boxes.

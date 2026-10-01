@@ -256,7 +256,7 @@ const DRIVERS = [
       field("host", "Host", "connection", { description: "unix:///path/to/docker.sock or ssh://user@host. Empty uses the docker CLI's own default." }),
       field("linux-image", "Linux image", "boxes", { default: "bbbox/linux:1" }),
       field("desktop-image", "Desktop image", "boxes", { default: "bbbox/linux-desktop:1" }),
-      { key: "privileged", type: "boolean", label: "Docker in linux boxes", group: "boxes", default: false },
+      { key: "privileged", type: "boolean", label: "Docker in boxes", group: "boxes", default: true },
       { key: "gpu-desktops", type: "boolean", label: "GPU desktops", group: "boxes", default: false },
       { key: "boxes", type: "number", label: "Most boxes", group: "advanced", default: 10 },
     ],

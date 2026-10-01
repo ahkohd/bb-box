@@ -139,7 +139,8 @@ desktop in under a second.
   `docker exec`, so BB's server needs no network path to a box, and a
   Docker host over SSH works as the local one does.
 - **Docker in a box**: Docker in Docker, in a privileged container, which is
-  root on the Docker host, so it is off until the operator turns it on.
+  root on the Docker host. It is on unless the operator turns it off, and a
+  GPU desktop has none.
 - **Desktop**: XFCE and Chrome drawn by the CPU, or on an NVIDIA GPU through
   the NVIDIA Container Toolkit.
 - **Limits**: no systemd in a box, no disk size of its own, and it is not a

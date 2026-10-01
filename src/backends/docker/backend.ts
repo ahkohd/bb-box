@@ -167,8 +167,13 @@ function dataOf(container: ContainerInfo): Record<string, string> {
   return { ...(box ? { box } : {}), ...(gpu ? { gpu } : {}) };
 }
 
-/** The kinds a config offers: those with an image. */
-export function dockerKinds(config: DockerConfig): BoxKind[] {
+/**
+ * The kinds a config offers: those with an image. A box has Docker when the
+ * setting is on and the host is not rootless Docker, which cannot run the
+ * privileged containers it needs (041).
+ */
+export function dockerKinds(config: DockerConfig, rootless = false): BoxKind[] {
+  const docker = config.docker && !rootless ? ["docker"] : [];
   const kinds: Record<DockerKind, BoxKind> = {
     linux: {
       id: "linux",
@@ -179,8 +184,7 @@ export function dockerKinds(config: DockerConfig): BoxKind[] {
         os: "linux",
         arch: "x86_64",
         gpu: false,
-        // Its own Docker daemon needs a privileged container, so only with the setting on (041).
-        features: config.docker ? ["docker"] : [],
+        features: docker,
         command: DOCKER_COMMAND,
         displays: [],
         computerUse: null,
@@ -197,6 +201,8 @@ export function dockerKinds(config: DockerConfig): BoxKind[] {
         os: "linux",
         arch: "x86_64",
         gpu: true,
+        // Never privileged: a privileged container sees every GPU on the
+        // host, and Xorg would take the first, not the one placed (041).
         features: [],
         command: DOCKER_COMMAND,
         // As in a Proxmox LXC box, x0vncserver on the GPU refuses a viewer's
@@ -217,7 +223,7 @@ export function dockerKinds(config: DockerConfig): BoxKind[] {
         os: "linux",
         arch: "x86_64",
         gpu: false,
-        features: [],
+        features: docker,
         command: DOCKER_COMMAND,
         displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
         computerUse: CUA_DRIVER,
@@ -245,6 +251,8 @@ export class DockerBackend implements Backend {
   readonly #context: BackendContext;
   readonly #options: DockerBackendOptions;
   readonly #kinds: BoxKind[];
+  /** The kinds on a rootless Docker host, which has no Docker to give boxes. */
+  readonly #rootlessKinds: BoxKind[];
   readonly #cli: DockerCli;
   /** The daemon's facts, as it last gave them. */
   #info: DockerInfo | null = null;
@@ -259,6 +267,7 @@ export class DockerBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#kinds = dockerKinds(config);
+    this.#rootlessKinds = dockerKinds(config, true);
     const machine = config.machine;
     const machines = context.machines;
     this.#cli = machine
@@ -269,8 +278,10 @@ export class DockerBackend implements Backend {
       : new DockerCli(config.host, options.binary);
   }
 
+  /** "Docker on" the host as hosts names it, so the kinds' text and the picker agree; "Docker" for a local daemon not yet asked. */
   get label(): string {
-    return this.#config.host ? `Docker on ${hostWords(this.#config.host, this.#context.machines)}` : "Docker";
+    const [host] = this.hosts;
+    return host ? `Docker on ${host}` : "Docker";
   }
 
   /**
@@ -284,12 +295,18 @@ export class DockerBackend implements Backend {
     return this.#config.host ? [hostWords(this.#config.host)] : [];
   }
 
+  /** The kinds, with Docker until the daemon has said it is rootless. */
   kinds(): BoxKind[] {
-    return this.#kinds;
+    return this.#info?.rootless ? this.#rootlessKinds : this.#kinds;
+  }
+
+  /** Whether a box of `kind` is a privileged container with its own Docker daemon (041). */
+  #privileged(kind: string): boolean {
+    return this.#config.docker && !this.#info?.rootless && kind !== "linux-desktop";
   }
 
   #kind(id: string): BoxKind {
-    const kind = this.#kinds.find((candidate) => candidate.id === id);
+    const kind = this.kinds().find((candidate) => candidate.id === id);
     if (!kind) throw new BackendError("unsupported", `${this.label} does not offer ${id} boxes.`);
     return kind;
   }
@@ -539,7 +556,7 @@ export class DockerBackend implements Backend {
     // The transport's commands go straight to the CLI, so a BB machine's relay is made ready first.
     await this.#cli.prepare();
     const command = new DockerTransport(this.#cli, guest.ref);
-    const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
+    const capabilities = this.kinds().find((candidate) => candidate.id === kind)?.capabilities;
     const displays = (capabilities?.displays ?? []).map(
       (display): Display => ({
         ...display,
@@ -656,12 +673,23 @@ export class DockerBackend implements Backend {
         );
       }
 
-      if (this.#config.docker) {
-        if (info.rootless) {
-          push("docker.privileged", "Docker in linux boxes", "fail", "Rootless Docker cannot run the privileged containers that give linux boxes Docker.", "Turn off Docker in linux boxes, or use rootful Docker.");
-        } else {
-          push("docker.privileged", "Docker in linux boxes", "ok", "Each linux box runs its own Docker daemon in a privileged container, which can take over the Docker host.");
-        }
+      if (!this.#config.docker) {
+        push("docker.privileged", "Docker in boxes", "ok", "Off: boxes run unprivileged and say No Docker.");
+      } else if (info.rootless) {
+        push(
+          "docker.privileged",
+          "Docker in boxes",
+          "warn",
+          "Rootless Docker cannot run the privileged containers that give boxes Docker, so boxes run unprivileged and say No Docker.",
+          "Use rootful Docker to give boxes Docker, or turn off Docker in boxes.",
+        );
+      } else {
+        push(
+          "docker.privileged",
+          "Docker in boxes",
+          "ok",
+          `Each box but a GPU desktop is a privileged container with its own Docker daemon, so a box can become root on ${info.name}. This is not a security boundary.`,
+        );
       }
 
       if (this.#config.images["linux-desktop"]) {
@@ -780,13 +808,11 @@ export class DockerBackend implements Backend {
       [LABELS.created]: String(box.createdAt),
       ...(gpu ? { [LABELS.gpu]: gpu } : {}),
     };
-    const extra =
-      box.kind === "linux" && this.#config.docker
-        ? // Docker's own data on a volume, since overlayfs cannot hold overlayfs.
-          ["--privileged", "--env", "BBBOX_DOCKERD=1", "--volume", "/var/lib/docker"]
-        : box.kind === "linux-desktop" && gpu
-          ? ["--device", gpu, "--env", "NVIDIA_DRIVER_CAPABILITIES=all", "--env", "BBBOX_GPU=1"]
-          : [];
+    const extra = [
+      // Docker's own data on a volume, since overlayfs cannot hold overlayfs.
+      ...(this.#privileged(box.kind) ? ["--privileged", "--env", "BBBOX_DOCKERD=1", "--volume", "/var/lib/docker"] : []),
+      ...(box.kind === "linux-desktop" && gpu ? ["--device", gpu, "--env", "NVIDIA_DRIVER_CAPABILITIES=all", "--env", "BBBOX_GPU=1"] : []),
+    ];
     const args = [
       "container", "create",
       "--pull", "never",
