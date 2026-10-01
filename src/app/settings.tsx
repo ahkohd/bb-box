@@ -234,7 +234,7 @@ export function SettingsSection() {
       </Section>
       {state.migrated ? (
         <p className="text-xs leading-snug text-subtle-foreground/75">
-          bb-box moved its settings from BB into this configuration {relativeTime(state.migrated.at, Date.now())}, and kept a copy; <code className="font-mono">bb box config migrated</code> shows it.
+          BB Box moved its settings from BB into this configuration {relativeTime(state.migrated.at, Date.now())}, and kept a copy; <code className="font-mono">bb box config migrated</code> shows it.
         </p>
       ) : null}
     </div>

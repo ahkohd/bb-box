@@ -488,9 +488,9 @@ test("the panel shows why a change failed", async () => {
 
 test("the panel says so when no backend is on, and links the settings", async () => {
   const slot = panel(server([], { kinds: [] }).handlers);
-  expect(await slot.findByText("bb-box is not set up yet")).toBeTruthy();
+  expect(await slot.findByText("BB Box is not set up yet")).toBeTruthy();
   expect(slot.queryByRole("button", { name: "New box" })).toBeNull();
-  expect(slot.getByRole("link", { name: /Open bb-box settings/ }).getAttribute("href")).toBe("/settings/plugins/bb-box");
+  expect(slot.getByRole("link", { name: /Open BB Box settings/ }).getAttribute("href")).toBe("/settings/plugins/bb-box");
 });
 
 test("the panel refetches on its thread's change signals and after a reconnect", async () => {
@@ -537,7 +537,7 @@ test("the settings page lists each backend's state, the kinds and the general se
   expect(slot.getByRole("combobox", { name: "Default kind" }).textContent).toBe("Linux");
   expect((slot.getByRole("textbox", { name: "Boxes per thread" }) as HTMLInputElement).value).toBe("0");
   expect(slot.getByRole("switch", { name: "Enrol boxes as BB machines" }).getAttribute("aria-checked")).toBe("true");
-  expect(slot.getByText(/bb-box moved its settings from BB/)).toBeTruthy();
+  expect(slot.getByText(/BB Box moved its settings from BB/)).toBeTruthy();
 });
 
 test("a backend's switch saves the document with the switch changed, and a problem shows", async () => {
