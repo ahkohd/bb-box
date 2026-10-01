@@ -424,6 +424,16 @@ export const scenes = {
       await wait(300);
     },
   },
+  "settings-setup-off": {
+    slot: "settings",
+    width: 860,
+    props: {},
+    rpc: rpc([]),
+    after: async (root) => {
+      root.querySelector('button[aria-label="Set up Tart"]')?.click();
+      await wait(300);
+    },
+  },
   "settings-kind": {
     slot: "settings",
     width: 860,

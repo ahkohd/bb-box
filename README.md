@@ -201,8 +201,8 @@ Then pick a backend and follow its guide under `setup/`. [Docker](setup/docker/R
 is the quickest: it needs only a Docker host, local or over SSH.
 [Proxmox LXC](setup/proxmox-lxc/README.md) gives the fastest boxes, and
 GPU desktops. On BB Box's settings page in BB (Settings, Plugins, BB Box),
-set the backend up with the values the guide gives, press Check, save, and
-turn it on. `bb box doctor` runs the same checks from a terminal, and
+set the backend up with the values the guide gives, press Check, then
+Save and turn on. `bb box doctor` runs the same checks from a terminal, and
 `bb box config` shows and saves the same configuration. Each thread gets a
 Box panel, agents get the `box_` tools, and `skills/bb-box/SKILL.md`
 describes both.

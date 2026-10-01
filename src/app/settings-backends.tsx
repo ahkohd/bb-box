@@ -197,7 +197,7 @@ export function BackendForm({
   const [draft, setDraft] = useState<BackendDraft>(() => draftOf(model));
   const [problems, setProblems] = useState<readonly Problem[]>(model.problems);
   const [doctor, setDoctor] = useState<{ report: DoctorReport; at: number; fresh: boolean } | null>(model.state?.doctor ? { ...model.state.doctor, fresh: false } : null);
-  const [busy, setBusy] = useState<"save" | "check" | null>(null);
+  const [busy, setBusy] = useState<"save" | "on" | "check" | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -219,6 +219,20 @@ export function BackendForm({
       setBusy(null);
     }
   };
+  /** Saves the backend on in one go. The server refuses an on backend with problems, so a refusal saves nothing. */
+  const saveOn = async () => {
+    setBusy("on");
+    setNotice(null);
+    try {
+      const { saved, problems: left } = await onSave({ ...toBackendConfig(model, draft), enabled: true });
+      setProblems(left);
+      if (saved && !left.length) onClose();
+      else if (saved) setNotice("Saved. It stays off until these are fixed.");
+      else if (left.length) setNotice("Not saved: it cannot be on with these. Save keeps it off while you fix them.");
+    } finally {
+      setBusy(null);
+    }
+  };
   const check = async () => {
     setBusy("check");
     setNotice(null);
@@ -233,6 +247,7 @@ export function BackendForm({
   };
 
   const guide = driver.setup.guide ? `${REPOSITORY_URL}/${driver.setup.guide}` : null;
+  const off = !(model.config?.enabled ?? false);
   return (
     <form
       className="mt-3 space-y-4 border-t border-border pt-3"
@@ -327,7 +342,13 @@ export function BackendForm({
         </ul>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" size="sm" className="h-7" disabled={busy !== null}>
+        {off ? (
+          <Button type="button" size="sm" className="h-7" disabled={busy !== null} onClick={() => void saveOn()}>
+            {busy === "on" ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
+            Save and turn on
+          </Button>
+        ) : null}
+        <Button type="submit" variant={off ? "outline" : "default"} size="sm" className="h-7" disabled={busy !== null}>
           {busy === "save" ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
           Save
         </Button>

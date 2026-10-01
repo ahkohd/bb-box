@@ -834,6 +834,28 @@ test("a backend that is off saves part way, and the form says what is still miss
   expect(slot.getByRole("button", { name: "Save" })).toBeTruthy();
 });
 
+test("a backend that is off offers Save and turn on, which saves it on in one go, and a refusal saves nothing", async () => {
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
+  expect(slot.queryByRole("button", { name: "Save and turn on" })).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Set up Other pool" }));
+  fireEvent.click(await slot.findByRole("button", { name: "Save and turn on" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  const saved = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
+  expect(saved.backends.find((backend: { id: string }) => backend.id === "other")).toMatchObject({ id: "other", type: "other", enabled: true });
+  await waitFor(() => expect(slot.queryByRole("button", { name: "Save and turn on" })).toBeNull());
+  cleanup();
+  applied = null;
+
+  const refused = settings(server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.other.machines", message: "Add a machine." }] } }).handlers);
+  fireEvent.click(await refused.findByRole("button", { name: "Set up Other pool" }));
+  fireEvent.click(refused.getByRole("button", { name: "Save and turn on" }));
+  expect(await refused.findByText("Add a machine.")).toBeTruthy();
+  expect(refused.getByText("Not saved: it cannot be on with these. Save keeps it off while you fix them.")).toBeTruthy();
+  expect(refused.getByRole("button", { name: "Save and turn on" })).toBeTruthy();
+});
+
 test("a kind's editor saves its presets, default, largest size, warm counts and spares as changes from the shipped sizes", async () => {
   const { handlers, changes } = server([]);
   const slot = settings(handlers);
