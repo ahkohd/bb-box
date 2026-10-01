@@ -252,6 +252,25 @@ test("a Linux box runs as box, boots with no saved state or VNC, and stop shuts 
   await backend.release(guest, releasing);
 });
 
+test("each new instance, as after a restart, reaches a Linux box as box from its data alone, and closes that connection when it stops it (#240)", async () => {
+  const { ssh, make, backend } = linuxSetup();
+  const box = identity("linux-arm64", "thr_abc123", LINUX_SMALL);
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  // Stop asks the VM to shut down on a shared connection, which must close before the VM goes.
+  const exits = () => ssh.log().filter((entry) => entry.control === "exit" && entry.target === `box@${guest.address}`).length;
+  const closed = exits();
+  await make().stop(guest);
+  assert.ok(exits() > closed, "its connection as box closed");
+  await make().start(guest);
+  assert.equal(await backend.power(guest), "running");
+  await make().relabel(guest, { ...box, name: "build-2" }, box.name, signal());
+  assert.ok(ssh.log().some((entry) => entry.target === `box@${guest.address}` && entry.command.includes("'build-2'")), "named as box");
+  assert.ok(!ssh.log().some((entry) => entry.target === `admin@${guest.address}`), "never as the macOS user");
+  const kept = exits();
+  await backend.release(guest, releasing);
+  assert.ok(exits() > kept, "release closes it too");
+});
+
 test("a Linux desktop box waits for its desktop, and opens it through SSH to the VM's own VNC server (040)", async () => {
   const off = new TartBackend(tartConfig({ "tart-linux-image": "bb-box-linux" }), testContext()).kinds();
   assert.ok(!off.some((kind) => kind.id === "linux-arm64-desktop-cpu"), "off until it has an image of its own");
