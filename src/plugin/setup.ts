@@ -413,9 +413,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (!project) throw new BoxError("not_found", `BB has no project ${projectId} for a thread on box ${box.name}.`);
       const personal = project.kind === "personal";
       if (!personal && !project.sources.some((source) => source.hostId === hostId)) await bb.sdk.projects.sources.add({ projectId, type: "clone", hostId });
+      // Spawned without its parent, then linked: BB gives a personal-project child its parent's
+      // environment, on the parent's machine, whatever machine the request names.
       const thread = await bb.sdk.threads.spawn({
         projectId,
-        parentThreadId: threadId,
         lifecycleOwnerThreadId: threadId,
         environment: {
           type: "host",
@@ -425,6 +426,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         prompt,
         title: title ?? `On box ${box.name}`,
       });
+      await bb.sdk.threads.update({ threadId: thread.id, parentThreadId: threadId });
       return thread.id;
     },
   };
