@@ -3,8 +3,10 @@
 How bb-box runs a command in a Mac box user's logged-in desktop session, so
 that the run tool's `session: "desktop"` works on macOS (issue #57).
 
-Status: recommendation made; experiments E7 to E12 pending. Checked on
-1 October 2026, on macOS 27.0 in a Tart box from a Cirrus Labs image.
+Status: recommendation made and measured, and accepted as
+[030](../decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md).
+Checked on 1 October 2026, on macOS 27.0 in a Tart box from a Cirrus Labs
+image.
 
 ## Recommendation
 
@@ -17,7 +19,8 @@ Status: recommendation made; experiments E7 to E12 pending. Checked on
 
    The command joins the box user's desktop session, and still runs under
    the SSH session, so output, stdin and the exit status work as for any
-   other command.
+   other command. It also reaches the login keychain, which plain SSH
+   cannot. It costs about 21 ms per run.
 2. **Every Mac gets it.**
    - Boxes whose user is an administrator, such as Tart's, have it already
      through their passwordless sudo.
@@ -63,6 +66,33 @@ On macOS 27.0, as the box user over bb-box's SSH:
   to count processes'` and printed a count, with exit status 0.
 - **E6.** The wrapper started TextEdit's binary. Its window appeared on
   the desktop, `computer_windows` listed it, and the agent typed into it.
+- **E7.** `ps -E` does not escape a literal backslash, so a value holding
+  a backslash and three digits reads like an escape (see Variables below).
+- **E8.** A wrapped command's `launchctl managername` prints `Aqua`. Its
+  PATH comes from ~/.zshenv, and HOME is the box user's. Its parent is the
+  inner sudo, which the shell replaces.
+- **E9.** The exit status (7), stdin (`hello`) and streaming (two lines
+  2 s apart) all pass through the wrapper. Whether stderr stays apart from
+  stdout was not checked; the conformance suite checks it.
+- **E10.** `time` gives 0.021 s for a wrapped `/usr/bin/true`.
+- **E11.** `security show-keychain-info` fails from plain SSH and works
+  wrapped, so only a wrapped command can use the login keychain. The
+  pasteboard works both ways.
+- **E12.** From plain SSH, TextEdit's binary got a window that took
+  typing through Accessibility. Real key events were not checked. `open -a
+  TextEdit` from plain SSH brought it up frontmost, as a child of launchd.
+- **The pre-check.** `sudo -n -l` with the wrapper's command exits 0 on an
+  administrator box, and `stat -f %Su /dev/console` prints the box user.
+- **Prompts.** No screen-capture consent prompt appeared on a fresh boot.
+  It appeared once, after the box was suspended and resumed, and Tart's
+  setup is to pre-approve it. macOS shows an "App Background Activity"
+  notification on every boot.
+
+So the wrapper passes E8 and E9, and it is enough for #57. E11 is a further
+reason to prefer it over plain SSH: git's keychain helper and Xcode's
+signing work only in a wrapped command. E12 shows that macOS 27 is kinder
+to plain SSH than Apple's forum reports for 26, but the session is still
+`Background` and the login keychain still out of reach.
 
 ## The wrapper
 
@@ -86,7 +116,17 @@ On macOS 27.0, as the box user over bb-box's SSH:
 - A run's time limit works as for other macOS commands today: core stops
   the local `ssh`, and the command may keep running in the box.
 - The conformance suite runs a `session: "desktop"` command on macOS
-  desktop kinds, and checks that `launchctl managername` prints `Aqua`.
+  desktop kinds, and checks that `launchctl managername` prints `Aqua` and
+  that stderr stays apart from stdout.
+
+## Variables
+
+E7 bears on reading BB's variables from a worker's environment on macOS,
+which `ps -E` prints with a newline as `\012`. A literal backslash is not
+escaped, so `\NNN` in a value is ambiguous. It is rare, and GH_TOKEN never
+has one. A space followed by `WORD=` in a value is ambiguous too. Both go
+when BB gives the variables directly ([BB requests](../bb-requests.md),
+request 8).
 
 ## Standard box users
 
@@ -138,19 +178,18 @@ Only if `asuser` stops working:
 
 ## Experiments
 
-E7 to E12 go to the next Tart live check, run as the box user over
-bb-box's SSH:
+Run as the box user over bb-box's SSH on macOS 27.0. Results are above.
 
-| | Checks | Expected |
+| | Checks | Result |
 | --- | --- | --- |
-| E7 | how `ps -E` prints a literal backslash (for the variables) | to decide whether `\NNN` decodes exactly |
-| E8 | the session, PATH, HOME and parent processes a wrapped command sees | `Aqua`; the PATH from ~/.zshenv |
-| E9 | exit status, stdin and streaming through the wrapper | 7; `hello`; two lines 2 s apart |
-| E10 | the wrapper's cost per run | to measure |
-| E11 | the login keychain and the pasteboard, with and without the wrapper | to find out |
-| E12 | a GUI binary from plain SSH, then `open -a` | no typing for the binary; `open` works |
-
-If E8 and E9 pass, the wrapper is enough for #57.
+| E5 | `osascript` to System Events, wrapped | a count, exit 0 |
+| E6 | TextEdit's binary, wrapped, then typing | window listed and typed into |
+| E7 | how `ps -E` prints a literal backslash | not escaped |
+| E8 | the session, PATH, HOME and parents of a wrapped command | `Aqua`; PATH from ~/.zshenv |
+| E9 | exit status, stdin and streaming through the wrapper | 7; `hello`; lines 2 s apart |
+| E10 | the wrapper's cost per run | 21 ms |
+| E11 | the login keychain and the pasteboard, plain and wrapped | keychain wrapped only; pasteboard both |
+| E12 | a GUI binary from plain SSH, then `open -a` | binary typed into via Accessibility; `open` frontmost |
 
 ## Sources
 

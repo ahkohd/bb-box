@@ -34,3 +34,4 @@ that changes gets a new record that supersedes the old one.
 | [027](027-a-kind-says-when-it-has-a-desktop.md) | A kind says when it has a desktop, and a plain box has no qualifier |
 | [028](028-a-box-size-is-chosen-when-it-is-made.md) | A box's size is chosen when it is made, from presets per kind |
 | [029](029-configuration-is-one-checked-document.md) | Configuration is one checked document in bb-box's storage, set through its page and CLI |
+| [030](030-a-mac-runs-desktop-commands-through-launchctl-asuser.md) | A Mac runs desktop commands through `launchctl asuser` |

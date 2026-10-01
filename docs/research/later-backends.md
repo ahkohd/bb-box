@@ -360,7 +360,8 @@ desktop kind. A separate driver is not needed.
     suppress it where available.
   - Commands over SSH do not have these grants, so the helper runs as a
     LaunchAgent in the box user's session and does the work. `session:
-    "desktop"` uses it too.
+    "desktop"` uses `launchctl asuser` instead
+    ([030](../decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md)).
 - **Desktop.** Screen Sharing on 5900, with "VNC viewers may control screen
   with password" turned on at setup. Otherwise it offers only Apple's own
   authentication types.
@@ -432,8 +433,9 @@ desktop kind. A separate driver is not needed.
 - **Commands and files.** SSH through the host: shell `sh`, `admin` true,
   `inDesktopSession` false. `tart exec` runs through tart-guest-agent over
   gRPC. The agent runs as a launchd global agent, so its commands run in the
-  GUI session, which makes it the natural `session: "desktop"` helper for
-  Tart.
+  GUI session, which made it a candidate `session: "desktop"` helper for
+  Tart. [030](../decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md)
+  chose `launchctl asuser` over SSH instead, which works on every Mac.
 - **Desktop.** `--vnc-experimental` starts a VNC server on the host, not in
   the VM. It uses Apple's Virtualization framework, and prints
   `vnc://:<password>@127.0.0.1:<port>` with a random port and a new password

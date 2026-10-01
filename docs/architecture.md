@@ -285,8 +285,9 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the
-  session bus on Linux, a LaunchAgent on macOS, a scheduled task with `/IT` on
-  Windows.
+  session bus on Linux, `launchctl asuser` on macOS
+  ([030](decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md)),
+  a scheduled task with `/IT` on Windows.
 
 ### Guests
 
@@ -1210,5 +1211,4 @@ Notes:
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
 | First boot of a Windows clone, Tart boot and resume, a physical Mac's reset; until then `readyTimeoutMs` values are estimates | [later backends](research/later-backends.md) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
-| How `launchctl asuser` runs a macOS desktop command: its session, stdin, exit status, keychain and pasteboard | the experiments in [the macOS desktop session](research/macos-desktop-session.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
