@@ -416,8 +416,6 @@ export class TartBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Each VM's address while bb-box knows it: learnt when it starts, forgotten when it stops. */
   readonly #addresses = new Map<string, string>();
-  /** Each VM's guest OS, as bb-box last learnt it from its box, for its SSH user. A VM it does not know is macOS. */
-  readonly #os = new Map<string, GuestOs>();
   /** VMs being started for boxes or warm pools, by VM, until they run or their start ends. */
   readonly #placing = new Map<string, Placing>();
   /** Placement is one at a time, so two acquires, or an acquire and a fill, never take the last slot of one Mac. */
@@ -644,7 +642,6 @@ export class TartBackend implements Backend {
       // A Linux box says so, for its SSH user; a macOS box's data is as it was.
       const data: Readonly<Record<string, string>> = os === "linux" ? { box: box.boxId, os } : { box: box.boxId };
       const guest = (address: string | null, size: BoxSize | null = null): Guest => ({ ref: vm, host: host.name, address, size, data });
-      this.#os.set(vm, os);
       let owned = placement.how === "resume";
       try {
         let address: string;
@@ -688,16 +685,16 @@ export class TartBackend implements Backend {
           await step("start", () => this.#start(host, vm, deadline, signal, false));
           address = await step("network", () => this.#address(host, vm, deadline, signal));
         }
-        await step("ssh", () => this.#waitReady(host, vm, address, deadline, signal));
+        await step("ssh", () => this.#waitReady(host, vm, os, address, deadline, signal));
         if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
-        await step("identify", () => this.#identify(host, address, vm, signal));
-        await step("name", () => this.#rename(host, address, vm, box.name, signal));
+        await step("identify", () => this.#identify(host, address, vm, os, signal));
+        await step("name", () => this.#rename(host, address, vm, os, box.name, signal));
         const size = sizeOf((await this.#state(host, signal)).configs.get(vm));
         // Claimed again, so the box's record has the address and size as it becomes ready.
         await hooks.claim(guest(address, size));
         return guest(address, size);
       } catch (error) {
-        if (owned) await this.#delete(host, vm, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
+        if (owned) await this.#delete(host, vm, os, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
         const retry = placement.how !== "clone" && attempt === 0 && !signal.aborted && Date.now() < deadline;
         if (!retry) throw error;
         this.#context.logError("acquire", new Error(`Box ${box.name} could not use VM ${vm} (${message(error)}), so bb-box clones a VM for it.`));
@@ -725,7 +722,7 @@ export class TartBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const host = this.#hostOf(guest);
     const started = performance.now();
-    await this.#delete(host, guest.ref, this.#boxOf(guest), signal);
+    await this.#delete(host, guest.ref, this.#osOf(guest), this.#boxOf(guest), signal);
     hooks.timing("delete", Math.round(performance.now() - started));
   }
 
@@ -749,25 +746,26 @@ export class TartBackend implements Backend {
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
     if ((await this.power(guest, signal)) === null) throw this.#gone(guest);
     this.#addresses.delete(guest.ref);
-    this.#os.set(guest.ref, this.#osOf(guest));
+    const os = this.#osOf(guest);
     await this.#start(host, guest.ref, deadline, signal, true, this.#boxOf(guest));
     const address = await this.#address(host, guest.ref, deadline, signal);
-    await this.#waitReady(host, guest.ref, address, deadline, signal);
-    await this.#identify(host, address, guest.ref, signal);
-    if (this.#osOf(guest) === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
+    await this.#waitReady(host, guest.ref, os, address, deadline, signal);
+    await this.#identify(host, address, guest.ref, os, signal);
+    if (os === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
     const host = this.#hostOf(guest);
     // A Linux VM shuts itself down, and the Mac waits for it; one that cannot be asked is stopped.
     // Only this install's box is asked, and only when it runs: another install's is "gone" (stopScript).
+    const os = this.#osOf(guest);
     let how: "suspend" | "stop" | "shutdown" = "suspend";
-    if (this.#osOf(guest) === "linux") {
+    if (os === "linux") {
       const power = await this.power(guest, signal);
       if (power === null) throw this.#gone(guest);
       how = power === "running" && (await this.#powerOff(host, guest, signal)) ? "shutdown" : "stop";
     }
-    await this.#forget(host, guest.ref);
+    await this.#forget(host, guest.ref, os);
     const result = await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), how), { timeoutMs: 240_000, signal });
     if (result.stdout.trim() === "gone") throw this.#gone(guest);
   }
@@ -782,8 +780,7 @@ export class TartBackend implements Backend {
     const owner = ownerText({ install: this.#context.installId, kind: box.kind, box: box.boxId, thread: box.threadId, name: box.name, created: box.createdAt });
     const result = (await this.#run(host, relabelScript(guest.ref, this.#context.installId, box.boxId, owner), { signal })).stdout.trim();
     if (result !== "relabelled") throw new Error(`The owner file of ${guest.ref} on ${host.name} does not name box ${box.boxId}.`);
-    this.#os.set(guest.ref, this.#osOf(guest));
-    if (from !== box.name && guest.address) await this.#name(host, guest.address, guest.ref, box.name, signal);
+    if (from !== box.name && guest.address) await this.#name(host, guest.address, guest.ref, this.#osOf(guest), box.name, signal);
   }
 
   /** This install's VMs on every Mac that answers, from their owner files. */
@@ -941,8 +938,8 @@ export class TartBackend implements Backend {
       return out;
     });
     for (const { host, vm } of retired) {
-      // Its owner file names no box, so a box that held it meanwhile keeps it.
-      await this.#delete(host, vm, null, signal).catch((error) => this.#context.logError("retire a warm VM", error));
+      // Its owner file names no box, so a box that held it meanwhile keeps it. Warm VMs are macOS.
+      await this.#delete(host, vm, "macos", null, signal).catch((error) => this.#context.logError("retire a warm VM", error));
     }
 
     for (const pool of pools) {
@@ -1011,8 +1008,8 @@ export class TartBackend implements Backend {
       await this.#run(host, cloneScript(pool.image, vm, pool.size.cores, pool.size.memoryMiB), { timeoutMs: 10 * 60_000, signal: fillSignal });
       await this.#start(host, vm, deadline, fillSignal, false);
       const address = await this.#address(host, vm, deadline, fillSignal);
-      await this.#waitReady(host, vm, address, deadline, fillSignal);
-      await this.#identify(host, address, vm, fillSignal);
+      await this.#waitReady(host, vm, "macos", address, deadline, fillSignal);
+      await this.#identify(host, address, vm, "macos", fillSignal);
       const { ssh } = await this.#keys();
       const desktop = await new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos").run(desktopScript(), {
         timeoutMs: 240_000,
@@ -1025,7 +1022,7 @@ export class TartBackend implements Backend {
       const adopted = await this.#chain(async () => {
         if (fill.adopted) return true;
         fillSignal.throwIfAborted();
-        await this.#forget(host, vm);
+        await this.#forget(host, vm, "macos");
         const result = (await this.#run(host, warmScript(vm, this.#context.installId), { timeoutMs: 120_000, signal: fillSignal })).stdout.trim();
         if (result !== "warm") throw new Error(`Warm VM ${vm} on ${host.name} was no longer being filled.`);
         return false;
@@ -1036,7 +1033,7 @@ export class TartBackend implements Backend {
       ready.reject(error);
       if (!fill.adopted) {
         this.#placing.delete(vm);
-        await this.#delete(host, vm, null).catch((cause) => this.#context.logError("release a warm VM that failed", cause));
+        await this.#delete(host, vm, "macos", null).catch((cause) => this.#context.logError("release a warm VM that failed", cause));
       }
       // Stopped for an acquire that needed the slot: no room for another now.
       if (abort.signal.aborted) return false;
@@ -1057,7 +1054,6 @@ export class TartBackend implements Backend {
     }
     if (!address) throw new TransportError("unreachable", `The VM ${guest.ref} on ${host.name} has no address. It may be stopped.`);
     const os = guestOsOf(kind);
-    this.#os.set(guest.ref, os);
     const access = this.#vm(mac, address, os);
     const command = new SshTransport(ssh, access, os);
     const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
@@ -1290,9 +1286,8 @@ export class TartBackend implements Backend {
   }
 
   /** Waits until SSH to the VM, through the Mac, answers, on the connection its first commands then share. */
-  async #waitReady(host: TartHost, vm: string, address: string, deadline: number, signal?: AbortSignal): Promise<void> {
+  async #waitReady(host: TartHost, vm: string, os: GuestOs, address: string, deadline: number, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
-    const os = this.#os.get(vm) ?? "macos";
     const access = this.#vm(await this.#mac(host), address, os);
     const command = new SshTransport(ssh, access, os);
     const left = Math.max(1_000, deadline - Date.now());
@@ -1318,9 +1313,8 @@ export class TartBackend implements Backend {
    * was removed, is named only when the Mac's ARP table, just after bb-box
    * reached the address, gives the MAC address in the VM's config.
    */
-  async #identify(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<void> {
+  async #identify(host: TartHost, address: string, vm: string, os: GuestOs, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
-    const os = this.#os.get(vm) ?? "macos";
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, os), os);
     const result = await command.run(identityScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new Error(`${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
@@ -1339,15 +1333,14 @@ export class TartBackend implements Backend {
    * Checks the VM is `vm`, then names it after its box. A box whose name could
    * not be set still works, so that only logs.
    */
-  async #name(host: TartHost, address: string, vm: string, name: string, signal?: AbortSignal): Promise<void> {
-    await this.#identify(host, address, vm, signal);
-    await this.#rename(host, address, vm, name, signal);
+  async #name(host: TartHost, address: string, vm: string, os: GuestOs, name: string, signal?: AbortSignal): Promise<void> {
+    await this.#identify(host, address, vm, os, signal);
+    await this.#rename(host, address, vm, os, name, signal);
   }
 
   /** Names a VM already identified (nameScript). */
-  async #rename(host: TartHost, address: string, vm: string, name: string, signal?: AbortSignal): Promise<void> {
+  async #rename(host: TartHost, address: string, vm: string, os: GuestOs, name: string, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
-    const os = this.#os.get(vm) ?? "macos";
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, os), os);
     const result = await command.run(nameScript(name), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 }).catch((error: unknown) => error);
     if (result instanceof Error || (result as RunResult).exitCode !== 0) {
@@ -1387,20 +1380,20 @@ export class TartBackend implements Backend {
   }
 
   /** Closes the shared SSH connections to a VM that is stopping or going, and forgets its address. */
-  async #forget(host: TartHost, vm: string): Promise<void> {
+  async #forget(host: TartHost, vm: string, os: GuestOs): Promise<void> {
     const address = this.#addresses.get(vm);
     this.#addresses.delete(vm);
     if (!address) return;
     try {
       const { ssh } = await this.#keys();
-      await ssh.forget(this.#vm(await this.#mac(host), address, this.#os.get(vm) ?? "macos"));
+      await ssh.forget(this.#vm(await this.#mac(host), address, os));
     } catch (error) {
       this.#context.logError("ssh", error);
     }
   }
 
-  async #delete(host: TartHost, vm: string, boxId: string | null, signal?: AbortSignal): Promise<void> {
-    await this.#forget(host, vm);
+  async #delete(host: TartHost, vm: string, os: GuestOs, boxId: string | null, signal?: AbortSignal): Promise<void> {
+    await this.#forget(host, vm, os);
     await this.#run(host, deleteScript(vm, this.#context.installId, boxId), { timeoutMs: 120_000, signal });
   }
 
