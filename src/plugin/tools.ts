@@ -241,7 +241,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     presentation: { label: { pending: "Running in a box", completed: "Ran in a box" } },
     parameters: z.object({
       box: boxParam,
-      command: z.string().min(1).describe("A shell script, run by the box user's shell (bash on Linux)."),
+      command: z.string().min(1).describe("A shell script, run by the box user's shell (bash on Linux, PowerShell 7 on Windows)."),
       cwd: z.string().optional().describe("Directory to run in. Defaults to the box user's home."),
       timeout_seconds: z
         .number()
@@ -250,7 +250,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .max(RUN_TIMEOUT_MAX_S)
         .optional()
         .describe(
-          `Seconds before the command, and everything it started, is stopped. Defaults to ${RUN_TIMEOUT_S}. box_run returns when the script's shell exits. Start a server in the background with its output redirected, so it keeps working after that: nohup <cmd> >server.log 2>&1 &`,
+          `Seconds before the command, and everything it started, is stopped. Defaults to ${RUN_TIMEOUT_S}. box_run returns when the script's shell exits. Start a server in the background with its output redirected, so it keeps working after that: nohup <cmd> >server.log 2>&1 &, or on Windows Start-Detached { <cmd> } server.log`,
         ),
       stdin: z.string().optional().describe("Text to send to the command's standard input."),
       desktop: z.boolean().optional().describe("Run in the box's desktop session so it can open windows. Desktop boxes only."),
@@ -267,8 +267,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
           maxOutputBytes: RUN_OUTPUT_BYTES,
         });
         const text = runText(box, result);
+        const background = box.capabilities.os === "windows" ? "Start-Detached { <cmd> } job.log" : "nohup <cmd> >job.log 2>&1 &";
         const hints = result.timedOut
-          ? ["Give timeout_seconds more time, or start a long job in the background with nohup <cmd> >job.log 2>&1 & and check on it."]
+          ? [`Give timeout_seconds more time, or start a long job in the background with ${background} and check on it.`]
           : [`Run more with box_run, or copy results out with box_copy (direction from_box).`];
         return result.exitCode === 0 && !result.timedOut
           ? `${text}${next(...hints)}`

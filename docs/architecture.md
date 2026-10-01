@@ -300,7 +300,10 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   the last native command's code when its last statement failed, else 1 when
   that failed, else 0. A script too long for Windows' command line of 32,767
   characters goes to a file in the box first, over stdin. These runs have no
-  end mark yet, so they end when the output closes.
+  end mark yet, so they end when the output closes. sshd runs each command
+  in a job that ends everything in it when the command exits, so each
+  script can call `Start-Detached`, Windows' `nohup`, which starts a
+  command through WMI, outside the job.
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the
