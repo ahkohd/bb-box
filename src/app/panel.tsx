@@ -9,7 +9,7 @@ import type { BoxResult, Contract, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { EmptyPanel, forThread, message, useLive, useNow } from "./common.tsx";
-import { NewBox } from "./new-box.tsx";
+import { NewBox, type SizeRequest } from "./new-box.tsx";
 
 /** bb-box's page under BB's settings. */
 export const SETTINGS_PATH = "/settings/plugins/bb-box";
@@ -40,7 +40,8 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     await refresh();
     return refused;
   };
-  const make = (kind: string) => settle(rpc.call("acquire", { threadId, kind }));
+  // The size key is left out for the kind's default: RPC input must be JSON.
+  const make = (kind: string, size?: SizeRequest) => settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}) }));
   const act = async (method: BoxAction, box: BoxView) => {
     setProblem(await settle(rpc.call(method, { threadId, box: box.id })));
   };

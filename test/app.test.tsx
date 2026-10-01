@@ -141,8 +141,8 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktops: () => boxes.filter((candidate) => candidate.desktop).map((found) => ({ threadId: THREAD, box: found })),
-    acquire: ({ kind }) => {
-      changes.push(`acquire ${kind}`);
+    acquire: ({ kind, size }) => {
+      changes.push(`acquire ${kind}${size ? ` ${JSON.stringify(size)}` : ""}`);
       if (options.failWith) return result(null);
       const made = box({ id: `box_${boxes.length + 2}`, name: "new-box", kind, kindLabel: KINDS.find((candidate) => candidate.id === kind)?.label ?? kind, state: "acquiring", createdAt: Date.now(), timings: {}, enrol: { state: "off", hostId: null, error: null } });
       boxes = [...boxes, made];
@@ -219,15 +219,15 @@ test("the app registers the Boxes panel, a desktop tab, the Desktops page and th
 
 test("the status line says the state, the timings, BB enrolment and the display", () => {
   const now = Date.now();
-  expect(statusOf(box(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s"]);
-  expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null } }), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Joining BB…"]);
+  expect(statusOf(box(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
+  expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null } }), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Joining BB…", "2 cores · 4 GiB"]);
   expect(statusOf(box({ enrol: { state: "failed", hostId: null, error: "no route" } }), now).items[1]).toEqual({ text: "Could not join BB", tone: "warn" });
-  expect(statusOf(box({ enrol: { state: "off", hostId: null, error: null }, timings: {} }), now).items.map((item) => item.text)).toEqual(["Ready"]);
-  expect(statusOf(box({ state: "acquiring", createdAt: now - 1400 }), now)).toEqual({ tone: "busy", items: [{ text: "Starting" }, { text: "1.4 s" }] });
-  expect(statusOf(box({ state: "stopped" }), now)).toEqual({ tone: "off", items: [{ text: "Stopped" }] });
+  expect(statusOf(box({ enrol: { state: "off", hostId: null, error: null }, timings: {}, size: null }), now).items.map((item) => item.text)).toEqual(["Ready"]);
+  expect(statusOf(box({ state: "acquiring", createdAt: now - 1400 }), now)).toEqual({ tone: "busy", items: [{ text: "Starting" }, { text: "1.4 s" }, { text: "2 cores · 4 GiB" }] });
+  expect(statusOf(box({ state: "stopped", size: "8 cores, 16 GiB memory, 64 GiB disk" }), now)).toEqual({ tone: "off", items: [{ text: "Stopped" }, { text: "8 cores · 16 GiB · 64 GiB" }] });
   expect(statusOf(box({ state: "failed", error: "No GPU is left." }), now).items).toEqual([{ text: "Failed", tone: "danger" }]);
   expect(statusOf(box({ state: "gone" }), now).items.map((item) => item.text)).toEqual(["Gone", "deleted outside bb-box"]);
-  expect(statusOf(desktopBox(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "GPU"]);
+  expect(statusOf(desktopBox(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB", "GPU"]);
   expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items.at(-1)).toEqual({ text: "CPU" });
   const held = desktopBox({ control: { owner: "human", holder: "viewer-1" } });
   expect(statusOf(held, now, new Set(["viewer-1"])).items.at(-1)).toEqual({ text: "You have control", tone: "fg" });
@@ -248,6 +248,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
 
   fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
   expect(slot.getByText("192.0.2.10")).toBeTruthy();
+  expect(slot.getByText("2 cores, 4 GiB memory")).toBeTruthy();
   expect(slot.getByText("Fake host")).toBeTruthy();
   expect(slot.getByText("linux x86_64, with docker")).toBeTruthy();
   expect(slot.getByText("clone 0.7 s · total 2.1 s · BB enrolment 5.3 s")).toBeTruthy();
@@ -280,15 +281,49 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
   const form = await screen.findByRole("radiogroup", { name: "Kind" });
   expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
   fireEvent.click(within(form).getByRole("radio", { name: /Linux desktop/ }));
-  expect(screen.getByText("4 cores, 8 GiB memory")).toBeTruthy();
+  expect(screen.getByText("4 cores · 8 GiB memory · base disk · the default")).toBeTruthy();
+  const sizes = screen.getByRole("radiogroup", { name: "Size" });
+  expect(within(sizes).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["Small:true", "Medium:false", "Large:false", "Custom:false"]);
+  fireEvent.click(within(sizes).getByRole("radio", { name: "Large" }));
+  expect(screen.getByText("16 cores · 32 GiB memory · base disk")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Make box" }));
 
   expect(await slot.findByText("new-box")).toBeTruthy();
-  expect(changes).toEqual(["acquire linux-desktop"]);
+  expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}']);
   expect(slot.getByText("Starting")).toBeTruthy();
   expect(slot.getByText("1 box")).toBeTruthy();
-  expect(window.localStorage.getItem("bb-box:new-box:kind")).toBe("linux-desktop");
+  expect(JSON.parse(window.localStorage.getItem("bb-box:new-box") ?? "{}")).toEqual({ kind: "linux-desktop", size: "large" });
   await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
+
+  // The default preset sends no size at all.
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: "Small" }));
+  fireEvent.click(screen.getByRole("button", { name: "Make box" }));
+  await waitFor(() => expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}', "acquire linux-desktop"]));
+});
+
+test("a custom size starts from the preset in view, sends only its filled fields, and refuses a field that is not a whole number", async () => {
+  const { handlers, changes } = server([]);
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const sizes = await screen.findByRole("radiogroup", { name: "Size" });
+  fireEvent.click(within(sizes).getByRole("radio", { name: "Medium" }));
+  fireEvent.click(within(sizes).getByRole("radio", { name: "Custom" }));
+  const cores = screen.getByLabelText(/^Cores/) as HTMLInputElement;
+  const memory = screen.getByLabelText(/^Memory, GiB/) as HTMLInputElement;
+  const disk = screen.getByLabelText(/^Disk, GiB/) as HTMLInputElement;
+  expect([cores.value, memory.value, disk.value, disk.placeholder]).toEqual(["4", "8", "", "base"]);
+  expect(screen.getByText("up to 16")).toBeTruthy();
+  expect(screen.getByText("up to 256")).toBeTruthy();
+
+  fireEvent.change(cores, { target: { value: "six" } });
+  expect((screen.getByRole("button", { name: "Make box" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(cores, { target: { value: "6" } });
+  fireEvent.change(memory, { target: { value: "12" } });
+  fireEvent.click(screen.getByRole("button", { name: "Make box" }));
+  await waitFor(() => expect(changes).toEqual(['acquire linux {"cores":6,"memoryGiB":12}']));
+  expect(JSON.parse(window.localStorage.getItem("bb-box:new-box") ?? "{}")).toEqual({ kind: "linux", size: "custom", custom: { cores: "6", memoryGiB: "12", diskGiB: "" } });
 });
 
 test("a refused box stays in the form with the reason", async () => {

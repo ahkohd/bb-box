@@ -34,8 +34,17 @@ export function controlWord(box: BoxView, myViewers: ReadonlySet<string>): Statu
   return { text: box.control.holder && myViewers.has(box.control.holder) ? "You have control" : "Another viewer has control", tone: "fg" };
 }
 
+/** "4 cores, 8 GiB memory, 32 GiB disk" as "4 cores · 8 GiB · 32 GiB", for a status line. */
+export function compactSize(words: string): string {
+  return words
+    .split(", ")
+    .map((part) => part.replace(/ memory$/, "").replace(/ disk$/, ""))
+    .join(" · ");
+}
+
 export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<string> = new Set()): Status {
   const rest: StatusItem[] = [];
+  if (box.size) rest.push({ text: compactSize(box.size) });
   const display = displayWord(box);
   if (display) rest.push({ text: display });
   const control = controlWord(box, myViewers);
