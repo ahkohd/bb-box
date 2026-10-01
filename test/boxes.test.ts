@@ -55,8 +55,8 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
       general: async () => world.general,
       notify: (threadId) => world.notified.push(threadId),
       thread: async (threadId) => world.threads.get(threadId) ?? "live",
-      enrol: async (box) => {
-        world.enrolled.push(box.name);
+      enrol: async (box, options) => {
+        world.enrolled.push(options?.restored ? `${box.name}, restored` : box.name);
         await world.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId: `host-${box.id}`, error: null } }));
       },
       unenrol: async (box) => {
@@ -497,7 +497,11 @@ test("the sweep releases guests no box owns and adopts guests of live threads", 
     await world.kv.delete(`index/${box.id}`);
   }
   world.threads.set("thr_gone", "ended");
+  // A restored box enrols only when bb-box enrols boxes.
+  world.general = { ...world.general, enrol: false };
+  const enrolled = world.enrolled.length;
   const report = await world.boxes.sweep();
+  assert.equal(world.enrolled.length, enrolled);
   assert.equal(report.adopted, 1);
   assert.equal(report.leftovers, 1);
   const adopted = await world.boxes.find(lost.id);
@@ -526,9 +530,11 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   world.threads.set("thr_ended", "ended");
   world.threads.set("thr_unsure", "unknown");
   world.backend.faults.silent = silent.guest!.ref;
+  world.enrolled.length = 0;
 
   const report = await boxes.sweep();
   assert.deepEqual({ ...report }, { released: 0, leftovers: 1, adopted: 3, kept: 1, resumed: 0 });
+  assert.deepEqual(world.enrolled, [`${running.name}, restored`], "only the box that runs and answers enrols again");
 
   for (const [before, state] of [[running, "ready"], [stopped, "stopped"]] as const) {
     const after = await boxes.find(before.id);
@@ -560,6 +566,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   world.threads.set("thr_unsure", "live");
   assert.deepEqual({ ...(await boxes.sweep()) }, { released: 0, leftovers: 0, adopted: 1, kept: 0, resumed: 0 });
   assert.equal((await boxes.find(unsure.id))?.name, unsure.name);
+  assert.deepEqual(world.enrolled, [`${running.name}, restored`, `${unsure.name}, restored`]);
   assert.equal(await boxes.release("thr_live", running.name), null);
   assert.deepEqual(
     (await world.backend.held()).map((guest) => guest.owner?.boxId).sort(),

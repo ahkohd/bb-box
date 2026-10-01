@@ -645,6 +645,12 @@ A box is a resource of its thread and gets what the thread's own machine has.
     Each enrolment logs how long each step took, from ready to enrolled, in
     `bb plugin logs bb-box`. One that bb-box follows again after a restart
     is counted from then, and the box shows no enrolment time.
+  - A box the sweep restores from its guest, while it runs and answers,
+    enrols again with the box ID as the key. BB gives back the machine it
+    still has, whose daemon bootstrap starts again if it is disconnected, or
+    makes a new one ([025](decisions/025-a-restored-box-enrols-again.md)).
+    The enrolment is counted from the restore. A box restored stopped does
+    not enrol.
   - Every template and image removes BB's daemon lock and PID file at boot,
     so a box that restarts after a hard stop reconnects in about 0.5 s
     ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). Without
@@ -881,7 +887,7 @@ Nothing expires, so a box must never be forgotten.
 
 | Data | Lives in | Owned by | Survives |
 | --- | --- | --- | --- |
-| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | restored by the sweep from the guests' labels if lost, while their threads are live; a restored box is not re-enrolled as a BB machine |
+| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | restored by the sweep from the guests' labels if lost, while their threads are live; a restored box that runs enrols again with the same key |
 | Which guest belongs to which box and thread | the provider (tags, names), or a marker on a real machine | backend | the plugin's storage being lost |
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |

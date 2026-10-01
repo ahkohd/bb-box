@@ -133,12 +133,15 @@ async function start(
         },
       },
       hosts: {
-        // Like BB: records the machine, then calls the provider's create in the background.
+        // Like BB: records the machine, then calls the provider's create in
+        // the background. A key whose machine BB still has gets it back.
         experimental_create: async ({ key, inputs }: { key: string; inputs: { boxId: string } }) => {
           const id = `host-${key}`;
+          world.events.push(`create ${id}`);
+          const existing = hosts.get(id);
+          if (existing && existing.lifecycle.phase !== "destroyed") return existing;
           const host = makeHostResponse({ id, status: "disconnected", machineProviderId: "bb-box" });
           hosts.set(id, { ...host, lifecycle: { ...host.lifecycle, phase: "creating" } });
-          world.events.push(`create ${id}`);
           void (async () => {
             const provider = harness.inspection.registrations.machineProviders.get("bb-box")!;
             const result = await provider.create({
@@ -184,12 +187,15 @@ async function start(
         },
       },
     } as never,
-    // BB's installer, in brief: it runs a command in the box through the executor.
+    // BB's installer, in brief: it runs a command in the box through the
+    // executor, and a machine BB already has connects again.
     machineBootstrap: {
       async bootstrap({ key, executor, signal }) {
         world.bootstraps.push(key);
         const { exitCode } = await executor.exec({ command: ["sh", "-c", world.installer], timeoutMs: 10_000, signal, stdin: "", onOutput: () => {} });
         if (exitCode !== 0) throw new Error(`The installer exited with ${exitCode}.`);
+        const host = hosts.get(`host-${key}`);
+        if (host?.lifecycle.phase === "active") hosts.set(host.id, { ...host, status: "connected" });
         return { hostId: `host-${key}` };
       },
     },
@@ -548,6 +554,13 @@ test("after bb-box loses its storage, the sweep restores a live thread's box fro
   assert.equal(restored.state, "ready");
   assert.equal(restored.error, null);
   assert.deepEqual(restored.guest, live!.guest);
+  // It is a BB machine again, keyed by its box ID: BB gives back the machine it still has.
+  const enrolled = await until("enrolment", async () => {
+    const current = await app.boxes.find(live!.id);
+    return current?.enrol.state === "enrolled" ? current : null;
+  });
+  assert.equal(enrolled.enrol.hostId, `host-${live!.id}`);
+  assert.equal(world.bootstraps.filter((key) => key === live!.id).length, 1, "its daemon was still connected");
   const result = await tool("box_run", { box: live!.name, command: "cat work.txt" });
   assert.match(text(result), /kept/);
   assert.deepEqual(await app.boxes.list("thr_two"), [], "the archived thread's guest went");
@@ -563,6 +576,55 @@ test("after bb-box loses its storage, the sweep restores a live thread's box fro
   world.threadErrors.clear();
   assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Boxes restored from their guests: 1/);
   assert.equal((await app.boxes.list("thr_three"))[0]?.id, unsure!.id, "restored once BB answers");
+});
+
+test("a box the sweep restores enrols again with its box ID, timed from the restore, and a stopped one does not", async (t) => {
+  const { harness, bb, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  const hostId = `host-${box.id}`;
+  // The guest says the box was made an hour ago.
+  const label = `backend/fake/guest/${box.guest!.ref}`;
+  const guest = (await bb.storage.kv.get(label)) as { owner: { createdAt: number } };
+  await bb.storage.kv.set(label, { ...guest, owner: { ...guest.owner, createdAt: guest.owner.createdAt - 3_600_000 } });
+  const restore = async () => {
+    for (const key of [...(await bb.storage.kv.list("box/")), ...(await bb.storage.kv.list("index/"))]) await bb.storage.kv.delete(key);
+    assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Boxes restored from their guests: 1/);
+  };
+  const enrolled = () =>
+    until("enrolment", async () => {
+      const current = await app.boxes.find(box.id);
+      return current?.enrol.state === "enrolled" ? current : null;
+    });
+  const logged = () => harness.inspection.logEntries.map((entry) => entry.message).filter((line) => line.startsWith(`Enrolled box ${box.name} `));
+
+  // The box rebooted, so BB still has its machine but its daemon is not running: bootstrap starts it again.
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await restore();
+  const again = await enrolled();
+  assert.equal(again.enrol.hostId, hostId);
+  assert.deepEqual(world.bootstraps, [box.id, box.id]);
+  assert.ok(again.timings.enrol! < 60_000, "timed from the restore, not from when the box was made");
+  assert.match(logged().at(-1) ?? "", /^Enrolled box \S+ \d+\.\d\d s after the sweep restored it: .*BB waiting for the daemon /);
+  assert.deepEqual(world.events, [`create ${hostId}`, `create ${hostId}`], "the same key, and BB's machine is kept");
+  assert.equal(world.hosts.get(hostId)?.status, "connected");
+
+  // BB no longer has the machine: it is made again with the same key.
+  world.hosts.delete(hostId);
+  await restore();
+  assert.equal((await enrolled()).enrol.hostId, hostId);
+  assert.deepEqual(world.bootstraps, [box.id, box.id, box.id]);
+  assert.equal(world.events.length, 3);
+
+  // A stopped box is restored stopped, and is not enrolled.
+  await tool("box_stop", { box: box.name });
+  await restore();
+  const stopped = await app.boxes.find(box.id);
+  assert.equal(stopped?.state, "stopped");
+  assert.equal(stopped?.enrol.state, "off");
+  assert.equal(world.events.length, 3);
 });
 
 test("refusals say what to do next", async (t) => {
