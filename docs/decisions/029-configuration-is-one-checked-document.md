@@ -2,7 +2,8 @@
 
 Status: accepted, 1 October 2026. Partly supersedes
 [027](027-a-kind-says-when-it-has-a-desktop.md): how the settings keys from
-before 027 are read.
+before 027 are read. Amended before it was built: what backends see of the
+configuration.
 
 ## Context
 
@@ -31,6 +32,13 @@ What BB gives a plugin:
 An operator may have several Docker hosts, or several Macs for Tart, that
 are set up alike, and one Proxmox host. Each backend has one instance today,
 whose ID is its type.
+
+Backends do not see the kinds' switches or sizes (028). Proxmox LXC's warm
+guests wait at their template's size and serve only boxes with the
+template's cores, so a kind whose default is given other cores gets no use
+of them. Tart's
+doctor checks room for a fixed size, and no doctor can say that a machine
+is too small for every preset.
 
 ## Decision
 
@@ -98,6 +106,26 @@ whose ID is its type.
   as Proxmox LXC's `linux` and `linux-docker` share a template, keeps their
   sum.
 - General: boxes per thread, whether boxes enrol, and the default kind.
+
+### What a backend sees
+
+- A backend's part of the document gives it its fields and its hosts'
+  names and fields. A backend is built again only when those or the
+  install ID change.
+- Everything else reaches it through its context, read as it is at the
+  call, so a change never builds it again:
+  - its ID;
+  - for each of its kinds: whether new boxes of it may come here, which
+    is the kind's switch and the backend's together, its default size,
+    and its presets, smallest first;
+  - its warm count for each kind, 0 while the backend or the kind is off;
+  - whether each of its hosts is on.
+- Warm guests wait at their kind's default size. One that cannot serve the
+  default after the operator changes it, such as a Proxmox LXC guest with
+  other cores, is retired and made again, as one of an old template is.
+- A doctor checks room for a box of a kind's default size. It warns about a
+  host or machine that could not hold that size even when empty, and says
+  which of the kind's presets it can hold.
 
 ### The RPC
 
@@ -177,8 +205,8 @@ document, bb-box builds it from BB's settings:
   (`connection`, `credentials`, `boxes` or `advanced`), shown in the order
   they are declared, plus fields per host for a backend with hosts.
   `parse` reads the backend's part of the document and gives each problem
-  with its field. `create` gets the backend's ID. Drivers ship no UI: the
-  page renders their fields.
+  with its field. The context gives the rest, as above. Drivers ship no UI:
+  the page renders their fields.
 - Core changes: an off backend stays built, hosts and kinds get switches,
   and the registry's order comes from the document.
 - Backends that land before the document declare BB settings as today, and
