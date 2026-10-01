@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<title>bb-box preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>@layer properties, theme, base, components, utilities;</style>
+<style id="bb-base"></style>
+<link rel="stylesheet" href="/dist/app.css">
+<style id="bb-theme"></style>
+<style>
+  html, body { margin: 0; background: var(--background, #222); color: var(--foreground, #ddd); font-family: "Inter Variable", Inter, system-ui, sans-serif; font-size: 13px; line-height: 1.4; }
+  body { padding: 16px; }
+  #frame { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--background); }
+  #chrome { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); }
+  #chrome .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: var(--state-active); color: var(--foreground); }
+  #chrome .pill svg { width: 14px; height: 14px; }
+  #root.padded { padding: 16px; }
+  #root.flush { height: 100%; }
+  [data-icon-root] { display: inline-block; }
+</style>
+<script type="module" src="./harness.js"></script>
+</head>
+<body>
+  <div id="frame"><div id="chrome"></div><div id="root" data-bb-plugin="bb-box"></div></div>
+</body>
+</html>

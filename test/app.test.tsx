@@ -2,11 +2,13 @@
 // SDK's slot harness against fake RPC handlers and a fake noVNC. Run with
 // vitest: npm run test:app.
 
-import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { BoxResult, Contract, DesktopState, PanelState } from "../src/plugin/contract.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
+import { statusOf } from "../src/app/status.ts";
 
 /** noVNC's RFB, recording each client the viewer makes. */
 const novnc = vi.hoisted(() => {
@@ -44,6 +46,7 @@ afterEach(() => {
   cleanup();
   novnc.FakeRfb.made = [];
   window.sessionStorage.clear();
+  window.localStorage.clear();
 });
 
 function box(overrides: Partial<BoxView> = {}): BoxView {
@@ -57,13 +60,13 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     role: "box",
     state: "ready",
     error: null,
-    createdAt: 1_790_000_000_000,
-    readyAt: 1_790_000_002_000,
+    createdAt: Date.now() - 12 * 60_000,
+    readyAt: Date.now() - 12 * 60_000 + 2100,
     os: "linux",
     arch: "x86_64",
     gpu: false,
     requires: [],
-    extras: [],
+    extras: ["docker"],
     desktop: false,
     display: null,
     control: null,
@@ -78,8 +81,8 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
 }
 
 const KINDS: KindView[] = [
-  { id: "linux", label: "Linux", description: "A Linux box without a desktop.", size: "2 cores, 4 GiB", gpu: false, desktop: false, backends: ["Fake host"] },
-  { id: "linux-desktop", label: "Linux desktop", description: "A desktop with a GPU.", size: "4 cores, 8 GiB", gpu: true, desktop: true, backends: ["Fake host"] },
+  { id: "linux", label: "Linux", description: "For builds, servers, Docker and the agent's own work.", size: "2 cores, 4 GiB memory, 16 GiB disk", gpu: false, desktop: false, backends: ["Fake host"] },
+  { id: "linux-desktop", label: "Linux desktop", description: "A desktop on the GPU.", size: "4 cores, 8 GiB memory, 32 GiB disk", gpu: true, desktop: true, backends: ["Fake host"] },
 ];
 
 const BACKENDS: BackendView[] = [
@@ -88,7 +91,7 @@ const BACKENDS: BackendView[] = [
     label: "Fake host",
     nature: "virtual",
     state: "misconfigured",
-    problems: ["Set the API URL."],
+    problems: ["Set the API URL.", "Set the API token."],
     setup: { guide: "setup/fake/README.md", scripts: ["setup/fake/one.sh", "setup/fake/two.sh"] },
   },
 ];
@@ -117,7 +120,7 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
     acquire: ({ kind }) => {
       changes.push(`acquire ${kind}`);
       if (options.failWith) return result(null);
-      const made = box({ id: `box_${boxes.length + 2}`, name: "new-box", kind, state: "acquiring" });
+      const made = box({ id: `box_${boxes.length + 2}`, name: "new-box", kind, kindLabel: KINDS.find((candidate) => candidate.id === kind)?.label ?? kind, state: "acquiring", createdAt: Date.now(), timings: {}, enrol: { state: "off", hostId: null, error: null } });
       boxes = [...boxes, made];
       return result(made);
     },
@@ -134,8 +137,11 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
           report: {
             ok: false,
             summary: "Fake host 1.0",
-            checks: [{ id: "api", name: "API", status: "fail", detail: "No answer from the API.", fix: "Check the URL." }],
-            notes: ["Install this public key in the templates."],
+            checks: [
+              { id: "api", name: "API", status: "fail", detail: "No answer from the API.", fix: "Check the URL." },
+              { id: "disk", name: "Disk", status: "ok", detail: "120 GiB free.", fix: null },
+            ],
+            notes: ["Install this public key in the templates: ssh-ed25519 AAAA bb-box"],
           },
         },
       ],
@@ -146,7 +152,7 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
 
 function panel(handlers: PluginRpcTestHandlers<Contract>) {
   const [action] = app.threadPanelActions;
-  return renderSlot(action!, { threadId: THREAD, params: null }, { rpc: handlers });
+  return renderSlot(action!, { threadId: THREAD, params: null }, { rpc: handlers, pluginId: "bb-box" });
 }
 
 function stateCalls(slot: ReturnType<typeof panel>): number {
@@ -164,8 +170,18 @@ function desktopBox(overrides: Partial<BoxView> = {}): BoxView {
     gpu: true,
     display: { protocol: "rfb", resizable: true },
     control: { owner: "agent", holder: null },
+    facts: [
+      { label: "GPU", value: "GPU-0a1b" },
+      { label: "Display mode", value: "gpu" },
+    ],
     ...overrides,
   });
+}
+
+/** Opens a row's menu with the keyboard, as Radix needs no pointer events for that. */
+function openMenu(trigger: HTMLElement) {
+  fireEvent.keyDown(trigger, { key: "Enter" });
+  return screen.findByRole("menu");
 }
 
 test("the app registers the Boxes panel, a desktop tab, the Desktops page and the Backends settings section", () => {
@@ -177,55 +193,108 @@ test("the app registers the Boxes panel, a desktop tab, the Desktops page and th
   expect(app.settingsSections.map((section) => section.id)).toEqual(["backends"]);
 });
 
-test("the panel lists the thread's boxes, and opens a desktop box's desktop", async () => {
-  const { handlers } = server([box(), desktopBox()]);
-  const [action] = app.threadPanelActions;
-  const slot = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: handlers, pluginId: "bb-box" });
-
-  expect(await slot.findByText("calm-otter")).toBeTruthy();
-  expect(slot.getByText("bold-heron")).toBeTruthy();
-  expect(slot.getAllByText("Ready")).toHaveLength(2);
-  expect(slot.getAllByText("192.0.2.10").length).toBeGreaterThan(0);
-  expect(slot.getAllByText("Enrolled").length).toBe(2);
-  expect(slot.getByText("The agent")).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "Open desktop" }));
-  expect(slot.inspection.navigateCalls).toEqual([
-    { method: "openThreadPanel", options: { actionId: "desktop", title: "Desktop: bold-heron", params: { box: "box_2" } } },
-  ]);
-  const link = slot.getByRole("link", { name: "New browser tab" });
-  expect(link.getAttribute("href")).toBe("/plugins/bb-box/desktop/thr_panel/box_2");
-  expect(link.getAttribute("target")).toBe("_blank");
-  expect(slot.getAllByText("2.1 s").length).toBe(2);
-  expect(slot.getAllByText("BB enrolment").length).toBe(2);
-  expect(slot.getAllByText("5.3 s").length).toBe(2);
+test("the status line says the state, the timings, BB enrolment and the display", () => {
+  const now = Date.now();
+  expect(statusOf(box(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s"]);
+  expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null } }), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Joining BB…"]);
+  expect(statusOf(box({ enrol: { state: "failed", hostId: null, error: "no route" } }), now).items[1]).toEqual({ text: "Could not join BB", tone: "warn" });
+  expect(statusOf(box({ enrol: { state: "off", hostId: null, error: null }, timings: {} }), now).items.map((item) => item.text)).toEqual(["Ready"]);
+  expect(statusOf(box({ state: "acquiring", createdAt: now - 1400 }), now)).toEqual({ tone: "busy", items: [{ text: "Starting" }, { text: "1.4 s" }] });
+  expect(statusOf(box({ state: "stopped" }), now)).toEqual({ tone: "off", items: [{ text: "Stopped" }] });
+  expect(statusOf(box({ state: "failed", error: "No GPU is left." }), now).items).toEqual([{ text: "Failed", tone: "danger" }]);
+  expect(statusOf(box({ state: "gone" }), now).items.map((item) => item.text)).toEqual(["Gone", "deleted outside bb-box"]);
+  expect(statusOf(desktopBox(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "GPU"]);
+  expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items.at(-1)).toEqual({ text: "CPU" });
+  const held = desktopBox({ control: { owner: "human", holder: "viewer-1" } });
+  expect(statusOf(held, now, new Set(["viewer-1"])).items.at(-1)).toEqual({ text: "You have control", tone: "fg" });
+  expect(statusOf(held, now, new Set()).items.at(-1)).toEqual({ text: "Another viewer has control", tone: "fg" });
 });
 
-test("the panel makes a box of the chosen kind", async () => {
+test("the panel lists the thread's boxes as rows, opens a row's details, and opens a desktop", async () => {
+  const { handlers } = server([box(), desktopBox()]);
+  const slot = panel(handlers);
+
+  expect(await slot.findByText("calm-otter")).toBeTruthy();
+  expect(slot.getByText("2 boxes")).toBeTruthy();
+  expect(slot.getByText("bold-heron")).toBeTruthy();
+  expect(slot.getAllByText("Ready in 2.1 s")).toHaveLength(2);
+  expect(slot.getAllByText("BB machine in 5.3 s")).toHaveLength(2);
+  expect(slot.getByText("GPU")).toBeTruthy();
+  expect(slot.queryByText("192.0.2.10")).toBeNull();
+
+  fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
+  expect(slot.getByText("192.0.2.10")).toBeTruthy();
+  expect(slot.getByText("Fake host")).toBeTruthy();
+  expect(slot.getByText("linux x86_64, with docker")).toBeTruthy();
+  expect(slot.getByText("clone 0.7 s · total 2.1 s · BB enrolment 5.3 s")).toBeTruthy();
+  expect(slot.getByText("12 minutes ago")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
+  expect(slot.queryByText("192.0.2.10")).toBeNull();
+
+  fireEvent.click(slot.getByRole("button", { name: "Open desktop" }));
+  expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "bold-heron", params: { box: "box_2" } } }]);
+
+  const menu = await openMenu(slot.getByRole("button", { name: "bold-heron actions" }));
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+    "Open desktop",
+    "Open desktop in a browser tab",
+    "Copy address",
+    "Stop",
+    "Check now",
+    "Release…",
+  ]);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Open desktop in a browser tab" }));
+  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "/plugins/bb-box/desktop/thr_panel/box_2" });
+});
+
+test("the panel makes a box of the chosen kind, and remembers the kind", async () => {
   const { handlers, changes } = server([]);
   const slot = panel(handlers);
 
-  expect(await slot.findByText(/This thread has no boxes/)).toBeTruthy();
-  fireEvent.change(slot.getByLabelText("Kind of box"), { target: { value: "linux-desktop" } });
-  expect(slot.getByText("A desktop with a GPU.")).toBeTruthy();
+  expect(await slot.findByText("No boxes yet")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const form = await screen.findByRole("radiogroup", { name: "Kind" });
+  expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+  fireEvent.click(within(form).getByRole("radio", { name: /Linux desktop/ }));
+  expect(screen.getByText("4 cores, 8 GiB memory, 32 GiB disk")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Make box" }));
 
   expect(await slot.findByText("new-box")).toBeTruthy();
   expect(changes).toEqual(["acquire linux-desktop"]);
-  expect(slot.getByText("Acquiring")).toBeTruthy();
+  expect(slot.getByText("Starting")).toBeTruthy();
+  expect(slot.getByText("1 box")).toBeTruthy();
+  expect(window.localStorage.getItem("bb-box:new-box:kind")).toBe("linux-desktop");
+  await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
+});
+
+test("a refused box stays in the form with the reason", async () => {
+  const { handlers } = server([], { failWith: "pve has no memory left. Release a box you no longer need." });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Make box" }));
+  expect((await screen.findByRole("alert")).textContent).toBe("pve has no memory left. Release a box you no longer need.");
+  expect(screen.getByRole("radiogroup", { name: "Kind" })).toBeTruthy();
 });
 
 test("releasing a box asks first", async () => {
   const { handlers, changes } = server([box()]);
   const slot = panel(handlers);
+  await slot.findByText("calm-otter");
 
-  fireEvent.click(await slot.findByRole("button", { name: "Release" }));
+  let menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Release…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("Release calm-otter?")).toBeTruthy();
+  expect(within(dialog).getByText("Its disk and everything on it will be deleted. Copy out anything you want to keep first.")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(changes).toEqual([]);
-  fireEvent.click(slot.getByRole("button", { name: "Keep" }));
-  expect(slot.queryByRole("button", { name: "Release and delete its disk" })).toBeNull();
 
-  fireEvent.click(slot.getByRole("button", { name: "Release" }));
-  fireEvent.click(slot.getByRole("button", { name: "Release and delete its disk" }));
-  expect(await slot.findByText(/This thread has no boxes/)).toBeTruthy();
+  menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Release…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
+  expect(await slot.findByText("No boxes yet")).toBeTruthy();
   expect(changes).toEqual(["release box_1"]);
 });
 
@@ -234,6 +303,7 @@ test("the panel stops and starts a box that can, and not one that cannot", async
   const slot = panel(handlers);
 
   fireEvent.click(await slot.findByRole("button", { name: "Stop" }));
+  expect(await slot.findByText("Stopped")).toBeTruthy();
   fireEvent.click(await slot.findByRole("button", { name: "Start" }));
   await slot.findByRole("button", { name: "Stop" });
   expect(changes).toEqual(["stop box_1", "start box_1"]);
@@ -242,7 +312,8 @@ test("the panel stops and starts a box that can, and not one that cannot", async
   const fixed = panel(server([box({ id: "box_9", name: "real-box", canStopStart: false })]).handlers);
   await fixed.findByText("real-box");
   expect(fixed.queryByRole("button", { name: "Stop" })).toBeNull();
-  expect(fixed.getByRole("button", { name: "Release" })).toBeTruthy();
+  const menu = await openMenu(fixed.getByRole("button", { name: "real-box actions" }));
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy address", "Check now", "Release…"]);
 });
 
 test("the panel shows why a change failed", async () => {
@@ -250,13 +321,14 @@ test("the panel shows why a change failed", async () => {
   const slot = panel(handlers);
 
   fireEvent.click(await slot.findByRole("button", { name: "Stop" }));
-  expect(await slot.findByText("Stopping the box failed: the host did not answer.")).toBeTruthy();
+  expect((await slot.findByRole("alert")).textContent).toBe("Stopping the box failed: the host did not answer.");
 });
 
-test("the panel says so when no backend is on", async () => {
+test("the panel says so when no backend is on, and links the settings", async () => {
   const slot = panel(server([], { kinds: [] }).handlers);
-  expect(await slot.findByText(/No backend is on/)).toBeTruthy();
+  expect(await slot.findByText("bb-box is not set up yet")).toBeTruthy();
   expect(slot.queryByRole("button", { name: "New box" })).toBeNull();
+  expect(slot.getByRole("link", { name: /Open bb-box settings/ }).getAttribute("href")).toBe("/settings/plugins/bb-box");
 });
 
 test("the panel refetches on its thread's change signals and after a reconnect", async () => {
@@ -277,21 +349,25 @@ test("the panel refetches on its thread's change signals and after a reconnect",
   await waitFor(() => expect(stateCalls(slot)).toBe(4));
 });
 
-test("the settings section shows each backend's problems and setup, and runs the doctor", async () => {
+test("the settings section shows each backend's state, problems and guide, and runs the doctor", async () => {
   const { handlers } = server([]);
   const [section] = app.settingsSections;
-  const slot = renderSlot(section!, {}, { rpc: handlers });
+  const slot = renderSlot(section!, {}, { rpc: handlers, pluginId: "bb-box" });
 
   expect(await slot.findByText("Fake host")).toBeTruthy();
-  expect(slot.getByText("Needs its settings fixed")).toBeTruthy();
+  expect(slot.getByText("Needs setting up")).toBeTruthy();
   expect(slot.getByText("Set the API URL.")).toBeTruthy();
-  expect(slot.getByText("setup/fake/README.md")).toBeTruthy();
-  expect(slot.getByText("setup/fake/two.sh")).toBeTruthy();
+  expect(slot.getByText("Set the API token.")).toBeTruthy();
+  expect(slot.getByRole("link", { name: "Fake host setup guide" }).getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/README.md");
+  expect(slot.getByRole("link", { name: "two.sh" }).getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/two.sh");
 
   fireEvent.click(slot.getByRole("button", { name: "Check the backends" }));
-  expect(await slot.findByText(/\[fail\] API: No answer from the API\./)).toBeTruthy();
+  expect(await slot.findByText("No answer from the API.")).toBeTruthy();
   expect(slot.getByText("Fix: Check the URL.")).toBeTruthy();
-  expect(slot.getByText("Note: Install this public key in the templates.")).toBeTruthy();
+  expect(slot.getByText("120 GiB free.")).toBeTruthy();
+  expect(slot.getByText("Install this public key in the templates: ssh-ed25519 AAAA bb-box")).toBeTruthy();
+  expect(slot.getByText("Fake host 1.0")).toBeTruthy();
+  expect(slot.getByText("checked just now")).toBeTruthy();
 });
 
 function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") {
@@ -303,7 +379,7 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
   const { handlers, changes } = server([desktopBox()]);
   const slot = desktopTab(handlers);
 
-  expect(await slot.findByText("Connecting to the desktop...")).toBeTruthy();
+  expect(await slot.findByText("Connecting to the desktop…")).toBeTruthy();
   const [client] = novnc.FakeRfb.made;
   const url = new URL(client!.url);
   expect(url.protocol).toBe("ws:");
@@ -313,18 +389,19 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
   expect(viewer).toMatch(/^[0-9a-f]{24}$/);
   expect(client!.options).toEqual({ shared: true });
   expect([client!.viewOnly, client!.scaleViewport]).toEqual([true, true]);
-  expect(slot.getByText("The agent has control. You are watching.")).toBeTruthy();
+  expect(slot.getByText("Connecting…")).toBeTruthy();
   expect((slot.getByRole("button", { name: "Take control" }) as HTMLButtonElement).disabled).toBe(true);
 
   act(() => void client!.dispatchEvent(new Event("connect")));
-  expect(slot.queryByText("Connecting to the desktop...")).toBeNull();
+  expect(slot.queryByText("Connecting to the desktop…")).toBeNull();
+  expect(slot.getByText("The agent has control.")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Take control" }));
-  expect(await slot.findByText("You have control. Hand it back when you are done.")).toBeTruthy();
+  expect(await slot.findByText("You have control. The desktop follows this tab's size.")).toBeTruthy();
   expect(slot.inspection.rpcCalls.find((call) => call.method === "takeControl")?.input).toEqual({ threadId: THREAD, box: "box_2", viewer });
   expect([client!.viewOnly, client!.resizeSession, client!.focused]).toEqual([false, true, 1]);
 
   fireEvent.click(slot.getByRole("button", { name: "Hand back to the agent" }));
-  expect(await slot.findByText("The agent has control. You are watching.")).toBeTruthy();
+  expect(await slot.findByText("The agent has control.")).toBeTruthy();
   expect([client!.viewOnly, client!.resizeSession]).toEqual([true, false]);
   expect(changes).toEqual(["takeControl box_2", "handBack box_2"]);
 });
@@ -332,7 +409,7 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
 test("a desktop tab keeps its viewer ID when it remounts, and two tabs never share one", async () => {
   const { handlers } = server([desktopBox()]);
   const first = desktopTab(handlers);
-  await first.findByText("Connecting to the desktop...");
+  await first.findByText("Connecting to the desktop…");
   const second = desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
   const [a, b] = novnc.FakeRfb.made.map((client) => new URL(client.url).searchParams.get("viewer"));
@@ -348,42 +425,51 @@ test("a desktop tab keeps its viewer ID when it remounts, and two tabs never sha
 test("a desktop tab shows why the desktop refused it, and reconnects", async () => {
   const { handlers } = server([desktopBox()]);
   const slot = desktopTab(handlers);
-  await slot.findByText("Connecting to the desktop...");
+  await slot.findByText("Connecting to the desktop…");
   const [client] = novnc.FakeRfb.made;
   act(() => {
     client!.dispatchEvent(new CustomEvent("securityfailure", { detail: { status: 1, reason: "The box's desktop refused its VNC password." } }));
     client!.dispatchEvent(new CustomEvent("disconnect", { detail: { clean: false } }));
   });
-  expect(slot.getByText("The box's desktop refused its VNC password. Trying again...")).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "Reconnect" }));
+  expect(slot.getByText("The box's desktop refused its VNC password.")).toBeTruthy();
+  expect(slot.getByText("Trying again in 1 s")).toBeTruthy();
+  expect(slot.getByText("Disconnected")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Reconnect now" }));
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
 });
 
-test("a desktop tab says when its box is not running or gone", async () => {
-  const stopped = desktopTab(server([desktopBox({ state: "stopped" })]).handlers);
-  expect(await stopped.findByText("The desktop shows when box bold-heron is running.")).toBeTruthy();
+test("a desktop tab says when its box is not running or gone, and starts a stopped box", async () => {
+  const { handlers, changes } = server([desktopBox({ state: "stopped" })]);
+  const stopped = desktopTab(handlers);
+  expect(await stopped.findByText("bold-heron is stopped.")).toBeTruthy();
   expect(novnc.FakeRfb.made).toEqual([]);
+  fireEvent.click(stopped.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(changes).toEqual(["start box_2"]));
+  expect(await stopped.findByText("Connecting to the desktop…")).toBeTruthy();
   cleanup();
   const gone = desktopTab(server([]).handlers);
-  expect(await gone.findByText("This thread has no such box. It may have been released.")).toBeTruthy();
+  expect(await gone.findByText("This box has been released.")).toBeTruthy();
 });
 
 test("a desktop tab opened bare lists the thread's desktops", async () => {
   const action = app.threadPanelActions.find((candidate) => candidate.id === "desktop");
-  const slot = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([box(), desktopBox()]).handlers });
-  fireEvent.click(await slot.findByRole("button", { name: "bold-heron" }));
-  expect(slot.inspection.navigateCalls).toEqual([
-    { method: "openThreadPanel", options: { actionId: "desktop", title: "Desktop: bold-heron", params: { box: "box_2" } } },
-  ]);
+  const slot = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([box(), desktopBox()]).handlers, pluginId: "bb-box" });
+  expect(await slot.findByText("bold-heron")).toBeTruthy();
+  expect(slot.queryByText("calm-otter")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Open" }));
+  expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "bold-heron", params: { box: "box_2" } } }]);
 });
 
-test("the Desktops page lists every desktop box, and shows one for a browser tab", async () => {
+test("the Desktops page lists every desktop box with its thread, and shows one for a browser tab", async () => {
   const { handlers } = server([desktopBox()]);
   const [page] = app.navPanels;
-  const list = renderSlot(page!, { subPath: "" }, { rpc: handlers, pluginId: "bb-box" });
-  expect(await list.findByText("Linux desktop, running")).toBeTruthy();
-  fireEvent.click(list.getByRole("button", { name: "bold-heron" }));
-  fireEvent.click(list.getByRole("button", { name: "Open its thread" }));
+  const list = renderSlot(page!, { subPath: "" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  expect(await list.findByText("bold-heron")).toBeTruthy();
+  expect(list.getByText("Linux desktop")).toBeTruthy();
+  expect(list.getByText("The agent has control")).toBeTruthy();
+  expect(await list.findByText("UI thread")).toBeTruthy();
+  fireEvent.click(list.getByRole("button", { name: "Open" }));
+  fireEvent.click(list.getByRole("button", { name: "Open thread" }));
   expect(list.inspection.navigateCalls).toEqual([
     { method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_2" } },
     { method: "toThread", threadId: THREAD },
@@ -391,6 +477,7 @@ test("the Desktops page lists every desktop box, and shows one for a browser tab
   cleanup();
 
   const one = renderSlot(page!, { subPath: "thr_panel/box_2" }, { rpc: handlers, pluginId: "bb-box" });
-  expect(await one.findByText("Connecting to the desktop...")).toBeTruthy();
-  expect(one.queryByRole("link", { name: "New browser tab" })).toBeNull();
+  expect(await one.findByText("Connecting to the desktop…")).toBeTruthy();
+  fireEvent.click(one.getByRole("button", { name: "Back to desktops" }));
+  expect(one.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "desktop", options: { subPath: "" } }]);
 });

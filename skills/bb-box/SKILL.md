@@ -156,12 +156,15 @@ Most take `--json`.
 
 ## The panel
 
-The Boxes thread panel lists the thread's boxes. It makes a box of any kind
-and stops, starts, checks and releases boxes. For a desktop box it opens the
-desktop in a panel tab of its own or in a new browser tab, and shows who has
-control. The Desktops page lists every desktop box. The Backends section in
-bb-box's settings shows each backend's state and what it still needs, and
-runs the doctor.
+The Boxes thread panel lists the thread's boxes as rows: name, kind, state,
+timings, whether the box is a BB machine, and GPU or CPU for a desktop. A
+row opens to its details. "New box" makes a box of any kind; each row's
+actions stop, start, check and release it (release asks first). A desktop
+box opens in a panel tab of its own, or in a browser tab, which shows who
+has control. The Desktops page lists every desktop box. The Backends
+section in bb-box's settings shows each backend's state, its setup guide
+and what it still needs, and runs the doctor. The design is in
+`docs/design/panel.md`.
 
 ## Settings
 

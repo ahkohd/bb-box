@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<title>bb-box mockups</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* BB's tokens, copied from its theme (apps/web/src/components/ui/theme.css at 0.44.0). */
+:root, .light {
+  color-scheme: light;
+  --canvas: oklch(1 0 0); --ink: oklch(0.3211 0 0);
+  --background: var(--canvas); --foreground: var(--ink);
+  --card: var(--canvas); --popover: var(--canvas);
+  --primary: oklch(0.4891 0 0); --primary-foreground: oklch(1 0 0);
+  --secondary: color-mix(in oklch, var(--ink) 8%, var(--canvas));
+  --muted: color-mix(in oklch, var(--ink) 11%, var(--canvas));
+  --muted-foreground: oklch(0.44 0 0); --subtle-foreground: oklch(0.5 0 0);
+  --state-hover: color-mix(in oklab, var(--ink) 5.9%, transparent);
+  --state-active: color-mix(in oklab, var(--ink) 11.8%, transparent);
+  --destructive: oklch(0.45 0.19 25.8625); --destructive-foreground: oklch(1 0 0); --destructive-text: oklch(0.45 0.19 25.8625);
+  --warning: oklch(0.7 0.16 50); --warning-text: oklch(0.55 0.14 50); --success: oklch(0.7 0.15 155);
+  --border: color-mix(in oklch, var(--ink) 14%, var(--canvas)); --input: color-mix(in oklch, var(--ink) 29.5%, var(--canvas));
+  --ring: var(--primary);
+  --surface-recessed: color-mix(in oklab, var(--ink) 6%, transparent); --surface-raised: color-mix(in oklab, var(--ink) 2.5%, transparent);
+  --surface-destructive: color-mix(in oklab, var(--destructive) 6%, transparent); --surface-destructive-border: color-mix(in oklab, var(--destructive) 25%, transparent);
+  --surface-selected: color-mix(in oklab, var(--primary) 16%, transparent); --surface-selected-border: color-mix(in oklab, var(--primary) 35%, transparent);
+  --shadow-md: 0px 2px 0px 0px hsl(0 0% 20% / 0.15), 0px 2px 4px -1px hsl(0 0% 20% / 0.15);
+  --radius: 0.5rem;
+}
+.dark {
+  color-scheme: dark;
+  --canvas: oklch(0.195 0 0); --ink: oklch(0.81 0 0);
+  --primary: oklch(0.7058 0 0); --primary-foreground: oklch(0.2178 0 0);
+  --secondary: color-mix(in oklch, var(--ink) 13%, var(--canvas));
+  --muted: color-mix(in oklch, var(--ink) 16%, var(--canvas));
+  --muted-foreground: oklch(0.78 0 0); --subtle-foreground: oklch(0.68 0 0);
+  --state-hover: color-mix(in oklab, var(--ink) 13.8%, transparent);
+  --state-active: color-mix(in oklab, var(--ink) 22.5%, transparent);
+  --destructive: oklch(0.56 0.19 22.1703); --destructive-text: oklch(0.65 0.16 22);
+  --warning: oklch(0.75 0.16 50); --warning-text: oklch(0.75 0.16 50); --success: oklch(0.74 0.15 155);
+  --border: color-mix(in oklch, var(--ink) 19.4%, var(--canvas)); --input: color-mix(in oklch, var(--ink) 32.6%, var(--canvas));
+  --surface-destructive: color-mix(in oklab, var(--destructive) 8%, transparent); --surface-destructive-border: color-mix(in oklab, var(--destructive) 30%, transparent);
+  --surface-selected: color-mix(in oklab, var(--primary) 12%, transparent);
+  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0.3), 0px 2px 4px -1px hsl(0 0% 0% / 0.4);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--background); color: var(--foreground); font: 13px/1.4 "Inter Variable", Inter, system-ui, sans-serif; }
+body { padding: 24px; }
+.frame { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--background); margin: 0 auto 24px; }
+.frame-title { font-size: 10px; color: var(--subtle-foreground); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
+.panel { width: 560px; }
+.panel-chrome { display:flex; align-items:center; gap:8px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); }
+.tab-pill { display:inline-flex; align-items:center; gap:6px; padding: 4px 10px; border-radius: 6px; background: var(--state-active); color: var(--foreground); font-size: 12px; }
+.pad { padding: 16px; }
+.xs { font-size: 12px; } .sm { font-size: 13px; } .xxs { font-size: 10px; }
+.muted { color: var(--muted-foreground); } .subtle { color: var(--subtle-foreground); } .fg { color: var(--foreground); }
+.danger { color: var(--destructive-text); } .warn { color: var(--warning-text); }
+.medium { font-weight: 500; } .semibold { font-weight: 600; }
+.row { display:flex; align-items:center; gap:8px; min-width:0; }
+.grow { flex:1; min-width:0; }
+.truncate { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.icon { width:16px; height:16px; flex:none; stroke: currentColor; fill:none; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; display:inline-block; vertical-align: -3px; }
+.icon.s { width:14px; height:14px; } .icon.xs { width:12px; height:12px; }
+.btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height: 32px; padding: 0 12px; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid transparent; background: transparent; color: var(--foreground); cursor:pointer; white-space:nowrap; }
+.btn.outline { border-color: var(--input); }
+.btn.outline:hover { background: var(--state-hover); }
+.btn.primary { background: var(--foreground); color: var(--background); }
+.btn.destructive { background: var(--destructive); color: var(--destructive-foreground); }
+.btn.ghost { color: var(--muted-foreground); }
+.btn.icon-btn { width: 28px; height: 28px; padding: 0; }
+.btn.sm7 { height: 28px; padding: 0 8px; }
+.btn.full { width: 100%; }
+.btn .icon { width:16px; height:16px; }
+.list { border: 1px solid var(--border); border-radius: 8px; background: var(--card); padding: 4px 16px; overflow:hidden; }
+.list > .item + .item { border-top: 1px solid var(--border); }
+.item { display:grid; grid-template-columns: 24px minmax(0,1fr) auto; gap: 12px; align-items:center; padding: 12px 0; }
+.item.open { align-items:start; }
+.lead { display:flex; width:24px; height:24px; align-items:center; justify-content:center; color: var(--muted-foreground); }
+.title { display:flex; align-items:baseline; gap:8px; min-width:0; }
+.title .name { font-size:13px; font-weight:500; color: var(--foreground); }
+.title .kind { font-size:12px; color: var(--muted-foreground); }
+.status { display:flex; flex-wrap: wrap; align-items:center; gap: 2px 6px; margin-top: 2px; font-size:12px; color: var(--muted-foreground); line-height: 1.35; }
+.dot { width:6px; height:6px; border-radius: 999px; flex:none; display:inline-block; }
+.dot.ok { background: var(--success); } .dot.warn { background: var(--warning); } .dot.bad { background: var(--destructive); } .dot.off { border: 1px solid var(--muted-foreground); }
+.sep::before { content: "\00b7"; color: var(--subtle-foreground); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.actions { display:flex; align-items:center; gap:2px; }
+.details { margin-top: 8px; display:grid; grid-template-columns: 96px minmax(0,1fr); gap: 3px 12px; font-size:12px; }
+.details dt { color: var(--muted-foreground); margin:0; } .details dd { margin:0; color: var(--foreground); overflow-wrap:anywhere; }
+.empty { border: 1px dashed var(--border); border-radius: 6px; padding: 24px 12px; text-align:center; color: var(--muted-foreground); font-size:13px; }
+.empty .h { color: var(--foreground); font-weight: 500; }
+.empty p { margin: 4px 0 0; }
+.toolbar { display:flex; align-items:center; gap:8px; margin-bottom: 12px; }
+.chip { display:inline-flex; align-items:center; border: 1px solid var(--border); background: color-mix(in oklab, var(--muted) 40%, transparent); color: var(--subtle-foreground); font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 4px; }
+/* popover */
+.popover { width: 352px; border: 1px solid var(--border); border-radius: 6px; background: var(--popover); padding: 16px; box-shadow: var(--shadow-md); }
+.popover h4 { margin:0 0 10px; font-size:13px; font-weight:500; }
+.label { font-size: 12px; color: var(--muted-foreground); margin: 10px 0 6px; }
+.option { display:grid; grid-template-columns: 20px minmax(0,1fr) 16px; gap: 8px; align-items:start; padding: 6px 8px; border-radius: 4px; cursor:pointer; }
+.option:hover { background: var(--state-hover); }
+.option.selected { background: var(--state-active); }
+.option .o-title { font-size: 12px; color: var(--foreground); }
+.option .o-desc { font-size: 11px; color: var(--muted-foreground); line-height: 1.3; }
+.option .icon { color: var(--muted-foreground); margin-top: 1px; }
+.seg { display:flex; gap: 4px; }
+.seg button { flex:1; height: 28px; border: 1px solid var(--input); border-radius: 6px; background: transparent; color: var(--foreground); font-size: 12px; font-weight: 500; cursor:pointer; }
+.seg button.on { background: var(--foreground); color: var(--background); border-color: transparent; }
+.sizes { font-size:12px; color: var(--muted-foreground); margin-top: 8px; }
+.fields { display:grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.field { display:flex; flex-direction:column; gap:4px; font-size: 11px; color: var(--muted-foreground); }
+.input { height: 32px; border: 1px solid var(--input); border-radius: 6px; background: transparent; color: var(--foreground); padding: 0 10px; font-size: 13px; width: 100%; }
+.input.sm { height: 28px; font-size: 12px; }
+.note { font-size: 12px; color: var(--destructive-text); margin-top: 8px; }
+/* dialog */
+.scrim { background: rgba(0,0,0,.6); padding: 40px; display:flex; align-items:center; justify-content:center; }
+.dialog { width: 400px; background: var(--background); border: 1px solid var(--border); border-radius: 8px; padding: 24px; box-shadow: var(--shadow-md); }
+.dialog h3 { margin:0 0 8px; font-size: 16px; font-weight: 600; }
+.dialog p { margin:0; font-size: 13px; color: var(--muted-foreground); }
+.dialog .foot { display:flex; justify-content:flex-end; gap:8px; margin-top: 20px; }
+/* desktop tab */
+.desktop { width: 720px; }
+.dt-bar { display:flex; align-items:center; gap:8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface-recessed); font-size: 12px; }
+.dt-screen { position:relative; height: 400px; background: var(--muted); display:flex; align-items:center; justify-content:center; }
+.dt-screen.mine { box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--primary) 60%, transparent); }
+.notice { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; font-size: 13px; color: var(--muted-foreground); text-align:center; max-width: 320px; display:flex; flex-direction:column; align-items:center; gap: 8px; }
+.fakeshot { position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.35 0.08 250), oklch(0.25 0.05 280)); }
+.fakeshot .win { position:absolute; left: 12%; top: 10%; width: 60%; height: 65%; background: #fff; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.fakeshot .win::before { content:""; position:absolute; left:0; right:0; top:0; height: 28px; background: #e8e8e8; border-radius: 6px 6px 0 0; }
+/* settings */
+.settings { width: 860px; padding: 24px; }
+.sec { margin-bottom: 24px; }
+.sec h2 { font-size: 12px; font-weight: 500; margin: 0 0 4px; }
+.sec .desc { font-size: 12px; color: color-mix(in oklab, var(--subtle-foreground) 75%, transparent); margin: 0 0 12px; }
+.card { border: 1px solid var(--border); border-radius: 8px; background: var(--card); padding: 14px 16px; }
+.srow { display:flex; align-items:center; gap: 12px; padding: 10px 0; }
+.srow + .srow { border-top: 1px solid var(--border); }
+.srow:first-child { padding-top: 0; } .srow:last-child { padding-bottom: 0; }
+.switch { width: 28px; height: 16px; border-radius: 999px; background: var(--muted); border: 1px solid var(--input); position: relative; flex:none; }
+.switch::after { content:""; position:absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 999px; background: var(--foreground); }
+.switch.on { background: var(--foreground); border-color: transparent; }
+.switch.on::after { background: var(--background); left: 13px; }
+.sub { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.fgrid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.fgrid .field { font-size: 12px; }
+.checks { display:flex; flex-direction:column; gap: 6px; font-size: 12px; margin-top: 10px; }
+.check { display:grid; grid-template-columns: 16px minmax(0,1fr); gap: 8px; align-items:start; }
+.check .fix { color: var(--muted-foreground); }
+.check .ok { color: var(--success); } .check .warn-i { color: var(--warning); } .check .bad { color: var(--destructive); }
+code { font-family: "Fira Code", ui-monospace, monospace; font-size: 11px; background: var(--surface-recessed); padding: 1px 4px; border-radius: 3px; }
+pre { font-family: "Fira Code", ui-monospace, monospace; font-size: 11px; background: var(--surface-recessed); padding: 8px 10px; border-radius: 6px; overflow:auto; margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; }
+table.kinds { width:100%; border-collapse: collapse; font-size: 12px; }
+table.kinds th { text-align:left; font-weight: 500; color: var(--muted-foreground); padding: 0 8px 8px 0; border-bottom: 1px solid var(--border); }
+table.kinds td { padding: 10px 8px 10px 0; border-bottom: 1px solid var(--border); vertical-align: middle; }
+table.kinds tr:last-child td { border-bottom: 0; }
+.fold { display:flex; align-items:center; gap:6px; font-size: 12px; color: var(--muted-foreground); cursor:pointer; margin-top: 12px; }
+.page { width: 860px; padding: 20px; }
+.page-head { display:flex; align-items:center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 500; }
+.screen { display: none; }
+.screen.show { display: block; }
+.all .screen { display:block; }
+</style>
+</head>
+<body class="all">
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m5 8 5 4-5 4M12 16h7"/><rect x="2.5" y="4" width="19" height="16" rx="2"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-chevron-r" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-chevron-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 9v5M12 17h.01"/></symbol>
+    <symbol id="i-loading" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 1-6.4 2.6"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+    <symbol id="i-circle-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+    <symbol id="i-arrow-l" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  </defs>
+</svg>
+
+<!-- 1. Boxes panel: empty -->
+<section class="screen" id="panel-empty">
+<p class="frame-title">Boxes panel: empty</p>
+<div class="frame panel">
+  <div class="panel-chrome"><span class="tab-pill"><svg class="icon s"><use href="#i-cube"/></svg>Boxes</span><span class="subtle">+</span></div>
+  <div class="pad">
+    <div class="toolbar"><span class="grow"></span><button class="btn outline"><svg class="icon"><use href="#i-plus"/></svg>New box</button></div>
+    <div class="empty">
+      <div class="h">No boxes yet</div>
+      <p>A box is a computer for this thread: Linux, with or without a desktop. You and the agent both use it.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 2. Boxes panel: no backend -->
+<section class="screen" id="panel-nobackend">
+<p class="frame-title">Boxes panel: no backend set up</p>
+<div class="frame panel">
+  <div class="panel-chrome"><span class="tab-pill"><svg class="icon s"><use href="#i-cube"/></svg>Boxes</span><span class="subtle">+</span></div>
+  <div class="pad">
+    <div class="empty">
+      <div class="h">bb-box is not set up yet</div>
+      <p>Turn on a backend in its settings to make boxes.</p>
+      <p style="margin-top:12px"><button class="btn outline"><svg class="icon"><use href="#i-settings"/></svg>Open bb-box settings</button></p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 3. New box chooser -->
+<section class="screen" id="panel-chooser">
+<p class="frame-title">Boxes panel: New box (popover from the button)</p>
+<div class="frame panel" style="height: 460px; position:relative">
+  <div class="panel-chrome"><span class="tab-pill"><svg class="icon s"><use href="#i-cube"/></svg>Boxes</span><span class="subtle">+</span></div>
+  <div class="pad">
+    <div class="toolbar"><span class="grow"></span><button class="btn outline" style="background: var(--state-active)"><svg class="icon"><use href="#i-plus"/></svg>New box</button></div>
+    <div class="empty"><div class="h">No boxes yet</div><p>A box is a computer for this thread: Linux, with or without a desktop. You and the agent both use it.</p></div>
+  </div>
+  <div class="popover" style="position:absolute; right: 16px; top: 88px;">
+    <h4>New box</h4>
+    <div class="label" style="margin-top:0">Kind</div>
+    <div class="option selected"><svg class="icon"><use href="#i-server"/></svg><div><div class="o-title">Linux</div><div class="o-desc">For builds, servers, Docker and the agent's own work.</div></div><svg class="icon s"><use href="#i-check"/></svg></div>
+    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div><div class="o-title">Linux desktop</div><div class="o-desc">A desktop on the GPU, for browsers, apps and computer use.</div></div><span></span></div>
+    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div><div class="o-title">Linux desktop (no GPU)</div><div class="o-desc">A desktop drawn by the CPU. Slower graphics; nothing else changes.</div></div><span></span></div>
+    <div class="label">Size</div>
+    <div class="seg"><button>Small</button><button class="on">Medium</button><button>Large</button><button>Custom</button></div>
+    <div class="sizes">2 cores · 4 GiB memory · 16 GiB disk</div>
+    <div style="margin-top:14px"><button class="btn primary full">Make box</button></div>
+  </div>
+</div>
+</section>
+
+<!-- 3b. Custom size -->
+<section class="screen" id="panel-chooser-custom">
+<p class="frame-title">New box: custom size, and a refusal</p>
+<div class="frame" style="width: 400px; padding: 24px;">
+  <div class="popover">
+    <h4>New box</h4>
+    <div class="label" style="margin-top:0">Kind</div>
+    <div class="option"><svg class="icon"><use href="#i-server"/></svg><div><div class="o-title">Linux</div><div class="o-desc">For builds, servers, Docker and the agent's own work.</div></div><span></span></div>
+    <div class="option selected"><svg class="icon"><use href="#i-monitor"/></svg><div><div class="o-title">Linux desktop</div><div class="o-desc">A desktop on the GPU, for browsers, apps and computer use.</div></div><svg class="icon s"><use href="#i-check"/></svg></div>
+    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div><div class="o-title">Linux desktop (no GPU)</div><div class="o-desc">A desktop drawn by the CPU. Slower graphics; nothing else changes.</div></div><span></span></div>
+    <div class="label">Size</div>
+    <div class="seg"><button>Small</button><button>Medium</button><button>Large</button><button class="on">Custom</button></div>
+    <div class="fields">
+      <label class="field">Cores <input class="input sm" value="6"><span>up to 16</span></label>
+      <label class="field">Memory, GiB <input class="input sm" value="12"><span>up to 32</span></label>
+      <label class="field">Disk, GiB <input class="input sm" value="64"><span>up to 200</span></label>
+    </div>
+    <div style="margin-top:14px"><button class="btn primary full">Make box</button></div>
+    <div class="note">pve has 10 GiB of memory free. A Linux desktop box of this size needs 12 GiB and 4 GiB is kept free. Pick a smaller size, or release a box you no longer need.</div>
+  </div>
+</div>
+</section>
+
+<!-- 4. Boxes panel: list -->
+<section class="screen" id="panel-list">
+<p class="frame-title">Boxes panel: a box starting, a desktop box ready (open), a stopped box</p>
+<div class="frame panel">
+  <div class="panel-chrome"><span class="tab-pill"><svg class="icon s"><use href="#i-cube"/></svg>Boxes</span><span class="subtle">+</span></div>
+  <div class="pad">
+    <div class="toolbar"><span class="xs muted grow">3 boxes</span><button class="btn outline"><svg class="icon"><use href="#i-plus"/></svg>New box</button></div>
+    <div class="list">
+      <div class="item">
+        <div class="lead"><svg class="icon"><use href="#i-server"/></svg></div>
+        <div class="grow">
+          <div class="title"><span class="name">quiet-fern</span><span class="kind">Linux</span></div>
+          <div class="status"><svg class="icon xs spin"><use href="#i-loading"/></svg><span>Starting</span><span class="sep"></span><span>1.4 s</span><span class="sep"></span><span>2 cores · 4 GiB · 16 GiB</span></div>
+        </div>
+        <div class="actions"><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </div>
+      <div class="item open">
+        <div class="lead"><svg class="icon"><use href="#i-monitor"/></svg></div>
+        <div class="grow">
+          <div class="title"><span class="name">bold-heron</span><span class="kind">Linux desktop</span></div>
+          <div class="status"><span class="dot ok"></span><span>Ready in 2.2 s</span><span class="sep"></span><span>BB machine in 5.3 s</span><span class="sep"></span><span>4 cores · 8 GiB · 32 GiB</span><span class="sep"></span><span>GPU</span><span class="sep"></span><span class="fg">You have control</span></div>
+          <dl class="details">
+            <dt>Address</dt><dd>10.200.0.14</dd>
+            <dt>Backend</dt><dd>Proxmox LXC on pve</dd>
+            <dt>System</dt><dd>Linux x86_64, with docker</dd>
+            <dt>GPU</dt><dd>NVIDIA RTX A4000 (GPU-0a1b…)</dd>
+            <dt>Display</dt><dd>GPU, hardware rendering</dd>
+            <dt>Template</dt><dd>9101</dd>
+            <dt>BB machine</dt><dd>bold-heron, connected</dd>
+            <dt>Timings</dt><dd>clone 0.75 s · start 1.0 s · ssh 0.45 s · total 2.2 s · BB enrolment 5.3 s</dd>
+            <dt>Made</dt><dd>12 minutes ago</dd>
+          </dl>
+        </div>
+        <div class="actions"><button class="btn ghost icon-btn" title="Open desktop"><svg class="icon"><use href="#i-monitor"/></svg></button><button class="btn ghost icon-btn" title="Open terminal"><svg class="icon"><use href="#i-terminal"/></svg></button><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </div>
+      <div class="item">
+        <div class="lead"><svg class="icon"><use href="#i-server"/></svg></div>
+        <div class="grow">
+          <div class="title"><span class="name">calm-otter</span><span class="kind">Linux with Docker</span></div>
+          <div class="status"><span class="dot off"></span><span>Stopped</span><span class="sep"></span><span>8 cores · 16 GiB · 64 GiB</span></div>
+        </div>
+        <div class="actions"><button class="btn ghost icon-btn" title="Start"><svg class="icon"><use href="#i-play"/></svg></button><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 4b. failures -->
+<section class="screen" id="panel-list-problems">
+<p class="frame-title">Boxes panel: a failed box, a gone box, and a refused change</p>
+<div class="frame panel">
+  <div class="panel-chrome"><span class="tab-pill"><svg class="icon s"><use href="#i-cube"/></svg>Boxes</span><span class="subtle">+</span></div>
+  <div class="pad">
+    <div class="toolbar"><span class="xs muted grow">3 boxes</span><button class="btn outline"><svg class="icon"><use href="#i-plus"/></svg>New box</button></div>
+    <div class="list">
+      <div class="item">
+        <div class="lead"><svg class="icon"><use href="#i-monitor"/></svg></div>
+        <div class="grow">
+          <div class="title"><span class="name">brisk-elm</span><span class="kind">Linux desktop</span></div>
+          <div class="status"><span class="dot bad"></span><span class="danger">Failed</span><span class="sep"></span><span class="danger truncate">No GPU is left: GPU-0a1b has 3 desktops and GPU-7c2d fell back to the CPU. Try a Linux desktop (no GPU).</span></div>
+        </div>
+        <div class="actions"><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </div>
+      <div class="item">
+        <div class="lead"><svg class="icon"><use href="#i-server"/></svg></div>
+        <div class="grow">
+          <div class="title"><span class="name">calm-otter</span><span class="kind">Linux</span></div>
+          <div class="status"><span class="dot bad"></span><span>Gone</span><span class="sep"></span><span>deleted outside bb-box</span></div>
+        </div>
+        <div class="actions"><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </div>
+      <div class="item">
+        <div class="lead"><svg class="icon"><use href="#i-server"/></svg></div>
+        <div class="grow">
+          <div class="title"><span class="name">quiet-fern</span><span class="kind">Linux</span></div>
+          <div class="status"><span class="dot ok"></span><span>Ready in 2.1 s</span><span class="sep"></span><span class="warn">Could not join BB</span><span class="sep"></span><span>2 cores · 4 GiB · 16 GiB</span></div>
+          <div class="status"><span class="danger">Stopping the box failed: the host did not answer.</span></div>
+        </div>
+        <div class="actions"><button class="btn ghost icon-btn" title="Stop"><svg class="icon"><use href="#i-stop"/></svg></button><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 5. Row menu -->
+<section class="screen" id="panel-menu">
+<p class="frame-title">A box's menu</p>
+<div class="frame" style="width: 260px; padding: 16px;">
+  <div style="border:1px solid var(--border); border-radius:6px; background: var(--popover); padding: 4px; box-shadow: var(--shadow-md); font-size:12px;">
+    <div class="row" style="padding:5px 8px; border-radius:4px"><svg class="icon"><use href="#i-monitor"/></svg>Open desktop</div>
+    <div class="row" style="padding:5px 8px; border-radius:4px"><svg class="icon"><use href="#i-external"/></svg>Open desktop in a browser tab</div>
+    <div class="row" style="padding:5px 8px; border-radius:4px"><svg class="icon"><use href="#i-terminal"/></svg>Open terminal</div>
+    <div class="row" style="padding:5px 8px; border-radius:4px"><svg class="icon"><use href="#i-copy"/></svg>Copy address</div>
+    <div style="height:1px; background: var(--muted); margin: 4px -4px"></div>
+    <div class="row" style="padding:5px 8px; border-radius:4px"><svg class="icon"><use href="#i-stop"/></svg>Stop</div>
+    <div class="row" style="padding:5px 8px; border-radius:4px"><svg class="icon"><use href="#i-loading"/></svg>Check now</div>
+    <div style="height:1px; background: var(--muted); margin: 4px -4px"></div>
+    <div class="row danger" style="padding:5px 8px; border-radius:4px"><svg class="icon"><use href="#i-trash"/></svg>Release…</div>
+  </div>
+</div>
+</section>
+
+<!-- 6. Release dialog -->
+<section class="screen" id="panel-release">
+<p class="frame-title">Release confirmation</p>
+<div class="frame scrim" style="width: 560px;">
+  <div class="dialog">
+    <h3>Release bold-heron?</h3>
+    <p>Its disk and everything on it will be deleted. Copy out anything you want to keep first.</p>
+    <div class="foot"><button class="btn outline">Cancel</button><button class="btn destructive">Release</button></div>
+  </div>
+</div>
+</section>
+
+<!-- 7. Desktop tab: agent -->
+<section class="screen" id="desktop-agent">
+<p class="frame-title">Desktop tab: the agent has control</p>
+<div class="frame desktop">
+  <div class="panel-chrome"><span class="xs muted">Boxes</span><span class="tab-pill"><svg class="icon s"><use href="#i-monitor"/></svg>bold-heron</span><span class="subtle">+</span></div>
+  <div class="dt-bar">
+    <svg class="icon muted"><use href="#i-monitor"/></svg><span class="medium">bold-heron</span>
+    <span class="muted"><span class="dot ok"></span> The agent has control</span>
+    <span class="grow"></span>
+    <button class="btn outline sm7">Take control</button>
+    <button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button>
+  </div>
+  <div class="dt-screen"><div class="fakeshot"><div class="win"></div></div></div>
+</div>
+</section>
+
+<!-- 8. Desktop tab: you -->
+<section class="screen" id="desktop-you">
+<p class="frame-title">Desktop tab: you have control</p>
+<div class="frame desktop">
+  <div class="panel-chrome"><span class="xs muted">Boxes</span><span class="tab-pill"><svg class="icon s"><use href="#i-monitor"/></svg>bold-heron</span><span class="subtle">+</span></div>
+  <div class="dt-bar">
+    <svg class="icon muted"><use href="#i-monitor"/></svg><span class="medium">bold-heron</span>
+    <span class="fg"><span class="dot ok"></span> You have control. The desktop follows this tab's size.</span>
+    <span class="grow"></span>
+    <button class="btn primary sm7">Hand back to the agent</button>
+    <button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button>
+  </div>
+  <div class="dt-screen mine"><div class="fakeshot"><div class="win"></div></div></div>
+</div>
+</section>
+
+<!-- 9. Desktop tab: disconnected / stopped -->
+<section class="screen" id="desktop-states">
+<p class="frame-title">Desktop tab: connection lost, and a stopped box</p>
+<div class="frame desktop" style="margin-bottom:16px">
+  <div class="dt-bar">
+    <svg class="icon muted"><use href="#i-monitor"/></svg><span class="medium">bold-heron</span>
+    <span class="muted"><span class="dot warn"></span> Disconnected</span>
+    <span class="grow"></span>
+    <button class="btn outline sm7">Reconnect</button>
+    <button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button>
+  </div>
+  <div class="dt-screen" style="height: 200px"><div class="notice"><span>The connection to the desktop ended.</span><span class="xs subtle">Trying again in 4 s</span></div></div>
+</div>
+<div class="frame desktop">
+  <div class="dt-bar">
+    <svg class="icon muted"><use href="#i-monitor"/></svg><span class="medium">bold-heron</span>
+    <span class="muted"><span class="dot off"></span> Stopped</span>
+    <span class="grow"></span>
+    <button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button>
+  </div>
+  <div class="dt-screen" style="height: 200px"><div class="notice"><span>bold-heron is stopped.</span><button class="btn outline sm7"><svg class="icon"><use href="#i-play"/></svg>Start</button></div></div>
+</div>
+</section>
+
+<!-- 10. Desktops page -->
+<section class="screen" id="desktops-page">
+<p class="frame-title">Desktops page (sidebar entry)</p>
+<div class="frame page" style="padding:0">
+  <div class="page-head"><svg class="icon muted"><use href="#i-monitor"/></svg>Desktops</div>
+  <div style="padding: 20px; max-width: 720px; margin: 0 auto;">
+    <div class="list">
+      <div class="item">
+        <div class="lead"><svg class="icon"><use href="#i-monitor"/></svg></div>
+        <div class="grow"><div class="title"><span class="name">bold-heron</span><span class="kind">Linux desktop</span></div><div class="status"><span class="dot ok"></span><span>Ready</span><span class="sep"></span><span>The agent has control</span><span class="sep"></span><span>bb-box: UI/UX design and panel</span></div></div>
+        <div class="actions"><button class="btn outline sm7">Open</button><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </div>
+      <div class="item">
+        <div class="lead"><svg class="icon"><use href="#i-monitor"/></svg></div>
+        <div class="grow"><div class="title"><span class="name">wild-cove</span><span class="kind">Linux desktop (no GPU)</span></div><div class="status"><span class="dot off"></span><span>Stopped</span><span class="sep"></span><span>claude/opus/dev</span></div></div>
+        <div class="actions"><button class="btn outline sm7">Open</button><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 11. Settings: backends -->
+<section class="screen" id="settings-backends">
+<p class="frame-title">Settings: Backends (below BB's plugin header)</p>
+<div class="frame settings">
+  <div class="sec">
+    <h2>Backends</h2>
+    <p class="desc">Where boxes come from. Turn one on and set it up; the check says what is still missing.</p>
+    <div class="card">
+      <div class="srow">
+        <div class="grow">
+          <div class="row"><span class="sm medium">Proxmox LXC</span><span class="chip">pve</span></div>
+          <div class="status"><span class="dot ok"></span><span>Ready</span><span class="sep"></span><span>Proxmox VE 9.2 on pve</span><span class="sep"></span><span>3 kinds on offer</span><span class="sep"></span><span>checked 2 min ago</span></div>
+        </div>
+        <button class="btn outline sm7">Check</button>
+        <button class="btn ghost sm7">Set up <svg class="icon s"><use href="#i-chevron-d"/></svg></button>
+        <span class="switch on"></span>
+      </div>
+      <div class="srow">
+        <div class="grow">
+          <div class="row"><span class="sm medium">Docker</span></div>
+          <div class="status"><span class="dot warn"></span><span class="warn">Needs setting up</span><span class="sep"></span><span>Set the Docker host.</span></div>
+        </div>
+        <button class="btn ghost sm7">Set up <svg class="icon s"><use href="#i-chevron-r"/></svg></button>
+        <span class="switch on"></span>
+      </div>
+      <div class="srow">
+        <div class="grow">
+          <div class="row"><span class="sm medium">SSH host pool</span></div>
+          <div class="status"><span class="dot off"></span><span>Off</span><span class="sep"></span><span>Your own machines, reached over SSH and reset between boxes.</span></div>
+        </div>
+        <button class="btn ghost sm7">Set up <svg class="icon s"><use href="#i-chevron-r"/></svg></button>
+        <span class="switch"></span>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 12. Settings: a backend's setup, open -->
+<section class="screen" id="settings-setup">
+<p class="frame-title">Settings: Proxmox LXC set up, open, with the check's results</p>
+<div class="frame settings">
+  <div class="sec">
+    <h2>Backends</h2>
+    <p class="desc">Where boxes come from. Turn one on and set it up; the check says what is still missing.</p>
+    <div class="card">
+      <div class="srow">
+        <div class="grow">
+          <div class="row"><span class="sm medium">Proxmox LXC</span></div>
+          <div class="status"><span class="dot warn"></span><span class="warn">Needs setting up</span><span class="sep"></span><span>Set the API token secret.</span></div>
+        </div>
+        <button class="btn outline sm7">Check</button>
+        <button class="btn ghost sm7" style="background: var(--state-active)">Set up <svg class="icon s"><use href="#i-chevron-d"/></svg></button>
+        <span class="switch on"></span>
+      </div>
+      <div class="sub">
+        <p class="xs muted" style="margin:0 0 12px">Follow the <a class="fg" href="#">Proxmox LXC setup guide</a>. Its scripts print the values for this form.</p>
+        <div class="fgrid">
+          <label class="field">API URL <input class="input" value="https://192.0.2.10:8006"></label>
+          <label class="field">Node <input class="input" value="pve"></label>
+          <label class="field">API token ID <input class="input" value="bbbox@pve!plugin"></label>
+          <label class="field"><span>API token secret <span class="chip">secret</span> <span class="chip">not set</span></span><input class="input" type="password" placeholder="Paste the secret"></label>
+          <label class="field">TLS fingerprint <input class="input" value="AB:CD:EF:…"></label>
+          <label class="field">Resource pool <input class="input" value="bbbox"></label>
+        </div>
+        <div class="label" style="margin-top:16px">Templates</div>
+        <div class="fgrid">
+          <label class="field">Linux templates <input class="input" value="9100"><span class="xxs subtle">VMIDs, separated by spaces. Serve Linux and Linux with Docker.</span></label>
+          <label class="field">GPU desktop templates <input class="input" value="9101 GPU-0a1b2c3d"><span class="xxs subtle">One per line: VMID and the GPU's ID.</span></label>
+          <label class="field">CPU desktop templates <input class="input" value=""><span class="xxs subtle">Leave empty to offer no CPU desktops.</span></label>
+          <div class="field"><span>SSH key <span class="chip">secret</span> <span class="chip">set</span></span><div class="row"><button class="btn outline sm7">Replace</button><button class="btn ghost sm7">Clear</button></div></div>
+        </div>
+        <div class="fold"><svg class="icon s"><use href="#i-chevron-r"/></svg>Network, addresses, VMIDs and reserves</div>
+        <div class="row" style="margin-top:12px; gap:8px"><button class="btn primary sm7">Save</button><button class="btn outline sm7">Check</button></div>
+        <div class="checks">
+          <div class="check"><svg class="icon s ok"><use href="#i-circle-check"/></svg><div><span class="fg">Proxmox API</span> <span class="muted">Proxmox VE 9.2 on pve</span></div></div>
+          <div class="check"><svg class="icon s ok"><use href="#i-circle-check"/></svg><div><span class="fg">Token rights</span> <span class="muted">VM.Allocate, VM.Clone, VM.Config.*, VM.PowerMgmt on /pool/bbbox</span></div></div>
+          <div class="check"><svg class="icon s bad"><use href="#i-x"/></svg><div><span class="fg">Template 9101</span> <span class="muted">has no tag build:…, so warm boxes cannot be checked against it.</span><div class="fix">Fix: run <code>build.sh desktop</code> again; it tags the template.</div></div></div>
+          <div class="check"><svg class="icon s warn-i"><use href="#i-alert"/></svg><div><span class="fg">Memory</span> <span class="muted">pve has 6 GiB free; 4 GiB is kept back, so one Linux box fits.</span></div></div>
+          <div class="check"><svg class="icon s subtle"><use href="#i-minus"/></svg><div><span class="muted">SSH into a box: skipped, since a template check failed.</span></div></div>
+          <div class="check"><svg class="icon s muted"><use href="#i-copy"/></svg><div><span class="muted">Install this public key in the templates:</span><pre>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB…  bb-box</pre></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 13. Settings: kinds -->
+<section class="screen" id="settings-kinds">
+<p class="frame-title">Settings: Kinds and sizes, General</p>
+<div class="frame settings">
+  <div class="sec">
+    <h2>Kinds</h2>
+    <p class="desc">What a thread can ask for. A kind is offered when it is on and a backend has it. Sizes are per box; a thread picks one up to the largest.</p>
+    <div class="card" style="padding: 14px 16px 6px">
+      <table class="kinds">
+        <tr><th></th><th>Kind</th><th>From</th><th>Default size</th><th>Largest</th><th>Warm</th><th></th></tr>
+        <tr><td><span class="switch on"></span></td><td><span class="fg">Linux</span></td><td class="muted">Proxmox LXC</td><td>2 cores · 4 GiB · 16 GiB</td><td>8 · 16 GiB · 64 GiB</td><td>0</td><td class="muted"><svg class="icon s"><use href="#i-chevron-r"/></svg></td></tr>
+        <tr><td><span class="switch on"></span></td><td><span class="fg">Linux with Docker</span></td><td class="muted">Proxmox LXC</td><td>2 cores · 4 GiB · 16 GiB</td><td>8 · 16 GiB · 64 GiB</td><td>0</td><td class="muted"><svg class="icon s"><use href="#i-chevron-r"/></svg></td></tr>
+        <tr><td><span class="switch on"></span></td><td><span class="fg">Linux desktop</span> <span class="chip">GPU</span></td><td class="muted">Proxmox LXC</td><td>4 cores · 8 GiB · 32 GiB</td><td>16 · 32 GiB · 128 GiB</td><td>1</td><td class="muted"><svg class="icon s"><use href="#i-chevron-d"/></svg></td></tr>
+        <tr><td colspan="7" style="padding: 4px 0 14px 40px">
+          <div class="fgrid" style="grid-template-columns: repeat(4, 1fr)">
+            <label class="field">Default cores <input class="input sm" value="4"></label>
+            <label class="field">Default memory, GiB <input class="input sm" value="8"></label>
+            <label class="field">Default disk, GiB <input class="input sm" value="32"><span class="xxs subtle">0 keeps the template's disk</span></label>
+            <label class="field">Warm boxes <input class="input sm" value="1"><span class="xxs subtle">Ready boxes kept waiting</span></label>
+            <label class="field">Largest cores <input class="input sm" value="16"></label>
+            <label class="field">Largest memory, GiB <input class="input sm" value="32"></label>
+            <label class="field">Largest disk, GiB <input class="input sm" value="128"></label>
+          </div>
+        </td></tr>
+        <tr><td><span class="switch"></span></td><td><span class="muted">Linux desktop (no GPU)</span></td><td class="muted">Proxmox LXC</td><td class="muted">4 cores · 8 GiB · 32 GiB</td><td class="muted">16 · 32 GiB · 128 GiB</td><td class="muted">0</td><td class="muted"><svg class="icon s"><use href="#i-chevron-r"/></svg></td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="sec">
+    <h2>General</h2>
+    <div class="card">
+      <div class="srow"><div class="grow"><div class="sm">Default kind</div><div class="xs subtle">What a thread gets when it does not say.</div></div><button class="btn outline sm7">Linux <svg class="icon s"><use href="#i-chevron-d"/></svg></button></div>
+      <div class="srow"><div class="grow"><div class="sm">Boxes per thread</div><div class="xs subtle">The most one thread may hold. 0 means no limit.</div></div><input class="input sm" value="0" style="width: 80px"></div>
+      <div class="srow"><div class="grow"><div class="sm">Enrol boxes as BB machines</div><div class="xs subtle">A ready box joins BB, so threads and terminals can use it and it gets the thread's credentials.</div></div><span class="switch on"></span></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<script>
+(function () {
+  const hash = location.hash.slice(1);
+  const [screen, theme] = hash.split("&");
+  if (theme === "light") { document.documentElement.classList.remove("dark"); document.documentElement.classList.add("light"); }
+  if (screen) {
+    document.body.classList.remove("all");
+    const el = document.getElementById(screen);
+    if (el) { el.classList.add("show"); }
+    document.body.style.padding = "16px";
+  }
+})();
+</script>
+</body>
+</html>

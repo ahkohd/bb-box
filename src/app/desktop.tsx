@@ -3,25 +3,21 @@
 // tab of its own for each box, and on the Desktops page for a browser tab.
 
 import RFB from "@novnc/novnc";
-import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState } from "react";
-import type { Contract, DesktopEntry, DesktopState, PanelState } from "../plugin/contract.ts";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+import type { BoxResult, Contract, DesktopEntry, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BUTTON, message, useLive } from "./common.tsx";
+import { EmptyPanel, forThread, IconButton, message, Meta, Notice, StatusDot, useLive, useNow, type Tone } from "./common.tsx";
+import { controlWord, statusOf } from "./status.ts";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
 
 /** The longest wait between attempts to reconnect to a desktop. */
 const MAX_RETRY_MS = 15_000;
-
-/** A change signal for this thread, or for every thread. */
-function forThread(threadId: string) {
-  return (payload: unknown) => {
-    const changed = (payload as { threadId?: unknown } | null)?.threadId;
-    return changed === null || changed === undefined || changed === threadId;
-  };
-}
 
 /** Where the Desktops page shows one box, for a new browser tab. */
 export function pageHref(pluginId: string, threadId: string, boxId: string): string {
@@ -77,29 +73,27 @@ function useViewerId(boxId: string): string {
   return viewer;
 }
 
-type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "disconnected"; readonly reason: string };
+type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "disconnected"; readonly reason: string; readonly retryMs: number };
 
+/** The toolbar's words for who has control. */
 function controlText(box: BoxView, mine: boolean): string {
   switch (box.control?.owner) {
     case "human":
-      return mine ? "You have control. Hand it back when you are done." : "Another viewer has control.";
+      return mine ? "You have control. The desktop follows this tab's size." : "Another viewer has control.";
     case "none":
-      return "Control is changing hands.";
+      return "Control is changing hands…";
     default:
-      return "The agent has control. You are watching.";
+      return "The agent has control.";
   }
 }
 
 /** A box's desktop, live, with its control bar. */
-export function DesktopViewer({ threadId, boxId, newTab }: { threadId: string; boxId: string; newTab: boolean }) {
+export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: string; boxId: string; newTab: boolean; onBack?: () => void }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
+  const navigate = useBbNavigate();
   const viewer = useViewerId(boxId);
-  const { value: state, error, refresh } = useLive<DesktopState>(
-    `${threadId}/${boxId}`,
-    () => rpc.call("desktop", { threadId, box: boxId }),
-    forThread(threadId),
-  );
+  const { value: state, error, refresh } = useLive<DesktopState>(`${threadId}/${boxId}`, () => rpc.call("desktop", { threadId, box: boxId }), forThread(threadId));
   const box = state?.box ?? null;
   const path = state?.desktopPath ?? null;
   const showing = box !== null && box.state === "ready" && box.display !== null;
@@ -132,8 +126,8 @@ export function DesktopViewer({ threadId, boxId, newTab }: { threadId: string; b
     };
     const onDisconnect = () => {
       rfb.current = null;
-      setConnection({ state: "disconnected", reason: refused ?? "The connection to the desktop ended." });
       const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** failures.current);
+      setConnection({ state: "disconnected", reason: refused ?? "The connection to the desktop ended.", retryMs: wait });
       failures.current += 1;
       retry = setTimeout(() => setAttempt((count) => count + 1), wait);
     };
@@ -160,7 +154,7 @@ export function DesktopViewer({ threadId, boxId, newTab }: { threadId: string; b
     if (mine) client.focus({ preventScroll: true });
   }, [mine, resizable, connection]);
 
-  const act = async (task: () => Promise<{ error: string | null }>) => {
+  const act = async (task: () => Promise<BoxResult>) => {
     setActing(true);
     try {
       setProblem((await task()).error);
@@ -173,57 +167,143 @@ export function DesktopViewer({ threadId, boxId, newTab }: { threadId: string; b
   };
   const take = () => act(() => rpc.call("takeControl", { threadId, box: boxId, viewer }));
   const handBack = () => act(() => rpc.call("handBack", { threadId, box: boxId }));
+  const start = () => act(() => rpc.call("start", { threadId, box: boxId }));
   const reconnect = () => {
     failures.current = 0;
     setAttempt((count) => count + 1);
   };
 
-  let notice: string | null = null;
-  if (error) notice = error;
-  else if (!state) notice = "Loading the desktop...";
-  else if (!box) notice = "This thread has no such box. It may have been released.";
-  else if (!box.display) notice = `Box ${box.name} has no desktop.`;
-  else if (box.state !== "ready") notice = `The desktop shows when box ${box.name} is running.`;
-  else if (connection.state === "connecting") notice = "Connecting to the desktop...";
-  else if (connection.state === "disconnected") notice = `${connection.reason} Trying again...`;
+  // The toolbar's state: a dot and a few words.
+  let tone: Tone = "busy";
+  let words = "Loading…";
+  if (error) {
+    tone = "bad";
+    words = "Could not load";
+  } else if (box && !box.display) {
+    tone = "off";
+    words = "No desktop";
+  } else if (box && box.state !== "ready") {
+    tone = box.state === "stopped" ? "off" : box.state === "failed" || box.state === "gone" ? "bad" : "busy";
+    words = statusOf(box, Date.now()).items[0]?.text ?? box.state;
+  } else if (box && connection.state === "connecting") {
+    words = "Connecting…";
+  } else if (box && connection.state === "disconnected") {
+    tone = "warn";
+    words = "Disconnected";
+  } else if (box) {
+    tone = "ok";
+    words = controlText(box, mine);
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
-        <Icon name="Monitor" className="size-4 text-muted-foreground" aria-hidden />
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
+        {onBack ? <IconButton label="Back to desktops" icon="ArrowLeft" onClick={onBack} className="-ml-1" /> : null}
+        <Icon name={`${pluginId}/monitor`} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="font-medium text-foreground">{box?.name ?? "Desktop"}</span>
-        {box && showing ? <span className="text-muted-foreground">{controlText(box, mine)}</span> : null}
-        <span className="ml-auto flex flex-wrap gap-2">
+        <span className={cn("inline-flex min-w-0 items-center gap-1.5", mine ? "text-foreground" : "text-muted-foreground")}>
+          <StatusDot tone={tone} />
+          <span className="min-w-0">{words}</span>
+        </span>
+        <span className="ml-auto flex items-center gap-1.5">
           {showing && !mine ? (
-            <button type="button" className={BUTTON} disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
+            <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
               Take control
-            </button>
+            </Button>
           ) : null}
-          {showing && box?.control?.owner === "human" ? (
-            <button type="button" className={BUTTON} disabled={acting} onClick={() => void handBack()}>
+          {showing && mine ? (
+            <Button type="button" size="sm" className="h-7" disabled={acting} onClick={() => void handBack()}>
               Hand back to the agent
-            </button>
+            </Button>
           ) : null}
           {showing && connection.state === "disconnected" ? (
-            <button type="button" className={BUTTON} onClick={reconnect}>
+            <Button type="button" variant="outline" size="sm" className="h-7" onClick={reconnect}>
               Reconnect
-            </button>
+            </Button>
           ) : null}
-          {newTab && box ? (
-            <a className={BUTTON} href={pageHref(pluginId, threadId, box.id)} target="_blank" rel="noopener noreferrer">
-              <Icon name="ExternalLink" className="size-3" aria-hidden />
-              New browser tab
-            </a>
+          {box ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label="Desktop actions">
+                  <Icon name="MoreHorizontal" className="size-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-max min-w-40 max-w-72" mobileTitle={box.name}>
+                {newTab ? (
+                  <DropdownMenuItem onSelect={() => void navigate.openUrl(pageHref(pluginId, threadId, box.id))}>
+                    <Icon name="ExternalLink" aria-hidden />
+                    Open in a browser tab
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onSelect={() => navigate.toThread(threadId)}>
+                    <Icon name="ArrowUpRight" aria-hidden />
+                    Open thread
+                  </DropdownMenuItem>
+                )}
+                {showing ? (
+                  <DropdownMenuItem onSelect={reconnect}>
+                    <Icon name="ArrowReloadHorizontal" aria-hidden />
+                    Reconnect
+                  </DropdownMenuItem>
+                ) : null}
+                {box.control?.owner === "human" && !mine ? (
+                  <DropdownMenuItem onSelect={() => void handBack()}>
+                    <Icon name="ArrowTurnBackward" aria-hidden />
+                    Hand back to the agent
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : null}
         </span>
       </div>
-      {problem ? <p className="px-3 py-1 text-xs text-destructive">{problem}</p> : null}
-      <div className="relative min-h-0 flex-1 bg-muted">
+      {problem ? (
+        <p role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive-text">
+          {problem}
+        </p>
+      ) : null}
+      <div className={cn("relative min-h-0 flex-1 bg-muted", mine && "shadow-[inset_0_0_0_2px_color-mix(in_oklab,var(--primary)_60%,transparent)]")}>
         <div ref={target} className="absolute inset-0" data-testid="desktop-screen" />
-        {notice ? (
-          <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-sm text-muted-foreground">
-            <p>{notice}</p>
-          </div>
+        {error ? (
+          <Notice>{error}</Notice>
+        ) : !state ? null : !box ? (
+          <Notice>This box has been released.</Notice>
+        ) : !box.display ? (
+          <Notice>{box.name} has no desktop.</Notice>
+        ) : box.state === "stopped" ? (
+          <Notice
+            action={
+              box.canStopStart ? (
+                <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting} onClick={() => void start()}>
+                  <Icon name="Play" aria-hidden />
+                  Start
+                </Button>
+              ) : undefined
+            }
+          >
+            {box.name} is stopped.
+          </Notice>
+        ) : box.state === "acquiring" || box.state === "starting" ? (
+          <Notice detail="The desktop shows once it is ready.">{box.name} is starting…</Notice>
+        ) : box.state === "failed" ? (
+          <Notice detail={box.error ?? undefined}>{box.name} failed to start.</Notice>
+        ) : box.state === "gone" ? (
+          <Notice>{box.name} was deleted outside bb-box.</Notice>
+        ) : box.state !== "ready" ? (
+          <Notice>{box.name} is being released.</Notice>
+        ) : connection.state === "connecting" ? (
+          <Notice>Connecting to the desktop…</Notice>
+        ) : connection.state === "disconnected" ? (
+          <Notice
+            detail={`Trying again in ${Math.max(1, Math.round(connection.retryMs / 1000))} s`}
+            action={
+              <Button type="button" variant="outline" size="sm" className="h-7" onClick={reconnect}>
+                Reconnect now
+              </Button>
+            }
+          >
+            {connection.reason}
+          </Notice>
         ) : null}
       </div>
     </div>
@@ -239,7 +319,7 @@ function parseParams(params: unknown): string | null {
 export function useOpenDesktop(): (box: BoxView) => void {
   const navigate = useBbNavigate();
   return (box) => {
-    navigate.openThreadPanel({ actionId: DESKTOP_ACTION, title: `Desktop: ${box.name}`, params: desktopParams(box.id) });
+    navigate.openThreadPanel({ actionId: DESKTOP_ACTION, title: box.name, params: desktopParams(box.id) });
   };
 }
 
@@ -250,27 +330,62 @@ export function DesktopPanel({ threadId, params }: { threadId: string; params: u
   return <DesktopChooser threadId={threadId} />;
 }
 
+/** A desktop box as a row: name, kind, state and who has control, with one "Open" button. */
+function DesktopRow({ box, meta, onOpen, actions }: { box: BoxView; meta?: string | null; onOpen: () => void; actions?: React.ReactNode }) {
+  const pluginId = experimental_usePluginId();
+  const status = statusOf(box, Date.now());
+  const control = box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null;
+  return (
+    <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
+      <span className="flex size-6 items-center justify-center text-muted-foreground">
+        <Icon name={`${pluginId}/monitor`} className="size-4" aria-hidden />
+      </span>
+      <div className="min-w-0">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
+          <span className="truncate text-xs text-muted-foreground">{box.kindLabel}</span>
+        </span>
+        <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
+          <StatusDot tone={status.tone} className="mt-[0.3rem]" />
+          <Meta items={[status.items[0]?.text, ...status.items.slice(1).map((item) => item.text), control, meta]} />
+        </div>
+      </div>
+      <span className="flex shrink-0 items-center gap-1">
+        <Button type="button" variant="outline" size="sm" className="h-7" onClick={onOpen}>
+          Open
+        </Button>
+        {actions}
+      </span>
+    </div>
+  );
+}
+
 function DesktopChooser({ threadId }: { threadId: string }) {
   const rpc = useRpc<Contract>();
   const open = useOpenDesktop();
   const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
   const desktops = state?.boxes.filter((box) => box.desktop) ?? [];
+  useNow(desktops.some((box) => box.state === "acquiring" || box.state === "starting"), 1000);
   return (
-    <div className="space-y-3 p-3 text-sm">
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      {state && !desktops.length ? <p className="text-muted-foreground">This thread has no desktop boxes. Make one in the Boxes panel.</p> : null}
-      {desktops.map((box) => (
-        <button key={box.id} type="button" className={BUTTON} onClick={() => open(box)}>
-          <Icon name="Monitor" className="size-3" aria-hidden />
-          {box.name}
-        </button>
-      ))}
+    <div className="p-4">
+      {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
+      {state && !desktops.length ? <EmptyPanel title="No desktop boxes">This thread has no desktop box. Make one in the Boxes panel.</EmptyPanel> : null}
+      {desktops.length ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-1">
+          <div className="divide-y divide-border">
+            {desktops.map((box) => (
+              <DesktopRow key={box.id} box={box} onOpen={() => open(box)} />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 /** The Desktops page: every desktop box, or one box's desktop at <threadId>/<boxId>. */
 export function DesktopsPage({ subPath }: { subPath: string }) {
+  const navigate = useBbNavigate();
   const [threadId, boxId, ...rest] = subPath.split("/").map((part) => {
     try {
       return decodeURIComponent(part);
@@ -278,36 +393,65 @@ export function DesktopsPage({ subPath }: { subPath: string }) {
       return "";
     }
   });
-  if (threadId && boxId && !rest.length) return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} />;
+  if (threadId && boxId && !rest.length) {
+    return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} onBack={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" })} />;
+  }
   return <DesktopList />;
+}
+
+/** The titles of the threads that have desktops, fetched once each; a thread that cannot be read shows its ID. */
+function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
+  const sdk = useSdk();
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  const key = threadIds.join(" ");
+  useEffect(() => {
+    let cancelled = false;
+    for (const threadId of key.split(" ").filter(Boolean)) {
+      if (titles[threadId] !== undefined) continue;
+      sdk.threads
+        .get({ threadId })
+        .then((thread) => {
+          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: thread.title || threadId }));
+        })
+        .catch(() => {
+          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: threadId }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+    // Titles are fetched once per thread; a change of the set triggers the next round.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, sdk]);
+  return titles;
 }
 
 function DesktopList() {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
   const { value: desktops, error } = useLive<DesktopEntry[]>("desktops", () => rpc.call("desktops"), () => true);
+  const titles = useThreadTitles([...new Set((desktops ?? []).map((entry) => entry.threadId))]);
   return (
-    <div className="space-y-3 p-4 text-sm">
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      {desktops && !desktops.length ? <p className="text-muted-foreground">No thread has a desktop box.</p> : null}
-      {desktops?.map(({ threadId, box }) => (
-        <div key={box.id} className="flex items-center gap-2">
-          <button
-            type="button"
-            className={BUTTON}
-            onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: `${encodeURIComponent(threadId)}/${encodeURIComponent(box.id)}` })}
-          >
-            <Icon name="Monitor" className="size-3" aria-hidden />
-            {box.name}
-          </button>
-          <span className="text-xs text-muted-foreground">
-            {box.kindLabel}, {box.state === "ready" ? "running" : box.state}
-          </span>
-          <button type="button" className={`${BUTTON} ml-auto`} onClick={() => navigate.toThread(threadId)}>
-            Open its thread
-          </button>
-        </div>
-      ))}
+    <div className="h-full overflow-y-auto p-4 md:p-5">
+      <div className="mx-auto w-full max-w-3xl space-y-4">
+        {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
+        {desktops && !desktops.length ? <EmptyPanel title="No desktops">No thread has a desktop box. Make one from a thread's Boxes panel.</EmptyPanel> : null}
+        {desktops?.length ? (
+          <div className="rounded-lg border border-border bg-card px-4 py-1">
+            <div className="divide-y divide-border">
+              {desktops.map(({ threadId, box }) => (
+                <DesktopRow
+                  key={box.id}
+                  box={box}
+                  meta={titles[threadId] ?? null}
+                  onOpen={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: `${encodeURIComponent(threadId)}/${encodeURIComponent(box.id)}` })}
+                  actions={<IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
