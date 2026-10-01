@@ -15,7 +15,8 @@ import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 
 export const PAUSED =
   "Paused: a person has taken control of this box's desktop in BB. The computer tools will work again when they hand control back. " +
-  "Nothing was done and the desktop is as they left it. Wait, or ask them in the thread.";
+  "Nothing was done and the desktop is as they left it. Wait, or ask them in the thread. " +
+  "Once they ask you to continue, or the thread makes clear they have finished, take control back with computer_take_control.";
 export const RETURNED = "Control returned; the desktop may have changed. Observe before acting.";
 
 /** The longest edge of an image the agent gets. */
@@ -61,6 +62,7 @@ const MAX_REFS = 20_000;
 /** How bb-box names itself to the driver. Cua does not read it. */
 const CLIENT = { name: "bb-box", version: "1" };
 const PAUSED_WHILE_RUNNING = "A person took control of the box's desktop while this ran, so bb-box closed its session with the driver.";
+const AFTER_PAUSE = "Wait until they hand control back, or take it back with computer_take_control once they ask you to continue; then call computer_observe.";
 const FORGOTTEN = "The box stopped or was released while this ran.";
 
 export type ComputerErrorCode = "paused" | "unsupported" | "stale" | "input" | "refused" | "driver" | "interrupted";
@@ -88,6 +90,8 @@ export interface ComputerDeps {
   spawn(box: BoxRecord, script: string, signal?: AbortSignal): Promise<ByteChannel>;
   /** Who controls the box's desktop now. */
   owner(boxId: string): Owner;
+  /** Takes control of the box's desktop back from a person (038). False when the agent had it already. */
+  takeBack(boxId: string): Promise<boolean>;
   logError(operation: string, error: unknown): void;
   readonly idleMs?: number;
   readonly pauseWaitMs?: number;
@@ -933,6 +937,26 @@ export class Computer {
     state.notice = RETURNED;
   }
 
+  /**
+   * The agent takes control of the box's desktop back from a person (038).
+   * The agent's references and images went when the person took it (pause).
+   */
+  async takeControl(box: BoxRecord): Promise<ComputerResult> {
+    this.#drivable(box);
+    const took = await this.#deps.takeBack(box.id);
+    const state = this.#boxes.get(box.id);
+    const notice = state?.notice ?? null;
+    if (state) state.notice = null;
+    if (took) {
+      return {
+        text: `You took control of box ${box.name}'s desktop back. Keys the person held down were let go, and the desktop has the size it had before they took control. It may have changed, and earlier references and images are gone.`,
+        hints: ["Call computer_windows or computer_observe before acting."],
+      };
+    }
+    const text = `You already have control of box ${box.name}'s desktop.`;
+    return notice ? { text: `${notice}\n\n${text}`, hints: [] } : { text, hints: [] };
+  }
+
   /** The box stopped, restarted or went: its session closes and nothing is kept. */
   forget(boxId: string): void {
     const state = this.#boxes.get(boxId);
@@ -990,11 +1014,7 @@ export class Computer {
 
   /** Runs one tool call: after the box's earlier ones, and only while the agent has control. */
   async #run(box: BoxRecord, signal: AbortSignal | undefined, work: (use: Use) => Promise<ComputerResult>): Promise<ComputerResult> {
-    const driver = box.capabilities.computerUse;
-    if (!driver) {
-      throw new ComputerError("unsupported", `Box ${box.name} has no computer use: its kind, ${box.kind}, has no desktop the computer tools can drive.`, "Acquire a desktop kind from box_list for computer use, or use box_run in this box.");
-    }
-    if (driver.driver !== "cua") throw new ComputerError("unsupported", `bb-box cannot drive box ${box.name}'s computer-use driver, ${driver.driver}.`, "Use box_run in this box.");
+    this.#drivable(box);
     const state = this.#state(box.id);
     state.inFlight++;
     this.#stopIdle(state);
@@ -1019,6 +1039,15 @@ export class Computer {
       state.inFlight--;
       if (!state.inFlight) this.#settled(state);
     }
+  }
+
+  /** Refuses a box with no desktop the computer tools can drive. */
+  #drivable(box: BoxRecord): void {
+    const driver = box.capabilities.computerUse;
+    if (!driver) {
+      throw new ComputerError("unsupported", `Box ${box.name} has no computer use: its kind, ${box.kind}, has no desktop the computer tools can drive.`, "Acquire a desktop kind from box_list for computer use, or use box_run in this box.");
+    }
+    if (driver.driver !== "cua") throw new ComputerError("unsupported", `bb-box cannot drive box ${box.name}'s computer-use driver, ${driver.driver}.`, "Use box_run in this box.");
   }
 
   #gate(use: Use): void {
@@ -1144,7 +1173,7 @@ export class Computer {
           if (live.reason === null && options.readOnly && attempt === 0) continue;
           const hint =
             live.reason === PAUSED_WHILE_RUNNING
-              ? "Wait until they hand control back, then call computer_observe."
+              ? AFTER_PAUSE
               : live.reason === FORGOTTEN
                 ? "Call box_status to see the box."
                 : "Call computer_observe to see the window; bb-box opens a new session with the driver.";
@@ -2012,7 +2041,7 @@ function unread(error: unknown, hint: string): Changes {
   if (error instanceof ComputerError && (error.code === "paused" || error.code === "interrupted")) {
     return {
       parts: ["A person took control of the desktop before bb-box could read what changed."],
-      hints: ["Wait until they hand control back, then call computer_observe."],
+      hints: [AFTER_PAUSE],
       changed: true,
       after: null,
     };

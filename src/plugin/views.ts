@@ -227,7 +227,7 @@ export function boxLine(box: BoxRecord): string {
 
 const CONTROL_WORDS: Record<ControlView["owner"], string> = {
   agent: "the agent",
-  human: "the user, in bb-box's panel. Leave the desktop's windows alone until they hand control back",
+  human: "the user, in bb-box's panel. Leave the desktop's windows alone until they hand control back, or until they ask you to continue: then call computer_take_control",
   none: "changing hands",
 };
 

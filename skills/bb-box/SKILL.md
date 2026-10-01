@@ -30,6 +30,7 @@ Every result ends with a `Next:` line that says what to do next.
 | `computer_act` | `box`, `action`, `ref?`, `window?`, `x?`, `y?`, `value?`, `direction?`, `amount?`, `keys?` | Clicks, double-clicks, right-clicks, scrolls or sets a value, on a reference or at pixels, or presses `keys` with action `key`, and says what changed. |
 | `computer_type` | `box`, `text?`, `keys?`, `ref?`, `window?` | Types text, or presses a key or chord such as `ctrl+a`, and says what the element reads afterwards. `window` can be `"desktop"`. |
 | `computer_launch` | `box`, `app?`, `url?` | Opens an app or a URL and says which windows it opened. |
+| `computer_take_control` | `box` | Takes a desktop back from a person who took control, as their hand-back would. Use it only when they ask you to continue, or the thread makes clear they have finished. |
 
 `box` is the box's name or ID.
 
@@ -130,7 +131,9 @@ A person can watch each desktop box live from the panel and take control of
 its keyboard and mouse. While they hold control, their input goes to the box
 and nobody else's does. Control goes back to the agent when they hand it
 back, close the viewer for a minute or bb-box reloads, and the desktop gets
-back the size it had before they took control.
+back the size it had before they took control. The agent can also take it
+back with `computer_take_control`; their viewer then says "The agent took
+control", and they can take it again at any time.
 
 `box_run` with `desktop` starts the command in the desktop session, so it
 can open windows, as when you test an app. On a Mac, only such a command
@@ -171,8 +174,10 @@ with `computer_observe` first, and act on its references. Take an image with
 - Of two windows of one app a few pixels apart, the desktop reads one's tree
   for both. bb-box then moves the window you read a little way, and says so.
   It cannot move a maximised window: un-maximise or close one of the two.
-- While a person holds control, every computer tool refuses at once. After
-  they hand back, references and images are gone: observe again.
+- While a person holds control, every computer tool refuses at once. Wait,
+  or call `computer_take_control` once they ask you to continue or have
+  clearly finished. Either way, references and images are gone: observe
+  again.
 
 ## BB machines
 

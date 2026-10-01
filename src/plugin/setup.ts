@@ -301,6 +301,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return command.spawn(script, signal);
     },
     owner: (boxId) => desktops?.control.view(boxId).owner ?? "agent",
+    takeBack: (boxId) => desktops?.control.takeBack(boxId) ?? Promise.resolve(false),
     logError,
     ...options.computer,
   });

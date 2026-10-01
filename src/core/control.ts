@@ -12,6 +12,8 @@ export interface ControlView {
   readonly owner: Owner;
   /** The viewer that holds control, while a person holds it. */
   readonly holder: string | null;
+  /** The viewer the agent took control back from (038), until a person takes it again. */
+  readonly takenFrom?: string;
 }
 
 /** One viewer's connection to a box's desktop. */
@@ -51,6 +53,7 @@ interface BoxControl {
   resized: Screen | null;
   /** Takes and hand-backs run one at a time. */
   queue: Promise<unknown>;
+  takenFrom: string | null;
 }
 
 const STALE_MS = 60_000;
@@ -68,7 +71,7 @@ export class Control {
   #box(boxId: string): BoxControl {
     let state = this.#boxes.get(boxId);
     if (!state) {
-      state = { owner: "agent", holder: null, connections: new Set(), stale: null, size: null, resized: null, queue: Promise.resolve() };
+      state = { owner: "agent", holder: null, connections: new Set(), stale: null, size: null, resized: null, queue: Promise.resolve(), takenFrom: null };
       this.#boxes.set(boxId, state);
     }
     return state;
@@ -76,7 +79,8 @@ export class Control {
 
   view(boxId: string): ControlView {
     const state = this.#boxes.get(boxId);
-    return state ? { owner: state.owner, holder: state.holder } : AGENT;
+    if (!state) return AGENT;
+    return state.takenFrom ? { owner: state.owner, holder: state.holder, takenFrom: state.takenFrom } : { owner: state.owner, holder: state.holder };
   }
 
   mayInput(boxId: string, viewer: string): boolean {
@@ -138,10 +142,11 @@ export class Control {
     return run;
   }
 
-  #set(boxId: string, state: BoxControl, owner: Owner, holder: string | null): void {
-    if (state.owner === owner && state.holder === holder) return;
+  #set(boxId: string, state: BoxControl, owner: Owner, holder: string | null, takenFrom: string | null = null): void {
+    if (state.owner === owner && state.holder === holder && state.takenFrom === takenFrom) return;
     state.owner = owner;
     state.holder = holder;
+    state.takenFrom = takenFrom;
     this.#deps.changed(boxId);
   }
 
@@ -189,10 +194,23 @@ export class Control {
    * then sets the desktop back to its size if the holder resized it.
    */
   handBack(boxId: string): Promise<ControlView> {
+    return this.#giveBack(boxId, "person").then(() => AGENT);
+  }
+
+  /**
+   * The agent takes control back from a person (038): a hand-back, after
+   * which the holder's viewer says the agent took it. False when the agent
+   * had control already.
+   */
+  takeBack(boxId: string): Promise<boolean> {
+    return this.#giveBack(boxId, "agent");
+  }
+
+  #giveBack(boxId: string, by: "person" | "agent"): Promise<boolean> {
     const state = this.#boxes.get(boxId);
-    if (!state) return Promise.resolve(AGENT);
+    if (!state) return Promise.resolve(false);
     return this.#serial(state, async () => {
-      if (state.owner === "agent") return AGENT;
+      if (state.owner === "agent") return false;
       const holder = state.holder;
       if (state.stale) {
         clearTimeout(state.stale);
@@ -205,8 +223,8 @@ export class Control {
       if (screen && state.size) {
         await this.#deps.restore(boxId, state.size, screen).catch((error) => this.#deps.logError("restore the desktop's size", error));
       }
-      this.#set(boxId, state, "agent", null);
-      return AGENT;
+      this.#set(boxId, state, "agent", null, by === "agent" ? holder : null);
+      return true;
     });
   }
 
