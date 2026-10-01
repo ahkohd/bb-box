@@ -929,6 +929,18 @@ function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") 
   return renderSlot(action!, { threadId: THREAD, params: { box: boxId } }, { rpc: handlers, pluginId: "bb-box" });
 }
 
+test("a desktop that cannot be resized says only that you have control, and noVNC does not resize it", async () => {
+  const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false } })]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const [client] = novnc.FakeRfb.made;
+  act(() => void client!.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  expect(await slot.findByText("You have control.")).toBeTruthy();
+  expect(slot.queryByText(/follows this tab's size/)).toBeNull();
+  expect([client!.viewOnly, client!.resizeSession]).toEqual([false, false]);
+});
+
 test("a desktop tab shows the box through the relay, and takes and hands back control", async () => {
   const { handlers, changes } = server([desktopBox()]);
   const slot = desktopTab(handlers);
