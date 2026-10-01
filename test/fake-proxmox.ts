@@ -123,7 +123,9 @@ export class FakeProxmox {
     return upid;
   }
 
+  /** The token's rights come from the pool, so Proxmox refuses a VMID with no guest before it looks for one. */
   #missing(vmid: number, type = "lxc"): FetchResponse {
+    if (!this.guests.has(vmid)) return respond(403, `Permission check failed (/vms/${vmid}, VM.Audit)`, { data: null });
     return respond(500, `Configuration file 'nodes/${this.node}/${type === "qemu" ? "qemu-server" : "lxc"}/${vmid}.conf' does not exist`, { data: null });
   }
 

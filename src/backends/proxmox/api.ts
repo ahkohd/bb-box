@@ -66,6 +66,14 @@ export class ProxmoxError extends Error {
     return this.status === 403;
   }
 
+  /**
+   * The guest is not there. The token's rights come from bb-box's pool, so
+   * Proxmox answers 403 for a VMID outside it, as for one deleted.
+   */
+  get gone(): boolean {
+    return this.notFound || this.forbidden;
+  }
+
   get unauthorised(): boolean {
     return this.status === 401;
   }
@@ -333,7 +341,7 @@ export class Proxmox {
         uptime: typeof data?.uptime === "number" ? data.uptime : undefined,
       };
     } catch (error) {
-      if (error instanceof ProxmoxError && error.notFound) return null;
+      if (error instanceof ProxmoxError && error.gone) return null;
       throw error;
     }
   }
@@ -346,7 +354,7 @@ export class Proxmox {
       try {
         await this.stop(vmid, signal);
       } catch (error) {
-        if (!(error instanceof ProxmoxError && error.notFound)) throw error;
+        if (!(error instanceof ProxmoxError && error.gone)) throw error;
         return;
       }
     }
@@ -362,7 +370,7 @@ export class Proxmox {
     try {
       await remove();
     } catch (error) {
-      if (error instanceof ProxmoxError && error.notFound) return;
+      if (error instanceof ProxmoxError && error.gone) return;
       // A clone keeps the template's protection until it is configured.
       if (!(error instanceof ProxmoxError && error.protected)) throw error;
       await this.configure(vmid, { delete: ["protection"] }, signal);
