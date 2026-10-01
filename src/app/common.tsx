@@ -171,14 +171,16 @@ export function Badge({ children, tone = "muted", className }: { children: React
 }
 
 /** What a kind or a box has beyond its label, as badges: GPU, then what its boxes are (LXC, Docker, VM, Physical). */
-export function KindBadges({ gpu, forms, className }: { gpu: boolean; forms: readonly string[]; className?: string }) {
-  if (!gpu && !forms.length) return null;
+/** `ready`: a spare of the kind is ready, so a box of it comes at once (032). */
+export function KindBadges({ gpu, forms, ready = false, className }: { gpu: boolean; forms: readonly string[]; ready?: boolean; className?: string }) {
+  if (!gpu && !forms.length && !ready) return null;
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
       {gpu ? <Badge>GPU</Badge> : null}
       {forms.map((form) => (
         <Badge key={form}>{form}</Badge>
       ))}
+      {ready ? <Badge>Ready now</Badge> : null}
     </span>
   );
 }

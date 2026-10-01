@@ -9,6 +9,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/p
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
+import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
 
 /** noVNC's RFB, recording each client the viewer makes. */
@@ -178,6 +179,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     gpu: desktop,
     desktop,
     enrol: true,
+    spares: { target: 0, ready: 0, making: 0 },
     admin: true,
     backends: ["Fake host"],
     forms: ["LXC"],
@@ -302,8 +304,8 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
       },
     },
     kinds: [
-      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, drivers: ["fake", "other"] },
-      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, drivers: ["fake"] },
+      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
+      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, drivers: ["fake"], spares: { ready: 0, making: 0 } },
     ],
     drivers: [
       {
@@ -487,6 +489,26 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
   fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Size:" })).getByRole("radio", { name: "Small" }));
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}', "acquire linux-desktop"]));
+});
+
+test("the New box popover marks a kind with a spare ready as Ready now (#121)", async () => {
+  const [linux, desktop] = KINDS;
+  const kinds = [{ ...linux!, spares: { target: 1, ready: 1, making: 0 } }, { ...desktop!, spares: { target: 1, ready: 0, making: 1 } }];
+  const slot = panel(server([], { kinds }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const kindGroup = await screen.findByRole("radiogroup", { name: "Kind:" });
+  const options = within(kindGroup).getAllByRole("radio");
+  expect(options.map((option) => within(option).queryByText("Ready now") !== null)).toEqual([true, false]);
+});
+
+test("a kind's spares read as ready, part ready or being made, and say nothing while none is coming (#121)", () => {
+  expect(sparesWords(0, { ready: 0, making: 0 })).toEqual([]);
+  expect(sparesWords(2, { ready: 2, making: 0 })).toEqual(["2 spares ready"]);
+  expect(sparesWords(1, { ready: 1, making: 0 })).toEqual(["1 spare ready"]);
+  expect(sparesWords(2, { ready: 1, making: 1 })).toEqual(["1 of 2 spares ready"]);
+  expect(sparesWords(2, { ready: 0, making: 2 })).toEqual(["2 spares, being made"]);
+  expect(sparesWords(2, { ready: 0, making: 0 })).toEqual([]);
 });
 
 test("a custom size starts from the preset in view, sends only its filled fields, and refuses a field that is not a whole number", async () => {

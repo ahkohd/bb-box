@@ -120,6 +120,8 @@ export interface KindView {
   readonly desktop: boolean;
   /** A box of it can become a BB machine, so a thread can run on it. */
   readonly enrol: boolean;
+  /** Its spare boxes (032). */
+  readonly spares: SparesView;
   /** The box user can become root on every backend that offers the kind, on none, or, when null, on some. */
   readonly admin: boolean | null;
   /** The backends that offer it, in the order acquire tries them. */
@@ -128,7 +130,19 @@ export interface KindView {
   readonly forms: readonly BoxForm[];
 }
 
-export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges): KindView[] {
+/** A kind's spare boxes (032): how many it keeps, and how many are ready or being made. */
+export interface SparesView {
+  readonly target: number;
+  readonly ready: number;
+  readonly making: number;
+}
+
+export function kindViews(
+  offered: readonly OfferedKind[],
+  changes: SizeChanges,
+  spares: Readonly<Record<string, { readonly ready: number; readonly making: number }>> = {},
+  targets: Readonly<Record<string, number>> = {},
+): KindView[] {
   const views = new Map<string, KindView>();
   for (const { kind, backend } of offered) {
     const existing = views.get(kind.id);
@@ -155,6 +169,7 @@ export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges)
       gpu: kind.capabilities.gpu,
       desktop: kind.capabilities.displays.length > 0,
       enrol: kind.capabilities.enrol,
+      spares: { target: targets[kind.id] ?? 0, ready: spares[kind.id]?.ready ?? 0, making: spares[kind.id]?.making ?? 0 },
       admin,
       backends: [backend.label],
       forms: form ? [form] : [],

@@ -646,6 +646,12 @@ test("a kind keeps a spare box as a BB machine, which box_acquire claims, rename
   assert.equal(world.hosts.get(hostId)?.name, `${spare.name} (spare)`);
   assert.doesNotMatch(text(await tool("box_list", {})), new RegExp(spare.name));
 
+  // The panel and the settings page show it as ready (#121).
+  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { kinds: { id: string; spares: unknown }[] };
+  assert.deepEqual(state.kinds.find((kind) => kind.id === "linux")!.spares, { target: 1, ready: 1, making: 0 });
+  const config = (await harness.behavior.callRpc("config.get", null)) as { kinds: { id: string; spares: unknown }[] };
+  assert.deepEqual(config.kinds.find((kind) => kind.id === "linux")!.spares, { ready: 1, making: 0 });
+
   // A thread runs on the spare's machine, so an acquire leaves it.
   world.hostThreads.set(hostId, 1);
   const other = text(await tool("box_acquire", { kind: "linux" }));
