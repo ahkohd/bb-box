@@ -144,22 +144,34 @@ document, bb-box builds it from BB's settings:
 - Proxmox LXC is in the document, with ID `proxmox-lxc` and its switch as it
   was, if any of its keys was set. Its boxes, storage and guests carry over,
   and no guest is touched. A new install starts with no backends.
-- The secrets are written first, then the document at revision 1. The
-  document marks the move as done, so it happens once, and a failed write
-  leaves BB's settings as they were for the next start to try again.
+- The secrets are written first, then a copy of the non-secret values
+  BB's settings gave, then the document at revision 1. The document marks
+  the move as done, so it happens once, and a failed write leaves BB's
+  settings as they were for the next start to try again.
+- The copy is kept in plugin storage under
+  `config/migrated-from-bb-settings`, with the time of the move and the
+  bb-box version that made it, so a value that moved wrongly can be
+  compared with what it was. `bb box config migrated` prints it, and
+  `--remove` removes it. `bb box config show` mentions it until then.
+  Secrets are not copied: they exist on their hosts.
 - Then bb-box clears the old values from BB's settings, so no second copy of
-  a secret is left. It declares the old keys only while there is no
-  document, for this move to read them.
+  a secret is left, and marks them cleared in plugin storage. It declares
+  the old keys only until that mark is there, so a start cut short after
+  the document is written clears them on the next start. Clearing them
+  must not reconfigure the backends: once the document exists, BB's
+  settings never drive them.
 
 ## Consequences
 
 - One place sets everything, and every write is checked. bb-box's page in
   Tools shows only its own section from the next start.
 - Drivers change shape. Their settings become fields named within the
-  backend, in the shape of BB's setting descriptors, plus fields per host
-  for a backend with hosts. `parse` reads the backend's part of the document
-  and gives each problem with its field. `create` gets the backend's ID.
-  Drivers ship no UI: the page renders their fields.
+  backend, in the shape of BB's setting descriptors with a group
+  (`connection`, `credentials`, `boxes` or `advanced`), shown in the order
+  they are declared, plus fields per host for a backend with hosts.
+  `parse` reads the backend's part of the document and gives each problem
+  with its field. `create` gets the backend's ID. Drivers ship no UI: the
+  page renders their fields.
 - Core changes: an off backend stays built, hosts and kinds get switches,
   and the registry's order comes from the document.
 - Backends that land before the document declare BB settings as today, and
