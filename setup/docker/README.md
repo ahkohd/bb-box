@@ -190,7 +190,8 @@ GPU desktops have not yet been tested on a Docker host with a GPU.
   with `systemd-socket-activate`, so the first `docker` command starts
   Docker's daemon; a box with containers starts it at once, so their restart
   policies work. In a desktop box it starts the display, the session and Cua
-  Driver. Then it writes `/run/bb-box/ready`, without waiting for Docker.
+  Driver. Then it writes `/run/bb-box/ready`, once Docker's socket is the
+  `docker` group's, without waiting for Docker's daemon.
   bb-box waits for that file, then runs BB's bootstrap, which starts BB's
   daemon in the box.
 - **Stop and start.** `docker stop` and `docker start`. The restart policy is

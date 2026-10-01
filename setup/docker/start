@@ -12,8 +12,9 @@
 #   restart policies work.
 # - In a desktop box, starts the display, the XFCE session and Cua Driver as
 #   the box user, and starts each again when it exits, as their units do.
-# - Then writes /run/bb-box/ready, which bb-box waits for. /run is a tmpfs, so
-#   the file is new at each start.
+# - Then writes /run/bb-box/ready, which bb-box waits for, once Docker's
+#   socket is the docker group's. /run is a tmpfs, so the file is new at each
+#   start.
 #
 # Installed as /usr/local/sbin/bb-box-start by setup/docker/Dockerfile.
 set -u
@@ -66,9 +67,9 @@ if [ "${BBBOX_DOCKERD:-0}" = 1 ]; then
     rm -f /run/docker.sock
     systemd-socket-activate -l /run/docker.sock dockerd -H fd:// &
     local activate=$!
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 500); do
       [ -S /run/docker.sock ] && break
-      sleep 0.1
+      sleep 0.01
     done
     chgrp docker /run/docker.sock && chmod 660 /run/docker.sock
     if [ -n "$(ls -A /var/lib/docker/containers 2>/dev/null)" ]; then
@@ -116,6 +117,17 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
     [ -S "$home/.cache/cua-driver/cua-driver.sock" ] && break
     sleep 0.1
   done
+fi
+
+# Docker's socket is the docker group's about 10 ms after it starts. Until
+# then the box user's docker commands are refused, so ready waits for it.
+if [ "${BBBOX_DOCKERD:-0}" = 1 ]; then
+  socket_ready() { [ "$(stat -c %G:%a /run/docker.sock 2>/dev/null)" = docker:660 ]; }
+  for _ in $(seq 1 500); do
+    socket_ready && break
+    sleep 0.01
+  done
+  socket_ready || log "Docker's socket is not the docker group's yet"
 fi
 
 touch "$run/ready"
