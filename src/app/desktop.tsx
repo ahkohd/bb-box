@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import type { BoxResult, Contract, DesktopEntry, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { EmptyPanel, forThread, IconButton, KindBadges, message, Meta, Notice, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
+import { claimKept, dropKept, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 
 export const DESKTOP_ACTION = "desktop";
@@ -75,6 +76,112 @@ function useViewerId(boxId: string): string {
 
 type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "disconnected"; readonly reason: string; readonly retryMs: number };
 
+/**
+ * One viewer's desktop: noVNC and its canvas, in an element of its own that
+ * a tab puts inside its screen area. It is kept across tab switches (037):
+ * the element leaves the page and comes back with the stream still on it,
+ * so switching back is instant, with no handshake and no blank frame. While
+ * hidden it does not reconnect; a lost connection ends it instead.
+ */
+export class DesktopSession implements Kept {
+  readonly element = document.createElement("div");
+  hidden = false;
+  onEnded?: () => void;
+  connection: Connection = { state: "connecting" };
+  readonly #url: string;
+  readonly #listeners = new Set<() => void>();
+  #client: RFB | null = null;
+  #failures = 0;
+  #retry: ReturnType<typeof setTimeout> | undefined;
+  #refused: string | null = null;
+  #mine = false;
+  #resizable = false;
+  #disposed = false;
+
+  constructor(url: string) {
+    this.#url = url;
+    this.element.className = "absolute inset-0";
+    this.connect();
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  #set(connection: Connection): void {
+    this.connection = connection;
+    for (const listener of this.#listeners) listener();
+  }
+
+  connect(): void {
+    if (this.#disposed) return;
+    clearTimeout(this.#retry);
+    this.#refused = null;
+    const client = new RFB(this.element, this.#url, { shared: true });
+    client.scaleViewport = true;
+    client.viewOnly = !this.#mine;
+    client.resizeSession = this.#mine && this.#resizable;
+    client.addEventListener("connect", () => {
+      if (this.#client !== client) return;
+      this.#failures = 0;
+      this.#set({ state: "connected" });
+      this.#apply();
+    });
+    client.addEventListener("securityfailure", (event: Event) => {
+      this.#refused = (event as CustomEvent<{ reason?: string }>).detail.reason ?? "The relay refused the connection.";
+    });
+    client.addEventListener("disconnect", () => {
+      if (this.#client !== client) return;
+      this.#client = null;
+      const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** this.#failures);
+      this.#failures += 1;
+      this.#set({ state: "disconnected", reason: this.#refused ?? "The connection to the desktop ended.", retryMs: wait });
+      if (this.hidden) {
+        this.onEnded?.();
+        return;
+      }
+      this.#retry = setTimeout(() => this.connect(), wait);
+    });
+    this.#client = client;
+    this.#set({ state: "connecting" });
+  }
+
+  reconnect(): void {
+    this.#failures = 0;
+    clearTimeout(this.#retry);
+    const client = this.#client;
+    this.#client = null;
+    client?.disconnect();
+    this.connect();
+  }
+
+  /** Input and resizing follow control. The relay drops input from a viewer without control anyway; this keeps noVNC from sending it. */
+  setControl(mine: boolean, resizable: boolean): void {
+    this.#mine = mine;
+    this.#resizable = resizable;
+    this.#apply();
+  }
+
+  #apply(): void {
+    const client = this.#client;
+    if (!client || this.connection.state !== "connected") return;
+    client.viewOnly = !this.#mine;
+    client.resizeSession = this.#mine && this.#resizable;
+    if (this.#mine) client.focus({ preventScroll: true });
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    clearTimeout(this.#retry);
+    const client = this.#client;
+    this.#client = null;
+    client?.disconnect();
+    this.#listeners.clear();
+    this.element.remove();
+  }
+}
+
 /** The toolbar's words for who has control. */
 function controlText(box: BoxView, mine: boolean): string {
   switch (box.control?.owner) {
@@ -101,58 +208,57 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const resizable = box?.display?.resizable ?? false;
 
   const target = useRef<HTMLDivElement>(null);
-  const rfb = useRef<RFB | null>(null);
+  const session = useRef<DesktopSession | null>(null);
+  const mineNow = useRef(false);
+  mineNow.current = mine;
   const [connection, setConnection] = useState<Connection>({ state: "connecting" });
-  const [attempt, setAttempt] = useState(0);
-  const failures = useRef(0);
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const key = `desktop:${boxId}:${viewer}`;
 
+  // The viewer's session is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
   useEffect(() => {
-    if (!showing || !path || !target.current) return;
-    const client = new RFB(target.current, socketUrl(path, boxId, viewer), { shared: true });
-    client.scaleViewport = true;
-    client.viewOnly = true;
-    rfb.current = client;
-    setConnection({ state: "connecting" });
-    let refused: string | null = null;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    const onConnect = () => {
-      failures.current = 0;
-      setConnection({ state: "connected" });
-    };
-    const onSecurityFailure = (event: Event) => {
-      refused = (event as CustomEvent<{ reason?: string }>).detail.reason ?? "The relay refused the connection.";
-    };
-    const onDisconnect = () => {
-      rfb.current = null;
-      const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** failures.current);
-      setConnection({ state: "disconnected", reason: refused ?? "The connection to the desktop ended.", retryMs: wait });
-      failures.current += 1;
-      retry = setTimeout(() => setAttempt((count) => count + 1), wait);
-    };
-    client.addEventListener("connect", onConnect);
-    client.addEventListener("securityfailure", onSecurityFailure);
-    client.addEventListener("disconnect", onDisconnect);
+    const screen = target.current;
+    if (!showing || !path || !screen) return;
+    const claimed = claimKept(key, () => new DesktopSession(socketUrl(path, boxId, viewer)));
+    const current = claimed.session;
+    screen.appendChild(current.element);
+    session.current = current;
+    const unsubscribe = current.subscribe(() => setConnection(current.connection));
+    setConnection(current.connection);
+    // It rested while the box was away, or lost its connection while hidden.
+    if (current.connection.state === "disconnected") current.reconnect();
     return () => {
-      clearTimeout(retry);
-      client.removeEventListener("connect", onConnect);
-      client.removeEventListener("securityfailure", onSecurityFailure);
-      client.removeEventListener("disconnect", onDisconnect);
-      rfb.current = null;
-      client.disconnect();
+      unsubscribe();
+      current.element.remove();
+      session.current = null;
+      if (!claimed.kept) {
+        current.dispose();
+        return;
+      }
+      // A hidden tab may hold control for as long as a closed viewer: a minute (008). Then the agent has it back, unless someone else took it meanwhile.
+      releaseKept(
+        key,
+        mineNow.current
+          ? {
+              handBack: async () => {
+                const latest = await rpc.call("desktop", { threadId, box: boxId });
+                if (latest.box?.control?.owner === "human" && latest.box.control.holder === viewer) await rpc.call("handBack", { threadId, box: boxId });
+              },
+            }
+          : {},
+      );
     };
-  }, [showing, path, boxId, viewer, attempt]);
+  }, [showing, path, boxId, viewer, key, rpc, threadId]);
 
-  // Input and resizing follow control. The relay drops input from a viewer
-  // without control anyway; this keeps noVNC from sending it.
   useEffect(() => {
-    const client = rfb.current;
-    if (!client || connection.state !== "connected") return;
-    client.viewOnly = !mine;
-    client.resizeSession = mine && resizable;
-    if (mine) client.focus({ preventScroll: true });
+    session.current?.setControl(mine, resizable);
   }, [mine, resizable, connection]);
+
+  // A box that stops or goes takes its stream with it.
+  useEffect(() => {
+    if (state && !showing) dropKept(key);
+  }, [state, showing, key]);
 
   const act = async (task: () => Promise<BoxResult>) => {
     setActing(true);
@@ -168,10 +274,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const take = () => act(() => rpc.call("takeControl", { threadId, box: boxId, viewer }));
   const handBack = () => act(() => rpc.call("handBack", { threadId, box: boxId }));
   const start = () => act(() => rpc.call("start", { threadId, box: boxId }));
-  const reconnect = () => {
-    failures.current = 0;
-    setAttempt((count) => count + 1);
-  };
+  const reconnect = () => session.current?.reconnect();
 
   // The toolbar's state: a dot and a few words.
   let tone: Tone = "busy";
