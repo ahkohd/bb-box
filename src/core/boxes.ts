@@ -1033,6 +1033,7 @@ export class Boxes {
       }
     }
 
+    // Every built backend, off ones too: an off backend's warm counts read 0, so its upkeep retires its warm guests (029).
     for (const backend of this.#deps.backends.active()) {
       signal?.throwIfAborted();
       await backend.maintain?.(signal).catch((error) => this.#deps.logError(`maintain ${backend.id}`, error));
