@@ -1,7 +1,9 @@
 # 012: A kind names what it promises, and offers may add features
 
 Status: accepted, 30 September 2026. Partly supersedes
-[011](011-interface-v1.md).
+[011](011-interface-v1.md). Partly superseded by
+[027](027-a-kind-says-when-it-has-a-desktop.md): the kinds without a desktop
+are `linux` and `linux-docker`.
 
 ## Context
 

@@ -94,7 +94,14 @@ and `start` and `stop` throw `gone`.
 ### Kinds and offers
 
 - A kind ID is a shared word that names what the kind promises, never what
-  it lacks. Several backends may offer the same kind.
+  it lacks. Several backends may offer the same kind. A kind without a
+  desktop has no qualifier, and a desktop kind says `desktop`
+  ([027](decisions/027-a-kind-says-when-it-has-a-desktop.md)). The default
+  kind is `linux`.
+- The IDs before 027, `linux-headless` and `linux-headless-docker`, stay
+  accepted wherever an ID comes in: tool input, settings, stored records and
+  guests' kind tags. Core maps them to the new IDs where they come in, so
+  backends and views see only the new ones.
 - An offer is a backend and a kind. The registry tries the offers of a kind
   in the order the backends are listed in settings, and takes the first with
   capacity. The box records both.
@@ -107,11 +114,12 @@ and `start` and `stop` throw `gone`.
 
 | Kind | Promises | Offered by |
 | --- | --- | --- |
-| `linux-headless` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
-| `linux-headless-docker` | as above, plus the feature `docker` | Proxmox LXC (`nesting=1`), Docker when privileged, an SSH pool machine whose reset restores the whole machine |
+| `linux` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
+| `linux-docker` | as above, plus the feature `docker` | Proxmox LXC (`nesting=1`), Docker when privileged, an SSH pool machine whose reset restores the whole machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
 | `linux-desktop-cpu` | a Linux desktop without a GPU | Docker, an SSH pool machine, Proxmox LXC from a CPU-only desktop template |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
+| `macos` | macOS, no GPU | a physical Mac, Tart |
 | `macos-desktop` | a macOS desktop, no GPU | a physical Mac, Tart |
 | `macos-desktop-xcode` | as above, plus the features `xcode` and `ios-simulator` | a physical Mac or Tart image with Xcode |
 
@@ -134,7 +142,7 @@ and `start` and `stop` throw `gone`.
   viewer's resize themselves. Both desktops resize to the viewer while you
   hold control.
 - A box user in the `docker` group is root on the machine, so an SSH pool
-  offers `linux-headless-docker` only if its reset restores the whole machine
+  offers `linux-docker` only if its reset restores the whole machine
   (`restores: "machine"`). Rootless Docker kept in the box user's home may
   allow it after a home reset; that is untested.
 - Each kind sets `readyTimeoutMs`, the longest an acquire may take: about
@@ -150,7 +158,7 @@ and `start` and `stop` throw `gone`.
 | `gpu` | yes or no | show GPU status and count GPU capacity |
 | `features` | words such as `docker`, `systemd`, `xcode`, `ios-simulator` | let the agent choose a kind, and show each box's extras |
 | `command` | the command capability below, or none | offer `run` and file copies |
-| `displays` | a list of `{id, protocol, resizable}`, empty when headless | load the viewer client before the box exists, and allow resizing |
+| `displays` | a list of `{id, protocol, resizable}`, empty for a box without a desktop | load the viewer client before the box exists, and allow resizing |
 | `computerUse` | `{driver, version, socket}`, or none | offer the computer tools, and reach the driver in the box ([015](decisions/015-computer-use-through-cua-driver.md)) |
 | `enrol` | yes or no | enrol the box as a BB machine |
 
