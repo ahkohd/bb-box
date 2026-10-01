@@ -29,7 +29,7 @@ a whole-machine reset
 | Windows | Linux | container | Docker, in one WSL2 distribution, over `ssh://` | `linux`, `linux-desktop-cpu` | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | none; CUDA through `/dev/dxg` to research |
 | Windows | Linux | VM | Hyper-V | `linux`, `linux-desktop-cpu` | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
 | Windows | Linux | WSL2 distribution | WSL2 | `linux` | not planned: distributions share one VM and network, #158 | x86_64 | to research |
-| Windows | Linux | container | Docker Desktop | `linux`, `linux-desktop-cpu` | not over `ssh://`, which fails, #158; through BB (042) once a check on a PC passes. It runs only while someone is signed in | x86_64 | to research |
+| Windows | Linux | container | Docker Desktop | `linux`, `linux-desktop-cpu` | through BB (042), tested in #233; set up by [setup/docker](../setup/docker/README.md#docker-desktop-on-a-windows-pc). Not over `ssh://`, which fails, #158. It runs only while someone is signed in | x86_64 | to research |
 | Windows | Windows | VM | Hyper-V | `windows-desktop` | later, #158 | x86_64 | to research |
 | Windows | macOS | - | - | - | not possible | - | - |
 
@@ -412,6 +412,10 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   machine's name, and builds there any image it lacks;
   `bb box docker-build <machine>` builds them again. Building both needs
   about 25 GB free on the machine, and `build.sh` does not start with less.
+- On a Windows PC, BB's host app can run in a WSL 2 distribution with
+  Docker Desktop's WSL integration, and the relay reaches Desktop's socket
+  there (#233). Desktop runs only while someone is signed in, and stops the
+  distribution when it quits, so the machine is offline in BB then.
 - For such a host the CLI's `-H` is a unix socket on BB's server. bb-box
   relays it over one WebSocket that the machine's worker opens out to
   bb-box with a one-time secret: each connection is a channel, with 1 MiB

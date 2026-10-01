@@ -2,7 +2,9 @@
 
 Status: accepted, 1 October 2026. Extends
 [031](031-docker-boxes-are-reached-through-docker-exec.md): the Docker
-backend reaches a BB machine's Docker without SSH.
+backend reaches a BB machine's Docker without SSH. Checked after it was
+built: on a Windows PC, the relay reaches Docker Desktop's socket in WSL,
+and privileged boxes there start and enrol (#233).
 
 ## Context
 
