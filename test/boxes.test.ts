@@ -22,7 +22,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "claimable" | "claimed" | "enrolWaitMs" | "log" | "recorded" | "reconnect"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "claimable" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "recorded" | "reconnect"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -995,6 +995,50 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
     (await world.backend.held()).map((guest) => guest.owner?.boxId).sort(),
     [stopped.id, silent.id, unsure.id].sort(),
   );
+});
+
+test("the sweep restores a thread's own box as BB's machine for the thread, which does not enrol again, and waits when BB does not say (#127)", async () => {
+  /** The ID of BB's machine for each box that is one, as BB keeps for a "New box". */
+  const machines = new Map<string, string>();
+  let answers = false;
+  const logs: string[] = [];
+  const world = setup(
+    {},
+    {
+      log: (message) => logs.push(message),
+      machineOf: async (boxId) => {
+        if (!answers) throw new Error("BB did not answer");
+        return machines.get(boxId) ?? null;
+      },
+    },
+  );
+  const own = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", role: "machine" }));
+  const other = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  machines.set(own.id, "host-thread");
+  for (const key of [...(await world.kv.list("box/")), ...(await world.kv.list("index/"))]) await world.kv.delete(key);
+  const boxes = world.restart();
+  world.enrolled.length = 0;
+
+  await boxes.sweep();
+  assert.deepEqual(await boxes.all(), [], "no record until BB says which machine each box is");
+  assert.ok(world.errors.includes("sweep: BB did not answer"));
+
+  answers = true;
+  assert.equal((await boxes.sweep()).adopted, 2);
+  const restored = await boxes.find(own.id);
+  assert.equal(restored?.role, "machine");
+  assert.deepEqual(restored?.enrol, { state: "enrolled", hostId: "host-thread", error: null });
+  assert.equal(restored?.restoredAt, null);
+  assert.ok(logs.includes(`Restored box ${own.name} of thread ${THREAD} from guest ${own.guest!.ref}, whose record was lost, as the thread's machine. It is ready.`));
+  assert.equal((await boxes.find(other.id))?.role, "box");
+  assert.deepEqual(world.enrolled, [`${other.name}, restored`], "only the other box enrols again");
+
+  // It is the thread's machine still: a start reconnects BB's machine and enrols nothing.
+  await boxes.stop(THREAD, own.name);
+  await boxes.start(THREAD, own.name);
+  await boxes.settled(own);
+  assert.deepEqual(world.reconnected, ["host-thread"]);
+  assert.deepEqual(world.enrolled, [`${other.name}, restored`]);
 });
 
 test("a kind's spares are made and enrolled ahead, and an acquire of the kind at its default size claims one at once (032)", async () => {

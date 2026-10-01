@@ -312,8 +312,9 @@ refusal says what to do instead.
   running. The sweep restores its box from the guest's labels while its
   thread is live, and releases it only once BB says the thread ended. When
   enrolment is on, a restored box is a BB machine again once it runs
-  and answers. If the thread ended first, the guest goes, but its BB
-  machine stays until someone removes it in BB.
+  and answers. A thread's own box from "New box" is that thread's BB
+  machine again, as BB still has it. If the thread ended first, the guest
+  goes, but its BB machine stays until someone removes it in BB.
   `bb plugin logs bb-box` shows each guest the sweep released, restored or
   kept, and why.
 - The sweep also finishes acquires and releases that a restart interrupted.

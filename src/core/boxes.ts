@@ -133,6 +133,11 @@ export interface BoxesDeps {
   /** A thread's project, for a box the sweep restores from its guest. */
   projectOf?(threadId: string): Promise<string | null>;
   /**
+   * The ID of BB's machine that a box is for its thread, as a "New box"
+   * (033), or null when it is none. The sweep asks it for a box it restores.
+   */
+  machineOf?(boxId: string): Promise<string | null>;
+  /**
    * Enrols a ready box as a BB machine, with the box ID as the key. With
    * `restored`, the sweep restored the box and bb-box has just found it
    * answering, so its enrolment counts from now. Called without awaiting.
@@ -1318,7 +1323,8 @@ export class Boxes {
    * creation, with its reference, address and data. A running guest is ready
    * when its command transport answers, and enrols again as a BB machine with
    * the same key, so BB gives back the machine it still has (025). Any other
-   * enrols later, once it runs and answers (026).
+   * enrols later, once it runs and answers (026). A box that is BB's machine
+   * for its thread, as a "New box", is that machine again and never enrols.
    */
   async #restore(backend: Backend, held: HeldGuest, signal?: AbortSignal): Promise<boolean> {
     const { owner: found, power, ...guest } = held;
@@ -1327,6 +1333,9 @@ export class Boxes {
     const kind = backend.kinds().find((candidate) => candidate.id === kindId);
     const answers = power === "stopped" ? false : await this.#answers(backend, guest, kindId, signal);
     const projectId = (await this.#deps.projectOf?.(owner.threadId).catch(() => null)) ?? null;
+    // A thread's own box is BB's machine for the thread still, and must not
+    // enrol as another (#127). When BB does not say, the guest waits for the next sweep.
+    const machine = (await this.#deps.machineOf?.(owner.boxId)) ?? null;
     const restored = await this.#locked(owner.threadId, async () => {
       if (await this.#read(owner.threadId, owner.boxId)) return null;
       const existing = await this.list(owner.threadId);
@@ -1344,7 +1353,7 @@ export class Boxes {
         backend: backend.id,
         backendLabel: backend.label,
         nature: backend.nature,
-        role: "box",
+        role: machine ? "machine" : "box",
         guest,
         state: power === "stopped" ? "stopped" : "ready",
         error: power === "stopped" || answers ? null : SILENT,
@@ -1353,14 +1362,14 @@ export class Boxes {
         releaseRequestedAt: null,
         resetAt: null,
         timings: {},
-        enrol: { state: "off", hostId: null, error: null },
-        restoredAt: this.#now(),
+        enrol: machine ? { state: "enrolled", hostId: machine, error: null } : { state: "off", hostId: null, error: null },
+        restoredAt: machine ? null : this.#now(),
       };
       await this.#deps.kv.set(indexKey(box.id), box.threadId);
       return this.#write(box);
     });
     if (restored) {
-      this.#deps.log?.(`Restored box ${restored.name} of thread ${restored.threadId} from guest ${guest.ref}, whose record was lost. It is ${restored.state}.`);
+      this.#deps.log?.(`Restored box ${restored.name} of thread ${restored.threadId} from guest ${guest.ref}, whose record was lost${machine ? ", as the thread's machine" : ""}. It is ${restored.state}.`);
       // Only a running guest answers.
       if (answers) await this.#enrol(restored, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
     }
