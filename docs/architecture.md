@@ -982,13 +982,21 @@ A box is a resource of its thread and gets what the thread's own machine has.
   - BB's daemon starts the workers that carry the variables a moment after
     BB shows the machine connected, up to about a second later on a Mac. So
     the enrolment ends once a command in the box finds such a worker, or
-    10 s after the machine connects. A reconnect after bb-box starts a box
-    waits up to 10 s for BB to show the machine connected again, then in
-    the same way. `box_run` waits up to 20 s for either, as `box_acquire`
-    and `box_start` do, so its first command has the variables; a Mac box
-    takes 8 to 10 s from ready to enrolled. A box with no names to take,
-    or with nothing running the daemon's program, does not wait. If BB
-    removes the machine during these waits, the box is left unenrolled.
+    30 s after the machine connects, since BB can give a new machine
+    `GH_TOKEN` some seconds after its other variables. A reconnect after
+    bb-box starts a box waits up to 30 s for BB to show the machine
+    connected again, then in the same way. `box_run` waits up to 20 s for
+    either, as `box_acquire` and `box_start` do, so its first command has
+    the variables; a Mac box takes 8 to 10 s from ready to enrolled. A box
+    with no names to take, or with nothing running the daemon's program,
+    does not wait. If BB removes the machine during these waits, the box is
+    left unenrolled.
+  - BB's daemon can stop during these waits, as in a box that runs out of
+    memory, so bb-box asks BB again as they end. If BB does not show the
+    machine connected within 30 s of that, or of bootstrap returning, the
+    enrolment fails rather than recording the box enrolled (#286). The
+    reason, in `box_status` and the log, names the box's memory when it is
+    under 2 GiB. The box keeps its machine until its release.
   - BB can take seconds to answer while it is busy, so bb-box asks for the
     machine's and the project's names together, first as the box starts,
     and keeps them for a minute. After that, a command gets the names it

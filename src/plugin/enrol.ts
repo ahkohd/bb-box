@@ -25,8 +25,11 @@
 // carry the variables, a moment after that, so the enrolment ends once the
 // box's commands find GH_TOKEN, which BB can give a new machine some seconds
 // after its other variables, or 30 s later, and the box's first command has
-// them. A reconnect waits in the same way for BB to show the machine
-// connected again, then for such a worker.
+// them. BB's daemon can stop meanwhile, as when the box runs out of memory,
+// so bb-box then asks BB again: the enrolment fails, and says why, if BB
+// does not show the machine connected within 30 s of that, or of bootstrap
+// returning (#286). A reconnect waits in the same way for BB to show the
+// machine connected again, then for such a worker.
 // Each enrolment logs how long its steps took.
 
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
@@ -35,6 +38,7 @@ import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 import { abortable } from "../core/abortable.ts";
+import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 
 export const MACHINE_PROVIDER_ID = "bb-box";
 
@@ -90,6 +94,13 @@ function isUnknownProvider(error: unknown): boolean {
 /** A wait for the log, such as "10 s" or "0.3 s". */
 function waited(ms: number): string {
   return `${Number((ms / 1000).toFixed(1))} s`;
+}
+
+/** For a daemon that stopped: the memory of a box with less than it needs, or nothing (#286). */
+function lowMemory(box: BoxRecord): string {
+  const memoryMiB = (box.guest?.size ?? box.size)?.memoryMiB;
+  if (memoryMiB === undefined || memoryMiB >= LINUX_LEAST_MEMORY_GIB * 1024) return "";
+  return ` The box has ${formatMiB(memoryMiB)} memory: with less than ${LINUX_LEAST_MEMORY_GIB} GiB it can run out of memory as it becomes a BB machine.`;
 }
 
 function sh(value: string): string {
@@ -374,20 +385,32 @@ export class Enrolment {
     }
   }
 
-  /** Waits for BB to show the machine connected. `access` is the access setup running alongside. */
+  /**
+   * Waits for BB to show the machine connected, and still connected once
+   * the waits for the box's access end. `access` is the access setup
+   * running alongside.
+   */
   async #follow(box: BoxRecord, phases: Phases, access: Promise<void>): Promise<void> {
     const hostId = box.enrol.hostId!;
     const deadline = Date.now() + this.#timeoutMs;
+    /** When the waits for the box's access ended. */
+    let waitsEnded: number | undefined;
     for (;;) {
       const current = await this.#deps.boxes.find(box.id);
       if (!current || current.state === "releasing" || current.enrol.hostId !== hostId) return;
       const host = await this.#deps.hosts().get({ hostId });
       const phase = host.lifecycle.phase;
-      if (phase === "active" && host.status === "connected") {
+      if (phase === "active" && host.status === "connected" && waitsEnded === undefined) {
         const connected = Date.now();
         phases.mark("connected", connected);
         await access;
         await this.#variables(current, "the machine connected", connected, phases);
+        // BB's daemon can stop during the waits, as when the box runs out of
+        // memory, so bb-box asks BB again before it records the box enrolled (#286).
+        waitsEnded = Date.now();
+        continue;
+      }
+      if (phase === "active" && host.status === "connected") {
         // BB may have removed the machine during the waits, and the box is then not enrolled.
         // A resumed enrolment's own time is only its last part, so the box shows none.
         const enrolled = await this.#deps.boxes.update(box, (latest) =>
@@ -410,6 +433,20 @@ export class Enrolment {
       }
       if (Date.now() > deadline) {
         const reason = `BB did not finish adding the box as a machine within ${Math.round(this.#timeoutMs / 60_000)} minutes.${host.lifecycle.message ? ` ${host.lifecycle.message}` : ""}`;
+        await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId, error: reason } }));
+        return;
+      }
+      // Once BB's daemon has started, or has connected and the waits ended,
+      // BB shows the machine connected within a second or so. If it does not
+      // within as long as an enrolment waits for the variables, the daemon
+      // stopped, and the box is not a BB machine (#286).
+      const from = waitsEnded ?? phases.marks.get("bootstrapped");
+      if (from !== undefined && Date.now() - from > this.#variablesWaitMs) {
+        const reason =
+          (waitsEnded !== undefined
+            ? `BB's daemon in box ${current.name} stopped soon after it connected, and BB did not show the machine connected again within ${waited(this.#variablesWaitMs)}.`
+            : `BB's daemon in box ${current.name} started, but BB did not show the machine connected within ${waited(this.#variablesWaitMs)}.`) + lowMemory(current);
+        this.#deps.log?.(reason);
         await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId, error: reason } }));
         return;
       }
