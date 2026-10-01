@@ -30,6 +30,8 @@ export interface ControlDeps {
   restore(boxId: string, size: Size, screen: Screen): Promise<void>;
   /** Stops the agent's input before a person takes control. It fails the take by throwing. */
   pause?(boxId: string): Promise<void>;
+  /** bb-box is stopping while a person has control of the box, so the log can say why it goes back to the agent. */
+  stopping?(boxId: string): Promise<void>;
   logError(operation: string, error: unknown): void;
   /** How long a holder's viewer may be gone before control goes back to the agent. */
   readonly staleMs?: number;
@@ -254,6 +256,11 @@ export class Control {
       if (state.stale) clearTimeout(state.stale);
       state.stale = null;
     }
-    await Promise.all([...this.#boxes.keys()].map((boxId) => this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error))));
+    await Promise.all(
+      [...this.#boxes].map(async ([boxId, state]) => {
+        if (state.owner === "human") await this.#deps.stopping?.(boxId).catch((error) => this.#deps.logError("log a hand back", error));
+        await this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error));
+      }),
+    );
   }
 }

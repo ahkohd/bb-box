@@ -7,9 +7,12 @@ import {
   describeSize,
   fits,
   kindSizes,
+  LINUX_LEAST_MEMORY_GIB,
   parseSizeChanges,
+  presetSizes,
   withEarlierSizes,
 } from "../src/core/sizes.ts";
+import { KIND_INFO } from "../src/backends/kinds.ts";
 
 const GiB = 1024;
 
@@ -106,6 +109,30 @@ test("a size request takes parts from its preset, or else the default preset, up
   assert.match(refused({ memoryGiB: 1.5 }), /whole numbers of at least 1/);
   assert.match(refused({ cores: 17 }), /^A linux box can be at most 16 cores, 32 GiB memory, 256 GiB disk, not 17 cores, 4 GiB memory\. Its presets are small/);
   assert.match(refused({ diskGiB: 257 }), /not 2 cores, 4 GiB memory, 257 GiB disk/);
+});
+
+test("a custom size of a Linux kind has at least 2 GiB memory, and every preset bb-box ships has that", () => {
+  assert.equal(LINUX_LEAST_MEMORY_GIB, 2);
+  const linux = kindSizes("linux");
+  assert.deepEqual(chooseSize("linux", linux, { memoryGiB: 2 }), { ok: true, size: { cores: 2, memoryMiB: 2 * GiB, diskGiB: null } });
+  assert.deepEqual(chooseSize("linux", linux, { memoryGiB: 1 }), {
+    ok: false,
+    message:
+      "A linux box needs at least 2 GiB memory, not 1 GiB: with less it can run out of memory as it becomes a BB machine. " +
+      "Its presets are small (2 cores, 4 GiB memory, the default), medium (4 cores, 8 GiB memory) and large (8 cores, 16 GiB memory).",
+  });
+  for (const kind of ["linux-desktop-cpu", "linux-arm64", "linux-headless"]) {
+    const choice = chooseSize(kind, kindSizes(kind), { cores: 4, memoryGiB: 1 });
+    assert.ok(!choice.ok && choice.message.startsWith(`A ${kind} box needs at least 2 GiB memory, not 1 GiB`), kind);
+  }
+  assert.equal(chooseSize("macos", kindSizes("macos"), { memoryGiB: 1 }).ok, true, "the floor is for Linux kinds");
+  assert.equal(chooseSize("windows-desktop", kindSizes("windows-desktop"), { memoryGiB: 1 }).ok, true, "the floor is for Linux kinds");
+
+  const linuxKinds = Object.entries(KIND_INFO).filter(([, info]) => info.os === "linux").map(([id]) => id);
+  assert.ok(linuxKinds.length >= 5);
+  for (const kind of linuxKinds) {
+    for (const preset of presetSizes(kindSizes(kind))) assert.ok(preset.memoryMiB >= LINUX_LEAST_MEMORY_GIB * GiB, `${kind}: ${describeSize(preset)}`);
+  }
 });
 
 test("sizes are described in words, leaving out the base disk", () => {

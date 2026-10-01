@@ -323,7 +323,7 @@ test("restoring the size sets the desktop back over a connection of its own", as
 });
 
 /** Shared control over a box whose viewers are plain records. */
-function control(options: { pause?: () => Promise<void>; staleMs?: number; reconnectMs?: number } = {}) {
+function control(options: { pause?: () => Promise<void>; stopping?: (boxId: string) => Promise<void>; staleMs?: number; reconnectMs?: number } = {}) {
   const events: string[] = [];
   const restores: unknown[] = [];
   const errors: string[] = [];
@@ -331,6 +331,7 @@ function control(options: { pause?: () => Promise<void>; staleMs?: number; recon
     changed: (boxId) => events.push(`${boxId} ${value.view(boxId).owner}`),
     restore: async (_boxId, size, screen) => void restores.push([size, screen]),
     pause: options.pause,
+    stopping: options.stopping,
     logError: (operation, error) => errors.push(`${operation}: ${String(error)}`),
     staleMs: options.staleMs,
     reconnectMs: options.reconnectMs,
@@ -463,15 +464,25 @@ test("the box ending the holder's connection keeps control while the viewer conn
 });
 
 test("a reload gives control back and sets the desktop's size back before bb-box goes, and schedules nothing after (#139)", async () => {
-  const { value, events, restores, connect } = control({ staleMs: 10 });
+  const stopping: string[] = [];
+  const { value, events, restores, errors, connect } = control({
+    staleMs: 10,
+    stopping: async (boxId) => {
+      stopping.push(boxId);
+      throw new Error("the log is gone");
+    },
+  });
   const a = connect("viewer-a");
+  connect("viewer-a", "box2");
   value.seen("box1", { width: 1280, height: 800 });
   await value.take("box1", "viewer-a");
   value.resized("box1", "viewer-a", SCREEN);
   await value.dispose();
   assert.deepEqual(value.view("box1"), { owner: "agent", holder: null });
   assert.equal(a.releases, 1, "what the holder held down is let go");
-  assert.deepEqual(restores, [[{ width: 1280, height: 800 }, SCREEN]]);
+  assert.deepEqual(restores, [[{ width: 1280, height: 800 }, SCREEN]], "even when the log line fails");
+  assert.deepEqual(stopping, ["box1"], "the log says why for each box a person had control of");
+  assert.deepEqual(errors, ["log a hand back: Error: the log is gone"]);
 
   // A take that lands during the reload, then its viewer closing, as the
   // reload closes every viewer: nothing hands back later with the old plugin's API.

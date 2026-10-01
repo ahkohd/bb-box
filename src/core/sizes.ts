@@ -4,7 +4,7 @@
 // kind. A box is made at a preset or a custom size, where any part left out
 // comes from the preset, or else the default preset.
 
-import { currentKindId, isEarlierKindId } from "../backends/kinds.ts";
+import { currentKindId, isEarlierKindId, kindInfo } from "../backends/kinds.ts";
 import type { BoxSize } from "../backends/types.ts";
 
 export const PRESETS = ["small", "medium", "large"] as const;
@@ -44,6 +44,13 @@ const MACOS: KindSizes = {
   default: "small",
   largest: size(16, 64, 256),
 };
+
+/**
+ * The least memory of a custom size of a Linux kind. BB's daemon uses about
+ * 260 MB in a box, and a 1 GiB box ran out of memory as it became a BB
+ * machine. Every preset bb-box ships has more.
+ */
+export const LINUX_LEAST_MEMORY_GIB = 2;
 
 /** What bb-box ships, by kind. A kind with none takes linux's until its backend brings its own. */
 const SHIPPED: Readonly<Record<string, KindSizes>> = {
@@ -262,7 +269,8 @@ export type SizeChoice = { readonly ok: true; readonly size: BoxSize } | { reado
 /**
  * The size a request asks for, complete: parts left out come from the named
  * preset, or else the default preset. Refuses an unknown preset, a part that
- * is not a whole number of at least 1, and a size above the largest.
+ * is not a whole number of at least 1, less than 2 GiB memory for a Linux
+ * kind, and a size above the largest.
  */
 export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest = {}): SizeChoice {
   const presets = `Its presets are ${describePresets(sizes)}`;
@@ -274,6 +282,12 @@ export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest 
   const parts = [request.cores, request.memoryGiB, request.diskGiB];
   if (parts.some((part) => part !== undefined && !isWhole(part, 1))) {
     return { ok: false, message: "Give cores, memory in GiB and disk in GiB as whole numbers of at least 1." };
+  }
+  if (request.memoryGiB !== undefined && request.memoryGiB < LINUX_LEAST_MEMORY_GIB && kindInfo(currentKindId(kind)).os === "linux") {
+    return {
+      ok: false,
+      message: `A ${kind} box needs at least ${LINUX_LEAST_MEMORY_GIB} GiB memory, not ${request.memoryGiB} GiB: with less it can run out of memory as it becomes a BB machine. ${presets}.`,
+    };
   }
   const base = sizes.presets[name as Preset];
   const chosen: BoxSize = {

@@ -23,8 +23,8 @@ BB app (panel, desktop viewer)          BB server
 |       desktop relay, shared control, BB enrolment, in-box scripts per OS |
 |------------------------------+-------------------------------------------|
 | Transports                   | Backends                                  |
-|  command: SSH, docker exec   |  built: proxmox-lxc, ssh-pool, tart,      |
-|    (guest agent later)       |    docker; being built: proxmox-qemu      |
+|  command: SSH, docker exec   |  built: proxmox-lxc, proxmox-qemu,        |
+|    (guest agent later)       |    ssh-pool, tart, docker                 |
 |  routes: tcp, command,       |  planned: mac (physical), clouds, ...     |
 |    websocket                 |                                           |
 +------------------------------+-------------------------------------------+
@@ -126,14 +126,19 @@ and `start` and `stop` throw `gone`.
 | --- | --- | --- |
 | `linux` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
-| `linux-desktop-cpu` | a Linux desktop without a GPU | Docker, an SSH pool machine, Proxmox LXC from a CPU-only desktop template |
+| `linux-desktop-cpu` | a Linux desktop without a GPU | Proxmox LXC from a CPU-only desktop template, Docker |
 | `linux-arm64` | Linux on arm64, no GPU | Tart |
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
-| `macos` | macOS, no GPU | a physical Mac, Tart |
-| `macos-desktop` | a macOS desktop, no GPU | a physical Mac, Tart |
-| `macos-desktop-xcode` | as above, plus the features `xcode` and `ios-simulator` | a physical Mac or Tart image with Xcode |
+| `macos` | macOS, no GPU | Tart; a physical Mac later (#47) |
+| `macos-desktop` | a macOS desktop, no GPU | Tart; a physical Mac later (#47) |
 
+- An SSH pool offers `linux` only, as its machines have no desktop yet.
+  Docker runs on a local daemon, a host over `ssh://`, such as a Windows PC
+  with Docker Engine in WSL2, or a BB machine
+  ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)).
+- A macOS kind with the features `xcode` and `ios-simulator` is later:
+  Tart's image has Xcode's command line tools only.
 - A kind's ID names its architecture when it is not the OS's usual one:
   `-arm64` follows the OS, and the rest is the x86_64 kind's. An agent
   asking for `linux` never gets arm64, where amd64 images and x86_64
@@ -157,16 +162,16 @@ and `start` and `stop` throw `gone`.
   `linux-desktop-cpu`, and a `linux-desktop` box back on the CPU, take the
   viewer's resize themselves. Both desktops resize to the viewer while you
   hold control.
-- Docker comes with Proxmox LXC (`nesting=1`) and Tart, and with the
-  Docker backend's boxes when they are privileged, as they are by default
-  but for GPU desktops.
+- Docker comes with Proxmox LXC (`nesting=1`) and Tart's Linux VMs, and
+  with the Docker backend's boxes when they are privileged, as they are by
+  default but for GPU desktops.
   A box user in the `docker` group is root on the machine, so an SSH pool
   gives Docker only if its reset restores the whole machine
   (`restores: "machine"`). Rootless Docker kept in the box user's home may
   allow it after a home reset; that is untested.
-- Each kind sets `readyTimeoutMs`, the longest an acquire may take: about
-  30 s for an LXC or Docker box, 3 min for a Windows VM, 5 min for a macOS
-  VM.
+- Each kind sets `readyTimeoutMs`, the longest an acquire may take: 30 s
+  for an LXC box, 60 s for a Docker box or a pool machine, 3 min for a
+  Windows VM and 5 min for a Tart VM.
 
 ### Capabilities
 
@@ -270,7 +275,7 @@ held for 250 ms: the last frame of a pane opening is not lost.
 - macOS Screen Sharing offers VNC authentication only when "VNC viewers may
   control screen with password" is on; otherwise it offers only Apple's own
   type 30, which the relay cannot answer. Mac setup turns the option on.
-- Windows starts with RFB through Proxmox's console: nothing to install in the
+- Windows uses RFB through Proxmox's console: nothing to install in the
   guest, the same noVNC client, and it shows the console session the agent
   uses. `vncproxy` returns a one-time ticket, which authorises the WebSocket,
   and a one-time password, which the relay answers as the VNC password. The
@@ -367,9 +372,11 @@ small values the backend needs later, such as a per-claim user or published
 ports. The registry stores `data` with the box and passes it back. It never
 holds a secret. Where references can be reused, `data.box` holds the box ID
 from the claim on ([018](decisions/018-guests-name-their-install-and-box.md)).
-A backend with several hosts set up alike, such as Docker hosts or Tart's
-Macs, lists them in its configuration, and `host` names one
-([029](decisions/029-configuration-is-one-checked-document.md)).
+A backend with several hosts set up alike, such as Tart's Macs, lists them
+in its configuration, and `host` names one
+([029](decisions/029-configuration-is-one-checked-document.md)). A Docker
+backend has one host, so each Docker host is a backend of its own
+([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)).
 
 ### Capacity
 
@@ -398,7 +405,8 @@ memory and root disk, where a disk of null is the backend's base.
   and a largest custom size, in bb-box's configuration, the same on every
   offer. The configuration's kinds part changes them per kind.
   `box_acquire` and `bb box acquire` take a preset or a custom size; core
-  refuses one above the largest.
+  refuses one above the largest, or one of a Linux kind with less than
+  2 GiB memory, as BB's daemon uses about 260 MB in a box.
 - The backend gets the size in `BoxIdentity.size`, and `capacity` is asked
   about that size, with the kind and size of each box still being acquired.
   An offer that cannot make it says so in capacity's message, and the
@@ -647,11 +655,16 @@ export interface PoolMember {
 
 export interface Backend {
   readonly id: string;
+  /** Shown to users, for example "Proxmox LXC on pve1" or "Docker on devpc". */
   readonly label: string;
+  /** Where its boxes run, by name; empty for a pool or a local Docker daemon. */
+  readonly hosts?: readonly string[];
   readonly nature: "virtual" | "real";
   /** Real backends: what a release restores. */
   readonly restores?: "home" | "machine";
   kinds(): readonly BoxKind[];
+  /** Real backends: free machines for a kind, from the last survey, with no call. */
+  free?(kind: string): number | null;
   capacity(
     kind: string,
     size: BoxSize,
@@ -709,6 +722,11 @@ export interface BackendDriver<C = unknown> {
    * LXC. A set goes whole, so no connection mixes values from both.
    */
   readonly inherits?: { readonly from: string; readonly sets: readonly (readonly string[])[] };
+  /**
+   * For a type with several backends, one per host (042): the host its
+   * fields name. Two backends on one host are refused.
+   */
+  readonly several?: (fields: Readonly<Record<string, unknown>>) => string;
   /** Reads the backend's part of the configuration. */
   parse(part: BackendPart): ParsedBackend<C>;
   /** Built again only when its fields, inherited too, or the install ID change. */
@@ -772,7 +790,21 @@ export interface BackendContext {
   warm(kind: string): number;
   /** Whether new boxes may go on this host. */
   hostOn(name: string): boolean;
+  /** BB machines reached through BB (042); absent where there is no BB. */
+  readonly machines?: MachineAccess;
   logError(operation: string, error: unknown): void;
+}
+
+/** A BB machine as a backend reaches it, through bb-box and BB (042). */
+export interface MachineAccess {
+  /** The docker CLI's host: a unix socket on BB's server, relayed to the machine. */
+  dockerHost(hostId: string): string;
+  /** Listens on that socket; fails at once when BB shows the machine offline. */
+  ready(hostId: string): Promise<void>;
+  /** The machine's name as BB has it, or null while bb-box does not know it. */
+  name(hostId: string): string | null;
+  /** Whether BB shows it connected, with no call to it; null for no such machine. */
+  connected(hostId: string): Promise<boolean | null>;
 }
 
 export interface KindSettings {
@@ -886,8 +918,8 @@ real backend's pool of free, reset machines is the same thing
 - Warm guests are not enrolled
   ([014](decisions/014-enrol-through-machine-providers.md)). A box enrols
   when it is claimed, and runs commands meanwhile. Spare boxes, which core
-  will keep enrolled for the kinds the operator chooses, are to hide that
-  wait. BB shows them in its machine list until a thread claims them
+  keeps enrolled for the kinds the operator chooses, hide that wait. BB
+  shows them in its machine list until a thread claims them
   ([032](decisions/032-spare-boxes-are-enrolled-ahead.md)).
 
 ## Thread access
@@ -964,9 +996,13 @@ A box is a resource of its thread and gets what the thread's own machine has.
     its "access" keeps a `sleep` started with them, so commands always find
     them. It starts a new one only when the values bb-box names change, and
     holds a lease so BB's idle timer leaves the worker alone. bb-box calls
-    it before a command, and again 30 s later at most, so a changed value
-    arrives within that time (`src/plugin/holder.ts`). The sleep ends with
-    the worker, as on a plugin reload, and the next command starts another.
+    it before a box's first command, and again in the background 30 s
+    later at most, or 2 s while BB has not given the machine `GH_TOKEN`
+    yet. Commands take the values the sleep holds meanwhile, so a changed
+    value arrives within that time and a call (`src/plugin/holder.ts`).
+    The sleep ends with the worker, as on a plugin reload, and the next
+    command waits for another, as does a command with names the sleep does
+    not hold.
   - A project's own variables are only in the agent that a worker of the
     daemon starts for a thread of the project on the box, so commands take
     the variables from any process below the daemon, not only its workers.
@@ -1032,7 +1068,8 @@ A box is a resource of its thread and gets what the thread's own machine has.
   you hand back, when your viewer has been gone for 60 s, when the box ends
   the connection and your viewer does not connect again within 5 s, or when
   the plugin restarts ([008](decisions/008-shared-control.md)). The plugin
-  log says why the box ended it.
+  log says why the box ended it, and says so when a restart, as for an
+  update, takes your control.
 - **Pausing the agent** happens in the plugin, not the box
   ([015](decisions/015-computer-use-through-cua-driver.md)). While you hold
   control, every computer tool refuses at once without reaching the box.
@@ -1265,11 +1302,9 @@ Push work to Git or copy it out before releasing a box.
 
 ## Backends
 
-How each backend fits the interface. Proxmox LXC, the SSH host pool, Tart
-and Docker are built. Proxmox QEMU makes Windows boxes, runs their
-commands, copies their files, shows and resizes their desktops, offers
-computer use, hibernates them on stop and keeps a hibernated warm pool. The
-rest are planned, and the later-backends research fills in the details.
+How each backend fits the interface. Proxmox LXC, Proxmox QEMU (Windows),
+Docker, the SSH host pool and Tart are built. Physical Macs and clouds
+are planned, and the later-backends research fills in the details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1346,11 +1381,12 @@ Notes:
   reboots, about 1 to 2 minutes on Apple silicon. Cua's Accessibility grant
   can come from an MDM profile, but Screen Recording needs one approval by a
   person when the Mac joins the pool.
-- **Tart** images are prepared ahead: Cua's permissions written offline into
-  the image's TCC database, automatic login, Xcode and the iOS Simulator
-  warmed, background indexing off. They are pulled from an OCI registry with
-  `tart pull`. Several Macs are the backend's hosts in the configuration
-  (029), or are managed by Orchard later.
+- **Tart** images are prepared ahead on each Mac by the setup's scripts,
+  from Cirrus Labs' images pulled with `tart pull`: for macOS, Cua's
+  permissions written offline into the image's TCC database, automatic
+  login, Xcode's command line tools, background indexing off. Several Macs
+  are the backend's hosts in the configuration (029), or are managed by
+  Orchard later.
   - Apple's macOS licence (section 2B(iii)) allows two macOS VMs per Mac you
     own or control, for software development, testing during development,
     macOS Server or personal non-commercial use, and not as a service bureau
@@ -1418,5 +1454,4 @@ Notes:
 | A physical Mac's reset; until then its `readyTimeoutMs` is an estimate | [later backends](research/later-backends.md) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
-| Whether the Docker backend runs as it is against Docker Engine in WSL2, and how fast Hyper-V clones and resumes | the experiments in [Windows hosts](research/windows-hosts.md) |
-| Whether a BB machine's relay reaches Docker Desktop's socket in WSL, and a privileged box there starts and enrols | a check on a Windows PC before [042](decisions/042-a-docker-host-can-be-a-bb-machine.md) is built |
+| Whether a BB machine's relay reaches Docker Desktop's socket in WSL, and a privileged box there starts and enrols | a check on a Windows PC with Docker Desktop ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)) |

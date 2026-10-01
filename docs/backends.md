@@ -1,42 +1,56 @@
 # Writing a backend
 
 A backend is where bb-box gets boxes from. The interface it implements, and
-how each planned backend fits it, is in [the architecture](architecture.md)
-under "Interface v1" and "Backends". This guide says what runs where, where
-the code goes and how to prove a backend works.
+how each backend fits it, is in [the architecture](architecture.md) under
+"Interface v1" and "Backends". This guide says what runs where, where the
+code goes and how to prove a backend works.
 
 ## What runs where
 
 One row per host and box OS. A box is a container, a VM or a physical
-machine; its kinds are plain or with a desktop. "Working" means merged and
-in daily use. Linux boxes have Docker, except Docker backend boxes with its
-`privileged` field off or on rootless Docker, its GPU desktops, and SSH host
-pool boxes unless every machine has a whole-machine reset
+machine. "Working" means merged and in daily use. Linux boxes have Docker,
+except Docker backend boxes with its `privileged` field off or on rootless
+Docker, its GPU desktops, and SSH host pool boxes unless every machine has
+a whole-machine reset
 ([041](decisions/041-every-linux-box-has-docker.md)).
 
 | Host | Box | Form | Backend | Kinds | Status | Arch | GPU |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Linux | Linux | container | Proxmox LXC | plain, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU; `linux-desktop-cpu`: none |
-| Linux | Linux | container | Docker | plain, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU through CDI |
-| Linux | Linux | physical | SSH host pool | plain | working | x86_64 | none offered |
-| Linux | Windows | VM | Proxmox QEMU | desktop | in progress, #46 | x86_64 | none at first: Windows draws on the CPU; a whole card passed through later |
+| Linux | Linux | container | Proxmox LXC | `linux`, `linux-desktop`, `linux-desktop-cpu` | working | x86_64 | `linux-desktop`: an NVIDIA GPU; `linux-desktop-cpu`: none |
+| Linux | Linux | container | Docker, local or over `ssh://` | `linux`, `linux-desktop`, `linux-desktop-cpu` | working | x86_64 | `linux-desktop`: an NVIDIA GPU through CDI |
+| Linux | Linux | container | Docker on a BB machine, through BB | `linux`, `linux-desktop`, `linux-desktop-cpu` | working, [042](decisions/042-a-docker-host-can-be-a-bb-machine.md) | x86_64 | as above |
+| Linux | Linux | physical | SSH host pool | `linux` | working | x86_64 | none offered |
+| Linux | Windows | VM | Proxmox QEMU | `windows-desktop` | working, [039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md) | x86_64 | none: Windows draws on the CPU; a whole card passed through later |
 | Linux | macOS | - | - | - | not possible: macOS runs only on Apple hardware | - | - |
-| Mac | macOS | VM | Tart | plain, desktop | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
-| Mac | macOS | physical | physical Mac | desktop | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
-| Mac | Linux | VM | Tart | plain, desktop | working, 040 | arm64 | none offered |
-| Mac | Windows | VM | QEMU with HVF, UTM or Parallels | desktop | research, #150 | arm64 | to research |
-| Windows | Linux | container | Docker, in one WSL2 distribution | plain, desktop | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | `linux-desktop-cpu`; CUDA through `/dev/dxg` to research |
-| Windows | Linux | VM | Hyper-V | plain, desktop | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
-| Windows | Linux | WSL2 distribution | WSL2 | plain | not planned: distributions share one VM and network, #158 | x86_64 | to research |
-| Windows | Linux | container | Docker Desktop | plain, desktop | not planned: `ssh://` fails, and it runs only while someone is signed in, #158 | x86_64 | to research |
-| Windows | Windows | VM | Hyper-V | desktop | later, after #46; see #158 | x86_64 | to research |
+| Mac | macOS | VM | Tart | `macos`, `macos-desktop` | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
+| Mac | macOS | physical | physical Mac | `macos`, `macos-desktop` | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
+| Mac | Linux | VM | Tart | `linux-arm64`, `linux-arm64-desktop-cpu` | working, [040](decisions/040-linux-on-arm64-has-kinds-of-its-own.md) | arm64 | none offered |
+| Mac | Windows | VM | QEMU with HVF, UTM or Parallels | a Windows desktop on arm64 | research, #150 | arm64 | to research |
+| Windows | Linux | container | Docker, in one WSL2 distribution, over `ssh://` | `linux`, `linux-desktop-cpu` | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | none; CUDA through `/dev/dxg` to research |
+| Windows | Linux | VM | Hyper-V | `linux`, `linux-desktop-cpu` | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
+| Windows | Linux | WSL2 distribution | WSL2 | `linux` | not planned: distributions share one VM and network, #158 | x86_64 | to research |
+| Windows | Linux | container | Docker Desktop | `linux`, `linux-desktop-cpu` | not over `ssh://`, which fails, #158; through BB (042) once a check on a PC passes. It runs only while someone is signed in | x86_64 | to research |
+| Windows | Windows | VM | Hyper-V | `windows-desktop` | later, #158 | x86_64 | to research |
 | Windows | macOS | - | - | - | not possible | - | - |
 
 Across the table:
 
-- **Architecture.** Every Linux kind is x86_64 today, and every Mac box
-  arm64. Each kind's capabilities name its `arch`. How a kind's ID shows
-  it is open in #148.
+- **Kinds.** A kind without a desktop has no qualifier, and a desktop kind
+  says `desktop` ([027](decisions/027-a-kind-says-when-it-has-a-desktop.md)).
+  `linux-docker` and `linux-arm64-docker` are aliases of `linux` and
+  `linux-arm64` that take only offers with Docker (041). The IDs before
+  027, `linux-headless` and `linux-headless-docker`, are still accepted.
+- **Architecture.** A kind's ID names its architecture when it is not the
+  OS's usual one: `-arm64` follows the OS, so `linux` is always x86_64 and
+  `linux-arm64` is arm64 (040). macOS runs on arm64 only and keeps no
+  qualifier. Each kind's capabilities name its `arch`.
+- **Where a box goes.** A kind's offers are tried in the configuration's
+  order, and the first with room takes the box. `box_acquire`'s `on`, and
+  `--on` on `bb box acquire` and `bb box machines add`, name one provider
+  instead, as `box_list` gives it ("Docker on devpc"), by its backend ID
+  (`docker:devpc`) or by its one host's name (`devpc`). Then only that one
+  is tried, and a full or offline provider is refused rather than passed
+  over ([044](decisions/044-a-box-can-be-asked-for-on-one-provider.md)).
 - **Enrolment.** Linux and macOS boxes can become BB machines. Windows boxes
   cannot until BB's host app runs on Windows
   ([BB request 1](bb-requests.md#1-bbs-host-app-on-windows)).
@@ -44,11 +58,13 @@ Across the table:
   Macs through #47, planned as the same driver with a reset per OS. There is
   no plan for physical Windows machines yet.
 - **Phone emulators.** The iOS Simulator runs only on Macs: on a physical
-  Mac (#47), or in a Tart image with Xcode. Android emulators are in
-  research (#161), for Linux hosts with KVM, Macs and Windows hosts.
-- **Cloud hosts.** A cloud VM that runs Linux is a Linux host above:
-  the Docker backend over `ssh://` and the SSH host pool reach one today. A
-  backend that makes cloud VMs itself is later, with no issue yet.
+  Mac (#47), or in a Tart image with Xcode, which the image does not have
+  yet. Android emulators are in research (#161), for Linux hosts with KVM,
+  Macs and Windows hosts.
+- **Cloud hosts.** A cloud VM that runs Linux is a Linux host above: the
+  Docker backend reaches one over `ssh://` or as a BB machine, and the SSH
+  host pool reaches one too. A backend that makes cloud VMs itself is
+  later, with no issue yet.
 
 ## Where the code goes
 
@@ -74,10 +90,14 @@ The core uses only [src/backends/types.ts](../src/backends/types.ts) and
      typed config, or problems each at its field;
    - `setup`, the path of its guide and of the scripts it runs, in order.
      The settings page links the guide first, then the scripts;
+   - `several`, for a type with one backend per host, as Docker has: the
+     host a backend's fields name. Two backends on one host are refused
+     ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md));
    - `create`, which builds the `Backend`. Its context gives the backend's
      ID, its storage, and its warm counts, kinds and hosts as the
      configuration has them now. A switch or a count changes them without
-     the backend being built again, so read them when needed.
+     the backend being built again, so read them when needed. Where bb-box
+     runs in BB, `context.machines` also reaches BB machines (042).
 
    A backend that kept BB settings before the configuration document (029)
    also has `earlier`: those settings, and how to read them once into the
@@ -374,12 +394,31 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   transport in `transport.ts`, and the backend in `backend.ts`.
 - The images are built by `setup/docker/`, from the Proxmox LXC template's
   guest scripts; its guide lists the fields. bb-box runs the `docker` CLI
-  on BB's server, against the local daemon or one over `ssh://`, and reaches
-  a box only through `docker exec`
+  on BB's server, against the local daemon, one over `ssh://` or a BB
+  machine's, and reaches a box only through `docker exec`
   ([031](decisions/031-docker-boxes-are-reached-through-docker-exec.md)).
+- Each Docker host is a backend of its own: the first has the ID `docker`,
+  another `docker:<name>`. Two backends on one host are refused.
 - On a Windows PC, `setup/docker-wsl/` runs Docker Engine in one WSL2
   distribution with its own sshd, which the backend reaches as
   `ssh://box@<pc>:2222` like any other host.
+- A BB machine with Docker, such as a developer's PC, needs no SSH
+  ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)). Settings
+  list, under "Docker on BB machines", each connected, persistent machine
+  that bb-box did not make, with Docker's version, cores and memory, and a
+  switch. Turning one on adds a Docker backend whose host is
+  `bb:<machine ID>`, last in acquire order and named "Docker on" and the
+  machine's name, and builds there any image it lacks;
+  `bb box docker-build <machine>` builds them again. Building both needs
+  about 25 GB free on the machine, and `build.sh` does not start with less.
+- For such a host the CLI's `-H` is a unix socket on BB's server. bb-box
+  relays it over one WebSocket that the machine's worker opens out to
+  bb-box with a one-time secret: each connection is a channel, with 1 MiB
+  of credit at first and frames of at most 64 KiB, and a ping every 15 s
+  finds a dead relay. The relay opens with the first `docker` command,
+  in about 0.5 s, and a plugin reload or the machine reconnecting ends it.
+  Capacity asks BB whether the machine is connected, with no call to it,
+  so an acquire passes over an offline machine at once.
 - Ownership lives in container labels set at creation (`bbbox.backend`,
   `bbbox.install`, `bbbox.box`, `bbbox.thread`, `bbbox.name`, `bbbox.kind`),
   and the container's name is `bbbox-<box ID>`, so references are never

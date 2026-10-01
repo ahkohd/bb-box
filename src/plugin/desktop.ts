@@ -101,6 +101,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     staleMs: deps.staleMs,
     reconnectMs,
     pause: deps.pause,
+    // A deploy or reload looks to a person like the box ending the viewer's connection, so the log says it was bb-box.
+    async stopping(boxId) {
+      const box = await boxes.find(boxId);
+      bb.log.warn(`bb-box is stopping, as for an update or a reload, so control of box ${box?.name ?? boxId}'s desktop goes back to the agent.`);
+    },
     async restore(boxId, size, screen) {
       const shown = await display(boxes, boxId);
       // SetDesktopSize first, even when the backend resizes: a GPU desktop
