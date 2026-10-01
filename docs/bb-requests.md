@@ -322,8 +322,8 @@ need a restart to pass on a changed token or variable.
 
 **What it would remove.**
 
-- The BB terminal that bb-box keeps on each enrolled box, which shows in
-  BB's terminal list and is replaced every 10 minutes.
+- bb-box's host entry, whose worker keeps a `sleep` with the variables on
+  each enrolled box.
 - On Linux, bb-box's scan of `/proc/<pid>/environ` for the processes
   below the daemon, which picks the newest with the most variables.
 - On macOS, bb-box's parsing of `ps -E`. It prints a newline as `\012`
@@ -336,9 +336,9 @@ need a restart to pass on a changed token or variable.
 - bb-box's dependence on where BB installs its daemon
   (`host-daemon/dist/daemon-bundle`), which a BB release can change.
 
-**Until then.** bb-box keeps a BB terminal running `sleep` on each
-enrolled box, since BB's own workers come and go
-(`src/plugin/keeper.ts`). Linux boxes read the environment of the
+**Until then.** bb-box's host entry keeps a `sleep` with the variables on
+each enrolled box, since BB's own workers come and go
+(`src/host/access.ts`). Linux boxes read the environment of the
 processes below the daemon from `/proc`, and macOS boxes parse `ps -E`,
 choosing the process the same way (`src/core/in-box.ts`). Windows boxes
 get none of the variables.

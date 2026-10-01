@@ -897,12 +897,15 @@ A box is a resource of its thread and gets what the thread's own machine has.
     has while bb-box asks again in the background, so a variable added in
     BB reaches commands a minute or so later.
   - BB starts and stops its workers as it pleases: a plugin reload stops
-    the ones a box has, and nothing starts them again. So bb-box keeps a BB
-    terminal on each enrolled box, titled "bb-box access", running `sleep`
-    (`src/plugin/keeper.ts`). BB gives its process the variables as it
-    starts, so commands always find them. bb-box makes it before a command
-    when there is none, and replaces it once it is 10 minutes old, so a
-    changed value arrives within that time.
+    the ones a box has, and nothing starts them again. So bb-box has a host
+    entry, which BB runs in a worker of the daemon (`src/host/access.ts`).
+    For each call, BB gives the worker the daemon's current variables, and
+    its "access" keeps a `sleep` started with them, so commands always find
+    them. It starts a new one only when the values bb-box names change, and
+    holds a lease so BB's idle timer leaves the worker alone. bb-box calls
+    it before a command, and again 30 s later at most, so a changed value
+    arrives within that time (`src/plugin/holder.ts`). The sleep ends with
+    the worker, as on a plugin reload, and the next command starts another.
   - A project's own variables are only in the agent that a worker of the
     daemon starts for a thread of the project on the box, so commands take
     the variables from any process below the daemon, not only its workers.
