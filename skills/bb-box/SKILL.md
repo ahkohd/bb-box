@@ -194,7 +194,7 @@ Most take `--json`.
 
 ## The panel
 
-The Boxes thread panel lists the thread's boxes as rows: name, kind, state,
+The Box thread panel lists the thread's boxes as rows: name, kind, state,
 timings, whether the box is a BB machine, and GPU or CPU for a desktop. A
 row opens to its details. "New box" makes a box of any kind; each row's
 actions stop, start, check and release it (release asks first). A desktop

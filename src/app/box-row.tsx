@@ -1,4 +1,4 @@
-// One box in the Boxes panel: its name, kind and status line, its details
+// One box in the Box panel: its name, kind and status line, its details
 // when open, its quick actions and its menu, and the release confirmation.
 
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate } from "@get-bb/plugin-sdk/app";

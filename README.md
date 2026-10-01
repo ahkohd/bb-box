@@ -197,7 +197,7 @@ bb plugin install .
 
 Then set a backend up with its guide, fill in its fields on bb-box's
 settings page in BB, and check them with `bb box doctor`. `bb box config`
-shows and saves the same configuration from a terminal. Each thread gets a Boxes panel,
+shows and saves the same configuration from a terminal. Each thread gets a Box panel,
 agents get the `box_` tools, and `skills/bb-box/SKILL.md` describes both.
 
 ## Upgrade

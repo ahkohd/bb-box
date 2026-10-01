@@ -1,4 +1,4 @@
-// The Boxes panel: a thread's boxes as rows, "New box", and the empty states.
+// The Box panel: a thread's boxes as rows, "New box", and the empty states.
 
 import { experimental_Icon as Icon, UrlLink, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
@@ -107,7 +107,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
         </div>
       ) : (
         <EmptyPanel title="No boxes yet">
-          <p className="mt-1">A box is a computer for this thread: Linux, with or without a desktop. You and the agent both use it.</p>
+          <p className="mt-1">A computer for this thread.</p>
         </EmptyPanel>
       )}
     </div>

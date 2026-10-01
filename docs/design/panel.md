@@ -1,6 +1,6 @@
-# Design: the Boxes panel and the desktop
+# Design: the Box panel and the desktop
 
-How bb-box looks and reads in BB: the Boxes panel in a thread, the desktop
+How bb-box looks and reads in BB: the Box panel in a thread, the desktop
 tab, and the Desktops page. The settings page is in
 [settings.md](settings.md). Mockups are in [mockups](mockups/): the HTML
 renders every screen in BB's dark and light themes, and the PNGs beside it
@@ -51,10 +51,11 @@ bb-box's own icon is a cube; BB has no cube, monitor or server glyph, so the
 plugin declares its three as SVGs (`bb.branding.experimental_icons`), drawn
 in the weight of BB's set.
 
-## The Boxes panel
+## The Box panel
 
-A thread panel tab (`layout: "padded"`, so BB gives it its usual padding
-and scrolling).
+A thread panel tab titled "Box" (`layout: "padded"`, so BB gives it its
+usual padding and scrolling). The operator asked for the singular on the
+tab (1 October 2026): one tab, one place for the thread's boxes.
 
 ### Layout
 
@@ -206,9 +207,9 @@ Size
 
 ### Empty states
 
-- **No boxes**: BB's dashed empty panel: "No boxes yet", then "A box is a
-  computer for this thread: Linux, with or without a desktop. You and the
-  agent both use it." The toolbar's "New box" is the action; the panel does
+- **No boxes**: BB's dashed empty panel: "No boxes yet", then "A computer
+  for this thread." The operator asked for that line to stay this simple
+  (1 October 2026). The toolbar's "New box" is the action; the panel does
   not repeat it.
 - **No backend on**: "bb-box is not set up yet. Turn on a backend in its
   settings to make boxes." with an "Open bb-box settings" button that goes
@@ -275,17 +276,17 @@ The sidebar entry lists every desktop box in every thread, as rows: glyph,
 name, kind, then the state, who has control, and the thread's title, with
 "Open" and a menu with "Open thread". Opening shows the same viewer with a
 back arrow in the toolbar. Empty: "No thread has a desktop box. Make one
-from a thread's Boxes panel."
+from a thread's Box panel."
 
 ## Copy
 
 | Where | Text |
 | --- | --- |
 | plugin description | Computers for BB threads: Linux boxes, with or without a desktop, that you and the agent share. |
-| tab titles | Boxes; the box's name for its desktop |
+| tab titles | Box; the box's name for its desktop |
 | toolbar | New box |
 | chooser | New box · Kind · Size · Small · Medium · Large · Custom · Make box |
-| empty | No boxes yet · A box is a computer for this thread: Linux, with or without a desktop. You and the agent both use it. |
+| empty | No boxes yet · A computer for this thread. |
 | not set up | bb-box is not set up yet. Turn on a backend in its settings to make boxes. · Open bb-box settings |
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |
 | actions | Open desktop · Open desktop in a browser tab · Open terminal · Copy address · Start · Stop · Check now · Release… |

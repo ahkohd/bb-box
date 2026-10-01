@@ -370,7 +370,7 @@ function DesktopChooser({ threadId }: { threadId: string }) {
   return (
     <div className="p-4">
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-      {state && !desktops.length ? <EmptyPanel title="No desktop boxes">This thread has no desktop box. Make one in the Boxes panel.</EmptyPanel> : null}
+      {state && !desktops.length ? <EmptyPanel title="No desktop boxes">This thread has no desktop box. Make one in the Box panel.</EmptyPanel> : null}
       {desktops.length ? (
         <div className="rounded-lg border border-border bg-card px-4 py-1">
           <div className="divide-y divide-border">
@@ -436,7 +436,7 @@ function DesktopList() {
     <div className="h-full overflow-y-auto p-4 md:p-5">
       <div className="mx-auto w-full max-w-3xl space-y-4">
         {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-        {desktops && !desktops.length ? <EmptyPanel title="No desktops">No thread has a desktop box. Make one from a thread's Boxes panel.</EmptyPanel> : null}
+        {desktops && !desktops.length ? <EmptyPanel title="No desktops">No thread has a desktop box. Make one from a thread's Box panel.</EmptyPanel> : null}
         {desktops?.length ? (
           <div className="rounded-lg border border-border bg-card px-4 py-1">
             <div className="divide-y divide-border">

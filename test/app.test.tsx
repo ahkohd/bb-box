@@ -304,7 +304,7 @@ function openMenu(trigger: HTMLElement) {
 
 test("the app registers the Boxes panel, a desktop tab, the Desktops page and the Backends settings section", () => {
   expect(app.threadPanelActions.map((action) => [action.id, action.title])).toEqual([
-    ["boxes", "Boxes"],
+    ["boxes", "Box"],
     ["desktop", "Desktop"],
   ]);
   expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["desktops", "Desktops", "desktop"]]);
