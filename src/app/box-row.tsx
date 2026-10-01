@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { IconButton, KindBadges, Meta, relativeTime, StatusDot } from "./common.tsx";
+import { IconButton, KindBadges, Meta, osName, relativeTime, StatusDot } from "./common.tsx";
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
@@ -131,8 +131,8 @@ export function BoxRow({
         >
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
-            <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{box.kindLabel}</span>
-            <KindBadges gpu={box.gpu} forms={box.form ? [box.form] : []} />
+            <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{osName(box.os)}</span>
+            <KindBadges desktop={box.desktop} gpu={box.gpu} docker={box.requires.includes("docker")} forms={box.form ? [box.form] : []} />
           </span>
         </button>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">

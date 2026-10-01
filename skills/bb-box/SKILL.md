@@ -67,8 +67,9 @@ backend offers:
 - `linux-desktop`: a desktop with a GPU
 - `linux-desktop-cpu`: a desktop drawn by the CPU
 
-Both desktops are labelled "Linux desktop"; the ID, the GPU badge and
-`box_status` tell them apart.
+Both desktops are labelled "Linux desktop" in `box_list`, `bb box kinds` and
+`box_status`, with "(GPU)" after the GPU one; the panel names every kind by
+its OS and shows Desktop, GPU and the rest as badges.
 
 A kind is on offer only when its templates are set. The Docker backend
 offers the same kinds as containers, with the same tools, and
@@ -241,8 +242,9 @@ cannot list models until it exists.
 
 ## The panel
 
-The Box thread panel lists the thread's boxes as rows: name, kind, badges
-(GPU, and LXC, Docker, VM or Physical for what the box is), state, timings
+The Box thread panel lists the thread's boxes as rows: name, the OS, badges
+(Desktop, GPU, Docker inside, and LXC, Docker, VM or Physical for what the
+box is), state, timings
 and whether the box is a BB machine. A row opens to its details. The plus
 button, "New box", makes a box of any kind; each row's
 actions stop, start, check and release it (release asks first). A desktop

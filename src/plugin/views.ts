@@ -2,7 +2,7 @@
 // for the panel, and short text for agents. Nothing here holds a credential.
 
 import { boxForm, type BackendStatus, type OfferedKind } from "../backends/index.ts";
-import type { BoxForm, BoxSize, DoctorReport } from "../backends/types.ts";
+import type { BoxForm, BoxSize, DoctorReport, GuestOs } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
@@ -118,6 +118,10 @@ export interface KindView {
   readonly largest: SizeView;
   readonly gpu: boolean;
   readonly desktop: boolean;
+  /** The OS, which the panel names the kind by; badges say the rest. */
+  readonly os: GuestOs;
+  /** The features every offer promises, such as "docker". */
+  readonly features: readonly string[];
   /** A box of it can become a BB machine, so a thread can run on it. */
   readonly enrol: boolean;
   /** Its spare boxes (032). */
@@ -168,6 +172,8 @@ export function kindViews(
       largest: sizeView(sizes.largest),
       gpu: kind.capabilities.gpu,
       desktop: kind.capabilities.displays.length > 0,
+      os: kind.capabilities.os,
+      features: kind.requires,
       enrol: kind.capabilities.enrol,
       spares: { target: targets[kind.id] ?? 0, ready: spares[kind.id]?.ready ?? 0, making: spares[kind.id]?.making ?? 0 },
       admin,

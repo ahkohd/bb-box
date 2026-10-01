@@ -11,7 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
-import { KindBadges } from "./common.tsx";
+import { KindBadges, osName } from "./common.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -200,7 +200,7 @@ export function NewBox({
         >
           <div>
             <p id="new-box-kind" className="mb-1.5 text-xs font-medium text-foreground">
-              Kind:
+              Kind
             </p>
             <div role="radiogroup" aria-labelledby="new-box-kind" className="space-y-0.5" onKeyDown={(event) => arrows(event, kinds.length, kindIndex, (position) => chooseKind(kinds[position]!, true))}>
               {kinds.map((candidate, position) => {
@@ -223,9 +223,9 @@ export function NewBox({
                   >
                     <Icon name={`${pluginId}/${candidate.desktop ? "monitor" : "server"}`} className="size-4 text-muted-foreground" aria-hidden />
                     <span className="min-w-0">
-                      <span className="block truncate text-xs text-foreground">{candidate.label}</span>
+                      <span className="block truncate text-xs text-foreground">{osName(candidate.os)}</span>
                       {/* Badges on a line of their own, so a kind with several never squeezes its name. */}
-                      <KindBadges gpu={candidate.gpu} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-1 flex flex-wrap" />
+                      <KindBadges desktop={candidate.desktop} gpu={candidate.gpu} docker={candidate.features.includes("docker")} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-1 flex flex-wrap" />
                     </span>
                     {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
                   </button>
@@ -236,7 +236,7 @@ export function NewBox({
           {kind ? (
             <div>
               <p id="new-box-size" className="mb-1.5 text-xs font-medium text-foreground">
-                Size:
+                Size
               </p>
               <div role="radiogroup" aria-labelledby="new-box-size" className="flex gap-1" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
                 {choices.map((candidate, position) => {

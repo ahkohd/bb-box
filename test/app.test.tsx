@@ -186,6 +186,8 @@ function kindView(id: string, label: string, description: string, cores: number,
     largest: size(cores * 8, cores * 16, 256),
     gpu: desktop,
     desktop,
+    os: "linux",
+    features: id === "linux-docker" ? ["docker"] : [],
     enrol: true,
     spares: { target: 0, ready: 0, making: 0 },
     admin: true,
@@ -318,8 +320,8 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
       },
     },
     kinds: [
-      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
-      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, drivers: ["fake"], spares: { ready: 0, making: 0 } },
+      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, os: "linux", features: [], drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
+      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, os: "linux", features: [], drivers: ["fake"], spares: { ready: 0, making: 0 } },
     ],
     drivers: [
       {
@@ -478,14 +480,14 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
 
   expect(await slot.findByText("No boxes yet")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  const form = await screen.findByRole("radiogroup", { name: "Kind:" });
+  const form = await screen.findByRole("radiogroup", { name: "Kind" });
   expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
   expect(within(form).getByText("GPU")).toBeTruthy();
   expect(within(form).getAllByText("LXC")).toHaveLength(2);
-  fireEvent.click(within(form).getByRole("radio", { name: /Linux desktop/ }));
+  fireEvent.click(within(form).getByRole("radio", { name: /^LinuxDesktop/ }));
   expect(screen.getByText("4 cores · 8 GiB memory · base disk")).toBeTruthy();
   expect(screen.queryByText(/A desktop on the GPU/)).toBeNull();
-  const sizes = screen.getByRole("radiogroup", { name: "Size:" });
+  const sizes = screen.getByRole("radiogroup", { name: "Size" });
   expect(within(sizes).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["Small:true", "Medium:false", "Large:false", "Custom:false"]);
   fireEvent.click(within(sizes).getByRole("radio", { name: "Large" }));
   expect(screen.getByText("16 cores · 32 GiB memory · base disk")).toBeTruthy();
@@ -500,7 +502,7 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
 
   // The default preset sends no size at all.
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Size:" })).getByRole("radio", { name: "Small" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: "Small" }));
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}', "acquire linux-desktop"]));
 });
@@ -511,7 +513,7 @@ test("the New box popover marks a kind with a spare ready as Ready now (#121)", 
   const slot = panel(server([], { kinds }).handlers);
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  const kindGroup = await screen.findByRole("radiogroup", { name: "Kind:" });
+  const kindGroup = await screen.findByRole("radiogroup", { name: "Kind" });
   const options = within(kindGroup).getAllByRole("radio");
   expect(options.map((option) => within(option).queryByText("Ready now") !== null)).toEqual([true, false]);
 });
@@ -530,7 +532,7 @@ test("a custom size starts from the preset in view, sends only its filled fields
   const slot = panel(handlers);
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  const sizes = await screen.findByRole("radiogroup", { name: "Size:" });
+  const sizes = await screen.findByRole("radiogroup", { name: "Size" });
   fireEvent.click(within(sizes).getByRole("radio", { name: "Medium" }));
   fireEvent.click(within(sizes).getByRole("radio", { name: "Custom" }));
   const cores = screen.getByLabelText(/^Cores/) as HTMLInputElement;
@@ -546,8 +548,8 @@ test("a custom size starts from the preset in view, sends only its filled fields
   fireEvent.change(memory, { target: { value: "12" } });
 
   // Custom fields belong to the kind: another kind starts from its own preset, and the edits come back with the kind.
-  const kinds = screen.getByRole("radiogroup", { name: "Kind:" });
-  fireEvent.click(within(kinds).getByRole("radio", { name: /Linux desktop/ }));
+  const kinds = screen.getByRole("radiogroup", { name: "Kind" });
+  fireEvent.click(within(kinds).getByRole("radio", { name: /^LinuxDesktop/ }));
   expect([(screen.getByLabelText(/^Cores/) as HTMLInputElement).value, (screen.getByLabelText(/^Memory, GiB/) as HTMLInputElement).value]).toEqual(["8", "16"]);
   expect(screen.getByText("up to 32")).toBeTruthy();
   fireEvent.click(within(kinds).getAllByRole("radio")[0]!);
@@ -565,7 +567,7 @@ test("a refused box stays in the form with the reason", async () => {
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   fireEvent.click(await screen.findByRole("button", { name: "Create" }));
   expect((await screen.findByRole("alert")).textContent).toBe("pve has no memory left. Release a box you no longer need.");
-  expect(screen.getByRole("radiogroup", { name: "Kind:" })).toBeTruthy();
+  expect(screen.getByRole("radiogroup", { name: "Kind" })).toBeTruthy();
 });
 
 test("releasing a box asks first", async () => {
@@ -705,7 +707,9 @@ test("the settings page lists each backend's state, the kinds and the general se
   expect((slot.getByRole("switch", { name: "Fake host on" }) as HTMLButtonElement).getAttribute("aria-checked")).toBe("true");
   expect((slot.getByRole("switch", { name: "Other pool on" }) as HTMLButtonElement).getAttribute("aria-checked")).toBe("false");
 
-  expect(slot.getByText("Linux desktop")).toBeTruthy();
+  // Kinds are named by their OS; the badges say the rest.
+  expect(slot.getAllByText("Linux")).toHaveLength(3);
+  expect(slot.getByText("Desktop")).toBeTruthy();
   expect(slot.getByText("GPU")).toBeTruthy();
   expect(slot.getAllByText("LXC")).toHaveLength(2);
   expect(slot.queryByText("Physical")).toBeNull();
@@ -978,7 +982,8 @@ test("the Desktops page lists every desktop box with its thread, and shows one f
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
   expect(await list.findByText("bold-heron")).toBeTruthy();
-  expect(list.getByText("Linux desktop")).toBeTruthy();
+  expect(list.getByText("Linux")).toBeTruthy();
+  expect(list.getByText("Desktop")).toBeTruthy();
   expect(list.getByText("The agent has control")).toBeTruthy();
   expect(await list.findByText("UI thread")).toBeTruthy();
   fireEvent.click(list.getByRole("button", { name: "Open" }));

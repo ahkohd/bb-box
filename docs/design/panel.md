@@ -57,17 +57,21 @@ BB's chip (its machine picker's and settings sections' small bordered word)
 sits after a kind's or a box's label, in the Kinds rows, the box rows, the
 New box options and the desktop lists:
 
+- **Desktop** for a kind or a box with a desktop.
 - **GPU** where the kind takes one. A box of a GPU kind whose display fell
   back to the CPU says "Display on the CPU" in its status line, in warning
   text; otherwise the status line does not repeat the badge.
+- **Docker inside** for the kind that promises Docker in the box
+  (`linux-docker`), as against the Docker badge below, which says the box
+  runs on a Docker host.
 - **What the box is**, one word from its backend's driver: LXC, Docker, VM
   or Physical. A kind on offer from several backends shows each once.
 - **Ready now**, in the New box options only, last, on a kind with a spare
   box ready (032), so a box of it comes at once. A box claimed from a spare
   needs nothing more: its status line says "Ready in 0.1 s".
 
-Nothing else is a badge: "desktop" and "with Docker" are in the label, and
-the backend's name is in the row's details. Calm, not stacked.
+In that order. Nothing else is a badge; the backend's name is in the row's
+details. Calm, not stacked.
 
 Badges never squeeze a name. In the New box options they sit on a line
 of their own under the label (the operator's annotation of 1 October 2026:
@@ -201,22 +205,23 @@ The plus opens a popover (a bottom sheet on compact viewports) with one
 small form:
 
 ```
-Kind:
+Kind
   (o) [=] Linux
           [LXC] [Physical] [Docker] [Ready now]
-  ( ) [#] Linux desktop
-          [GPU] [LXC]
-  ( ) [#] Linux desktop
-          [LXC] [Docker]
-Size:
+  ( ) [#] Linux
+          [Desktop] [GPU] [LXC]
+  ( ) [#] Linux
+          [Desktop] [LXC] [Docker]
+Size
   [ Small ] [ Medium ] [ Large ] [ Custom ]
   2 cores · 4 GiB memory · base disk
 [ Create ]
 ```
 
 The popover has no heading of its own: the button that opens it is named
-"New box", so its first line is "Kind:" (the operator's annotation of
-1 October 2026). "Kind:" and "Size:" are the section labels, in
+"New box", so its first line is "Kind" (the operator's annotation of
+1 October 2026, and a later one the same day took the colons off). "Kind"
+and "Size" are the section labels, in
 `text-xs font-medium text-foreground`, so they stand above their options
 (a second annotation the same day). On a compact viewport the bottom sheet
 still carries the title "New box".
@@ -414,7 +419,7 @@ from a thread's Box panel."
 | plugin description | Computers for BB threads. The plugin shows as "BB Box"; its ID stays bb-box. |
 | tab titles | Box; the box's name for its desktop |
 | toolbar | New box |
-| chooser | Kind: · Size: · Small · Medium · Large · Custom · Create |
+| chooser | Kind · Size · Small · Medium · Large · Custom · Create |
 | empty | No boxes yet · A computer for this thread. |
 | not set up | BB Box is not set up yet. Turn on a backend in its settings. · Open BB Box settings |
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |
