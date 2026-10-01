@@ -156,7 +156,9 @@ export type BoxErrorCode =
   | "unsupported"
   | "backend_off"
   | "released"
-  | "unreachable";
+  | "unreachable"
+  /** A thread runs on the box's BB machine. */
+  | "in_use";
 
 export class BoxError extends Error {
   readonly code: BoxErrorCode;

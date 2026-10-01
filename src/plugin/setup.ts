@@ -19,9 +19,10 @@ import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
 import { Refreshing } from "./refreshing.ts";
+import type { ThreadOnBox } from "./contract.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
-import { boxView, kindViews, type BackendView, type BoxView, type DoctorView, type KindView } from "./views.ts";
+import { boxView, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type KindView } from "./views.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
@@ -79,7 +80,17 @@ export interface BbBox {
    * parent, which is also when the box goes. Returns its ID.
    */
   startThread(input: { threadId: string; box: string; prompt: string; title?: string; signal?: AbortSignal }): Promise<string>;
+  /** The threads, not archived or deleted, that run on a box's BB machine. */
+  threadsOn(box: BoxRecord): Promise<ThreadOnBox[]>;
+  /**
+   * Refuses, naming them, while threads are working on a box's BB machine:
+   * releasing or stopping it would end their work. Returns the idle threads
+   * there, which lose their machine, for the answer to name.
+   */
+  checkInUse(box: BoxRecord, action: "Releasing" | "Stopping"): Promise<ThreadOnBox[]>;
 }
+
+
 
 function status(error: unknown): { status?: unknown; code?: unknown } {
   return (error ?? {}) as { status?: unknown; code?: unknown };
@@ -389,6 +400,26 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return { hostId: environment.hostId, path: environment.path ?? null };
     },
     projectOf,
+    async threadsOn(box) {
+      const hostId = box.enrol.hostId;
+      if (!hostId) return [];
+      const threads = await bb.sdk.threads.list({ hostId, archived: false, includeHidden: true });
+      const working = new Set(["active", "starting", "pending", "stopping"]);
+      return threads
+        .filter((thread) => !isSet(thread.archivedAt) && !isSet(thread.deletedAt))
+        .map((thread) => ({ id: thread.id, title: thread.title ?? null, running: working.has(thread.status) || thread.hasPendingInteraction }));
+    },
+    async checkInUse(box, action) {
+      const threads = await api.threadsOn(box);
+      const running = threads.filter((thread) => thread.running);
+      if (running.length) {
+        throw new BoxError(
+          "in_use",
+          `${action} box ${box.name} would end the work of ${threadsWords(running)}, which ${running.length === 1 ? "is" : "are"} working on it. Wait until ${running.length === 1 ? "it is" : "they are"} done.`,
+        );
+      }
+      return threads;
+    },
     async startThread({ threadId, box: ref, prompt, title, signal }) {
       let box = await boxes.get(threadId, ref);
       if (box.state !== "ready") throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. Start a thread on it once it is ready.`);
