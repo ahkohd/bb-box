@@ -784,7 +784,9 @@ export class Boxes {
   async #finishRelease(initial: BoxRecord): Promise<BoxRecord | null> {
     const box = await this.#read(initial.threadId, initial.id);
     if (!box) return null;
-    if (box.enrol.hostId && this.#deps.unenrol) {
+    // A thread's own box (role "machine") has a BB machine that BB owns and removes itself; deleting it
+    // from here would wait on BB's removal, which waits on this release.
+    if (box.enrol.hostId && this.#deps.unenrol && box.role !== "machine") {
       try {
         await this.#deps.unenrol(box);
       } catch (error) {

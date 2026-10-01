@@ -7,7 +7,7 @@
 
 import type { BbPluginApi, MachineBootstrapRequest, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { describeError, type BoxRecord, type Boxes } from "../core/boxes.ts";
+import { describeError, isActive, type BoxRecord, type Boxes } from "../core/boxes.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { executor } from "./enrol.ts";
 
@@ -27,9 +27,14 @@ export interface NewBoxDeps {
   bootstrap(request: MachineBootstrapRequest): Promise<{ hostId: string }>;
 }
 
-/** The thread's own box, while it has one that is not gone. */
+/** The thread's own box, while it has one that can still serve. */
 async function machineOf(boxes: Boxes, threadId: string): Promise<BoxRecord | null> {
-  return (await boxes.list(threadId)).find((box) => box.role === "machine" && box.state !== "releasing") ?? null;
+  return (await boxes.list(threadId)).find((box) => box.role === "machine" && isActive(box)) ?? null;
+}
+
+/** Releases the thread's own boxes that failed, so a retry starts on a new one. */
+async function releaseFailed(boxes: Boxes, threadId: string): Promise<void> {
+  for (const box of await boxes.list(threadId)) if (box.role === "machine" && box.state === "failed") await boxes.release(threadId, box.id);
 }
 
 export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclaration<typeof newBoxInputs> {
@@ -56,6 +61,7 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
       try {
         let box = await machineOf(boxes, thread.id);
         if (!box) {
+          await releaseFailed(boxes, thread.id);
           report.step("Making a box");
           box = await boxes.acquire({ threadId: thread.id, projectId: thread.projectId, kind: inputs.kind, size: { preset: inputs.size }, role: "machine" });
         }
@@ -77,6 +83,7 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
     // A create cut short: the thread's box, if bb-box made one, goes.
     async reconcileCleanup({ key }) {
       await release(await machineOf(boxes, key));
+      await releaseFailed(boxes, key);
       return { status: "removed" };
     },
     async remove({ resource }) {
