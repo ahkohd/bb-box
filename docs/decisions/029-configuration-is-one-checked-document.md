@@ -138,9 +138,16 @@ document, bb-box builds it from BB's settings:
 
 - Each key's value, reading a key from before 027 where its new key is unset
   (027). A value equal to its declared default is left out.
-- Proxmox LXC's cores, memory and disk per flavour become the default
-  preset's size for the flavour's kinds (028). Its warm count per flavour
-  becomes the count for the flavour's first kind.
+- Each kind's sizes come from the `box-sizes` setting (028), read as bb-box
+  reads it then: an earlier kind ID counts where the current one has no
+  entry, and an entry with a mistake, which bb-box already ignores, is left
+  out. The copy below keeps the setting as it was.
+- 028 moved Proxmox LXC's cores, memory and disk per flavour into
+  `box-sizes` once, as the default preset's size for the flavour's kinds.
+  If that has not happened, as on an install that skips 028's version, the
+  move does the same first, so those keys are read once and only once.
+- Proxmox LXC's warm count per flavour becomes the count for the flavour's
+  first kind.
 - Proxmox LXC is in the document, with ID `proxmox-lxc` and its switch as it
   was, if any of its keys was set. Its boxes, storage and guests carry over,
   and no guest is touched. A new install starts with no backends.
