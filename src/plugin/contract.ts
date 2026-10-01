@@ -35,6 +35,12 @@ export interface BoxResult {
   readonly error: string | null;
 }
 
+/** What starting a thread on a box returns: the new thread, or why it did not start. */
+export interface ThreadResult {
+  readonly threadId: string | null;
+  readonly error: string | null;
+}
+
 const thread = z.object({ threadId: z.string().min(1) });
 const oneBox = thread.extend({ box: z.string().min(1) });
 /** The viewer ID names one viewer, such as a panel tab, of a box's desktop. */
@@ -61,6 +67,8 @@ export const contract = defineRpcContract({
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },
   desktops: { input: z.null(), output: z.custom<DesktopEntry[]>() },
+  /** Starts a child thread on a box's BB machine. */
+  thread: { input: oneBox.extend({ prompt: z.string().min(1) }), output: z.custom<ThreadResult>() },
   backends: { input: z.null(), output: z.custom<BackendView[]>() },
   doctor: { input: z.null(), output: z.custom<DoctorView>() },
   /** The configuration, its defaults and problems, and each backend's state (029). */

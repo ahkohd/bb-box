@@ -62,6 +62,13 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         .sort((a, b) => a.createdAt - b.createdAt)
         .map((box) => ({ threadId: box.threadId, box: app.view(box) }));
     },
+    async thread({ threadId, box, prompt }) {
+      try {
+        return { threadId: await app.startThread({ threadId, box, prompt }), error: null };
+      } catch (error) {
+        return { threadId: null, error: describeError(error, "Starting a thread on the box") };
+      }
+    },
     backends: () => app.backendViews(),
     doctor: () => app.doctor(),
     "config.get": () => app.configuration.state(),

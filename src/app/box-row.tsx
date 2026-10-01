@@ -1,7 +1,7 @@
 // One box in the Box panel: its name, kind and status line, its details
 // when open, its quick actions and its menu, and the release confirmation.
 
-import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useState, type MouseEvent, type ReactNode } from "react";
 import {
   AlertDialog,
@@ -15,7 +15,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { IconButton, Meta, relativeTime, StatusDot } from "./common.tsx";
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
@@ -78,6 +80,21 @@ export function BoxRow({
   const glyph = useBoxGlyph();
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const rpc = useRpc<Contract>();
+  /** The new-thread dialog: closed, or its prompt, whether it is starting and why it did not. */
+  const [threading, setThreading] = useState<{ prompt: string; starting: boolean; error: string | null } | null>(null);
+  const startThread = async () => {
+    if (!threading?.prompt.trim()) return;
+    setThreading({ ...threading, starting: true, error: null });
+    const result = await rpc.call("thread", { threadId, box: box.id, prompt: threading.prompt.trim() }).catch((error: unknown) => ({
+      threadId: null,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    if (result.threadId) {
+      setThreading(null);
+      navigate.toThread(result.threadId);
+    } else setThreading((current) => current && { ...current, starting: false, error: result.error });
+  };
   const run = async (method: BoxAction) => {
     setBusy(method);
     try {
@@ -175,7 +192,13 @@ export function BoxRow({
                 Copy address
               </DropdownMenuItem>
             ) : null}
-            {(box.desktop && ready) || box.address ? <DropdownMenuSeparator /> : null}
+            {ready && box.enrol.state === "enrolled" ? (
+              <DropdownMenuItem onSelect={() => setThreading({ prompt: "", starting: false, error: null })}>
+                <Icon name="MessageSquarePlus" fallback="Plus" aria-hidden />
+                New thread on this box…
+              </DropdownMenuItem>
+            ) : null}
+            {(box.desktop && ready) || box.address || (ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
             {box.canStopStart && ready ? (
               <DropdownMenuItem onSelect={() => void run("stop")}>
                 <Icon name="Square" aria-hidden />
@@ -200,6 +223,31 @@ export function BoxRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </span>
+      <AlertDialog open={threading !== null} onOpenChange={(open) => !open && setThreading(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>New thread on {box.name}</AlertDialogTitle>
+            <AlertDialogDescription>
+              A child of this thread, working in a worktree of the project on the box. It is archived with this thread.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            aria-label="Prompt"
+            placeholder="What should it do on the box?"
+            value={threading?.prompt ?? ""}
+            onChange={(event) => setThreading((current) => current && { ...current, prompt: event.target.value })}
+            rows={4}
+            autoFocus
+          />
+          {threading?.error ? <p className="text-sm text-destructive">{threading.error}</p> : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={threading?.starting}>Cancel</AlertDialogCancel>
+            <Button type="button" disabled={!threading?.prompt.trim() || threading.starting} onClick={() => void startThread()}>
+              {threading?.starting ? "Starting…" : "Start thread"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>

@@ -329,6 +329,28 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
   });
 
   bb.agents.registerTool({
+    name: "box_thread",
+    description:
+      "Start a child thread that runs on a box, as a BB machine, with this thread's project. Give it the task as its prompt. It works in a worktree of the project's repository on the box, cloned there for the first thread, and is archived with this thread.",
+    presentation: { label: { pending: "Starting a thread on a box", completed: "Started a thread on a box" } },
+    parameters: z.object({
+      box: boxParam,
+      prompt: z.string().min(1).describe("The child thread's first message: the task it should do on the box."),
+      title: z.string().min(1).max(120).optional().describe('A title for the child thread. Defaults to "On box <name>".'),
+    }),
+    async execute({ box: ref, prompt, title }, { threadId, signal }) {
+      try {
+        const id = thread(threadId);
+        const box = await boxes.get(id, ref);
+        const child = await app.startThread({ threadId: id, box: box.id, prompt, title, signal });
+        return `Started thread ${child} on box ${box.name}.${next(`It reports back like any child thread; bb thread show ${child} shows its progress.`)}`;
+      } catch (error) {
+        return failure(error, "Starting a thread on the box");
+      }
+    },
+  });
+
+  bb.agents.registerTool({
     name: "box_release",
     description: "Release a box you no longer need. Its disk and everything on it are deleted. Copy out anything you want to keep first.",
     presentation: { label: { pending: "Releasing a box", completed: "Released a box" } },

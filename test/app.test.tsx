@@ -150,6 +150,10 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktops: () => boxes.filter((candidate) => candidate.desktop).map((found) => ({ threadId: THREAD, box: found })),
+    thread: ({ box: ref, prompt }) => {
+      changes.push(`thread ${ref} ${prompt}`);
+      return { threadId: "thr_child", error: null };
+    },
     acquire: ({ kind, size }) => {
       changes.push(`acquire ${kind}${size ? ` ${JSON.stringify(size)}` : ""}`);
       if (options.failWith) return result(null);
@@ -358,6 +362,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
     "Open desktop",
     "Open desktop in a browser tab",
     "Copy address",
+    "New thread on this box…",
     "Stop",
     "Check now",
     "Release…",
@@ -475,7 +480,32 @@ test("the panel stops and starts a box that can, and not one that cannot", async
   await fixed.findByText("real-box");
   expect(fixed.queryByRole("button", { name: "Stop" })).toBeNull();
   const menu = await openMenu(fixed.getByRole("button", { name: "real-box actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy address", "Check now", "Release…"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy address", "New thread on this box…", "Check now", "Release…"]);
+});
+
+test("a row starts a child thread on its box, and opens it", async () => {
+  const { handlers, changes } = server([box()]);
+  const slot = panel(handlers);
+  await slot.findByText("calm-otter");
+
+  const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "New thread on this box…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("New thread on calm-otter")).toBeTruthy();
+  const start = within(dialog).getByRole("button", { name: "Start thread" }) as HTMLButtonElement;
+  expect(start.disabled).toBe(true);
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Prompt" }), { target: { value: "Run uname -a" } });
+  fireEvent.click(start);
+  await waitFor(() => expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_child" }));
+  expect(changes).toEqual(["thread box_1 Run uname -a"]);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+test("a box that is not a BB machine offers no thread", async () => {
+  const slot = panel(server([box({ enrol: { state: "off", hostId: null, error: null } })]).handlers);
+  await slot.findByText("calm-otter");
+  const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  expect(within(menu).queryByRole("menuitem", { name: "New thread on this box…" })).toBeNull();
 });
 
 test("the panel shows why a change failed", async () => {

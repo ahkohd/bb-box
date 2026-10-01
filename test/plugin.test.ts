@@ -76,6 +76,10 @@ async function start(
     threadErrors: new Map<string, Error>(),
     /** Calls for the names of BB's machine variables: "system", or the project's ID. */
     names: [] as string[],
+    /** Threads bb-box asked BB to start. */
+    spawned: [] as unknown[],
+    /** The project's sources, by machine, as BB keeps them. */
+    sources: [] as { hostId: string; type: string }[],
     /** How long after bootstrap returns BB shows a machine it has connected again, or null for never. */
     connectAfterMs: 0 as number | null,
   };
@@ -91,6 +95,10 @@ async function start(
           if (!thread) throw threadNotFound();
           return thread;
         },
+        spawn: async (args: unknown) => {
+          world.spawned.push(args);
+          return makeThreadResponse({ id: `thr_child${world.spawned.length}`, projectId: PROJECT });
+        },
       },
       environments: {
         get: async () => ({ id: "env_one", hostId: "host-workspace", path: workspace }) as never,
@@ -102,6 +110,13 @@ async function start(
         },
       },
       projects: {
+        get: async ({ projectId }: { projectId: string }) => ({ id: projectId, sources: world.sources }) as never,
+        sources: {
+          add: async ({ hostId, type }: { hostId: string; type: string }) => {
+            world.sources.push({ hostId, type });
+            return { id: `src_${world.sources.length}`, hostId, type: "local_path" } as never;
+          },
+        },
         machineEnvironment: async ({ projectId }: { projectId: string }) => {
           world.names.push(projectId);
           return {
@@ -600,6 +615,47 @@ test("when BB removes a box's machine, the box is no longer enrolled", async (t)
   await harness.behavior.emitThreadEvent("experimental_host.deleted", { host });
   await until("the host to be forgotten", async () => (await app.boxes.find(box.id))?.enrol.state === "off");
   assert.equal((await only(app)).state, "ready", "the box stays");
+});
+
+test("box_thread starts a child thread on a box's BB machine, with the thread's project (#55)", async (t) => {
+  const { harness, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { boxes: { name: string; enrol: { hostId: string } }[] };
+  const name = box.boxes[0]!.name;
+
+  const started = text(await tool("box_thread", { box: name, prompt: "Run uname -a" }));
+  assert.match(started, new RegExp(`^Started thread thr_child1 on box ${name}\\.`));
+  const [args] = world.spawned as Record<string, unknown>[];
+  assert.deepEqual(args, {
+    projectId: PROJECT,
+    parentThreadId: THREAD,
+    lifecycleOwnerThreadId: THREAD,
+    environment: { type: "host", hostId: box.boxes[0]!.enrol.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
+    prompt: "Run uname -a",
+    title: `On box ${name}`,
+    origin: "plugin",
+    originPluginId: "bb-box",
+  });
+
+  assert.deepEqual(world.sources, [{ hostId: box.boxes[0]!.enrol.hostId, type: "clone" }], "the first thread clones the project onto the box");
+
+  const panel = (await harness.behavior.callRpc("thread", { threadId: THREAD, box: name, prompt: "Again" })) as { threadId: string; error: null };
+  assert.deepEqual(panel, { threadId: "thr_child2", error: null });
+  const cli = await harness.behavior.runCli(["thread", name, "--prompt", "Once more", "--thread", THREAD]);
+  assert.equal(cli.stdout, `Started thread thr_child3 on box ${name}.\n`);
+  assert.equal(world.sources.length, 1, "later threads use the same clone");
+});
+
+test("a box that is not a BB machine cannot run a thread, and says why (#55)", async (t) => {
+  const { harness, tool, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const { boxes } = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { boxes: { name: string }[] };
+  const refused = await tool("box_thread", { box: boxes[0]!.name, prompt: "Run uname -a" });
+  assert.ok(isError(refused));
+  assert.match(text(refused), /A thread cannot run on box \S+: it is not a BB machine\. Its kind does not enrol, or enrolment is off in bb-box's settings\./);
+  assert.deepEqual(world.spawned, []);
 });
 
 test("enrolment can be switched off", async (t) => {

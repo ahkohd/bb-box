@@ -70,6 +70,14 @@ export interface BbBox {
   workspace(threadId: string, signal?: AbortSignal): Promise<{ hostId: string; path: string | null }>;
   /** A thread's project, for boxes the panel or the CLI acquires. */
   projectOf(threadId: string): Promise<string | null>;
+  /**
+   * Starts a child thread of `threadId` on a box's BB machine, with the
+   * parent's project, in a worktree of the project's repository there. The
+   * first thread on a box clones the repository onto it; BB forgets that
+   * clone with the machine. The thread is archived and deleted with its
+   * parent, which is also when the box goes. Returns its ID.
+   */
+  startThread(input: { threadId: string; box: string; prompt: string; title?: string; signal?: AbortSignal }): Promise<string>;
 }
 
 function status(error: unknown): { status?: unknown; code?: unknown } {
@@ -380,6 +388,35 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return { hostId: environment.hostId, path: environment.path ?? null };
     },
     projectOf,
+    async startThread({ threadId, box: ref, prompt, title, signal }) {
+      let box = await boxes.get(threadId, ref);
+      if (box.state !== "ready") throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. Start a thread on it once it is ready.`);
+      box = await boxes.enrolled(box, signal);
+      if (box.enrol.state !== "enrolled" || !box.enrol.hostId) {
+        const why =
+          box.enrol.state === "enrolling"
+            ? "it is still becoming a BB machine. Try again in a few seconds"
+            : box.enrol.state === "failed"
+              ? `its enrolment as a BB machine failed: ${box.enrol.error ?? "no reason given"}`
+              : "it is not a BB machine. Its kind does not enrol, or enrolment is off in bb-box's settings";
+        throw new BoxError("unsupported", `A thread cannot run on box ${box.name}: ${why}.`);
+      }
+      const projectId = box.projectId ?? (await projectOf(threadId));
+      if (!projectId) throw new BoxError("unsupported", "This thread has no project, so a thread on its box would have none either.");
+      const hostId = box.enrol.hostId;
+      // A thread of a project runs where the project has a source; a box gets a clone of its repository.
+      const { sources } = await bb.sdk.projects.get({ projectId });
+      if (!sources.some((source) => source.hostId === hostId)) await bb.sdk.projects.sources.add({ projectId, type: "clone", hostId });
+      const thread = await bb.sdk.threads.spawn({
+        projectId,
+        parentThreadId: threadId,
+        lifecycleOwnerThreadId: threadId,
+        environment: { type: "host", hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
+        prompt,
+        title: title ?? `On box ${box.name}`,
+      });
+      return thread.id;
+    },
   };
 
   registerTools(bb, api);
