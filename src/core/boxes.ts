@@ -104,7 +104,18 @@ export interface BoxRecord {
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
 }
 
-export type ThreadLiveness = "live" | "ended" | "unknown";
+/**
+ * What BB says of a thread: "ended" when it returns the thread archived or
+ * deleted, "missing" when it says there is no such thread, and "unknown" on
+ * any other error.
+ */
+export type ThreadLiveness = "live" | "ended" | "missing" | "unknown";
+
+/** BB's answer for a thread, with what it said as it came, for the log. */
+export interface ThreadAnswer {
+  readonly state: ThreadLiveness;
+  readonly said: string;
+}
 
 /** The thread of spare boxes, which no thread owns yet (032). BB's thread IDs never take this form. */
 export const SPARES = "spare";
@@ -146,10 +157,11 @@ export interface BoxesDeps {
   /** A box's record was written, or deleted when `deleted` is true. */
   recorded?(box: BoxRecord, deleted: boolean): void;
   /**
-   * Whether a thread still exists and is not archived. "ended" only when BB
-   * says so: the sweep releases the thread's boxes and guests on it.
+   * Whether a thread still exists and is not archived, as BB says. The sweep
+   * releases the thread's boxes and guests once BB says at two sweeps running
+   * that it ended or that there is no such thread.
    */
-  thread(threadId: string): Promise<ThreadLiveness>;
+  thread(threadId: string): Promise<ThreadAnswer>;
   /** A thread's project, for a box the sweep restores from its guest. */
   projectOf?(threadId: string): Promise<string | null>;
   /**
@@ -1142,26 +1154,40 @@ export class Boxes {
 
   /**
    * Releases every box of a thread that BB said was archived or deleted.
-   * Resolves with how many it released. BB is asked again first, and while
-   * it says the thread is live, its boxes stay.
+   * Resolves with how many it released. BB is asked again first, and the
+   * boxes go now only when it returns the thread archived or deleted. When it
+   * finds no such thread, the next sweep releases them if it still finds
+   * none; while it says the thread is live, or cannot say, they stay.
    */
   async releaseThread(threadId: string, ended: "archived" | "deleted"): Promise<number> {
     const boxes = await this.list(threadId);
     if (!boxes.length) return 0;
-    if ((await this.#deps.thread(threadId).catch(() => "unknown" as const)) === "live") {
-      this.#deps.log?.(`Kept the boxes of thread ${threadId}: BB said it was ${ended}, but says now that it is live.`);
+    const { state, said } = await this.#ask(threadId);
+    if (state !== "ended") {
+      // BB's answer now counts as its first for the next sweep.
+      if (state === "missing") this.#ending.add(threadId);
+      const now =
+        state === "live" ? "says now that it is live" :
+        state === "missing" ? "finds no such thread now, and the next sweep releases them if BB still finds none" :
+        "cannot say now whether it ended, and the sweep decides";
+      this.#deps.log?.(`Kept the boxes of thread ${threadId}: BB said it was ${ended}, but ${now}. BB's answer: ${said}.`);
       return 0;
     }
     let count = 0;
     for (const box of boxes) {
       try {
         if (this.#holdsNothing(box)) await this.#forget(box);
-        else if ((await this.#release(box, `its thread was ${ended}`)) === null) count++;
+        else if ((await this.#release(box, `its thread was ${ended}. BB's answer: ${said}`)) === null) count++;
       } catch (error) {
         this.#deps.logError("release", error);
       }
     }
     return count;
+  }
+
+  /** BB's answer for a thread; an error asking it is no answer. */
+  #ask(threadId: string): Promise<ThreadAnswer> {
+    return this.#deps.thread(threadId).catch((error: unknown) => ({ state: "unknown" as const, said: describeError(error, "Asking BB") }));
   }
 
   /** A failed box with no guest: nothing to release, only the record to forget. */
@@ -1471,26 +1497,28 @@ export class Boxes {
    * their thread lives.
    */
   async sweep(signal?: AbortSignal): Promise<SweepReport> {
-    const liveness = new Map<string, Promise<ThreadLiveness>>([
-      [SPARES, Promise.resolve("live")],
-      [OPERATOR, Promise.resolve("live")],
+    const own: ThreadAnswer = { state: "live", said: "bb-box's own" };
+    const liveness = new Map<string, Promise<ThreadAnswer>>([
+      [SPARES, Promise.resolve(own)],
+      [OPERATOR, Promise.resolve(own)],
     ]);
     const thread = (threadId: string) => {
-      let state = liveness.get(threadId);
-      if (!state) {
-        state = this.#deps.thread(threadId).catch(() => "unknown" as const);
-        liveness.set(threadId, state);
+      let answer = liveness.get(threadId);
+      if (!answer) {
+        answer = this.#ask(threadId);
+        liveness.set(threadId, answer);
       }
-      return state;
+      return answer;
     };
     // "ended" once BB has said so at two sweeps running, "ending" at the first.
+    // A thread BB returns archived or deleted and one it does not find count alike.
     const before = this.#ending;
     const ending = (this.#ending = new Set<string>());
-    const verdict = async (threadId: string): Promise<ThreadLiveness | "ending"> => {
-      const state = await thread(threadId);
-      if (state !== "ended") return state;
+    const verdict = async (threadId: string): Promise<{ state: "live" | "unknown" | "ending" | "ended"; said: string }> => {
+      const { state, said } = await thread(threadId);
+      if (state === "live" || state === "unknown") return { state, said };
       ending.add(threadId);
-      return before.has(threadId) ? "ended" : "ending";
+      return { state: before.has(threadId) ? "ended" : "ending", said };
     };
     let released = 0;
     let leftovers = 0;
@@ -1518,15 +1546,15 @@ export class Boxes {
           await this.#chain(box.id, () => this.#finishRelease(box));
           continue;
         }
-        const state = await verdict(box.threadId);
+        const { state, said } = await verdict(box.threadId);
         if (state === "ended") {
           if (this.#holdsNothing(box)) await this.#forget(box);
-          else if ((await this.#release(box, "BB says its thread was archived or deleted, at this sweep and the last")) === null) released++;
+          else if ((await this.#release(box, `BB says its thread ended, at this sweep and the last. BB's answer: ${said}`)) === null) released++;
           continue;
         }
         if (state === "ending") {
           waiting++;
-          this.#deps.log?.(`Kept ${describeBox(box)}: BB says its thread was archived or deleted, and the next sweep releases it if BB says so again.`);
+          this.#deps.log?.(`Kept ${describeBox(box)}: BB says its thread ended, and the next sweep releases it if BB says so again. BB's answer: ${said}.`);
         }
         if (isAcquiring(box) && box.readyAt === null) {
           resumed++;
@@ -1579,17 +1607,17 @@ export class Boxes {
           }
           // Its record was lost, as when bb-box lost its storage. The guest
           // names its box and thread, so it goes only when the thread ended.
-          const state = await verdict(owner.threadId);
+          const { state, said } = await verdict(owner.threadId);
           if (state === "live") {
             if (await this.#restore(backend, guest, signal)) adopted++;
           } else if (state === "ended") {
-            await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} was archived or deleted, as BB says at this sweep and the last`, signal);
+            await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} ended, as BB says at this sweep and the last. BB's answer: ${said}`, signal);
             leftovers++;
           } else if (state === "ending") {
-            this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB says thread ${owner.threadId} was archived or deleted, and the next sweep releases the guest if BB says so again.`);
+            this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB says thread ${owner.threadId} ended, and the next sweep releases the guest if BB says so again. BB's answer: ${said}.`);
             waiting++;
           } else {
-            this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB did not say whether thread ${owner.threadId} still exists.`);
+            this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB did not say whether thread ${owner.threadId} still exists. BB's answer: ${said}.`);
             kept++;
           }
         } catch (error) {

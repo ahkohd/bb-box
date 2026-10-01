@@ -68,7 +68,10 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
       backends,
       general: async () => world.general,
       notify: (threadId) => world.notified.push(threadId),
-      thread: async (threadId) => world.threads.get(threadId) ?? "live",
+      thread: async (threadId) => {
+        const state = world.threads.get(threadId) ?? "live";
+        return { state, said: `the test says ${state}` };
+      },
       enrol: async (box, options) => {
         world.enrolled.push(options?.restored ? `${box.name}, restored` : box.name);
         await world.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId: `host-${box.id}`, error: null } }));
@@ -277,7 +280,7 @@ test("a backend that cannot make a size refuses it through capacity, and the nex
     },
     general: async () => ({ perThreadLimit: null, enrol: false, defaultKind: "linux", sizes: {}, spares: {} }),
     notify: () => {},
-    thread: async () => "live",
+    thread: async () => ({ state: "live", said: "the test's own" }),
     logError: () => {},
   });
   const medium = await ready(boxes, await boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", size: { preset: "medium" } }));
@@ -1012,17 +1015,36 @@ test("a thread BB says was archived loses all its boxes, failed ones forgotten, 
   await world.boxes.idle();
   assert.equal(await world.boxes.releaseThread(THREAD, "archived"), 0);
   assert.equal((await world.boxes.list(THREAD)).length, 3);
-  assert.ok(logs.includes(`Kept the boxes of thread ${THREAD}: BB said it was archived, but says now that it is live.`));
+  assert.ok(logs.includes(`Kept the boxes of thread ${THREAD}: BB said it was archived, but says now that it is live. BB's answer: the test says live.`));
   world.threads.set(THREAD, "ended");
   assert.equal(await world.boxes.releaseThread(THREAD, "archived"), 2);
   assert.deepEqual(await world.boxes.list(THREAD), []);
-  assert.ok(logs.includes(`Releasing box ${first.name} of thread ${THREAD}: its thread was archived.`));
+  assert.ok(logs.includes(`Releasing box ${first.name} of thread ${THREAD}: its thread was archived. BB's answer: the test says ended.`));
   assert.deepEqual(
     (await world.backend.held()).map((guest) => guest.owner?.boxId),
     [other.id],
   );
   await world.boxes.release("thr_two", other.name, "its thread released it with box_release");
   assert.ok(logs.includes(`Releasing box ${other.name} of thread thr_two: its thread released it with box_release.`));
+});
+
+test("a thread event releases its boxes at once only when BB returns the thread archived or deleted, and leaves the rest to the sweep", async () => {
+  const logs: string[] = [];
+  const world = setup({}, { log: (line) => logs.push(line) });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  // BB cannot say: the box stays, and the sweep decides as ever.
+  world.threads.set(THREAD, "unknown");
+  assert.equal(await world.boxes.releaseThread(THREAD, "deleted"), 0);
+  assert.ok(logs.includes(`Kept the boxes of thread ${THREAD}: BB said it was deleted, but cannot say now whether it ended, and the sweep decides. BB's answer: the test says unknown.`));
+  assert.equal((await world.boxes.sweep()).released, 0);
+  // BB finds no such thread: that counts as its first answer, and the next sweep releases the box if BB still finds none.
+  world.threads.set(THREAD, "missing");
+  assert.equal(await world.boxes.releaseThread(THREAD, "deleted"), 0);
+  assert.equal((await world.boxes.find(box.id))?.state, "ready");
+  assert.ok(logs.includes(`Kept the boxes of thread ${THREAD}: BB said it was deleted, but finds no such thread now, and the next sweep releases them if BB still finds none. BB's answer: the test says missing.`));
+  assert.equal((await world.boxes.sweep()).released, 1);
+  assert.equal(await world.boxes.find(box.id), null);
+  assert.ok(logs.includes(`Releasing box ${box.name} of thread ${THREAD}: BB says its thread ended, at this sweep and the last. BB's answer: the test says missing.`));
 });
 
 test("the sweep releases the boxes of ended threads and keeps live and unknown ones", async () => {
@@ -1052,7 +1074,7 @@ test("a box goes for its thread ending only when BB says so at two sweeps runnin
   assert.equal(first.released, 0);
   assert.equal(first.ending, 1);
   assert.equal((await world.boxes.find(box.id))?.state, "ready");
-  assert.ok(logs.includes(`Kept box ${box.name} of thread ${THREAD}: BB says its thread was archived or deleted, and the next sweep releases it if BB says so again.`));
+  assert.ok(logs.includes(`Kept box ${box.name} of thread ${THREAD}: BB says its thread ended, and the next sweep releases it if BB says so again. BB's answer: the test says ended.`));
   world.threads.delete(THREAD);
   await world.boxes.sweep();
   world.threads.set(THREAD, "ended");
@@ -1063,10 +1085,12 @@ test("a box goes for its thread ending only when BB says so at two sweeps runnin
   assert.deepEqual(await world.backend.held().then((held) => held.map((guest) => guest.owner?.boxId)), [box.id]);
   assert.ok(!logs.some((line) => line.startsWith("Releasing")));
 
+  // A thread BB returns archived or deleted and one it does not find count alike.
+  world.threads.set(THREAD, "missing");
   assert.equal((await boxes.sweep()).released, 1);
   assert.equal(await boxes.find(box.id), null);
   assert.deepEqual(await world.backend.held(), []);
-  assert.ok(logs.includes(`Releasing box ${box.name} of thread ${THREAD}: BB says its thread was archived or deleted, at this sweep and the last.`));
+  assert.ok(logs.includes(`Releasing box ${box.name} of thread ${THREAD}: BB says its thread ended, at this sweep and the last. BB's answer: the test says missing.`));
 });
 
 test("the sweep releases guests no box owns and adopts guests of live threads", async () => {

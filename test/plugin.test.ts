@@ -1263,25 +1263,32 @@ test("enrolment can be switched off", async (t) => {
   assert.equal(world.hosts.size, 0);
 });
 
-test("archiving or deleting a thread releases its boxes, once BB says so when asked", async (t) => {
+test("archiving or deleting a thread releases its boxes, once BB says so when asked, and the log has BB's answer", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   world.threads.set("thr_two", makeThreadResponse({ id: "thr_two", projectId: PROJECT }));
 
   await tool("box_acquire", {});
   await tool("box_acquire", {}, "thr_two");
-  const archived = makeThreadResponse({ id: THREAD, projectId: PROJECT, archivedAt: Date.now() });
+  const archivedAt = Date.now();
+  const archived = makeThreadResponse({ id: THREAD, projectId: PROJECT, archivedAt });
   const logs = () => harness.inspection.logEntries.map((entry) => entry.message);
   await harness.behavior.emitThreadEvent("thread.archived", { thread: archived });
-  await until("the check with BB", async () => logs().includes(`Kept the boxes of thread ${THREAD}: BB said it was archived, but says now that it is live.`));
+  await until("the check with BB", async () => logs().includes(`Kept the boxes of thread ${THREAD}: BB said it was archived, but says now that it is live. BB's answer: archivedAt null, deletedAt null.`));
   assert.equal((await app.boxes.list(THREAD)).length, 1);
   world.threads.set(THREAD, archived);
   await harness.behavior.emitThreadEvent("thread.archived", { thread: archived });
   await until("the archived thread's box to go", async () => (await app.boxes.list(THREAD)).length === 0);
-  assert.ok(logs().some((line) => line.startsWith("Releasing box ") && line.endsWith(` of thread ${THREAD}: its thread was archived.`)));
+  const answer = `BB's answer: archivedAt ${new Date(archivedAt).toISOString()}, deletedAt null.`;
+  assert.ok(logs().some((line) => line.startsWith("Releasing box ") && line.endsWith(` of thread ${THREAD}: its thread was archived. ${answer}`)));
+  // BB finds no such thread: the box goes at the next sweep if BB still finds none.
   world.threads.delete("thr_two");
   await harness.behavior.emitThreadEvent("thread.deleted", { thread: makeThreadResponse({ id: "thr_two" }) });
-  await until("the deleted thread's box to go", async () => (await app.boxes.list("thr_two")).length === 0);
+  const missing = `BB's answer: status 404, code thread_not_found, message "HTTP 404: Thread not found".`;
+  await until("the check with BB", async () => logs().includes(`Kept the boxes of thread thr_two: BB said it was deleted, but finds no such thread now, and the next sweep releases them if BB still finds none. ${missing}`));
+  assert.equal((await app.boxes.list("thr_two")).length, 1);
+  await within(app.boxes.sweep(), "the sweep");
+  assert.deepEqual(await app.boxes.list("thr_two"), []);
   await app.boxes.idle();
   assert.equal(world.hosts.size, 0, "their machines went too");
 });
@@ -1328,7 +1335,8 @@ test("after bb-box loses its storage, the sweep restores a live thread's box fro
   // The plugin's storage loses every box record; the guests keep running.
   for (const key of await bb.storage.kv.list("box/")) await bb.storage.kv.delete(key);
   for (const key of await bb.storage.kv.list("index/")) await bb.storage.kv.delete(key);
-  world.threads.set("thr_two", makeThreadResponse({ id: "thr_two", projectId: PROJECT, archivedAt: Date.now() }));
+  const archivedAt = Date.now();
+  world.threads.set("thr_two", makeThreadResponse({ id: "thr_two", projectId: PROJECT, archivedAt }));
   world.threads.set("thr_three", { ...makeThreadResponse({ id: "thr_three", projectId: PROJECT }), deletedAt: undefined } as unknown as Thread);
   world.threadErrors.set("thr_three", Object.assign(new Error("HTTP 404: Not Found"), { status: 404 }));
 
@@ -1363,7 +1371,8 @@ test("after bb-box loses its storage, the sweep restores a live thread's box fro
   assert.ok(!held.includes(ended!.id));
   const logs = harness.inspection.logEntries.map((entry) => entry.message);
   assert.ok(logs.some((line) => line.startsWith(`Restored box ${live!.name} of thread ${THREAD}`)), "the restore is logged");
-  assert.ok(logs.some((line) => line.includes(`${ended!.id}, which no box records: its box's thread thr_two was archived or deleted`)));
+  assert.ok(logs.some((line) => line.includes(`${ended!.id}, which no box records: its box's thread thr_two ended, as BB says at this sweep and the last. BB's answer: archivedAt ${new Date(archivedAt).toISOString()}, deletedAt null.`)));
+  assert.ok(logs.some((line) => line.endsWith(`BB did not say whether thread thr_three still exists. BB's answer: status 404, code none, message "HTTP 404: Not Found".`)));
   assert.ok(logs.some((line) => line.startsWith(`Kept guest`) && line.includes(unsure!.id)));
 
   world.threadErrors.clear();

@@ -350,8 +350,10 @@ refusal says what to do instead.
 
 ## Clean-up
 
-- When a thread is archived or deleted, bb-box releases its boxes, unless
-  BB says when asked that the thread is live.
+- When a thread is archived or deleted, bb-box asks BB about the thread,
+  and releases its boxes at once when BB returns it archived or deleted.
+  When BB finds no such thread, the next sweep releases them if BB still
+  finds none. While BB says the thread is live, or cannot say, they stay.
 - Every 3 minutes a sweep releases the boxes of threads that BB says were
   archived or deleted at that sweep and the one before. One answer is not
   enough, so a box goes at the second sweep. It removes guests that bb-box
@@ -378,4 +380,6 @@ refusal says what to do instead.
   another box, shows as gone. Releasing it leaves the other box alone.
 - A thread whose state BB cannot read keeps its boxes. Only BB's "thread
   not found", or a thread BB returns archived or deleted, ends a thread.
+  The log gives BB's answer each time bb-box keeps or releases boxes for
+  this.
 - Boxes do not expire.

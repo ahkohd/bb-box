@@ -6,7 +6,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
 import type { BackendDriver, DoctorReport, MachineAccess } from "../backends/types.ts";
-import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
+import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { emptyDocument, type BackendConfig, type ConfigDocument } from "../core/document.ts";
@@ -147,6 +147,17 @@ export function isMissingThread(error: unknown): boolean {
   const { status: code, code: name } = status(error);
   if (name === "thread_not_found") return true;
   return name === undefined && code === 404 && error instanceof Error && /^(HTTP 404: )?Thread not found\.?$/i.test(error.message);
+}
+
+/** An error from BB as it came, for the log: its status, code and message. */
+export function describeAnswer(error: unknown): string {
+  const { status: code, code: name } = status(error);
+  return `status ${String(code ?? "none")}, code ${String(name ?? "none")}, message ${JSON.stringify(error instanceof Error ? error.message : String(error))}`;
+}
+
+/** A thread's archivedAt or deletedAt as BB sent it, for the log. */
+function when(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? new Date(value).toISOString() : String(value);
 }
 
 /** Set, as opposed to null or missing. */
@@ -374,12 +385,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         void terminals?.end(box.id, deleted ? "The box was released." : box.state === "stopped" || box.state === "stopping" ? "The box stopped." : "The box is no longer running.");
       }
     },
-    async thread(threadId): Promise<ThreadLiveness> {
+    async thread(threadId): Promise<ThreadAnswer> {
       try {
         const thread = await bb.sdk.threads.get({ threadId });
-        return isSet(thread.archivedAt) || isSet(thread.deletedAt) ? "ended" : "live";
+        const said = `archivedAt ${when(thread.archivedAt)}, deletedAt ${when(thread.deletedAt)}`;
+        return { state: isSet(thread.archivedAt) || isSet(thread.deletedAt) ? "ended" : "live", said };
       } catch (error) {
-        return isMissingThread(error) ? "ended" : "unknown";
+        return { state: isMissingThread(error) ? "missing" : "unknown", said: describeAnswer(error) };
       }
     },
     projectOf,
