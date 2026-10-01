@@ -596,6 +596,7 @@ test("the settings page lists each backend's state, the kinds and the general se
   expect(slot.getByText("Linux desktop")).toBeTruthy();
   expect(slot.getByText("GPU")).toBeTruthy();
   expect(slot.getAllByText("LXC")).toHaveLength(2);
+  expect(slot.queryByText("Physical")).toBeNull();
   expect(slot.getAllByText("From Fake host")).toHaveLength(2);
   expect(slot.getByText("1 warm on Fake host")).toBeTruthy();
   expect(slot.getByText("Small 2 cores · 4 GiB · base disk (default) · Medium 4 cores · 8 GiB · base disk · Large 8 cores · 16 GiB · base disk · up to 16 cores · 32 GiB · 256 GiB")).toBeTruthy();
