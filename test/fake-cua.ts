@@ -433,7 +433,8 @@ export class FakeCua {
       window_id: window.id,
       pid: window.pid,
       element_count: elements.length,
-      elements_complete: !truncated,
+      // As on macOS and Windows, where Cua cannot prove that nothing is missing.
+      elements_complete: false,
       truncated,
       ...(truncated ? { truncation_reason: "node_budget" } : {}),
       elements,
