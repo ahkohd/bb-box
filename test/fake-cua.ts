@@ -647,6 +647,14 @@ export class FakeCua {
         const window = openTasks(desktop, []);
         return text("Launched tasks.", { pid: window.pid, running: true, windows: [this.#windowJson(window)] });
       }
+      if (name === "textedit") {
+        // As on a Mac: a helper of another process opens a window off screen, listed before the app's own.
+        const pid = desktop.nextPid++;
+        const helper: FakeWindow = { id: desktop.nextWindow++, pid: desktop.nextPid++, app: "CursorUIViewService", title: "", x: 0, y: 0, width: 40, height: 40, onScreen: false };
+        const own: FakeWindow = { id: desktop.nextWindow++, pid, app: "TextEdit", title: "Untitled", x: 0, y: 0, width: 640, height: 480, onScreen: true };
+        desktop.windows.push(helper, own);
+        return text("Launched TextEdit.", { pid, running: true, windows: [this.#windowJson(helper), this.#windowJson(own)] });
+      }
       // Other apps open their window a little later, as a slow app does.
       const pid = desktop.nextPid++;
       const id = desktop.nextWindow++;

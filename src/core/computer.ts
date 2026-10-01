@@ -931,8 +931,13 @@ export class Computer {
         const where = input.url !== undefined ? " It may have opened in a browser window that was already open." : "";
         return { text: `Opened ${what}, but no new window appeared within ${Math.round(waited / 1000)} s.${where}`, hints: ["Call computer_windows to see the windows now."] };
       }
-      // A browser names its window after the page once the page has a title.
-      let page = reused ?? windows[0]!;
+      // The app's first window on screen, not a helper's off screen (#219). A
+      // browser names its window after the page once the page has a title.
+      let page =
+        reused ??
+        windows.find((window) => window.onScreen && (launched === undefined || window.pid === launched)) ??
+        windows.find((window) => window.onScreen) ??
+        windows[0]!;
       if (input.url !== undefined) {
         const until = Date.now() + (this.#deps.pageWaitMs ?? PAGE_WAIT_MS);
         while (placeholder(page.title, input.url) && Date.now() < until) {
