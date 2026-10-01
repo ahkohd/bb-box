@@ -5,6 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { Capture } from "../../transports/process.ts";
+import { abortable } from "../../core/abortable.ts";
 
 export interface DockerResult {
   /** Null when the CLI was killed. */
@@ -19,19 +20,7 @@ const UNREACHABLE = /Cannot connect to the Docker daemon|error during connect|fa
 /** What the daemon says of a container, or a name, that does not exist. */
 export const NO_SUCH = /No such (container|object|image)/i;
 
-/** `promise`, or `signal`'s reason as soon as it aborts. */
-export function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    promise.then(
-      (value) => (signal.removeEventListener("abort", abort), resolve(value)),
-      (error: unknown) => (signal.removeEventListener("abort", abort), reject(error)),
-    );
-  });
-}
+export { abortable };
 
 export class DockerError extends Error {
   /** The CLI could not reach the daemon, so nothing was done. */

@@ -27,6 +27,7 @@ import { backendPart } from "../core/document.ts";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
+import { abortable } from "../core/abortable.ts";
 import { DockerHosts, backendOn, withDockerHost, type MachineRecord } from "./docker-hosts.ts";
 import { DockerImages } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
@@ -153,7 +154,12 @@ function isSet(value: unknown): boolean {
   return value !== null && value !== undefined;
 }
 
+/**
+ * Waits `ms`, or until `signal` aborts. A signal that has aborted already
+ * ends it at once: its abort event has fired, and would never come again.
+ */
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(done, ms);
     signal.addEventListener("abort", done, { once: true });
@@ -451,14 +457,22 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   bb.background.service("sweeper", {
     async start(signal) {
-      await enrolment.resume().catch((error) => logError("resume enrolment", error));
-      // What this release adds to a kind reaches boxes made before it (#215).
-      await boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
-      while (!signal.aborted) {
-        await boxes.sweep(signal).catch((error) => {
-          if (!signal.aborted) logError("sweep", error);
+      // Each step ends its wait when the plugin stops: BB may no longer answer
+      // a stopping plugin, and a call to a machine through it, such as a Docker
+      // host's relay, may never end. What a step started finishes on its own.
+      const step = async (operation: string, work: Promise<unknown>) => {
+        await abortable(work, signal).catch((error) => {
+          if (!signal.aborted) logError(operation, error);
         });
-        await enrolment.sweep().catch((error) => logError("sweep enrolment", error));
+      };
+      await step("resume enrolment", enrolment.resume());
+      // What this release adds to a kind reaches boxes made before it (#215).
+      await step("capabilities", boxes.refreshCapabilities(signal));
+      while (!signal.aborted) {
+        await step("sweep", boxes.sweep(signal));
+        if (signal.aborted) break;
+        await step("sweep enrolment", enrolment.sweep(signal));
+        // An abort during a sweep came before this sleep began: sleep sees it at once.
         await sleep(SWEEP_EVERY_MS, signal);
       }
     },

@@ -33,6 +33,7 @@ import { z } from "zod";
 import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from "../core/boxes.ts";
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
+import { abortable } from "../core/abortable.ts";
 
 export const MACHINE_PROVIDER_ID = "bb-box";
 
@@ -472,13 +473,14 @@ export class Enrolment {
    * the box's commands have the thread's variables, or the waits for them
    * end. A box whose machine BB removed meanwhile is left unenrolled.
    */
-  async reconnect(box: BoxRecord): Promise<void> {
+  async reconnect(box: BoxRecord, stop?: AbortSignal): Promise<void> {
     const hostId = box.enrol.hostId;
-    if (!hostId || this.#reconnecting.has(box.id)) return;
+    if (!hostId || this.#reconnecting.has(box.id) || stop?.aborted) return;
     this.#reconnecting.add(box.id);
     try {
       const transport = await this.#transport(box);
-      const signal = AbortSignal.timeout(this.#timeoutMs);
+      // Its own time limit, or the plugin stopping, whichever comes first.
+      const signal = stop ? AbortSignal.any([AbortSignal.timeout(this.#timeoutMs), stop]) : AbortSignal.timeout(this.#timeoutMs);
       try {
         // A thread's own box joined BB under the thread's key; any other under its own ID.
         const key = box.role === "machine" ? box.threadId : box.id;
@@ -492,9 +494,9 @@ export class Enrolment {
       const reconnected = await this.#deps.boxes.update(box, (current) =>
         current.enrol.hostId !== hostId ? {} : { enrol: { ...current.enrol, state: "enrolled", error: null } },
       );
-      if (reconnected?.enrol.hostId !== hostId) return;
-      const connected = await this.#connected(reconnected, hostId);
-      if (connected !== null) await this.#variables(reconnected, "the machine connected again", connected);
+      if (reconnected?.enrol.hostId !== hostId || stop?.aborted) return;
+      const connected = await this.#connected(reconnected, hostId, stop);
+      if (connected !== null && !stop?.aborted) await this.#variables(reconnected, "the machine connected again", connected);
     } finally {
       this.#reconnecting.delete(box.id);
     }
@@ -522,10 +524,11 @@ export class Enrolment {
    * again, for as long as an enrolment waits for the variables. Returns when
    * it did, or null.
    */
-  async #connected(box: BoxRecord, hostId: string): Promise<number | null> {
+  async #connected(box: BoxRecord, hostId: string, stop?: AbortSignal): Promise<number | null> {
     const deadline = Date.now() + this.#variablesWaitMs;
     for (;;) {
-      const host = await this.#deps.hosts().get({ hostId });
+      if (stop?.aborted) return null;
+      const host = await abortable(this.#deps.hosts().get({ hostId }), stop);
       if (host.lifecycle.phase !== "active") return null;
       if (host.status === "connected") return Date.now();
       if (Date.now() >= deadline) {
@@ -541,15 +544,18 @@ export class Enrolment {
    * that BB shows disconnected, as after a reboot bb-box did not start, such
    * as the host's (017). A machine BB no longer has leaves its box unenrolled.
    */
-  async sweep(): Promise<void> {
+  /** Starts BB's daemon again in each enrolled box whose machine BB shows disconnected. Ends at once when `signal` aborts, as when the plugin stops. */
+  async sweep(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
     const enrolled = (await this.#deps.boxes.all()).filter((box) => box.state === "ready" && box.enrol.state === "enrolled" && box.enrol.hostId);
     await Promise.all(
       enrolled.map(async (box) => {
         try {
-          const host = await this.#deps.hosts().get({ hostId: box.enrol.hostId! });
+          const host = await abortable(this.#deps.hosts().get({ hostId: box.enrol.hostId! }), signal);
           if (host.status === "connected" || host.lifecycle.phase !== "active") return;
-          await this.reconnect(box);
+          await this.reconnect(box, signal);
         } catch (error) {
+          if (signal?.aborted) return;
           if (isNotFound(error)) await this.forgetHost(box.enrol.hostId!);
           else this.#deps.logError("reconnect", error);
         }
