@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Control, ControlError, type ViewerConnection } from "../src/core/control.ts";
+import { Control, ControlError, type KeptControl, type ViewerConnection } from "../src/core/control.ts";
 import { RfbRelay, restoreSize, type OpenDisplay, type RelayOptions } from "../src/core/relay.ts";
 import {
   ClientParser,
@@ -323,7 +323,9 @@ test("restoring the size sets the desktop back over a connection of its own", as
 });
 
 /** Shared control over a box whose viewers are plain records. */
-function control(options: { pause?: () => Promise<void>; stopping?: (boxId: string) => Promise<void>; staleMs?: number; reconnectMs?: number } = {}) {
+function control(
+  options: { pause?: () => Promise<void>; keep?: (kept: readonly KeptControl[]) => Promise<void>; stopping?: (boxId: string, kept: boolean) => Promise<void>; staleMs?: number; reconnectMs?: number } = {},
+) {
   const events: string[] = [];
   const restores: unknown[] = [];
   const errors: string[] = [];
@@ -331,6 +333,7 @@ function control(options: { pause?: () => Promise<void>; stopping?: (boxId: stri
     changed: (boxId) => events.push(`${boxId} ${value.view(boxId).owner}`),
     restore: async (_boxId, size, screen) => void restores.push([size, screen]),
     pause: options.pause,
+    keep: options.keep,
     stopping: options.stopping,
     logError: (operation, error) => errors.push(`${operation}: ${String(error)}`),
     staleMs: options.staleMs,
@@ -463,12 +466,76 @@ test("the box ending the holder's connection keeps control while the viewer conn
   await until("the agent to have control", () => value.view("box1").owner === "agent");
 });
 
-test("a reload gives control back and sets the desktop's size back before bb-box goes, and schedules nothing after (#139)", async () => {
+test("each person's control is stored as it changes, and a reload keeps it for their viewer, which has it again if it connects in time (045)", async () => {
+  const stored: (readonly KeptControl[])[] = [];
   const stopping: string[] = [];
+  const before = control({
+    keep: async (kept) => void stored.push(kept),
+    stopping: async (boxId, kept) => void stopping.push(`${boxId} ${kept}`),
+  });
+  const a = before.connect("viewer-a");
+  before.connect("viewer-b", "box2");
+  before.value.seen("box1", { width: 1280, height: 800 });
+  await before.value.take("box1", "viewer-a");
+  before.value.resized("box1", "viewer-a", SCREEN);
+  await before.value.dispose();
+  const kept = { boxId: "box1", holder: "viewer-a", size: { width: 1280, height: 800 }, resized: SCREEN };
+  assert.deepEqual(stored, [[], [{ ...kept, resized: null }], [kept]], "every change, and only a box a person has; nothing as bb-box stops");
+  assert.equal(a.releases, 1, "what the holder held down is let go");
+  assert.deepEqual(before.restores, [], "the desktop keeps the person's size");
+  assert.deepEqual(stopping, ["box1 true"]);
+
+  const after = control({ staleMs: 30 });
+  after.value.resume([kept]);
+  assert.deepEqual(after.value.view("box1"), { owner: "human", holder: "viewer-a" });
+  assert.deepEqual(after.events, ["box1 human"], "the panel hears of it");
+  after.connect("viewer-a");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(after.value.view("box1"), { owner: "human", holder: "viewer-a" }, "the viewer connected again in time");
+  await after.value.handBack("box1");
+  assert.deepEqual(after.restores, [[{ width: 1280, height: 800 }, SCREEN]], "the size from before the person took control");
+});
+
+test("kept control goes back to the agent with the desktop's size when the viewer does not connect again in time, and never over a person's take (045)", async () => {
+  const kept = { holder: "viewer-a", size: { width: 1280, height: 800 }, resized: SCREEN };
+  const stored: (readonly KeptControl[])[] = [];
+  // The time a viewer that went away has, not the time a box gives it.
+  const { value, restores, errors, connect } = control({ staleMs: 30, reconnectMs: 60_000, keep: async (each) => void stored.push(each) });
+  connect("viewer-b", "box2");
+  await value.take("box2", "viewer-b");
+  connect("viewer-a", "box3");
+  value.resume([
+    { boxId: "box1", ...kept },
+    { boxId: "box2", ...kept },
+    { boxId: "box3", ...kept },
+  ]);
+  assert.deepEqual(value.view("box2"), { owner: "human", holder: "viewer-b" }, "a take since the start stands");
+  await until("the agent to have control", () => value.view("box1").owner === "agent");
+  assert.deepEqual(restores, [[{ width: 1280, height: 800 }, SCREEN]]);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(value.view("box3"), { owner: "human", holder: "viewer-a" }, "a viewer that connected before the resume keeps it");
+  assert.deepEqual(
+    stored.at(-1),
+    [
+      { boxId: "box2", holder: "viewer-b", size: null, resized: null },
+      { boxId: "box3", ...kept },
+    ],
+  );
+  assert.deepEqual(errors, []);
+});
+
+test("a reload that cannot keep control gives it back and sets the desktop's size back before bb-box goes, and schedules nothing after (#139)", async () => {
+  const stopping: string[] = [];
+  let stores = 0;
   const { value, events, restores, errors, connect } = control({
     staleMs: 10,
-    stopping: async (boxId) => {
-      stopping.push(boxId);
+    // The latest store fails.
+    keep: async (kept) => {
+      stores++;
+      if (kept.some((each) => each.resized)) throw new Error("storage is gone");
+    },
+    stopping: async (boxId, kept) => {
+      stopping.push(`${boxId} ${kept}`);
       throw new Error("the log is gone");
     },
   });
@@ -478,11 +545,12 @@ test("a reload gives control back and sets the desktop's size back before bb-box
   await value.take("box1", "viewer-a");
   value.resized("box1", "viewer-a", SCREEN);
   await value.dispose();
+  assert.equal(stores, 3, "the hand-back stores nothing over the next instance's");
   assert.deepEqual(value.view("box1"), { owner: "agent", holder: null });
   assert.equal(a.releases, 1, "what the holder held down is let go");
   assert.deepEqual(restores, [[{ width: 1280, height: 800 }, SCREEN]], "even when the log line fails");
-  assert.deepEqual(stopping, ["box1"], "the log says why for each box a person had control of");
-  assert.deepEqual(errors, ["log a hand back: Error: the log is gone"]);
+  assert.deepEqual(stopping, ["box1 false"], "the log says why for each box a person had control of");
+  assert.deepEqual(errors, ["keep control: Error: storage is gone", "log a hand back: Error: the log is gone"]);
 
   // A take that lands during the reload, then its viewer closing, as the
   // reload closes every viewer: nothing hands back later with the old plugin's API.
@@ -492,6 +560,7 @@ test("a reload gives control back and sets the desktop's size back before bb-box
   value.detach("box1", b, "viewer");
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.equal(events.length, changes);
+  assert.equal(stores, 3);
 });
 
 test("a box that stops or goes gives control back and forgets its size", async () => {

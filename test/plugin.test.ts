@@ -52,7 +52,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; controlReconnectMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; controlReconnectMs?: number; controlStaleMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -287,6 +287,7 @@ async function start(
     variablesWaitMs: options.variablesWaitMs,
     providerRetryMs: options.providerRetryMs,
     controlReconnectMs: options.controlReconnectMs,
+    controlStaleMs: options.controlStaleMs,
   };
   const app = await setup(bb, setupOptions);
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
@@ -1797,33 +1798,83 @@ test("the box ending the connection of the viewer with control keeps control whi
   assert.deepEqual(warnings(), [line, line], "a watching viewer's end says nothing");
 });
 
-test("a reload while a person has control gives it back and sets the desktop's size back first (#139)", async (t) => {
-  const { harness, app, world } = await start();
-  t.after(() => harness.lifecycle.dispose());
-  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
+test("a reload keeps a person's control and the desktop's size for their viewer, and gives both back if it does not connect again in time (045)", async (t) => {
+  const { bb, harness, app, world, setupOptions } = await start(undefined, { controlStaleMs: 500, controlReconnectMs: 60_000 });
+  let host = harness;
+  let api = bb;
+  const hosts = [host];
+  t.after(() => host.lifecycle.dispose());
+  await host.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
   await app.boxes.idle();
   const box = await only(app);
+  // Enrolment ends before the reload, which would stop it.
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
   const viewer = "viewer-one-0001";
-  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
-  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
-  await session.receive(Uint8Array.of(1));
-  await session.receive(Uint8Array.of(1));
-  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  const open = async () => {
+    const session = await host.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+    await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+    await session.receive(Uint8Array.of(1));
+    await session.receive(Uint8Array.of(1));
+    return session;
+  };
+  const session = await open();
+  await host.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
   await session.receive(setDesktopSize(1600, 1000, { id: 7, flags: 0 }));
-  const rfb = world.backend!.rfb;
-  await until("the viewer's size", async () => rfb.width === 1600);
+  const before = world.backend!.rfb;
+  await until("the viewer's size", async () => before.width === 1600);
+  const control = async () => ((await host.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { box: { control: unknown } }).box.control;
+  // As BB does: the next instance starts, then the last one stops.
+  const reload = async () => {
+    const next = await host.lifecycle.reload(async (bb) => {
+      await setup(bb, setupOptions);
+    });
+    host = next.harness;
+    api = next.bb;
+    hosts.push(host);
+    // The new instance's fake desktop is the box's, as the person left it.
+    Object.assign(world.backend!.rfb, { width: 1600, height: 1000 });
+  };
 
-  await harness.lifecycle.dispose();
-  assert.deepEqual([rfb.width, rfb.height], [1280, 800], "the agent's size, set while bb-box can still reach the box");
+  await reload();
+  assert.deepEqual([before.width, before.height], [1600, 1000], "the desktop keeps the person's size through the restart");
+  await until("the viewer's control to be back", async () => JSON.stringify(await control()) === JSON.stringify({ owner: "human", holder: viewer }));
+  await open();
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  assert.deepEqual(await control(), { owner: "human", holder: viewer }, "the viewer connected again in time");
+
+  // Its tab closed while bb-box restarted.
+  await reload();
+  await until("control to go back", async () => ((await control()) as { owner: string }).owner === "agent");
+  assert.deepEqual([world.backend!.rfb.width, world.backend!.rfb.height], [1280, 800], "the agent's size");
+  const logged = (level: string) => hosts.flatMap((each) => each.inspection.logEntries.filter((entry) => entry.level === level).map((entry) => entry.message));
+  assert.deepEqual(logged("error"), []);
+  const stopping = `bb-box is stopping, as for an update or a reload. The viewer with control of box ${box.name}'s desktop keeps it if it connects again within 0.5 s.`;
+  assert.deepEqual(logged("warn"), [stopping, stopping], "the log says why the viewer's connection dropped, and how long it has");
+  const started = `The viewer with control of box ${box.name}'s desktop as bb-box restarted keeps it if it connects again within 0.5 s.`;
   assert.deepEqual(
-    harness.inspection.logEntries.filter((entry) => entry.level === "error").map((entry) => entry.message),
-    [],
+    logged("info").filter((message) => message.includes("as bb-box restarted")),
+    [started, started],
   );
-  assert.deepEqual(
-    harness.inspection.logEntries.filter((entry) => entry.level === "warn").map((entry) => entry.message),
-    [`bb-box is stopping, as for an update or a reload, so control of box ${box.name}'s desktop goes back to the agent.`],
-    "the log says why control went back, which the viewer sees as a dropped connection",
-  );
+
+  // What storage holds for a box that went, or that this version cannot read, gives nobody control.
+  await api.storage.kv.set("desktop-control", [
+    { boxId: "bx-gone", holder: viewer, size: null, resized: null },
+    { boxId: box.id, holder: "x", size: null, resized: null },
+    { boxId: box.id, holder: viewer, size: "big", resized: null },
+  ]);
+  await reload();
+  await until("storage to be cleared", async () => (await api.storage.kv.get("desktop-control")) === undefined);
+  assert.deepEqual(await control(), { owner: "agent", holder: null });
+  assert.deepEqual(logged("error"), []);
+  assert.equal(logged("info").filter((message) => message.includes("as bb-box restarted")).length, 2);
+
+  // Nor for a box that stopped while bb-box was away.
+  assert.match(text(await host.behavior.callAgentTool("box_stop", { box: box.name }, { threadId: THREAD, projectId: PROJECT })), /is stopped/);
+  await api.storage.kv.set("desktop-control", [{ boxId: box.id, holder: viewer, size: null, resized: null }]);
+  await reload();
+  await until("storage to be cleared again", async () => (await api.storage.kv.get("desktop-control")) === undefined);
+  assert.deepEqual(logged("error"), []);
+  assert.equal(logged("info").filter((message) => message.includes("as bb-box restarted")).length, 2);
 });
 
 test("a box without a desktop has no desktop to control", async (t) => {
