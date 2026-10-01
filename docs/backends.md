@@ -206,6 +206,10 @@ node --test test/conformance.test.ts
   window shows. It runs unelevated, as an app the user opens does, and
   takes about 1 s more than a command over SSH. Its output comes back when
   it exits. What it opens stays open, unless its timeout ends it.
+- The VirtIO GPU driver ignores a viewer's resize and takes only the modes
+  Windows lists. So the backend sets the desktop to the largest listed mode
+  that fits the viewer, or the smallest when none fits, through a desktop
+  command, which takes 1 to 2 s. The mode is kept for the next logon.
 - Computer use goes through Cua Driver, at the version `build.sh` installs.
   A task at logon starts its daemon in the box user's session, on the pipe
   `\\.\pipe\cua-driver`. It runs elevated, as SSH sessions do, since an
@@ -213,10 +217,10 @@ node --test test/conformance.test.ts
   run unelevated. bb-box runs `cua-driver mcp` over SSH, in PowerShell.
   Cua's cursor overlay, a window over the whole screen, is left out of the
   window lists.
-- Still to come: resizing the desktop, stop and start, and a hibernated
-  warm pool. The conformance suite runs against it, but skips the checks
-  whose scripts are written for sh: commands, streaming, the architecture,
-  file copies and enrolment.
+- Still to come: stop and start, and a hibernated warm pool. The
+  conformance suite runs against it, but skips the checks whose scripts are
+  written for sh: commands, streaming, the architecture, file copies and
+  enrolment.
 - The tests run against the fake API, and the fake ssh as a Windows host,
   with a sh stand-in for PowerShell where a test needs one
   ([test/proxmox-qemu.test.ts](../test/proxmox-qemu.test.ts)).

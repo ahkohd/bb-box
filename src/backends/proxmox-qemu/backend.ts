@@ -16,8 +16,9 @@
 //
 // The desktop is the VM's console, through the API's VNC proxy. Core runs
 // desktop commands as scheduled tasks in the box user's session, and computer
-// use through Cua's daemon, which runs there elevated, as SSH does. Resizing
-// the desktop, stop and start, and the warm pool are still to come.
+// use through Cua's daemon, which runs there elevated, as SSH does. The
+// viewer's size sets the desktop's mode, through a desktop command. Stop and
+// start, and the warm pool, are still to come.
 
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
@@ -57,7 +58,8 @@ import {
 } from "../types.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import type { Display, SshAccess } from "../../transports/types.ts";
+import { desktopScript } from "../../transports/powershell.ts";
+import type { Display, DisplaySize, SshAccess } from "../../transports/types.ts";
 import type { QemuConfig } from "./config.ts";
 
 const MiB = 2 ** 20;
@@ -67,6 +69,8 @@ const SSH_KEY = "ssh-key";
 const NEXT_VMID = "next-vmid";
 /** A linked clone of Windows boots and starts sshd in about 20 s; this leaves room for a busy host. */
 const READY_TIMEOUT_MS = 180_000;
+/** How long setting the desktop's mode may take, in the desktop session. */
+const RESIZE_TIMEOUT_MS = 15_000;
 /** build.sh --replace swaps the template for its new build, which leaves it missing for a moment. A clone waits this long for it. */
 const TEMPLATE_WAIT_MS = 10_000;
 const TEMPLATE_POLL_MS = 250;
@@ -87,7 +91,7 @@ const KIND: BoxKind = {
     gpu: false,
     features: [],
     command: { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true },
-    displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
+    displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
     computerUse: CUA_DRIVER,
     enrol: false,
   },
@@ -107,6 +111,58 @@ export const EXTEND_C = String.raw`try {
   [Console]::Error.WriteLine("$_")
   exit 1
 }`;
+
+/**
+ * Sets the desktop to the largest mode Windows lists that fits in `width` by
+ * `height`, else to the smallest, at the colour depth it has: the display
+ * driver takes only the modes it lists. The mode is kept for the user's
+ * next logon. It runs in the box user's desktop session, as the session
+ * SSH gives has another display.
+ */
+export function setMode(width: number, height: number): string {
+  return String.raw`$ErrorActionPreference = 'Stop'
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class BbDisplay {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct Mode {
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+    public short SpecVersion, DriverVersion, Size, DriverExtra;
+    public int Fields, PositionX, PositionY, Orientation, FixedOutput;
+    public short Color, Duplex, YResolution, TTOption, Collate;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FormName;
+    public short LogPixels;
+    public int BitsPerPel, Width, Height, Flags, Frequency;
+    public int ICMMethod, ICMIntent, MediaType, DitherType, Reserved1, Reserved2, PanningWidth, PanningHeight;
+  }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplaySettings(string device, int index, ref Mode mode);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string device, ref Mode mode, IntPtr window, int flags, IntPtr param);
+  static long Area(Mode mode) { return (long)mode.Width * mode.Height; }
+  public static string Fit(int width, int height) {
+    var current = new Mode();
+    current.Size = (short)Marshal.SizeOf(typeof(Mode));
+    if (!EnumDisplaySettings(null, -1, ref current)) return "Windows gave no mode for the display.";
+    Mode fits = current, smallest = current;
+    bool fitting = false, any = false;
+    var mode = new Mode();
+    mode.Size = current.Size;
+    for (int i = 0; EnumDisplaySettings(null, i, ref mode); i++) {
+      if (mode.BitsPerPel != current.BitsPerPel) continue;
+      if (!any || Area(mode) < Area(smallest)) { smallest = mode; any = true; }
+      if (mode.Width <= width && mode.Height <= height && (!fitting || Area(mode) > Area(fits))) { fits = mode; fitting = true; }
+    }
+    Mode chosen = fitting ? fits : smallest;
+    if (chosen.Width == current.Width && chosen.Height == current.Height) return null;
+    chosen.Fields = 0x80000 | 0x100000; // DM_PELSWIDTH | DM_PELSHEIGHT
+    int result = ChangeDisplaySettingsEx(null, ref chosen, IntPtr.Zero, 1, IntPtr.Zero); // CDS_UPDATEREGISTRY
+    return result == 0 ? null : "Windows refused the mode " + chosen.Width + "x" + chosen.Height + " with " + result + ".";
+  }
+}
+'@
+$bbRefused = [BbDisplay]::Fit(${width}, ${height})
+if ($bbRefused) { [Console]::Error.WriteLine($bbRefused); exit 1 }`;
+}
 
 /** A doctor check's stable ID and its name. */
 type Check = readonly [id: string, name: string];
@@ -424,8 +480,14 @@ export class ProxmoxQemuBackend implements Backend {
 
   async transports(guest: Guest): Promise<BoxTransports> {
     const vmid = this.#vmid(guest);
-    const desktop: Display = { ...KIND.capabilities.displays[0]!, label: "Desktop", open: (signal) => this.#console(vmid, signal) };
-    return { command: await this.#command(vmid), displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };
+    const command = await this.#command(vmid);
+    const desktop: Display = {
+      ...KIND.capabilities.displays[0]!,
+      label: "Desktop",
+      open: (signal) => this.#console(vmid, signal),
+      resize: (size, signal) => this.#resize(command, size, signal),
+    };
+    return { command, displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };
   }
 
   /**
@@ -736,6 +798,21 @@ export class ProxmoxQemuBackend implements Backend {
     const result = await command.run(EXTEND_C, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) {
       throw new Error(`The box's disk grew, but Windows could not extend C: over it: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    }
+  }
+
+  /**
+   * Sets the desktop to the mode that fits `size`, through Windows itself
+   * (021), as the display driver takes only the modes Windows lists.
+   */
+  async #resize(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+    const { width, height } = size;
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+      throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
+    }
+    const result = await command.run(desktopScript(setMode(width, height), RESIZE_TIMEOUT_MS), { timeoutMs: RESIZE_TIMEOUT_MS + 5_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) {
+      throw new Error(`Windows could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}.`}`);
     }
   }
 
