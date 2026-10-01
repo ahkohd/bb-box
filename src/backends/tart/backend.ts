@@ -17,6 +17,7 @@
 // - A VM's address can change when it starts again, so bb-box asks the Mac
 //   for it when it does not know it, and forgets it when the VM stops.
 
+import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
@@ -41,14 +42,19 @@ import {
   type HeldGuest,
   type HostCapacity,
   type Limit,
+  type PoolMember,
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
+import { ReadyPool } from "../pool.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
   claimScript,
   cloneScript,
   deleteScript,
+  discardStateScript,
+  holdScript,
+  ownerScript,
   ipScript,
   ownerText,
   parseConfig,
@@ -61,6 +67,7 @@ import {
   stopScript,
   vmName,
   vncScript,
+  warmScript,
   type HostState,
   type VmConfig,
 } from "./host.ts";
@@ -91,11 +98,67 @@ interface SshKeys {
   readonly generated: boolean;
 }
 
-/** A VM bb-box is starting on a Mac, counted against the Mac until Tart lists it running. */
+/** A VM bb-box is starting on a Mac, counted against the Mac until Tart lists it running. Keyed by the VM. */
 interface Placing {
   readonly host: string;
   readonly vm: string;
   readonly memoryMiB: number;
+}
+
+/** The prefix of a warm VM's name. A box that takes it keeps the name. */
+const WARM_PREFIX = "bb-box-warm-";
+
+/**
+ * Warm VMs of one image at one size, which serve every kind whose image and
+ * default size they are: one pool when macos and macos-desktop share both.
+ */
+interface WarmPool {
+  readonly image: string;
+  readonly size: BoxSize;
+  readonly kinds: readonly string[];
+  /** The sum of the kinds' warm counts (029). */
+  readonly target: number;
+}
+
+/** A warm VM bb-box is filling, until it is suspended or a box takes it over. */
+interface Fill {
+  readonly host: string;
+  readonly size: BoxSize;
+  readonly kinds: readonly string[];
+  readonly abort: AbortController;
+  /** The VM's address once it is ready; rejects when the fill fails. */
+  readonly ready: Promise<string>;
+  /** Settles when the fill has ended, whichever way. */
+  readonly done: Promise<void>;
+  /** A box took the VM over before its suspend: the fill stops there. */
+  adopted: boolean;
+}
+
+/** A free warm VM on a Mac, as the state script shows it. */
+interface FreeWarm {
+  readonly vm: string;
+  readonly size: BoxSize;
+  readonly kinds: readonly string[];
+}
+
+/** How an acquire gets its VM: a clone, a free warm VM, a fill to take over, or its own VM after a restart. */
+type Placement =
+  | { readonly how: "clone" | "warm" | "resume"; readonly host: TartHost; readonly vm: string }
+  | { readonly how: "adopt"; readonly host: TartHost; readonly vm: string; readonly fill: Fill }
+  | { readonly how: "wait"; readonly fills: readonly Fill[] };
+
+function sameSize(a: BoxSize, b: BoxSize): boolean {
+  return a.cores === b.cores && a.memoryMiB === b.memoryMiB && a.diskGiB === b.diskGiB;
+}
+
+/** A VM bb-box filled or held for a warm pool, which is no box's. */
+function warmState(fields: Readonly<Record<string, string>>): "warm" | "filling" | null {
+  return fields.state === "warm" || fields.state === "filling" ? fields.state : null;
+}
+
+/** A Tart error that a VM's saved state did not restore. */
+function failedRestore(error: unknown): boolean {
+  return /failed to restore/i.test(message(error));
 }
 
 type Pending = { readonly kind: string; readonly size: BoxSize };
@@ -185,6 +248,33 @@ export function hostnameOf(name: string): string {
 }
 
 /**
+ * Checks that the VM that answers is `vm`, from the name each VM keeps in a
+ * file of its own, and writes the name when there is none. A VM resumed
+ * after a long suspend may answer at an address its DHCP lease has given to
+ * another VM since, and every clone has its image's host keys. Exits 4 when
+ * another VM answers.
+ */
+export function identityScript(vm: string): string {
+  return String.raw`f="$HOME/.config/bb-box/vm"
+if [ -s "$f" ] && [ "$(cat "$f")" != ${quote(vm)} ]; then echo "The VM that answers is $(cat "$f"), not ${vm}." >&2; exit 4; fi
+mkdir -p "$HOME/.config/bb-box" && printf '%s\n' ${quote(vm)} > "$f"`;
+}
+
+/**
+ * Waits in a VM being filled until its desktop is logged in and Cua's
+ * daemon listens, so a box that takes it can use its desktop at once. Only
+ * in a Virtualization framework VM.
+ */
+export function desktopScript(): string {
+  return String.raw`case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) exit 0 ;; esac
+i=0
+until pgrep -qx Finder && { [ ! -d /Applications/CuaDriver.app ] || [ -S "$HOME/Library/Caches/cua-driver/cua-driver.sock" ]; }; do
+  i=$((i + 1)); [ "$i" -lt 900 ] || { echo "The desktop did not log in within 3 minutes." >&2; exit 1; }
+  sleep 0.2
+done`;
+}
+
+/**
  * Names a VM after its box: its ComputerName, LocalHostName and HostName,
  * which its prompt, its Bonjour name and its BB machine show. Only in a
  * Virtualization framework VM, never on a Mac a command reaches by mistake,
@@ -215,10 +305,15 @@ export class TartBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Each VM's address while bb-box knows it: learnt when it starts, forgotten when it stops. */
   readonly #addresses = new Map<string, string>();
-  /** VMs being acquired, by box ID, until their acquire ends. */
+  /** VMs being started for boxes or warm pools, by VM, until they run or their start ends. */
   readonly #placing = new Map<string, Placing>();
-  /** Placement is one at a time, so two acquires never take the last slot of one Mac. */
+  /** Placement is one at a time, so two acquires, or an acquire and a fill, never take the last slot of one Mac. */
   #placement: Promise<unknown> = Promise.resolve();
+  /** Warm VMs this instance is filling, by VM. */
+  readonly #filling = new Map<string, Fill>();
+  readonly #warm: ReadyPool<BoxIdentity>;
+  readonly #stopping = new AbortController();
+  #maintaining: Promise<void> | null = null;
 
   constructor(config: TartConfig, context: BackendContext, options: TartBackendOptions = {}) {
     this.id = context.id;
@@ -227,6 +322,10 @@ export class TartBackend implements Backend {
     this.#options = options;
     this.#kinds = tartKinds(config);
     this.label = `Tart on ${config.hosts.map((host) => host.name).join(", ")}`;
+    this.#warm = new ReadyPool<BoxIdentity>({
+      members: (signal) => this.#members(signal),
+      hold: (member, box, signal) => this.#hold(member, box, signal),
+    });
   }
 
   kinds(): BoxKind[] {
@@ -249,10 +348,15 @@ export class TartBackend implements Backend {
     };
     const hosts = this.#on().map((host) => this.#room(host, states.get(host.name)!, size, unplaced));
     const ok = hosts.some((host) => host.capacity.ok);
+    let ready = 0;
+    for (const host of this.#on()) {
+      const state = states.get(host.name)!;
+      if (!(state instanceof Error)) ready += this.#freeWarm(state).filter((warm) => warm.kinds.includes(kind)).length;
+    }
     return {
       ok,
       message: ok ? null : this.#full(kind, hosts),
-      warm: null,
+      warm: { ready, target: this.#pools().find((pool) => pool.kinds.includes(kind))?.target ?? 0 },
       hosts: hosts.map((host) => host.capacity),
     };
   }
@@ -315,25 +419,69 @@ export class TartBackend implements Backend {
     return `No Mac can take this ${kind} box: ${reasons.join("; ")}.`;
   }
 
-  /** Picks the first Mac with room and counts the box against it, one acquire at a time. */
-  #place(box: BoxIdentity, signal: AbortSignal): Promise<TartHost> {
-    const placed = this.#placement.then(async () => {
+  /** Runs `task` in the placement chain, one at a time. */
+  #chain<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.#placement.then(task);
+    this.#placement = next.catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * Chooses how a box gets its VM, and counts it against its Mac, one at a
+   * time: a free warm VM of the box's own size and kind on a Mac with room;
+   * else a clone on the first Mac with room; else a fill on a full Mac,
+   * taken over when its size and kinds suit the box, or stopped so its slot
+   * is free ("wait", outside the chain, as a fill ends in the chain).
+   */
+  #place(box: BoxIdentity, signal: AbortSignal): Promise<Placement> {
+    return this.#chain(async (): Promise<Placement> => {
       const states = await this.#states(signal);
-      const rooms = this.#on().map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size) }));
+      const on = this.#on();
+      const rooms = on.map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size) }));
+      const count = (host: TartHost, vm: string) => this.#placing.set(vm, { host: host.name, vm, memoryMiB: box.size.memoryMiB });
+      for (const room of rooms) {
+        const state = states.get(room.host.name)!;
+        if (!room.capacity.ok || state instanceof Error) continue;
+        const warm = this.#freeWarm(state).find((free) => free.kinds.includes(box.kind) && sameSize(free.size, box.size));
+        if (warm) {
+          count(room.host, warm.vm);
+          return { how: "warm", host: room.host, vm: warm.vm };
+        }
+      }
       const chosen = rooms.find((room) => room.capacity.ok);
-      if (!chosen) throw new BackendError("no_capacity", this.#full(box.kind, rooms));
-      this.#placing.set(box.boxId, { host: chosen.host.name, vm: vmName(box.boxId), memoryMiB: box.size.memoryMiB });
-      return chosen.host;
+      if (chosen) {
+        count(chosen.host, vmName(box.boxId));
+        return { how: "clone", host: chosen.host, vm: vmName(box.boxId) };
+      }
+      const fills = [...this.#filling.entries()].filter(([, fill]) => !fill.adopted && on.some((host) => host.name === fill.host));
+      const suits = fills.find(([, fill]) => fill.kinds.includes(box.kind) && sameSize(fill.size, box.size));
+      if (suits) {
+        const [vm, fill] = suits;
+        fill.adopted = true;
+        return { how: "adopt", host: on.find((host) => host.name === fill.host)!, vm, fill };
+      }
+      if (fills.length) {
+        for (const [, fill] of fills) fill.abort.abort(new Error("A box needs the slot this warm VM was taking."));
+        return { how: "wait", fills: fills.map(([, fill]) => fill) };
+      }
+      throw new BackendError("no_capacity", this.#full(box.kind, rooms));
     });
-    this.#placement = placed.catch(() => undefined);
-    return placed;
+  }
+
+  /** Places a box, waiting once for fills it stopped to let go of their slot. */
+  async #placeBox(box: BoxIdentity, signal: AbortSignal): Promise<Exclude<Placement, { how: "wait" }>> {
+    for (let attempt = 0; ; attempt++) {
+      const placement = await this.#place(box, signal);
+      if (placement.how !== "wait") return placement;
+      await Promise.all(placement.fills.map((fill) => fill.done));
+      if (attempt > 0) throw new BackendError("no_capacity", `No Mac had room for this ${box.kind} box, even after stopping the warm VMs being made.`);
+    }
   }
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
     const image = this.#config.kinds[box.kind as TartKind].image!;
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs);
-    const vm = vmName(box.boxId);
     const step: Step = async (name, run) => {
       const started = performance.now();
       try {
@@ -342,47 +490,99 @@ export class TartBackend implements Backend {
         hooks.timing(name, Math.round(performance.now() - started));
       }
     };
-    const resumed = previous?.ref === vm ? this.#hostNamed(previous.host) : null;
-    const host = resumed ?? (await step("place", () => this.#place(box, signal)));
-    if (resumed) this.#placing.set(box.boxId, { host: resumed.name, vm, memoryMiB: box.size.memoryMiB });
-    const guest = (address: string | null, size: BoxSize | null = null): Guest => ({ ref: vm, host: host.name, address, size, data: { box: box.boxId } });
-    let owned = false;
-    try {
-      await hooks.claim(guest(null));
-      const owner = ownerText({
-        install: this.#context.installId,
-        kind: box.kind,
-        box: box.boxId,
-        thread: box.threadId,
-        name: box.name,
-        created: box.createdAt,
-      });
-      const claimed = (await this.#run(host, claimScript(vm, owner), { signal })).stdout.trim();
-      if (claimed !== "claimed") {
-        const fields = parseFields(claimed);
-        if (fields.install !== this.#context.installId || fields.box !== box.boxId) {
-          throw new Error(`VM ${vm} on ${host.name} belongs to another box, so bb-box left it alone.`);
+    const owner = ownerText({
+      install: this.#context.installId,
+      kind: box.kind,
+      box: box.boxId,
+      thread: box.threadId,
+      name: box.name,
+      created: box.createdAt,
+    });
+    let placement: Exclude<Placement, { how: "wait" }> | null = await this.#previous(box, previous, signal);
+    if (placement) this.#placing.set(placement.vm, { host: placement.host.name, vm: placement.vm, memoryMiB: box.size.memoryMiB });
+    let started = false;
+    const starting = async () => {
+      if (!started) await hooks.starting();
+      started = true;
+    };
+    // A warm VM that fails to resume or answers as another VM gives way to a clone, once.
+    for (let attempt = 0; ; attempt++) {
+      placement ??= await step("place", () => this.#placeBox(box, signal));
+      const { host, vm } = placement;
+      const guest = (address: string | null, size: BoxSize | null = null): Guest => ({ ref: vm, host: host.name, address, size, data: { box: box.boxId } });
+      let owned = placement.how === "resume";
+      try {
+        let address: string;
+        if (placement.how === "clone") {
+          await hooks.claim(guest(null));
+          const claimed = (await this.#run(host, claimScript(vm, owner), { signal })).stdout.trim();
+          if (claimed !== "claimed") {
+            const fields = parseFields(claimed);
+            if (fields.install !== this.#context.installId || fields.box !== box.boxId) {
+              throw new Error(`VM ${vm} on ${host.name} belongs to another box, so bb-box left it alone.`);
+            }
+          }
+          owned = true;
+          await step("clone", () => this.#run(host, cloneScript(image, vm, box.size.cores, box.size.memoryMiB), { timeoutMs: 10 * 60_000, signal }));
+          await starting();
+          await step("start", () => this.#start(host, vm, deadline, signal));
+          address = await step("network", () => this.#address(host, vm, deadline, signal));
+        } else if (placement.how === "adopt") {
+          const fill = placement.fill;
+          await hooks.claim(guest(null));
+          const held = (await this.#run(host, holdScript(vm, this.#context.installId, "filling", owner), { signal })).stdout.trim();
+          if (held !== "held") throw new Error(`The warm VM ${vm} on ${host.name} being made was no longer there to take over.`);
+          owned = true;
+          await starting();
+          address = await step("warm", () => fill.ready);
+          this.#kick();
+        } else {
+          if (placement.how === "warm") {
+            const member = await step("warm", () =>
+              this.#warm.claim(box.kind, box, {
+                fits: (candidate) => candidate.ref === vm,
+                before: async () => hooks.claim(guest(null)),
+                signal,
+              }),
+            );
+            if (!member) throw new Error(`The warm VM ${vm} on ${host.name} was taken or retired first.`);
+            this.#kick();
+          }
+          owned = true;
+          await starting();
+          await step("start", () => this.#start(host, vm, deadline, signal, false));
+          address = await step("network", () => this.#address(host, vm, deadline, signal));
         }
+        await step("ssh", () => this.#waitReady(host, vm, address, deadline, signal));
+        await step("name", () => this.#name(host, address, vm, box.name, signal));
+        const size = sizeOf((await this.#state(host, signal)).configs.get(vm));
+        // Claimed again, so the box's record has the address and size as it becomes ready.
+        await hooks.claim(guest(address, size));
+        return guest(address, size);
+      } catch (error) {
+        if (owned) await this.#delete(host, vm, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
+        const retry = placement.how !== "clone" && attempt === 0 && !signal.aborted && Date.now() < deadline;
+        if (!retry) throw error;
+        this.#context.logError("acquire", new Error(`Box ${box.name} could not use VM ${vm} (${message(error)}), so bb-box clones a VM for it.`));
+      } finally {
+        this.#placing.delete(placement.vm);
       }
-      owned = true;
-      const cloned = await step("clone", () => this.#run(host, cloneScript(image, vm, box.size.cores, box.size.memoryMiB), { timeoutMs: 10 * 60_000, signal }));
-      const size = sizeOf(parseConfig(cloned.stdout));
-      await hooks.starting();
-      await step("start", () => this.#start(host, vm, deadline, signal));
-      const address = await step("network", () => this.#address(host, vm, deadline, signal));
-      await step("ssh", () => this.#waitReady(host, vm, address, deadline, signal));
-      await step("name", () => this.#name(host, address, box.name, signal));
-      // Claimed again, so the box's record has the address and size as it becomes ready.
-      await hooks.claim(guest(address, size));
-      return guest(address, size);
-    } catch (error) {
-      if (owned) {
-        await this.#delete(host, vm, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
-      }
-      throw error;
-    } finally {
-      this.#placing.delete(box.boxId);
+      placement = null;
     }
+  }
+
+  /**
+   * The VM a restarted acquire made or held: bb-box-<box ID>, or a warm VM
+   * whose owner file names the box (it was held before the restart). A warm
+   * VM still marked warm was not held, and the acquire starts over.
+   */
+  async #previous(box: BoxIdentity, previous: Guest | null, signal: AbortSignal): Promise<Exclude<Placement, { how: "wait" }> | null> {
+    const host = previous ? this.#hostNamed(previous.host) : null;
+    if (!previous || !host) return null;
+    if (previous.ref === vmName(box.boxId)) return { how: "clone", host, vm: previous.ref };
+    if (!previous.ref.startsWith(WARM_PREFIX)) return null;
+    const fields = parseFields((await this.#run(host, ownerScript(previous.ref), { signal })).stdout);
+    return fields.install === this.#context.installId && fields.box === box.boxId ? { how: "resume", host, vm: previous.ref } : null;
   }
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
@@ -415,6 +615,7 @@ export class TartBackend implements Backend {
     await this.#start(host, guest.ref, deadline, signal);
     const address = await this.#address(host, guest.ref, deadline, signal);
     await this.#waitReady(host, guest.ref, address, deadline, signal);
+    await this.#identify(host, address, guest.ref, signal);
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -436,6 +637,11 @@ export class TartBackend implements Backend {
       }
       for (const [vm, fields] of state.owners) {
         if (fields.install !== this.#context.installId) continue;
+        // A warm VM is no box's, and neither is one this instance is filling.
+        // One being filled when bb-box stopped is listed with no owner, so the
+        // sweep releases it.
+        const warm = warmState(fields);
+        if (warm === "warm" || (warm === "filling" && this.#filling.has(vm))) continue;
         const owner = ownerOf(fields);
         const listed = state.vms.find((candidate) => candidate.name === vm);
         held.push({
@@ -451,6 +657,228 @@ export class TartBackend implements Backend {
       }
     }
     return held;
+  }
+
+  // The warm pool: suspended clones at a kind's default size (028), which hold
+  // no VM slot and no memory, only disk, until a box takes one and resumes it.
+
+  /** Retires warm VMs that serve no pool now, or beyond their pool's count, then fills what is missing. */
+  maintain(signal?: AbortSignal): Promise<void> {
+    if (!this.#maintaining) {
+      const run = this.#topUp(signal ?? this.#stopping.signal).finally(() => {
+        this.#maintaining = null;
+      });
+      this.#maintaining = run;
+    }
+    return this.#maintaining;
+  }
+
+  /** Tops the pool up in the background after a box takes a warm VM. */
+  #kick(): void {
+    if (!this.#pools().some((pool) => pool.target > 0)) return;
+    this.maintain(this.#stopping.signal).catch((error) => this.#context.logError("warm pool", error));
+  }
+
+  /**
+   * The warm pools the configuration asks for now: kinds with an image, on,
+   * whose default size Tart can make, grouped by image and default size.
+   */
+  #pools(): WarmPool[] {
+    const pools: WarmPool[] = [];
+    for (const kind of this.#kinds) {
+      const settings = this.#context.kind(kind.id);
+      const image = this.#config.kinds[kind.id as TartKind].image;
+      if (!settings.enabled || !image || settings.defaultSize.diskGiB !== null) continue;
+      const size = settings.defaultSize;
+      const index = pools.findIndex((pool) => pool.image === image && sameSize(pool.size, size));
+      const target = this.#context.warm(kind.id);
+      if (index < 0) pools.push({ image, size, kinds: [kind.id], target });
+      else pools[index] = { ...pools[index]!, kinds: [...pools[index]!.kinds, kind.id], target: pools[index]!.target + target };
+    }
+    return pools;
+  }
+
+  /**
+   * The kinds a warm VM serves now: those whose image is the VM's, at the
+   * build the VM was cloned from, and whose default size is the VM's. A VM
+   * saved under another Tart or macOS build serves none, as its state may
+   * not restore.
+   */
+  #servedBy(state: HostState, fields: Readonly<Record<string, string>>, size: BoxSize | null): string[] {
+    if (!size || fields.tart !== state.version || fields.macos !== state.macosBuild) return [];
+    return this.#pools()
+      .filter((pool) => pool.image === fields.image && (state.builds.get(pool.image) ?? "") === (fields.build ?? "") && sameSize(pool.size, size))
+      .flatMap((pool) => pool.kinds);
+  }
+
+  /** This install's free warm VMs on a Mac: suspended, marked warm, serving a kind now. */
+  #freeWarm(state: HostState): FreeWarm[] {
+    const free: FreeWarm[] = [];
+    for (const [vm, fields] of state.owners) {
+      if (fields.install !== this.#context.installId || warmState(fields) !== "warm") continue;
+      if (state.vms.find((candidate) => candidate.name === vm)?.state !== "suspended") continue;
+      const size = sizeOf(state.configs.get(vm));
+      const kinds = this.#servedBy(state, fields, size);
+      if (size && kinds.length) free.push({ vm, size, kinds });
+    }
+    return free;
+  }
+
+  /** The pool's members, as ReadyPool sees them: the free warm VMs on the Macs that are on. */
+  async #members(signal?: AbortSignal): Promise<PoolMember[]> {
+    const states = await this.#states(signal);
+    const members: PoolMember[] = [];
+    for (const host of this.#on()) {
+      const state = states.get(host.name)!;
+      if (state instanceof Error) continue;
+      for (const warm of this.#freeWarm(state)) {
+        members.push({ ref: warm.vm, host: host.name, kinds: warm.kinds, state: "free", reason: null, since: 0, generation: 0 });
+      }
+    }
+    return members;
+  }
+
+  /** Hands a warm VM to a box: its owner file names the box from now on. */
+  async #hold(member: PoolMember, box: BoxIdentity, signal?: AbortSignal): Promise<void> {
+    const host = this.#hostNamed(member.host);
+    if (!host) throw new Error(`Mac ${member.host} is not in bb-box's settings.`);
+    const owner = ownerText({ install: this.#context.installId, kind: box.kind, box: box.boxId, thread: box.threadId, name: box.name, created: box.createdAt });
+    const held = (await this.#run(host, holdScript(member.ref, this.#context.installId, "warm", owner), { signal })).stdout.trim();
+    if (held !== "held") throw new Error(`The warm VM ${member.ref} on ${host.name} is no longer free.`);
+  }
+
+  async #topUp(signal: AbortSignal): Promise<void> {
+    const pools = this.#pools();
+    // Retire, while no claim runs, warm VMs that serve no pool now, or beyond
+    // their pool's count. A Mac that is off keeps its warm VMs, which count
+    // again when it is on.
+    const retired = await this.#warm.exclusive(async () => {
+      const states = await this.#states(signal);
+      const kept = new Map<WarmPool, number>();
+      const out: { host: TartHost; vm: string }[] = [];
+      for (const host of this.#on()) {
+        const state = states.get(host.name)!;
+        if (state instanceof Error) continue;
+        for (const [vm, fields] of state.owners) {
+          if (fields.install !== this.#context.installId || warmState(fields) !== "warm") continue;
+          const size = sizeOf(state.configs.get(vm));
+          const kinds = this.#servedBy(state, fields, size);
+          const pool = pools.find((candidate) => kinds.length && candidate.kinds.includes(kinds[0]!));
+          const count = pool ? (kept.get(pool) ?? 0) : 0;
+          if (pool && count < pool.target) {
+            kept.set(pool, count + 1);
+            continue;
+          }
+          out.push({ host, vm });
+        }
+      }
+      return out;
+    });
+    for (const { host, vm } of retired) {
+      // Its owner file names no box, so a box that held it meanwhile keeps it.
+      await this.#delete(host, vm, null, signal).catch((error) => this.#context.logError("retire a warm VM", error));
+    }
+
+    for (const pool of pools) {
+      if (pool.target === 0) continue;
+      const states = await this.#states(signal);
+      let ready = 0;
+      for (const host of this.#on()) {
+        const state = states.get(host.name)!;
+        if (!(state instanceof Error)) ready += this.#freeWarm(state).filter((warm) => warm.kinds.includes(pool.kinds[0]!)).length;
+      }
+      const filling = [...this.#filling.values()].filter((fill) => !fill.adopted && sameSize(fill.size, pool.size) && fill.kinds.includes(pool.kinds[0]!)).length;
+      for (let missing = pool.target - ready - filling; missing > 0; missing--) {
+        signal.throwIfAborted();
+        if (!(await this.#fill(pool, signal))) break;
+      }
+    }
+  }
+
+  /**
+   * Makes one warm VM of a pool: clones it, boots it to the logged-in
+   * desktop, and suspends it. It takes a VM slot and its memory until then,
+   * so it is placed as a box is, and an acquire that needs the slot takes it
+   * over or stops it. Resolves false when no Mac has room.
+   */
+  async #fill(pool: WarmPool, signal: AbortSignal): Promise<boolean> {
+    const vm = `${WARM_PREFIX}${randomBytes(6).toString("hex")}`;
+    const placed = await this.#chain(async () => {
+      const states = await this.#states(signal);
+      for (const host of this.#on()) {
+        const state = states.get(host.name)!;
+        if (state instanceof Error || !this.#room(host, state, pool.size).capacity.ok) continue;
+        this.#placing.set(vm, { host: host.name, vm, memoryMiB: pool.size.memoryMiB });
+        return { host, state };
+      }
+      return null;
+    });
+    if (!placed) return false;
+    const { host, state } = placed;
+    const abort = new AbortController();
+    const fillSignal = AbortSignal.any([signal, abort.signal]);
+    let ready!: { resolve(address: string): void; reject(error: unknown): void };
+    let done!: () => void;
+    const fill: Fill = {
+      host: host.name,
+      size: pool.size,
+      kinds: pool.kinds,
+      abort,
+      ready: new Promise<string>((resolve, reject) => (ready = { resolve, reject })),
+      done: new Promise<void>((resolve) => (done = resolve)),
+      adopted: false,
+    };
+    fill.ready.catch(() => undefined);
+    this.#filling.set(vm, fill);
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
+    try {
+      const owner = ownerText({
+        install: this.#context.installId,
+        state: "filling",
+        image: pool.image,
+        build: state.builds.get(pool.image) ?? "",
+        tart: state.version,
+        macos: state.macosBuild,
+      });
+      const claimed = (await this.#run(host, claimScript(vm, owner), { signal: fillSignal })).stdout.trim();
+      if (claimed !== "claimed") throw new Error(`Warm VM ${vm} on ${host.name} is already there.`);
+      await this.#run(host, cloneScript(pool.image, vm, pool.size.cores, pool.size.memoryMiB), { timeoutMs: 10 * 60_000, signal: fillSignal });
+      await this.#start(host, vm, deadline, fillSignal, false);
+      const address = await this.#address(host, vm, deadline, fillSignal);
+      await this.#waitReady(host, vm, address, deadline, fillSignal);
+      await this.#identify(host, address, vm, fillSignal);
+      const { ssh } = await this.#keys();
+      const desktop = await new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos").run(desktopScript(), {
+        timeoutMs: 240_000,
+        signal: fillSignal,
+        maxOutputBytes: 4096,
+      });
+      if (desktop.exitCode !== 0) throw new Error(`Warm VM ${vm} on ${host.name}: ${desktop.stderr.trim() || `exit code ${desktop.exitCode}`}`);
+      ready.resolve(address);
+      // In the chain, so an acquire that takes the VM over and this suspend never cross.
+      const adopted = await this.#chain(async () => {
+        if (fill.adopted) return true;
+        fillSignal.throwIfAborted();
+        await this.#forget(host, vm);
+        const result = (await this.#run(host, warmScript(vm, this.#context.installId), { timeoutMs: 120_000, signal: fillSignal })).stdout.trim();
+        if (result !== "warm") throw new Error(`Warm VM ${vm} on ${host.name} was no longer being filled.`);
+        return false;
+      });
+      if (!adopted) this.#placing.delete(vm);
+      return true;
+    } catch (error) {
+      ready.reject(error);
+      if (!fill.adopted) {
+        this.#placing.delete(vm);
+        await this.#delete(host, vm, null).catch((cause) => this.#context.logError("release a warm VM that failed", cause));
+      }
+      // Stopped for an acquire that needed the slot: no room for another now.
+      if (abort.signal.aborted) return false;
+      throw error;
+    } finally {
+      this.#filling.delete(vm);
+      done();
+    }
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
@@ -568,6 +996,8 @@ export class TartBackend implements Backend {
   }
 
   async dispose(): Promise<void> {
+    this.#stopping.abort(new Error("bb-box is stopping."));
+    await this.#maintaining?.catch(() => undefined);
     const pending = this.#ssh;
     this.#ssh = null;
     const keys = await pending?.catch(() => null);
@@ -619,8 +1049,24 @@ export class TartBackend implements Backend {
     return parseState((await this.#run(host, stateScript(), { timeoutMs: 30_000, signal })).stdout);
   }
 
-  /** Starts the VM, detached from SSH, and fails fast when Tart cannot. */
-  async #start(host: TartHost, vm: string, deadline: number, signal?: AbortSignal): Promise<void> {
+  /**
+   * Starts the VM, detached from SSH, and fails fast when Tart cannot. A VM
+   * whose saved state does not restore, as after an update of macOS or Tart,
+   * boots afresh from its disk when `discard` is true; a warm VM gives way to
+   * a clone instead.
+   */
+  async #start(host: TartHost, vm: string, deadline: number, signal?: AbortSignal, discard = true): Promise<void> {
+    try {
+      await this.#launch(host, vm, deadline, signal);
+    } catch (error) {
+      if (!discard || !failedRestore(error)) throw error;
+      this.#context.logError("start", new Error(`The saved state of ${vm} on ${host.name} did not restore, so it boots afresh from its disk: ${message(error)}`));
+      await this.#run(host, discardStateScript(vm), { timeoutMs: 30_000, signal });
+      await this.#launch(host, vm, deadline, signal);
+    }
+  }
+
+  async #launch(host: TartHost, vm: string, deadline: number, signal?: AbortSignal): Promise<void> {
     const seconds = Math.max(5, Math.min(180, Math.round((deadline - Date.now()) / 1000)));
     const { ssh } = await this.#keys();
     const result = await ssh.run(await this.#mac(host), startScript(vm, seconds), { timeoutMs: (seconds + 30) * 1000, signal, maxOutputBytes: 1 << 16 }, "macos");
@@ -676,8 +1122,20 @@ export class TartBackend implements Backend {
     return vnc;
   }
 
-  /** Names the VM after its box. A box whose name could not be set still works, so this only logs. */
-  async #name(host: TartHost, address: string, name: string, signal?: AbortSignal): Promise<void> {
+  /** Checks that the VM that answers at `address` is `vm` (identityScript). */
+  async #identify(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos");
+    const result = await command.run(identityScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) throw new Error(`${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+  }
+
+  /**
+   * Checks the VM is `vm`, then names it after its box. A box whose name could
+   * not be set still works, so that only logs.
+   */
+  async #name(host: TartHost, address: string, vm: string, name: string, signal?: AbortSignal): Promise<void> {
+    await this.#identify(host, address, vm, signal);
     const { ssh } = await this.#keys();
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos");
     const result = await command.run(nameScript(name), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 }).catch((error: unknown) => error);

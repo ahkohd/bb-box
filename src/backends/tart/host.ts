@@ -107,6 +107,10 @@ for vm in $(ls "$home/vms" 2>/dev/null); do
   [ -f "$home/vms/$vm/config.json" ] || continue
   printf '=%s\\n' "$vm"; tr -d '\\n' < "$home/vms/$vm/config.json"; echo
 done
+echo @builds
+for vm in $(ls "$home/vms" 2>/dev/null); do
+  [ -f "$home/vms/$vm/disk.img" ] && printf '%s %s\\n' "$vm" "$(ls -i "$home/vms/$vm/disk.img" | awk '{ print $1 }')"
+done
 echo @owners
 for vm in $(ls "$d/owners"); do [ -f "$d/owners/$vm" ] || continue; printf '=%s\\n' "$vm"; cat "$d/owners/$vm"; done
 echo @memory; sysctl -n hw.memsize
@@ -115,6 +119,7 @@ echo @cpus; sysctl -n hw.ncpu
 echo @disk; df -k "$home" | awk 'NR == 2 { print $2, $4 }'
 echo @arch; uname -m
 echo @macos; sw_vers -productVersion
+echo @macosbuild; sw_vers -buildVersion
 `);
 }
 
@@ -135,6 +140,11 @@ export interface HostState {
   readonly version: string;
   readonly vms: readonly TartVm[];
   readonly configs: ReadonlyMap<string, VmConfig>;
+  /**
+   * Each VM's disk, as an ID that changes when the disk is made again: a
+   * clone or an image built again has a new file, and a rename keeps it.
+   */
+  readonly builds: ReadonlyMap<string, string>;
   readonly owners: ReadonlyMap<string, Record<string, string>>;
   readonly memoryMiB: number;
   /** The Mac's cores, or 0 when it did not say. */
@@ -142,6 +152,8 @@ export interface HostState {
   readonly disk: { readonly totalMiB: number; readonly freeMiB: number };
   readonly arch: string;
   readonly macos: string;
+  /** The Mac's macOS build, such as 26A428: a VM saved under another may not restore. */
+  readonly macosBuild: string;
 }
 
 /** Entries of a section made of `=name` lines, each followed by its text. */
@@ -193,6 +205,11 @@ export function parseState(text: string): HostState {
     const config = parseConfig(json);
     if (config) configs.set(name, config);
   }
+  const builds = new Map<string, string>();
+  for (const line of (parts.get("builds") ?? "").split("\n")) {
+    const [name, build] = line.trim().split(/\s+/);
+    if (name && build) builds.set(name, build);
+  }
   const owners = new Map<string, Record<string, string>>();
   for (const [name, fields] of named(parts.get("owners") ?? "")) owners.set(name, parseFields(fields));
   const [total = 0, free = 0] = (parts.get("disk") ?? "").trim().split(/\s+/).map(Number);
@@ -200,12 +217,14 @@ export function parseState(text: string): HostState {
     version: parts.get("version")?.trim() ?? "",
     vms,
     configs,
+    builds,
     owners,
     memoryMiB: Math.floor(Number(parts.get("memory")?.trim() || 0) / 1024 / 1024),
     cpus: Number(parts.get("cpus")?.trim()) || 0,
     disk: { totalMiB: Math.floor(total / 1024), freeMiB: Math.floor(free / 1024) },
     arch: parts.get("arch")?.trim() ?? "",
     macos: parts.get("macos")?.trim() ?? "",
+    macosBuild: parts.get("macosbuild")?.trim() ?? "",
   };
 }
 
@@ -216,6 +235,48 @@ export function parseState(text: string): HostState {
 export function claimScript(vm: string, owner: string): string {
   return script(String.raw`f="$d/owners/"${quote(vm)}
 if (set -C; printf '%s' ${quote(owner)} > "$f") 2>/dev/null; then echo claimed; else cat "$f"; fi
+`);
+}
+
+/**
+ * Suspends a warm VM bb-box has filled, once it is ready, and marks it warm.
+ * Prints "warm", or "gone" when its owner file no longer says it is filling.
+ */
+export function warmScript(vm: string, installId: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+grep -qxF ${quote(`install=${installId}`)} "$f" 2>/dev/null && grep -qx 'state=filling' "$f" || { echo gone; exit 0; }
+if [ "$(state "$vm")" = running ]; then tart suspend "$vm" || exit 1; fi
+settled "$vm" 1200 || { echo "$vm is still running a minute after tart suspend." >&2; exit 1; }
+[ "$(state "$vm")" = suspended ] || { echo "$vm did not suspend." >&2; exit 1; }
+sed 's/^state=filling$/state=warm/' "$f" > "$f.new" && mv -f "$f.new" "$f"
+echo warm
+`);
+}
+
+/**
+ * Hands a warm VM, or one being filled, to a box: rewrites its owner file
+ * with the box's fields, only while the file still says it is in that state.
+ * Prints "held", or the file that is there.
+ */
+export function holdScript(vm: string, installId: string, from: "warm" | "filling", owner: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+if grep -qxF ${quote(`install=${installId}`)} "$f" 2>/dev/null && grep -qxF ${quote(`state=${from}`)} "$f"; then
+  printf '%s' ${quote(owner)} > "$f.new" && mv -f "$f.new" "$f" && echo held
+else
+  cat "$f" 2>/dev/null
+fi
+`);
+}
+
+/** A VM's owner file as it is, or nothing. */
+export function ownerScript(vm: string): string {
+  return script(`cat "$d/owners/"${quote(vm)} 2>/dev/null || :\n`);
+}
+
+/** Drops a VM's saved state, so a VM whose state does not restore boots afresh from its disk. */
+export function discardStateScript(vm: string): string {
+  return script(String.raw`home=$HOME/.tart; [ -z "$TART_HOME" ] || home=$TART_HOME
+rm -f "$home/vms/"${quote(vm)}"/state.vzvmsave"
 `);
 }
 
