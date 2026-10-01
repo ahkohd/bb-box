@@ -58,6 +58,10 @@ For a thread placed this way, BB:
   another one.
 - "New box" offers no Windows kinds, and none with enrolment off. It serves
   projects with a Git remote, which BB's project checkout needs.
+- BB lists "New box" at the end of the new-thread picker's scrolling
+  Machines list, below the fold once there are six machines, and lower with
+  every box and spare that is a BB machine
+  ([BB request 10](../bb-requests.md#10-show-machine-making-environments-where-they-can-be-seen)).
 - BB passing the thread's ID as the key is its behaviour, not its
   documented API. If that changes, `create` fails with a message
   ([BB requests, "Possible later"](../bb-requests.md#possible-later)).

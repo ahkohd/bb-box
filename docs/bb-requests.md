@@ -16,6 +16,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Reach a port on a machine](#7-reach-a-port-on-a-machine) | draft | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already |
 | [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box reads the thread's variables and GH_TOKEN from BB's workers in the box: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
 | [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | draft | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
+| [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | draft | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
 
 ## 1. BB's host app on Windows
 
@@ -356,6 +357,37 @@ the box's transport, with its PTY on BB's server, streamed to xterm.js
 over a plugin WebSocket (`src/plugin/terminal.ts`). It keeps the shell
 while the tab is away, but not across a plugin restart, and it is not in
 BB's terminal list.
+
+## 10. Show machine-making environments where they can be seen
+
+**What bb-box needs.** "New box" in BB's new-thread screen
+([033](decisions/033-a-thread-can-start-on-a-new-box.md)) where a user sees
+it when they open the Environment picker.
+
+**What BB does now.** Checked in the web app BB 0.44.0 serves:
+
+- With three or more machines, the Environment picker uses its contextual
+  menu. An environment that brings its own machine (a composition with a
+  `machineProviderId`, such as BB's Modal sandbox or bb-box's "New box") is
+  listed inside the Machines group, after every machine.
+- That group is a scroll area capped at 12rem (`max-h-48`). A machine row is
+  about 26 px, so with six machines the group is full, and the first such
+  environment starts at its bottom edge. Users see the machines, the "On
+  <machine>" section and "Reuse existing", and not "New box" (the operator,
+  1 October 2026: "Where is the new box?").
+- Plugin machines in that list push it further down: every bb-box box that
+  is a BB machine, and each spare box
+  ([032](decisions/032-spare-boxes-are-enrolled-ahead.md)) until BB can hide
+  machines from placement ("Possible later" below).
+- The picker's search shows it: typing "new" filters out the machines, and
+  environments that bring their own machine are not filtered.
+
+**What we ask.** List environments that bring their own machine in a group
+of their own, outside the scrolling Machines list, for example "New
+machine" under the machines, or before them.
+
+**Until then.** The operator scrolls the Machines list to its end, or types
+"new" in the picker's search. The skill says so.
 
 ## Checked, no request needed
 

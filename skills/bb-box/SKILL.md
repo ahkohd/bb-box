@@ -218,6 +218,10 @@ with a Git remote. The box is the thread's machine: `box_list` and the panel
 say so, it does not count against the per-thread limit, and it is released
 when the thread is archived or deleted.
 
+BB lists "New box" at the end of the Environment picker's Machines list, which
+scrolls: with several machines it is below the fold. Scroll that list down,
+or type "new" in the picker's search, which leaves it alone in the list.
+
 From a terminal, `bb thread spawn` can start one too: `bb environment
 providers` lists it as `bb-box-new`, with inputs such as `{"kind": "linux"}`.
 Give `--model` when the project has no remembered model, since the new box
