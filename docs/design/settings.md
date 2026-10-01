@@ -192,6 +192,12 @@ Leave empty to offer no CPU desktops.
   is off and has no boxes can be saved with problems, so setting up can
   stop part way and resume; one that is on, or has boxes, cannot. A saved
   backend is reconfigured at once, and its state line updates.
+- **Save and turn on**, shown while the backend is off, saves it on in one
+  go, so first setup does not end with the row's switch. The server refuses
+  an on backend with problems, so a refusal saves nothing: the form says
+  "Not saved: it cannot be on with these. Save keeps it off while you fix
+  them." The Tart and SSH host pool guides save a backend off on purpose,
+  and Save still does that.
 - **Check** runs the doctor against the draft (`config.check` with `test`)
   without saving, so a person can test a token before committing it. Each
   check is a row with BB's icon for its status (check circle, warning
@@ -246,7 +252,7 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
 | section titles | Backends · Kinds · General |
 | backend states | Ready · Needs setting up · Off · Checking… |
 | state details | Proxmox VE 9.2 on pve · 3 kinds on offer · checked 2 min ago · Set the API token secret. |
-| buttons | Check · Set up · Save · Replace · Clear · Copy |
+| buttons | Check · Set up · Save · Save and turn on · Replace · Clear · Copy |
 | secrets | secret · set · not set |
 | doctor | the check's `name`, `detail` and `fix` as the backend gives them, with "Fix:" before the fix |
 | kinds | Small · Medium · Large · Largest · Warm · default · Not offered: no backend has it |

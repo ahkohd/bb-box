@@ -413,7 +413,8 @@ Set up the backend on BB Box's settings page in BB: open Proxmox LXC's
 setup and fill in its fields, which appear in this order. The examples are
 this guide's defaults; a host set up with them needs only the values from
 the token file, the SSH key and the templates you built. "Check" tests the
-fields against the host before you save them. Then turn the backend on.
+fields against the host before you save them; "Save and turn on" does
+both.
 
 From a terminal, `bb box config show --json` prints the configuration, and
 `bb box config apply <file>` saves an edited copy. The backend's part of the
