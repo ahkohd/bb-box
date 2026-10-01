@@ -155,8 +155,11 @@ document, bb-box builds it from BB's settings:
   `--remove` removes it. `bb box config show` mentions it until then.
   Secrets are not copied: they exist on their hosts.
 - Then bb-box clears the old values from BB's settings, so no second copy of
-  a secret is left. It declares the old keys only while there is no
-  document, for this move to read them.
+  a secret is left, and marks them cleared in plugin storage. It declares
+  the old keys only until that mark is there, so a start cut short after
+  the document is written clears them on the next start. Clearing them
+  must not reconfigure the backends: once the document exists, BB's
+  settings never drive them.
 
 ## Consequences
 
