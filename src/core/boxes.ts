@@ -78,6 +78,12 @@ export interface BoxRecord {
   readonly releaseRequestedAt: number | null;
   /** When a real backend began resetting the machine, during release. */
   readonly resetAt: number | null;
+  /**
+   * When the sweep restored the box's lost record from its guest, until the
+   * box starts enrolling again. A box restored stopped, or whose guest did
+   * not answer, enrols when bb-box starts it or the sweep finds it answering (026).
+   */
+  readonly restoredAt?: number | null;
   /** Milliseconds per acquire step, "total" from request to ready, and "release.<step>" after a failed release. */
   readonly timings: Readonly<Record<string, number>>;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
@@ -106,8 +112,8 @@ export interface BoxesDeps {
   projectOf?(threadId: string): Promise<string | null>;
   /**
    * Enrols a ready box as a BB machine, with the box ID as the key. With
-   * `restored`, the sweep has just restored the box, so its enrolment counts
-   * from now. Called without awaiting.
+   * `restored`, the sweep restored the box and bb-box has just found it
+   * answering, so its enrolment counts from now. Called without awaiting.
    */
   enrol?(box: BoxRecord, options?: { restored?: boolean }): Promise<void>;
   /** Removes a box's BB machine. Awaited before the backend releases the box. */
@@ -206,12 +212,15 @@ const UNKNOWN_KIND: KindCapabilities = {
   enrol: false,
 };
 
-/** For releases whose progress nobody watches: leftovers the sweep finds, and guests whose box was forgotten. */
 /** How much longer than the timeout in the box bb-box waits before it stops the command itself. */
 const LOCAL_TIMEOUT_GRACE_MS = 10_000;
 const ENROL_POLL_MS = 250;
 
+/** For releases whose progress nobody watches: leftovers the sweep finds, and guests whose box was forgotten. */
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
+
+/** The error of a box restored running whose guest did not answer. The sweep clears it once the guest answers. */
+const SILENT = "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.";
 
 /** The features a box has beyond what its kind promises. */
 export function extraFeatures(box: Pick<BoxRecord, "requires" | "capabilities">): string[] {
@@ -495,13 +504,19 @@ export class Boxes {
     await this.#enrol(next);
   }
 
-  /** Starts enrolling a ready box as a BB machine, when its kind can enrol and bb-box enrols boxes. */
+  /** Starts enrolling a ready box as a BB machine, when it can enrol. */
   async #enrol(box: BoxRecord, options: { restored?: boolean } = {}): Promise<void> {
-    const general = await this.#deps.general();
-    if (box.capabilities.enrol && general.enrol && this.#deps.enrol) {
-      const enrolling = await this.update(box, () => ({ enrol: { state: "enrolling", hostId: null, error: null } }));
-      if (enrolling) void this.#deps.enrol(enrolling, options).catch((error) => this.#deps.logError("enrol", error));
-    }
+    if (!(await this.#enrols(box))) return;
+    const enrolling = await this.update(box, (current) => ({
+      enrol: { state: "enrolling", hostId: null, error: null },
+      ...(current.restoredAt ? { restoredAt: null } : {}),
+    }));
+    if (enrolling) void this.#deps.enrol!(enrolling, options).catch((error) => this.#deps.logError("enrol", error));
+  }
+
+  /** Whether a box can enrol as a BB machine: its kind can and bb-box enrols boxes. */
+  async #enrols(box: BoxRecord): Promise<boolean> {
+    return box.capabilities.enrol && !!this.#deps.enrol && (await this.#deps.general()).enrol;
   }
 
   #backendOff(box: BoxRecord): string {
@@ -635,7 +650,10 @@ export class Boxes {
     });
   }
 
-  /** Starts a stopped box, waits until its command transport answers, and reconnects its BB machine. */
+  /**
+   * Starts a stopped box, waits until its command transport answers, and
+   * reconnects its BB machine, or enrols it when the sweep restored it.
+   */
   async start(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
     return this.#chain(box.id, async () => {
@@ -651,6 +669,10 @@ export class Boxes {
         throw error;
       }
       const started = (await this.#move(current, "ready")) ?? current;
+      if (started.state === "ready" && started.restoredAt) {
+        await this.#enrol(started, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
+        return (await this.#read(started.threadId, started.id)) ?? started;
+      }
       // A hard stop ends BB's daemon, and nothing in the box starts it again (017).
       if (started.state === "ready" && started.enrol.state === "enrolled" && this.#deps.reconnect) {
         void this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error));
@@ -974,6 +996,10 @@ export class Boxes {
         if (box.state !== "ready" && box.state !== "stopped") continue;
         await this.#observe(box, { signal }).catch((error) => this.#deps.logError("sweep", error));
       }
+      for (const box of records) {
+        if (!box.restoredAt || !seen.has(box.id) || this.#work.has(box.id)) continue;
+        await this.#enrolAnswering(backend, box, signal).catch((error) => this.#deps.logError("sweep", error));
+      }
     }
 
     for (const backend of this.#deps.backends.active()) {
@@ -981,6 +1007,19 @@ export class Boxes {
       await backend.maintain?.(signal).catch((error) => this.#deps.logError(`maintain ${backend.id}`, error));
     }
     return { released, leftovers, adopted, kept, resumed };
+  }
+
+  /** Enrols a restored box whose guest did not answer at the restore, once it runs and answers (026). */
+  async #enrolAnswering(backend: Backend, box: BoxRecord, signal?: AbortSignal): Promise<void> {
+    if (!(await this.#enrols(box))) return;
+    await this.#chain(box.id, async () => {
+      const current = await this.#read(box.threadId, box.id);
+      if (current?.state !== "ready" || !current.restoredAt || !current.guest) return;
+      if (!(await this.#answers(backend, current.guest, current.kind, signal))) return;
+      this.#deps.log?.(`Restored box ${current.name} of thread ${current.threadId} answers now, so it enrols again.`);
+      const answering = current.error === SILENT ? await this.update(current, () => ({ error: null })) : current;
+      if (answering) await this.#enrol(answering, { restored: true });
+    });
   }
 
   async #releaseLeftover(backend: Backend, guest: HeldGuest, reason: string, signal?: AbortSignal): Promise<void> {
@@ -993,7 +1032,8 @@ export class Boxes {
    * was lost, from what the guest names: its box, thread, name, kind and
    * creation, with its reference, address and data. A running guest is ready
    * when its command transport answers, and enrols again as a BB machine with
-   * the same key, so BB gives back the machine it still has (025).
+   * the same key, so BB gives back the machine it still has (025). Any other
+   * enrols later, once it runs and answers (026).
    */
   async #restore(backend: Backend, held: HeldGuest, signal?: AbortSignal): Promise<boolean> {
     const { owner: found, power, ...guest } = held;
@@ -1022,16 +1062,14 @@ export class Boxes {
         role: "box",
         guest,
         state: power === "stopped" ? "stopped" : "ready",
-        error:
-          power === "stopped" || answers
-            ? null
-            : "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.",
+        error: power === "stopped" || answers ? null : SILENT,
         createdAt: owner.createdAt ?? this.#now(),
         readyAt: owner.createdAt ?? this.#now(),
         releaseRequestedAt: null,
         resetAt: null,
         timings: {},
         enrol: { state: "off", hostId: null, error: null },
+        restoredAt: this.#now(),
       };
       await this.#deps.kv.set(indexKey(box.id), box.threadId);
       return this.#write(box);

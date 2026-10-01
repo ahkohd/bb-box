@@ -5,7 +5,8 @@
 // starts a stopped box, or when the sweep finds a ready box's machine
 // disconnected, bootstrap runs again with the same key to start BB's daemon
 // (017). A box the sweep restores from its guest enrols again with the same
-// key, and BB gives back the machine it still has for it (025).
+// key once it runs and answers, and BB gives back the machine it still has
+// for it (025, 026).
 //
 // Plugins can read the names of BB's machine variables but not their values;
 // BB gives the values, and GH_TOKEN, to its daemon in the box. Commands in a
@@ -129,14 +130,15 @@ const STEPS: readonly Step[] = [
 
 /**
  * What an enrolment's time counts from: the box being ready, bb-box
- * resuming the enrolment after a restart, or the sweep restoring the box.
+ * resuming the enrolment after a restart, or bb-box finding a box the sweep
+ * restored running and answering.
  */
 export type EnrolSince = "ready" | "resumed" | "restored";
 
 const SINCE: Record<EnrolSince, string> = {
   ready: "it was ready",
   resumed: "bb-box resumed following it",
-  restored: "the sweep restored it",
+  restored: "bb-box found the restored box answering",
 };
 
 /** When each step of one enrolment ended, counted from `origin`. */
@@ -268,14 +270,14 @@ export class Enrolment {
   /**
    * Makes a ready box a BB machine and waits until its daemon connects.
    * `since` "resumed" follows an enrolment a restart interrupted, and
-   * "restored" enrols a box the sweep restored. Never throws.
+   * "restored" enrols a box the sweep restored, once it answers. Never throws.
    */
   async enrol(box: BoxRecord, options: { since?: EnrolSince } = {}): Promise<void> {
     if (this.#following.has(box.id)) return;
     this.#following.add(box.id);
     // Enrolment starts once the box is ready, so its time counts from then.
     // A resumed one's time from then would count the restart too, and a
-    // restored box was ready long before.
+    // restored box was ready long before, or was restored stopped.
     const since = options.since ?? "ready";
     const phases = new Phases(since === "ready" ? (box.readyAt ?? Date.now()) : Date.now(), Date.now, since);
     this.#phases.set(box.id, phases);

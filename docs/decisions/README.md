@@ -30,3 +30,4 @@ that changes gets a new record that supersedes the old one.
 | [023](023-a-reference-follows-its-element-through-its-own-rename.md) | A reference follows its element through its own rename |
 | [024](024-an-element-renamed-out-of-sight-is-refused-once.md) | An action on an element renamed out of sight is refused once |
 | [025](025-a-restored-box-enrols-again.md) | A restored box enrols again, keyed by its box ID |
+| [026](026-a-restored-box-enrols-once-it-answers.md) | A restored box enrols once it answers |

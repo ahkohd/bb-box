@@ -12,6 +12,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Start cleanly after a reboot](#3-start-cleanly-after-a-reboot) | draft | every template and image clears BB's daemon lock and PID file at boot |
 | [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | draft | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
 | [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | draft | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
+| [Find a machine by its key](#6-find-a-machine-by-its-key) | draft | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
 
 ## 1. BB's host app on Windows
 
@@ -193,6 +194,35 @@ installer runs, asks BB whether the machine is connected every 100 ms once
 the installer has finished, and logs each step's time in
 `bb plugin logs bb-box`. Enrolling warm boxes ahead would hide the wait, but
 needs machines hidden from thread placement (below).
+
+## 6. Find a machine by its key
+
+**What bb-box needs.** To remove the BB machine of a box whose record it
+lost. bb-box makes each box's machine with the box ID as the key
+([014](decisions/014-enrol-through-machine-providers.md)). If bb-box loses
+its storage and a box's thread ends before the sweep restores the box, the
+sweep releases the box's guest, which names the box ID. Nothing tells
+bb-box which machine has that key, so the machine stays in BB, disconnected,
+until someone removes it.
+
+**What BB does now.** Checked in BB 0.44.0:
+
+- `Host` has no key. `hosts.list` filters only by type and by whether a
+  machine is still being made, and `hosts.get` takes a host ID.
+- `hosts.experimental_create` with the key returns the machine BB has for
+  it, but makes a new one when BB has none, as after someone removed it.
+  bb-box must not bring back a machine that was removed.
+- `machineBootstrap.bootstrap` finds the machine by its key, and checks that
+  the plugin's provider made it, but then runs BB's installer in the box.
+
+**What we ask.** A way for a plugin to find the machine its provider made
+with a given key, without making one. For example, `hosts.get({ key })`
+that answers only the plugin whose provider made the machine, or the key on
+`Host` for that plugin.
+
+**Until then.** Such a machine stays in BB until someone removes it
+([026](decisions/026-a-restored-box-enrols-once-it-answers.md)). It
+follows only lost plugin storage, which upgrades no longer cause.
 
 ## Checked, no request needed
 

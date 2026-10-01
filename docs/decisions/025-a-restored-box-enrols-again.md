@@ -2,7 +2,9 @@
 
 Status: accepted, 1 October 2026. Partly supersedes
 [019](019-lost-records-are-restored-from-guests.md): whether a restored box
-is a BB machine.
+is a BB machine. Partly superseded by
+[026](026-a-restored-box-enrols-once-it-answers.md): a box restored stopped
+or silent enrols once it answers.
 
 ## Context
 
