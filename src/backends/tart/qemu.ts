@@ -9,9 +9,10 @@
 //   `current` names the build new VMs are made from.
 // - qemu/vms/<vm>/: a VM. disk.qcow2 is an overlay on its build's disk, and
 //   vars.fd a copy of the build's. config names its image and build, its
-//   size, and its two ports on the Mac's loopback, for SSH and VNC, chosen
-//   when it is made. While QEMU runs it, it has QEMU's QMP socket, pid file
-//   and output. A stopped VM keeps its memory in state, saved by QEMU's
+//   size, its two ports on the Mac's loopback, for SSH and VNC, and the
+//   machine, such as virt-11.1, that QEMU's virt stood for, all chosen when
+//   it is made. While QEMU runs it, it has QEMU's QMP socket, pid file and
+//   output. A stopped VM keeps its memory in state, saved by QEMU's
 //   migration to a file, until it starts again.
 // - The VM's owner file is in Tart's directory (host.ts) and names the
 //   engine, qemu. It is written before the VM's directory and removed after.
@@ -154,8 +155,10 @@ export function parseQemuState(text: string): QemuState {
 
 /**
  * Makes the VM unless it is there: an overlay on the image's current build,
- * a copy of its UEFI variables, and two free ports. Then sizes it, and
- * prints its config after a line `@config`.
+ * a copy of its UEFI variables, two free ports, and the machine QEMU's virt
+ * stands for. The VM keeps that machine, so that a state saved by this QEMU
+ * restores after QEMU is updated. Then sizes it, and prints its config after
+ * a line `@config`.
  */
 export function qemuCloneScript(image: string, vm: string, cores: number, memoryMiB: number): string {
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"; image=${quote(image)}
@@ -163,6 +166,8 @@ mkdir -p "$q/vms" || exit 1
 if [ ! -d "$v" ]; then
   b=$(cd "$q/images/$image/current" 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] ||
     { echo "There is no Windows image $image on this Mac, in $q/images." >&2; exit 1; }
+  machine=$(qemu-system-aarch64 -machine help 2>/dev/null | sed -n 's/^virt .*(alias of \(virt-[0-9.]*\)).*/\1/p' | head -n 1)
+  [ -n "$machine" ] || machine=virt
   rm -rf "$v.new"; mkdir "$v.new" || exit 1
   qemu-img create -q -f qcow2 -F qcow2 -b "$b/disk.qcow2" "$v.new/disk.qcow2" || exit 1
   # An APFS clone, which shares the image's blocks until it changes.
@@ -184,7 +189,7 @@ if [ ! -d "$v" ]; then
   }
   ssh=$(free ${FIRST_PORT}) && vnc=$(free $((ssh + 1))) ||
     { rmdir "$q/ports.lock"; echo "No two ports from ${FIRST_PORT} to ${LAST_PORT} are free on this Mac's loopback." >&2; exit 1; }
-  printf 'image=%s\nbuild=%s\nssh=%s\nvnc=%s\n' "$image" "$(basename "$b")" "$ssh" "$vnc" > "$v.new/config" && mv "$v.new" "$v"
+  printf 'image=%s\nbuild=%s\nmachine=%s\nssh=%s\nvnc=%s\n' "$image" "$(basename "$b")" "$machine" "$ssh" "$vnc" > "$v.new/config" && mv "$v.new" "$v"
   made=$?; rmdir "$q/ports.lock"; [ "$made" -eq 0 ] || exit 1
 fi
 sed -e '/^cores=/d' -e '/^memory=/d' "$v/config" > "$v/config.new" && printf 'cores=%s\nmemory=%s\n' ${cores} ${memoryMiB} >> "$v/config.new" &&
@@ -209,7 +214,7 @@ fw="$(qshare)/edk2-aarch64-code.fd"
 [ -f "$fw" ] || { echo "QEMU's firmware $fw is missing." >&2; exit 1; }
 val() { sed -n "s/^$1=//p" "$v/config" | head -n 1; }
 rm -f "$v/qmp" "$v/pid"
-set -- -name "$vm" -machine virt -accel hvf -cpu host -smp "$(val cores)" -m "$(val memory)" \
+set -- -name "$vm" -machine "$(val machine)" -accel hvf -cpu host -smp "$(val cores)" -m "$(val memory)" \
   -drive "if=pflash,format=raw,readonly=on,file=$fw" -drive "if=pflash,format=raw,file=$v/vars.fd" \
   -device qemu-xhci -device usb-kbd -device usb-tablet \
   -drive "if=none,id=disk,file=$v/disk.qcow2,discard=unmap" -device virtio-blk-pci,drive=disk \
@@ -274,6 +279,7 @@ if qrunning "$vm"; then
     r=$(qmp '{"execute":"query-migrate"}') || failed "$r"
     qhas "$r" status completed && break
     qhas "$r" status failed && failed "$r"
+    qhas "$r" status cancelled && failed "$r"
     i=$((i + 1)); [ "$i" -lt 1200 ] || failed "it had not saved after two minutes."
     sleep 0.1
   done
