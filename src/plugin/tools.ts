@@ -4,7 +4,7 @@
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
 import { z } from "zod";
-import { BoxError, OPERATOR, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, OPERATOR, SPARES, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
 import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import type { BbBox } from "./setup.ts";
@@ -105,8 +105,17 @@ function kindSizesText(kind: KindView): string {
 
 /** Why the box this thread runs on, but does not own, is not released or stopped from here (036). */
 function runsOnRefusal(box: BoxRecord, action: "release" | "stop"): BoxError {
+  // A spare a thread started on becomes your machine at the next spare upkeep (036).
+  if (box.threadId === SPARES) return new BoxError("not_owner", `Box ${box.name} is a spare, which becomes your machine, and this thread runs on it. Remove or stop it in BB Box's settings once it is yours.`);
   if (box.threadId === OPERATOR) return new BoxError("not_owner", `Box ${box.name} is your machine, which this thread runs on. Remove or stop it in BB Box's settings.`);
   return new BoxError("not_owner", `Box ${box.name} is thread ${box.threadId}'s, and this thread runs on it. ${action === "release" ? "Release" : "Stop"} it from that thread.`);
+}
+
+/** Whose the box a thread runs on is, for box_list. */
+function ownerWords(box: BoxRecord): string {
+  if (box.threadId === OPERATOR) return "yours";
+  if (box.threadId === SPARES) return "a spare, which becomes your machine";
+  return `thread ${box.threadId}'s`;
 }
 
 export const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
@@ -180,7 +189,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         const lines: string[] = [];
         // The box this thread runs on comes first, unless it is the thread's own and listed below (036).
         if (machine && !list.some((box) => box.id === machine.id)) {
-          lines.push(`The machine this thread runs on:\n${boxLine(machine)}; ${machine.threadId === OPERATOR ? "yours" : `thread ${machine.threadId}'s`}`);
+          lines.push(`The machine this thread runs on:\n${boxLine(machine)}; ${ownerWords(machine)}`);
         }
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(

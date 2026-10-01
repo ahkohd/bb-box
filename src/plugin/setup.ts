@@ -330,9 +330,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   needsConfiguration();
 
   bb.events.on("thread.archived", ({ thread }) => {
+    threadHosts.delete(thread.id);
     void boxes.releaseThread(thread.id).catch((error) => logError("thread archived", error));
   });
   bb.events.on("thread.deleted", ({ thread }) => {
+    threadHosts.delete(thread.id);
     void boxes.releaseThread(thread.id).catch((error) => logError("thread deleted", error));
   });
   bb.events.on("experimental_host.deleted", ({ host }) => {
@@ -352,6 +354,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
   });
 
+  /** Each thread's machine, once it has an environment. */
+  const threadHosts = new Map<string, string>();
   const api: BbBox = {
     boxes,
     backends,
@@ -450,11 +454,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     projectOf,
     async runsOn(threadId, signal) {
-      let hostId: string;
-      try {
-        hostId = (await api.workspace(threadId, signal)).hostId;
-      } catch {
-        return null;
+      // A thread's host does not change once it has an environment, and the panel asks on every update.
+      let hostId = threadHosts.get(threadId);
+      if (hostId === undefined) {
+        try {
+          hostId = (await api.workspace(threadId, signal)).hostId;
+        } catch {
+          return null;
+        }
+        threadHosts.set(threadId, hostId);
       }
       return (await boxes.all()).find((box) => box.enrol.hostId === hostId && box.state !== "gone" && box.state !== "releasing") ?? null;
     },
