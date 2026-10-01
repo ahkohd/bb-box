@@ -335,7 +335,7 @@ export const scenes = {
       await wait(300);
       click(document.body, "radio", "Linux desktopA Linux desktop on the host's GPU, for computer use, browsers and app development.");
       click(document.body, "radio", "Large");
-      click(document.body, "button", "Make box");
+      click(document.body, "button", "Create");
       await wait(300);
     },
   },

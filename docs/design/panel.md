@@ -173,16 +173,20 @@ Anything in the box user's home will be deleted."
 small form:
 
 ```
-New box
-Kind
+Kind:
   (o) [=] Linux                    For builds, servers, Docker and the agent's own work.
   ( ) [#] Linux desktop            A desktop on the GPU, for browsers, apps and computer use.
   ( ) [#] Linux desktop (no GPU)   A desktop drawn by the CPU. Slower graphics; nothing else changes.
-Size
+Size:
   [ Small ] [ Medium ] [ Large ] [ Custom ]
   2 cores · 4 GiB memory · base disk
-[ Make box ]
+[ Create ]
 ```
+
+The popover has no heading of its own: the button that opens it already
+says "New box", so its first line is "Kind:" (the operator's annotation of
+1 October 2026). On a compact viewport the bottom sheet still carries the
+title "New box".
 
 - **Kind** is a list of options with a glyph, the label and one line of
   description, chosen with a click or the arrow keys; the chosen one is
@@ -197,7 +201,7 @@ Size
   preset the person was looking at; a field left empty takes the default
   preset's value, and an empty disk keeps the base disk. The form sends a
   preset by name, or the custom fields, and nothing for the default.
-- **Make box** is the one primary button. Enter does the same. The popover
+- **Create** is the one primary button. Enter does the same. The popover
   closes, and the new row appears with "Starting".
 - The form remembers the last kind and size in the browser, keyed by plugin
   ID, so the next box is two clicks.
@@ -285,7 +289,7 @@ from a thread's Box panel."
 | plugin description | Computers for BB threads: Linux boxes, with or without a desktop, that you and the agent share. |
 | tab titles | Box; the box's name for its desktop |
 | toolbar | New box |
-| chooser | New box · Kind · Size · Small · Medium · Large · Custom · Make box |
+| chooser | Kind: · Size: · Small · Medium · Large · Custom · Create |
 | empty | No boxes yet · A computer for this thread. |
 | not set up | bb-box is not set up yet. Turn on a backend in its settings to make boxes. · Open bb-box settings |
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |

@@ -190,10 +190,9 @@ export function NewBox({
             void submit();
           }}
         >
-          <p className="text-sm font-medium text-foreground">New box</p>
           <div>
             <p id="new-box-kind" className="mb-1.5 text-xs text-muted-foreground">
-              Kind
+              Kind:
             </p>
             <div role="radiogroup" aria-labelledby="new-box-kind" className="space-y-0.5" onKeyDown={(event) => arrows(event, kinds.length, kindIndex, (position) => chooseKind(kinds[position]!, true))}>
               {kinds.map((candidate, position) => {
@@ -228,7 +227,7 @@ export function NewBox({
           {kind ? (
             <div>
               <p id="new-box-size" className="mb-1.5 text-xs text-muted-foreground">
-                Size
+                Size:
               </p>
               <div role="radiogroup" aria-labelledby="new-box-size" className="flex gap-1" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
                 {choices.map((candidate, position) => {
@@ -270,7 +269,7 @@ export function NewBox({
           ) : null}
           <Button type="submit" size="sm" className="w-full" disabled={!kind || making || (size === CUSTOM && !custom)}>
             {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-            Make box
+            Create
           </Button>
           {problem ? (
             <p role="alert" className="text-xs leading-snug text-destructive-text">
