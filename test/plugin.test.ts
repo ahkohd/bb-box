@@ -1682,7 +1682,7 @@ test("an agent reads a desktop box's window, acts on references and is told what
   assert.match(windows, /- window 100: tasks "Tasks", 800 by 600/);
 
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
-  assert.match(tree, /^Window 100: tasks "Tasks", 800 by 600\. 11 elements, 12 lines\./);
+  assert.match(tree, /^Window 100: tasks "Tasks", 800 by 600\. 11 elements, 12 lines\.\n/, "a whole tree is not called partial");
   assert.match(tree, /\n {2}- heading = "My tasks"\n/, "text that cannot be acted on has no reference");
   assert.doesNotMatch(tree, /actions=\[\]/);
   const deleteOne = refOf(tree, '"Delete Task 1"');

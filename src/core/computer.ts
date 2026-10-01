@@ -656,6 +656,15 @@ function dialogLine(dialog: Dialog): string {
   return `A${dialog.modal ? " modal" : ""} dialog${title}, window ${dialog.id}, is open over this window.`;
 }
 
+/**
+ * Whether Cua read the whole tree. Its elements_complete is false whenever it
+ * cannot prove that nothing is missing, as always on macOS and Windows, so its
+ * truncated flag decides when it gives one.
+ */
+function whole(structured: Json): boolean {
+  return typeof structured.truncated === "boolean" ? !structured.truncated : structured.elements_complete !== false;
+}
+
 /** Why Cua stopped reading a tree early, in words. */
 function cutShort(reason: string): string {
   return /time|deadline|long/i.test(reason) ? `Reading the tree took longer than ${WALK_MS / 1000} s` : "bb-box read only part of the tree";
@@ -1528,7 +1537,7 @@ export class Computer {
     const popups = popupsOf(structured, window.pid).filter((popup) => popup.id !== window.id);
     this.#register(state, popups, window.id);
 
-    const complete = structured.elements_complete !== false && structured.truncated !== true;
+    const complete = whole(structured);
     if (!complete || elements.length > (this.#deps.smallTree ?? TREE_SMALL)) state.large.add(window.id);
     else state.large.delete(window.id);
     const snapshot: Snapshot = {
@@ -1857,7 +1866,7 @@ export class Computer {
     const popups = popupsOf(structured, window.pid).filter((popup) => popup.id !== window.id);
     this.#register(use.state, popups, window.id);
     if (budget === 1 || (await this.#twin(use, window, structured, false))) return { popups, snapshot: null };
-    if (structured.elements_complete === false || structured.truncated === true) {
+    if (!whole(structured)) {
       use.state.large.add(window.id);
       return { popups, snapshot: null };
     }
