@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import {
@@ -8,11 +9,13 @@ import {
   installFromDescription,
   ownerFromDescription,
   ownerFromTags,
+  warmNameScript,
   type LxcBackendOptions,
 } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
+import { quote } from "../src/transports/process.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, lxcWarm, tempDir, testContext } from "./helpers.ts";
 
@@ -401,6 +404,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.deepEqual(hook.claimed[0]?.data, { template: 9000, box: box.boxId }, "the claim records the box");
   assert.deepEqual(hook.events, ["claim 7000", "clone 7000", "starting"]);
   assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags", "warm"]);
+  assert.ok(!ssh.log().some((entry) => entry.command.includes("bb-box-warm")), "a fresh clone has its name from the start");
 
   const made = proxmox.guests.get(7000)!;
   assert.equal(made.status, "running");
@@ -867,7 +871,7 @@ test("a GPU desktop is resized with xrandr as the box user, a size X cannot take
 });
 
 test("the warm pool fills, hands out a ready guest and refills", async () => {
-  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 });
+  const { backend, proxmox, ssh } = setup({ "proxmox-lxc-linux-warm": 1 });
   await backend.maintain();
   const warm = proxmox.guests.get(7000)!;
   assert.equal(warm.status, "running");
@@ -882,6 +886,11 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   assert.deepEqual(hook.events, ["claim 7000", "starting"]);
   assert.equal(ownerFromTags(parseTags(proxmox.guests.get(7000)!.config.tags))?.boxId, box.boxId);
   assert.equal(proxmox.guests.get(7000)!.name, box.name);
+  const named = ssh.log().filter((entry) => entry.command.includes("bb-box-warm"));
+  assert.equal(named.length, 1, "the guest is named after its box inside, once");
+  assert.equal(named[0]!.target, "box@192.0.2.100");
+  assert.ok(named[0]!.command.includes(`-c ${quote(warmNameScript(box.name))}`));
+  assert.ok("name" in hook.timings);
 
   // Claiming a warm guest starts a refill; maintain returns the one in flight.
   await backend.maintain();
@@ -894,6 +903,38 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   const second = await backend.acquire(docker, null, hooks().value, signal());
   assert.equal(second.ref, "7001");
   assert.equal(ownerFromTags(parseTags(proxmox.guests.get(7001)!.config.tags))?.kind, "linux-docker");
+});
+
+test("a claimed warm guest is named after its box inside, and no other machine is", () => {
+  const dir = tempDir("warm-name");
+  const bin = join(dir, "bin");
+  const etc = join(dir, "etc");
+  mkdirSync(bin);
+  mkdirSync(etc);
+  // Stand-ins that keep the kernel's hostname in a file, and run as this user.
+  writeFileSync(join(bin, "hostname"), `#!/bin/sh\nif [ $# -eq 0 ]; then cat '${dir}/kernel'; else printf '%s\\n' "$1" > '${dir}/kernel'; fi\n`);
+  writeFileSync(join(bin, "sudo"), `#!/bin/sh\n[ "$1" = -n ] && shift\nexec "$@"\n`);
+  for (const tool of ["hostname", "sudo"]) chmodSync(join(bin, tool), 0o755);
+  const run = (kernel: string, hosts: string) => {
+    writeFileSync(join(dir, "kernel"), `${kernel}\n`);
+    writeFileSync(join(etc, "hostname"), `${kernel}\n`);
+    writeFileSync(join(etc, "hosts"), hosts);
+    const result = spawnSync("sh", ["-c", warmNameScript("calm-otter", etc)], { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin` } });
+    assert.equal(result.status, 0, result.stderr);
+    const read = (name: string) => readFileSync(join(name === "kernel" ? dir : etc, name), "utf8");
+    return { kernel: read("kernel"), hostname: read("hostname"), hosts: read("hosts") };
+  };
+  const pve = (line: string) => `127.0.0.1 localhost\n::1 localhost ip6-localhost\n# --- BEGIN PVE ---\n${line}\n# --- END PVE ---\n`;
+
+  assert.deepEqual(run("bb-box-warm", pve("127.0.1.1 bb-box-warm")), {
+    kernel: "calm-otter\n",
+    hostname: "calm-otter\n",
+    hosts: pve("127.0.1.1 calm-otter"),
+  });
+  assert.equal(run("bb-box-warm", pve("127.0.1.1 bb-box-warm.example bb-box-warm")).hosts, pve("127.0.1.1 calm-otter.example calm-otter"), "with a search domain");
+  assert.equal(run("bb-box-warm", "127.0.0.1 localhost\n").hosts, "127.0.0.1 localhost\n127.0.1.1 calm-otter\n", "a hosts file with no such line gains one");
+  // A machine not named as a warm guest is left as it is.
+  assert.deepEqual(run("workstation", pve("127.0.1.1 workstation")), { kernel: "workstation\n", hostname: "workstation\n", hosts: pve("127.0.1.1 workstation") });
 });
 
 test("a warm guest satisfies capacity even when memory is short", async () => {

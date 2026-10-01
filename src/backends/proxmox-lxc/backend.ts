@@ -24,7 +24,9 @@
 // when Proxmox next rebalances its CPUs, up to 10 s later, and a new clone is
 // quicker than that wait. Claiming one sets the box's memory and retags it
 // for its box, so a new box is ready as soon as the tags change and any
-// larger disk is applied. build.sh tags each template it makes
+// larger disk is applied. It also names the guest after its box inside,
+// since Proxmox gives a running container a new hostname only when it next
+// starts. build.sh tags each template it makes
 // "build.<id>", and a warm guest copies the tag: one whose template now has
 // another, or is away, is retired rather than claimed. Guests of other
 // installs, or with no install, count against capacity but are otherwise
@@ -57,6 +59,7 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
+import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import type { Display, DisplaySize, SshAccess } from "../../transports/types.ts";
 import {
@@ -88,6 +91,8 @@ const DISPLAY_REASON_FILE = "/run/bb-box/display-reason";
 /** What a program needs to reach the desktop's display as the box user. */
 const DISPLAY_ENV = "DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority";
 const SSH_KEY = "ssh-key";
+/** The hostname a warm guest has until a box claims it. */
+const WARM_HOSTNAME = "bb-box-warm";
 /** Where the next VMID search starts. */
 const NEXT_VMID = "next-vmid";
 /** Clone, start and SSH answering take a few seconds; this leaves room for a busy host. */
@@ -358,6 +363,36 @@ export interface LxcBackendOptions {
   readonly readyTimeoutMs?: number;
   /** Replaces how long a clone waits for a template that is being replaced, for tests. */
   readonly templateWaitMs?: number;
+}
+
+/**
+ * Names a claimed warm guest after its box inside: the kernel's hostname,
+ * /etc/hostname, and the 127.0.1.1 line Proxmox writes in /etc/hosts, so
+ * sudo still finds the name. As root, through the sudo every template gives
+ * the box user. Only in a guest still named WARM_HOSTNAME, never on a
+ * machine a command reaches by mistake, such as a test machine. `etc` is for
+ * tests.
+ */
+export function warmNameScript(name: string, etc = "/etc"): string {
+  return String.raw`[ "$(hostname)" = ${WARM_HOSTNAME} ] || exit 0
+sudo -n sh -s -- ${quote(name)} ${quote(etc)} <<'NAME'
+set -e
+awk -v old=${WARM_HOSTNAME} -v new="$1" '
+  $1 == "127.0.1.1" {
+    for (i = 2; i <= NF; i++) {
+      if ($i == old) $i = new
+      else if (index($i, old ".") == 1) $i = new substr($i, length(old) + 1)
+      if ($i == new || index($i, new ".") == 1) found = 1
+    }
+  }
+  { print }
+  END { if (!found) print "127.0.1.1", new }
+' "$2/hosts" > "$2/hosts.bb-box"
+cat "$2/hosts.bb-box" > "$2/hosts"
+rm -f "$2/hosts.bb-box"
+printf '%s\n' "$1" > "$2/hostname"
+hostname "$1"
+NAME`;
 }
 
 /** Times one step of an acquire. */
@@ -711,6 +746,7 @@ export class ProxmoxLxcBackend implements Backend {
         // Read while the box comes up: the size it has, as Proxmox gives it.
         const size = api.config(id, signal).then(sizeOf, () => null);
         await this.#waitReady(id, box.kind, Math.max(1_000, deadline - Date.now()), signal, step);
+        if (warm) await step("name", () => this.#name(id, box.name, signal));
         const display = offer.kind.capabilities.displays.length
           ? await step("display", () => this.#displayMode(id, box.kind, Math.max(1_000, deadline - Date.now()), signal))
           : null;
@@ -1452,6 +1488,19 @@ export class ProxmoxLxcBackend implements Backend {
     return new SshTransport((await this.#keys()).ssh, this.#access(vmid), "linux");
   }
 
+  /** Names a claimed warm guest after its box inside. A failure is logged, and leaves the guest's name as it was. */
+  async #name(vmid: number, name: string, signal?: AbortSignal): Promise<void> {
+    try {
+      const command = await this.#command(vmid);
+      const result = await command.run(warmNameScript(name), { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+      if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `exit code ${result.exitCode}`);
+    } catch (error) {
+      signal?.throwIfAborted();
+      const why = error instanceof Error ? error.message : String(error);
+      this.#context.logError("name the box", new Error(`Box ${name} keeps the warm guest's hostname, ${WARM_HOSTNAME}, inside: ${why}`));
+    }
+  }
+
   /** Waits for port 22 to open, which is cheap to poll, then for SSH to answer. */
   async #waitReady(vmid: number, kind: string | null, timeoutMs: number, signal?: AbortSignal, step: Step = untimed): Promise<void> {
     const deadline = Date.now() + timeoutMs;
@@ -1631,7 +1680,7 @@ export class ProxmoxLxcBackend implements Backend {
         api,
         guests,
         template,
-        "bb-box-warm",
+        WARM_HOSTNAME,
         `bb-box warm ${flavour}\ninstall ${this.#context.installId}`,
         async (id) => {
           this.#filling.set(id, template);
