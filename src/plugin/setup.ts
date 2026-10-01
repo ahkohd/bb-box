@@ -311,19 +311,36 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // enrolled box needs them, and BB can take seconds to answer while it is
   // busy, so they are kept per project and refreshed in the background. The
   // key "" holds the machine-wide names.
-  const variableNames = new Refreshing<readonly string[]>({
+  // With the names, whether BB gives machines GH_TOKEN: its built-in Git is
+  // logged in to GitHub, or a variable sets it. Only then does a new box wait for it.
+  const variableNames = new Refreshing<{ readonly names: readonly string[]; readonly gitToken: boolean }>({
     freshMs: NAMES_FRESH_MS,
     onError: (error) => logError("variable names", error),
     async load(projectId) {
-      if (!projectId) return (await bb.sdk.system.machineEnvironment()).variables.map((variable) => variable.name);
-      const project = await bb.sdk.projects.machineEnvironment({ projectId });
-      return [...project.inheritedVariables, ...project.variables].map((variable) => variable.name);
+      let variables: readonly { name: string }[];
+      let git: string;
+      if (projectId) {
+        const project = await bb.sdk.projects.machineEnvironment({ projectId });
+        variables = [...project.inheritedVariables, ...project.variables];
+        git = project.builtInGit.status;
+      } else {
+        const system = await bb.sdk.system.machineEnvironment();
+        variables = system.variables;
+        git = system.builtInGit.status;
+      }
+      const names = variables.map((variable) => variable.name);
+      return { names, gitToken: git === "logged in" || names.includes("GH_TOKEN") };
     },
   });
-  const names = async (box: BoxRecord): Promise<string[]> => {
-    const [system, project] = await Promise.all([variableNames.get(""), box.projectId ? variableNames.get(box.projectId) : []]);
-    return [...new Set([...DAEMON_NAMES, ...system, ...project])];
+  const access = async (box: BoxRecord): Promise<{ names: string[]; gitToken: boolean }> => {
+    const [system, project] = await Promise.all([variableNames.get(""), box.projectId ? variableNames.get(box.projectId) : null]);
+    return {
+      names: [...new Set([...DAEMON_NAMES, ...(system?.names ?? []), ...(project?.names ?? [])])],
+      // The project's own answer, when the box has one: it can override BB's Git.
+      gitToken: (project ?? system)?.gitToken ?? false,
+    };
   };
+  const names = async (box: BoxRecord): Promise<string[]> => (await access(box)).names;
 
   // bb-box's host entry on each enrolled box keeps a process with the thread's access, as BB's workers come and go.
   const holders = new Holders({
@@ -378,10 +395,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return enrolment.claimed(box);
     },
     access: async (box) => {
-      const listed = await names(box);
+      const { names: listed, gitToken } = await access(box);
       if (box.enrol.hostId) await holders.ensure(box.enrol.hostId, listed);
       // git needs GH_TOKEN, which BB can give a new machine after its other variables.
-      return { names: listed, parent: options.daemonParent ?? DAEMON_PARENT, required: listed.includes("GH_TOKEN") ? ["GH_TOKEN"] : [] };
+      // Only when BB gives one: without GitHub, nothing waits for it.
+      return { names: listed, parent: options.daemonParent ?? DAEMON_PARENT, required: gitToken ? ["GH_TOKEN"] : [] };
     },
     logError,
     log: (message) => bb.log.info(message),

@@ -71,6 +71,8 @@ async function start(
     installer: "echo installed > bb-installed",
     /** BB's machine calls never answer, as for a plugin that is stopping. */
     silent: false,
+    /** BB's built-in Git: "logged in" when it gives machines GH_TOKEN. */
+    git: "logged in" as "logged in" | "not logged in" | "disabled" | "overridden",
     /** Host calls, in order, to check a machine is removed before its box. */
     events: [] as string[],
     /** Makes threads.get fail with this error, such as a network error. */
@@ -165,7 +167,7 @@ async function start(
       system: {
         machineEnvironment: async () => {
           world.names.push("system");
-          return { builtInGit: { status: "logged in", statusMessage: "" }, variables: variables(["MACHINE_VAR"]) };
+          return { builtInGit: { status: world.git, statusMessage: "" }, variables: variables(["MACHINE_VAR"]) };
         },
       },
       projects: {
@@ -179,7 +181,7 @@ async function start(
         machineEnvironment: async ({ projectId }: { projectId: string }) => {
           world.names.push(projectId);
           return {
-            builtInGit: { status: "logged in", statusMessage: "" },
+            builtInGit: { status: world.git, statusMessage: "" },
             inheritedVariables: variables(["MACHINE_VAR"]),
             variables: variables(projectId === PROJECT ? ["PROJECT_VAR"] : []),
           };
@@ -668,6 +670,25 @@ test("a box whose machine BB removes while its daemon starts again is not enroll
   writeFileSync(go, "");
   assert.ok(!isError(await started));
   assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "off", hostId: null, error: null });
+});
+
+test("without GitHub in BB, a new box does not wait for GH_TOKEN: its git identity ends the enrolment's wait", async (t) => {
+  const connected = join(tempDir("connected"), "connected");
+  const identity = { GIT_AUTHOR_NAME: "A Person", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A Person", GIT_COMMITTER_EMAIL: "a@example.com" };
+  const daemon = await fakeDaemon([identity], { startOn: { file: connected, seconds: 0.5 } });
+  t.after(daemon.stop);
+  const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent });
+  t.after(() => harness.lifecycle.dispose());
+  world.git = "not logged in";
+  world.installer = `: > '${connected}'`;
+  const started = Date.now();
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  assert.ok(Date.now() - started < 10_000, `no wait for a token BB does not give: ${Date.now() - started} ms`);
+  const box = await only(app);
+  const messages = harness.inspection.logEntries.map((entry) => entry.message);
+  assert.ok(!messages.some((line) => line.includes("had no process with the thread's GH_TOKEN")), messages.join("\n"));
+  const run = await tool("box_run", { box: box.name, command: 'printf "%s|" "${GH_TOKEN:-none}"; git var GIT_AUTHOR_IDENT' });
+  assert.match(text(run), /stdout:\nnone\|A Person <a@example\.com> /);
 });
 
 test("the enrolment waits only so long for a worker with the thread's variables", async (t) => {
