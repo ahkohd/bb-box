@@ -206,10 +206,12 @@ node --test test/conformance.test.ts
   window shows. It runs unelevated, as an app the user opens does, and
   takes about 1 s more than a command over SSH. Its output comes back when
   it exits. What it opens stays open, unless its timeout ends it.
-- The VirtIO GPU driver ignores a viewer's resize and takes only the modes
-  Windows lists. So the backend sets the desktop to the largest listed mode
-  that fits the viewer, or the smallest when none fits, through a desktop
-  command, which takes 1 to 2 s. The mode is kept for the next logon.
+- The VirtIO GPU driver takes a viewer's size from QEMU but does not
+  switch to it, and Windows lists it late, if at all. So the backend sets
+  the desktop to that size through a desktop command, which takes 1 to
+  2 s. If the driver does not take it within 2 s, the backend sets the
+  smallest listed mode that covers the viewer, which the viewer scales
+  down, or else the largest. The mode is kept for the next logon.
 - Computer use goes through Cua Driver, at the version `build.sh` installs.
   A task at logon starts its daemon in the box user's session, on the pipe
   `\\.\pipe\cua-driver`. It runs elevated, as SSH sessions do, since an

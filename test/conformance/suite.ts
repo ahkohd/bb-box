@@ -591,9 +591,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
                 await display.resize!(size, signal());
               };
               const before = await desktopSize(open);
-              // Windows takes only the modes its display driver lists, such as these.
-              const listed = before.width === 1440 && before.height === 900 ? { width: 1280, height: 800 } : { width: 1440, height: 900 };
-              const wanted = capabilities.os === "windows" ? listed : { width: before.width + 128, height: before.height + 64 };
+              const wanted = { width: before.width + 128, height: before.height + 64 };
               try {
                 await set(wanted);
                 assert.deepEqual(await desktopSize(open), wanted);
