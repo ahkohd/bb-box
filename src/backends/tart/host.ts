@@ -110,7 +110,8 @@ done
 echo @builds
 for vm in $(ls "$home/vms" 2>/dev/null); do
   f="$home/vms/$vm/disk.img"
-  [ -f "$f" ] && printf '%s %s\\n' "$vm" "$(stat -f '%i.%m' "$f" 2>/dev/null || stat -c '%i.%Y' "$f")"
+  # macOS's stat takes -f for a format; GNU's, which answers --version, takes -c.
+  [ -f "$f" ] && printf '%s %s\\n' "$vm" "$(if stat --version >/dev/null 2>&1; then stat -c '%i.%Y' "$f"; else stat -f '%i.%m' "$f"; fi)"
 done
 echo @owners
 for vm in $(ls "$d/owners"); do [ -f "$d/owners/$vm" ] || continue; printf '=%s\\n' "$vm"; cat "$d/owners/$vm"; done
