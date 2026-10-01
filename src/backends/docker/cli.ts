@@ -19,6 +19,20 @@ const UNREACHABLE = /Cannot connect to the Docker daemon|error during connect|fa
 /** What the daemon says of a container, or a name, that does not exist. */
 export const NO_SUCH = /No such (container|object|image)/i;
 
+/** `promise`, or `signal`'s reason as soon as it aborts. */
+export function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (value) => (signal.removeEventListener("abort", abort), resolve(value)),
+      (error: unknown) => (signal.removeEventListener("abort", abort), reject(error)),
+    );
+  });
+}
+
 export class DockerError extends Error {
   /** The CLI could not reach the daemon, so nothing was done. */
   readonly unreachable: boolean;
@@ -163,12 +177,17 @@ export class DockerCli {
     this.#prepare = prepare;
   }
 
-  /** Makes the host ready to use, as the transport needs before its first command. Throws a DockerError when it cannot. */
-  async prepare(): Promise<void> {
+  /**
+   * Makes the host ready to use, as the transport needs before its first
+   * command. Throws a DockerError when it cannot, and stops waiting when
+   * `signal` aborts, as when the plugin stops, since BB may not answer then.
+   */
+  async prepare(signal?: AbortSignal): Promise<void> {
     if (!this.#prepare) return;
     try {
-      await this.#prepare();
+      await abortable(this.#prepare(), signal);
     } catch (error) {
+      if (signal?.aborted) throw signal.reason;
       throw new DockerError(error instanceof Error ? error.message : String(error), true);
     }
   }
@@ -180,7 +199,7 @@ export class DockerCli {
 
   async run(args: readonly string[], options: RunOptions = {}): Promise<DockerResult> {
     // The CLI's own version needs no daemon.
-    if (args[0] !== "--version") await this.prepare();
+    if (args[0] !== "--version") await this.prepare(options.signal);
     return this.#spawn(args, options);
   }
 

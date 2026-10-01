@@ -726,3 +726,22 @@ test("on a BB machine, the doctor's fix for a missing image is bb-box's own buil
   assert.equal(image?.status, "fail");
   assert.equal(image?.fix, "Run bb box docker-build devpc, or turn devpc off and on under Docker on BB machines in bb-box's settings, to build it there.", "named as BB names it, which the command takes");
 });
+
+test("on a BB machine, a command or a capacity check stops waiting when its signal aborts, though BB never answers, so a stopping plugin's sweep ends", async () => {
+  const fake = fakeDockerHost();
+  const never = new Promise<never>(() => {});
+  const context = {
+    ...testContext(),
+    machines: { dockerHost: () => "unix:///tmp/relay/host_m1.sock", ready: () => never, name: () => "devpc", connected: () => never },
+  };
+  const backend = new DockerBackend(dockerConfig({ host: "bb:host_m1" }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  for (const call of [(signal: AbortSignal) => backend.held(signal), (signal: AbortSignal) => backend.capacity("linux", SMALL, [], signal)]) {
+    const stopping = new AbortController();
+    const started = Date.now();
+    const pending = call(stopping.signal);
+    setTimeout(() => stopping.abort(new Error("the plugin is stopping")), 50);
+    await assert.rejects(pending, /the plugin is stopping/);
+    assert.ok(Date.now() - started < 2_000);
+  }
+  assert.deepEqual(fake.calls(), [], "nothing reached the machine");
+});
