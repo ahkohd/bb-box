@@ -37,3 +37,4 @@ that changes gets a new record that supersedes the old one.
 | [030](030-a-mac-runs-desktop-commands-through-launchctl-asuser.md) | A Mac runs desktop commands through `launchctl asuser` |
 | [031](031-docker-boxes-are-reached-through-docker-exec.md) | Docker boxes are reached through `docker exec` |
 | [032](032-spare-boxes-are-enrolled-ahead.md) | Spare boxes are enrolled ahead, and BB shows them until claimed |
+| [033](033-a-thread-can-start-on-a-new-box.md) | A thread can start on a new box, from BB's new-thread screen |
