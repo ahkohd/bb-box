@@ -101,13 +101,6 @@ const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
 ];
 
 /**
- * Checks that the offers of each kind keep the kind's promise: every offer
- * has the features the kind requires, can reach its computer-use driver, and
- * offers from several backends agree on what an agent relies on. Offers may
- * differ in size, transports and extra features. A problem is a warning,
- * since each box still works.
- */
-/**
  * Warnings for backends whose boxes would take the same guest IDs or
  * addresses in one scope, such as Proxmox QEMU and Proxmox LXC on one
  * cluster and bridge (#194). None when nothing overlaps.
@@ -142,6 +135,13 @@ export function overlapChecks(backends: readonly Pick<Backend, "id" | "label" | 
   return checks;
 }
 
+/**
+ * Checks that the offers of each kind keep the kind's promise: every offer
+ * has the features the kind requires, can reach its computer-use driver, and
+ * offers from several backends agree on what an agent relies on. Offers may
+ * differ in size, transports and extra features. A problem is a warning,
+ * since each box still works.
+ */
 export function offerChecks(offered: readonly OfferedKind[]): DoctorCheck[] {
   const byKind = new Map<string, OfferedKind[]>();
   for (const offer of offered) byKind.set(offer.kind.id, [...(byKind.get(offer.kind.id) ?? []), offer]);
