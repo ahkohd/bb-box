@@ -399,10 +399,12 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
   expect(await slot.findByText("You have control. The desktop follows this tab's size.")).toBeTruthy();
   expect(slot.inspection.rpcCalls.find((call) => call.method === "takeControl")?.input).toEqual({ threadId: THREAD, box: "box_2", viewer });
   expect([client!.viewOnly, client!.resizeSession, client!.focused]).toEqual([false, true, 1]);
+  expect(slot.getByTestId("control-ring")).toBeTruthy();
 
   fireEvent.click(slot.getByRole("button", { name: "Hand back to the agent" }));
   expect(await slot.findByText("The agent has control.")).toBeTruthy();
   expect([client!.viewOnly, client!.resizeSession]).toEqual([true, false]);
+  expect(slot.queryByTestId("control-ring")).toBeNull();
   expect(changes).toEqual(["takeControl box_2", "handBack box_2"]);
 });
 

@@ -262,8 +262,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           {problem}
         </p>
       ) : null}
-      <div className={cn("relative min-h-0 flex-1 bg-muted", mine && "shadow-[inset_0_0_0_2px_color-mix(in_oklab,var(--primary)_60%,transparent)]")}>
+      <div className="relative min-h-0 flex-1 bg-muted">
         <div ref={target} className="absolute inset-0" data-testid="desktop-screen" />
+        {mine ? <div aria-hidden data-testid="control-ring" className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary/60" /> : null}
         {error ? (
           <Notice>{error}</Notice>
         ) : !state ? null : !box ? (
