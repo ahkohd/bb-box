@@ -1272,10 +1272,18 @@ Notes:
   as the template may have come back meanwhile. The box's timings show the
   wait as `template`, apart from `clone`. Warm guests and the capacity check
   wait the same way.
-- **Docker** runs the `docker` CLI against a local socket or a Docker host
-  over `ssh://`. Commands, file copies and the desktop all go through
-  `docker exec`, so BB's server needs no network path to a box
+- **Docker** runs the `docker` CLI against a local socket, a Docker host
+  over `ssh://`, or a BB machine's Docker. Commands, file copies and the
+  desktop all go through `docker exec`, so BB's server needs no network
+  path to a box
   ([031](decisions/031-docker-boxes-are-reached-through-docker-exec.md)).
+  For a BB machine, set as `bb:<machine ID>` and turned on in settings,
+  bb-box relays Docker's API: the CLI uses a unix socket on BB's server,
+  and each connection to it is a channel, with credit-based flow control,
+  on one WebSocket that the machine's host worker opens out to a route of
+  bb-box's with a one-time secret. The relay opens on demand with one host
+  call, and the worker holds a lease while it is open
+  ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)).
   GPU desktops use NVIDIA's container toolkit through CDI. Boxes run with
   `--init` and a start script, and no systemd
   ([013](decisions/013-docker-boxes-run-unprivileged.md)). Docker inside a
@@ -1386,3 +1394,4 @@ Notes:
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
 | Whether the Docker backend runs as it is against Docker Engine in WSL2, and how fast Hyper-V clones and resumes | the experiments in [Windows hosts](research/windows-hosts.md) |
+| Whether a BB machine's relay reaches Docker Desktop's socket in WSL, and a privileged box there starts and enrols | a check on a Windows PC before [042](decisions/042-a-docker-host-can-be-a-bb-machine.md) is built |

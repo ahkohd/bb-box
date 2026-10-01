@@ -1,7 +1,9 @@
 # 031: Docker boxes are reached through `docker exec`
 
 Status: accepted, 1 October 2026. Partly supersedes
-[013](013-docker-boxes-run-unprivileged.md).
+[013](013-docker-boxes-run-unprivileged.md). Extended by
+[042](042-a-docker-host-can-be-a-bb-machine.md): the Docker host can be a BB
+machine, reached through BB.
 
 ## Context
 

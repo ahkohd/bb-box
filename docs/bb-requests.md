@@ -13,11 +13,12 @@ server protocol 219). They are drafts until filed with BB.
 | [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | draft | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
 | [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | draft | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
 | [Find a machine by its key](#6-find-a-machine-by-its-key) | draft | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
-| [Reach a port on a machine](#7-reach-a-port-on-a-machine) | draft | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already |
+| [Reach a port on a machine](#7-reach-a-port-on-a-machine) | draft | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already; Docker on a BB machine goes through a relay of bb-box's own, on a route with `auth: "none"` guarded by a one-time secret |
 | [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box keeps a BB terminal on each box and reads the thread's variables and GH_TOKEN from BB's processes there: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
 | [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | draft | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
 | [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | draft | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
 | [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | draft | a box has its thread's project variables only while a thread of the project runs on it |
+| [Make a plugin's host call quick](#12-make-a-plugins-host-call-quick) | draft | each call to bb-box's host entry takes about 0.4 s, so it cannot carry commands |
 
 ## 1. BB's host app on Windows
 
@@ -267,6 +268,12 @@ with Remote Login, bb-box's key in its `authorized_keys`, and the Mac's host
 key pinned in bb-box's settings. When the Mac runs BB's host daemon, BB
 already has an authenticated connection to it.
 
+The same holds for a Docker host that is a BB machine, such as a developer's
+PC with Docker in WSL
+([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)). bb-box needs
+Docker's API there, which is a unix socket or a named pipe, as a byte
+stream from BB's server.
+
 **What BB does now.** Checked in the plugin SDK 0.5.29 and 0.6.5:
 
 - A plugin can declare one host entry (`bb.host`, an
@@ -281,13 +288,19 @@ already has an authenticated connection to it.
   `output`) are PTY sessions whose output is read back, which change bytes
   and suit people, not protocols. So neither can carry the VNC stream or an
   SSH connection to a VM.
+- Emulating a stream with calls and signals carried 0.12 to 1.1 MiB/s,
+  measured on 1 October 2026.
 
 **What we ask.** A way for a plugin's server side to open a two-way byte
-stream to a TCP address as a machine sees it, with backpressure: for example
-`bb.hosts.experimental_connect({ hostId, host, port, signal })`, returning a
-`ReadableStream` and a `WritableStream`, and allowed only to addresses the
-host entry's machine can reach. It could be limited to the loopback and
-private ranges, or to what a plugin's host entry allows.
+stream with backpressure to an address as a machine sees it: a TCP address,
+a unix socket or a named pipe. For example
+`bb.hosts.experimental_connect({ hostId, host, port, signal })`, or with
+`path` in place of `host` and `port`, returning a `ReadableStream` and a
+`WritableStream`, and allowed only to addresses the host entry's machine
+can reach. It could be limited to the loopback and private ranges, or to
+what a plugin's host entry allows. A stream that the plugin's host entry
+answers itself, for example with a handler that is given the stream, would
+serve as well.
 
 **What it would remove.** For a Mac that is a BB machine, all of bb-box's
 SSH to the Mac: the host user's Remote Login, bb-box's key on the Mac and
@@ -297,8 +310,15 @@ stream to `<VM address>:22` from the Mac, so the VMs need no jump host. The
 VMs' own SSH, with bb-box's key in the image, would stay, until the VMs
 enrol and bb-box can run commands through BB too.
 
+For a Docker host that is a BB machine, it would remove bb-box's relay: the
+route with `auth: "none"`, the one-time secret, the lease the worker holds,
+and the flow control bb-box does itself.
+
 **Until then.** The Tart backend reaches Macs over SSH, which is also the
-general path for Macs that do not run BB.
+general path for Macs that do not run BB. For Docker on a BB machine, the
+machine's worker opens a WebSocket out to a route of bb-box's, with a
+one-time secret that a host call gives it, and carries Docker's API over it
+(042).
 
 ## 8. Give a machine's own commands its variables
 
@@ -463,6 +483,37 @@ sees them.
 **Until then.** A box has its project's variables only while a thread of
 the project runs on it, as with `box_thread` or "New box". The skill says
 so.
+
+## 12. Make a plugin's host call quick
+
+**What bb-box needs.** Calls to its host entry that take about as long as
+BB's own requests to a machine. bb-box calls its host entry to keep a
+process with the thread's access on each enrolled box (request 8): before
+a command, when its last call there is more than 30 s old. It also calls
+it to open the relay to a Docker host that is a BB machine
+([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)).
+
+**What BB does now.** Measured on 1 October 2026, with a throwaway plugin
+whose host entry does nothing, on a box that is a BB machine:
+
+- A call from the plugin's server side took 424 ms at the median and
+  630 ms at the 90th percentile, 2 ms of it in the machine.
+- A plugin CLI command that makes one call took about 690 ms, against about
+  290 ms for one that calls nothing. `bb file read` on the same box took
+  about 200 ms, CLI included.
+
+So each call adds about 400 ms on BB's side. Where the time goes is not
+known yet.
+
+**What we ask.** A plugin's host call that adds no more than BB's own
+requests to a machine, which take 0.1 to 0.2 s.
+
+**What it would remove.** About 0.4 s from one command in each 30 s on an
+enrolled box, and from each opening of a Docker relay.
+
+**Until then.** bb-box calls its host entry as little as it can: for a
+box's access at most every 30 s, and once each time a relay opens.
+Commands themselves go through SSH, `docker exec` or the relay.
 
 ## Checked, no request needed
 
