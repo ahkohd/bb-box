@@ -594,6 +594,9 @@ test("config.get gives the document with each secret as set or not, the defaults
     description: "A Linux desktop on a GPU, for computer use, browsers and app development.",
     gpu: true,
     desktop: true,
+    os: "linux",
+    arch: "x86_64",
+    features: [],
     drivers: ["fake", "proxmox-lxc"],
     spares: { ready: 0, making: 0 },
   });
