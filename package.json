@@ -13,7 +13,11 @@
     "branding": {
       "icon": "./assets/icon.svg",
       "experimental_icons": {
+        "docker": "./assets/docker.svg",
+        "laptop": "./assets/laptop.svg",
         "monitor": "./assets/monitor.svg",
+        "plug": "./assets/plug.svg",
+        "proxmox": "./assets/proxmox.svg",
         "server": "./assets/server.svg",
         "terminal": "./assets/terminal.svg"
       }
