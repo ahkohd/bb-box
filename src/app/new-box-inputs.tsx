@@ -42,8 +42,8 @@ export function NewBoxInputs({ value, onChange }: PluginMachineProviderInputsPro
   const size = current?.kind === kind?.id ? (current?.size ?? kind?.defaultPreset) : kind?.defaultPreset;
   useEffect(() => {
     if (problem) onChange({ status: "blocked", reason: problem });
-    else if (!kinds) onChange({ status: "blocked", reason: "Loading bb-box's kinds…" });
-    else if (!kind) onChange({ status: "blocked", reason: "bb-box offers no kind that a thread can run on. Turn on a backend in bb-box's settings." });
+    else if (!kinds) onChange({ status: "blocked", reason: "Loading BB Box's kinds…" });
+    else if (!kind) onChange({ status: "blocked", reason: "BB Box offers no kind that a thread can run on. Set a backend up in BB Box's settings and turn it on." });
     else onChange({ status: "ready", value: { kind: kind.id, ...(size ? { size } : {}) } });
   }, [onChange, problem, kinds, kind, size]);
 

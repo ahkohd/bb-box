@@ -130,7 +130,7 @@ Where boxes come from.
 ### A backend's setup area
 
 ```
-Follow the Proxmox LXC setup guide. Its scripts print the values for this form.
+Follow the Proxmox LXC setup guide; it gives the values for this form. Its scripts: setup-host.sh, setup-network.sh, build.sh and setup-token.sh.
 
 API URL                    Node
 [https://192.0.2.10:8006]  [pve]
