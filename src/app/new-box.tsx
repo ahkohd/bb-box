@@ -22,10 +22,17 @@ export interface SizeRequest {
 type Choice = string;
 const CUSTOM: Choice = "custom";
 
+interface Fields {
+  readonly cores: string;
+  readonly memoryGiB: string;
+  readonly diskGiB: string;
+}
+
 interface Remembered {
   readonly kind?: string;
   readonly size?: Choice;
-  readonly custom?: { readonly cores?: string; readonly memoryGiB?: string; readonly diskGiB?: string };
+  /** The custom fields a person edited, by kind. */
+  readonly custom?: Readonly<Record<string, Fields>>;
 }
 
 function remembered(pluginId: string): Remembered {
@@ -59,8 +66,13 @@ function whole(text: string): number | null | undefined {
   return Number.isInteger(value) && value >= 1 ? value : undefined;
 }
 
+/** Custom starts from a preset: its cores and memory, and its disk when it has one of its own. */
+function fieldsOf(preset: SizeView): Fields {
+  return { cores: String(preset.cores), memoryGiB: String(preset.memoryGiB), diskGiB: preset.diskGiB === null ? "" : String(preset.diskGiB) };
+}
+
 /** The custom size's fields as the RPC takes them, or null when a field is not a whole number. */
-export function customSize(fields: { cores: string; memoryGiB: string; diskGiB: string }): SizeRequest | null {
+export function customSize(fields: Fields): SizeRequest | null {
   const cores = whole(fields.cores);
   const memoryGiB = whole(fields.memoryGiB);
   const diskGiB = whole(fields.diskGiB);
@@ -81,7 +93,11 @@ export function NewBox({
   const [last] = useState(() => remembered(pluginId));
   const [chosenKind, setChosenKind] = useState<string>(last.kind ?? "");
   const [choice, setChoice] = useState<Choice | null>(last.size ?? null);
-  const [fields, setFields] = useState({ cores: last.custom?.cores ?? "", memoryGiB: last.custom?.memoryGiB ?? "", diskGiB: last.custom?.diskGiB ?? "" });
+  /** The preset last chosen, which Custom starts from. */
+  const [viewed, setViewed] = useState<string | null>(last.size && last.size !== CUSTOM ? last.size : null);
+  // Custom fields belong to a kind: edited ones are kept per kind, and a
+  // kind without edits starts from its own preset in view.
+  const [edited, setEdited] = useState<Readonly<Record<string, Fields>>>(() => (last.custom && typeof last.custom === "object" ? last.custom : {}));
   const [making, setMaking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const kindOptions = useRef<(HTMLButtonElement | null)[]>([]);
@@ -93,6 +109,9 @@ export function NewBox({
   const choices: Choice[] = [...presets.map((preset) => preset.name), CUSTOM];
   const size: Choice = choice && choices.includes(choice) ? choice : (kind?.defaultPreset ?? CUSTOM);
   const preset = presets.find((candidate) => candidate.name === size) ?? null;
+  // The preset Custom starts from: the one chosen last, else the kind's default.
+  const inView = preset ?? presets.find((candidate) => candidate.name === viewed) ?? presets.find((candidate) => candidate.name === kind?.defaultPreset) ?? null;
+  const fields: Fields = (kind && edited[kind.id]) ?? (inView ? fieldsOf(inView) : { cores: "", memoryGiB: "", diskGiB: "" });
   const custom = size === CUSTOM ? customSize(fields) : null;
   const sizeIndex = choices.indexOf(size);
 
@@ -107,13 +126,14 @@ export function NewBox({
   };
   const chooseSize = (next: Choice, focus = false) => {
     setChoice(next);
+    if (next !== CUSTOM) setViewed(next);
     setProblem(null);
-    if (next === CUSTOM && kind && !fields.cores && !fields.memoryGiB && !fields.diskGiB) {
-      // Custom starts from the preset the person was looking at.
-      const from = preset ?? presets.find((candidate) => candidate.name === kind.defaultPreset);
-      if (from) setFields({ cores: String(from.cores), memoryGiB: String(from.memoryGiB), diskGiB: from.diskGiB === null ? "" : String(from.diskGiB) });
-    }
     if (focus) sizeOptions.current[choices.indexOf(next)]?.focus();
+  };
+  const edit = (name: keyof Fields, value: string) => {
+    if (!kind) return;
+    setEdited((current) => ({ ...current, [kind.id]: { ...fields, [name]: value } }));
+    setProblem(null);
   };
   const arrows = (event: KeyboardEvent<HTMLElement>, count: number, index: number, pick: (position: number) => void) => {
     if (!count) return;
@@ -130,7 +150,7 @@ export function NewBox({
       const refused = await make(kind.id, request);
       setProblem(refused);
       if (!refused) {
-        remember(pluginId, { kind: kind.id, size, custom: size === CUSTOM ? fields : undefined });
+        remember(pluginId, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
         setOpen(false);
       }
     } finally {
@@ -148,10 +168,7 @@ export function NewBox({
         value={fields[name]}
         placeholder={name === "diskGiB" ? "base" : ""}
         aria-invalid={whole(fields[name]) === undefined || undefined}
-        onChange={(event) => {
-          setFields((current) => ({ ...current, [name]: event.target.value }));
-          setProblem(null);
-        }}
+        onChange={(event) => edit(name, event.target.value)}
       />
       {limit !== null ? <span>up to {limit}</span> : null}
     </label>
