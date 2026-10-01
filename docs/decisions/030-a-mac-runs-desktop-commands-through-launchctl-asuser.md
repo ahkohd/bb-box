@@ -63,8 +63,10 @@ Measured on macOS 27.0 in a Tart box, over bb-box's SSH
   own exit status and message:
   - the box user owns the console (`stat -f %Su /dev/console`), or there is
     no desktop session to join;
-  - sudo allows the wrapper (`sudo -n -l` with the same command), or the
-    message points to the sudoers rule in the Mac setup guide.
+  - sudo runs a no-op, `/usr/bin/true`, through the wrapper without a
+    password, or the message gives the sudoers rule to add. `sudo -n -l`
+    is not enough: it allows a command whose rule needs a password (E13
+    in the research note).
 - `canRunInDesktop("macos")` is true. The interface does not change, and
   core never branches on the backend: on a Mac where sudo refuses, the run
   fails with the message above.

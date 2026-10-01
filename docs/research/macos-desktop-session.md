@@ -3,8 +3,9 @@
 How bb-box runs a command in a Mac box user's logged-in desktop session, so
 that the run tool's `session: "desktop"` works on macOS (issue #57).
 
-Status: recommendation made and measured, and accepted as
-[030](../decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md).
+Status: recommendation made and measured, accepted as
+[030](../decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md),
+and built.
 Checked on 1 October 2026, on macOS 27.0 in a Tart box from a Cirrus Labs
 image.
 
@@ -72,8 +73,9 @@ On macOS 27.0, as the box user over bb-box's SSH:
   PATH comes from ~/.zshenv, and HOME is the box user's. Its parent is the
   inner sudo, which the shell replaces.
 - **E9.** The exit status (7), stdin (`hello`) and streaming (two lines
-  2 s apart) all pass through the wrapper. Whether stderr stays apart from
-  stdout was not checked; the conformance suite checks it.
+  2 s apart) all pass through the wrapper, and stderr stays apart from
+  stdout. The conformance suite checks the session, stdin, stderr and the
+  exit status.
 - **E10.** `time` gives 0.021 s for a wrapped `/usr/bin/true`.
 - **E11.** `security show-keychain-info` fails from plain SSH and works
   wrapped, so only a wrapped command can use the login keychain. The
@@ -81,8 +83,19 @@ On macOS 27.0, as the box user over bb-box's SSH:
 - **E12.** From plain SSH, TextEdit's binary got a window that took
   typing through Accessibility. Real key events were not checked. `open -a
   TextEdit` from plain SSH brought it up frontmost, as a child of launchd.
-- **The pre-check.** `sudo -n -l` with the wrapper's command exits 0 on an
-  administrator box, and `stat -f %Su /dev/console` prints the box user.
+- **The pre-check.** `stat -f %Su /dev/console` prints the box user.
+- **E13.** `sudo -n -l` with the wrapper's command exits 0 when the rule
+  that allows it needs a password, as long as another rule has `NOPASSWD`;
+  the wrapper itself then fails with sudo's "a password is required". A
+  no-op run through the wrapper, `/usr/bin/true`, fails there and passes
+  where the wrapper works.
+- **E14.** With a box user's sudo limited to the standard user's rule
+  below, the wrapper runs a script of several lines with quotes in it, and
+  sudo refuses other commands as root and the wrapper for another user.
+- **E15.** bb-box's desktop command takes about 93 ms for
+  `/usr/bin/true`, against 20 ms for a plain one: the checks about 12 ms,
+  the wrapper about 20 ms, and the inner shell's `~/.zshenv` hook loads the
+  variables again.
 - **Prompts.** No screen-capture consent prompt appeared on a fresh boot.
   It appeared once, after the box was suspended and resumed, and Tart's
   setup is to pre-approve it. macOS shows an "App Background Activity"
@@ -107,10 +120,9 @@ to plain SSH than Apple's forum reports for 26, but the session is still
 - Before it runs, the wrapper checks two things, each failing with a
   status and message of its own:
   - the box user owns the console (`stat -f %Su /dev/console`). Otherwise
-    there is no desktop session to join;
-  - sudo allows the wrapper (`sudo -n -l` with the same command).
-    Otherwise the message points to the sudoers rule in the Mac setup
-    guide.
+    there is no desktop session to join (status 69);
+  - sudo runs a no-op through the wrapper without a password (E13).
+    Otherwise the message gives the sudoers rule to add (status 77).
 - `canRunInDesktop("macos")` becomes true. Core never branches on the
   backend: on a Mac where sudo refuses, the run fails with that message.
 - A run's time limit works as for other macOS commands today: core stops
@@ -121,13 +133,12 @@ to plain SSH than Apple's forum reports for 26, but the session is still
 
 ## Variables
 
-E7 bears on reading BB's variables from a worker's environment on macOS,
-as bb-box does (`src/core/in-box.ts`), which `ps -E` prints with a newline
-as `\012`. A literal backslash is not
-escaped, so `\NNN` in a value is ambiguous. It is rare, and GH_TOKEN never
-has one. A space followed by `WORD=` in a value is ambiguous too. Both go
-when BB gives the variables directly ([BB requests](../bb-requests.md),
-request 8).
+E7 bears on how bb-box reads BB's variables from a worker's
+environment on macOS (`src/core/in-box.ts`). `ps -E` prints a newline
+in it as `\012`, but a literal backslash as it is, so `\NNN` in a
+value is ambiguous. It is rare, and GH_TOKEN never has one. A space
+followed by `WORD=` in a value is ambiguous too. Both go when BB gives
+the variables directly ([BB requests](../bb-requests.md), request 8).
 
 ## Standard box users
 
@@ -187,10 +198,13 @@ Run as the box user over bb-box's SSH on macOS 27.0. Results are above.
 | E6 | TextEdit's binary, wrapped, then typing | window listed and typed into |
 | E7 | how `ps -E` prints a literal backslash | not escaped |
 | E8 | the session, PATH, HOME and parents of a wrapped command | `Aqua`; PATH from ~/.zshenv |
-| E9 | exit status, stdin and streaming through the wrapper | 7; `hello`; lines 2 s apart |
+| E9 | exit status, stdin, stderr and streaming through the wrapper | 7; `hello`; stderr apart; lines 2 s apart |
 | E10 | the wrapper's cost per run | 21 ms |
 | E11 | the login keychain and the pasteboard, plain and wrapped | keychain wrapped only; pasteboard both |
 | E12 | a GUI binary from plain SSH, then `open -a` | binary typed into via Accessibility; `open` frontmost |
+| E13 | `sudo -n -l` and a no-op through the wrapper, when its rule needs a password | `-l` exits 0; the no-op fails |
+| E14 | the wrapper with only the standard user's rule | runs; other root commands refused |
+| E15 | bb-box's desktop command against a plain one, for `/usr/bin/true` | 93 ms; 20 ms |
 
 ## Sources
 

@@ -116,6 +116,11 @@ its keyboard and mouse. While they hold control, their input goes to the box
 and nobody else's does. Control goes back to the agent when they hand it
 back or close the viewer for a minute.
 
+`box_run` with `desktop` starts the command in the desktop session, so it
+can open windows, as when you test an app. On a Mac, only such a command
+reaches the login keychain, which git's keychain helper and Xcode's signing
+use.
+
 ## Computer use
 
 The `computer_` tools drive the apps on a desktop box. Read a window as text
