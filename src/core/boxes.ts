@@ -687,9 +687,10 @@ export class Boxes {
    * too (#215). What describes the guest as it was made, such as its size
    * and address, is the guest's and stays. Returns how many changed.
    */
-  async refreshCapabilities(): Promise<number> {
+  async refreshCapabilities(signal?: AbortSignal): Promise<number> {
     let changed = 0;
     for (const box of await this.all()) {
+      if (signal?.aborted) break;
       if (!box.guest || box.state === "gone" || box.state === "releasing") continue;
       const backend = this.#deps.backends.get(box.backend);
       const kind = backend?.kinds().find((candidate) => candidate.id === box.kind);
@@ -698,7 +699,7 @@ export class Boxes {
       if (!hasFeatures(kind.capabilities, box.requires)) continue;
       const requires = [...new Set([...kind.requires, ...box.requires])];
       if (JSON.stringify(box.capabilities) === JSON.stringify(kind.capabilities) && JSON.stringify(box.requires) === JSON.stringify(requires)) continue;
-      if (backend.asOffered && !(await backend.asOffered(box.guest, kind.id, box.createdAt).catch((error) => (this.#deps.logError("capabilities", error), false)))) continue;
+      if (backend.asOffered && !(await backend.asOffered(box.guest, kind.id, box.createdAt, signal).catch((error) => (this.#deps.logError("capabilities", error), false)))) continue;
       const updated = await this.update(box, () => ({ capabilities: kind.capabilities, requires, kindLabel: kind.label })).catch((error) => {
         this.#deps.logError("capabilities", error);
         return null;

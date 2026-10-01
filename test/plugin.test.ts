@@ -69,6 +69,8 @@ async function start(
     bootstraps: [] as string[],
     /** The script BB's installer runs in the box. */
     installer: "echo installed > bb-installed",
+    /** BB's machine calls never answer, as for a plugin that is stopping. */
+    silent: false,
     /** Host calls, in order, to check a machine is removed before its box. */
     events: [] as string[],
     /** Makes threads.get fail with this error, such as a network error. */
@@ -216,6 +218,8 @@ async function start(
         },
         list: async () => [...hosts.values()],
         get: async ({ hostId }: { hostId: string }) => {
+          // As BB may be for a plugin that is stopping: no answer at all.
+          if (world.silent) await new Promise(() => {});
           const host = hosts.get(hostId);
           if (!host) throw notFound("Host");
           return host;
@@ -566,6 +570,35 @@ test("commands in an enrolled box keep the thread's access when BB's workers tha
   const names = (calls[0]!.input as { names: string[] }).names;
   assert.ok(names.includes("GH_TOKEN") && names.includes("MACHINE_VAR"), names.join(" "));
   await until("the old terminal to close", async () => world.terminals.get("term_old")?.status === "exited");
+});
+
+test("the sweeper stops at once when the plugin stops, mid-reconnect or with BB not answering, though a backend's call would wait", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  const box = await only(app);
+  const hostId = `host-${box.id}`;
+
+  // BB shows the machine disconnected, so the sweep starts its daemon again, and BB's installer takes minutes.
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  world.installer = "sleep 300";
+  const before = world.bootstraps.length;
+  const first = harness.behavior.runService("sweeper");
+  await until("the reconnect to start", async () => world.bootstraps.length > before);
+  let stopped = Date.now();
+  first.controller.abort(new Error("the plugin is stopping"));
+  await first.done;
+  assert.ok(Date.now() - stopped < 1_000, `the sweeper stopped in ${Date.now() - stopped} ms, not when the installer ends`);
+
+  // BB no longer answers the plugin's calls about machines, as for a plugin that is stopping.
+  world.silent = true;
+  const second = harness.behavior.runService("sweeper");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  stopped = Date.now();
+  second.controller.abort(new Error("the plugin is stopping"));
+  await second.done;
+  assert.ok(Date.now() - stopped < 1_000, `the sweeper stopped in ${Date.now() - stopped} ms`);
+  world.silent = false;
 });
 
 test("box_start waits for BB to show the box's machine connected again, but only so long", async (t) => {
