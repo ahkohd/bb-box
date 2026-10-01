@@ -1889,6 +1889,11 @@ test("computer_launch opens apps and URLs and says which windows opened", async 
       "Next: Give app as one of these names, or the path of a program in the box.",
   );
   assert.match(text(await tool("computer_launch", { box: box.name })), /^Give app or url, not both and not neither\./);
+  // The hint names the app's window on screen, not a helper's off screen (#219).
+  const textedit = text(await tool("computer_launch", { box: box.name, app: "textedit" }));
+  const own = /window (\d+): TextEdit "Untitled"/.exec(textedit)?.[1];
+  assert.match(textedit, /window \d+: CursorUIViewService, 40 by 40, not on screen/);
+  assert.match(textedit, new RegExp(`Next: Call computer_observe with window ${own} to read it\\.`));
 });
 
 test("a web page's runs of text are one line each, and the limit counts every line shown", async (t) => {
