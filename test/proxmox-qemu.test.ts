@@ -578,3 +578,19 @@ test("doctor says what is missing", async () => {
   assert.match(byId["proxmox.bridge"]!.detail, /pve has no vmbr1/);
   assert.match(report.summary, /^Windows template 9105: /);
 });
+
+test("a Windows box is from its template as built now only while the template has the build it was cloned from (#227)", async () => {
+  const { backend, proxmox } = setup();
+  for (const vmid of [9104, 9105]) proxmox.guests.get(vmid)!.config.tags = "bbbox;windows;build.20260920-000000-aaaa";
+  const before = identity();
+  const old = await backend.acquire(before, null, hooks().value, signal());
+  assert.equal(old.data?.build, "20260920-000000-aaaa");
+  assert.equal(await backend.asOffered(old, KIND, before.createdAt), true);
+  const during = { ...identity(), createdAt: Date.UTC(2026, 8, 25, 0, 30) };
+  const cloned = await backend.acquire(during, null, hooks().value, signal());
+  for (const vmid of [9104, 9105]) proxmox.guests.get(vmid)!.config.tags = "bbbox;windows;build.20260925-000000-bbbb";
+  assert.equal(await backend.asOffered(old, KIND, before.createdAt), false, "made before the replace");
+  assert.equal(await backend.asOffered(cloned, KIND, during.createdAt), false, "made during the build, before the swap");
+  const { build: _, ...data } = old.data!;
+  assert.equal(await backend.asOffered({ ...old, data }, KIND, Date.UTC(2026, 8, 26)), true, "with no recorded build, by the build's time");
+});

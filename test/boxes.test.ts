@@ -1792,7 +1792,7 @@ test("a box gains what a release adds to its kind, where its backend says the gu
   options.kinds = FAKE_KINDS.map((kind) => (kind.id === "linux" ? { ...kind, capabilities: { ...kind.capabilities, computerUse } } : kind));
   const boxes = world.restart();
   // The backend made `other` from something it no longer offers the kind from.
-  world.backend.asOffered = (guest) => guest.ref !== other.guest!.ref;
+  world.backend.asOffered = async (guest) => guest.ref !== other.guest!.ref;
   assert.equal(await boxes.refreshCapabilities(), 1);
 
   const gained = (await boxes.find(kept.id))!;

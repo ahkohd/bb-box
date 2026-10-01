@@ -39,6 +39,8 @@ import {
   TAG,
   boxTags,
   buildFromTags,
+  fromBuild,
+  templateBuild,
   describe,
   installFromDescription,
   installFromTags,
@@ -580,14 +582,14 @@ export class ProxmoxLxcBackend implements Backend {
         hooks.timing(name, Math.round(performance.now() - started));
       }
     };
-    const acquiring = { flavour: offer.flavour, template: null as number | null, vmid: null as number | null, held: null as number | null };
+    const acquiring = { flavour: offer.flavour, template: null as number | null, build: null as string | null, vmid: null as number | null, held: null as number | null };
     this.#acquiring.set(box.boxId, acquiring);
     let vmid: number | null = null;
     let claimed: number | null = null;
     const claim = async (id: number) => {
       claimed = id;
       acquiring.vmid = id;
-      await hooks.claim(this.#guest(api.node, id, acquiring.template, box.boxId));
+      await hooks.claim(this.#guest(api.node, id, acquiring.template, box.boxId, null, null, acquiring.build));
     };
     try {
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
@@ -595,6 +597,7 @@ export class ProxmoxLxcBackend implements Backend {
         acquiring.vmid = vmid;
         acquiring.held = 0;
         acquiring.template = typeof previous.data?.template === "number" ? previous.data.template : null;
+        acquiring.build = typeof previous.data?.build === "string" ? previous.data.build : null;
       }
       let warm = false;
       if (vmid === null) {
@@ -604,6 +607,7 @@ export class ProxmoxLxcBackend implements Backend {
             fits: (candidate) => this.#warmStore.sizeOf(candidate.ref)?.cores === box.size.cores,
             before: (candidate) => {
               acquiring.template = this.#warmStore.templateOf(candidate.ref);
+              acquiring.build = this.#warmStore.buildOf(candidate.ref);
               memory = this.#warmStore.sizeOf(candidate.ref)?.memoryMiB ?? 0;
               return claim(Number(candidate.ref));
             },
@@ -617,6 +621,7 @@ export class ProxmoxLxcBackend implements Backend {
           this.#kick();
         } else {
           acquiring.template = null;
+          acquiring.build = null;
         }
       }
       // GPUs whose box started without them. A linux-desktop box promises
@@ -633,6 +638,8 @@ export class ProxmoxLxcBackend implements Backend {
             const choice = this.#choose(offer, guests, [], api.node, this.#placing(offer, new Set(failed.keys())));
             if (failed.size && choice.problem) throw noGpu(failed, choice.problem);
             acquiring.template = choice.template.vmid;
+            // Read before the clone, so it is never newer than the clone's: a replace in between leaves the box what it has.
+            acquiring.build = (await templateBuild(api, guests, acquiring.template, signal)) ?? null;
             const description = describe(box, this.#context.installId);
             vmid = await this.#clone(api, guests, acquiring.template, box.name, description, claim, signal, (ms) => (away = (away ?? 0) + ms));
             acquiring.held = 0;
@@ -661,7 +668,7 @@ export class ProxmoxLxcBackend implements Backend {
           ? await step("display", () => this.#displayMode(id, box.kind, Math.max(1_000, deadline - Date.now()), signal))
           : null;
         if (!offer.kind.capabilities.gpu || display?.mode === "gpu") {
-          const guest = this.#guest(api.node, id, template, box.boxId, display, await size);
+          const guest = this.#guest(api.node, id, template, box.boxId, display, await size, acquiring.build);
           // Claimed again, so the box's record shows the display's facts as it becomes ready.
           if (display) await hooks.claim(guest);
           return guest;
@@ -678,6 +685,7 @@ export class ProxmoxLxcBackend implements Backend {
         claimed = null;
         acquiring.vmid = null;
         acquiring.template = null;
+        acquiring.build = null;
         acquiring.held = null;
         warm = false;
         const left = offer.config.templates.some((candidate) => candidate.gpu !== null && !failed.has(candidate.gpu));
@@ -1069,30 +1077,10 @@ export class ProxmoxLxcBackend implements Backend {
     }
     const builds = new Map<number, string | null>();
     for (const template of named) {
-      const build = await this.#buildOf(api, guests, template, signal);
+      const build = await templateBuild(api, guests, template, signal);
       if (build !== undefined) builds.set(template, build);
     }
     return builds;
-  }
-
-  /**
-   * The build ID of `template` as it is now: null without one, undefined
-   * while it is missing or not yet a template. From `guests` when the
-   * template is in the pool, which the setup guide's templates are;
-   * otherwise read on its own. A lock, as during a backup, changes nothing:
-   * its warm guests are still clones of it.
-   */
-  async #buildOf(api: Proxmox, guests: readonly PoolGuest[], template: number, signal?: AbortSignal): Promise<string | null | undefined> {
-    const listed = guests.find((guest) => guest.vmid === template);
-    if (listed) return listed.template ? buildFromTags(listed.tags) : undefined;
-    let config: Record<string, unknown>;
-    try {
-      config = await api.config(template, signal);
-    } catch (error) {
-      if (error instanceof ProxmoxError && error.gone) return undefined;
-      throw error;
-    }
-    return isTemplate(config) ? buildFromTags(parseTags(config.tags)) : undefined;
   }
 
   /** Gives a warm guest its box's name and memory, and retags it. The guest keeps running, and already has the box's cores. */
@@ -1144,10 +1132,12 @@ export class ProxmoxLxcBackend implements Backend {
     return LXC_FLAVOURS.find((flavour) => this.#config.flavours[flavour].templates.some((listed) => listed.vmid === template)) ?? null;
   }
 
-  asOffered(guest: Guest, kind: string): boolean {
+  /** A guest of a template the kind's flavour lists now, from that template's build as it is now. */
+  async asOffered(guest: Guest, kind: string, createdAt: number, signal?: AbortSignal): Promise<boolean> {
     const template = guest.data?.template;
     const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
-    return typeof template === "number" && !!offer && offer.config.templates.some((listed) => listed.vmid === template);
+    if (typeof template !== "number" || !offer || !offer.config.templates.some((listed) => listed.vmid === template)) return false;
+    return fromBuild(guest, await templateBuild(await this.client(), [], template, signal), createdAt);
   }
 
   #offer(kind: string): Offer {
@@ -1167,7 +1157,7 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   /**
-   * `template` and `box` are kept with the box. A GPU desktop's GPU is
+   * `template`, its `build` and `box` are kept with the box. A GPU desktop's GPU is
    * shown, and a desktop's display mode and why, once it has started.
    */
   #guest(
@@ -1177,9 +1167,10 @@ export class ProxmoxLxcBackend implements Backend {
     box: string | null = null,
     display: DisplayMode | null = null,
     size: BoxSize | null = null,
+    build: string | null = null,
   ): Guest {
     const guest: Guest = { ref: String(vmid), host: node, address: addressFor(this.#config, vmid), size };
-    const data = { ...(template !== null ? { template } : {}), ...(box !== null ? { box } : {}) };
+    const data = { ...(template !== null ? { template } : {}), ...(build !== null ? { build } : {}), ...(box !== null ? { box } : {}) };
     if (!Object.keys(data).length) return guest;
     const gpu = this.#gpuOf(template);
     const facts = [
@@ -1609,7 +1600,7 @@ export class ProxmoxLxcBackend implements Backend {
       const template = this.#choose(offer, guests, [], api.node, this.#placing(offer)).template.vmid;
       // Read before the clone, so it is never newer than the clone's build. A
       // template replaced in between retires the guest later, which is safe.
-      const build = await this.#buildOf(api, guests, template, signal);
+      const build = await templateBuild(api, guests, template, signal);
       const tags = (state: string) => [TAG, install, state, templateTag(template), ...(build ? [`${BUILD}${build}`] : [])];
       vmid = await this.#clone(
         api,
@@ -1656,6 +1647,8 @@ class WarmStore implements PoolStore<BoxIdentity> {
   readonly #templates = new Map<string, number>();
   /** The size of each warm guest, as last listed. */
   readonly #sizes = new Map<string, BoxSize>();
+  /** The build of each warm guest's template, which is its own, as last listed. */
+  readonly #builds = new Map<string, string>();
 
   constructor(backend: ProxmoxLxcBackend, pool: string) {
     this.#backend = backend;
@@ -1667,12 +1660,15 @@ class WarmStore implements PoolStore<BoxIdentity> {
     const members: PoolMember[] = [];
     this.#templates.clear();
     this.#sizes.clear();
+    this.#builds.clear();
     const guests = await api.listPool(this.#pool, signal);
     const builds = await this.#backend.templateBuilds(api, guests, signal);
     for (const guest of guests) {
       const warm = this.#backend.warmOf(guest, builds);
       if (!warm || guest.status !== "running") continue;
       this.#templates.set(String(guest.vmid), warm.template);
+      const build = builds.get(warm.template);
+      if (build) this.#builds.set(String(guest.vmid), build);
       if (guest.size) this.#sizes.set(String(guest.vmid), guest.size);
       members.push({
         ref: String(guest.vmid),
@@ -1689,6 +1685,10 @@ class WarmStore implements PoolStore<BoxIdentity> {
 
   templateOf(ref: string): number | null {
     return this.#templates.get(ref) ?? null;
+  }
+
+  buildOf(ref: string): string | null {
+    return this.#builds.get(ref) ?? null;
   }
 
   sizeOf(ref: string): BoxSize | null {

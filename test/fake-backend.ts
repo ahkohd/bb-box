@@ -413,7 +413,7 @@ export class FakeBackend implements Backend {
   readonly relabels: { boxId: string; threadId: string; name: string; from: string }[] = [];
 
   /** Whether a guest comes from what the kind is offered from now; unset assumes so. */
-  asOffered?: (guest: Guest, kind: string) => boolean;
+  asOffered?: (guest: Guest, kind: string, createdAt: number) => Promise<boolean>;
 
   /** How long relabel takes. */
   relabelMs = 0;

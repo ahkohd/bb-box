@@ -1277,3 +1277,29 @@ test("dispose stops a warm fill", async () => {
   await backend.dispose();
   await fill.catch(() => undefined);
 });
+
+test("a box is from its template as built now only while the template has the build it was cloned from (#227)", async () => {
+  const { backend, proxmox } = setup();
+  const template = proxmox.guests.get(9000)!;
+  template.config.tags = "build.20260920-000000-aaaa";
+  const before = identity();
+  const old = await backend.acquire(before, null, hooks().value, signal());
+  assert.equal(old.data?.build, "20260920-000000-aaaa", "the build is read before the clone and kept with the guest");
+  assert.equal(await backend.asOffered(old, "linux", before.createdAt), true);
+  // build.sh --replace begins a new build; boxes cloned until it swaps come from the old one.
+  const during = { ...identity(), createdAt: Date.UTC(2026, 8, 25, 0, 30) };
+  const cloned = await backend.acquire(during, null, hooks().value, signal());
+  // The swap: the same VMID with the new build. On LVM-thin both boxes keep running.
+  template.config.tags = "build.20260925-000000-bbbb";
+  assert.equal(await backend.asOffered(old, "linux", before.createdAt), false, "made before the replace");
+  assert.equal(await backend.asOffered(cloned, "linux", during.createdAt), false, "made during the build, before the swap");
+
+  // A box from before bb-box recorded builds goes by the build's time.
+  const { build: _, ...data } = old.data!;
+  const unrecorded = { ...old, data };
+  assert.equal(await backend.asOffered(unrecorded, "linux", before.createdAt), false, "made before the build began");
+  assert.equal(await backend.asOffered(unrecorded, "linux", Date.UTC(2026, 8, 26)), true, "made after it began");
+  assert.equal(await backend.asOffered(old, "linux-desktop", before.createdAt), false, "not a template of the kind");
+  template.config.tags = "";
+  assert.equal(await backend.asOffered(unrecorded, "linux", Date.UTC(2026, 8, 26)), false, "a template with no build keeps what boxes have");
+});

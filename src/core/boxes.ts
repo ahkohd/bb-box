@@ -616,12 +616,6 @@ export class Boxes {
   }
 
   /**
-   * Keeps each kind's spares (032): makes those missing, at the kind's
-   * default size, and releases those no kind keeps now, those of another
-   * size and those no claim can take. One run at a time; a call during a run
-   * starts another after it.
-   */
-  /**
    * Gives each box the capabilities its kind has now, where its backend
    * still offers the kind and says the guest comes from what it offers it
    * from. A box keeps the capabilities it was acquired with otherwise, so a
@@ -635,8 +629,9 @@ export class Boxes {
       if (!box.guest || box.state === "gone" || box.state === "releasing") continue;
       const backend = this.#deps.backends.get(box.backend);
       const kind = backend?.kinds().find((candidate) => candidate.id === box.kind);
-      if (!backend || !kind || (backend.asOffered && !backend.asOffered(box.guest, kind.id))) continue;
+      if (!backend || !kind) continue;
       if (JSON.stringify(box.capabilities) === JSON.stringify(kind.capabilities) && JSON.stringify(box.requires) === JSON.stringify(kind.requires)) continue;
+      if (backend.asOffered && !(await backend.asOffered(box.guest, kind.id, box.createdAt).catch((error) => (this.#deps.logError("capabilities", error), false)))) continue;
       const updated = await this.update(box, () => ({ capabilities: kind.capabilities, requires: kind.requires, kindLabel: kind.label })).catch((error) => {
         this.#deps.logError("capabilities", error);
         return null;
@@ -649,6 +644,12 @@ export class Boxes {
     return changed;
   }
 
+  /**
+   * Keeps each kind's spares (032): makes those missing, at the kind's
+   * default size, and releases those no kind keeps now, those of another
+   * size and those no claim can take. One run at a time; a call during a run
+   * starts another after it.
+   */
   keepSpares(): Promise<void> {
     if (this.#keeping) {
       this.#keepAgain = true;

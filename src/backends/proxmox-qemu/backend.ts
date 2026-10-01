@@ -26,6 +26,7 @@ import {
   TAG,
   boxTags,
   describe,
+  fromBuild,
   installFromDescription,
   installFromTags,
   installTag,
@@ -33,6 +34,7 @@ import {
   namesOf,
   ownerFromDescription,
   ownerFromTags,
+  templateBuild,
   templateFromTags,
 } from "../proxmox/owner.ts";
 import { addressFor } from "../proxmox/settings.ts";
@@ -377,15 +379,17 @@ export class ProxmoxQemuBackend implements Backend {
     let vmid: number | null = null;
     let claimed: number | null = null;
     let template: number | null = null;
+    let build: string | null = null;
     const claim = async (id: number) => {
       claimed = id;
-      await hooks.claim(this.#guest(api.node, id, template, box.boxId));
+      await hooks.claim(this.#guest(api.node, id, template, box.boxId, null, build));
     };
     try {
       let resumed = false;
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
         vmid = Number(previous.ref);
         template = typeof previous.data?.template === "number" ? previous.data.template : null;
+        build = typeof previous.data?.build === "string" ? previous.data.build : null;
         resumed = true;
       }
       if (vmid === null) {
@@ -396,6 +400,8 @@ export class ProxmoxQemuBackend implements Backend {
           const guests = await api.listPool(this.#config.proxmox.pool, signal);
           template = this.#choose(guests);
           this.#acquiring.set(box.boxId, template);
+          // Read before the clone, so it is never newer than the clone's: a replace in between leaves the box what it has.
+          build = (await templateBuild(api, guests, template, signal)) ?? null;
           vmid = await this.#clone(api, guests, template, box.name, describe(box, installId), claim, signal, (ms) => (away = (away ?? 0) + ms));
         } finally {
           if (away !== null) hooks.timing("template", away);
@@ -419,7 +425,7 @@ export class ProxmoxQemuBackend implements Backend {
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step);
       // A resumed acquire may have grown the disk before it stopped.
       if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
-      return this.#guest(api.node, id, template, box.boxId, await size);
+      return this.#guest(api.node, id, template, box.boxId, await size, build);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
@@ -712,9 +718,9 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** `template` and `box` are kept with the box. */
-  #guest(node: string, vmid: number, template: number | null = null, box: string | null = null, size: BoxSize | null = null): Guest {
+  #guest(node: string, vmid: number, template: number | null = null, box: string | null = null, size: BoxSize | null = null, build: string | null = null): Guest {
     const guest: Guest = { ref: String(vmid), host: node, address: addressFor(this.#config, vmid), size };
-    const data = { ...(template !== null ? { template } : {}), ...(box !== null ? { box } : {}) };
+    const data = { ...(template !== null ? { template } : {}), ...(build !== null ? { build } : {}), ...(box !== null ? { box } : {}) };
     return Object.keys(data).length ? { ...guest, data } : guest;
   }
 
@@ -728,9 +734,11 @@ export class ProxmoxQemuBackend implements Backend {
     }
   }
 
-  asOffered(guest: Guest): boolean {
+  /** A guest of a Windows template listed now, from that template's build as it is now. */
+  async asOffered(guest: Guest, _kind: string, createdAt: number, signal?: AbortSignal): Promise<boolean> {
     const template = guest.data?.template;
-    return typeof template === "number" && this.#config.templates.includes(template);
+    if (typeof template !== "number" || !this.#config.templates.includes(template)) return false;
+    return fromBuild(guest, await templateBuild(await this.client(), [], template, signal), createdAt);
   }
 
   /** Whether the guest at the reference is still `guest` (018): it names this install and the box in `guest.data.box`, or no box when that is absent. */
