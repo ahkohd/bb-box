@@ -8,8 +8,8 @@
     "bbPluginSdk": "^0.5.29"
   },
   "bb": {
-    "name": "bb-box",
-    "description": "Computers for BB threads: Linux boxes, with or without a desktop, that you and the agent share.",
+    "name": "BB Box",
+    "description": "Computers for BB threads.",
     "branding": {
       "icon": "./assets/icon.svg",
       "experimental_icons": {

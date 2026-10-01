@@ -215,8 +215,8 @@ title "New box".
   for this thread." The operator asked for that line to stay this simple
   (1 October 2026). The toolbar's "New box" is the action; the panel does
   not repeat it.
-- **No backend on**: "bb-box is not set up yet. Turn on a backend in its
-  settings to make boxes." with an "Open bb-box settings" button that goes
+- **No backend on**: "BB Box is not set up yet. Turn on a backend in its
+  settings to make boxes." with an "Open BB Box settings" button that goes
   to the plugin's settings page. No "New box" button.
 - **Loading**: BB's skeleton rows, shown only after 200 ms so a fast load
   does not flash.
@@ -286,12 +286,12 @@ from a thread's Box panel."
 
 | Where | Text |
 | --- | --- |
-| plugin description | Computers for BB threads: Linux boxes, with or without a desktop, that you and the agent share. |
+| plugin description | Computers for BB threads. The plugin shows as "BB Box"; its ID stays bb-box. |
 | tab titles | Box; the box's name for its desktop |
 | toolbar | New box |
 | chooser | Kind: · Size: · Small · Medium · Large · Custom · Create |
 | empty | No boxes yet · A computer for this thread. |
-| not set up | bb-box is not set up yet. Turn on a backend in its settings to make boxes. · Open bb-box settings |
+| not set up | BB Box is not set up yet. Turn on a backend in its settings to make boxes. · Open BB Box settings |
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |
 | actions | Open desktop · Open desktop in a browser tab · Open terminal · Copy address · Start · Stop · Check now · Release… |
 | release | Release bold-heron? · Its disk and everything on it will be deleted. Copy out anything you want to keep first. · Cancel · Release |
