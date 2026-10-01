@@ -2,14 +2,17 @@
 # Downloads every artifact a template build needs into <dir> and checks each
 # against its pinned SHA-256. Files already there and correct are kept.
 #
-# usage: fetch-artifacts.sh <dir> linux|desktop|desktop-cpu
-# (headless is linux's earlier name)
+# usage: fetch-artifacts.sh <dir> linux|desktop|desktop-cpu [x86_64|arm64]
+# (headless is linux's earlier name). The architecture is the image's, by
+# default x86_64; it picks the tools in pins.json.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
 . "$here/../host/common.sh"
 art=$1
 kind=$2
+arch=${3:-x86_64}
+case "$arch" in x86_64 | arm64) ;; *) die "architecture must be x86_64 or arm64" ;; esac
 mkdir -p "$art"
 
 fetch() { # url sha256 file
@@ -43,12 +46,10 @@ fetch() { # url sha256 file
   echo "fetched $name"
 }
 
-# Tools unpacked into /opt/bb-box-tools.
-count=$(jq -er '.tools | length' "$here/pins.json")
-for i in $(seq 0 $((count - 1))); do
-  url=$(jq -er ".tools[$i].url" "$here/pins.json")
-  fetch "$url" "$(jq -er ".tools[$i].sha256" "$here/pins.json")" "${url##*/}"
-done
+# Tools unpacked into /opt/bb-box-tools, those for the image's architecture.
+while IFS=$'\t' read -r url sha; do
+  fetch "$url" "$sha" "${url##*/}"
+done < <(jq -er --arg arch "$arch" '.tools[] | select(.arch == $arch) | "\(.url)\t\(.sha256)"' "$here/pins.json")
 
 # BB's host daemon package, whatever build the server has now.
 if [ -n "$BBBOX_BB_URL" ]; then

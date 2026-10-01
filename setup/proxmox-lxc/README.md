@@ -209,13 +209,16 @@ Everything a build downloads is checked against a pinned SHA-256 and kept in
 - `template/apt-snapshot`: the Ubuntu archive snapshot every build installs
   from, so builds are repeatable;
 - `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, uv,
-  Claude Code, Codex and Pi;
+  Claude Code, Codex and Pi, each for x86_64 and arm64 (`arch`). A build
+  installs the ones for its image's architecture: x86_64 here, arm64 for
+  Linux VMs on a Mac (040);
 - `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Google Chrome, Cua
   Driver and rustup;
 - the NVIDIA installer for exactly the host's driver version, checked against
   the SHA-256 NVIDIA publishes next to it.
 
-To update a tool, change its pin (URL and SHA-256) and rebuild.
+To update a tool, change its pins (URL and SHA-256, for each architecture)
+and rebuild.
 
 ### What is in a box
 
