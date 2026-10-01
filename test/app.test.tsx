@@ -322,9 +322,18 @@ test("a custom size starts from the preset in view, sends only its filled fields
   expect((screen.getByRole("button", { name: "Make box" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.change(cores, { target: { value: "6" } });
   fireEvent.change(memory, { target: { value: "12" } });
+
+  // Custom fields belong to the kind: another kind starts from its own preset, and the edits come back with the kind.
+  const kinds = screen.getByRole("radiogroup", { name: "Kind" });
+  fireEvent.click(within(kinds).getByRole("radio", { name: /Linux desktop/ }));
+  expect([(screen.getByLabelText(/^Cores/) as HTMLInputElement).value, (screen.getByLabelText(/^Memory, GiB/) as HTMLInputElement).value]).toEqual(["8", "16"]);
+  expect(screen.getByText("up to 32")).toBeTruthy();
+  fireEvent.click(within(kinds).getAllByRole("radio")[0]!);
+  expect([(screen.getByLabelText(/^Cores/) as HTMLInputElement).value, (screen.getByLabelText(/^Memory, GiB/) as HTMLInputElement).value]).toEqual(["6", "12"]);
+
   fireEvent.click(screen.getByRole("button", { name: "Make box" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux {"cores":6,"memoryGiB":12}']));
-  expect(JSON.parse(window.localStorage.getItem("bb-box:new-box") ?? "{}")).toEqual({ kind: "linux", size: "custom", custom: { cores: "6", memoryGiB: "12", diskGiB: "" } });
+  expect(JSON.parse(window.localStorage.getItem("bb-box:new-box") ?? "{}")).toEqual({ kind: "linux", size: "custom", custom: { linux: { cores: "6", memoryGiB: "12", diskGiB: "" } } });
 });
 
 test("a refused box stays in the form with the reason", async () => {
