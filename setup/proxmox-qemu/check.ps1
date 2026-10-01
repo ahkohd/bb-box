@@ -23,6 +23,11 @@ Check 'SSH session elevated' {
   $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
   if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'not elevated' }; "$env:USERNAME, elevated"
 }
+Check 'git and gh on PATH' {
+  $git = git --version; $gh = gh --version | Select-Object -First 1
+  if (-not $git -or -not $gh) { throw 'missing' }; "$git; $gh"
+}
+Check 'NO_COLOR set' { if ($env:NO_COLOR -ne '1') { throw "NO_COLOR is '$env:NO_COLOR'" }; 'NO_COLOR=1' }
 Check 'address from the SMBIOS serial' {
   $line = Get-Content C:\bb-box\boot.log -Tail 1
   if ($line -notmatch ' address \d') { throw $line }; $line -replace '^\S+ ', ''

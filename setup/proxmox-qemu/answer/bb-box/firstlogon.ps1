@@ -89,6 +89,20 @@ if (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyConti
   New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Profile Any -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
 }
 
+Step "Git $($build.git.version) and GitHub CLI $($build.gh.version)"
+$exe = 'C:\bb-box\git.exe'
+Get-Pinned $build.git.url $build.git.sha256 $exe
+# On PATH for every shell. No credential manager: its sign-in window would
+# wait in the desktop for a person while a command over SSH hangs.
+Start-Process $exe -Wait -ArgumentList '/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', '/SUPPRESSMSGBOXES', '/o:PathOption=Cmd', '/o:CredentialManager=Disabled'
+Remove-Item $exe -Force
+$msi = 'C:\bb-box\gh.msi'
+Get-Pinned $build.gh.url $build.gh.sha256 $msi
+Start-Process msiexec.exe -Wait -ArgumentList "/i `"$msi`" /qn /norestart"
+Remove-Item $msi -Force
+# Plain output for agents' commands, as the backend's command prelude asks too.
+[Environment]::SetEnvironmentVariable('NO_COLOR', '1', 'Machine')
+
 Step 'UTF-8 as the system code page'
 foreach ($name in 'ACP', 'OEMCP', 'MACCP') { Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage' -Name $name -Value '65001' }
 
