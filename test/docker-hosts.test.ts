@@ -81,11 +81,13 @@ test("each machine shows Docker as it answers through the relay, kept a while, a
     connected: true,
     docker: { version: "29.8.1", os: "Arch Linux", arch: "x86_64", cpus: 16, memoryMiB: 102400 },
     problem: null,
+    absent: false,
     backend: { id: "docker:behemoth", enabled: true, boxes: 2 },
     images: null,
   });
   assert.equal(listed.find((each) => each.name === "windows-pc")?.problem, "Docker there runs windows containers. Switch it to Linux containers.");
-  assert.equal(listed.find((each) => each.name === "no-docker")?.problem, "Docker did not answer: there is no Docker to reach: /var/run/docker.sock: connect ENOENT /var/run/docker.sock");
+  // No Docker on a machine is normal: no problem to show, only absent.
+  assert.deepEqual([listed.find((each) => each.name === "no-docker")?.problem, listed.find((each) => each.name === "no-docker")?.absent], [null, true]);
   assert.equal(listed.find((each) => each.name === "sleepy")?.problem, "The machine is offline in BB.");
   assert.deepEqual(asked.sort(), ["host_b", "host_n", "host_w"], "a machine BB shows offline is not called at all");
   assert.equal(calls, 2, "the relay only where Docker is");
