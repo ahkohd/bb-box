@@ -25,7 +25,7 @@ a whole-machine reset
 | Mac | macOS | VM | Tart | `macos`, `macos-desktop` | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
 | Mac | macOS | physical | physical Mac | `macos`, `macos-desktop` | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
 | Mac | Linux | VM | Tart | `linux-arm64`, `linux-arm64-desktop-cpu` | working, [040](decisions/040-linux-on-arm64-has-kinds-of-its-own.md) | arm64 | none offered |
-| Mac | Windows | VM | QEMU with HVF, UTM or Parallels | a Windows desktop on arm64 | research, #150 | arm64 | to research |
+| Mac | Windows | VM | Tart, through QEMU with HVF | `windows-arm64-desktop` | planned, #207, [046](decisions/046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md) | arm64 | none: Windows draws on the CPU |
 | Windows | Linux | container | Docker, in one WSL2 distribution, over `ssh://` | `linux`, `linux-desktop-cpu` | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | none; CUDA through `/dev/dxg` to research |
 | Windows | Linux | VM | Hyper-V | `linux`, `linux-desktop-cpu` | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
 | Windows | Linux | WSL2 distribution | WSL2 | `linux` | not planned: distributions share one VM and network, #158 | x86_64 | to research |
@@ -42,7 +42,8 @@ Across the table:
   027, `linux-headless` and `linux-headless-docker`, are still accepted.
 - **Architecture.** A kind's ID names its architecture when it is not the
   OS's usual one: `-arm64` follows the OS, so `linux` is always x86_64 and
-  `linux-arm64` is arm64 (040). macOS runs on arm64 only and keeps no
+  `linux-arm64` is arm64 (040), as are `windows-desktop` and
+  `windows-arm64-desktop` (046). macOS runs on arm64 only and keeps no
   qualifier. Each kind's capabilities name its `arch`.
 - **Where a box goes.** A kind's offers are tried in the configuration's
   order, and the first with room takes the box. `box_acquire`'s `on`, and

@@ -6,6 +6,9 @@ goes in a kind's ID; and [028](028-a-box-size-is-chosen-when-it-is-made.md):
 the arm64 kinds' presets. Partly superseded by
 [041](041-every-linux-box-has-docker.md): `linux-arm64-docker` is an alias
 of `linux-arm64` with the feature `docker`.
+Extended by
+[046](046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md): Windows on
+arm64 is `windows-arm64-desktop`.
 
 ## Context
 

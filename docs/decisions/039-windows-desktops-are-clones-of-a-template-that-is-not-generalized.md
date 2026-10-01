@@ -8,6 +8,9 @@ runs elevated. Extends [021](021-desktop-resize-through-the-backend.md),
 Amended while it was built: the template's real-time clock is UTC, a cold
 clone's time to its desktop as the first template build measured it, and
 file copies run in PowerShell rather than SFTP.
+Extended by
+[046](046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md): the same
+guest, built for arm64, runs in QEMU on a Mac, in the Tart backend.
 
 ## Context
 
