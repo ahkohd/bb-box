@@ -3,10 +3,10 @@
 // settings file and the tests all go through parseLxcSettings.
 //
 // Templates come in three flavours, each a list of CT templates: Linux ones
-// serve linux and linux-docker, GPU desktop ones (each carrying one GPU,
-// named by an ID) serve linux-desktop, and CPU-only desktop ones serve
-// linux-desktop-cpu. A new box is cloned from the flavour's least used
-// template; a GPU desktop goes to the GPU with the fewest desktops.
+// serve linux, GPU desktop ones (each carrying one GPU, named by an ID) serve
+// linux-desktop, and CPU-only desktop ones serve linux-desktop-cpu. A new box
+// is cloned from the flavour's least used template; a GPU desktop goes to the
+// GPU with the fewest desktops.
 //
 // Each VMID in the owned range has a fixed address: the n-th VMID gets the
 // n-th address. Proxmox refuses a second guest with the same VMID, so two
@@ -61,7 +61,7 @@ export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
 
 /** The kinds each flavour's clones serve. */
 export const FLAVOUR_KINDS: Readonly<Record<LxcFlavour, readonly string[]>> = {
-  linux: ["linux", "linux-docker"],
+  linux: ["linux"],
   desktop: ["linux-desktop"],
   "desktop-cpu": ["linux-desktop-cpu"],
 };
@@ -163,7 +163,7 @@ function withEarlierKeys(values: Readonly<Record<string, unknown>>): Readonly<Re
 const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readonly templates: string }>> = {
   linux: {
     name: "Linux",
-    templates: "VMIDs of the CT templates linux and linux-docker boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+    templates: "VMIDs of the CT templates linux boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
   },
   desktop: {
     name: "GPU desktop",

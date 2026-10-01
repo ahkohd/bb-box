@@ -62,33 +62,28 @@ const RESET_POLL_MS = 2_000;
 
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
 
-const OFFERS: readonly BoxKind[] = [
-  {
+/** The pool's one offer. With Docker, which gives root, only when every machine's line lists linux-docker (041). */
+function linuxOffer(docker: boolean): BoxKind {
+  return {
     id: "linux",
     label: "Linux",
-    description: "A Linux machine of its own, for builds, backend services and the agent's own work.",
+    description: docker
+      ? "A Linux machine of its own with Docker, and root through sudo, for builds, backend services and the agent's own work."
+      : "A Linux machine of its own, for builds, backend services and the agent's own work.",
     requires: [],
-    capabilities: { os: "linux", arch: ARCH, gpu: false, features: [], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
-    readyTimeoutMs: READY_TIMEOUT_MS,
-  },
-  {
-    id: "linux-docker",
-    label: "Linux with Docker",
-    description: "A Linux machine of its own with Docker, and root through sudo, for builds and services that need them.",
-    requires: ["docker"],
     capabilities: {
       os: "linux",
       arch: ARCH,
       gpu: false,
-      features: ["docker"],
-      command: { ...SSH_COMMAND, admin: true },
+      features: docker ? ["docker"] : [],
+      command: docker ? { ...SSH_COMMAND, admin: true } : SSH_COMMAND,
       displays: [],
       computerUse: null,
       enrol: true,
     },
     readyTimeoutMs: READY_TIMEOUT_MS,
-  },
-];
+  };
+}
 
 export interface SshPoolBackendOptions {
   readonly sshBinary?: string;
@@ -148,6 +143,7 @@ interface SshKeys {
 type Check = readonly [id: string, name: string];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const MACHINES_CHECK: Check = ["machines", "Machines"];
+const DOCKER_CHECK: Check = ["docker", "Docker"];
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
@@ -244,6 +240,8 @@ export class SshPoolBackend implements Backend {
   readonly #options: SshPoolBackendOptions;
   readonly #keyFile = new KeyFile();
   readonly #machines: ReadonlyMap<string, SshPoolMachine>;
+  /** Every machine gives Docker, so the pool's boxes have it. */
+  readonly #docker: boolean;
   /** Machines this process is resetting, which held() leaves to it. */
   readonly #resetting = new Set<string>();
   /** Machines this process is claiming, whose record the claim writes. */
@@ -262,10 +260,11 @@ export class SshPoolBackend implements Backend {
     this.#machines = new Map(config.machines.map((machine) => [machine.name, machine]));
     this.label = `SSH host pool of ${plural(config.machines.length, "machine")}`;
     this.restores = config.machines.length && config.machines.every((machine) => machine.reset === "machine") ? "machine" : "home";
+    this.#docker = config.machines.length > 0 && config.machines.every((machine) => machine.docker);
   }
 
   kinds(): readonly BoxKind[] {
-    return OFFERS.filter((kind) => this.#config.machines.some((machine) => machine.kinds.includes(kind.id as SshPoolKind)));
+    return this.#config.machines.length ? [linuxOffer(this.#docker)] : [];
   }
 
   #offer(kind: string): BoxKind {
@@ -309,7 +308,7 @@ export class SshPoolBackend implements Backend {
   #candidates(views: readonly View[], kind: string, size: BoxSize): View[] {
     return views
       .filter((view) => this.#lists(view.machine, kind) && view.state === "free" && this.#ready(view, kind) === null && fits(view.probe.status, size))
-      .sort((a, b) => bySize(a, b) || a.machine.kinds.length - b.machine.kinds.length || a.since - b.since);
+      .sort((a, b) => bySize(a, b) || a.since - b.since);
   }
 
   /** Why no machine is free for `kind` at `size`, in words for the user. `waited` machines would be free but for acquires waiting to claim. */
@@ -410,7 +409,7 @@ export class SshPoolBackend implements Backend {
         this.#claiming.add(machine.name);
         try {
           // Without the signal: a claim cut short could finish on the machine after bb-box looked.
-          const docker = kind.requires.includes("docker") ? ["docker"] : [];
+          const docker = kind.capabilities.features.includes("docker") ? ["docker"] : [];
           const result = await this.#helper(machine, ["claim", String(generation), ...docker], claimInput(this.#context.installId, box, publicKey), CLAIM_TIMEOUT_MS);
           if (result.exitCode === EXIT.held || result.exitCode === EXIT.moved || result.exitCode === 255 || result.timedOut) continue;
           if (result.exitCode === EXIT.dirty) {
@@ -564,7 +563,7 @@ export class SshPoolBackend implements Backend {
     if (!machine) throw new BackendError("gone", `Machine ${guest.ref} is no longer in the SSH host pool's settings.`);
     const user = typeof guest.data?.user === "string" ? guest.data.user : `${USER_PREFIX}${guest.data?.generation}`;
     const access = this.#access(machine, user);
-    const docker = OFFERS.find((offer) => offer.id === kind)?.capabilities.features.includes("docker") ?? false;
+    const docker = this.kinds().find((offer) => offer.id === kind)?.capabilities.features.includes("docker") ?? false;
     const host = access.host.includes(":") ? `[${access.host}]` : access.host;
     return {
       command: await this.#command(machine, user),
@@ -659,7 +658,7 @@ export class SshPoolBackend implements Backend {
       const check = (what: string, label: string): Check => [`machine.${name}.${what}`, `${name}: ${label}`];
       const SSH = check("ssh", "SSH"), HELPER = check("helper", "helper"), ARCH_CHECK = check("arch", "architecture");
       const TOOLS = check("tools", "tools"), DOCKER = check("docker", "Docker"), STATE = check("state", "state");
-      const rest = [HELPER, ARCH_CHECK, TOOLS, ...(machine.kinds.includes("linux-docker") ? [DOCKER] : []), STATE];
+      const rest = [HELPER, ARCH_CHECK, TOOLS, ...(machine.docker ? [DOCKER] : []), STATE];
       const view = views.find((other) => other.machine === machine);
       const where = `${machine.admin.user}@${machine.admin.host}${machine.admin.port === 22 ? "" : `:${machine.admin.port}`}${machine.jump ? ` through ${machine.jump.host}` : ""}`;
       if (!view) {
@@ -683,7 +682,7 @@ export class SshPoolBackend implements Backend {
       const { status } = probe;
       if (!status || status.helper === null) {
         fail(HELPER, `bb-box's helper did not run: ${probe.problem ?? "it gave no version."}`, `Run setup/ssh-pool/setup.sh on ${name} as root.`);
-        skip(ARCH_CHECK, TOOLS, ...(machine.kinds.includes("linux-docker") ? [DOCKER] : []), STATE);
+        skip(ARCH_CHECK, TOOLS, ...(machine.docker ? [DOCKER] : []), STATE);
         continue;
       }
       if (status.helper < HELPER_VERSION || status.generation === null) {
@@ -718,8 +717,8 @@ export class SshPoolBackend implements Backend {
         const linger = status.systemd ? "It has systemd, so BB's daemon lingers." : "There is no systemd, so BB's daemon runs without linger.";
         pass(TOOLS, `Everything the helper, enrolment and the thread's GitHub access need, with Node.js ${node}. ${linger}`);
       }
-      if (machine.kinds.includes("linux-docker")) {
-        const problem = this.#ready(view, "linux-docker");
+      if (machine.docker) {
+        const problem = this.#dockerProblem(view);
         if (problem) fail(DOCKER, problem, `Install Docker on ${name}, and its reset-machine command with setup.sh --reset-hook, or take linux-docker off its line.`);
         else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
@@ -741,8 +740,18 @@ export class SshPoolBackend implements Backend {
           "If one of these IDs was this install's before it lost its storage, take it back with bb box install-id --set <id>.",
       );
     }
+    const without = this.#config.machines.filter((machine) => !machine.docker);
+    if (this.#config.machines.some((machine) => machine.docker) && without.length) {
+      const names = without.map((machine) => machine.name).join(", ");
+      warn(
+        DOCKER_CHECK,
+        `${names} ${without.length === 1 ? "does" : "do"} not list linux-docker, so none of the pool's linux boxes have Docker, and each says No Docker.`,
+        // bb-box runs one SSH host pool, so the fix is the lines, not a second pool.
+        `To give them Docker, set up a whole-machine reset on ${names} and add linux-docker and reset=machine to ${without.length === 1 ? "its line" : "their lines"}, as the SSH host pool's setup guide says. Otherwise take linux-docker off every line.`,
+      );
+    }
     if (this.restores === "home") {
-      notes.push("A release removes the box's user, its files and its processes. It does not undo changes a box made as root, which only linux-docker boxes can make.");
+      notes.push("A release removes the box's user, its files and its processes. It does not undo changes made as root, which boxes from this pool cannot make, since none of them has Docker.");
     }
 
     const ok = checks.every((check) => check.status !== "fail");
@@ -781,8 +790,13 @@ export class SshPoolBackend implements Backend {
 
   /** Why a free machine cannot serve `kind` now, or null when it can. */
   #ready(view: View, kind: string): string | null {
+    return this.kinds().find((offer) => offer.id === kind)?.capabilities.features.includes("docker") ? this.#dockerProblem(view) : null;
+  }
+
+  /** Why a machine cannot give its boxes Docker, or null when it can. */
+  #dockerProblem(view: View): string | null {
     const status = view.probe.status;
-    if (kind !== "linux-docker" || !status) return null;
+    if (!status) return null;
     if (!status.docker) return "Docker is not installed.";
     if (!status.hook) return "There is no reset-machine command, so a whole-machine reset is not set up.";
     return null;

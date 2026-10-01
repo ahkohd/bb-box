@@ -48,12 +48,10 @@ const MACOS: KindSizes = {
 /** What bb-box ships, by kind. A kind with none takes linux's until its backend brings its own. */
 const SHIPPED: Readonly<Record<string, KindSizes>> = {
   linux: LINUX,
-  "linux-docker": LINUX,
   "linux-desktop": DESKTOP,
   "linux-desktop-cpu": DESKTOP,
   // Linux on arm64 takes the presets of the x86_64 kinds it follows (040).
   "linux-arm64": LINUX,
-  "linux-arm64-docker": LINUX,
   "linux-arm64-desktop-cpu": DESKTOP,
   macos: MACOS,
   "macos-desktop": MACOS,

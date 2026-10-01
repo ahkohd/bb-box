@@ -50,7 +50,8 @@ test("the box-sizes setting changes a kind's presets, default and largest", () =
   assert.deepEqual(defaultSize(linux), { cores: 4, memoryMiB: 8 * GiB, diskGiB: 40 });
   assert.deepEqual(linux.largest, { cores: 24, memoryMiB: 32 * GiB, diskGiB: 256 });
   assert.deepEqual(kindSizes("linux-desktop", changes).presets.small, { cores: 4, memoryMiB: 12 * GiB, diskGiB: null });
-  assert.deepEqual(kindSizes("linux-docker", changes), kindSizes("linux-docker"), "each kind has its own entry");
+  assert.deepEqual(kindSizes("linux-docker", changes), linux, "an alias takes its kind's sizes (041)");
+  assert.deepEqual(kindSizes("linux-desktop-cpu", changes), kindSizes("linux-desktop-cpu"), "each kind has its own entry");
   assert.deepEqual(parseSizeChanges(""), { changes: {}, problems: [] });
   assert.deepEqual(parseSizeChanges(undefined), { changes: {}, problems: [] });
 });
@@ -117,7 +118,7 @@ test("sizes are described in words, leaving out the base disk", () => {
 
 test("sizes saved before 028 become each kind's default preset, once, and larger presets are never smaller", () => {
   const six = { cores: 6, memoryMiB: 6 * GiB, diskGiB: 20 };
-  const adopted = withEarlierSizes(undefined, { linux: six, "linux-docker": six });
+  const adopted = withEarlierSizes(undefined, { linux: six });
   assert.ok(adopted);
   const { changes, problems } = parseSizeChanges(adopted);
   assert.deepEqual(problems, []);

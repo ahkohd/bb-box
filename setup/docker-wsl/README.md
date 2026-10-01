@@ -4,8 +4,8 @@ This makes a Windows PC a Docker host for bb-box's [Docker backend](../docker/RE
 Docker Engine runs in one WSL 2 distribution, `bbdocker`, with its own SSH
 server on port 2222. WSL's mirrored networking puts that port on the PC's own
 address, so the backend's host is `ssh://box@<pc>:2222`. Boxes then work as
-on a Linux Docker host: linux, linux-docker and linux-desktop-cpu boxes,
-their desktops, computer use and enrolment.
+on a Linux Docker host: linux boxes, with Docker when `privileged` is on,
+linux-desktop-cpu boxes, their desktops, computer use and enrolment.
 
 It works on every edition of Windows 11, Home too, needs no Docker Desktop
 and runs before anyone signs in.

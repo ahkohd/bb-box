@@ -196,17 +196,17 @@ function tartCalls(mac: string): string[][] {
   return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]) : [];
 }
 
-test("offers linux-arm64 and linux-arm64-docker only with a Linux image, as arm64 (040)", () => {
+test("offers linux-arm64 only with a Linux image, as arm64, with Docker (040, 041)", () => {
   const kinds = new TartBackend(tartConfig({ "tart-linux-image": "bb-box-linux" }), testContext()).kinds();
-  assert.deepEqual(kinds.map((kind) => kind.id), ["macos", "macos-desktop", "linux-arm64", "linux-arm64-docker"]);
+  assert.deepEqual(kinds.map((kind) => kind.id), ["macos", "macos-desktop", "linux-arm64"], "linux-arm64-docker is an alias of linux-arm64, not an offer");
   const linux = kinds.find((kind) => kind.id === "linux-arm64")!;
   assert.deepEqual([linux.capabilities.os, linux.capabilities.arch, linux.capabilities.displays.length, linux.capabilities.computerUse, linux.capabilities.enrol], ["linux", "arm64", 0, null, true]);
   assert.match(linux.description, /amd64 container images and x86_64 binaries do not run there/);
-  assert.deepEqual(kinds.find((kind) => kind.id === "linux-arm64-docker")!.requires, ["docker"]);
+  assert.deepEqual([linux.requires, linux.capabilities.features], [[], ["docker"]]);
   // Off by default, and on alone.
   assert.deepEqual(new TartBackend(tartConfig(), testContext()).kinds().map((kind) => kind.id), ["macos", "macos-desktop"]);
   const alone = tartConfig({ "tart-linux-image": "bb-box-linux", "tart-macos-image": "", "tart-macos-desktop-image": "" });
-  assert.deepEqual(new TartBackend(alone, testContext()).kinds().map((kind) => kind.id), ["linux-arm64", "linux-arm64-docker"]);
+  assert.deepEqual(new TartBackend(alone, testContext()).kinds().map((kind) => kind.id), ["linux-arm64"]);
   const none = parseTartSettings({ "tart-enabled": true, "tart-hosts": "mac1 a@b", "tart-host-keys": "b ssh-ed25519 AAAA", "tart-macos-image": "", "tart-macos-desktop-image": "" });
   assert.ok(none.enabled && !none.ok && none.problems.some((problem) => /an image for macOS or Linux boxes/.test(problem)));
 });
@@ -295,7 +295,7 @@ test("Linux boxes take memory on a Mac but none of its two macOS VMs, and have n
   assert.equal(linux.ok, true, linux.message ?? "");
   const memory = linux.hosts[0]!.limits.find((limit) => limit.resource === "memory")!;
   assert.equal(memory.used, 2 * 8192 + 8192, "both macOS VMs and the pending box");
-  const third = await backend.acquire(identity("linux-arm64-docker", "thr_abc123", LINUX_SMALL), null, hooks().hooks, signal());
+  const third = await backend.acquire(identity("linux-arm64", "thr_abc123", LINUX_SMALL), null, hooks().hooks, signal());
   for (const guest of [first, second, third]) await backend.release(guest, releasing);
 });
 

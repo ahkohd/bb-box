@@ -8,24 +8,27 @@ the code goes and how to prove a backend works.
 ## What runs where
 
 One row per host and box OS. A box is a container, a VM or a physical
-machine; its kinds are plain, with Docker, or with a desktop. "Working"
-means merged and in daily use.
+machine; its kinds are plain or with a desktop. "Working" means merged and
+in daily use. Linux boxes have Docker, except Docker backend boxes without
+its `privileged` field, its desktops for now, and SSH host pool boxes
+unless every machine lists `linux-docker`
+([041](decisions/041-every-linux-box-has-docker.md)).
 
 | Host | Box | Form | Backend | Kinds | Status | Arch | GPU |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Linux | Linux | container | Proxmox LXC | plain, Docker, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU; `linux-desktop-cpu`: none |
-| Linux | Linux | container | Docker | plain, Docker, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU through CDI |
-| Linux | Linux | physical | SSH host pool | plain, Docker | working | x86_64 | none offered |
+| Linux | Linux | container | Proxmox LXC | plain, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU; `linux-desktop-cpu`: none |
+| Linux | Linux | container | Docker | plain, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU through CDI |
+| Linux | Linux | physical | SSH host pool | plain | working | x86_64 | none offered |
 | Linux | Windows | VM | Proxmox QEMU | desktop | in progress, #46 | x86_64 | none at first: Windows draws on the CPU; a whole card passed through later |
 | Linux | macOS | - | - | - | not possible: macOS runs only on Apple hardware | - | - |
 | Mac | macOS | VM | Tart | plain, desktop | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
 | Mac | macOS | physical | physical Mac | desktop | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
-| Mac | Linux | VM | Tart | plain, Docker (desktop to come) | working, 040 | arm64 | none offered |
+| Mac | Linux | VM | Tart | plain, desktop | working, 040 | arm64 | none offered |
 | Mac | Windows | VM | QEMU with HVF, UTM or Parallels | desktop | research, #150 | arm64 | to research |
-| Windows | Linux | container | Docker, in one WSL2 distribution | plain, Docker, desktop | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | `linux-desktop-cpu`; CUDA through `/dev/dxg` to research |
-| Windows | Linux | VM | Hyper-V | plain, Docker, desktop | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
-| Windows | Linux | WSL2 distribution | WSL2 | plain, Docker | not planned: distributions share one VM and network, #158 | x86_64 | to research |
-| Windows | Linux | container | Docker Desktop | plain, Docker, desktop | not planned: `ssh://` fails, and it runs only while someone is signed in, #158 | x86_64 | to research |
+| Windows | Linux | container | Docker, in one WSL2 distribution | plain, desktop | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | `linux-desktop-cpu`; CUDA through `/dev/dxg` to research |
+| Windows | Linux | VM | Hyper-V | plain, desktop | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
+| Windows | Linux | WSL2 distribution | WSL2 | plain | not planned: distributions share one VM and network, #158 | x86_64 | to research |
+| Windows | Linux | container | Docker Desktop | plain, desktop | not planned: `ssh://` fails, and it runs only while someone is signed in, #158 | x86_64 | to research |
 | Windows | Windows | VM | Hyper-V | desktop | later, after #46; see #158 | x86_64 | to research |
 | Windows | macOS | - | - | - | not possible | - | - |
 
@@ -276,7 +279,9 @@ node --test test/conformance.test.ts
   small box waiting to claim does not stop a large one. `Guest.size` is the
   machine's cores and memory, with `diskGiB` null. There is no warm pool.
 - `restores` is `machine` only when every machine has a whole-machine
-  reset (`reset=machine`); only those machines serve `linux-docker`.
+  reset (`reset=machine`). Only those machines may list `linux-docker`,
+  and the pool's one offer, `linux`, has Docker only when every machine
+  does (041). Otherwise its boxes say No Docker, and the doctor warns.
 - `members()` reads each machine now, and shows a machine whose marker
   names a box as held, even when its helper is too old to lend it again.
   `returnToService(ref)` resets an out-of-service machine again; an

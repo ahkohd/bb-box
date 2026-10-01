@@ -43,7 +43,7 @@ export function kindName(kind: KindView): string {
   return name;
 }
 
-/** Every offer of the kind has Docker; a kind row says "No Docker" only when none has (041). */
+/** Some offer of the kind has Docker, for the pane's Has and Lacks (041). The row's badge reads the kind's own docker. */
 export function kindHasDocker(kind: KindView): boolean {
   return kind.offers.length ? kind.offers.some((offer) => offer.docker) : kind.features.includes("docker");
 }

@@ -8,7 +8,7 @@ import { BoxError, OPERATOR, SPARES, describeError, type BoxErrorCode, type BoxR
 import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, boxLine, boxSize, idleWords, next, type KindView } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, boxSize, idleWords, next, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -135,7 +135,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .string()
         .min(1)
         .optional()
-        .describe("The kind, from box_list: linux, linux-docker, linux-desktop and the rest. Defaults to the user's default kind."),
+        .describe("The kind, from box_list: linux, linux-desktop and the rest, or linux-docker for a linux box that must have Docker. Defaults to the user's default kind."),
       size: z
         .string()
         .min(1)
@@ -194,7 +194,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${adminText(kind)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")}`).join("\n")}`
             : "No backend is set up, so there are no kinds. Ask the user to set one up in BB Box's settings in BB.",
         );
         const hints = list.length

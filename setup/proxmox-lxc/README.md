@@ -465,8 +465,9 @@ file looks like this, with the field names below:
 | `reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
 
 `warm` keeps started boxes waiting per kind, so a new box is ready at once.
-`linux` and `linux-docker` are clones of the same templates and share their
-warm boxes, so the backend keeps the sum of their counts.
+Since [041](../../docs/decisions/041-every-linux-box-has-docker.md),
+`linux-docker` is `linux` with Docker, not a kind of its own, so bb-box
+adds a warm count for it to `linux`'s, once.
 
 A box is made at the size asked for: its kind's preset or a custom size
 ([028](../../docs/decisions/028-a-box-size-is-chosen-when-it-is-made.md)).
@@ -492,7 +493,7 @@ the document, with the same backend ID, so boxes and guests carry over.
 `bb box config migrated` shows what they were.
 
 Leave a flavour's templates empty to offer none of its kinds. Linux
-templates serve `linux` and `linux-docker`, GPU desktop templates
+templates serve `linux`, GPU desktop templates
 `linux-desktop`, and CPU-only desktop templates `linux-desktop-cpu`.
 
 The GPU's ID can be any name without spaces; templates with the same ID

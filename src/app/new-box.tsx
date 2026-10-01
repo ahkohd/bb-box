@@ -11,8 +11,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
-import { KindBadges } from "./common.tsx";
-import { groupKinds, kindHasDocker, KindDetail, kindTitle, OfferMarks } from "./kind-picker.tsx";
+import { KindBadges, lacksDocker } from "./common.tsx";
+import { groupKinds, KindDetail, kindTitle, OfferMarks } from "./kind-picker.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -280,7 +280,7 @@ export function NewBox({
                         <span className="min-w-0">
                           <span className="block truncate text-xs text-foreground">{kindTitle(candidate)}</span>
                           {/* Badges on a line of their own: what the boxes are, and whether one is ready; the title says the rest. */}
-                          <KindBadges gpu={false} noDocker={!kindHasDocker(candidate)} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-0.5 flex-wrap" />
+                          <KindBadges gpu={false} noDocker={lacksDocker(candidate)} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-0.5 flex-wrap" />
                         </span>
                         <OfferMarks offers={candidate.offers} pluginId={pluginId} />
                         {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}

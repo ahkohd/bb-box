@@ -16,7 +16,7 @@ import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
 import { parseTartSettings } from "../src/backends/tart/config.ts";
 import { tartDriver } from "../src/backends/tart/index.ts";
 import type { BackendContext, BackendDriver, DoctorReport } from "../src/backends/types.ts";
-import { backendPart, checkDocument, exported, generalConfig, readDraft, withSecretChanges, type ConfigDocument, type Secrets } from "../src/core/document.ts";
+import { backendPart, checkDocument, exported, generalConfig, readDraft, upgradeDocument, withSecretChanges, type ConfigDocument, type Secrets } from "../src/core/document.ts";
 import { CLEARED_KEY, COPY_KEY, DOCUMENT_KEY, SECRETS_KEY, SIZES_ADOPTED_KEY, fromSettings, type MovedCopy } from "../src/core/move.ts";
 import { boundedDoctor, type ApplyResult, type CheckResult, type ConfigState } from "../src/plugin/configuration.ts";
 import { setup, type BbBox } from "../src/plugin/setup.ts";
@@ -210,10 +210,7 @@ test("the move builds the document from realistic saved settings, keeping secret
   const { document, secrets, notes } = fromSettings(SAVED, DRIVERS, false);
   assert.deepEqual(notes, []);
   assert.deepEqual(document.general, { enrol: false });
-  assert.deepEqual(document.kinds, {
-    linux: { presets: { small: { cores: 4, memoryMiB: 8192 } } },
-    "linux-docker": { presets: { small: { cores: 4, memoryMiB: 8192 } } },
-  });
+  assert.deepEqual(document.kinds, { linux: { presets: { small: { cores: 4, memoryMiB: 8192 } } } });
   assert.equal(document.revision, 1);
   assert.equal(document.backends.length, 1, "the SSH host pool was never set, so it is not in the document");
   const [lxc] = document.backends;
@@ -400,7 +397,7 @@ test("a key a backend generated survives the move and the restarts unchanged, fo
   for (const [key, value] of Object.entries(seed)) assert.deepEqual(await kvOf(world).get(key), value, key);
   // Proxmox LXC keeps the warm guests it kept: one per flavour that had one.
   const lxc = world.real.get("proxmox-lxc")!;
-  assert.deepEqual(["linux", "linux-docker", "linux-desktop", "linux-desktop-cpu"].map((kind) => lxc.warm(kind)), [1, 0, 1, 0]);
+  assert.deepEqual(["linux", "linux-desktop", "linux-desktop-cpu"].map((kind) => lxc.warm(kind)), [1, 1, 0]);
 
   world.real.clear();
   const again = await restart();
@@ -521,7 +518,7 @@ test("a draft's problems are at their fields' paths", () => {
   assert.ok(checked.includes("kinds.linux-headless: linux-headless is now called linux. Use that."));
   assert.ok(checked.includes("general.defaultKind: linux-headless is now called linux. Use that."));
   assert.ok(checked.some((line) => line.startsWith("kinds.linux.presets.small: The small linux preset, 64 cores")));
-  assert.ok(checked.includes("kinds.linux-docker.spares: Keep 0 to 10 spare linux-docker boxes."));
+  assert.ok(checked.includes("kinds.linux-docker: linux-docker is now linux with Docker, not a kind of its own. Use linux."));
   assert.ok(checked.includes("backends.proxmox-lxc.url: Set the Proxmox API URL."));
   assert.ok(checked.includes("backends.proxmox-lxc.warm.linux: Keep 0 to 20 warm linux boxes."));
   assert.ok(checked.some((line) => line.startsWith("backends.proxmox-lxc.warm.macos: Proxmox LXC makes ")));
@@ -529,12 +526,51 @@ test("a draft's problems are at their fields' paths", () => {
 
   const off = checkDocument(readDraft({ general: { defaultKind: "linux-desktop" }, kinds: { "linux-desktop": { enabled: false } } }, DRIVERS).document, {}, DRIVERS);
   assert.deepEqual(off.map((problem) => problem.path), ["general.defaultKind"], "a default kind that is off is a problem");
-  const unoffered = checkDocument(readDraft({ general: { defaultKind: "linux-docker" } }, DRIVERS).document, {}, DRIVERS);
+  const unoffered = checkDocument(readDraft({ general: { defaultKind: "linux-desktop-cpu" } }, DRIVERS).document, {}, DRIVERS);
   assert.deepEqual(unoffered, [], "a kind no backend offers just now is fine");
 });
 
+test("an earlier kind ID's entries move to its kind once, unless the kind has its own (041)", () => {
+  const stored = readDraft(
+    {
+      general: { defaultKind: "linux-docker" },
+      kinds: {
+        "linux-docker": { enabled: false, spares: 2, presets: { small: { cores: 4 } } },
+        "linux-arm64-docker": { spares: 1 },
+        "linux-arm64": { spares: 3 },
+      },
+      backends: [{ id: "proxmox-lxc", type: "proxmox-lxc", enabled: false, warm: { linux: 1, "linux-docker": 2, "linux-desktop": 1 } }],
+    },
+    DRIVERS,
+  ).document;
+  const upgraded = upgradeDocument(stored)!;
+  assert.deepEqual(upgraded.kinds, {
+    "linux-arm64": { spares: 3 },
+    linux: { spares: 2, presets: { small: { cores: 4 } } },
+  }, "linux-docker's entry moves without turning linux off; linux-arm64 keeps its own");
+  assert.deepEqual(upgraded.general, { defaultKind: "linux" });
+  assert.deepEqual(upgraded.backends[0]!.warm, { linux: 3, "linux-desktop": 1 }, "a warm count adds to its kind's, as they were the same guests");
+  assert.equal(upgradeDocument(upgraded), null, "once");
+  assert.equal(upgradeDocument(readDraft({ kinds: { linux: { spares: 1 } } }, DRIVERS).document), null, "nothing to move, nothing written");
+  assert.deepEqual(checkDocument(upgraded, {}, DRIVERS).filter((problem) => !problem.path.startsWith("backends.")), []);
+});
+
+test("a start moves a stored document's earlier kind IDs once, as a write would (041)", async () => {
+  const { world, restart } = await start(SAVED);
+  const kv = kvOf(world);
+  const document = (await kv.get<ConfigDocument>(DOCUMENT_KEY))!;
+  await kv.set(DOCUMENT_KEY, { ...document, kinds: { "linux-docker": { spares: 1 } } });
+  const app = await restart();
+  const moved = (await kvOf(world).get<ConfigDocument>(DOCUMENT_KEY))!;
+  assert.deepEqual(moved.kinds, { linux: { spares: 1 } });
+  assert.equal(moved.revision, document.revision + 1);
+  assert.deepEqual(app.configuration.document, moved);
+  await restart();
+  assert.deepEqual(await kvOf(world).get(DOCUMENT_KEY), moved, "the next start changes nothing");
+});
+
 test("only a kind that is on keeps spare boxes (032)", () => {
-  const { document, problems } = readDraft({ kinds: { linux: { spares: 2 }, "linux-docker": { spares: 0 }, "linux-desktop": { enabled: false, spares: 1 } } }, DRIVERS);
+  const { document, problems } = readDraft({ kinds: { linux: { spares: 2 }, "linux-desktop-cpu": { spares: 0 }, "linux-desktop": { enabled: false, spares: 1 } } }, DRIVERS);
   assert.deepEqual(problems, []);
   assert.deepEqual(generalConfig(document).spares, { linux: 2 });
   assert.deepEqual(generalConfig(readDraft({}, DRIVERS).document).spares, {}, "none by default");
@@ -597,6 +633,7 @@ test("config.get gives the document with each secret as set or not, the defaults
     os: "linux",
     arch: "x86_64",
     features: [],
+    docker: false,
     drivers: ["fake", "proxmox-lxc"],
     spares: { ready: 0, making: 0 },
   });

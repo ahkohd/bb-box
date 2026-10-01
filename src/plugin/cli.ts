@@ -9,7 +9,7 @@ import type { DoctorReport } from "../backends/types.ts";
 import type { Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, boxLine, configText, doctorText, idleWords, movedText, problemsText } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, movedText, problemsText } from "./views.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -107,7 +107,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               kinds
                 .map((kind) => {
                   const presets = kind.presets.map((preset) => `  ${preset.name}${preset.name === kind.defaultPreset ? " (default)" : ""}: ${preset.words}`);
-                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, from ${kind.backends.join(", ")}. ${kind.description} ${adminText(kind)}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
+                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, from ${kind.backends.join(", ")}. ${kind.description} ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
                 })
                 .join("\n"),
             );

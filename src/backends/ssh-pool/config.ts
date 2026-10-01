@@ -11,14 +11,17 @@
 // The user is bb-box's admin user on the machine, bbbox-admin by default,
 // which setup/ssh-pool/setup.sh makes. "via" is a jump host, reached with the
 // same key. "reset=machine" says the machine has a whole-machine reset, which
-// linux-docker needs. setup.sh prints each machine's line and its host keys.
+// Docker needs. Listing linux-docker, an alias of linux with Docker (041),
+// says the machine gives its boxes Docker. The pool's linux boxes have Docker
+// only when every machine does. setup.sh prints each machine's line and its
+// host keys.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
-import { currentKindId } from "../kinds.ts";
+import { kindRequest } from "../kinds.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
-export const SSH_POOL_KINDS = ["linux", "linux-docker"] as const;
+export const SSH_POOL_KINDS = ["linux"] as const;
 export type SshPoolKind = (typeof SSH_POOL_KINDS)[number];
 
 export const SSH_POOL_DEFAULTS = { adminUser: "bbbox-admin", port: 22 } as const;
@@ -43,6 +46,8 @@ export interface SshPoolMachine {
   readonly admin: SshPoolHost;
   readonly jump: SshPoolHost | null;
   readonly kinds: readonly SshPoolKind[];
+  /** Its line lists linux-docker: its boxes may have Docker, and root through it. */
+  readonly docker: boolean;
   /** "machine" when the operator's reset-machine restores the whole machine. */
   readonly reset: "home" | "machine";
   readonly labels: readonly string[];
@@ -160,11 +165,15 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
   if (!admin) return bad(`Give machine ${name} an address as [user@]host[:port].`);
   if (!kindList) return bad(`Give machine ${name} the kinds it serves.`);
   const kinds: SshPoolKind[] = [];
+  let docker = false;
   for (const word of kindList.split(",")) {
-    const id = currentKindId(word);
-    const kind = SSH_POOL_KINDS.includes(id as SshPoolKind) ? (id as SshPoolKind) : null;
-    if (!kind) return bad(`Machine ${name} cannot serve kind "${word}": the SSH host pool offers ${SSH_POOL_KINDS.join(" and ")}.`);
+    const asked = kindRequest(word);
+    const kind = SSH_POOL_KINDS.includes(asked.kind as SshPoolKind) ? (asked.kind as SshPoolKind) : null;
+    if (!kind || asked.features.some((feature) => feature !== "docker")) {
+      return bad(`Machine ${name} cannot serve kind "${word}": the SSH host pool offers linux, or linux-docker for linux with Docker.`);
+    }
     if (!kinds.includes(kind)) kinds.push(kind);
+    if (asked.features.includes("docker")) docker = true;
   }
   let jump: SshPoolHost | null = null;
   let reset: "home" | "machine" = "home";
@@ -184,13 +193,13 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
       }
     } else return bad(`Machine ${name} has an unknown option "${option}".`);
   }
-  if (kinds.includes("linux-docker") && reset !== "machine") {
+  if (docker && reset !== "machine") {
     problems.push(
       `Machine ${name} serves linux-docker, which needs reset=machine: Docker gives the box root, so only a whole-machine reset makes the machine clean. Remove linux-docker, or set up reset-machine as the setup guide says and add reset=machine.`,
     );
     return null;
   }
-  return { name, admin, jump, kinds, reset, labels };
+  return { name, admin, jump, kinds, docker, reset, labels };
 }
 
 export const SSH_POOL_PREFIX = "ssh-pool-";

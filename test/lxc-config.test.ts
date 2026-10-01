@@ -116,7 +116,7 @@ test("an unset Linux setting reads its key from before 027, and a set one wins",
     const replaced = LXC_SETTINGS[key]!;
     assert.ok(!("default" in replaced), key);
     assert.match(replaced.label, /\(replaced\)$/, key);
-    assert.match(replaced.description ?? "", /^Replaced by Box sizes, which took a saved value once as the default size of (linux and linux-docker|linux-desktop|linux-desktop-cpu) boxes\. Changing it does nothing\.$/, key);
+    assert.match(replaced.description ?? "", /^Replaced by Box sizes, which took a saved value once as the default size of (linux|linux-desktop|linux-desktop-cpu) boxes\. Changing it does nothing\.$/, key);
   }
 });
 
@@ -190,8 +190,8 @@ test("the size keys saved before 028 give each kind's earlier size", () => {
   assert.deepEqual(earlierLxcSizes({}), {}, "nothing saved, nothing to carry over");
   assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-linux-templates": "9000", "proxmox-lxc-linux-warm": 2 }), {}, "only the size keys count");
   const six = { cores: 6, memoryMiB: 4096, diskGiB: 20 };
-  assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-linux-cores": 6, "proxmox-lxc-linux-disk-gib": 20 }), { linux: six, "linux-docker": six });
-  assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-headless-cores": 6, "proxmox-lxc-headless-disk-gib": 20 }), { linux: six, "linux-docker": six }, "under the keys from before 027 too");
+  assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-linux-cores": 6, "proxmox-lxc-linux-disk-gib": 20 }), { linux: six });
+  assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-headless-cores": 6, "proxmox-lxc-headless-disk-gib": 20 }), { linux: six }, "under the keys from before 027 too");
   assert.deepEqual(
     earlierLxcSizes({ "proxmox-lxc-desktop-memory-mib": 16384, "proxmox-lxc-desktop-cpu-disk-gib": 0 }),
     {

@@ -174,15 +174,17 @@ export function dockerKinds(config: DockerConfig): BoxKind[] {
       label: "Linux",
       description: "A Linux container for builds, backend services and the agent's own work.",
       requires: [],
-      capabilities: { os: "linux", arch: "x86_64", gpu: false, features: [], command: DOCKER_COMMAND, displays: [], computerUse: null, enrol: true },
-      readyTimeoutMs: READY_TIMEOUT_MS,
-    },
-    "linux-docker": {
-      id: "linux-docker",
-      label: "Linux with Docker",
-      description: "A Linux container with Docker inside, for builds and services that need it.",
-      requires: ["docker"],
-      capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: DOCKER_COMMAND, displays: [], computerUse: null, enrol: true },
+      capabilities: {
+        os: "linux",
+        arch: "x86_64",
+        gpu: false,
+        // Its own Docker daemon needs a privileged container, so only with the setting on (041).
+        features: config.docker ? ["docker"] : [],
+        command: DOCKER_COMMAND,
+        displays: [],
+        computerUse: null,
+        enrol: true,
+      },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
     "linux-desktop": {
@@ -617,11 +619,11 @@ export class DockerBackend implements Backend {
         );
       }
 
-      if (this.#config.images["linux-docker"]) {
+      if (this.#config.docker) {
         if (info.rootless) {
-          push("docker.privileged", "linux-docker boxes", "fail", "Rootless Docker cannot run the privileged containers linux-docker boxes need.", "Turn off linux-docker boxes, or use rootful Docker.");
+          push("docker.privileged", "Docker in linux boxes", "fail", "Rootless Docker cannot run the privileged containers that give linux boxes Docker.", "Turn off Docker in linux boxes, or use rootful Docker.");
         } else {
-          push("docker.privileged", "linux-docker boxes", "ok", "Each runs its own Docker daemon in a privileged container, which can take over the Docker host.");
+          push("docker.privileged", "Docker in linux boxes", "ok", "Each linux box runs its own Docker daemon in a privileged container, which can take over the Docker host.");
         }
       }
 
@@ -742,7 +744,7 @@ export class DockerBackend implements Backend {
       ...(gpu ? { [LABELS.gpu]: gpu } : {}),
     };
     const extra =
-      box.kind === "linux-docker"
+      box.kind === "linux" && this.#config.docker
         ? // Docker's own data on a volume, since overlayfs cannot hold overlayfs.
           ["--privileged", "--env", "BBBOX_DOCKERD=1", "--volume", "/var/lib/docker"]
         : box.kind === "linux-desktop" && gpu

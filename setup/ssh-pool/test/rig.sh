@@ -16,9 +16,11 @@
 #                       plain's sshd
 #
 # <dir> gets the key bb-box uses, settings.json with plain and systemd for
-# scripts/conformance.ts and scripts/smoke.ts, and via.json with plain
-# reached through the bastion. Keep <dir> out of the repository. Everything
-# the rig makes is named bbbox-sshpool*.
+# scripts/conformance.ts and scripts/smoke.ts, docker.json with systemd
+# alone, whose boxes have Docker, and via.json with plain reached through
+# the bastion. A pool's boxes have Docker only when every machine gives it
+# (041), so settings.json's do not. Keep <dir> out of the repository.
+# Everything the rig makes is named bbbox-sshpool*.
 
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -103,6 +105,14 @@ up() {
   "ssh-pool-ssh-private-key": { "file": "id_ed25519" }
 }
 EOF
+  cat >"$dir/docker.json" <<EOF
+{
+  "ssh-pool-enabled": true,
+  "ssh-pool-machines": $(json "$(block 1 <"$dir/systemd.txt")"),
+  "ssh-pool-known-hosts": $(json "$(block 2 <"$dir/systemd.txt")"),
+  "ssh-pool-ssh-private-key": { "file": "id_ed25519" }
+}
+EOF
   bastion=$(docker exec "$NAME-bastion" sh -c 'for f in /etc/ssh/ssh_host_*_key.pub; do echo "[127.0.0.1]:2220 $(cut -d" " -f1,2 "$f")"; done')
   plain=$(docker exec "$NAME-plain" sh -c 'for f in /etc/ssh/ssh_host_*_key.pub; do echo "$1 $(cut -d" " -f1,2 "$f")"; done' sh "$NAME-plain")
   cat >"$dir/via.json" <<EOF
@@ -114,7 +124,7 @@ $plain"),
   "ssh-pool-ssh-private-key": { "file": "id_ed25519" }
 }
 EOF
-  echo "The pool is up. Settings: $dir/settings.json, and through the bastion: $dir/via.json"
+  echo "The pool is up. Settings: $dir/settings.json, with Docker: $dir/docker.json, and through the bastion: $dir/via.json"
   printf '%s\n' "$machines" | sed 's/^/  /'
 }
 

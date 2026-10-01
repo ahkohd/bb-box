@@ -9,7 +9,7 @@
 
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
-export const DOCKER_KINDS = ["linux", "linux-docker", "linux-desktop-cpu", "linux-desktop"] as const;
+export const DOCKER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop"] as const;
 export type DockerKind = (typeof DOCKER_KINDS)[number];
 
 /** The images' layout version. setup/docker/build.sh labels each image with it, and the doctor checks the label. */
@@ -20,6 +20,8 @@ export interface DockerConfig {
   readonly host: string | null;
   /** The image of each kind, or null when the kind is off. */
   readonly images: Readonly<Record<DockerKind, string | null>>;
+  /** Whether linux boxes are privileged containers with their own Docker daemon (041). */
+  readonly docker: boolean;
   /** The network bb-box makes for its boxes and keeps them on. */
   readonly network: string;
   /** The most bb-box containers on the host, counting every install's. */
@@ -62,7 +64,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [DOCKER_KEYS.linuxImage]: {
     type: "string",
     label: "Linux image",
-    description: "The image linux boxes, and linux-docker boxes when allowed, run. setup/docker/build.sh builds it. Empty turns them off.",
+    description: "The image linux boxes run. setup/docker/build.sh builds it. Empty turns them off.",
     group: "boxes",
     default: DOCKER_DEFAULTS.linuxImage,
   },
@@ -75,9 +77,9 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   },
   [DOCKER_KEYS.privileged]: {
     type: "boolean",
-    label: "Privileged linux-docker boxes",
+    label: "Docker in linux boxes",
     description:
-      "Offer linux-docker boxes, which run their own Docker daemon. Each runs as a privileged container, which can take over the Docker host. Turn it on only where the agents may.",
+      "Give each linux box its own Docker daemon. Each runs as a privileged container, which can take over the Docker host. Turn it on only where the agents may. Off, linux boxes say No Docker.",
     group: "boxes",
     default: false,
   },
@@ -163,7 +165,6 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   const gpu = values[DOCKER_KEYS.gpuDesktops] === true;
   const images: Record<DockerKind, string | null> = {
     linux: linux || null,
-    "linux-docker": privileged && linux ? linux : null,
     "linux-desktop-cpu": desktop || null,
     "linux-desktop": gpu && desktop ? desktop : null,
   };
@@ -178,5 +179,5 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   if (!(reserveMemoryMiB >= 0)) problem(DOCKER_KEYS.reserveMemoryMiB, "Docker: the memory kept free cannot be negative.");
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { host: host || null, images, network, boxes, desktopsPerGpu, reserveMemoryMiB } };
+  return { ok: true, config: { host: host || null, images, docker: privileged && Boolean(linux), network, boxes, desktopsPerGpu, reserveMemoryMiB } };
 }

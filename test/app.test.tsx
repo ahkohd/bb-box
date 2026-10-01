@@ -9,7 +9,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/p
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
-import { forgetLive, isArm64Badge } from "../src/app/common.tsx";
+import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
 import { groupKinds, kindFacts, kindName, kindTitle, offerWhere, providerGlyph } from "../src/app/kind-picker.tsx";
 type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
@@ -200,6 +200,7 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     gpu: false,
     requires: [],
     extras: ["docker"],
+    docker: true,
     desktop: false,
     display: null,
     control: null,
@@ -238,6 +239,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     os: "linux",
     arch: id.includes("arm64") ? "arm64" : "x86_64",
     features: id === "linux-docker" ? ["docker"] : [],
+    docker: true,
     enrol: true,
     spares: { target: 0, ready: 0, making: 0 },
     admin: true,
@@ -409,8 +411,8 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
       },
     },
     kinds: [
-      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
-      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], drivers: ["fake"], spares: { ready: 0, making: 0 } },
+      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], docker: true, drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
+      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], docker: true, drivers: ["fake"], spares: { ready: 0, making: 0 } },
     ],
     drivers: [
       {
@@ -522,7 +524,7 @@ test("the status line says the state, the timings, BB enrolment and the display"
 });
 
 test("the panel lists the thread's boxes as rows, opens a row's details, and opens a desktop", async () => {
-  const { handlers } = server([box({ timings: { clone: 700, total: 2100, enrol: 5300, "start.resume": 4100, "start.ssh": 1200, "start.clock": 600, "start.total": 6000 } }), desktopBox()]);
+  const { handlers } = server([box({ timings: { clone: 700, total: 2100, enrol: 5300, "start.resume": 4100, "start.ssh": 1200, "start.clock": 600, "start.total": 6000 } }), desktopBox({ docker: false })]);
   const slot = panel(handlers);
 
   expect(await slot.findByText("calm-otter")).toBeTruthy();
@@ -531,6 +533,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.getAllByText("Ready in 2.1 s")).toHaveLength(2);
   expect(slot.getAllByText("BB machine in 5.3 s")).toHaveLength(2);
   expect(slot.getByText("GPU")).toBeTruthy();
+  expect(slot.getAllByText("No Docker")).toHaveLength(1);
   expect(slot.getAllByText("LXC")).toHaveLength(2);
   expect(slot.getByRole("button", { name: "New box" }).textContent).toBe("");
   expect(slot.queryByText("192.0.2.10")).toBeNull();
@@ -1477,6 +1480,7 @@ test("the kind picker groups kinds by OS, names rows by their tools, and its pan
     forms: ["VM"],
     enrol: false,
     computerUse: true,
+    docker: false,
     offers: [{ backend: "proxmox-qemu", type: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve1"], form: "VM", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: 30000, docker: false }],
   };
   const pooled: KindView = {
@@ -1495,7 +1499,8 @@ test("the kind picker groups kinds by OS, names rows by their tools, and its pan
   const form = await screen.findByRole("radiogroup", { name: "Kind" });
   expect(within(form).getAllByRole("group").map((group) => group.getAttribute("aria-label"))).toEqual(["Linux", "Windows"]);
   const options = within(form).getAllByRole("radio");
-  expect(options.map((option) => option.textContent)).toEqual(["TerminalLXCPhysical", "Desktop, GPULXCpve", "DesktopNo DockerVMpve1"]);
+  // Only a Linux kind says No Docker: Windows never had it (041).
+  expect(options.map((option) => option.textContent)).toEqual(["TerminalLXCPhysical", "Desktop, GPULXCpve", "DesktopVMpve1"]);
   // Each option describes itself by the pane, which shows the chosen kind until something is hovered or focused.
   const pane = document.getElementById("new-box-kind-detail")!;
   expect(options.map((option) => option.getAttribute("aria-describedby"))).toEqual(["new-box-kind-detail", "new-box-kind-detail", "new-box-kind-detail"]);
@@ -1541,6 +1546,8 @@ test("the kind picker's words: titles, names, groups, where an offer runs and it
   expect(offerWhere({ ...offer, type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
   expect(["proxmox-lxc", "proxmox-qemu", "docker", "tart", "ssh-pool", "fake"].map((type) => providerGlyph({ ...offer, type }))).toEqual(["proxmox", "proxmox", "docker", "laptop", "plug", "server"]);
   expect(kindFacts({ ...linux, offers: [{ ...offer, docker: false }] }).map((fact) => fact.label)).toEqual(["System", "Has", "Lacks", "BB machine", "Sizes"]);
+  // The badge: a Linux kind or box without Docker, not one whose offers differ, nor another OS (041).
+  expect([lacksDocker({ os: "linux", docker: false }), lacksDocker({ os: "linux", docker: null }), lacksDocker({ os: "linux", docker: true }), lacksDocker({ os: "windows", docker: false })]).toEqual([true, false, false, false]);
 });
 
 test("a field that takes a value from another backend names that backend when there are two of its type (#197)", () => {

@@ -41,12 +41,13 @@ qualifier and only desktops say so.
 | Kind ID | Shown as | Icon |
 | --- | --- | --- |
 | `linux` | Linux | server |
-| `linux-docker` | Linux with Docker | server |
 | `linux-desktop` | Linux desktop | monitor |
 | `linux-desktop-cpu` | Linux desktop | monitor |
 | later `macos`, `macos-desktop`, `windows-desktop` | macOS, macOS desktop, Windows desktop | server, monitor |
 
-The panel shows `kindLabel` from the backend; the IDs appear nowhere. Two
+`linux-docker` is `linux` with Docker, an alias an agent may ask for, and
+never a row (041). The panel shows `kindLabel` from the backend; the IDs
+appear nowhere. Two
 kinds may share a label: the GPU desktop and the CPU desktop are both
 "Linux desktop", and badges tell them apart (the operator's annotation of
 1 October 2026, which removed "(no GPU)" from the label).
@@ -61,11 +62,12 @@ New box options and the desktop lists:
 - **GPU** where the kind takes one. A box of a GPU kind whose display fell
   back to the CPU says "Display on the CPU" in its status line, in warning
   text; otherwise the status line does not repeat the badge.
-- **No Docker** for a kind none of whose offers has Docker, such as
-  Windows (041: every Linux box has Docker, so only its absence is said;
-  a box row says nothing about it).
+- **No Docker** for a Linux kind none of whose offers has Docker, and a
+  Linux box without it (041: every other Linux box has Docker, so only its
+  absence is said). Other systems never had Docker, so they carry none, and
+  nor does a kind whose offers differ.
 - **arm64** for a Linux (or later Windows) kind on arm64 (040,
-  `linux-arm64` and its desktop and Docker kinds), so two Linux rows read
+  `linux-arm64` and its desktop), so two Linux rows read
   apart. macOS runs on arm64 only, so it carries none.
 - **What the box is**, one word from its backend's driver: LXC, Container
   (the Docker backend's, so the word Docker means the feature, 041), VM
@@ -226,7 +228,7 @@ the pane sits under the list, above Size.
 | BB machine yes: Git            |           [VM]                        |
 |           credentials, machine |  Windows                              |
 |           variables, child     |   ( ) [#] Desktop         [P] pve     |
-|           threads              |           [No Docker] [VM]            |
+|           threads              |           [VM]                        |
 | Sizes     Small 4 cores · 8    | Size                                  |
 |           GiB (default) · ...  |  [ Small ] [ Medium ] [ Large ] [ Custom ] |
 |                                |  4 cores · 8 GiB memory · base disk   |
@@ -248,9 +250,10 @@ still carries the title "New box".
   "Terminal, arm64"), so a list is never "Linux, Linux, Linux" (the
   operator's note of 1 October 2026). Under the name, on a line of its own,
   the badges say what the boxes are (LXC, Container, VM, Physical), "No
-  Docker" when no offer has Docker (041), and "Ready now" when a spare is
-  ready (032). At the right, a provider mark per offer: the provider's
-  glyph (Proxmox, Docker, a laptop for a Mac, a plug for a pool machine)
+  Docker" for a Linux kind no offer of which has Docker (041), and "Ready
+  now" when a spare is ready (032). At the right, a provider mark per
+  offer: the provider's glyph (Proxmox, Docker, a laptop for a Mac, a plug
+  for a pool machine)
   and the host's name when the kind has one offer. Options are chosen with
   a click or the arrow keys; the chosen one is highlighted with a check.
   The list comes from the kinds on offer, so a new backend's kinds need no

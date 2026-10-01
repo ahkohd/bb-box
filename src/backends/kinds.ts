@@ -1,7 +1,9 @@
-// Kind IDs that were renamed (027). The default box has no qualifier, and
-// only desktops say so: linux-headless became linux. The earlier IDs stay
-// accepted wherever a kind ID comes in: box_acquire, stored records and the
-// kind a guest names. What bb-box shows uses the current IDs.
+// Kind IDs that were renamed (027), and aliases (041). The default box has no
+// qualifier, and only desktops say so: linux-headless became linux. An alias
+// names a kind and the features its box must have: linux-docker is linux
+// with Docker. Earlier IDs and aliases stay accepted wherever a kind ID comes
+// in: box_acquire, the configuration, stored records and the kind a guest
+// names. What bb-box shows uses the current IDs, and backends offer only kinds.
 
 import type { Arch, GuestOs } from "./types.ts";
 
@@ -10,14 +12,41 @@ const RENAMED: ReadonlyMap<string, string> = new Map([
   ["linux-headless-docker", "linux-docker"],
 ]);
 
-/** The current ID of a kind, given its current or an earlier ID. */
-export function currentKindId(id: string): string {
-  return RENAMED.get(id) ?? id;
+/** What an alias asks for (041). */
+export interface KindAlias {
+  readonly kind: string;
+  readonly features: readonly string[];
 }
 
-/** True when `id` is an earlier ID of a kind that has a new one. */
+const ALIASES: ReadonlyMap<string, KindAlias> = new Map([
+  ["linux-docker", { kind: "linux", features: ["docker"] }],
+  ["linux-arm64-docker", { kind: "linux-arm64", features: ["docker"] }],
+]);
+
+/** A kind, and the features a box of it must have, given a kind's current or earlier ID or an alias. */
+export function kindRequest(id: string): KindAlias {
+  const renamed = RENAMED.get(id) ?? id;
+  return ALIASES.get(renamed) ?? { kind: renamed, features: [] };
+}
+
+/** The current ID of a kind, given its current or an earlier ID or an alias. */
+export function currentKindId(id: string): string {
+  return kindRequest(id).kind;
+}
+
+/** True when `id` is an earlier ID of a kind that has a new one, or an alias. */
 export function isEarlierKindId(id: string): boolean {
-  return RENAMED.has(id);
+  return RENAMED.has(id) || ALIASES.has(id);
+}
+
+/** The aliases, for agents: each with the kind and features it asks for. */
+export function kindAliases(): readonly (KindAlias & { readonly id: string })[] {
+  return [...ALIASES].map(([id, alias]) => ({ id, ...alias }));
+}
+
+/** How the panel and agents name a feature. */
+export function featureWord(feature: string): string {
+  return feature === "docker" ? "Docker" : feature;
 }
 
 /** What a kind is, in words, for the settings page, which lists kinds no backend offers now. */
@@ -30,14 +59,13 @@ export interface KindInfo {
   readonly os: GuestOs;
   /** x86_64 unless the kind is arm64 (040). */
   readonly arch: Arch;
-  /** The features every offer of it promises, such as "docker". */
+  /** The features every offer of it promises. None for a Linux kind, whose offers may differ on Docker (041). */
   readonly features: readonly string[];
 }
 
 /** The kinds bb-box knows (027). A backend's own kind may describe itself more closely. */
 export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   linux: { label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [] },
-  "linux-docker": { label: "Linux with Docker", description: "A Linux box with Docker, for builds and services that need it.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: ["docker"] },
   "linux-desktop": { label: "Linux desktop", description: "A Linux desktop on a GPU, for computer use, browsers and app development.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [] },
   "linux-desktop-cpu": { label: "Linux desktop", description: "A Linux desktop drawn by the CPU, for computer use and browsers.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: [] },
   "linux-arm64": {
@@ -48,15 +76,6 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
     os: "linux",
     arch: "arm64",
     features: [],
-  },
-  "linux-arm64-docker": {
-    label: "Linux on arm64 with Docker",
-    description: "A Linux box on arm64 with Docker. amd64 container images and x86_64 binaries do not run there.",
-    gpu: false,
-    desktop: false,
-    os: "linux",
-    arch: "arm64",
-    features: ["docker"],
   },
   "linux-arm64-desktop-cpu": {
     label: "Linux desktop on arm64",
@@ -73,5 +92,5 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
 };
 
 export function kindInfo(id: string): KindInfo {
-  return KIND_INFO[id] ?? { label: id, description: "", gpu: false, desktop: false, os: id.startsWith("macos") ? "macos" : id.startsWith("windows") ? "windows" : "linux", arch: id.startsWith("macos") || /-arm64\b/.test(id) ? "arm64" : "x86_64", features: /-docker\b/.test(id) ? ["docker"] : [] };
+  return KIND_INFO[id] ?? { label: id, description: "", gpu: false, desktop: false, os: id.startsWith("macos") ? "macos" : id.startsWith("windows") ? "windows" : "linux", arch: id.startsWith("macos") || /-arm64\b/.test(id) ? "arm64" : "x86_64", features: [] };
 }

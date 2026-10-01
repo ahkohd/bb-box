@@ -45,8 +45,7 @@ installs can share machines: each leaves alone the boxes of the other.
 - BB's server, where bb-box runs, must reach the machine's sshd, directly or
   through a jump host.
 - At least the default size of the kinds it serves, or no box made at that
-  size fits it: 2 cores and 4 GiB of memory for `linux` and
-  `linux-docker`. For smaller machines, make the presets smaller with the
+  size fits it: 2 cores and 4 GiB of memory for `linux`. For smaller machines, make the presets smaller with the
   `box-sizes` setting (see Sizes under Notes).
 
 On Debian or Ubuntu, this installs the tools, then Node.js 24 from
@@ -171,13 +170,16 @@ A line is:
 | --- | --- |
 | `<name>` | Lower-case letters, digits and `-`, unique in the pool |
 | `[user@]host[:port]` | The admin user and how to reach sshd. Put an IPv6 address in brackets |
-| `<kinds>` | `linux`, or `linux,linux-docker` for a machine with Docker and a whole-machine reset |
+| `<kinds>` | `linux`, or `linux,linux-docker` for a machine that gives its boxes Docker, which needs a whole-machine reset. `linux-docker` means linux with Docker |
 | `via=` | A jump host, reached with the same key |
 | `reset=machine` | The machine has a whole-machine reset. `setup.sh` adds it when you give `--reset-hook` |
 | `labels=` | Words for your own use |
 
-When a box asks for a kind, bb-box lends the free machine with the fewest
-other kinds, so machines with Docker stay free for boxes that need it.
+bb-box lends the smallest free machine that fits the box's size. The pool's
+boxes have Docker only when every machine's line lists `linux-docker`
+([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md)).
+When only some lines list it, no box has Docker, each says No Docker, and
+the doctor warns.
 
 ### Through a jump host
 
@@ -216,9 +218,9 @@ succeeds.
 
 The default reset removes what the box's user made. It does not undo:
 
-- changes made as root. Only `linux-docker` boxes can make them: they have
-  sudo and the `docker` group. That is why `linux-docker` needs a
-  whole-machine reset
+- changes made as root. Only boxes with Docker can make them: they have
+  sudo and the `docker` group. That is why Docker needs a whole-machine
+  reset
 - changes to files other users let anyone write
 - files on network filesystems, such as NFS
 - files in container storage, such as `/var/lib/docker`, which it never
@@ -231,9 +233,10 @@ hold nothing you would not show the box.
 
 ## Docker
 
-`linux-docker` boxes have Docker and passwordless sudo, which means root on
-the machine. So bb-box offers Docker only on a machine with a whole-machine
-reset that puts the machine back as it was.
+Boxes with Docker have passwordless sudo too, which means root on the
+machine. So bb-box gives Docker only on a machine with a whole-machine reset
+that puts the machine back as it was, and only when every machine in the
+pool has one. List `linux-docker` on each machine's line.
 
 The whole-machine reset is a program you write. Give it to `setup.sh` with
 `--reset-hook`, which installs it as `/usr/local/libexec/bb-box/reset-machine`.

@@ -8,9 +8,10 @@ each Mac. It offers these kinds:
 - **macos**: a macOS VM for builds and commands, its desktop not shown;
 - **macos-desktop**: the same VM with its desktop shown in the thread's panel,
   shared control, and computer use through Cua Driver;
-- **linux-arm64** and **linux-arm64-docker**: Ubuntu on arm64 with what a
-  Linux box on Proxmox has, Docker included, from a second image (040). Off
-  until you give its image.
+- **linux-arm64**: Ubuntu on arm64 with what a Linux box on Proxmox has,
+  Docker included, from a second image (040). An agent may ask for it as
+  linux-arm64-docker, linux-arm64 with Docker (041). Off until you give its
+  image.
 - **linux-arm64-desktop-cpu**: the same with an XFCE desktop drawn by the
   CPU, shown in the thread's panel, and computer use through Cua Driver,
   from a third image (040). Off until you give its image.
@@ -183,7 +184,7 @@ session.
 
 ### The Linux image (arm64)
 
-Linux boxes on a Mac (`linux-arm64` and `linux-arm64-docker`, 040) are
+Linux boxes on a Mac (`linux-arm64`, 040) are
 clones of a second image, which `prepare-linux-image.sh` builds from Cirrus
 Labs' Ubuntu 24.04. It runs the Proxmox LXC template's own guest scripts in
 the VM (`../proxmox-lxc/template`), with their arm64 tool pins, so a Linux
@@ -270,7 +271,7 @@ keeps its boxes and takes no new ones. The backend's own fields:
 | --- | --- | --- |
 | `ssh-private-key` | empty | A secret. Empty makes bb-box generate one; its public key is in `bb box doctor` |
 | `macos-image`, `macos-desktop-image` | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
-| `linux-image` | empty | The Tart VM `linux-arm64` and `linux-arm64-docker` boxes are cloned from, such as `bb-box-linux`. Empty, the default, turns them off |
+| `linux-image` | empty | The Tart VM `linux-arm64` boxes are cloned from, such as `bb-box-linux`. Empty, the default, turns them off |
 | `linux-desktop-image` | empty | The Tart VM `linux-arm64-desktop-cpu` boxes are cloned from, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
 | `vm-user` | `admin` | The macOS images' user. Linux boxes work as `box` |
 | `vms-per-host` | 2 | At most 2 |
