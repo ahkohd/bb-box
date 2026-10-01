@@ -478,7 +478,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.getByText("192.0.2.10")).toBeTruthy();
   expect(slot.getByText("2 cores, 4 GiB memory")).toBeTruthy();
   expect(slot.getByText("Fake host")).toBeTruthy();
-  expect(slot.getByText("linux x86_64, with docker")).toBeTruthy();
+  expect(slot.getByText("Linux x86_64, with docker")).toBeTruthy();
   expect(slot.getByText("clone 0.7 s · total 2.1 s · BB enrolment 5.3 s")).toBeTruthy();
   expect(slot.getByText("12 minutes ago")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
@@ -690,6 +690,7 @@ test("a Windows box, whose kind cannot enrol, says its BB machine is not for thi
   await slot.findByText("calm-otter");
   fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
   expect(await slot.findByText("not for this kind")).toBeTruthy();
+  expect(slot.getByText(/Windows x86_64/)).toBeTruthy();
   expect(slot.queryByText("off")).toBeNull();
 });
 
