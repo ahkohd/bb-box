@@ -208,6 +208,22 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               return out(`Released box ${positionals.box}.${idleWords(idle, false)}`);
             }),
         }),
+        "docker-check": cliCommand({
+          summary: "Check that Docker on a BB machine answers through bb-box's Docker relay (042), with its version, cores and memory.",
+          positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list.", required: true }],
+          options: jsonOption,
+          run: ({ positionals, options }, ctx) =>
+            guard("Checking Docker on the machine", async () => {
+              const check = await app.dockerCheck(positionals.machine, ctx.signal);
+              if (options.json) return json(check);
+              const { info } = check;
+              return out(
+                `Docker ${info.version} on ${check.name} (${check.hostId}) answers through bb-box's relay: ${info.operatingSystem}, ${info.arch}, ` +
+                  `${info.cpus} cores, ${(info.memoryMiB / 1024).toFixed(1)} GiB memory. ` +
+                  `The first call took ${(check.firstMs / 1000).toFixed(1)} s, opening the relay; the next ${(check.againMs / 1000).toFixed(2)} s.`,
+              );
+            }),
+        }),
         "install-id": cliCommand({
           summary: "Show this install's ID, which it records on its guests. --set takes back the ID it had before it lost its storage.",
           options: { ...jsonOption, set: { type: "string", description: "The ID to use from now on, as bb box doctor lists it." } },

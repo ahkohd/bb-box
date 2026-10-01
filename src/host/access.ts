@@ -1,5 +1,5 @@
-// bb-box's host entry, which BB's daemon runs in a worker on each box that
-// is a BB machine. BB gives GH_TOKEN, the git identity and the machine
+// The access holder in bb-box's host entry (src/host/entry.ts), which BB's
+// daemon runs in a worker on each box that is a BB machine. BB gives GH_TOKEN, the git identity and the machine
 // variables only to processes its daemon starts, and its other workers come
 // and go (a plugin reload stops them, and nothing starts them again). For
 // each call, BB's worker puts the daemon's current variables in
@@ -11,8 +11,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { experimental_defineHostEntry, type ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
-import { hostContract } from "./contract.ts";
+import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
 
 /** What the held process runs: it only waits, about 68 years. */
 export const HOLDER_COMMAND = ["sleep", "2147483647"] as const;
@@ -25,7 +24,7 @@ function fingerprint(names: readonly string[], env: NodeJS.ProcessEnv): string {
 
 const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
 
-export function accessEntry(options: { command?: readonly string[] } = {}) {
+export function accessHandlers(options: { command?: readonly string[] } = {}) {
   const [program, ...args] = options.command ?? HOLDER_COMMAND;
   let held: { child: ChildProcess; fingerprint: string } | null = null;
   let lease: ExperimentalHostWorkerLease | null = null;
@@ -33,10 +32,9 @@ export function accessEntry(options: { command?: readonly string[] } = {}) {
     held?.child.kill("SIGTERM");
     held = null;
   };
-  return experimental_defineHostEntry({
-    contract: hostContract,
+  return {
     handlers: {
-      access: async ({ names }, context) => {
+      access: async ({ names }: { names: readonly string[] }, context: ExperimentalHostRpcContext) => {
         if (!lease) {
           lease = context.experimental_retainWorker();
           context.lifecycle.signal.addEventListener("abort", stop, { once: true });
@@ -58,5 +56,5 @@ export function accessEntry(options: { command?: readonly string[] } = {}) {
       await lease?.dispose();
       lease = null;
     },
-  });
+  };
 }
