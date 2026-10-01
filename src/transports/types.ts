@@ -41,8 +41,12 @@ export type Route =
       readonly type: "websocket";
       readonly url: string;
       readonly headers?: Readonly<Record<string, string>>;
+      /** Subprotocols to ask for, such as "binary", which Proxmox requires. */
+      readonly protocols?: readonly string[];
       /** SHA-256 of a self-signed certificate to pin, in hex with or without colons. */
       readonly fingerprint?: string;
+      /** PEM certificates to trust instead of the system roots, when there is no fingerprint. */
+      readonly ca?: string;
     };
 
 /** What the stream server in the box expects. The relay answers it; the browser never sees it. */

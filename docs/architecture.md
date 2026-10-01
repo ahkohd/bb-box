@@ -205,7 +205,7 @@ The command capability:
 | --- | --- | --- |
 | `tcp` | host and port | a box on a network the BB server reaches |
 | `command` | a command whose stdin and stdout carry the bytes | `ssh -W 127.0.0.1:5900 <host>`, `docker exec -i <container> socat - TCP:127.0.0.1:5900` |
-| `websocket` | URL, headers, and optionally a certificate fingerprint to pin | Proxmox's `vncwebsocket` with its one-time ticket, Orchard's port-forward |
+| `websocket` | URL, headers, subprotocols, and optionally a certificate fingerprint to pin or a CA to trust | Proxmox's `vncwebsocket` with its one-time ticket, Orchard's port-forward |
 
 - `openRoute(route)` in `src/transports/route.ts` is the only code that opens
   a route. It returns a byte channel with backpressure.
@@ -235,9 +235,10 @@ last ([021](decisions/021-desktop-resize-through-the-backend.md)).
   guest, the same noVNC client, and it shows the console session the agent
   uses. `vncproxy` returns a one-time ticket, which authorises the WebSocket,
   and a one-time password, which the relay answers as the VNC password. The
-  route pins the certificate the API serves, not the `cert` in `vncproxy`'s
-  answer. Windows' VirtIO GPU driver ignores a viewer's resize, so the
-  backend sets the mode in the desktop session
+  route trusts the API's certificate as the backend's API calls do, by its
+  fingerprint or its CA, not the `cert` in `vncproxy`'s answer. Windows'
+  VirtIO GPU driver ignores a viewer's resize, so the backend sets the mode
+  in the desktop session
   ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)).
   RDP is not planned. It needs a gateway and a second client, and an RDP
   login moves the session off the console, so you and the agent could not

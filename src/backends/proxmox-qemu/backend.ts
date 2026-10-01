@@ -14,8 +14,8 @@
 // over the space the disk grew by. A stopped VM's disk grows at once, so it
 // grows before the start.
 //
-// The desktop's display, desktop commands, stop and start, and the warm pool
-// are still to come.
+// The desktop is the VM's console, through the API's VNC proxy. Resizing it,
+// desktop commands, stop and start, and the warm pool are still to come.
 
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
@@ -54,7 +54,7 @@ import {
 } from "../types.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import type { SshAccess } from "../../transports/types.ts";
+import type { Display, SshAccess } from "../../transports/types.ts";
 import type { QemuConfig } from "./config.ts";
 
 const MiB = 2 ** 20;
@@ -74,7 +74,7 @@ const KIND: BoxKind = {
   id: "windows-desktop",
   label: "Windows desktop",
   description:
-    "A Windows 11 VM for Windows apps, browsers and builds. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running.",
+    "A Windows 11 VM for Windows apps, browsers and builds, with its desktop shown in the panel. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running.",
   requires: [],
   capabilities: {
     os: "windows",
@@ -82,7 +82,7 @@ const KIND: BoxKind = {
     gpu: false,
     features: [],
     command: { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true },
-    displays: [],
+    displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
     computerUse: null,
     enrol: false,
   },
@@ -419,7 +419,28 @@ export class ProxmoxQemuBackend implements Backend {
 
   async transports(guest: Guest): Promise<BoxTransports> {
     const vmid = this.#vmid(guest);
-    return { command: await this.#command(vmid), displays: [], access: { ssh: this.#access(vmid), dockerHost: null } };
+    const desktop: Display = { ...KIND.capabilities.displays[0]!, label: "Desktop", open: (signal) => this.#console(vmid, signal) };
+    return { command: await this.#command(vmid), displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };
+  }
+
+  /**
+   * The VM's console, through a VNC proxy of the API's own. Its WebSocket is
+   * on the API, so it takes the API's token and trusts the API's certificate
+   * as the API calls do; the `cert` in the proxy's answer is another one.
+   */
+  async #console(vmid: number, signal?: AbortSignal): ReturnType<Display["open"]> {
+    const api = await this.client();
+    const proxy = await api.vncProxy(vmid, signal).catch((error: unknown) => {
+      // The viewer shows only 123 bytes of the reason.
+      if (error instanceof ProxmoxError && error.forbidden) throw new Error("The Proxmox token lacks VM.Console. Run setup-token.sh again to add it.");
+      throw error;
+    });
+    const { tlsFingerprint, caCertificate } = this.#config.proxmox;
+    const trust = tlsFingerprint ? { fingerprint: tlsFingerprint } : caCertificate ? { ca: caCertificate } : {};
+    return {
+      route: { type: "websocket", ...api.vncWebSocket(vmid, proxy), protocols: ["binary"], ...trust },
+      auth: { type: "vnc-password", password: proxy.password },
+    };
   }
 
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {

@@ -121,7 +121,7 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   assert.equal(kind!.capabilities.os, "windows");
   assert.equal(kind!.capabilities.arch, "x86_64");
   assert.equal(kind!.capabilities.enrol, false, "BB cannot enrol a Windows box yet");
-  assert.deepEqual(kind!.capabilities.displays, []);
+  assert.deepEqual(kind!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: false }]);
   assert.equal(kind!.capabilities.computerUse, null);
 });
 
@@ -295,7 +295,10 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.equal(result.stdout, "hi from box\n");
   assert.match(ssh.log().at(-1)!.command, /FromBase64String/, "commands go to PowerShell");
   assert.deepEqual(transports.access!.ssh, { host: "192.0.2.150", port: 22, user: "box", hostKeys: [] });
-  assert.deepEqual(transports.displays, []);
+  assert.deepEqual(
+    transports.displays.map(({ open: _, ...display }) => display),
+    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: false }],
+  );
 });
 
 test("a larger disk grows before the box starts, and C: is extended over it", async () => {
@@ -388,6 +391,52 @@ test("a box that never answers on SSH is deleted, pointing to the template's key
 
   const closed = setup({}, new MemoryStorage(), { portCheck: async () => false });
   await assert.rejects(closed.backend.acquire(identity(), null, hooks().value, signal()), /Nothing answered on port 22 of 192\.0\.2\.150.*C:\\bb-box\\boot\.log/);
+});
+
+test("the desktop is the VM's console, through a VNC proxy of the API's on its token and certificate", async () => {
+  const fingerprint = Array(32).fill("AB").join(":");
+  const { backend, proxmox } = setup({ "tls-fingerprint": fingerprint });
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  const [desktop] = (await backend.transports(guest)).displays;
+  const { route, auth } = await desktop!.open();
+  const proxy = proxmox.calls.at(-1)!;
+  assert.equal(`${proxy.method} ${proxy.path}`, "POST /nodes/pve/qemu/9700/vncproxy");
+  assert.deepEqual(proxy.params, { websocket: "1", "generate-password": "1" });
+  const [issued] = proxmox.consoles;
+  assert.ok(route.type === "websocket" && issued?.password);
+  const url = new URL(route.url);
+  assert.equal(`${url.origin}${url.pathname}`, "wss://pve.example.com:8006/api2/json/nodes/pve/qemu/9700/vncwebsocket");
+  assert.equal(url.searchParams.get("port"), String(issued.port));
+  assert.equal(url.searchParams.get("vncticket"), issued.ticket);
+  assert.deepEqual(route.headers, { Authorization: `PVEAPIToken=${FAKE_TOKEN.tokenId}=${FAKE_TOKEN.tokenSecret}` });
+  assert.deepEqual(route.protocols, ["binary"], "Proxmox requires a subprotocol");
+  assert.equal(route.fingerprint, fingerprint, "the API's certificate, not the one in the proxy's answer");
+  assert.equal(route.ca, undefined);
+  assert.deepEqual(auth, { type: "vnc-password", password: issued.password });
+
+  await desktop!.open();
+  assert.equal(proxmox.consoles.length, 2, "each viewer gets a proxy of its own");
+  proxmox.guests.get(9700)!.status = "stopped";
+  await assert.rejects(desktop!.open(), /VM 9700 not running/);
+  proxmox.intercept = (call) =>
+    call.path.endsWith("/vncproxy")
+      ? { ok: false, status: 403, statusText: "Permission check failed (/vms/9700, VM.Console)", text: async () => '{"data":null}' }
+      : undefined;
+  await assert.rejects(desktop!.open(), /^Error: The Proxmox token lacks VM.Console. Run setup-token.sh again to add it.$/);
+});
+
+test("the console trusts the API's CA, or the system roots when there is none", async () => {
+  const ca = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----";
+  for (const [values, trust] of [
+    [{ "ca-certificate": ca }, { ca }],
+    [{}, {}],
+  ] as const) {
+    const { backend } = setup(values);
+    const guest = await backend.acquire(identity(), null, hooks().value, signal());
+    const { route } = await (await backend.transports(guest)).displays[0]!.open();
+    assert.ok(route.type === "websocket");
+    assert.deepEqual({ ca: route.ca, fingerprint: route.fingerprint }, { ca: undefined, fingerprint: undefined, ...trust });
+  }
 });
 
 test("an unknown kind is refused", async () => {
