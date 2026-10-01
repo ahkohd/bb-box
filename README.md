@@ -118,10 +118,20 @@ and because anyone can try them.
 
 ## Status
 
-In development, and private until it has been used daily for months; then it
-will be open-sourced. Linux headless and desktop boxes on Proxmox LXC come
-first, with Docker and an SSH host pool to keep the core backend-agnostic,
-then speed (a warm pool, faster BB enrolment), then Windows, then macOS.
+Private and in daily use; it will be open-sourced once it has been used daily
+for months.
+
+Working on the Proxmox LXC backend:
+
+- Linux headless boxes with Docker, enrolled in BB with the thread's access.
+- Linux desktop boxes on the GPU or the CPU, shown live in the thread's panel,
+  with shared control and resizing.
+- Computer use for agents, through the accessibility tree and screenshots.
+- A warm pool: a warm box is handed out in about 0.1 s; BB's enrolment then
+  takes a few seconds (see [what bb-box asks of BB](docs/bb-requests.md)).
+
+Next: Docker and SSH host pool backends, to keep the core backend-agnostic and
+to make bb-box easy to try; then Windows, then macOS.
 
 ## Install
 
