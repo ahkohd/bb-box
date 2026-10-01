@@ -345,6 +345,30 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
     assert.equal(await onMachine("plain", `taskset -c ${cpus!.split(/[,-]/)[0]} ${HELPER} status </dev/null | grep '^cores='`), "cores=1");
   });
 
+  it("says the memory a box can use when the machine is a container with a memory limit", async () => {
+    const all = Number(await onMachine("plain", "awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo"));
+    const memory = async () => {
+      const pool = backend("settings.json");
+      // 1 GiB, so a machine limited to 2 GiB still has the size.
+      const guest = await acquire(pool, "linux", { ...sizeOf("linux"), memoryMiB: 1024 });
+      try {
+        assert.equal(guest.ref, "plain");
+        return guest.size?.memoryMiB;
+      } finally {
+        await pool.release(guest, releaseHooks().hooks);
+      }
+    };
+    // Docker's memory limit is not in /proc/meminfo, which shows the host's memory.
+    assert.equal(await memory(), all);
+    await run("docker", ["update", "--memory", "2g", "--memory-swap", "2g", "bbbox-sshpool-plain"]);
+    try {
+      assert.equal(await memory(), 2048);
+    } finally {
+      // Docker cannot remove a memory limit, so this one is the host's memory, which a machine says as without a limit.
+      await run("docker", ["update", "--memory", `${all}m`, "--memory-swap", `${all * 2}m`, "bbbox-sshpool-plain"]);
+    }
+  });
+
   it("reaches a machine through a jump host", async () => {
     const pool = backend("via.json");
     const report = await pool.doctor();

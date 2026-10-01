@@ -157,6 +157,18 @@ cores() (
   echo "$n"
 )
 
+# The memory a process may use, in MiB: the machine's, and no more than its
+# cgroup's memory limit. In a container with a memory limit, /proc/meminfo
+# shows the host's.
+memory() (
+  m=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo 2>/dev/null)
+  if [ -n "$m" ] && [ -r /sys/fs/cgroup/memory.max ] && read -r limit </sys/fs/cgroup/memory.max && [ "$limit" != max ]; then
+    l=$((limit / 1048576))
+    [ "$l" -ge "$m" ] || m=$l
+  fi
+  echo "$m"
+)
+
 status() {
   echo "helper=$VERSION"
   echo "arch=$(uname -m)"
@@ -174,9 +186,9 @@ status() {
   [ -x "$HOOK" ] && echo hook=1 || echo hook=0
   command -v docker >/dev/null 2>&1 && echo docker=1 || echo docker=0
   [ -d /run/systemd/system ] && echo systemd=1 || echo systemd=0
-  # The machine's size: the cores a box can use, memory in MiB, and free disk under /home in GiB.
+  # The machine's size: the cores and memory in MiB a box can use, and free disk under /home in GiB.
   echo "cores=$(cores)"
-  echo "memory=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo 2>/dev/null)"
+  echo "memory=$(memory)"
   echo "disk=$(df -Pk /home 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }')"
   missing=''
   for tool in sh tar flock setsid useradd userdel groupadd groupdel usermod pgrep pkill find getent; do
