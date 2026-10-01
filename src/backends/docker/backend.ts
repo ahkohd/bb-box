@@ -294,6 +294,12 @@ export class DockerBackend implements Backend {
     return kind;
   }
 
+  /** How to build a missing or old image: on a BB machine, through bb-box itself (042). */
+  #buildFix(otherwise: string): string {
+    const machine = this.#config.machine;
+    return machine ? `Run bb box docker-build ${machine}, or turn ${this.#host} off and on under Docker on BB machines in bb-box's settings, to build it there.` : otherwise;
+  }
+
   /** The host's name for people: a BB machine's as BB has it, else as the daemon gives it once it has answered. */
   get #host(): string {
     if (this.#config.machine) return hostWords(this.#config.host, this.#context.machines);
@@ -609,7 +615,7 @@ export class DockerBackend implements Backend {
         const name = `Image ${image}`;
         const result = await this.#cli.run(["image", "inspect", "--format", "{{json .Config.Labels}}", image], { timeoutMs: 30_000, signal });
         if (result.exitCode !== 0) {
-          push(id, name, "fail", `${info.name} has no image ${image}, which ${kinds} boxes run. bb-box never pulls images.`, "Build it with setup/docker/build.sh, or pull or load it on the Docker host.");
+          push(id, name, "fail", `${info.name} has no image ${image}, which ${kinds} boxes run. bb-box never pulls images.`, this.#buildFix("Build it with setup/docker/build.sh, or pull or load it on the Docker host."));
           continue;
         }
         let labels: Record<string, unknown> = {};
@@ -627,7 +633,7 @@ export class DockerBackend implements Backend {
             name,
             "warn",
             built ? `Built for layout ${String(built)}; this bb-box expects layout ${IMAGE_VERSION}.` : `Not built by setup/docker/build.sh, so boxes may not start.`,
-            "Build it again with this bb-box's setup/docker/build.sh.",
+            this.#buildFix("Build it again with this bb-box's setup/docker/build.sh."),
           );
         }
       }

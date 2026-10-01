@@ -712,3 +712,17 @@ test("a Docker host that is a BB machine is reached through bb-box's relay, name
   assert.match(daemon?.fix ?? "", /bb box docker-check host_m1/);
   assert.equal(report.checks.find((check) => check.id === "docker.cli")?.status, "ok", "the CLI's own version needs no machine");
 });
+
+test("on a BB machine, the doctor's fix for a missing image is bb-box's own build there (042)", async () => {
+  const fake = fakeDockerHost();
+  writeFileSync(join(fake.root, "images.json"), JSON.stringify({}));
+  const context = {
+    ...testContext(),
+    machines: { dockerHost: () => "unix:///tmp/relay/host_m1.sock", ready: async () => {}, name: () => "devpc", connected: async () => true },
+  };
+  const backend = new DockerBackend(dockerConfig({ host: "bb:host_m1" }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const report = await backend.doctor(signal());
+  const image = report.checks.find((check) => check.id === "image.bbbox/linux:1");
+  assert.equal(image?.status, "fail");
+  assert.equal(image?.fix, "Run bb box docker-build host_m1, or turn devpc off and on under Docker on BB machines in bb-box's settings, to build it there.");
+});
