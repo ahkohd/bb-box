@@ -830,10 +830,13 @@ A box is a resource of its thread and gets what the thread's own machine has.
   - The thread's Git credentials and machine variables reach the box through
     BB, which gives them to its daemon in the box. Plugins can read their
     names but not their values, so each command bb-box runs, and each SSH
-    session through the box's `~/.bashrc`, takes the listed names from a
-    worker of that daemon as it starts. A changed value reaches the next
-    command, and the values never reach the disk. `git` asks `gh` for GitHub
-    credentials, so it uses `GH_TOKEN`.
+    session through the box's `~/.bashrc` (`~/.zshenv` on macOS), takes the
+    listed names from a worker of that daemon as it starts: from `/proc` on
+    Linux, and from `ps -E` on macOS, which reads a value holding a space
+    then `NAME=`, or a backslash then three digits, wrongly
+    ([BB requests](bb-requests.md), request 8). A changed value reaches the
+    next command, and the values never reach the disk. `git` asks `gh` for
+    GitHub credentials, so it uses `GH_TOKEN`.
   - BB can take seconds to answer while it is busy, so bb-box asks for the
     machine's and the project's names together, first as the box starts,
     and keeps them for a minute. After that, a command gets the names it

@@ -14,7 +14,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | draft | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
 | [Find a machine by its key](#6-find-a-machine-by-its-key) | draft | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
 | [Reach a port on a machine](#7-reach-a-port-on-a-machine) | draft | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already |
-| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box reads the thread's variables and GH_TOKEN from BB's workers in the box: from `/proc` on Linux, inexactly from `ps -E` on macOS once core adds it, and not at all on Windows |
+| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box reads the thread's variables and GH_TOKEN from BB's workers in the box: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
 
 ## 1. BB's host app on Windows
 
@@ -308,19 +308,19 @@ no plugin's server side sees them.
 
 - On Linux, bb-box's scan of `/proc/<pid>/environ` for the daemon's
   workers, which picks the newest worker with the most variables.
-- On macOS, parsing `ps -E`, which core plans next. It prints a newline
-  as `\012` but leaves a backslash as it is, so it cannot read exactly a
-  value that holds a backslash and three digits, or a space followed by a
-  name and `=`.
+- On macOS, bb-box's parsing of `ps -E`. It prints a newline as `\012`
+  but leaves a backslash as it is, so it cannot read exactly a value that
+  holds a backslash and three digits, or a space followed by a name and
+  `=`.
 - On Windows, which has neither `/proc` nor `ps -E`, the gap: once
   request 1 lets a Windows box enrol, it would get the variables the same
   way.
 - bb-box's dependence on where BB installs its daemon
   (`host-daemon/dist/daemon-bundle`), which a BB release can change.
 
-**Until then.** Linux boxes read the workers' environment from `/proc`
-(`src/core/in-box.ts`). macOS boxes will parse `ps -E` the same way once
-core adds it. Windows boxes get none of the variables.
+**Until then.** Linux boxes read the workers' environment from `/proc`,
+and macOS boxes parse `ps -E`, choosing the worker the same way
+(`src/core/in-box.ts`). Windows boxes get none of the variables.
 
 ## Checked, no request needed
 

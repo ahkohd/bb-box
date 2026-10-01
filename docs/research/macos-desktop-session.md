@@ -122,7 +122,8 @@ to plain SSH than Apple's forum reports for 26, but the session is still
 ## Variables
 
 E7 bears on reading BB's variables from a worker's environment on macOS,
-which `ps -E` prints with a newline as `\012`. A literal backslash is not
+as bb-box does (`src/core/in-box.ts`), which `ps -E` prints with a newline
+as `\012`. A literal backslash is not
 escaped, so `\NNN` in a value is ambiguous. It is rare, and GH_TOKEN never
 has one. A space followed by `WORD=` in a value is ambiguous too. Both go
 when BB gives the variables directly ([BB requests](../bb-requests.md),
