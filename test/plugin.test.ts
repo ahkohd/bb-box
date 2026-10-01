@@ -343,7 +343,7 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
     assert.match(logged, new RegExp(`, ${step} ${s},`), step);
   }
   assert.match(logged, new RegExp(`^Enrolled box ${box.name} ${s} after it was ready: asking BB ${s} alongside, BB calling bb-box's create ${s}, .*, finishing ${s}\\.$`));
-  const parts = ["fetching the variable names", "reaching the box and writing the env file", "running the script"].map((part) => `${part} ${s}`);
+  const parts = ["fetching the variable names", "reaching the box and back", "running the script"].map((part) => `${part} ${s}`);
   assert.match(logged, new RegExp(`, setting up the thread's access ${s} alongside \\(${parts.join(", ")}\\), `));
   // Once bootstrap returns, bb-box notices the machine connected at once rather than at its next 500 ms poll.
   assert.match(logged, /, BB showing the machine connected 0\.[0-2]\d s,/);
@@ -384,7 +384,7 @@ test("the enrolment's log lists its steps in the order they started, with the ac
     timeline({ ...marks, enrolled: 5_150 }),
     "Enrolled box b 5.15 s after it was ready: asking BB 0.10 s alongside, BB calling bb-box's create 0.02 s, reaching the box 0.00 s, " +
       "BB preparing the enrolment 0.02 s, BB's installer in the box 4.98 s, setting up the thread's access 3.62 s alongside " +
-      "(fetching the variable names 0.39 s, reaching the box and writing the env file 0.30 s, running the script 2.93 s), " +
+      "(fetching the variable names 0.39 s, reaching the box and back 0.30 s, running the script 2.93 s), " +
       "BB waiting for the daemon 0.03 s, BB showing the machine connected 0.10 s, finishing 0.00 s.",
   );
   // An access setup that ends after the machine connects is waited for; without the script's own time, its parts are left out.

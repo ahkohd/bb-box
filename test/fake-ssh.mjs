@@ -6,8 +6,9 @@
 // run/bb-box/ in the host's home, where the desktop's display mode starts as
 // gpu, or as $FAKE_SSH_DIR/display/<host> holds it (a mode line, then a reason).
 // Starting a shared connection (-N) dials like a command and makes its
-// socket, a plain file; -O succeeds, and -O exit removes the socket. Their
-// log entries have an empty command and say which they were.
+// socket, a plain file, once $FAKE_SSH_DIR/hold-share/<host> is gone; -O
+// succeeds, and -O exit removes the socket. Their log entries have an empty
+// command and say which they were.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -38,6 +39,7 @@ if (existsSync(upAfter)) {
   }
 }
 if (control) {
+  while (existsSync(join(root, "hold-share", host))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   writeFileSync(socket, "");
   process.exit(0);
 }

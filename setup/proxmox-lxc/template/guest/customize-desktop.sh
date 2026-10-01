@@ -45,11 +45,11 @@ desktop_packages="$desktop_packages fonts-noto-cjk"
 # What Zed's GPUI needs to build on Linux.
 gpui_packages="clang cmake libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
   libfontconfig-dev libfreetype-dev libssl-dev libzstd-dev libvulkan-dev libasound2-dev"
+# TigerVNC comes from its own release: Ubuntu 24.04's 1.13 has no clipboard
+# in x0vncserver and lacks later security fixes.
 tigervnc=$(check tigervnc)
 virtualgl=$(check virtualgl)
 chrome=$(check chrome)
-# TigerVNC comes from its own release: Ubuntu 24.04's 1.13 has no clipboard
-# in x0vncserver and lacks later security fixes.
 # Downloads are retried through snapshot.ubuntu.com's short outages, as in
 # baseline.sh; files already downloaded stay in apt's cache.
 # shellcheck disable=SC2086

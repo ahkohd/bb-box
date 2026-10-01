@@ -17,7 +17,7 @@ test("ssh dials once with a 2 s connect timeout and accepts a fresh box's first 
   assert.match(joined, /ConnectTimeout=2/);
   assert.match(joined, /ConnectionAttempts=1/);
   assert.match(joined, /BatchMode=yes/);
-  assert.match(joined, /ServerAliveInterval=5 -o ServerAliveCountMax=2/, "a box that dies unseen ends the connection within about 15 s");
+  assert.match(joined, /ServerAliveInterval=5 -o ServerAliveCountMax=3/, "a box that dies unseen ends the connection within about 20 s");
   assert.match(joined, /StrictHostKeyChecking=no/);
   assert.match(joined, /UserKnownHostsFile=\/dev\/null/);
   assert.doesNotMatch(joined, /ProxyCommand/);
@@ -266,6 +266,29 @@ test("the ready check opens the shared connection, which the box's next command 
   for (const entry of commands) assert.ok(entry.args.includes(`ControlPath=${path}`));
   down("192.0.2.29");
   assert.equal(await new SshTransport(ssh, at("192.0.2.29"), "linux").answers(), false);
+  await ssh.dispose();
+});
+
+test("a command waits for a slow shared connection no longer than its timeout, or until aborted, then dials alone", async () => {
+  const { ssh, log, holdShare } = fakeSsh({ share: true });
+  const box = at("192.0.2.30");
+  const commands = () => log().filter((entry) => !entry.control && entry.target === "box@192.0.2.30");
+  const shared = (entry: { args: string[] }) => entry.args.some((arg) => arg.startsWith("ControlPath="));
+  const open = holdShare("192.0.2.30");
+  const started = Date.now();
+  assert.equal((await ssh.run(box, "echo 1", { timeoutMs: 1_000 })).stdout, "1\n");
+  assert.ok(Date.now() - started < 3_000, "it stopped waiting at its timeout");
+  assert.equal(shared(commands()[0]!), false, "it dialled alone");
+
+  const controller = new AbortController();
+  const aborted = ssh.run(box, "echo 2", { signal: controller.signal });
+  setTimeout(() => controller.abort(new Error("released")), 50);
+  await assert.rejects(aborted, /released/);
+  assert.equal(commands().length, 1, "an aborted command does not dial");
+
+  open();
+  assert.equal((await ssh.run(box, "echo 3")).stdout, "3\n");
+  assert.equal(shared(commands().at(-1)!), true, "once it opens, commands use it");
   await ssh.dispose();
 });
 
