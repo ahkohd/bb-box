@@ -61,13 +61,14 @@ New box options and the desktop lists:
 - **GPU** where the kind takes one. A box of a GPU kind whose display fell
   back to the CPU says "Display on the CPU" in its status line, in warning
   text; otherwise the status line does not repeat the badge.
-- **Docker inside** for the kind that promises Docker in the box
-  (`linux-docker`), as against the Docker badge below, which says the box
-  runs on a Docker host.
+- **No Docker** for a kind none of whose offers has Docker, such as
+  Windows (041: every Linux box has Docker, so only its absence is said;
+  a box row says nothing about it).
 - **arm64** for a Linux (or later Windows) kind on arm64 (040,
   `linux-arm64` and its desktop and Docker kinds), so two Linux rows read
   apart. macOS runs on arm64 only, so it carries none.
-- **What the box is**, one word from its backend's driver: LXC, Docker, VM
+- **What the box is**, one word from its backend's driver: LXC, Container
+  (the Docker backend's, so the word Docker means the feature, 041), VM
   or Physical. A kind on offer from several backends shows each once.
 - **Ready now**, in the New box options only, last, on a kind with a spare
   box ready (032), so a box of it comes at once. A box claimed from a spare
@@ -205,20 +206,32 @@ Anything in the box user's home will be deleted."
 ### New box
 
 The plus opens a popover (a bottom sheet on compact viewports) with one
-small form:
+small form. On a viewport of 640 px or more it has two columns, a detail
+pane left of the list, as the operator asked (1 October 2026); narrower,
+the pane sits under the list, above Size.
 
 ```
-Kind
-  (o) [=] Linux
-          [LXC] [Physical] [Docker] [Ready now]
-  ( ) [#] Linux
-          [Desktop] [GPU] [LXC]
-  ( ) [#] Linux
-          [Desktop] [LXC] [Docker]
-Size
-  [ Small ] [ Medium ] [ Large ] [ Custom ]
-  2 cores · 4 GiB memory · base disk
-[ Create ]
++--------------------------------+---------------------------------------+
+| [#] Linux desktop on a GPU     | Kind                                  |
+| [P] Proxmox LXC on pve1   |  Linux                                |
+|     · LXC container · 1 ready  |   (o) [=] Terminal        [P][m][D]   |
+|     now · usually about 3 s    |           [LXC] [Physical] [Container]|
+|                                |           [Ready now]                 |
+| System    Linux x86_64 · root  |   ( ) [#] Desktop, GPU        [P] pve |
+|           through sudo         |           [LXC]                       |
+| Has       a desktop on the GPU |   ( ) [#] Desktop          [P][D]     |
+|           · computer use ·     |           [LXC] [Container]           |
+|           follows the panel's  |  macOS                                |
+|           size · Docker        |   ( ) [#] Desktop        [L] 2 Macs   |
+| BB machine yes: Git            |           [VM]                        |
+|           credentials, machine |  Windows                              |
+|           variables, child     |   ( ) [#] Desktop         [P] pve     |
+|           threads              |           [No Docker] [VM]            |
+| Sizes     Small 4 cores · 8    | Size                                  |
+|           GiB (default) · ...  |  [ Small ] [ Medium ] [ Large ] [ Custom ] |
+|                                |  4 cores · 8 GiB memory · base disk   |
+|                                | [ Create ]                            |
++--------------------------------+---------------------------------------+
 ```
 
 The popover has no heading of its own: the button that opens it is named
@@ -229,12 +242,35 @@ and "Size" are the section labels, in
 (a second annotation the same day). On a compact viewport the bottom sheet
 still carries the title "New box".
 
-- **Kind** is a list of options, each its glyph, its label and, on a line
-  of its own under the label, its badges, and nothing more (the operator found the descriptions noise, 1 October 2026;
-  they stay where agents read them, in `box_list` and the skill), chosen
-  with a click or the arrow keys; the chosen one is
-  highlighted with a check. The list comes from the kinds on offer, so a
-  new backend's kinds need no panel change.
+- **Kind** is a list of options grouped by OS (Linux, macOS, Windows, as
+  small group labels), each option named by its tools within the group,
+  "Terminal" or "Desktop", with GPU and arm64 in the name ("Desktop, GPU",
+  "Terminal, arm64"), so a list is never "Linux, Linux, Linux" (the
+  operator's note of 1 October 2026). Under the name, on a line of its own,
+  the badges say what the boxes are (LXC, Container, VM, Physical), "No
+  Docker" when no offer has Docker (041), and "Ready now" when a spare is
+  ready (032). At the right, a provider mark per offer: the provider's
+  glyph (Proxmox, Docker, a laptop for a Mac, a plug for a pool machine)
+  and the host's name when the kind has one offer. Options are chosen with
+  a click or the arrow keys; the chosen one is highlighted with a check.
+  The list comes from the kinds on offer, so a new backend's kinds need no
+  panel change. Descriptions stay where agents read them, in `box_list`
+  and the skill.
+- **The detail pane** follows the pointer over an option or the keyboard
+  focus, and shows the chosen kind otherwise, so it is never empty. It
+  gives the kind's full name ("Linux desktop on a GPU"); each offer in
+  acquire order, with the provider and host ("Proxmox LXC on pve1",
+  "Tart on 2 Macs", "SSH host pool"), what the boxes are, spares ready
+  now, free pool machines and the usual cold start ("usually about 3 s",
+  the median of the kind's last five on that backend); "the first with
+  room, in that order" when there are several; then System (OS, arch,
+  root or Administrator), Has (a desktop and how it is drawn, computer
+  use, follows the panel's size, Docker), Lacks when something is missing
+  (Docker on Windows), BB machine (yes with what that gives, or no with
+  what that costs), and Sizes. Every option describes itself by the pane
+  (`aria-describedby`), so a screen reader hears the details after the
+  name on focus; the pane is not a live region, so hovering says nothing.
+  Tab order is unchanged: kinds, Size, Name, Create.
 - **Size** follows decision 028: Small, Medium and Large are the kind's
   presets, and the kind's default preset is chosen at first; being chosen
   says so, so nothing calls it the default. The chosen size's words sit
@@ -253,6 +289,10 @@ still carries the title "New box".
 - A refusal (no room, the thread's limit, a size above the largest) shows
   under the button in destructive text, with the backend's words, and the
   popover stays open so the person can pick another size or kind.
+- The pane's data comes with each kind (`KindView.offers`,
+  `computerUse`): the registry keeps the last five cold starts of each kind
+  on each backend and counts spares ready per backend, and a real backend
+  gives its free machines from its last survey.
 
 ### The box this thread runs on
 

@@ -281,12 +281,25 @@ export interface Backend {
   readonly id: string;
   /** Shown to users, for example "Proxmox LXC on pve". */
   readonly label: string;
+  /**
+   * Where its boxes run, by name, for the panel: a Proxmox node, each Mac of
+   * a Tart backend, a Docker host. Empty for a pool, whose machines are the
+   * boxes themselves, and for a local Docker daemon.
+   */
+  readonly hosts?: readonly string[];
   readonly nature: MachineNature;
   /** Real backends: what a release restores, the box user's home or the whole machine. */
   readonly restores?: "home" | "machine";
 
   /** The kinds this backend can acquire now. */
   kinds(): readonly BoxKind[];
+
+  /**
+   * Real backends: how many free machines could take a box of `kind`, from
+   * what the backend already holds (its last survey), with no call to any
+   * machine: the panel asks on every load. Null until it has surveyed.
+   */
+  free?(kind: string): number | null;
 
   /**
    * Whether one more box of `kind` and `size` fits. `pending` gives the kind

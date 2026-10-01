@@ -1,7 +1,7 @@
 // What the panel, the tools and the CLI show about boxes: plain JSON views
 // for the panel, and short text for agents. Nothing here holds a credential.
 
-import { boxForm, type BackendStatus, type OfferedKind } from "../backends/index.ts";
+import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import type { Arch, BoxForm, BoxSize, DoctorReport, GuestOs } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
@@ -137,6 +137,35 @@ export interface KindView {
   readonly backends: readonly string[];
   /** What its boxes are on those backends, as badges, each once. */
   readonly forms: readonly BoxForm[];
+  /** Each offer, in the order acquire tries them, for the picker's detail pane. */
+  readonly offers: readonly OfferView[];
+  /** Its boxes run a computer-use driver, on every backend that offers it. */
+  readonly computerUse: boolean;
+}
+
+/** One backend's offer of a kind, as the picker's pane shows it. */
+export interface OfferView {
+  /** The backend's ID, as boxes record it. */
+  readonly backend: string;
+  /** The driver's type, for the provider's glyph: "proxmox-lxc", "proxmox-qemu", "docker", "tart", "ssh-pool". */
+  readonly type: string;
+  /** The driver's label, as settings names the backend: "Proxmox LXC". */
+  readonly label: string;
+  /** Where its boxes run, by name: a node, each Mac, a Docker host. Empty for a pool and for a local Docker daemon. */
+  readonly hosts: readonly string[];
+  readonly form: BoxForm | null;
+  /** Spare boxes of this kind ready now on this backend (032). */
+  readonly ready: number;
+  /** Free machines for this kind on a real backend, from its last survey; null for a virtual one or before a survey. */
+  readonly free: number | null;
+  /** The box user can become root, or Administrator, on this backend. */
+  readonly admin: boolean;
+  /** Its desktop follows the viewer's size; null for a kind without a desktop. */
+  readonly resizable: boolean | null;
+  /** The median total of its last cold starts on this backend, in ms; null until it has had one. */
+  readonly typicalReadyMs: number | null;
+  /** This offer's boxes have Docker (041). */
+  readonly docker: boolean;
 }
 
 /** A kind's spare boxes (032): how many it keeps, and how many are ready or being made. */
@@ -151,18 +180,39 @@ export function kindViews(
   changes: SizeChanges,
   spares: Readonly<Record<string, { readonly ready: number; readonly making: number }>> = {},
   targets: Readonly<Record<string, number>> = {},
+  /** Median cold-start totals, keyed "<kind>|<backend>" (the registry's `typicalReady`). */
+  typical: Readonly<Record<string, number>> = {},
+  /** Spares ready now, keyed "<kind>|<backend>" (the registry's `spareReadyByBackend`). */
+  readyByBackend: Readonly<Record<string, number>> = {},
 ): KindView[] {
   const views = new Map<string, KindView>();
   for (const { kind, backend } of offered) {
     const existing = views.get(kind.id);
     const admin = kind.capabilities.command?.admin ?? false;
     const form = boxForm(backend.id);
+    const key = `${kind.id}|${backend.id}`;
+    const offer: OfferView = {
+      backend: backend.id,
+      type: backend.id.split(":")[0]!,
+      label: driverLabel(backend.id),
+      hosts: backend.hosts ?? [],
+      form,
+      ready: readyByBackend[key] ?? 0,
+      free: backend.free?.(kind.id) ?? null,
+      admin,
+      resizable: kind.capabilities.displays.length ? (kind.capabilities.displays[0]!.resizable ?? false) : null,
+      typicalReadyMs: typical[key] ?? null,
+      docker: kind.capabilities.features.includes("docker"),
+    };
+    const computerUse = kind.capabilities.computerUse !== null;
     if (existing) {
       views.set(kind.id, {
         ...existing,
         admin: existing.admin === admin ? admin : null,
         backends: [...existing.backends, backend.label],
         forms: form && !existing.forms.includes(form) ? [...existing.forms, form] : existing.forms,
+        offers: [...existing.offers, offer],
+        computerUse: existing.computerUse && computerUse,
       });
       continue;
     }
@@ -185,6 +235,8 @@ export function kindViews(
       admin,
       backends: [backend.label],
       forms: form ? [form] : [],
+      offers: [offer],
+      computerUse,
     });
   }
   return [...views.values()];

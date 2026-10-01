@@ -363,6 +363,33 @@ test("box details and kind lists say whether the box user can become root", asyn
   assert.equal(adminText({ admin: null, os: "windows" }), "Administrator: on some of its backends; box_status says for each box.");
   const commandless = { ...FAKE_KINDS[0]!, capabilities: { ...FAKE_KINDS[0]!.capabilities, command: null } };
   assert.equal(kindViews([{ kind: commandless, backend: other }], {})[0]!.admin, false, "a kind without commands gives no root");
+
+  // Each offer, in acquire order, with what the picker's pane shows: the driver's label and glyph type, hosts, spares ready,
+  // free pool machines, a typical cold start and Docker (041).
+  const pool = { id: "ssh-pool:rooted", label: "Rooted host", free: (kind: string) => (kind === "linux" ? 2 : 0) } as unknown as Backend;
+  const lxc = { ...world.backend, id: "proxmox-lxc", hosts: ["pve"] } as unknown as Backend;
+  const dockered = { ...FAKE_KINDS[0]!, capabilities: { ...FAKE_KINDS[0]!.capabilities, features: ["docker"] } };
+  const [linux] = kindViews(
+    [
+      { kind: dockered, backend: lxc },
+      { kind: FAKE_KINDS[0]!, backend: pool },
+    ],
+    {},
+    {},
+    {},
+    { "linux|proxmox-lxc": 2200 },
+    { "linux|proxmox-lxc": 1 },
+  );
+  assert.deepEqual(
+    linux!.offers.map((offer) => [offer.type, offer.label, offer.hosts, offer.ready, offer.free, offer.typicalReadyMs, offer.docker, offer.resizable]),
+    [
+      ["proxmox-lxc", "Proxmox LXC", ["pve"], 1, null, 2200, true, null],
+      ["ssh-pool", "SSH host pool", [], 0, 2, null, false, null],
+    ],
+  );
+  assert.equal(linux!.computerUse, false);
+  const [desktop] = kindViews([{ kind: FAKE_KINDS[1]!, backend: lxc }], {});
+  assert.deepEqual([desktop!.computerUse, desktop!.offers[0]!.resizable], [true, true]);
 });
 
 test("box details promise a restored box enrols again only when its kind can enrol", async () => {
@@ -1157,6 +1184,32 @@ test("the sweep restores a thread's own box as BB's machine for the thread, whic
   await boxes.settled(own);
   assert.deepEqual(world.reconnected, ["host-thread"]);
   assert.deepEqual(world.enrolled, [`${other.name}, restored`]);
+});
+
+test("the registry keeps each kind's last cold starts per backend, not claims from a spare, and counts spares ready per backend", async () => {
+  const world = setup();
+  const key = `linux|${world.backend.id}`;
+  assert.deepEqual(await world.boxes.typicalReady(), {}, "nothing before the first start");
+  const first = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  await world.boxes.idle();
+  let typical = await world.boxes.typicalReady();
+  assert.equal(typical[key], first.timings.total, "one start: its own total");
+  const second = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  await world.boxes.idle();
+  typical = await world.boxes.typicalReady();
+  assert.equal(typical[key], Math.round((first.timings.total! + second.timings.total!) / 2), "two starts: their mean, as the median");
+  const history = (await world.kv.get<Record<string, number[]>>("ready-history"))!;
+  assert.deepEqual(history[key], [first.timings.total, second.timings.total]);
+
+  // A spare counts as ready on its backend; claiming it is not a start.
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  assert.deepEqual(await world.boxes.spareReadyByBackend(), { [key]: 1 });
+  const claimed = await world.boxes.acquire({ threadId: "thr_other", projectId: null, kind: "linux" });
+  await world.boxes.idle();
+  assert.notEqual(claimed.timings.spare, undefined, "claimed from the spare");
+  assert.equal(((await world.kv.get<Record<string, number[]>>("ready-history"))!)[key]!.length, 3, "the spare's own cold start counted once; the claim did not");
 });
 
 test("a kind's spares are made and enrolled ahead, and an acquire of the kind at its default size claims one at once (032)", async () => {

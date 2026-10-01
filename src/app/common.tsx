@@ -2,6 +2,7 @@
 // change signals, a ticking clock, words for times, and small controls in
 // BB's style.
 
+import type { BoxForm } from "../backends/types.ts";
 import { experimental_Icon as Icon, useRealtime, useRealtimeConnectionState } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -200,20 +201,44 @@ export function isArm64Badge(os: string, arch: string): boolean {
   return arch === "arm64" && os !== "macos";
 }
 
-export function KindBadges({ desktop = false, gpu, docker = false, arm64 = false, forms, ready = false, className }: { desktop?: boolean; gpu: boolean; docker?: boolean; /** The kind is arm64 (040); a badge tells two Linux rows apart. */ arm64?: boolean; forms: readonly string[]; ready?: boolean; className?: string }) {
-  if (!desktop && !gpu && !docker && !arm64 && !forms.length && !ready) return null;
+export function KindBadges({
+  desktop = false,
+  gpu,
+  noDocker = false,
+  arm64 = false,
+  forms,
+  ready = false,
+  className,
+}: {
+  desktop?: boolean;
+  gpu: boolean;
+  /** The kind, or box, has no Docker (041: every Linux box has it, so only its absence is said). */
+  noDocker?: boolean;
+  /** The kind is arm64 (040); a badge tells two Linux kinds apart. */
+  arm64?: boolean;
+  forms: readonly BoxForm[];
+  /** A spare is ready (032). */
+  ready?: boolean;
+  className?: string;
+}) {
+  if (!desktop && !gpu && !noDocker && !arm64 && !forms.length && !ready) return null;
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
       {desktop ? <Badge>Desktop</Badge> : null}
       {gpu ? <Badge>GPU</Badge> : null}
-      {docker ? <Badge>Docker inside</Badge> : null}
+      {noDocker ? <Badge>No Docker</Badge> : null}
       {arm64 ? <Badge>arm64</Badge> : null}
       {forms.map((form) => (
-        <Badge key={form}>{form}</Badge>
+        <Badge key={form}>{formBadge(form)}</Badge>
       ))}
       {ready ? <Badge>Ready now</Badge> : null}
     </span>
   );
+}
+
+/** A form's badge: the Docker backend's boxes read "Container", so the word Docker means the feature (041). */
+export function formBadge(form: BoxForm): string {
+  return form === "Docker" ? "Container" : form;
 }
 
 /** BB's dashed empty panel. */

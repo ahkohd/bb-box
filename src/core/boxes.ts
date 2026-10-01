@@ -218,6 +218,8 @@ export class BoxError extends Error {
   }
 }
 
+/** The storage key of the cold-start history, see `typicalReady`. */
+const READY_HISTORY = "ready-history";
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 
 export function newBoxId(random: (bytes: number) => Uint8Array): string {
@@ -579,6 +581,44 @@ export class Boxes {
     });
   }
 
+  /**
+   * Keeps the last five cold starts of each kind on each backend, by their
+   * total time to ready, for "usually about 3 s" in the panel. A claim from
+   * a spare (its timings carry `spare`) and a restored record are not starts.
+   */
+  async #recordReady(box: BoxRecord): Promise<void> {
+    const total = box.timings.total;
+    if (box.timings.spare !== undefined || box.restoredAt || typeof total !== "number") return;
+    const history = (await this.#deps.kv.get<Record<string, number[]>>(READY_HISTORY)) ?? {};
+    const key = `${box.kind}|${box.backend}`;
+    history[key] = [...(history[key] ?? []), total].slice(-5);
+    await this.#deps.kv.set(READY_HISTORY, history);
+  }
+
+  /** The median of each kind's last cold starts on each backend, keyed "<kind>|<backend>", in ms. */
+  async typicalReady(): Promise<Record<string, number>> {
+    const history = (await this.#deps.kv.get<Record<string, number[]>>(READY_HISTORY)) ?? {};
+    const typical: Record<string, number> = {};
+    for (const [key, totals] of Object.entries(history)) {
+      const sorted = [...totals].sort((a, b) => a - b);
+      if (!sorted.length) continue;
+      const middle = Math.floor(sorted.length / 2);
+      typical[key] = sorted.length % 2 ? sorted[middle]! : Math.round((sorted[middle - 1]! + sorted[middle]!) / 2);
+    }
+    return typical;
+  }
+
+  /** Spares ready to claim now, keyed "<kind>|<backend>" (032), for the picker's offers. */
+  async spareReadyByBackend(): Promise<Record<string, number>> {
+    const counts: Record<string, number> = {};
+    for (const spare of await this.list(SPARES)) {
+      if (!isActive(spare) || !(await this.#claimable(spare))) continue;
+      const key = `${spare.kind}|${spare.backend}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }
+
   /** Each kind's spares now (032): ready to claim, and being made or made ready. */
   async spareCounts(): Promise<Record<string, { readonly ready: number; readonly making: number }>> {
     const counts: Record<string, { ready: number; making: number }> = {};
@@ -887,6 +927,7 @@ export class Boxes {
         ? { guest }
         : { guest, state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt } },
     );
+    if (next?.state === "ready") void this.#recordReady(next).catch((error) => this.#deps.logError("ready history", error));
     if (!next) {
       await backend.release(guest, QUIET).catch((error) => this.#deps.logError("release", error));
       return;

@@ -22,6 +22,12 @@ export function boxForm(backendId: string, drivers: readonly BackendDriver<any>[
   return drivers.find((driver) => driver.type === type)?.form ?? null;
 }
 
+/** The driver's label for a backend ID, as the settings page names it ("Proxmox LXC"); the ID itself for a driver bb-box no longer has. */
+export function driverLabel(backendId: string, drivers: readonly BackendDriver<any>[] = DRIVERS): string {
+  const type = backendId.split(":")[0]!;
+  return drivers.find((driver) => driver.type === type)?.label ?? backendId;
+}
+
 /** Keys under `prefix`, with the prefix hidden from the backend. */
 export function scopedStorage(storage: BackendStorage, prefix: string): BackendStorage {
   return {

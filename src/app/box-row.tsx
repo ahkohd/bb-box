@@ -142,7 +142,7 @@ export function BoxRow({
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
             <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{osName(box.os)}</span>
-            <KindBadges desktop={box.desktop} gpu={box.gpu} docker={box.requires.includes("docker")} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
+            <KindBadges desktop={box.desktop} gpu={box.gpu} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
             {held?.owner === "yours" ? <Badge>Yours</Badge> : null}
           </span>
         </button>

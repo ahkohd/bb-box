@@ -350,6 +350,7 @@ export class ProxmoxQemuBackend implements Backend {
   readonly id: string;
   readonly nature = "virtual" as const;
   readonly label: string;
+  readonly hosts: readonly string[];
   readonly #config: QemuConfig;
   readonly #context: BackendContext;
   readonly #options: QemuBackendOptions;
@@ -377,6 +378,7 @@ export class ProxmoxQemuBackend implements Backend {
       ? { fetch: options.fetch, close: async () => {} }
       : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
     this.label = `Proxmox QEMU on ${config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname}`;
+    this.hosts = [config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname];
   }
 
   kinds(): BoxKind[] {

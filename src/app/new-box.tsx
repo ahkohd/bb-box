@@ -11,7 +11,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
-import { isArm64Badge, KindBadges, osName } from "./common.tsx";
+import { KindBadges } from "./common.tsx";
+import { groupKinds, kindHasDocker, KindDetail, kindTitle, OfferMarks } from "./kind-picker.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -59,6 +60,9 @@ export function sizeLine(size: SizeView): string {
 }
 
 const PRESET_LABELS: Readonly<Record<string, string>> = { small: "Small", medium: "Medium", large: "Large" };
+
+/** The detail pane's element, which each kind option describes itself by. */
+const DETAIL_ID = "new-box-kind-detail";
 
 /** A whole number of at least 1, or null for an empty field; undefined when the text is not one. */
 function whole(text: string): number | null | undefined {
@@ -120,8 +124,14 @@ export function NewBox({
   const kindOptions = useRef<(HTMLButtonElement | null)[]>([]);
   const sizeOptions = useRef<(HTMLButtonElement | null)[]>([]);
 
-  const kind = kinds.find((candidate) => candidate.id === chosenKind) ?? kinds[0] ?? null;
-  const kindIndex = kind ? kinds.indexOf(kind) : -1;
+  /** The kind under the pointer or the keyboard focus, which the pane shows; the chosen kind otherwise. */
+  const [peek, setPeek] = useState<string | null>(null);
+  const groups = groupKinds(kinds);
+  const ordered = groups.flatMap((group) => group.kinds);
+
+  const kind = kinds.find((candidate) => candidate.id === chosenKind) ?? ordered[0] ?? null;
+  const kindIndex = kind ? ordered.indexOf(kind) : -1;
+  const shown = ordered.find((candidate) => candidate.id === peek) ?? kind;
   const presets = kind?.presets ?? [];
   const choices: Choice[] = [...presets.map((preset) => preset.name), CUSTOM];
   const size: Choice = choice && choices.includes(choice) ? choice : (kind?.defaultPreset ?? CUSTOM);
@@ -139,7 +149,7 @@ export function NewBox({
   const chooseKind = (next: KindView, focus = false) => {
     setChosenKind(next.id);
     setProblem(null);
-    if (focus) kindOptions.current[kinds.indexOf(next)]?.focus();
+    if (focus) kindOptions.current[ordered.indexOf(next)]?.focus();
   };
   const chooseSize = (next: Choice, focus = false) => {
     setChoice(next);
@@ -217,52 +227,77 @@ export function NewBox({
           </Tooltip>
         </TooltipProvider>
       )}
-      <PopoverContent align="end" className="w-80 p-4" mobileTitle={machine ? "Add machine" : "New box"}>
+      <PopoverContent align="end" className="w-80 p-4 sm:w-[640px]" mobileTitle={machine ? "Add machine" : "New box"}>
+        {/* Two columns when there is room: the detail pane left of the list, as the operator asked; stacked under it otherwise. */}
         <form
-          className="space-y-3"
+          className="space-y-3 sm:grid sm:grid-cols-[240px_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-3 sm:space-y-0"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <div>
+          <div className="sm:col-start-2 sm:row-start-1">
             <p id="new-box-kind" className="mb-1.5 text-xs font-medium text-foreground">
               Kind
               {machine ? <span className="ml-1.5 font-normal text-muted-foreground">of the ones whose boxes join BB</span> : null}
             </p>
-            <div role="radiogroup" aria-labelledby="new-box-kind" className="space-y-0.5" onKeyDown={(event) => arrows(event, kinds.length, kindIndex, (position) => chooseKind(kinds[position]!, true))}>
-              {kinds.map((candidate, position) => {
-                const selected = candidate.id === kind?.id;
-                return (
-                  <button
-                    key={candidate.id}
-                    ref={(element) => {
-                      kindOptions.current[position] = element;
-                    }}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    tabIndex={selected ? 0 : -1}
-                    onClick={() => chooseKind(candidate)}
-                    className={cn(
-                      "grid w-full grid-cols-[1rem_minmax(0,1fr)_1rem] items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
-                      selected && "bg-state-active",
-                    )}
-                  >
-                    <Icon name={`${pluginId}/${candidate.desktop ? "monitor" : "server"}`} className="size-4 text-muted-foreground" aria-hidden />
-                    <span className="min-w-0">
-                      <span className="block truncate text-xs text-foreground">{osName(candidate.os)}</span>
-                      {/* Badges on a line of their own, so a kind with several never squeezes its name. */}
-                      <KindBadges desktop={candidate.desktop} gpu={candidate.gpu} docker={candidate.features.includes("docker")} arm64={isArm64Badge(candidate.os, candidate.arch)} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-1 flex flex-wrap" />
-                    </span>
-                    {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
-                  </button>
-                );
-              })}
+            <div
+              role="radiogroup"
+              aria-labelledby="new-box-kind"
+              className="space-y-0.5"
+              onKeyDown={(event) => arrows(event, ordered.length, kindIndex, (position) => chooseKind(ordered[position]!, true))}
+              onMouseLeave={() => setPeek(null)}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPeek(null);
+              }}
+            >
+              {groups.map((group, index) => (
+                <div key={group.os} role="group" aria-label={group.label}>
+                  <p className={cn("px-2 pb-0.5 text-2xs font-medium text-subtle-foreground", index === 0 ? "pt-0" : "pt-1.5")}>{group.label}</p>
+                  {group.kinds.map((candidate) => {
+                    const position = ordered.indexOf(candidate);
+                    const selected = candidate.id === kind?.id;
+                    return (
+                      <button
+                        key={candidate.id}
+                        ref={(element) => {
+                          kindOptions.current[position] = element;
+                        }}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        aria-describedby={DETAIL_ID}
+                        tabIndex={selected ? 0 : -1}
+                        onClick={() => chooseKind(candidate)}
+                        onMouseEnter={() => setPeek(candidate.id)}
+                        onFocus={() => setPeek(candidate.id)}
+                        className={cn(
+                          "grid w-full grid-cols-[1rem_minmax(0,1fr)_auto_1rem] items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
+                          selected && "bg-state-active",
+                        )}
+                      >
+                        <Icon name={`${pluginId}/${candidate.desktop ? "monitor" : "server"}`} className="size-4 text-muted-foreground" aria-hidden />
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs text-foreground">{kindTitle(candidate)}</span>
+                          {/* Badges on a line of their own: what the boxes are, and whether one is ready; the title says the rest. */}
+                          <KindBadges gpu={false} noDocker={!kindHasDocker(candidate)} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-0.5 flex-wrap" />
+                        </span>
+                        <OfferMarks offers={candidate.offers} pluginId={pluginId} />
+                        {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           </div>
+          {shown ? (
+            <div className="sm:col-start-1 sm:row-span-4 sm:row-start-1 sm:border-r sm:border-border sm:pr-4">
+              <KindDetail kind={shown} pluginId={pluginId} id={DETAIL_ID} />
+            </div>
+          ) : null}
           {kind ? (
-            <div>
+            <div className="sm:col-start-2">
               <p id="new-box-size" className="mb-1.5 text-xs font-medium text-foreground">
                 Size
               </p>
@@ -302,7 +337,7 @@ export function NewBox({
             </div>
           ) : null}
           {machine ? (
-            <div>
+            <div className="sm:col-start-2">
               <label htmlFor="new-machine-name" className="mb-1.5 block text-xs font-medium text-foreground">
                 Name
               </label>
@@ -327,15 +362,17 @@ export function NewBox({
               ) : null}
             </div>
           ) : null}
-          <Button type="submit" size="sm" className="w-full" disabled={!kind || making || (size === CUSTOM && !custom) || nameWrong !== null}>
-            {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-            {machine ? "Add" : "Create"}
-          </Button>
-          {problem ? (
-            <p role="alert" className="text-xs leading-snug text-destructive-text">
-              {problem}
-            </p>
-          ) : null}
+          <div className="space-y-3 sm:col-start-2">
+            <Button type="submit" size="sm" className="w-full" disabled={!kind || making || (size === CUSTOM && !custom) || nameWrong !== null}>
+              {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
+              {machine ? "Add" : "Create"}
+            </Button>
+            {problem ? (
+              <p role="alert" className="text-xs leading-snug text-destructive-text">
+                {problem}
+              </p>
+            ) : null}
+          </div>
         </form>
       </PopoverContent>
     </Popover>
