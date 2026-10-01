@@ -263,7 +263,9 @@ so switching back is instant; a hidden tab that holds a desktop's control
 hands it back after a minute. The Desktops page lists every desktop box.
 The design is in `docs/design/panel.md`.
 
-bb-box's settings page in BB has three parts: Backends, each with a switch,
+bb-box's settings page in BB has four parts: Your machines, boxes you own
+kept as BB machines, each with its threads and actions, and "Add machine";
+Backends, each with a switch,
 its state in words and a setup area with the driver's fields, hosts,
 write-only secrets and a check that runs the doctor against the form;
 Kinds, each with a switch, its presets, largest size, warm counts and

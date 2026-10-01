@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Contract, DesktopState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { forThread, message, Notice, StatusDot, useLive, type Tone } from "./common.tsx";
+import { forThread, IconButton, message, Notice, StatusDot, useLive, type Tone } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { XTERM_CSS } from "./xterm-css.ts";
 
@@ -255,7 +255,8 @@ export function TerminalPanel({ threadId, params }: { threadId: string; params: 
   return <BoxTerminal key={boxId} threadId={threadId} boxId={boxId} />;
 }
 
-function BoxTerminal({ threadId, boxId }: { threadId: string; boxId: string }) {
+/** One box's terminal; `onBack` adds a back arrow, for the Desktops page. */
+export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; boxId: string; onBack?: { label: string; go: () => void } }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const { value: state, error, refresh } = useLive<DesktopState>(`${threadId}/${boxId}/terminal`, () => rpc.call("desktop", { threadId, box: boxId }), forThread(threadId));
@@ -347,6 +348,7 @@ function BoxTerminal({ threadId, boxId }: { threadId: string; boxId: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
+        {onBack ? <IconButton label={onBack.label} icon="ArrowLeft" onClick={onBack.go} className="-ml-1" /> : null}
         <Icon name={`${pluginId}/terminal`} className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="font-medium text-foreground">{box?.name ?? "Terminal"}</span>
         <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">

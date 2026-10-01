@@ -42,6 +42,55 @@ plugin's own on-off switch, which BB draws). Each section has BB's section
 title and description, and a card with rows divided by hairlines, as BB's
 Machines page does.
 
+### Your machines
+
+First on the page, since they are the operator's own objects (036,
+[#144](https://github.com/moonstead/bb-box/issues/144)): boxes you own,
+kept as BB machines, under your name in BB's machine list, sidebar and
+new-thread picker.
+
+```
+Your machines                                               [+ Add machine]
+Boxes of your own, kept as BB machines.
++----------------------------------------------------------------------------+
+| [#] build-1  Linux [Desktop] [GPU] [LXC]                [#] [>_] [stop] ... |
+|     (green) Ready in 2.2 s · BB machine in 5.3 s · 4 cores · 8 GiB         |
+|             · Working: Fix the login form · 1 more                          |
+| [=] scratch  Linux [LXC]                                      [start] ...   |
+|     (ring) Stopped · 2 cores · 4 GiB                                        |
++----------------------------------------------------------------------------+
+```
+
+- One row per machine, the panel's box row: glyph, name, the OS and badges,
+  the status line with its start-up times, and the threads on its machine,
+  the working ones named first ("Working: a, b · 1 more"; "Thread: a" when
+  none is working).
+- Quick actions: Open desktop (desktop kinds, when ready), Open terminal
+  (when ready), Stop or Start; the menu adds Copy address and "Remove…".
+  Open desktop and Open terminal go to the Desktops page, which shows one
+  box's desktop at `operator/<box>` and its terminal at
+  `operator/<box>/terminal`, since a settings page has no thread panel to
+  open a tab in. Opened from here the route ends in `from-settings`, and
+  the view's back arrow returns to the settings page rather than the
+  Desktops list, where a machine without a desktop is not.
+- Remove asks ("Remove build-1?", what is deleted). Remove and Stop ask
+  again when a thread is working on the machine, naming the threads, as
+  the panel's Release does (034): "Stop build-1 anyway?" with "Stop
+  anyway"; then the request goes with `force`.
+- **Add machine** is the New box popover with a Name field after Size:
+  only kinds that can enrol (`KindView.enrol`), the kind's presets starting
+  at its default, and a name, a hostname label of up to 32 lowercase
+  letters, digits and hyphens starting with a letter, unique among your
+  machines. What is wrong shows under the field as the person types; a
+  name left empty lets bb-box pick one; the server's refusal (a taken
+  name, a kind that cannot enrol) shows under the button. The new row
+  shows "Starting" with its time until the machine is ready and in BB.
+- Empty: "Add a box as a BB machine of your own. It shows in BB's machine
+  list and new-thread picker, and stays until you remove it here."
+- The section reads `machines.list` and refetches on the "operator"
+  signal; `machines.add`, `machines.remove`, `machines.stop` and
+  `machines.start` do the rest.
+
 ### Backends
 
 ```

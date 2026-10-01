@@ -14,6 +14,24 @@ import type { FieldView } from "../plugin/configuration.ts";
 import { isSecretField, isSecretState, type FormValue } from "./config.ts";
 
 /** BB's small badge beside a setting's label. */
+/** A block of the page, titled as BB titles a plugin's settings sections, with room for one action beside the title. */
+export function Section({ title, description, action, children }: { title: string; description?: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-xs font-medium text-foreground">{title}</h3>
+          {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      <div className="rounded-lg border border-border bg-card px-4 py-3.5">
+        <div className="divide-y divide-border">{children}</div>
+      </div>
+    </section>
+  );
+}
+
 export function Chip({ children, tone = "muted" }: { children: ReactNode; tone?: "muted" | "warn" }) {
   return <Badge tone={tone}>{children}</Badge>;
 }

@@ -18,11 +18,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { BoxResult, Contract, PanelState, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
-import { EmptyPanel, forThread, message, useLive, useNow } from "./common.tsx";
+import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { NewBox, type SizeRequest } from "./new-box.tsx";
 
 /** bb-box's page under BB's settings. */
-export const SETTINGS_PATH = "/settings/plugins/bb-box";
 
 function isMoving(box: BoxView): boolean {
   return box.state === "acquiring" || box.state === "starting";
