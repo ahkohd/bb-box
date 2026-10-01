@@ -772,7 +772,9 @@ test("a backend's setup shows its fields by group with problems, saves the whole
   });
   const slot = settings(handlers);
   fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
-  expect(slot.getByRole("link", { name: "Fake host setup guide" }).getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/README.md");
+  const guideLink = slot.getByRole("link", { name: "Fake host setup guide" });
+  expect(guideLink.getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/README.md");
+  expect(guideLink.closest("p")!.textContent).toBe("Follow the Fake host setup guide; it gives the values for this form. Its script: one.sh.");
   expect(slot.getByText("Connection")).toBeTruthy();
   expect(slot.getByText("Credentials")).toBeTruthy();
   expect(slot.getByText("Boxes")).toBeTruthy();

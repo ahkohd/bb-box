@@ -53,7 +53,7 @@ stream 0.6 s.
   its container. If BB listens only on the Docker host's localhost, a box
   cannot reach it, and enrolment fails. Then either make BB listen on an
   address the containers reach, or turn off **Enrol boxes as BB machines**
-  in bb-box's settings: commands, file copies, desktops and computer use work
+  in BB Box's settings: commands, file copies, desktops and computer use work
   without it.
 
 ## Requirements
@@ -98,7 +98,7 @@ layout version, which `bb box doctor` checks.
 
 ## 2. Settings
 
-In BB, under bb-box's settings, turn on the Docker backend. Its fields:
+In BB, on BB Box's settings page, set up the Docker backend and turn it on. Its fields:
 
 | Field | Default | Meaning |
 | --- | --- | --- |

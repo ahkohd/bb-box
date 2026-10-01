@@ -247,9 +247,10 @@ export function BackendForm({
           <UrlLink href={guide} className="text-foreground underline underline-offset-2">
             {driver.label} setup guide
           </UrlLink>
+          ; it gives the values for this form.
           {driver.setup.scripts.length ? (
             <>
-              . It runs{" "}
+              {driver.setup.scripts.length === 1 ? " Its script: " : " Its scripts: "}
               {driver.setup.scripts.map((script, index) => (
                 <span key={script}>
                   {index > 0 ? (index === driver.setup.scripts.length - 1 ? " and " : ", ") : ""}
@@ -258,11 +259,9 @@ export function BackendForm({
                   </UrlLink>
                 </span>
               ))}
-              , in that order, and they print the values for this form.
+              .
             </>
-          ) : (
-            ", which gives the values for this form."
-          )}
+          ) : null}
         </p>
       ) : null}
       {groups.map((group) => {

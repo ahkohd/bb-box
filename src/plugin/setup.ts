@@ -326,7 +326,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       .statuses()
       .filter((backend) => backend.state === "misconfigured")
       .map((backend) => `${backend.label}: ${backend.problems.join(" ")}`);
-    bb.status.needsConfiguration(unconfigured.length ? unconfigured.join(" ") : "Turn on a backend in bb-box's settings, then set it up.");
+    bb.status.needsConfiguration(unconfigured.length ? unconfigured.join(" ") : "Set a backend up in BB Box's settings and turn it on.");
   }
   needsConfiguration();
 
