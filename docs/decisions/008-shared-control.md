@@ -3,6 +3,10 @@
 Status: accepted, 30 September 2026. Partly superseded by
 [015](015-computer-use-through-cua-driver.md): taking control closes the
 box's computer-use session in the plugin, and nothing in the box is stopped.
+Partly superseded by [038](038-the-agent-can-take-control-back.md): the
+agent can take control back when asked. Extended by
+[037](037-a-panel-keeps-a-boxs-desktop-and-terminal.md): a hidden panel tab
+counts as a viewer gone.
 
 ## Context
 
