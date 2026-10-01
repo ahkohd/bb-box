@@ -5,6 +5,8 @@ Status: accepted, 1 October 2026. Partly supersedes
 runs elevated. Extends [021](021-desktop-resize-through-the-backend.md),
 [028](028-a-box-size-is-chosen-when-it-is-made.md) and
 [030](030-a-mac-runs-desktop-commands-through-launchctl-asuser.md).
+Amended while it was built: the template's real-time clock is UTC, and a
+cold clone's time to its desktop as the first template build measured it.
 
 ## Context
 
@@ -47,6 +49,10 @@ It also found that:
     rule for any network profile;
   - the guest agent, automatic logon as `box`, no lock screen, screen
     saver or sleep, and UAC elevating without a prompt;
+  - the real-time clock in UTC (`localtime: 0`), as Windows in the
+    template expects. Proxmox gives a Windows VM local time by default,
+    so a clone's clock would be off by the host's UTC offset. Clones
+    inherit the setting;
   - Windows Update not installing or restarting by itself. A box lives
     hours, not months; the template is rebuilt to update it.
 - **Clones.** A box is a linked clone of the template. Every box has the
@@ -92,8 +98,12 @@ It also found that:
 
 ## Consequences
 
-- A Windows desktop opens in about 4 s from the warm pool, and about 20 s
-  without one. The agent drives it with the same seven computer tools.
+- A Windows desktop opens in about 4 s from the warm pool, and about 30 s
+  without one. On the first template build, a clone answered SSH after
+  27 s, most of it Windows booting before the startup task set the
+  address (16.7 s), and Cua 1 s later. A hibernated clone resumed in
+  3.2 s, with SSH and Cua answering within a second. The agent drives it
+  with the same seven computer tools.
 - Each box needs a Windows licence. An unactivated or evaluation copy is
   enough to try it. bb-box never ships a Windows image.
 - A box of another size is a cold clone, since a hibernated VM keeps its

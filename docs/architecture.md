@@ -1229,7 +1229,7 @@ Notes:
 - **Windows** on Proxmox QEMU
   ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md))
   clones a template that is not generalized: a clone shows its desktop
-  with Cua in about 20 s, and a hibernated warm VM resumes to it in about
+  with Cua in about 30 s, and a hibernated warm VM resumes to it in about
   4 s. The backend sets the guest's clock after each resume. The box's
   address is in the VM's SMBIOS serial, which a startup task reads.
   Commands use OpenSSH with PowerShell 7, elevated; the guest agent is for
