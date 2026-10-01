@@ -10,7 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { cn } from "@/lib/utils";
 import type { BoxResult, Contract, DesktopEntry, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { EmptyPanel, forThread, IconButton, KindBadges, message, Meta, Notice, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
+import { EmptyPanel, forThread, IconButton, KindBadges, message, Meta, Notice, osName, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
 import { claimKept, dropKept, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 
@@ -447,8 +447,8 @@ function DesktopRow({ box, meta, onOpen, actions }: { box: BoxView; meta?: strin
       <div className="min-w-0">
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
-          <span className="truncate text-xs text-muted-foreground">{box.kindLabel}</span>
-          <KindBadges gpu={box.gpu} forms={box.form ? [box.form] : []} />
+          <span className="truncate text-xs text-muted-foreground">{osName(box.os)}</span>
+          <KindBadges desktop={box.desktop} gpu={box.gpu} docker={box.requires.includes("docker")} forms={box.form ? [box.form] : []} />
         </span>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
           <StatusDot tone={status.tone} className="mt-[0.3rem]" />

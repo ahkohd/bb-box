@@ -171,12 +171,24 @@ export function Badge({ children, tone = "muted", className }: { children: React
 }
 
 /** What a kind or a box has beyond its label, as badges: GPU, then what its boxes are (LXC, Docker, VM, Physical). In a wrapping line they go under the name rather than squeeze it. */
-/** `ready`: a spare of the kind is ready, so a box of it comes at once (032). */
-export function KindBadges({ gpu, forms, ready = false, className }: { gpu: boolean; forms: readonly string[]; ready?: boolean; className?: string }) {
-  if (!gpu && !forms.length && !ready) return null;
+/** The name the panel gives a kind or a box: its OS. Badges say the rest (the operator, 1 October 2026). */
+export function osName(os: string): string {
+  return os === "macos" ? "macOS" : os === "windows" ? "Windows" : os === "linux" ? "Linux" : os;
+}
+
+/**
+ * What a kind or a box is beyond its OS, as badges: Desktop, GPU, Docker
+ * inside (the feature), then what its boxes are (LXC, Docker, VM,
+ * Physical), then Ready now for a kind with a spare (032). In a wrapping
+ * line they go under the name rather than squeeze it.
+ */
+export function KindBadges({ desktop = false, gpu, docker = false, forms, ready = false, className }: { desktop?: boolean; gpu: boolean; docker?: boolean; forms: readonly string[]; ready?: boolean; className?: string }) {
+  if (!desktop && !gpu && !docker && !forms.length && !ready) return null;
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
+      {desktop ? <Badge>Desktop</Badge> : null}
       {gpu ? <Badge>GPU</Badge> : null}
+      {docker ? <Badge>Docker inside</Badge> : null}
       {forms.map((form) => (
         <Badge key={form}>{form}</Badge>
       ))}

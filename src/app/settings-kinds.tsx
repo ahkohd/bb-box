@@ -11,7 +11,7 @@ import type { BoxForm, BoxSize } from "../backends/types.ts";
 import type { Problem } from "../core/document.ts";
 import type { Preset } from "../core/sizes.ts";
 import type { BackendState, ConfigState, KindInfoView } from "../plugin/configuration.ts";
-import { KindBadges, Meta, StatusDot } from "./common.tsx";
+import { KindBadges, Meta, osName, StatusDot } from "./common.tsx";
 import { PRESET_LABELS, PRESET_NAMES, gib, mib, problemAt, problemsLeft, sizeWords, type KindSizes } from "./config.ts";
 import { FieldShell, FormHeading } from "./settings-fields.tsx";
 
@@ -57,8 +57,8 @@ export function KindRow({ model, open, onToggle, onSwitch, switching, children }
         <Switch aria-label={`${info.label} on`} className="mt-1" checked={sizes.enabled} disabled={switching} onCheckedChange={onSwitch} />
         <div className="min-w-0 flex-1">
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
-            <span className="truncate">{info.label}</span>
-            <KindBadges gpu={info.gpu} forms={forms} />
+            <span className="truncate">{osName(info.os)}</span>
+            <KindBadges desktop={info.desktop} gpu={info.gpu} docker={info.features.includes("docker")} forms={forms} />
           </p>
           <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
             <StatusDot tone={!sizes.enabled ? "off" : offering.length ? "ok" : "warn"} className="mt-[0.3rem]" />

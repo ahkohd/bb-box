@@ -5,7 +5,7 @@
 
 import { layeredStorage, scopedStorage, type Backends } from "../backends/index.ts";
 import { kindInfo } from "../backends/kinds.ts";
-import type { BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm } from "../backends/types.ts";
+import type { BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs } from "../backends/types.ts";
 import type { BoxRecord } from "../core/boxes.ts";
 import {
   GENERAL_DEFAULTS,
@@ -55,6 +55,9 @@ export interface KindInfoView {
   readonly description: string;
   readonly gpu: boolean;
   readonly desktop: boolean;
+  /** The OS, which the settings name the kind by, and the features it promises, for its badges. */
+  readonly os: GuestOs;
+  readonly features: readonly string[];
   /** Driver types that can make it. */
   readonly drivers: readonly string[];
   /** Its spare boxes now (032): ready to claim, and being made. */
