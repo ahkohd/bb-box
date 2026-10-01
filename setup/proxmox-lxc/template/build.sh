@@ -219,8 +219,10 @@ if ! pveam list "${BBBOX_OS_TEMPLATE%%:*}" | grep -q "$os"; then
   pveam download "${BBBOX_OS_TEMPLATE%%:*}" "$os"
 fi
 
-size=16
-[ "$kind" = linux ] || size=24
+# A template waits at its kinds' default size (028), so its warm boxes serve
+# them: a warm box serves only a box with its cores.
+size=16 cores=2 memory=4096
+[ "$kind" = linux ] || size=24 cores=4 memory=8192
 lines=
 if [ "$kind" = desktop ] && [ -z "$cpu" ]; then lines=$(gpu_lines "$gpu"); fi
 [ -z "$cpu" ] || lines="# cpu only"
@@ -266,7 +268,7 @@ pct exec "$ct" -- bash "$in_ct/guest/finalize.sh" "$in_ct" "$kind"
 pct shutdown "$ct" --timeout 60
 # Clones get their address from the plugin; without one they have none.
 pct set "$ct" --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=manual,type=veth" --delete nameserver \
-  --cores 2 --memory 4096 --swap 512
+  --cores "$cores" --memory "$memory" --swap 512
 note=$(grep '^#' <<<"$lines" | cut -c3- || true)
 description="bb-box $kind template${note:+ ($note)}, built $(date -u +%F). See /usr/share/bb-box/template-release inside."
 if [ "$ct" != "$vmid" ]; then

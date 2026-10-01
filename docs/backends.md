@@ -90,7 +90,10 @@ the box connected to BB again within 3 s of being ready), recovery by a new
 instance, repeated release and interrupted acquires. It also checks that
 two installs on one backend leave each other's guests alone, and, given a
 `reuse` hook that makes the backend hand out a reference again, that the old
-box reads as gone and its release leaves the new box alone. Steps a kind
+box reads as gone and its release leaves the new box alone. The size check
+measures a box as soon as it is ready, after filling any warm pool the run's
+settings ask for, so the box can come from it; the pool stays for the next
+run, and a run with a target of 0 removes it. Steps a kind
 does not declare are skipped by its capabilities; any other skip gives its
 reason.
 

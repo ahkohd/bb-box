@@ -19,13 +19,16 @@
 // least used template; a GPU desktop goes to the GPU with the fewest
 // desktops. Every guest carries a "template.<vmid>" tag, which is how that
 // use is counted. The warm pool keeps started guests of each flavour, tagged
-// "warm", at their template's size. Claiming one sets the box's cores and
-// memory, which a running container takes at once, and retags it for its
-// box, so a new box is ready as soon as the tags change and any larger disk
-// is applied. build.sh tags each template it makes "build.<id>", and
-// a warm guest copies the tag: one whose template now has another, or is
-// away, is retired rather than claimed. Guests of other installs, or with no
-// install, count against capacity but are otherwise left alone.
+// "warm", at their template's size. A warm guest serves only a box with its
+// cores: a running container takes new memory at once, but new cores only
+// when Proxmox next rebalances its CPUs, up to 10 s later, and a new clone is
+// quicker than that wait. Claiming one sets the box's memory and retags it
+// for its box, so a new box is ready as soon as the tags change and any
+// larger disk is applied. build.sh tags each template it makes
+// "build.<id>", and a warm guest copies the tag: one whose template now has
+// another, or is away, is retired rather than claimed. Guests of other
+// installs, or with no install, count against capacity but are otherwise
+// left alone.
 
 import type { TLSSocket } from "node:tls";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
@@ -475,9 +478,10 @@ export class ProxmoxLxcBackend implements Backend {
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
     const builds = await this.templateBuilds(api, guests, signal);
     const ready = guests.filter((guest) => this.warmOf(guest, builds)?.flavour === offer.flavour && guest.status === "running");
+    const fitting = ready.filter((guest) => guest.size?.cores === size.cores);
     const waiting = pending.filter((other) => flavourOf(other.kind) === offer.flavour).length;
     // Any of them may be claimed, so the one with the least memory is assumed.
-    const warmMiB = ready.length > waiting ? Math.min(...ready.map((guest) => guest.size?.memoryMiB ?? 0)) : null;
+    const warmMiB = fitting.length > waiting ? Math.min(...fitting.map((guest) => guest.size?.memoryMiB ?? 0)) : null;
     return this.#room(api, offer, size, guests, pending, { ready: ready.length, target: offer.config.warm }, warmMiB, signal);
   }
 
@@ -654,6 +658,7 @@ export class ProxmoxLxcBackend implements Backend {
       if (vmid === null) {
         const member = await step("warm", () =>
           this.#warm.claim(box.kind, box, {
+            fits: (candidate) => this.#warmStore.coresOf(candidate.ref) === box.size.cores,
             before: (candidate) => {
               acquiring.template = this.#warmStore.templateOf(candidate.ref);
               return claim(Number(candidate.ref));
@@ -1134,13 +1139,12 @@ export class ProxmoxLxcBackend implements Backend {
     return isTemplate(config) ? buildFromTags(parseTags(config.tags)) : undefined;
   }
 
-  /** Gives a warm guest its box's name, cores and memory, and retags it. The guest keeps running. */
+  /** Gives a warm guest its box's name and memory, and retags it. The guest keeps running, and already has the box's cores. */
   async hold(member: PoolMember, box: BoxIdentity, template: number | null, signal?: AbortSignal): Promise<void> {
     const api = await this.client();
     const vmid = Number(member.ref);
     const installId = this.#context.installId;
-    const { cores, memoryMiB } = box.size;
-    await api.configure(vmid, { hostname: box.name, cores, memory: memoryMiB, description: describe(box, installId) }, signal);
+    await api.configure(vmid, { hostname: box.name, memory: box.size.memoryMiB, description: describe(box, installId) }, signal);
     await api.configure(vmid, { tags: boxTags(box, installId, template) }, signal);
   }
 
@@ -1656,6 +1660,8 @@ class WarmStore implements PoolStore<BoxIdentity> {
   readonly #pool: string;
   /** The template of each warm guest, as last listed. */
   readonly #templates = new Map<string, number>();
+  /** The cores of each warm guest, as last listed. */
+  readonly #cores = new Map<string, number>();
 
   constructor(backend: ProxmoxLxcBackend, pool: string) {
     this.#backend = backend;
@@ -1666,12 +1672,14 @@ class WarmStore implements PoolStore<BoxIdentity> {
     const api = await this.#backend.client();
     const members: PoolMember[] = [];
     this.#templates.clear();
+    this.#cores.clear();
     const guests = await api.listPool(this.#pool, signal);
     const builds = await this.#backend.templateBuilds(api, guests, signal);
     for (const guest of guests) {
       const warm = this.#backend.warmOf(guest, builds);
       if (!warm || guest.status !== "running") continue;
       this.#templates.set(String(guest.vmid), warm.template);
+      if (guest.size) this.#cores.set(String(guest.vmid), guest.size.cores);
       members.push({
         ref: String(guest.vmid),
         host: guest.node || api.node,
@@ -1687,6 +1695,10 @@ class WarmStore implements PoolStore<BoxIdentity> {
 
   templateOf(ref: string): number | null {
     return this.#templates.get(ref) ?? null;
+  }
+
+  coresOf(ref: string): number | null {
+    return this.#cores.get(ref) ?? null;
   }
 
   hold(member: PoolMember, box: BoxIdentity, signal?: AbortSignal): Promise<void> {

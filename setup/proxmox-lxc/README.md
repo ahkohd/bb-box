@@ -448,8 +448,14 @@ A box is made at the size asked for: its kind's preset or a custom size
 bb-box's general `box-sizes` setting changes the presets, and
 `skills/bb-box/SKILL.md` lists them. A disk size grows the template's disk;
 one smaller than the template's keeps the template's, which is quickest.
-A warm box waits at its template's size (`build.sh` leaves 2 cores and
-4 GiB) and is given the size asked for when it is handed out. Capacity
+A warm box waits at its template's size, which `build.sh` makes its kinds'
+default size: 2 cores and 4 GiB for Linux templates, 4 cores and 8 GiB for
+desktops. It is handed out only to a box with the same cores, and given that
+box's memory and disk. A running container takes new memory at once, but
+new cores only when Proxmox next rebalances its CPUs, up to 10 s later, so a
+box with other cores is a new clone, ready in 2 to 4 s. If `box-sizes`
+gives a kind's default size other cores, its warm boxes serve only boxes
+with the template's cores. Capacity
 checks the size against the node's CPU threads, its memory less the
 reserve, and, for a larger disk, the storage less the reserve.
 
