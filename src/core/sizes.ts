@@ -53,6 +53,7 @@ const SHIPPED: Readonly<Record<string, KindSizes>> = {
   "linux-desktop-cpu": DESKTOP,
   macos: MACOS,
   "macos-desktop": MACOS,
+  "windows-desktop": DESKTOP,
 };
 
 /** Part of a size in the box-sizes setting. A disk of null is the base. */

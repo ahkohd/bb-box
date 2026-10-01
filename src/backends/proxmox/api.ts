@@ -162,9 +162,9 @@ export function parseSizeGiB(value: string): number | null {
   return unit === "" ? amount / (1024 * 1024 * 1024) : amount * factor;
 }
 
-/** The root disk's size in GiB, from a guest's config, or null when it does not say. */
-export function rootDiskGiB(config: Record<string, unknown>): number | null {
-  const size = /(?:^|,)size=([^,]+)/.exec(String(config.rootfs ?? ""))?.[1];
+/** The size in GiB of a guest's root disk, or of its `disk`, from its config, or null when it does not say. */
+export function rootDiskGiB(config: Record<string, unknown>, disk = "rootfs"): number | null {
+  const size = /(?:^|,)size=([^,]+)/.exec(String(config[disk] ?? ""))?.[1];
   return size ? parseSizeGiB(size) : null;
 }
 
@@ -279,17 +279,18 @@ export class Proxmox {
   }
 
   /**
-   * Grows a container's root disk to `sizeGiB` if it is smaller. Proxmox
-   * cannot shrink disks. On a running container this takes about a second; on
-   * a stopped linked clone it can take much longer.
+   * Grows a guest's root disk to `sizeGiB` if it is smaller: a container's
+   * rootfs, or a VM's `disk`, such as scsi0. Proxmox cannot shrink disks. On
+   * a running container this takes about a second; on a stopped linked clone
+   * it can take much longer. A VM's disk grows as quickly either way.
    */
-  async growRootDisk(vmid: number, sizeGiB: number, signal?: AbortSignal): Promise<boolean> {
-    const currentGiB = rootDiskGiB(await this.config(vmid, signal));
+  async growRootDisk(vmid: number, sizeGiB: number, signal?: AbortSignal, disk = this.type === "qemu" ? "scsi0" : "rootfs"): Promise<boolean> {
+    const currentGiB = rootDiskGiB(await this.config(vmid, signal), disk);
     if (currentGiB !== null && currentGiB >= sizeGiB) return false;
     const result = await this.#request<unknown>(
       "PUT",
       this.#guest(vmid, "/resize"),
-      { disk: "rootfs", size: `${sizeGiB}G` },
+      { disk, size: `${sizeGiB}G` },
       signal,
     );
     if (typeof result === "string" && result.startsWith("UPID:")) await this.waitTask(result, signal);

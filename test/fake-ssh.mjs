@@ -14,7 +14,8 @@
 // command line over 32,767 characters, as Windows does, and stands in for
 // PowerShell with bb-box's own commands: it decodes a script, or stages one
 // in tmp/ in the host's home, then runs the script, less its PowerShell exit
-// check, with `sh -c`.
+// check, with `sh -c`. When $FAKE_SSH_DIR/powershell/<host> exists, a sh
+// script that stands in for PowerShell, it runs that with the script as $1.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -77,7 +78,9 @@ if (existsSync(join(root, "windows", host))) {
   if (staged) rmSync(join(tmp, staged[1]));
   script = text.replace(/\nif\(-not \$\?\)\{.*\}$/, "");
 }
-const result = spawnSync("sh", ["-c", script.replaceAll("/run/bb-box/", `${run}/`)], {
+const powershell = join(root, "powershell", host);
+const shell = existsSync(powershell) ? [powershell] : ["-c"];
+const result = spawnSync("sh", [...shell, script.replaceAll("/run/bb-box/", `${run}/`)], {
   cwd: home,
   env: { PATH: process.env.PATH, HOME: home, USER: target.split("@")[0] },
   stdio: "inherit",

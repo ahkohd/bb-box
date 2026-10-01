@@ -61,6 +61,7 @@ export function fakeSsh(options: { share?: boolean } = {}) {
   mkdirSync(join(dir, "shared"));
   mkdirSync(join(dir, "hold-share"));
   mkdirSync(join(dir, "windows"));
+  mkdirSync(join(dir, "powershell"));
   writeFileSync(join(dir, "log"), "");
   const ssh = new Ssh({ keyPath: "/nonexistent/key", binary: FAKE_SSH_BINARY, shareDir: options.share ? join(dir, "shared") : null });
   return {
@@ -71,6 +72,8 @@ export function fakeSsh(options: { share?: boolean } = {}) {
     upAfter: (host: string, dials: number) => writeFileSync(join(dir, "up-after", host), String(dials)),
     /** Makes `host` a Windows box, whose shell is PowerShell. */
     windows: (host: string) => writeFileSync(join(dir, "windows", host), ""),
+    /** Runs each script for Windows box `host` through `sh`, a sh script that gets it as $1, in place of `sh -c`. */
+    powershell: (host: string, sh: string) => writeFileSync(join(dir, "powershell", host), sh),
     /** Keeps a shared connection to `host` from opening until the returned function is called. */
     holdShare: (host: string) => {
       writeFileSync(join(dir, "hold-share", host), "");

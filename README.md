@@ -72,7 +72,7 @@ To try it, see [Install](#install): one Docker host is enough.
 | Backend | Virtual or real | Kinds | Status |
 | --- | --- | --- | --- |
 | Proxmox LXC | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |
-| Proxmox QEMU | virtual | Windows desktop | planned |
+| Proxmox QEMU | virtual | Windows desktop | in development |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
 | Apple Virtualization framework, with [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS, macOS desktop | in development |
 | Docker | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |
