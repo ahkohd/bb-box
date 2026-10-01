@@ -5,6 +5,7 @@
 // install ID change. Switches and warm counts reach it live, so a warm pool
 // or an open connection survives them and changes to other backends.
 
+import { dockerDriver } from "./docker/index.ts";
 import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
 import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
@@ -12,7 +13,7 @@ import { backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocume
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
 import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck } from "./types.ts";
 
-export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, sshPoolDriver, tartDriver];
+export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, sshPoolDriver, tartDriver, dockerDriver];
 
 /** Keys under `prefix`, with the prefix hidden from the backend. */
 export function scopedStorage(storage: BackendStorage, prefix: string): BackendStorage {

@@ -1,10 +1,12 @@
 #!/bin/bash
 # bb-box base template, run as root inside a Proxmox Ubuntu 24.04 CT: the
 # development baseline, pinned tools, Docker, the box user, SSH with the
-# plugin's key, DNS and PATH. The desktop template runs this first too.
+# plugin's key, DNS and PATH. The desktop template runs this first too, and so
+# does setup/docker/Dockerfile for the Docker backend's images.
 #
 # usage: customize-base.sh <build-dir>
-# <build-dir>/build.env sets BOX_USER, BOX_DNS and BB_URL (see build.sh).
+# <build-dir>/build.env sets BOX_USER, BOX_DNS and BB_URL (see build.sh), and
+# BOX_RUNTIME: lxc (the default) or docker.
 set -Eeuo pipefail
 trap 'echo "customize-base: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 umask 022
@@ -13,8 +15,10 @@ build=$1
 # shellcheck disable=SC1091
 . "$build/build.env"
 user=${BOX_USER:-box}
+runtime=${BOX_RUNTIME:-lxc}
 export DEBIAN_FRONTEND=noninteractive
 die() { echo "customize-base: $*" >&2; exit 1; }
+case $runtime in lxc | docker) ;; *) die "BOX_RUNTIME must be lxc or docker" ;; esac
 installed() { [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ]; }
 
 # The base image may lack CA certificates, which the https snapshot needs.
@@ -33,6 +37,10 @@ rm -rf /etc/cloud /var/lib/cloud /snap /var/snap /var/lib/snapd
 # Baseline, Docker and everyday tools, from the pinned apt snapshot.
 docker_packages="docker.io docker-compose-v2 docker-buildx pigz postgresql-client redis-tools sqlite3"
 extra_packages="openssh-server sudo systemd-resolved less nano vim-tiny iputils-ping iputils-arping dnsutils netcat-openbsd htop tmux file lsof strace"
+# Ubuntu's container image has no systemd. A Docker box does not run it, but
+# systemctl sets up the same units as in an LXC box, and the box's start script
+# makes the machine ID with it.
+[ "$runtime" = lxc ] || extra_packages=${extra_packages/systemd-resolved/systemd}
 # shellcheck disable=SC2086
 bash "$build/guest/baseline.sh" "$build" $docker_packages $extra_packages
 # npm installs global packages where they land on PATH (`sudo npm i -g x`).
@@ -136,50 +144,54 @@ R /home/$user/.bb-machines/*/daemon.lock.lock
 r /home/$user/.bb-machines/*/install-daemon.pid
 EOF
 
-# The plugin's key, for the box user and root.
-key=$(cat "$build/plugin-key.pub")
-[[ "$key" == ssh-ed25519\ * ]] || die "plugin-key.pub is not an ed25519 public key"
-for home in /root "/home/$user"; do
-  owner=root
-  [ "$home" = /root ] || owner=$user
-  install -d -m 0700 -o "$owner" -g "$owner" "$home/.ssh"
-  printf '%s\n' "$key" >"$home/.ssh/authorized_keys"
-  chown "$owner:$owner" "$home/.ssh/authorized_keys"
-  chmod 0600 "$home/.ssh/authorized_keys"
-done
+# Only in a Proxmox LXC box. A Docker box has no SSH server running and no
+# key: bb-box reaches it through `docker exec`. Docker sets up its DNS and
+# network.
+if [ "$runtime" = lxc ]; then
+  # The plugin's key, for the box user and root.
+  key=$(cat "$build/plugin-key.pub")
+  [[ "$key" == ssh-ed25519\ * ]] || die "plugin-key.pub is not an ed25519 public key"
+  for home in /root "/home/$user"; do
+    owner=root
+    [ "$home" = /root ] || owner=$user
+    install -d -m 0700 -o "$owner" -g "$owner" "$home/.ssh"
+    printf '%s\n' "$key" >"$home/.ssh/authorized_keys"
+    chown "$owner:$owner" "$home/.ssh/authorized_keys"
+    chmod 0600 "$home/.ssh/authorized_keys"
+  done
 
-# DNS: systemd-resolved with fixed resolvers. Proxmox rewrites
-# /etc/resolv.conf at every start unless the marker exists, and its networkd
-# file for eth0 carries no DNS.
-installed systemd-resolved || die "systemd-resolved is not installed"
-install -d -m 0755 /etc/systemd/resolved.conf.d
-printf '[Resolve]\nDNS=%s\n' "${BOX_DNS:-1.1.1.1 9.9.9.9}" >/etc/systemd/resolved.conf.d/10-bb-box.conf
-systemctl enable systemd-networkd.service systemd-resolved.service >/dev/null
-ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-: >/etc/.pve-ignore.resolv.conf
-# Only IPv4 matters for network-online (Docker waits for it).
-install -d -m 0755 /etc/systemd/system/systemd-networkd-wait-online.service.d
-cat >/etc/systemd/system/systemd-networkd-wait-online.service.d/10-bb-box.conf <<'EOF'
+  # DNS: systemd-resolved with fixed resolvers. Proxmox rewrites
+  # /etc/resolv.conf at every start unless the marker exists, and its networkd
+  # file for eth0 carries no DNS.
+  installed systemd-resolved || die "systemd-resolved is not installed"
+  install -d -m 0755 /etc/systemd/resolved.conf.d
+  printf '[Resolve]\nDNS=%s\n' "${BOX_DNS:-1.1.1.1 9.9.9.9}" >/etc/systemd/resolved.conf.d/10-bb-box.conf
+  systemctl enable systemd-networkd.service systemd-resolved.service >/dev/null
+  ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  : >/etc/.pve-ignore.resolv.conf
+  # Only IPv4 matters for network-online (Docker waits for it).
+  install -d -m 0755 /etc/systemd/system/systemd-networkd-wait-online.service.d
+  cat >/etc/systemd/system/systemd-networkd-wait-online.service.d/10-bb-box.conf <<'EOF'
 [Service]
 ExecStart=
 ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any --ipv4 --timeout=10
 EOF
-# IPv4 only on eth0: IPv6 link-local DAD held network-online (and Docker)
-# back by 1.4 s. Proxmox rewrites eth0.network at each start but leaves
-# drop-ins alone.
-install -d -m 0755 /etc/systemd/network/eth0.network.d
-cat >/etc/systemd/network/eth0.network.d/10-bb-box.conf <<'EOF'
+  # IPv4 only on eth0: IPv6 link-local DAD held network-online (and Docker)
+  # back by 1.4 s. Proxmox rewrites eth0.network at each start but leaves
+  # drop-ins alone.
+  install -d -m 0755 /etc/systemd/network/eth0.network.d
+  cat >/etc/systemd/network/eth0.network.d/10-bb-box.conf <<'EOF'
 # bb-box: IPv4 only; no IPv6 link-local DAD delaying network-online.
 [Network]
 LinkLocalAddressing=no
 IPv6AcceptRA=no
 EOF
 
-# A box's address is often one a deleted box had. Announce the new MAC with a
-# gratuitous ARP as soon as the address is up; otherwise the host keeps a
-# stale neighbour entry and sends to the old MAC for up to 8 s.
-install -d -m 0755 /usr/local/libexec/bb-box
-cat >/usr/local/libexec/bb-box/announce <<'EOF'
+  # A box's address is often one a deleted box had. Announce the new MAC with a
+  # gratuitous ARP as soon as the address is up; otherwise the host keeps a
+  # stale neighbour entry and sends to the old MAC for up to 8 s.
+  install -d -m 0755 /usr/local/libexec/bb-box
+  cat >/usr/local/libexec/bb-box/announce <<'EOF'
 #!/bin/sh
 # bb-box: announce eth0's IPv4 address (gratuitous ARP) once it is configured.
 for _ in $(seq 1 50); do
@@ -190,8 +202,8 @@ done
 [ -n "$addr" ] || exit 0
 exec arping -q -U -c 2 -I eth0 "$addr"
 EOF
-chmod 0755 /usr/local/libexec/bb-box/announce
-cat >/etc/systemd/system/bb-box-announce.service <<'EOF'
+  chmod 0755 /usr/local/libexec/bb-box/announce
+  cat >/etc/systemd/system/bb-box-announce.service <<'EOF'
 [Unit]
 Description=bb-box: announce this box's address to its neighbours
 After=systemd-networkd.service
@@ -204,7 +216,8 @@ ExecStart=-/usr/local/libexec/bb-box/announce
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable bb-box-announce.service >/dev/null
+  systemctl enable bb-box-announce.service >/dev/null
+fi
 
 # Locale for tools that complain without one.
 printf 'LANG=C.UTF-8\n' >/etc/default/locale

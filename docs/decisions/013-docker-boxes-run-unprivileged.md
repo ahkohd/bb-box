@@ -1,6 +1,8 @@
 # 013: Docker boxes run unprivileged, without systemd
 
-Status: accepted, 30 September 2026.
+Status: accepted, 30 September 2026. Partly superseded by
+[031](031-docker-boxes-are-reached-through-docker-exec.md): no sshd, bb-box
+starts BB's daemon, and linux-docker has no systemd.
 
 ## Context
 

@@ -6,6 +6,7 @@
 # the host, VirtualGL, GPUI build dependencies and Rust.
 #
 # usage: customize-desktop.sh <build-dir>
+# build.env as for customize-base.sh, and DESKTOP_GPU.
 set -Eeuo pipefail
 trap 'echo "customize-desktop: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 umask 022
@@ -15,6 +16,7 @@ build=$1
 . "$build/build.env"
 art=$build/artifacts
 user=${BOX_USER:-box}
+runtime=${BOX_RUNTIME:-lxc}
 export DEBIAN_FRONTEND=noninteractive
 die() { echo "customize-desktop: $*" >&2; exit 1; }
 [ -f /etc/apt/apt.conf.d/50bb-box-build-snapshot ] || die "run customize-base.sh first (no apt snapshot)"
@@ -271,6 +273,15 @@ cat >/etc/opt/chrome/policies/managed/bb-box-first-run.json <<'EOF'
 }
 EOF
 chmod 0644 /opt/google/chrome/initial_preferences /etc/opt/chrome/policies/managed/bb-box-first-run.json
+# Chrome's sandbox needs namespaces that Docker's default seccomp profile
+# refuses to an unprivileged container, so in a Docker box Chrome runs without
+# it, and without the bar that warns of the flag on every window.
+sandbox=
+if [ "$runtime" = docker ]; then
+  sandbox=" --no-sandbox"
+  printf '{\n  "CommandLineFlagSecurityWarningsEnabled": false\n}\n' >/etc/opt/chrome/policies/managed/bb-box-docker.json
+  chmod 0644 /etc/opt/chrome/policies/managed/bb-box-docker.json
+fi
 # Computer use reads web pages through AT-SPI, which Chrome builds only with
 # --force-renderer-accessibility. The diversion covers every way Chrome
 # starts and survives upgrades.
@@ -284,9 +295,9 @@ cat >"$bin.bb-box" <<EOF
 # WebGL on the CPU display path. Installed over a dpkg diversion by the bb-box
 # desktop template.
 if [ "\$(cat /run/bb-box/display-mode 2>/dev/null)" = cpu ]; then
-  exec $bin.distrib --force-renderer-accessibility --ignore-gpu-blocklist "\$@"
+  exec $bin.distrib --force-renderer-accessibility$sandbox --ignore-gpu-blocklist "\$@"
 fi
-exec $bin.distrib --force-renderer-accessibility "\$@"
+exec $bin.distrib --force-renderer-accessibility$sandbox "\$@"
 EOF
 chmod 0755 "$bin.bb-box"
 mv -f "$bin.bb-box" "$bin"

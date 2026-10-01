@@ -1,12 +1,15 @@
 // Runs the backend conformance suite against the fake backend, in both
 // natures, against the Proxmox LXC backend on a fake Proxmox and fake SSH,
-// and against the Tart backend on a fake Mac.
+// against the Tart backend on a fake Mac, and against the Docker backend on a
+// fake Docker host.
 
+import { DockerBackend } from "../src/backends/docker/backend.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import type { CommandTransport } from "../src/transports/types.ts";
 import { conformance, type ConformanceBb } from "./conformance/suite.ts";
 import { FakeBackend } from "./fake-backend.ts";
+import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
 import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
@@ -117,6 +120,24 @@ await conformance({
     display: "the fake Mac has no VNC server to stream",
     "computer-use": "the fake VM has no computer-use driver",
     size: "the fake SSH runs commands on the test machine",
+  },
+  timeoutMs: 20_000,
+});
+
+// A container's name comes from its box ID, so the Docker backend has no ref to reuse.
+const docker = fakeDockerHost();
+const dockerSettings = dockerConfig({ privileged: true });
+await conformance({
+  name: "Docker on a fake host",
+  storage: new MemoryStorage(),
+  create: (storage, installId) => new DockerBackend(dockerSettings, testContext(storage, installId), { binary: docker.binary, readyTimeoutMs: 20_000 }),
+  bb: fakeBb(),
+  skip: {
+    arch: "the fake docker runs commands on the test machine",
+    docker: "the fake docker runs commands on the test machine",
+    display: "the fake Docker host has no desktop to stream",
+    "computer-use": "the fake container has no computer-use driver",
+    size: "the fake docker runs commands on the test machine",
   },
   timeoutMs: 20_000,
 });

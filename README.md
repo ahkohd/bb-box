@@ -48,7 +48,7 @@ services and builds, so that work runs on a box and not on your own machine.
   returned on release. The interface is acquire and release for both, and a
   warm pool of ready virtual boxes works like a pool of real machines.
 - **Transport**: how bb-box reaches inside a box, shared by backends: command
-  execution and file copy (SSH; `docker exec` or a guest agent later) and the
+  execution and file copy (SSH or `docker exec`; a guest agent later) and the
   desktop stream (RFB, the VNC protocol, now; Selkies later). Everything that
   runs inside a box (BB enrolment, computer use, the thread's access) goes
   through a transport and is written once for every backend.
@@ -73,7 +73,7 @@ services and builds, so that work runs on a box and not on your own machine.
 | Proxmox QEMU | virtual | Windows desktop | planned |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
 | Apple Virtualization framework, with [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS, macOS desktop | in development |
-| Docker | virtual | Linux, Linux desktop | planned, early |
+| Docker | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |
 | SSH host pool | real | Linux, Linux with Docker, on Linux machines you own | in development |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
@@ -123,6 +123,28 @@ made for it. When the box is released, the machine is reset and lent again.
 
 See [its guide](setup/ssh-pool/README.md).
 
+### Docker
+
+Runs boxes as containers on one Docker host: the Docker on BB's server, or
+another machine's over SSH. It needs only Docker, so it is the quickest way
+to try bb-box. A linux box is ready in about a third of a second, and a
+desktop in under a second.
+
+- **Images**: built on the Docker host by `setup/docker/build.sh`, from the
+  same guest scripts as the Proxmox LXC templates, so a box has the same
+  tools. bb-box never pulls an image.
+- **Reach**: commands, file copies and the desktop stream all go through
+  `docker exec`, so BB's server needs no network path to a box, and a
+  Docker host over SSH works as the local one does.
+- **Docker in a box**: Docker in Docker, in a privileged container, which is
+  root on the Docker host, so it is off until the operator turns it on.
+- **Desktop**: XFCE and Chrome drawn by the CPU, or on an NVIDIA GPU through
+  the NVIDIA Container Toolkit.
+- **Limits**: no systemd in a box, no disk size of its own, and it is not a
+  security boundary: a box shares the host's kernel.
+
+See [its guide](setup/docker/README.md).
+
 ## Easy to set up, tested on every backend
 
 bb-box should be easy to set up on whatever you have. Every backend has a
@@ -154,8 +176,13 @@ The SSH host pool backend lends Linux machines you own, with Docker on
 machines with a whole-machine reset. It passes the conformance suite against
 Docker containers running sshd, with and without systemd.
 
-Next: the Docker backend, to keep the core backend-agnostic and to make
-bb-box easy to try; then Windows, then macOS.
+The Docker backend runs Linux boxes, desktops among them, as containers on
+one Docker host, local or over SSH, and needs only Docker to try bb-box.
+It passes the conformance suite on a local Docker host and on one over SSH,
+for every kind but linux-desktop, which has not yet been tested on a host
+with an NVIDIA GPU.
+
+Next: Windows, then macOS.
 
 ## Install
 
@@ -210,12 +237,15 @@ The tests and scripts need Node 22.18 or later, which runs TypeScript
 directly. `scripts/preview/` renders the built panels outside BB, with BB's
 theme and fixtures, for screenshots: serve the repository root and open
 `scripts/preview/index.html#panel-list`, or run `node scripts/preview/shoot.mjs`
-on a machine with Chrome. The tests run against a fake Proxmox API and a fake `ssh`, so they
-need no host. The smoke script runs against a real backend without BB; see
+on a machine with Chrome. The tests run against a fake Proxmox API, a fake
+`ssh`, a fake `tart` and a fake `docker`, so they need no host. The smoke
+script runs against a real backend without BB; see
 [section 6 of the Proxmox LXC guide](setup/proxmox-lxc/README.md#6-smoke-test).
 `npm run conformance` runs the conformance suite against a real backend; the
 [SSH host pool guide](setup/ssh-pool/README.md#testing-on-one-computer) runs
-it against Docker containers on one computer.
+it against Docker containers on one computer, and the
+[Docker guide](setup/docker/README.md#trying-it-without-bb) against the
+Docker backend.
 
 ## Third-party code
 
@@ -233,3 +263,4 @@ package, in `node_modules/@novnc/novnc` after `npm install`.
 - [Setting up the Proxmox LXC backend](setup/proxmox-lxc/README.md)
 - [Setting up the SSH host pool backend](setup/ssh-pool/README.md)
 - [Setting up the Tart backend](setup/tart/README.md)
+- [Setting up the Docker backend](setup/docker/README.md)

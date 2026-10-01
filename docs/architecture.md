@@ -23,10 +23,10 @@ BB app (panel, desktop viewer)          BB server
 |       desktop relay, shared control, BB enrolment, in-box scripts per OS |
 |------------------------------+-------------------------------------------|
 | Transports                   | Backends                                  |
-|  command: SSH (docker exec,  |  proxmox-lxc (built), ssh-pool (built),   |
-|    guest agent later)        |  proxmox-qemu, docker, mac (physical),    |
-|  routes: tcp, command,       |  tart, clouds, ...                        |
-|    websocket                 |                                           |
+|  command: SSH, docker exec   |  built: proxmox-lxc, ssh-pool, tart,      |
+|    (guest agent later)       |    docker                                 |
+|  routes: tcp, command,       |  planned: proxmox-qemu, mac (physical),   |
+|    websocket                 |    clouds, ...                            |
 +------------------------------+-------------------------------------------+
           |                                 |
           v                                 v
@@ -359,9 +359,10 @@ memory and root disk, where a disk of null is the backend's base.
   console session. If any check fails, the machine goes out of service with
   the reason, and the claim tries the next one.
 - A `PoolStore` must not assume a guest's labels or tags can change after
-  creation. Docker sets labels when it creates a container (backend, kind,
-  generation, install), so `held()` finds every container this install made,
-  and claims a warm container by renaming it.
+  creation. Docker sets labels only when it creates a container (backend,
+  install, box, kind), so `held()` finds every container this install made.
+  Docker has no warm pool, as a box is ready in about a second
+  ([031](decisions/031-docker-boxes-are-reached-through-docker-exec.md)).
 
 ### Doctor and setup
 
@@ -1008,9 +1009,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
 Nothing expires, so a box must never be forgotten.
 
 - **Ownership is recorded at the provider** where it can be: tags on a Proxmox
-  guest, the container name for Docker, the VM name for Tart, a marker file on
-  a real machine. `held()` reads it back, so the sweep works even if bb-box's
-  storage is lost.
+  guest, labels set as the container is made for Docker, an owner file per
+  VM for Tart, a marker file on a real machine. `held()` reads it back, so
+  the sweep works even if bb-box's storage is lost.
 - **Each install records its ID** on every guest it makes, and `held()`
   returns only that install's guests. Two BB servers, or a smoke run, can
   share a pool and never touch each other's guests. An install that lost
@@ -1106,19 +1107,19 @@ Push work to Git or copy it out before releasing a box.
 
 ## Backends
 
-How each backend fits the interface. Proxmox LXC and the SSH host pool are
-built; the rest are planned, and the later-backends research fills in the
-details.
+How each backend fits the interface. Proxmox LXC, the SSH host pool, Tart
+and Docker are built; the rest are planned, and the later-backends research
+fills in the details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
 | Nature | virtual | virtual | virtual | real | real | virtual |
 | Acquire | linked clone, start | linked clone, start | create and start a container from the kind's image | claim a machine | claim a Mac, prepare the box user | `tart clone` (copy on write), `tart run` headless |
 | Release | delete | delete | remove the container | remove the box user and what it left, or restore the whole machine | reset the box user | `tart delete` |
-| Command | SSH | OpenSSH for Windows with PowerShell, or the QEMU guest agent | `docker exec`, or SSH if the image runs it | SSH | SSH | SSH through the Mac host |
+| Command | SSH | OpenSSH for Windows with PowerShell, or the QEMU guest agent | `docker exec` | SSH | SSH | SSH through the Mac host |
 | Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | none yet; RFB through SSH later | RFB (Screen Sharing) through SSH | RFB through the Mac host |
-| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file on the machine, with a reset generation | marker file and plugin storage | an owner file per VM on the Mac, written before the clone with noclobber and removed last. A warm VM's says `filling`, then `warm`, and a claim rewrites it with the box's fields, so warm VMs are claimed in it rather than renamed, since `tart rename` does not check whether a VM is running |
-| Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), GPU | machines | machines | guests (two VMs per Mac), memory, disk |
+| Ownership record | tags | tags | labels set at creation, and the container name `bbbox-<box ID>` | marker file on the machine, with a reset generation | marker file and plugin storage | an owner file per VM on the Mac, written before the clone with noclobber and removed last. A warm VM's says `filling`, then `warm`, and a claim rewrites it with the box's fields, so warm VMs are claimed in it rather than renamed, since `tart rename` does not check whether a VM is running |
+| Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), desktops per GPU | machines | machines | guests (two VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
 | Enrol | yes | not until BB's host app runs on Windows | yes, without systemd | yes | yes | yes |
 
@@ -1133,17 +1134,20 @@ Notes:
   tried once more at once, as the template may have come back meanwhile.
   The box's timings show the wait as `template`, apart from `clone`. Warm
   guests and the capacity check wait the same way.
-- **Docker** reaches its daemon through a local socket or a remote Docker
-  host. GPU desktops use NVIDIA's container toolkit. Boxes run unprivileged
-  with `--init` and a start script, ready in 0.78 s as measured
-  ([013](decisions/013-docker-boxes-run-unprivileged.md)). systemd and Docker
-  inside a box need a privileged kind, which the operator turns on because a
-  privileged container is root on the Docker host. Without systemd, BB's
-  installer leaves its host daemon running in the background. After a
-  restart, the start script removes BB's daemon lock and PID file, and bb-box
-  calls `bootstrap` again, which starts the daemon
+- **Docker** runs the `docker` CLI against a local socket or a Docker host
+  over `ssh://`. Commands, file copies and the desktop all go through
+  `docker exec`, so BB's server needs no network path to a box
+  ([031](decisions/031-docker-boxes-are-reached-through-docker-exec.md)).
+  GPU desktops use NVIDIA's container toolkit through CDI. Boxes run with
+  `--init` and a start script, and no systemd
+  ([013](decisions/013-docker-boxes-run-unprivileged.md)). Docker inside a
+  box needs the privileged kind `linux-docker`, which the operator turns on
+  because a privileged container is root on the Docker host. Without
+  systemd, BB's installer leaves its host daemon running in the background.
+  After a restart, the start script removes BB's daemon lock and PID file,
+  and bb-box calls `bootstrap` again, which starts the daemon
   ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
-  `access.dockerHost` stays null unless the operator opts in.
+  `access.dockerHost` is null.
 - **Windows** on Proxmox QEMU streams its console through Proxmox's API, so
   nothing is installed in the guest for the desktop. Commands need OpenSSH for
   Windows or the QEMU guest agent, whose calls Proxmox limits to 64 KiB of

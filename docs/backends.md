@@ -111,7 +111,8 @@ reason.
 [test/fake-backend.ts](../test/fake-backend.ts) is an in-memory backend,
 virtual or real, that passes the suite and backs the core's own tests.
 [test/conformance.test.ts](../test/conformance.test.ts) runs the suite
-against it, and against Proxmox LXC with a fake API.
+against it, against Proxmox LXC with a fake API, against Tart on a fake
+Mac, and against Docker on a fake Docker host.
 
 ```sh
 node --test test/conformance.test.ts
@@ -202,3 +203,37 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
 - The tests run the real host scripts against a fake `tart` on a fake Mac
   ([test/fake-tart.mjs](../test/fake-tart.mjs),
   [test/fake-mac.ts](../test/fake-mac.ts)).
+
+## Docker
+
+- Virtual. Code in [src/backends/docker/](../src/backends/docker/): the
+  fields in `config.ts`, the `docker` CLI in `cli.ts`, the command
+  transport in `transport.ts`, and the backend in `backend.ts`.
+- The images are built by `setup/docker/`, from the Proxmox LXC template's
+  guest scripts; its guide lists the fields. bb-box runs the `docker` CLI
+  on BB's server, against the local daemon or one over `ssh://`, and reaches
+  a box only through `docker exec`
+  ([031](decisions/031-docker-boxes-are-reached-through-docker-exec.md)).
+- Ownership lives in container labels set at creation (`bbbox.backend`,
+  `bbbox.install`, `bbbox.box`, `bbbox.thread`, `bbbox.name`, `bbbox.kind`),
+  and the container's name is `bbbox-<box ID>`, so references are never
+  reused. Every method reads the labels now and acts only on a container
+  that names this install and the box.
+- Capacity is per host: `guests`, every bb-box container there, running or
+  stopped, of any install; `memory`, the host's less a reserve and the
+  limits of the running boxes; and, for GPU desktops, `gpu-desktops` per
+  GPU the NVIDIA Container Toolkit lists through CDI, counting stopped
+  desktops. A box gets its size's cores and memory as container limits, and
+  may not have more cores than the host. A disk size is refused, and
+  `Guest.size` has `diskGiB` null. There is no warm pool.
+- The tests run against a fake `docker` CLI whose daemon state is a
+  directory, and whose `docker exec` runs commands on the test machine
+  ([test/fake-docker.mjs](../test/fake-docker.mjs),
+  [test/fake-docker.ts](../test/fake-docker.ts)).
+
+To run the suite against a real Docker host with the images built:
+
+```sh
+echo '{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": { "privileged": true } }] }' > /tmp/docker.json
+npm run conformance -- --backend docker --settings /tmp/docker.json
+```
