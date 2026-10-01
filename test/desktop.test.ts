@@ -367,6 +367,27 @@ test("the box ending the holder's connection gives control back at once", async 
   await until("the agent to have control", () => value.view("box1").owner === "agent");
 });
 
+test("a reload gives control back and sets the desktop's size back before bb-box goes, and schedules nothing after (#139)", async () => {
+  const { value, events, restores, connect } = control({ staleMs: 10 });
+  const a = connect("viewer-a");
+  value.seen("box1", { width: 1280, height: 800 });
+  await value.take("box1", "viewer-a");
+  value.resized("box1", "viewer-a", SCREEN);
+  await value.dispose();
+  assert.deepEqual(value.view("box1"), { owner: "agent", holder: null });
+  assert.equal(a.releases, 1, "what the holder held down is let go");
+  assert.deepEqual(restores, [[{ width: 1280, height: 800 }, SCREEN]]);
+
+  // A take that lands during the reload, then its viewer closing, as the
+  // reload closes every viewer: nothing hands back later with the old plugin's API.
+  const b = connect("viewer-b");
+  await value.take("box1", "viewer-b");
+  const changes = events.length;
+  value.detach("box1", b, "viewer");
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(events.length, changes);
+});
+
 test("a box that stops or goes gives control back and forgets its size", async () => {
   const { value, restores, connect } = control();
   connect("viewer-a");

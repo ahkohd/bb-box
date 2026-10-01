@@ -1360,6 +1360,30 @@ test("the backend resizes a desktop whose stream server cannot, one resize at a 
   await session.close();
 });
 
+test("a reload while a person has control gives it back and sets the desktop's size back first (#139)", async (t) => {
+  const { harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
+  await app.boxes.idle();
+  const box = await only(app);
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  await session.receive(setDesktopSize(1600, 1000, { id: 7, flags: 0 }));
+  const rfb = world.backend!.rfb;
+  await until("the viewer's size", async () => rfb.width === 1600);
+
+  await harness.lifecycle.dispose();
+  assert.deepEqual([rfb.width, rfb.height], [1280, 800], "the agent's size, set while bb-box can still reach the box");
+  assert.deepEqual(
+    harness.inspection.logEntries.filter((entry) => entry.level === "error").map((entry) => entry.message),
+    [],
+  );
+});
+
 test("a box without a desktop has no desktop to control", async (t) => {
   const { harness, app } = await start();
   t.after(() => harness.lifecycle.dispose());

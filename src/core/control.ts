@@ -59,6 +59,7 @@ const AGENT: ControlView = { owner: "agent", holder: null };
 export class Control {
   readonly #deps: ControlDeps;
   readonly #boxes = new Map<string, BoxControl>();
+  #disposed = false;
 
   constructor(deps: ControlDeps) {
     this.#deps = deps;
@@ -105,7 +106,7 @@ export class Control {
   detach(boxId: string, connection: ViewerConnection, by: "viewer" | "box"): void {
     const state = this.#boxes.get(boxId);
     if (!state?.connections.delete(connection)) return;
-    if (state.owner !== "human" || state.holder !== connection.viewer || this.connected(boxId, connection.viewer)) return;
+    if (this.#disposed || state.owner !== "human" || state.holder !== connection.viewer || this.connected(boxId, connection.viewer)) return;
     if (by === "box") {
       void this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error));
       return;
@@ -221,10 +222,18 @@ export class Control {
     if (!state.connections.size) this.#boxes.delete(boxId);
   }
 
-  dispose(): void {
+  /**
+   * The plugin is going away, as on a reload, and its next start gives
+   * control to the agent (008). Each person's control goes back now, while
+   * bb-box can still reach the box, so a desktop the holder resized gets its
+   * size back (#139). Nothing is scheduled after.
+   */
+  async dispose(): Promise<void> {
+    this.#disposed = true;
     for (const state of this.#boxes.values()) {
       if (state.stale) clearTimeout(state.stale);
       state.stale = null;
     }
+    await Promise.all([...this.#boxes.keys()].map((boxId) => this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error))));
   }
 }

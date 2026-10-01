@@ -167,7 +167,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     control,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
     async dispose() {
-      control.dispose();
+      await control.dispose();
       await Promise.all([...relays].map((relay) => relay.close()));
     },
   };
