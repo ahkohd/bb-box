@@ -29,6 +29,7 @@ Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
 | Path | What it does |
 | --- | --- |
 | `prepare-image.sh` | Builds the image a Mac's boxes are cloned from |
+| `prepare-linux-image.sh` | Builds the image a Mac's Linux boxes are cloned from (040) |
 | `guest/customize.sh` | Runs inside the image's VM while it is built |
 | `grant-tcc.sh` | Grants Cua Driver its permissions in a stopped VM's disk |
 
@@ -172,6 +173,40 @@ Cirrus Labs' image also grants `sshd-keygen-wrapper`, the process SSH logins
 run under, Accessibility, Screen Recording and Apple Events. Commands over
 SSH can therefore drive the desktop too, although they run outside its
 session.
+
+### The Linux image (arm64)
+
+Linux boxes on a Mac (`linux-arm64` and `linux-arm64-docker`, 040) are
+clones of a second image, which `prepare-linux-image.sh` builds from Cirrus
+Labs' Ubuntu 24.04. It runs the Proxmox LXC template's own guest scripts in
+the VM (`../proxmox-lxc/template`), with their arm64 tool pins, so a Linux
+box on a Mac has what a Linux box on Proxmox has. It takes about 6 minutes
+once the base image is pulled (3.1 GB), and leaves a stopped VM named
+`bb-box-linux` of about 5.6 GB.
+
+```sh
+tart pull ghcr.io/cirruslabs/ubuntu:24.04
+./prepare-linux-image.sh --key 'ssh-ed25519 AAAA... bb-box' --bb-url https://bb.example.com
+```
+
+Its options are `prepare-image.sh`'s, with `--from` defaulting to
+`ghcr.io/cirruslabs/ubuntu:24.04` and `--name` to `bb-box-linux`. The keys
+must be ed25519.
+
+What it has, beyond the Linux template's development tools, agent CLIs,
+Docker and BB's host app:
+
+- user `box`, with bb-box's key and sudo without a password, as in every
+  Linux box. Cirrus's `admin` user stays for Tart's guest agent, which runs
+  as it, with its password locked;
+- a 64 GB disk (sparse: it costs what a box writes), and the VM's own
+  network and DNS from the Mac;
+- packages from Ubuntu's live ports archive. Ubuntu keeps snapshots of its
+  main archive only, so unlike the Proxmox template the arm64 image is not
+  pinned to a snapshot date.
+
+Everything in it is arm64: amd64 container images and x86_64 binaries do not
+run there.
 
 ### Permissions for computer use
 
