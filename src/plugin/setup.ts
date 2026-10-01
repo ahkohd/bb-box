@@ -29,7 +29,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { abortable } from "../core/abortable.ts";
-import { DockerHosts, backendOn, withDockerHost, type MachineRecord } from "./docker-hosts.ts";
+import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord } from "./docker-hosts.ts";
 import { DockerImages } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
@@ -241,25 +241,34 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // The Docker API relay (042): a socket per BB machine for the docker CLI, each
   // connection a channel on one WebSocket the machine's worker opens out to this route.
   const machineNames = new Map<string, string>();
-  const machineStates = new Map<string, { at: number; connected: boolean | null }>();
-  /** Whether BB shows the machine connected, from BB with no call to it, for a moment at a time. Null for no such machine. */
+  const machineStates = new Map<string, { at: number; connected: boolean | null; offline: string | null }>();
+  /**
+   * Whether BB shows the machine connected and has heard from it lately, from
+   * BB with no call to it, for a moment at a time. Null for no such machine.
+   */
   const machineConnected = async (hostId: string): Promise<boolean | null> => {
     const known = machineStates.get(hostId);
     if (known && Date.now() - known.at < MACHINE_STATE_MS) return known.connected;
+    let offline: string | null = null;
     let connected: boolean | null;
     try {
       const found = await bb.sdk.hosts.get({ hostId });
       machineNames.set(hostId, found.name);
-      connected = found.status === "connected";
+      offline = machineOffline(found, Date.now());
+      connected = offline === null;
     } catch (error) {
       if (status(error).status !== 404) throw error;
       connected = null;
     }
-    machineStates.set(hostId, { at: Date.now(), connected });
+    machineStates.set(hostId, { at: Date.now(), connected, offline });
     return connected;
   };
   const offline = (hostId: string, connected: boolean | null) =>
-    new Error(connected === null ? `BB has no machine ${hostId}.` : `${machineNames.get(hostId) ?? `BB machine ${hostId}`} is offline in BB.`);
+    new Error(
+      connected === null
+        ? `BB has no machine ${hostId}.`
+        : `${machineNames.get(hostId) ?? `BB machine ${hostId}`} ${machineStates.get(hostId)?.offline ?? "is offline in BB."}`,
+    );
   const relay = new RelayHub({
     async open(hostId, secret, signal) {
       const connected = await machineConnected(hostId);
