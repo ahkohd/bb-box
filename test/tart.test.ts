@@ -139,7 +139,7 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   assert.deepEqual(recorded.claimed.at(-1), guest, "claimed again with its address");
   assert.equal(recorded.claimed[0]!.ref, `bb-box-${box.boxId}`);
   assert.deepEqual(recorded.claimed[0]!.data, { box: box.boxId });
-  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "name"]);
+  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "identify", "name"]);
   assert.equal(guest.host, "mac1");
   assert.match(guest.address ?? "", /^192\.168\.64\.\d+$/);
   const owner = readFileSync(join(owners, guest.ref), "utf8");
@@ -262,7 +262,7 @@ test("a Linux desktop box waits for its desktop, and opens it through SSH to the
 
   const recorded = hooks();
   const guest = await backend.acquire(identity("linux-arm64-desktop-cpu", "thr_abc123", LINUX_SMALL), null, recorded.hooks, signal());
-  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "desktop", "name"]);
+  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "desktop", "identify", "name"]);
   assert.ok(tartCalls(mac).some((call) => call[1] === "clone" && call[2] === "bb-box-linux-desktop" && call[3] === guest.ref));
   const waits = () => ssh.log().filter((entry) => entry.target === `box@${guest.address}` && entry.command.includes("systemctl is-active --quiet bb-box-display.service")).length;
   assert.equal(waits(), 1);
@@ -426,8 +426,14 @@ test("a box's hostname comes from its name, and only a VM is renamed", () => {
   assert.match(off, /^\[ "\$\(systemd-detect-virt --vm 2>\/dev\/null\)" = apple \] \|\| \{ echo "not a VM"; exit 0; \}\n/);
   assert.match(off, /\n\[ "\$\(cat "\$HOME\/\.config\/bb-box\/vm" 2>\/dev\/null\)" = 'bb-box-bx1' \] \|\| \{ echo "not bb-box-bx1"; exit 0; \}\nsync\nsudo -n systemctl poweroff --no-block/);
   assert.match(script, /\ncase "\$\(sysctl -n hw\.model 2>\/dev\/null\)" in VirtualMac\*\) ;; \*\) echo "not a VM"; exit 0 ;; esac\n/);
-  // A Linux desktop's X cookie then answers for any hostname.
-  assert.match(script, /\n {2}xauth -q -f "\$auth" nlist \| sed 's\/\^\.\.\.\.\/ffff\/' \| xauth -q -f "\$auth" nmerge -\n {2}exit 0\nfi\n/);
+  // A Linux desktop's X cookie answers for any hostname before the name changes, which needs no D-Bus.
+  const linux = script.slice(0, script.indexOf("\nfi\n"));
+  assert.ok(linux.indexOf("nmerge -") < linux.indexOf("sudo -n sh -s -- 'calm-otter-3'"), linux);
+  // Read, then merge: never two xauth on the file at once, which can wait 20 s for its lock and merge nothing.
+  assert.match(linux, /if \[ -s "\$auth" \]; then entries=\$\(xauth -q -f "\$auth" nlist\) && printf '%s\\n' "\$entries" \| sed 's\/\^\.\.\.\.\/ffff\/' \| xauth -q -f "\$auth" nmerge -; fi\n/);
+  assert.ok(!/nlist \|/.test(linux));
+  assert.match(linux, /\nprintf '%s\\n' "\$1" > \/etc\/hostname\nhostname "\$1"\nNAME\n/);
+  assert.ok(!linux.includes("hostnamectl"));
 });
 
 test("a VM that changes hands gets its new owner in its owner file, and its new name inside (036)", async () => {

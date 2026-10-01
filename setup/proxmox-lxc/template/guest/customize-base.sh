@@ -78,6 +78,12 @@ systemctl mask apt-daily.service apt-daily-upgrade.service >/dev/null
 # With nesting, the CT has its own AppArmor namespace, and loading every
 # profile at each boot is slow. A VM keeps AppArmor.
 [ "$runtime" = vm ] || systemctl mask apparmor.service >/dev/null
+# A VM's own hostname is in /etc/hosts, as Proxmox puts a CT's: sudo looks it
+# up, and early in a VM's boot systemd-resolved took 2.7 s to answer. Naming
+# a box replaces the line (the Tart backend's nameScript).
+if [ "$runtime" = vm ] && ! grep -q '^127[.]0[.]1[.]1[[:space:]]' /etc/hosts; then
+  echo "127.0.1.1 $(hostname)" >>/etc/hosts
+fi
 
 # Docker: nesting=1 on the CT is all it needs. Keep its networks off
 # 192.168.0.0/16, which is in Docker's default pools and often a home LAN.

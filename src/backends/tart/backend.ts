@@ -357,24 +357,32 @@ done`;
 /**
  * Names a VM after its box: its ComputerName, LocalHostName and HostName,
  * which its prompt, its Bonjour name and its BB machine show; in a Linux VM,
- * its hostname and the 127.0.1.1 line in /etc/hosts. Only in a
- * Virtualization framework VM, never on a machine a command reaches by
+ * its hostname, /etc/hostname and the 127.0.1.1 line in /etc/hosts. Only in
+ * a Virtualization framework VM, never on a machine a command reaches by
  * mistake, such as a test machine.
  *
- * A Linux desktop's display wrote its X cookie for the old hostname, and X
- * clients look it up by the hostname, so the script also gives the cookie an
- * entry for any hostname, as the Proxmox LXC backend does.
+ * A Linux desktop's display wrote its X cookie for the hostname it had, and
+ * X clients look it up by the hostname, so first the cookie gets an entry for
+ * any hostname, as the Proxmox LXC backend gives it; images built since have
+ * one from the start. It reads the entries before it merges: in one
+ * pipeline the two xauth raced for the file's lock, and when the merge won,
+ * the read gave up after 20 s and nothing was merged. Then one root shell
+ * writes the files and sets the name, without hostnamectl and D-Bus (#251).
  */
 export function nameScript(name: string): string {
   const host = quote(hostnameOf(name));
   return `if [ "$(uname -s)" = Linux ]; then
   [ "$(systemd-detect-virt --vm 2>/dev/null)" = apple ] || { echo "not a VM"; exit 0; }
-  sudo -n hostnamectl set-hostname ${host} || exit 1
-  if grep -q '^127[.]0[.]1[.]1[[:space:]]' /etc/hosts; then sudo -n sed -i "s/^127[.]0[.]1[.]1[[:space:]].*/127.0.1.1 "${host}"/" /etc/hosts; else echo "127.0.1.1 "${host} | sudo -n tee -a /etc/hosts >/dev/null; fi
   auth=${DISPLAY_AUTH_FILE}
-  [ -s "$auth" ] || exit 0
-  xauth -q -f "$auth" nlist | sed 's/^..../ffff/' | xauth -q -f "$auth" nmerge -
-  exit 0
+  # Read, then merge: two xauth at once on the file can wait 20 s for its lock and merge nothing.
+  if [ -s "$auth" ]; then entries=$(xauth -q -f "$auth" nlist) && printf '%s\\n' "$entries" | sed 's/^..../ffff/' | xauth -q -f "$auth" nmerge -; fi
+  sudo -n sh -s -- ${host} <<'NAME'
+set -e
+if grep -q '^127[.]0[.]1[.]1[[:space:]]' /etc/hosts; then sed -i "s/^127[.]0[.]1[.]1[[:space:]].*/127.0.1.1 $1/" /etc/hosts; else echo "127.0.1.1 $1" >> /etc/hosts; fi
+printf '%s\\n' "$1" > /etc/hostname
+hostname "$1"
+NAME
+  exit
 fi
 case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) echo "not a VM"; exit 0 ;; esac
 for key in ComputerName LocalHostName HostName; do sudo -n scutil --set "$key" ${host} || exit 1; done`;
@@ -688,7 +696,8 @@ export class TartBackend implements Backend {
         }
         await step("ssh", () => this.#waitReady(host, vm, address, deadline, signal));
         if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
-        await step("name", () => this.#name(host, address, vm, box.name, signal));
+        await step("identify", () => this.#identify(host, address, vm, signal));
+        await step("name", () => this.#rename(host, address, vm, box.name, signal));
         const size = sizeOf((await this.#state(host, signal)).configs.get(vm));
         // Claimed again, so the box's record has the address and size as it becomes ready.
         await hooks.claim(guest(address, size));
@@ -1337,6 +1346,11 @@ export class TartBackend implements Backend {
    */
   async #name(host: TartHost, address: string, vm: string, name: string, signal?: AbortSignal): Promise<void> {
     await this.#identify(host, address, vm, signal);
+    await this.#rename(host, address, vm, name, signal);
+  }
+
+  /** Names a VM already identified (nameScript). */
+  async #rename(host: TartHost, address: string, vm: string, name: string, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
     const os = this.#os.get(vm) ?? "macos";
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, os), os);

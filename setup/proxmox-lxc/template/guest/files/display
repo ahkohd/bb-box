@@ -85,6 +85,11 @@ echo "display: $mode ($reason)" >&2
 
 rm -f "$auth"
 xauth -q -f "$auth" add :99 MIT-MAGIC-COOKIE-1 "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+# X clients look the cookie up by the hostname, which naming a box changes
+# after boot, so it has an entry for any hostname too. Read, then merge: two
+# xauth at once on the file can wait 20 s for its lock and merge nothing.
+entries=$(xauth -q -f "$auth" nlist)
+printf '%s\n' "$entries" | sed 's/^..../ffff/' | xauth -q -f "$auth" nmerge -
 
 case "$mode" in
   gpu)
