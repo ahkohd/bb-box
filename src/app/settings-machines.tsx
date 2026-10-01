@@ -83,7 +83,7 @@ export function MachinesSection() {
   };
 
   return (
-    <Section title="Your machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} machine />}>
+    <Section title="Your machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} machine />} plain={!machines.length}>
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
       {problem ? (
         <p role="alert" className="py-2 text-xs leading-snug text-destructive-text">
@@ -96,7 +96,7 @@ export function MachinesSection() {
       {machines.length ? (
         // A project with a repository needs a source on a machine once, which BB's picker sets up (036).
         <p className="pb-2 text-2xs leading-snug text-subtle-foreground/75">
-          To use one for a project with a repository, pick it in BB's new-thread picker and choose Set up on it once.
+          To use one for a project with a repository, pick it in BB's new-thread picker.
         </p>
       ) : null}
       {machines.map((entry) => (

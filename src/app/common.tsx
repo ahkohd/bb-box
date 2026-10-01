@@ -219,7 +219,7 @@ export function KindBadges({ desktop = false, gpu, docker = false, arm64 = false
 /** BB's dashed empty panel. */
 export function EmptyPanel({ title, children, className, role }: { title?: string; children?: ReactNode; className?: string; role?: string }) {
   return (
-    <div role={role} className={cn("rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground", className)}>
+    <div role={role} className={cn("mx-auto max-w-md rounded-md border border-dashed border-border px-6 py-6 text-center text-sm text-subtle-foreground", className)}>
       {title ? <p className="font-medium text-foreground">{title}</p> : null}
       {children}
     </div>
