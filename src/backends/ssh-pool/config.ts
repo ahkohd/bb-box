@@ -1,0 +1,235 @@
+// Settings of the SSH host pool backend, parsed into a typed config. Every
+// key starts with "ssh-pool-". The pool is a list of machines, one per line:
+//
+//   <name> [user@]host[:port] <kind>[,<kind>] [via=[user@]host[:port]] [reset=home|machine] [labels=<word>[,<word>]]
+//
+// for example
+//
+//   build-1 bbbox-admin@192.0.2.21 linux
+//   build-2 192.0.2.22:2222 linux,linux-docker via=jump@bastion.example.com reset=machine labels=fast
+//
+// The user is bb-box's admin user on the machine, bbbox-admin by default,
+// which setup/ssh-pool/setup.sh makes. "via" is a jump host, reached with the
+// same key. "reset=machine" says the machine has a whole-machine reset, which
+// linux-docker needs. setup.sh prints each machine's line and its host keys.
+
+import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
+import { currentKindId } from "../kinds.ts";
+import { normalisePrivateKey } from "../proxmox-lxc/config.ts";
+import type { ParsedSettings } from "../types.ts";
+
+export const SSH_POOL_KINDS = ["linux", "linux-docker"] as const;
+export type SshPoolKind = (typeof SSH_POOL_KINDS)[number];
+
+export const SSH_POOL_DEFAULTS = { adminUser: "bbbox-admin", port: 22 } as const;
+
+export const SSH_POOL_KEYS = {
+  enabled: "ssh-pool-enabled",
+  machines: "ssh-pool-machines",
+  knownHosts: "ssh-pool-known-hosts",
+  sshPrivateKey: "ssh-pool-ssh-private-key",
+} as const;
+
+export interface SshPoolHost {
+  readonly host: string;
+  readonly port: number;
+  readonly user: string;
+}
+
+export interface SshPoolMachine {
+  /** Unique in the pool. Stored with each box as its reference. */
+  readonly name: string;
+  /** bb-box's admin user on the machine. */
+  readonly admin: SshPoolHost;
+  readonly jump: SshPoolHost | null;
+  readonly kinds: readonly SshPoolKind[];
+  /** "machine" when the operator's reset-machine restores the whole machine. */
+  readonly reset: "home" | "machine";
+  readonly labels: readonly string[];
+}
+
+export interface SshPoolConfig {
+  readonly machines: readonly SshPoolMachine[];
+  /** known_hosts lines for every machine and jump host. */
+  readonly knownHosts: readonly string[];
+  /** A null key means bb-box generates one and shows its public key. */
+  readonly privateKey: string | null;
+}
+
+export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
+  [SSH_POOL_KEYS.enabled]: {
+    type: "boolean",
+    label: "SSH host pool: enabled",
+    description: "Lend Linux machines you already have, reached over SSH. Each box has a machine to itself, which is reset when the box is released.",
+    default: false,
+  },
+  [SSH_POOL_KEYS.machines]: {
+    type: "string",
+    label: "SSH host pool: machines",
+    description:
+      'One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux". setup/ssh-pool/setup.sh prints the line for each machine.',
+    experimental_multiline: true,
+    default: "",
+  },
+  [SSH_POOL_KEYS.knownHosts]: {
+    type: "string",
+    label: "SSH host pool: host keys",
+    description: "known_hosts lines for every machine and jump host, as setup.sh prints them. bb-box connects only to a machine whose key is here.",
+    experimental_multiline: true,
+    default: "",
+  },
+  [SSH_POOL_KEYS.sshPrivateKey]: {
+    type: "string",
+    label: "SSH host pool: SSH private key",
+    description:
+      "An unencrypted OpenSSH private key that the machines' admin user accepts. Leave empty and bb-box makes one and shows its public key, which you then give setup.sh.",
+    secret: true,
+  },
+};
+
+function text(values: Readonly<Record<string, unknown>>, key: string): string {
+  const value = values[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+const NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const USER = /^[a-z_][a-z0-9_.-]{0,31}$/i;
+const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
+const IPV6 = /^[0-9a-f:.]+(?:%[a-z0-9]+)?$/i;
+const LABEL = /^[a-z0-9][a-z0-9_.-]{0,62}$/i;
+
+/** `[user@]host[:port]`, with an IPv6 address in brackets, or null. */
+export function parseTarget(value: string, defaultUser: string): SshPoolHost | null {
+  const at = value.lastIndexOf("@");
+  const user = at >= 0 ? value.slice(0, at) : defaultUser;
+  const rest = at >= 0 ? value.slice(at + 1) : value;
+  let host: string;
+  let portText: string | null = null;
+  if (rest.startsWith("[")) {
+    const close = rest.indexOf("]");
+    if (close < 0) return null;
+    host = rest.slice(1, close);
+    const after = rest.slice(close + 1);
+    if (after && !after.startsWith(":")) return null;
+    portText = after ? after.slice(1) : null;
+    if (!IPV6.test(host) || !host.includes(":")) return null;
+  } else {
+    const colon = rest.lastIndexOf(":");
+    if (colon >= 0) {
+      if (rest.indexOf(":") !== colon) return null;
+      host = rest.slice(0, colon);
+      portText = rest.slice(colon + 1);
+    } else host = rest;
+    if (!HOSTNAME.test(host)) return null;
+  }
+  const port = portText === null ? SSH_POOL_DEFAULTS.port : Number(portText);
+  if (!USER.test(user) || !/^\d+$/.test(portText ?? "22") || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return { host, port, user };
+}
+
+/** How known_hosts names a host: "host", or "[host]:port" off port 22. */
+export function knownHostsName(host: { readonly host: string; readonly port: number }): string {
+  return host.port === 22 ? host.host : `[${host.host}]:${host.port}`;
+}
+
+/** The names a known_hosts line is for, or null for a hashed or wildcard line, which may be for any host. */
+function lineNames(line: string): string[] | null {
+  const fields = line.trim().split(/\s+/);
+  const names = fields[0]?.startsWith("@") ? fields[1] : fields[0];
+  if (!names || names.startsWith("|") || /[*?!]/.test(names)) return null;
+  return names.split(",");
+}
+
+/** The known_hosts lines for `host`, or all of them when some cannot be matched by name. */
+export function hostKeysFor(lines: readonly string[], host: { readonly host: string; readonly port: number }): string[] {
+  const name = knownHostsName(host);
+  const named = lines.filter((line) => lineNames(line)?.includes(name));
+  return named.length ? named : lines.some((line) => lineNames(line) === null) ? [...lines] : [];
+}
+
+const EXAMPLE = '"build-1 bbbox-admin@192.0.2.21 linux"';
+
+function parseMachine(line: string, problems: string[]): SshPoolMachine | null {
+  const [name = "", target = "", kindList = "", ...options] = line.split(/\s+/);
+  const bad = (why: string) => {
+    problems.push(`${why} In the machines list, "${line}" should be like ${EXAMPLE}.`);
+    return null;
+  };
+  if (!NAME.test(name)) return bad(`Name each machine with lower-case letters, digits and "-".`);
+  const admin = parseTarget(target, SSH_POOL_DEFAULTS.adminUser);
+  if (!admin) return bad(`Give machine ${name} an address as [user@]host[:port].`);
+  if (!kindList) return bad(`Give machine ${name} the kinds it serves.`);
+  const kinds: SshPoolKind[] = [];
+  for (const word of kindList.split(",")) {
+    const id = currentKindId(word);
+    const kind = SSH_POOL_KINDS.includes(id as SshPoolKind) ? (id as SshPoolKind) : null;
+    if (!kind) return bad(`Machine ${name} cannot serve kind "${word}": the SSH host pool offers ${SSH_POOL_KINDS.join(" and ")}.`);
+    if (!kinds.includes(kind)) kinds.push(kind);
+  }
+  let jump: SshPoolHost | null = null;
+  let reset: "home" | "machine" = "home";
+  const labels: string[] = [];
+  for (const option of options) {
+    const [key, value = ""] = option.split(/=(.*)/s);
+    if (key === "via") {
+      jump = parseTarget(value, admin.user);
+      if (!jump) return bad(`Give machine ${name}'s jump host as via=[user@]host[:port].`);
+    } else if (key === "reset") {
+      if (value !== "home" && value !== "machine") return bad(`Use reset=home or reset=machine for machine ${name}.`);
+      reset = value;
+    } else if (key === "labels" || key === "label") {
+      for (const label of value.split(",")) {
+        if (!LABEL.test(label)) return bad(`Use letters, digits, ".", "_" and "-" in machine ${name}'s labels.`);
+        if (!labels.includes(label)) labels.push(label);
+      }
+    } else return bad(`Machine ${name} has an unknown option "${option}".`);
+  }
+  if (kinds.includes("linux-docker") && reset !== "machine") {
+    problems.push(
+      `Machine ${name} serves linux-docker, which needs reset=machine: Docker gives the box root, so only a whole-machine reset makes the machine clean. Remove linux-docker, or set up reset-machine as the setup guide says and add reset=machine.`,
+    );
+    return null;
+  }
+  return { name, admin, jump, kinds, reset, labels };
+}
+
+export function parseSshPoolSettings(values: Readonly<Record<string, unknown>>): ParsedSettings<SshPoolConfig> {
+  if (values[SSH_POOL_KEYS.enabled] !== true) return { enabled: false };
+  const problems: string[] = [];
+
+  const machines: SshPoolMachine[] = [];
+  for (const raw of text(values, SSH_POOL_KEYS.machines).split("\n")) {
+    const line = raw.replace(/#.*/, "").trim();
+    if (!line) continue;
+    const machine = parseMachine(line, problems);
+    if (!machine) continue;
+    if (machines.some((other) => other.name === machine.name)) problems.push(`Machine ${machine.name} is listed twice. Give each machine its own name.`);
+    else if (machines.some((other) => other.admin.host === machine.admin.host && other.admin.port === machine.admin.port)) {
+      problems.push(`Machines ${machines.find((other) => other.admin.host === machine.admin.host)!.name} and ${machine.name} have the same address. List each machine once.`);
+    } else machines.push(machine);
+  }
+  if (!machines.length && !problems.length) problems.push(`List at least one machine, like ${EXAMPLE}. setup/ssh-pool/setup.sh prints the line.`);
+
+  const knownHosts = text(values, SSH_POOL_KEYS.knownHosts)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  for (const line of knownHosts) {
+    const fields = line.split(/\s+/);
+    if (fields.length < (fields[0]!.startsWith("@") ? 4 : 3)) problems.push(`Use whole known_hosts lines for the host keys, like setup.sh prints. "${line.slice(0, 40)}" is not one.`);
+  }
+  for (const machine of machines) {
+    for (const [what, host] of [["machine", machine.admin], ["jump host", machine.jump]] as const) {
+      if (host && !hostKeysFor(knownHosts, host).length) {
+        problems.push(`Add the host key of ${what === "machine" ? `machine ${machine.name}` : `machine ${machine.name}'s jump host`}, ${knownHostsName(host)}, to the host keys. setup.sh prints it, or run ssh-keyscan on a network you trust.`);
+      }
+    }
+  }
+
+  const keyText = text(values, SSH_POOL_KEYS.sshPrivateKey);
+  const privateKey = keyText ? normalisePrivateKey(keyText) : null;
+  if (keyText && !privateKey) problems.push("Paste the whole SSH private key in OpenSSH form, or clear it so bb-box makes one.");
+
+  if (problems.length) return { enabled: true, ok: false, problems };
+  return { enabled: true, ok: true, config: { machines, knownHosts, privateKey } };
+}

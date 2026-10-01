@@ -1,7 +1,7 @@
 // The backend conformance suite: one set of checks every backend passes,
 // whatever the provider. It runs against the fake backend and the Proxmox
 // LXC backend on fakes in `npm test`, and against a live backend with
-// `npm run conformance -- --backend <type> --env-file <file>`.
+// `npm run conformance -- --backend <type> --settings <file>`.
 //
 // Doctor runs first. When it finds a failure, the rest is skipped with its
 // summary. Steps a kind does not support are skipped by its declared

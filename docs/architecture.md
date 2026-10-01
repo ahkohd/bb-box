@@ -23,8 +23,8 @@ BB app (panel, desktop viewer)          BB server
 |       desktop relay, shared control, BB enrolment, in-box scripts per OS |
 |------------------------------+-------------------------------------------|
 | Transports                   | Backends                                  |
-|  command: SSH (docker exec,  |  proxmox-lxc (built), proxmox-qemu,       |
-|    guest agent later)        |  docker, ssh-pool, mac (physical),        |
+|  command: SSH (docker exec,  |  proxmox-lxc (built), ssh-pool (built),   |
+|    guest agent later)        |  proxmox-qemu, docker, mac (physical),    |
 |  routes: tcp, command,       |  tart, clouds, ...                        |
 |    websocket                 |                                           |
 +------------------------------+-------------------------------------------+
@@ -1050,17 +1050,18 @@ Push work to Git or copy it out before releasing a box.
 
 ## Backends
 
-How each backend fits the interface. Proxmox LXC is built; the rest are
-planned, and the later-backends research fills in the details.
+How each backend fits the interface. Proxmox LXC and the SSH host pool are
+built; the rest are planned, and the later-backends research fills in the
+details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
 | Nature | virtual | virtual | virtual | real | real | virtual |
 | Acquire | linked clone, start | linked clone, start | create and start a container from the kind's image | claim a machine | claim a Mac, prepare the box user | `tart clone` (copy on write), `tart run` headless |
-| Release | delete | delete | remove the container | reset the box user | reset the box user | `tart delete` |
+| Release | delete | delete | remove the container | remove the box user and what it left, or restore the whole machine | reset the box user | `tart delete` |
 | Command | SSH | OpenSSH for Windows with PowerShell, or the QEMU guest agent | `docker exec`, or SSH if the image runs it | SSH | SSH | SSH through the Mac host |
-| Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | RFB through SSH | RFB (Screen Sharing) through SSH | RFB through the Mac host |
-| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file and plugin storage | marker file and plugin storage | VM name for boxes made on demand; the pool store for warm VMs, which are claimed rather than renamed, since `tart rename` does not check whether a VM is running |
+| Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | none yet; RFB through SSH later | RFB (Screen Sharing) through SSH | RFB through the Mac host |
+| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file on the machine, with a reset generation | marker file and plugin storage | VM name for boxes made on demand; the pool store for warm VMs, which are claimed rather than renamed, since `tart rename` does not check whether a VM is running |
 | Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), GPU | machines | machines | guests (two VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
 | Enrol | yes | not until BB's host app runs on Windows | yes, without systemd | yes | yes | yes |
@@ -1095,9 +1096,15 @@ Notes:
   OpenSSH, automatic logon and a standard user, since Cua runs unelevated in
   the desktop session. A sysprepped clone's first boot takes minutes, so
   Windows needs a warm pool to feel quick.
-- **SSH host pool** needs nothing but SSH access to each machine. It is the
-  simplest real backend, and the physical Mac backend may turn out to be the
-  same driver with macOS machines and a desktop kind.
+- **SSH host pool** needs nothing but SSH access to each machine, directly
+  or through a jump host, and an admin user that may run only bb-box's
+  helper as root. Each box gets a new user, removed with everything it left
+  on release; `linux-docker` needs a whole-machine reset the operator
+  provides, since a box with Docker is root on the machine. The machine
+  holds the truth: a marker names the install and box, and the reset
+  generation moves on with each reset. Desktops and rootless Docker are not
+  built yet. The physical Mac backend may turn out to be the same driver
+  with macOS machines and a desktop kind.
 - **Physical Macs** have one console session. The box user must be logged in
   at the console for the desktop and computer use. macOS logs a user in
   automatically only at boot, so a reset recreates the box user's home and
