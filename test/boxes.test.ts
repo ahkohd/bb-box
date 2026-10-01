@@ -251,7 +251,7 @@ test("a backend that cannot make a size refuses it through capacity, and the nex
       active: () => all,
       kinds: () => all.flatMap((backend) => backend.kinds().map((kind) => ({ kind, backend }))),
     },
-    general: async () => ({ perThreadLimit: null, enrol: false, sizes: {} }),
+    general: async () => ({ perThreadLimit: null, enrol: false, defaultKind: "linux", sizes: {} }),
     notify: () => {},
     thread: async () => "live",
     logError: () => {},
@@ -985,10 +985,10 @@ test("a box whose backend is off can be seen but says what to fix, and is kept",
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   world.active = false;
-  await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /backend that holds box .* is off or its settings need fixing/);
+  await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /backend that holds box .* is not in bb-box.s settings, or its settings need fixing/);
   const kept = await world.boxes.release(THREAD, box.name);
   assert.equal(kept?.state, "releasing");
-  assert.match(kept!.error!, /is off or its settings need fixing/);
+  assert.match(kept!.error!, /its settings need fixing/);
   await world.boxes.sweep();
   assert.ok(await world.boxes.find(box.id));
   world.active = true;

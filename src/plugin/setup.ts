@@ -1,16 +1,19 @@
-// Wires bb-box into BB: settings, the active backends, the box registry,
+// Wires bb-box into BB: its configuration, the active backends, the box registry,
 // enrolment, thread events, the sweep, and the tools, RPC and CLI that use
 // them. server.ts calls setup with the built-in drivers; tests pass fakes.
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { Backends, DRIVERS, backendSettings, earlierLxcSizes, offerChecks } from "../backends/index.ts";
+import packageJson from "../../package.json" with { type: "json" };
+import { Backends, DRIVERS, offerChecks } from "../backends/index.ts";
 import type { BackendDriver, DoctorReport } from "../backends/types.ts";
 import { BoxError, Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
-import { GENERAL_SETTINGS, parseGeneral, type GeneralConfig } from "../core/config.ts";
+import type { GeneralConfig } from "../core/config.ts";
+import { emptyDocument, type ConfigDocument } from "../core/document.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
-import { withEarlierSizes } from "../core/sizes.ts";
+import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
 import type { ControlView } from "../core/control.ts";
+import { Configuration, boundedDoctor } from "./configuration.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
@@ -29,8 +32,8 @@ const SWEEP_EVERY_MS = 3 * 60_000;
 const DOCTOR_TIMEOUT_MS = 30_000;
 /** How long the names of BB's machine variables are kept before a refresh. */
 const NAMES_FRESH_MS = 60_000;
-/** Set once the sizes saved in the Proxmox LXC settings before 028 are in the box-sizes setting. */
-const SIZES_ADOPTED = "sizes-adopted";
+/** bb-box's version, which the move from BB's settings records. */
+export const VERSION: string = packageJson.version;
 
 /** What the tools, RPC and CLI work with. */
 export interface BbBox {
@@ -41,6 +44,8 @@ export interface BbBox {
   readonly desktops: Desktops;
   /** The agent's computer use of desktop boxes (015). */
   readonly computer: Computer;
+  /** The configuration document (029). */
+  readonly configuration: Configuration;
   general(): Promise<GeneralConfig>;
   view(box: BoxRecord): BoxView;
   /** Who controls a box's desktop. */
@@ -81,10 +86,6 @@ function isSet(value: unknown): boolean {
   return value !== null && value !== undefined;
 }
 
-function withTimeout(ms: number, signal?: AbortSignal): AbortSignal {
-  return signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
-}
-
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(done, ms);
@@ -95,27 +96,6 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
       resolve();
     }
   });
-}
-
-/**
- * Once: the sizes the Proxmox LXC settings gave boxes before 028 become the
- * default sizes of their kinds in the box-sizes setting. The replaced
- * settings keep their values, so the move can be checked.
- */
-async function adoptEarlierSizes(
-  kv: BbPluginApi["storage"]["kv"],
-  settings: { experimental_set(values: { "box-sizes": string }): Promise<unknown> },
-  values: Readonly<Record<string, unknown>>,
-  logError: (operation: string, error: unknown) => void,
-): Promise<void> {
-  try {
-    if (await kv.get<unknown>(SIZES_ADOPTED)) return;
-    const adopted = withEarlierSizes(values["box-sizes"], earlierLxcSizes(values));
-    if (adopted !== null) await settings.experimental_set({ "box-sizes": adopted });
-    await kv.set(SIZES_ADOPTED, true);
-  } catch (error) {
-    logError("box sizes", error);
-  }
 }
 
 export interface SetupOptions {
@@ -130,7 +110,6 @@ export interface SetupOptions {
 
 export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promise<BbBox> {
   const drivers = options.drivers ?? DRIVERS;
-  const settings = bb.settings.define({ ...GENERAL_SETTINGS, ...backendSettings(drivers) });
   const logError = (operation: string, error: unknown) => {
     bb.log.error(`${operation}: ${error instanceof Error ? error.message : String(error)}`);
   };
@@ -142,11 +121,40 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     }
   };
 
-  const backends = new Backends({ storage: bb.storage.kv, installId: await loadInstallId(bb.storage.kv), logError, drivers });
-  const initial = await settings.get();
-  await adoptEarlierSizes(bb.storage.kv, settings, initial, logError);
-  await backends.configure(initial);
-  const general = async () => parseGeneral(await settings.get()).config;
+  // BB's settings move into the configuration document once, before any
+  // backend is built (029). The old keys stay declared until they are
+  // cleared, and nothing listens to them: once the document exists they
+  // drive nothing, so clearing them leaves the backends alone.
+  const kv = bb.storage.kv;
+  const earlier = earlierSettings(drivers);
+  const settings = (await kv.get<unknown>(CLEARED_KEY)) ? null : bb.settings.define(earlier);
+  if (!(await kv.get<ConfigDocument>(DOCUMENT_KEY))) {
+    if (settings) {
+      const { notes } = await moveSettings({ kv, drivers, values: await settings.get(), settings: earlier, version: VERSION });
+      bb.log.info("Moved bb-box's settings into its configuration. bb box config migrated shows what they were.");
+      for (const note of notes) bb.log.warn(`Moving bb-box's settings: ${note}`);
+    } else {
+      // BB's settings were moved and cleared before, so there is nothing to move: start empty, keeping the secrets.
+      await kv.set(DOCUMENT_KEY, emptyDocument(1));
+    }
+  }
+  if (settings) await clearSettings(kv, settings, earlier).catch((error) => logError("clear the settings bb-box moved", error));
+
+  const backends = new Backends({ storage: kv, installId: await loadInstallId(kv), logError, drivers });
+  const configuration = await Configuration.load({
+    kv,
+    backends,
+    drivers,
+    // Read only once setup is done.
+    boxes: () => boxes.all(),
+    changed: () => {
+      notify(null);
+      needsConfiguration();
+    },
+    logError,
+  });
+  await configuration.configure();
+  const general = async () => configuration.general();
 
   const projectOf = async (threadId: string): Promise<string | null> => {
     try {
@@ -236,23 +244,16 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.onDispose(() => desktop.dispose());
   bb.onDispose(() => computing.dispose());
 
-  const problems = () =>
-    backends
+  /** Asks for configuration while no backend is on and valid. */
+  function needsConfiguration(): void {
+    if (backends.on().length) return;
+    const unconfigured = backends
       .statuses()
       .filter((backend) => backend.state === "misconfigured")
       .map((backend) => `${backend.label}: ${backend.problems.join(" ")}`);
-  const unconfigured = problems();
-  if (!backends.active().length) {
-    bb.status.needsConfiguration(
-      unconfigured.length ? unconfigured.join(" ") : "Turn on a backend in bb-box's settings, then fill in its settings.",
-    );
+    bb.status.needsConfiguration(unconfigured.length ? unconfigured.join(" ") : "Turn on a backend in bb-box's settings, then set it up.");
   }
-  settings.onChange((next) => {
-    void backends
-      .configure(next)
-      .then(() => notify(null))
-      .catch((error) => logError("settings", error));
-  });
+  needsConfiguration();
 
   bb.events.on("thread.archived", ({ thread }) => {
     void boxes.releaseThread(thread.id).catch((error) => logError("thread archived", error));
@@ -283,6 +284,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     enrolment,
     desktops: desktop,
     computer: computing,
+    configuration,
     general,
     view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id)),
     control: (box) => control.view(box.id),
@@ -294,19 +296,19 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       })),
     async doctor(signal) {
       const sections: { title: string; report: DoctorReport }[] = [];
-      // A general setting with a problem takes its default, so it warns.
-      const { problems: unsettled } = parseGeneral(await settings.get());
+      // The general and kinds parts are checked on every write; one the move brought may still need fixing.
+      const unsettled = (await configuration.problems()).filter((problem) => !problem.path.startsWith("backends."));
       if (unsettled.length) {
         sections.push({
           title: "bb-box",
           report: {
             ok: true,
-            summary: "Some settings need fixing. Until then bb-box uses their defaults.",
-            checks: unsettled.map((problem, index) => ({
-              id: `settings.general.${index}`,
+            summary: "Some settings need fixing.",
+            checks: unsettled.map((problem) => ({
+              id: `config.${problem.path}`,
               name: "Settings",
               status: "warn" as const,
-              detail: problem,
+              detail: problem.message,
               fix: "Fix it in bb-box's settings.",
             })),
             notes: [],
@@ -320,11 +322,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           report: {
             ok: false,
             summary: "Its settings need fixing.",
-            checks: backend.problems.map((problem, index) => ({
-              id: `settings.${index}`,
+            checks: backend.fieldProblems.map((problem) => ({
+              id: `config.${problem.path}`,
               name: "Settings",
               status: "fail" as const,
-              detail: problem,
+              detail: problem.message,
               fix: "Fix it in bb-box's settings.",
             })),
             notes: [],
@@ -332,21 +334,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         });
       }
       const reports = await Promise.all(
-        backends.active().map(async (backend) => {
-          try {
-            return { title: backend.label, report: await backend.doctor(withTimeout(DOCTOR_TIMEOUT_MS, signal)) };
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-              title: backend.label,
-              report: {
-                ok: false,
-                summary: "The checks did not finish.",
-                checks: [{ id: "doctor", name: "Checks", status: "fail" as const, detail: message, fix: null }],
-                notes: [],
-              },
-            };
-          }
+        backends.on().map(async (backend) => {
+          const report = await boundedDoctor((bounded) => backend.doctor(bounded), DOCTOR_TIMEOUT_MS, signal);
+          await configuration.recordDoctor(backend.id, report);
+          return { title: backend.label, report };
         }),
       );
       sections.push(...reports);

@@ -386,9 +386,10 @@ cp scripts/smoke.example.json /root/bb-box/smoke.json
 node scripts/smoke.ts /root/bb-box/smoke.json --doctor
 ```
 
-The example reads the API URL, node, token and fingerprint from the token
-file, and the key from `ssh/id_ed25519`, both next to the settings file.
-Change the other values to match your settings. It acquires a
+The example is a configuration file in the form `bb box config show --json`
+prints, with the secrets in it. It reads the API URL, node, token and
+fingerprint from the token file, and the key from `ssh/id_ed25519`, both
+next to the settings file. Change the other values to match your host. It acquires a
 `linux` box, runs `uname -a`, releases the box and prints each
 step's time. `--kind`, `--size` and `--command` pick another kind, preset
 or command. The smoke run prints the size the box has. For a
@@ -405,47 +406,63 @@ share the pool with a BB server's bb-box: neither touches the other's boxes,
 though they share the host's capacity. Each run first releases any box an
 earlier run left.
 
-## 7. Plugin settings
+## 7. Configuration
 
-Set these in BB under the bb-box plugin's settings. The examples are this
+Set up the backend on bb-box's settings page in BB: turn on Proxmox LXC and
+fill in its fields, which appear in this order. The examples are this
 guide's defaults; a host set up with them needs only the values from the
-token file, the SSH key and the templates you built.
+token file, the SSH key and the templates you built. "Check" tests the
+fields against the host before you save them.
 
-| Setting | Example | Notes |
+From a terminal, `bb box config show --json` prints the configuration, and
+`bb box config apply <file>` saves an edited copy. The backend's part of the
+file looks like this, with the field names below:
+
+```json
+{
+  "backends": [
+    {
+      "id": "proxmox-lxc",
+      "type": "proxmox-lxc",
+      "enabled": true,
+      "fields": { "url": "https://192.0.2.10:8006/api2/json", "token-id": "bbbox@pve!plugin", "token-secret": "<from the token file>" },
+      "warm": { "linux": 1 }
+    }
+  ]
+}
+```
+
+| Field | Example | Notes |
 | --- | --- | --- |
-| `proxmox-lxc-enabled` | `true` | offer boxes from this host |
-| `proxmox-lxc-url` | `https://192.0.2.10:8006/api2/json` | from the token file |
-| `proxmox-lxc-token-id` | `bbbox@pve!plugin` | from the token file |
-| `proxmox-lxc-token-secret` | | from the token file |
-| `proxmox-lxc-tls-fingerprint` | | from the token file: the SHA-256 of the host's certificate, which bb-box then trusts alone |
-| `proxmox-lxc-ca-certificate` | | only without a fingerprint, when a private CA signed the host's certificate |
-| `proxmox-lxc-node` | `pve` | from the token file; can be empty on a single-node host |
-| `proxmox-lxc-pool` | `bbbox` | `BBBOX_POOL` |
-| `proxmox-lxc-linux-templates` | `9100` | VMIDs of Linux templates, separated by spaces or commas |
-| `proxmox-lxc-desktop-templates` | `9101 GPU-<uuid>`, then `9102 GPU-<uuid>` on the next line | one line per GPU desktop template: its VMID and its GPU's ID |
-| `proxmox-lxc-desktop-cpu-templates` | `9103` | VMIDs of CPU-only desktop templates |
-| `proxmox-lxc-desktops-per-gpu` | `0` | the most desktops on one GPU at once; 0 means no limit |
-| `proxmox-lxc-vmid-first` | `9900` | boxes take VMIDs from this range; keep other guests out of it |
-| `proxmox-lxc-vmid-last` | `9999` | |
-| `proxmox-lxc-bridge` | `vmbr200` | `BBBOX_BRIDGE` |
-| `proxmox-lxc-subnet` | `10.200.0.0/24` | the subnet of `BBBOX_GATEWAY_CIDR` |
-| `proxmox-lxc-gateway` | `10.200.0.1` | the address of `BBBOX_GATEWAY_CIDR` |
-| `proxmox-lxc-addresses` | `10.200.0.10-10.200.0.254` | box addresses; the n-th VMID gets the n-th address |
-| `proxmox-lxc-ssh-private-key` | | the key `BBBOX_SSH_KEY` names; left empty, bb-box makes one and its doctor shows the public key the templates must accept |
-| `proxmox-lxc-ssh-user` | `box` | |
-| `proxmox-lxc-reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |
-| `proxmox-lxc-reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
+| `url` | `https://192.0.2.10:8006/api2/json` | from the token file |
+| `node` | `pve` | from the token file; can be empty on a single-node host |
+| `tls-fingerprint` |  | from the token file: the SHA-256 of the host's certificate, which bb-box then trusts alone |
+| `ca-certificate` |  | only without a fingerprint, when a private CA signed the host's certificate |
+| `token-id` | `bbbox@pve!plugin` | from the token file |
+| `token-secret` |  | secret; from the token file |
+| `ssh-private-key` |  | secret; the key `BBBOX_SSH_KEY` names. Left empty, bb-box makes one and its doctor shows the public key the templates must accept |
+| `pool` | `bbbox` | `BBBOX_POOL` |
+| `linux-templates` | `9100` | VMIDs of Linux templates, separated by spaces or commas |
+| `desktop-templates` | `9101 GPU-<uuid>`, then `9102 GPU-<uuid>` on the next line | one line per GPU desktop template: its VMID and its GPU's ID |
+| `desktop-cpu-templates` | `9103` | VMIDs of CPU-only desktop templates |
+| `desktops-per-gpu` | `0` | the most desktops on one GPU at once; 0 means no limit |
+| `bridge` | `vmbr200` | `BBBOX_BRIDGE` |
+| `subnet` | `10.200.0.0/24` | the subnet of `BBBOX_GATEWAY_CIDR` |
+| `gateway` | `10.200.0.1` | the address of `BBBOX_GATEWAY_CIDR` |
+| `addresses` | `10.200.0.10-10.200.0.254` | box addresses; the n-th VMID gets the n-th address |
+| `vmid-first` | `9900` | boxes take VMIDs from this range; keep other guests out of it |
+| `vmid-last` | `9999` |  |
+| `ssh-user` | `box` |  |
+| `reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |
+| `reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
 
-Each flavour of template has its own warm pool. Replace `<flavour>` with
-`linux`, `desktop` or `desktop-cpu`:
-
-| Setting | Default | Notes |
-| --- | --- | --- |
-| `proxmox-lxc-<flavour>-warm` | `0` | started boxes kept waiting, so a new box is ready at once |
+`warm` keeps started boxes waiting per kind, so a new box is ready at once.
+`linux` and `linux-docker` are clones of the same templates and share their
+warm boxes, so the backend keeps the sum of their counts.
 
 A box is made at the size asked for: its kind's preset or a custom size
 ([028](../../docs/decisions/028-a-box-size-is-chosen-when-it-is-made.md)).
-bb-box's general `box-sizes` setting changes the presets, and
+The kinds part of bb-box's configuration changes the presets, and
 `skills/bb-box/SKILL.md` lists them. A disk size grows the template's disk;
 one smaller than the template's keeps the template's, which is quickest.
 A warm box waits at its template's size, which `build.sh` makes its kinds'
@@ -459,19 +476,16 @@ with the template's cores. Capacity
 checks the size against the node's CPU threads, its memory less the
 reserve, and, for a larger disk, the storage less the reserve.
 
-The `proxmox-lxc-<flavour>-cores`, `-memory-mib` and `-disk-gib` settings
-were replaced by `box-sizes`. Once, on the first start after the update,
-bb-box writes the values they had into `box-sizes` as the default size of
-their kinds, and lists them as replaced. Changing them does nothing.
+bb-box kept this backend's settings in BB's plugin settings, as
+`proxmox-lxc-*` keys, until its configuration document
+([029](../../docs/decisions/029-configuration-is-one-checked-document.md)).
+On the first start of the version that brings it, bb-box moves them into
+the document, with the same backend ID, so boxes and guests carry over.
+`bb box config migrated` shows what they were.
 
 Leave a flavour's templates empty to offer none of its kinds. Linux
 templates serve `linux` and `linux-docker`, GPU desktop templates
 `linux-desktop`, and CPU-only desktop templates `linux-desktop-cpu`.
-
-The Linux settings were `proxmox-lxc-headless-*` before the kinds were
-renamed ([027](../../docs/decisions/027-a-kind-says-when-it-has-a-desktop.md)).
-bb-box reads an old key while its `proxmox-lxc-linux-*` key is unset, and
-lists the old keys as replaced. Move their values to the new keys.
 
 The GPU's ID can be any name without spaces; templates with the same ID
 share a GPU. Use its UUID, which this command lists next to the PCI address

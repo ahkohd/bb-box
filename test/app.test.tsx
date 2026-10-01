@@ -112,11 +112,17 @@ const KINDS: KindView[] = [
 
 const BACKENDS: BackendView[] = [
   {
+    id: "fake",
     type: "fake",
     label: "Fake host",
     nature: "virtual",
     state: "misconfigured",
     problems: ["Set the API URL.", "Set the API token."],
+    fieldProblems: [
+      { path: "backends.fake.url", message: "Set the API URL." },
+      { path: "backends.fake.token", message: "Set the API token." },
+    ],
+    kinds: [],
     setup: { guide: "setup/fake/README.md", scripts: ["setup/fake/one.sh", "setup/fake/two.sh"] },
   },
 ];
@@ -171,6 +177,16 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
         },
       ],
     }),
+    // The settings page that uses these is not built yet.
+    "config.get": () => {
+      throw new Error("not used by the panel");
+    },
+    "config.check": () => {
+      throw new Error("not used by the panel");
+    },
+    "config.apply": () => {
+      throw new Error("not used by the panel");
+    },
   };
   return { handlers, changes };
 }

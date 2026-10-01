@@ -3,9 +3,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LXC_SETTINGS, addressFor, earlierLxcSizes, net0For, parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
+import { LXC_SETTINGS, addressFor, earlierLxcSizes, net0For, parseLxcSettings, readEarlierLxc } from "../src/backends/proxmox-lxc/config.ts";
 import { normalisePrivateKey } from "../src/transports/ssh.ts";
-import { parseGeneral } from "../src/core/config.ts";
 import { VALID, lxcConfig, tempDir } from "./helpers.ts";
 
 test("valid settings parse with defaults", () => {
@@ -16,7 +15,7 @@ test("valid settings parse with defaults", () => {
   assert.equal(config.proxmox.tlsFingerprint, null);
   assert.equal(config.ssh.user, "box");
   assert.deepEqual(config.vmids, { first: 9900, last: 9999 });
-  assert.deepEqual(config.flavours.linux, { templates: [{ vmid: 9000, gpu: null }], warm: 0 });
+  assert.deepEqual(config.flavours.linux, { templates: [{ vmid: 9000, gpu: null }] });
   assert.deepEqual(config.flavours.desktop.templates, []);
   assert.deepEqual(config.flavours["desktop-cpu"].templates, []);
   assert.deepEqual(config.desktop, { perGpu: null });
@@ -90,14 +89,17 @@ test("an unset Linux setting reads its key from before 027, and a set one wins",
     "proxmox-lxc-headless-disk-gib": 20,
     "proxmox-lxc-headless-warm": 2,
   };
-  assert.deepEqual(linux(earlier), { templates: [{ vmid: 9010, gpu: null }, { vmid: 9011, gpu: null }], warm: 2 });
-  const both = linux({ ...earlier, "proxmox-lxc-linux-templates": "9020", "proxmox-lxc-linux-warm": 0 });
-  assert.deepEqual(both.templates, [{ vmid: 9020, gpu: null }]);
-  assert.equal(both.warm, 0, "a new key set to 0 is set");
-  assert.equal(linux({ ...earlier, "proxmox-lxc-linux-warm": null }).warm, 2, "a cleared key is unset");
-  assert.equal(linux({ ...earlier, "proxmox-lxc-linux-templates": "9020" }).warm, 2, "each key falls back on its own");
+  assert.deepEqual(linux(earlier), { templates: [{ vmid: 9010, gpu: null }, { vmid: 9011, gpu: null }] });
+  assert.deepEqual(linux({ ...earlier, "proxmox-lxc-linux-templates": "9020" }).templates, [{ vmid: 9020, gpu: null }]);
   assert.deepEqual(linux({ ...earlier, "proxmox-lxc-linux-templates": "" }).templates, [], "an empty list is set, and turns the kinds off");
-  assert.deepEqual(linux({}), { templates: [{ vmid: 9100, gpu: null }], warm: 0 });
+  assert.deepEqual(linux({}), { templates: [{ vmid: 9100, gpu: null }] });
+
+  // The move into the configuration reads the warm counts the same way (029).
+  const warm = (values: Record<string, unknown>) => readEarlierLxc({ ...unset, ...values })!.warm;
+  assert.deepEqual(warm(earlier), { linux: 2 });
+  assert.deepEqual(warm({ ...earlier, "proxmox-lxc-linux-warm": 0 }), {}, "a new key set to 0 is set");
+  assert.deepEqual(warm({ ...earlier, "proxmox-lxc-linux-warm": null }), { linux: 2 }, "a cleared key is unset");
+  assert.deepEqual(readEarlierLxc({ ...unset, ...earlier })!.fields["linux-templates"], "9010 9011");
 
   // BB gives a declared default in place of an unset value, so the new keys declare none, and the old keys stay declared.
   for (const field of ["templates", "warm"]) {
@@ -181,23 +183,6 @@ test("the SSH key is optional and survives a one-line paste or base64", () => {
   assert.equal(normalisePrivateKey(key.replaceAll("\n", " ")), key);
   assert.equal(normalisePrivateKey(Buffer.from(key).toString("base64")), key);
   assert.equal(normalisePrivateKey("not a key"), null);
-});
-
-test("general settings: no per-thread limit unless set", () => {
-  assert.deepEqual(parseGeneral({}), { config: { perThreadLimit: null, enrol: true, sizes: {} }, problems: [] });
-  assert.deepEqual(parseGeneral({ "boxes-per-thread": 3, "enrol-boxes": false }), { config: { perThreadLimit: 3, enrol: false, sizes: {} }, problems: [] });
-  assert.deepEqual(parseGeneral({ "boxes-per-thread": -1 }), {
-    config: { perThreadLimit: null, enrol: true, sizes: {} },
-    problems: ["Use a whole number of boxes per thread, or 0 for no limit."],
-  });
-});
-
-test("general settings: box sizes, where a mistake keeps the shipped sizes and is a problem", () => {
-  const sizes = parseGeneral({ "box-sizes": '{"linux":{"default":"medium"}}' });
-  assert.deepEqual(sizes, { config: { perThreadLimit: null, enrol: true, sizes: { linux: { default: "medium" } } }, problems: [] });
-  const wrong = parseGeneral({ "boxes-per-thread": 2, "box-sizes": '{"linux":{"default":"huge"}}' });
-  assert.deepEqual(wrong.config, { perThreadLimit: 2, enrol: true, sizes: {} });
-  assert.deepEqual(wrong.problems, ["linux.default must be small, medium or large."]);
 });
 
 test("the size keys saved before 028 give each kind's earlier size", () => {

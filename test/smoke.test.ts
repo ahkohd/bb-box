@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
-import { parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
 import type { BackendDriver } from "../src/backends/types.ts";
-import { readSettings, smoke, timingTable } from "../scripts/smoke.ts";
-import { FakeBackend } from "./fake-backend.ts";
+import { backendPart } from "../src/core/document.ts";
+import { readSettings, smoke, timingTable, toConfiguration } from "../scripts/smoke.ts";
+import { fakeDriver } from "./fake-backend.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, KEY, VALID, fakeSsh, tempDir } from "./helpers.ts";
 
@@ -45,14 +45,26 @@ test("the example settings read the setup guide's token file and key, and parse"
   mkdirSync(join(dir, "ssh"));
   writeFileSync(join(dir, "ssh", "id_ed25519"), `${KEY}\n`);
 
-  const values = readSettings(join(dir, "smoke.json"));
-  assert.equal(values["proxmox-lxc-node"], "pve");
-  assert.equal(values["proxmox-lxc-token-secret"], "s3cret");
-  assert.equal(values["proxmox-lxc-ssh-private-key"], `${KEY}\n`);
-  const parsed = parseLxcSettings(values);
-  assert.ok(parsed.enabled && parsed.ok, JSON.stringify(parsed));
+  const configuration = toConfiguration(readSettings(join(dir, "smoke.json")));
+  assert.deepEqual(configuration.problems, []);
+  const [backend] = configuration.document.backends;
+  assert.equal(backend!.fields.node, "pve");
+  assert.deepEqual(configuration.secrets["proxmox-lxc"], { "token-secret": "s3cret", "ssh-private-key": `${KEY}\n` }, "secrets are kept apart");
+  const parsed = proxmoxLxcDriver.parse(backendPart(backend!, proxmoxLxcDriver, configuration.secrets));
+  assert.ok(parsed.ok, JSON.stringify(parsed));
   assert.deepEqual(parsed.config.flavours.linux.templates.map((template) => template.vmid), [9100]);
   assert.equal(parsed.config.proxmox.tlsFingerprint, FINGERPRINT);
+});
+
+test("a settings file may hold BB's settings from before the configuration, moved as bb-box moves them", () => {
+  const configuration = toConfiguration({ ...VALID, "proxmox-lxc-linux-warm": 2, "boxes-per-thread": 3 });
+  const [backend] = configuration.document.backends;
+  assert.equal(backend!.id, "proxmox-lxc");
+  assert.equal(backend!.enabled, true);
+  assert.deepEqual(backend!.warm, { linux: 2 });
+  assert.equal(configuration.document.general.boxesPerThread, 3);
+  const parsed = proxmoxLxcDriver.parse(backendPart(backend!, proxmoxLxcDriver, configuration.secrets));
+  assert.ok(parsed.ok, JSON.stringify(parsed));
 });
 
 test("a settings file naming a missing key says which", () => {
@@ -96,7 +108,7 @@ test("the smoke test stops before acquiring when the settings are wrong or no ba
   assert.equal(wrong.ok, false);
   assert.match(wrong.problems[0] ?? "", /^Proxmox LXC: /);
   const off = await smoke({ ...values, "proxmox-lxc-enabled": false }, { kind: "linux", command: "true", drivers, log });
-  assert.deepEqual(off.problems, ["No backend is on. Turn one on in the settings file, for example proxmox-lxc-enabled."]);
+  assert.deepEqual(off.problems, ["No backend is on. Turn one on in the settings file."]);
   assert.equal(proxmox.calls.length, 0);
 });
 
@@ -124,15 +136,7 @@ test("a smoke run first releases what an earlier smoke run left, and leaves othe
 
 test("the smoke test opens a desktop box's desktop as the relay does", async () => {
   const root = tempDir("smoke-desktop");
-  const driver: BackendDriver<Record<string, never>> = {
-    type: "fake",
-    label: "Fake host",
-    nature: "virtual",
-    settings: { "fake-enabled": { type: "boolean", label: "Fake host", description: "Use the fake host.", default: false } },
-    setup: { guide: "setup/fake/README.md", scripts: [] },
-    parse: (values) => (values["fake-enabled"] === true ? { enabled: true, ok: true, config: {} } : { enabled: false }),
-    create: (_config, context) => new FakeBackend({ root, storage: context.storage, installId: context.installId }),
-  };
+  const driver = fakeDriver(root);
   const lines: string[] = [];
   const result = await smoke({ "fake-enabled": true }, { kind: "linux-desktop", command: "true", drivers: [driver], log: (line) => lines.push(line) });
   assert.deepEqual(result.problems, []);

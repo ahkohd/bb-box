@@ -429,7 +429,7 @@ export function displayReason(reason: string): string {
 }
 
 export class ProxmoxLxcBackend implements Backend {
-  readonly id = "proxmox-lxc";
+  readonly id: string;
   readonly nature = "virtual" as const;
   readonly label: string;
   readonly #config: LxcConfig;
@@ -457,6 +457,7 @@ export class ProxmoxLxcBackend implements Backend {
   #maintaining: Promise<void> | null = null;
 
   constructor(config: LxcConfig, context: BackendContext, options: LxcBackendOptions = {}) {
+    this.id = context.id;
     this.#config = config;
     this.#context = context;
     this.#options = options;
@@ -482,7 +483,7 @@ export class ProxmoxLxcBackend implements Backend {
     const waiting = pending.filter((other) => flavourOf(other.kind) === offer.flavour).length;
     // Any of them may be claimed, so the one with the least memory is assumed.
     const warmMiB = fitting.length > waiting ? Math.min(...fitting.map((guest) => guest.size?.memoryMiB ?? 0)) : null;
-    return this.#room(api, offer, size, guests, pending, { ready: ready.length, target: offer.config.warm }, warmMiB, signal);
+    return this.#room(api, offer, size, guests, pending, { ready: ready.length, target: this.#warmTarget(offer.flavour) }, warmMiB, signal);
   }
 
   /**
@@ -1174,6 +1175,15 @@ export class ProxmoxLxcBackend implements Backend {
     return offers;
   }
 
+  /**
+   * Warm guests to keep for a flavour: the sum of its kinds' counts, since
+   * their guests are the same (029). None while it offers no kind.
+   */
+  #warmTarget(flavour: LxcFlavour): number {
+    if (!this.#config.flavours[flavour].templates.length) return 0;
+    return FLAVOUR_KINDS[flavour].reduce((sum, kind) => sum + this.#context.warm(kind), 0);
+  }
+
   /** The flavour whose settings list `template`, or null. */
   #flavourOf(template: number): LxcFlavour | null {
     return LXC_FLAVOURS.find((flavour) => this.#config.flavours[flavour].templates.some((listed) => listed.vmid === template)) ?? null;
@@ -1551,7 +1561,7 @@ export class ProxmoxLxcBackend implements Backend {
 
   /** Tops up the warm pool in the background after a warm guest is claimed. */
   #kick(): void {
-    if (!LXC_FLAVOURS.some((flavour) => this.#config.flavours[flavour].warm > 0)) return;
+    if (!LXC_FLAVOURS.some((flavour) => this.#warmTarget(flavour) > 0)) return;
     this.maintain(this.#stopping.signal).catch((error) => this.#context.logError("warm pool", error));
   }
 
@@ -1570,7 +1580,7 @@ export class ProxmoxLxcBackend implements Backend {
         if (installFromTags(guest.tags) !== this.#context.installId) continue;
         const flavour = this.warmOf(guest, builds)?.flavour;
         const count = flavour ? (kept.get(flavour) ?? 0) : 0;
-        if (flavour && guest.status === "running" && count < this.#config.flavours[flavour].warm) {
+        if (flavour && guest.status === "running" && count < this.#warmTarget(flavour)) {
           kept.set(flavour, count + 1);
           continue;
         }
@@ -1587,15 +1597,15 @@ export class ProxmoxLxcBackend implements Backend {
     for (const flavour of LXC_FLAVOURS) {
       // Any kind of the flavour stands for it: their guests are the same.
       const offer = this.#offers().find((candidate) => candidate.flavour === flavour);
-      if (!offer || offer.config.warm === 0) continue;
-      const { config } = offer;
+      const target = offer ? this.#warmTarget(flavour) : 0;
+      if (!offer || target === 0) continue;
       const guests = await api.listPool(pool, signal);
       const builds = await this.templateBuilds(api, guests, signal);
       const ready = guests.filter((guest) => this.warmOf(guest, builds)?.flavour === flavour && guest.status === "running").length;
       const filling = [...this.#filling.values()].filter((template) => this.#flavourOf(template) === flavour).length;
-      for (let missing = config.warm - ready - filling; missing > 0; missing--) {
+      for (let missing = target - ready - filling; missing > 0; missing--) {
         signal.throwIfAborted();
-        const room = await this.#room(api, offer, null, await api.listPool(pool, signal), [], { ready, target: config.warm }, null, signal);
+        const room = await this.#room(api, offer, null, await api.listPool(pool, signal), [], { ready, target }, null, signal);
         if (!room.ok) {
           this.#context.logError("warm pool", new Error(room.message ?? "No room for a warm box."));
           break;

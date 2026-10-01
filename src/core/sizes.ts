@@ -80,6 +80,11 @@ export function kindSizes(kind: string, changes: SizeChanges = {}): KindSizes {
   return apply(SHIPPED[id] ?? LINUX, changes[id]);
 }
 
+/** A kind's presets, smallest first: by cores, then memory. */
+export function presetSizes(sizes: KindSizes): BoxSize[] {
+  return PRESETS.map((preset) => sizes.presets[preset]).sort((a, b) => a.cores - b.cores || a.memoryMiB - b.memoryMiB);
+}
+
 /** The size a box of a kind gets when none is asked for. */
 export function defaultSize(sizes: KindSizes): BoxSize {
   return sizes.presets[sizes.default];

@@ -1,6 +1,8 @@
-// Settings of the Tart backend, parsed into a typed config. Every key starts
-// with "tart-". The plugin's settings page, the smoke script's settings file
-// and the tests all go through parseTartSettings.
+// Settings of the Tart backend, parsed into a typed config. In bb-box's
+// configuration (029) the Macs are the backend's hosts, each with its
+// address, user and host keys, and parseTartPart reads them. Before it, they
+// were BB settings starting with "tart-", which the tests still use through
+// parseTartSettings, and which bb-box moves into the configuration once.
 //
 // The backend runs macOS VMs with Tart on one or more Macs. bb-box reaches
 // each Mac over SSH as its host user, runs `tart` there, and reaches each VM
@@ -9,7 +11,8 @@
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
-import type { ParsedSettings } from "../types.ts";
+import { hostKeysFor } from "../ssh-pool/config.ts";
+import { isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
 export const TART_KINDS = ["macos", "macos-desktop"] as const;
 export type TartKind = (typeof TART_KINDS)[number];
@@ -176,56 +179,163 @@ export function parseHosts(value: string): { hosts: TartHost[]; problems: string
   return { hosts, problems };
 }
 
+/** Adds a problem with the setting at `key`. */
+type Problem = (key: string, message: string) => void;
+
+/** Flat settings, as the tests give them. A problem names no field. */
 export function parseTartSettings(values: Readonly<Record<string, unknown>>): ParsedSettings<TartConfig> {
   if (values[TART_KEYS.enabled] !== true) return { enabled: false };
   const problems: string[] = [];
+  const problem: Problem = (_key, message) => problems.push(message);
 
   const { hosts, problems: hostProblems } = parseHosts(text(values, TART_KEYS.hosts));
   problems.push(...hostProblems);
   if (!hosts.length && !hostProblems.length) problems.push("Tart: list at least one Mac.");
 
-  const hostKeys = text(values, TART_KEYS.hostKeys)
+  const hostKeys = keyLines(text(values, TART_KEYS.hostKeys), (message) => problems.push(message));
+  if (!hostKeys.length) problems.push("Tart: give each Mac's SSH host key, as ssh-keyscan -t ed25519 <address> prints it.");
+
+  const config = checkTart(values, hosts, hostKeys, problem);
+  if (problems.length) return { enabled: true, ok: false, problems };
+  return { enabled: true, ok: true, config };
+}
+
+/** known_hosts lines, without comments, each checked. */
+function keyLines(value: string, problem: (message: string) => void): string[] {
+  const lines = value
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
-  for (const line of hostKeys) {
-    if (line.split(/\s+/).length < 3) problems.push(`Tart: host key line "${line}" must be a known_hosts line: address, key type and key.`);
+  for (const line of lines) {
+    if (line.split(/\s+/).length < 3) problem(`Tart: host key line "${line}" must be a known_hosts line: address, key type and key.`);
   }
-  if (!hostKeys.length) problems.push("Tart: give each Mac's SSH host key, as ssh-keyscan -t ed25519 <address> prints it.");
+  return lines;
+}
 
+/** What a Tart backend is besides its Macs. */
+function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly TartHost[], hostKeys: readonly string[], problem: Problem): TartConfig {
   const kinds = {} as Record<TartKind, TartKindConfig>;
   for (const kind of TART_KINDS) {
     const image = text(values, IMAGE_KEYS[kind], TART_DEFAULTS.image);
-    if (image && !VM_NAME.test(image)) problems.push(`Tart: the ${kind} image "${image}" is not a Tart VM name bb-box can use.`);
+    if (image && !VM_NAME.test(image)) problem(IMAGE_KEYS[kind], `Tart: the ${kind} image "${image}" is not a Tart VM name bb-box can use.`);
     kinds[kind] = { image: image || null };
   }
-  if (TART_KINDS.every((kind) => !kinds[kind].image)) problems.push("Tart: give an image for macos or macos-desktop boxes.");
+  if (TART_KINDS.every((kind) => !kinds[kind].image)) problem(TART_KEYS.macosImage, "Tart: give an image for macos or macos-desktop boxes.");
 
   const vmsPerHost = number(values, TART_KEYS.vmsPerHost, MACOS_VMS_PER_MAC);
   if (!Number.isInteger(vmsPerHost) || vmsPerHost < 1 || vmsPerHost > MACOS_VMS_PER_MAC) {
-    problems.push(`Tart: VMs per Mac must be 1 or ${MACOS_VMS_PER_MAC}.`);
+    problem(TART_KEYS.vmsPerHost, `Tart: VMs per Mac must be 1 or ${MACOS_VMS_PER_MAC}.`);
   }
   const reserveMemoryMiB = number(values, TART_KEYS.reserveMemoryMiB, TART_DEFAULTS.reserveMemoryMiB);
   const reserveDiskGiB = number(values, TART_KEYS.reserveDiskGiB, TART_DEFAULTS.reserveDiskGiB);
-  if (!(reserveMemoryMiB >= 0) || !(reserveDiskGiB >= 0)) problems.push("Tart: the memory and disk kept free cannot be negative.");
+  if (!(reserveMemoryMiB >= 0) || !(reserveDiskGiB >= 0)) {
+    problem(reserveMemoryMiB >= 0 ? TART_KEYS.reserveDiskGiB : TART_KEYS.reserveMemoryMiB, "Tart: the memory and disk kept free cannot be negative.");
+  }
 
   const vmUser = text(values, TART_KEYS.vmUser, TART_DEFAULTS.vmUser);
-  if (!USER.test(vmUser)) problems.push(`Tart: "${vmUser}" is not a user name.`);
+  if (!USER.test(vmUser)) problem(TART_KEYS.vmUser, `Tart: "${vmUser}" is not a user name.`);
   const keyText = text(values, TART_KEYS.sshPrivateKey);
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
-  if (keyText && !privateKey) problems.push("Tart: use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
+  if (keyText && !privateKey) problem(TART_KEYS.sshPrivateKey, "Tart: use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
 
-  if (problems.length) return { enabled: true, ok: false, problems };
+  return { hosts, hostKeys, kinds, vmsPerHost, ssh: { privateKey, vmUser }, reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB } };
+}
+
+export const TART_PREFIX = "tart-";
+
+/** The backend's fields in bb-box's configuration: the settings above without the prefix, but the Macs. */
+export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
+  ([
+    [TART_KEYS.sshPrivateKey, "credentials"],
+    [TART_KEYS.macosImage, "boxes"],
+    [TART_KEYS.desktopImage, "boxes"],
+    [TART_KEYS.vmUser, "advanced"],
+    [TART_KEYS.vmsPerHost, "advanced"],
+    [TART_KEYS.reserveMemoryMiB, "advanced"],
+    [TART_KEYS.reserveDiskGiB, "advanced"],
+  ] as const).map(([key, group]) => {
+    const setting = TART_SETTINGS[key]!;
+    return [key.slice(TART_PREFIX.length), { ...setting, label: setting.label.replace(/^Tart: /, ""), group } as FieldDescriptor];
+  }),
+);
+
+/** Each Mac's fields. A Mac's name and switch are the host's own. */
+export const TART_HOST_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
+  address: { type: "string", label: "Address", description: "The Mac's address, with :port when SSH is not on 22. For example 192.0.2.20.", group: "connection", default: "" },
+  user: { type: "string", label: "User", description: "The user bb-box logs in to the Mac as, which runs tart.", group: "connection", default: "" },
+  "host-keys": {
+    type: "string",
+    label: "Host keys",
+    description: "The Mac's SSH host keys as known_hosts lines. ssh-keyscan -t ed25519 <address> prints one. bb-box checks them on every connection.",
+    experimental_multiline: true,
+    group: "connection",
+    default: "",
+  },
+};
+
+/** Tart's part of bb-box's configuration (029), with each problem at its field. */
+export function parseTartPart(part: BackendPart): ParsedBackend<TartConfig> {
+  const problems: FieldProblem[] = [];
+  const hosts: TartHost[] = [];
+  const hostKeys: string[] = [];
+  part.hosts.forEach((host, n) => {
+    const at = (field: string) => (message: string) => problems.push({ path: `hosts.${n}.${field}`, message });
+    const user = String(host.fields.user ?? "").trim();
+    const address = String(host.fields.address ?? "").trim();
+    const match = /^(\[[0-9a-fA-F:.]+\]|[^:@\s]+)(?::(\d+))?$/.exec(address);
+    const port = match?.[2] ? Number(match[2]) : 22;
+    if (!user || !USER.test(user)) at("user")(`Give the user bb-box logs in to Mac ${host.name} as.`);
+    if (!match || !Number.isInteger(port) || port < 1 || port > 65535) at("address")(`Give Mac ${host.name}'s address, such as 192.0.2.20, with :port when SSH is not on 22.`);
+    const keys = keyLines(String(host.fields["host-keys"] ?? ""), at("host-keys"));
+    if (!keys.length) at("host-keys")(`Give Mac ${host.name}'s SSH host key, as ssh-keyscan -t ed25519 <address> prints it.`);
+    if (match) hosts.push({ name: host.name, user, address: match[1]!.replace(/^\[|\]$/g, ""), port });
+    hostKeys.push(...keys.filter((key) => !hostKeys.includes(key)));
+  });
+  const values: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(part.fields)) values[TART_PREFIX + field] = value;
+  const config = checkTart(values, hosts, hostKeys, (key, message) => problems.push({ path: key.slice(TART_PREFIX.length), message }));
+  return problems.length ? { ok: false, problems } : { ok: true, config };
+}
+
+/** The backend's settings from before 029 that differ from their defaults, with each Mac as a host. Null when none does. */
+export function readEarlierTart(values: Readonly<Record<string, unknown>>): EarlierBackend | null {
+  let any = false;
+  const fields: Record<string, FieldValue> = {};
+  const secrets: Record<string, string> = {};
+  for (const [key, setting] of Object.entries(TART_SETTINGS)) {
+    const value = values[key];
+    if (value === undefined || value === null || ("default" in setting && value === setting.default)) continue;
+    if (isSecret(setting) && value === "") continue;
+    any = true;
+    const name = key.slice(TART_PREFIX.length);
+    if (!(name in TART_FIELDS)) continue;
+    if (isSecret(setting)) secrets[name] = String(value);
+    else fields[name] = value as FieldValue;
+  }
+  if (!any) return null;
+  // The Macs as they were. A line with a mistake made Tart misconfigured before; it is left out, and noted.
+  const { hosts, problems } = parseHosts(text(values, TART_KEYS.hosts));
+  const keys = text(values, TART_KEYS.hostKeys)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  // Each Mac gets the lines that name it, and every Mac the lines that name none, as all Macs had them before.
+  const named = hosts.map((host) => hostKeysFor(keys, { host: host.address, port: host.port }));
+  const unnamed = keys.filter((line) => !named.some((lines) => lines.includes(line)));
   return {
-    enabled: true,
-    ok: true,
-    config: {
-      hosts,
-      hostKeys,
-      kinds,
-      vmsPerHost,
-      ssh: { privateKey, vmUser },
-      reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB },
-    },
+    enabled: values[TART_KEYS.enabled] === true,
+    fields,
+    secrets,
+    warm: {},
+    notes: problems.map((problem) => `${problem} The Mac was left out; add it on the settings page.`),
+    hosts: hosts.map((host, n) => ({
+      name: host.name,
+      enabled: true,
+      fields: {
+        address: host.port === 22 ? host.address : `${host.address.includes(":") ? `[${host.address}]` : host.address}:${host.port}`,
+        user: host.user,
+        "host-keys": [...new Set([...named[n]!, ...unnamed])].join("\n"),
+      },
+    })),
   };
 }

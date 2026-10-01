@@ -6,9 +6,11 @@
 //
 //   node scripts/smoke.ts <settings.json> [--kind <kind>] [--size <preset>] [--command <script>] [--doctor] [--json]
 //
-// The settings file is one JSON object with bb-box's settings, under the
-// same keys as in BB. A value can come from a file instead, with a path
-// relative to the settings file:
+// The settings file is bb-box's configuration as bb box config show --json
+// prints it, with each secret as a string, or one JSON object of BB's
+// settings from before the configuration, which bb-box moves the same way.
+// A value can come from a file instead, with a path relative to the
+// settings file:
 //
 //   {"file": "ssh/id_ed25519"}                           the whole file
 //   {"file": "proxmox-token.env", "key": "PROXMOX_NODE"} one NAME=value line
@@ -25,13 +27,14 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { Backends } from "../src/backends/index.ts";
+import { Backends, DRIVERS } from "../src/backends/index.ts";
 import type { BackendDriver, BackendStorage } from "../src/backends/types.ts";
 import { Boxes, describeError, type BoxRecord } from "../src/core/boxes.ts";
-import { parseGeneral } from "../src/core/config.ts";
+import { generalConfig, readDraft, withSecretChanges, type ConfigDocument, type Secrets } from "../src/core/document.ts";
 import { driverCommand } from "../src/core/in-box.ts";
 import { McpSession } from "../src/core/mcp.ts";
 import { desktopSize, displayOpener } from "../src/core/relay.ts";
+import { fromSettings } from "../src/core/move.ts";
 import { describeSize } from "../src/core/sizes.ts";
 import { doctorText } from "../src/plugin/views.ts";
 
@@ -82,20 +85,40 @@ class MemoryStorage implements BackendStorage {
   }
 }
 
-/** Reads a settings file, replacing each {"file"} value with what it points at. */
+/** Reads a settings file, replacing each {"file"} value, at any depth, with what it points at. */
 export function readSettings(path: string): Record<string, unknown> {
   const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${path} must hold one JSON object of settings.`);
   const base = dirname(resolve(path));
-  const values: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(raw)) {
-    values[name] = isFileRef(value) ? fromFile(resolve(base, value.file), value.key) : value;
-  }
-  return values;
+  const read = (value: unknown): unknown => {
+    if (isFileRef(value)) return fromFile(resolve(base, value.file), value.key);
+    if (Array.isArray(value)) return value.map(read);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, read(inner)]));
+    return value;
+  };
+  return read(raw) as Record<string, unknown>;
 }
 
 function isFileRef(value: unknown): value is { file: string; key?: string } {
   return !!value && typeof value === "object" && typeof (value as { file?: unknown }).file === "string";
+}
+
+/**
+ * The configuration a settings file gives: a configuration document with
+ * its secrets inline, or BB's settings from before it, moved as bb-box
+ * moves them.
+ */
+export function toConfiguration(
+  values: Readonly<Record<string, unknown>>,
+  drivers: readonly BackendDriver<any>[] = DRIVERS,
+): { document: ConfigDocument; secrets: Secrets; problems: string[] } {
+  if (!("backends" in values)) return { ...fromSettings(values, drivers, false), problems: [] };
+  const draft = readDraft(values, drivers);
+  return {
+    document: draft.document,
+    secrets: withSecretChanges({}, draft.secrets, draft.document),
+    problems: draft.problems.map((problem) => `${problem.path}: ${problem.message}`),
+  };
 }
 
 function fromFile(path: string, key: string | undefined): string {
@@ -113,6 +136,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
   const storage = new MemoryStorage();
   const problems: string[] = [];
   const logError = (operation: string, error: unknown) => log(`  (${operation}: ${describeError(error, operation)})`);
+  const configuration = toConfiguration(values, options.drivers);
   const backends = new Backends({ storage, installId: SMOKE_INSTALL, logError, drivers: options.drivers });
   const timings: Record<string, number> = {};
   let box: BoxRecord | null = null;
@@ -122,7 +146,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
   const boxes = new Boxes({
     kv: storage,
     backends,
-    general: async () => ({ perThreadLimit: null, enrol: false, sizes: parseGeneral(values).config.sizes }),
+    general: async () => ({ ...generalConfig(configuration.document), perThreadLimit: null, enrol: false }),
     notify: () => {},
     thread: async () => "live",
     logError,
@@ -139,19 +163,20 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
   });
 
   try {
-    await backends.configure(values);
+    problems.push(...configuration.problems);
+    await backends.configure(configuration.document, configuration.secrets);
     for (const status of backends.statuses()) {
       if (status.state === "misconfigured") problems.push(`${status.label}: ${status.problems.join(" ")}`);
     }
     if (problems.length) return result();
-    if (!backends.active().length) {
-      problems.push("No backend is on. Turn one on in the settings file, for example proxmox-lxc-enabled.");
+    if (!backends.on().length) {
+      problems.push("No backend is on. Turn one on in the settings file.");
       return result();
     }
 
     if (options.doctor) {
       const sections = [];
-      for (const backend of backends.active()) sections.push({ title: backend.label, report: await backend.doctor(options.signal) });
+      for (const backend of backends.on()) sections.push({ title: backend.label, report: await backend.doctor(options.signal) });
       const view = { ok: sections.every((section) => section.report.ok), sections };
       log(doctorText(view));
       log("");

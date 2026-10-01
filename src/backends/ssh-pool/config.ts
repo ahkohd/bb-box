@@ -16,7 +16,7 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { currentKindId } from "../kinds.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
-import type { ParsedSettings } from "../types.ts";
+import { isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
 export const SSH_POOL_KINDS = ["linux", "linux-docker"] as const;
 export type SshPoolKind = (typeof SSH_POOL_KINDS)[number];
@@ -147,9 +147,9 @@ export function hostKeysFor(lines: readonly string[], host: { readonly host: str
   return named.length ? named : lines.some((line) => lineNames(line) === null) ? [...lines] : [];
 }
 
-const EXAMPLE = '"build-1 bbbox-admin@192.0.2.21 linux"';
+export const EXAMPLE = '"build-1 bbbox-admin@192.0.2.21 linux"';
 
-function parseMachine(line: string, problems: string[]): SshPoolMachine | null {
+function parseMachine(line: string, problems: { push(message: string): void }): SshPoolMachine | null {
   const [name = "", target = "", kindList = "", ...options] = line.split(/\s+/);
   const bad = (why: string) => {
     problems.push(`${why} In the machines list, "${line}" should be like ${EXAMPLE}.`);
@@ -193,9 +193,58 @@ function parseMachine(line: string, problems: string[]): SshPoolMachine | null {
   return { name, admin, jump, kinds, reset, labels };
 }
 
+export const SSH_POOL_PREFIX = "ssh-pool-";
+
+/** The backend's fields in bb-box's configuration (029): the settings above without the prefix. */
+export const SSH_POOL_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
+  ([
+    [SSH_POOL_KEYS.machines, "boxes"],
+    [SSH_POOL_KEYS.knownHosts, "connection"],
+    [SSH_POOL_KEYS.sshPrivateKey, "credentials"],
+  ] as const).map(([key, group]) => {
+    const setting = SSH_POOL_SETTINGS[key]!;
+    return [key.slice(SSH_POOL_PREFIX.length), { ...setting, label: setting.label.replace(/^SSH host pool: /, ""), group } as FieldDescriptor];
+  }),
+);
+
+/** Flat settings, as the tests give them. A problem names no field. */
 export function parseSshPoolSettings(values: Readonly<Record<string, unknown>>): ParsedSettings<SshPoolConfig> {
   if (values[SSH_POOL_KEYS.enabled] !== true) return { enabled: false };
-  const problems: string[] = [];
+  const { config, problems } = checkSshPool(values);
+  if (problems.length) return { enabled: true, ok: false, problems: problems.map((problem) => problem.message) };
+  return { enabled: true, ok: true, config: config! };
+}
+
+/** The SSH host pool's part of bb-box's configuration (029), with each problem at its field. */
+export function parseSshPoolPart(part: BackendPart): ParsedBackend<SshPoolConfig> {
+  const values: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(part.fields)) values[SSH_POOL_PREFIX + field] = value;
+  const { config, problems } = checkSshPool(values);
+  return problems.length ? { ok: false, problems } : { ok: true, config: config! };
+}
+
+/** The backend's settings from before 029 that differ from their defaults, or null when none does. */
+export function readEarlierSshPool(values: Readonly<Record<string, unknown>>): EarlierBackend | null {
+  let any = false;
+  const fields: Record<string, FieldValue> = {};
+  const secrets: Record<string, string> = {};
+  for (const [key, setting] of Object.entries(SSH_POOL_SETTINGS)) {
+    const value = values[key];
+    if (value === undefined || value === null || ("default" in setting && value === setting.default)) continue;
+    if (isSecret(setting) && value === "") continue;
+    any = true;
+    const name = key.slice(SSH_POOL_PREFIX.length);
+    if (!(name in SSH_POOL_FIELDS)) continue;
+    if (isSecret(setting)) secrets[name] = String(value);
+    else fields[name] = value as FieldValue;
+  }
+  return any ? { enabled: values[SSH_POOL_KEYS.enabled] === true, fields, secrets, warm: {} } : null;
+}
+
+function checkSshPool(values: Readonly<Record<string, unknown>>): { config: SshPoolConfig | null; problems: FieldProblem[] } {
+  const all: FieldProblem[] = [];
+  const at = (key: string) => ({ push: (message: string) => all.push({ path: key.slice(SSH_POOL_PREFIX.length), message }) });
+  const problems = at(SSH_POOL_KEYS.machines);
 
   const machines: SshPoolMachine[] = [];
   for (const raw of text(values, SSH_POOL_KEYS.machines).split("\n")) {
@@ -208,28 +257,29 @@ export function parseSshPoolSettings(values: Readonly<Record<string, unknown>>):
       problems.push(`Machines ${machines.find((other) => other.admin.host === machine.admin.host)!.name} and ${machine.name} have the same address. List each machine once.`);
     } else machines.push(machine);
   }
-  if (!machines.length && !problems.length) problems.push(`List at least one machine, like ${EXAMPLE}. setup/ssh-pool/setup.sh prints the line.`);
+  // A pool with no machines yet is valid, so its doctor can show the public key that setup.sh needs first.
 
   const knownHosts = text(values, SSH_POOL_KEYS.knownHosts)
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
+  const keys = at(SSH_POOL_KEYS.knownHosts);
   for (const line of knownHosts) {
     const fields = line.split(/\s+/);
-    if (fields.length < (fields[0]!.startsWith("@") ? 4 : 3)) problems.push(`Use whole known_hosts lines for the host keys, like setup.sh prints. "${line.slice(0, 40)}" is not one.`);
+    if (fields.length < (fields[0]!.startsWith("@") ? 4 : 3)) keys.push(`Use whole known_hosts lines for the host keys, like setup.sh prints. "${line.slice(0, 40)}" is not one.`);
   }
   for (const machine of machines) {
     for (const [what, host] of [["machine", machine.admin], ["jump host", machine.jump]] as const) {
       if (host && !hostKeysFor(knownHosts, host).length) {
-        problems.push(`Add the host key of ${what === "machine" ? `machine ${machine.name}` : `machine ${machine.name}'s jump host`}, ${knownHostsName(host)}, to the host keys. setup.sh prints it, or run ssh-keyscan on a network you trust.`);
+        keys.push(`Add the host key of ${what === "machine" ? `machine ${machine.name}` : `machine ${machine.name}'s jump host`}, ${knownHostsName(host)}, to the host keys. setup.sh prints it, or run ssh-keyscan on a network you trust.`);
       }
     }
   }
 
   const keyText = text(values, SSH_POOL_KEYS.sshPrivateKey);
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
-  if (keyText && !privateKey) problems.push("Paste the whole SSH private key in OpenSSH form, or clear it so bb-box makes one.");
+  if (keyText && !privateKey) at(SSH_POOL_KEYS.sshPrivateKey).push("Paste the whole SSH private key in OpenSSH form, or clear it so bb-box makes one.");
 
-  if (problems.length) return { enabled: true, ok: false, problems };
-  return { enabled: true, ok: true, config: { machines, knownHosts, privateKey } };
+  if (all.length) return { config: null, problems: all };
+  return { config: { machines, knownHosts, privateKey }, problems: all };
 }

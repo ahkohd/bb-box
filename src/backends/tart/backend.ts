@@ -204,7 +204,7 @@ class HostError extends Error {
 }
 
 export class TartBackend implements Backend {
-  readonly id = "tart";
+  readonly id: string;
   readonly label: string;
   readonly nature = "virtual" as const;
   readonly #config: TartConfig;
@@ -221,6 +221,7 @@ export class TartBackend implements Backend {
   #placement: Promise<unknown> = Promise.resolve();
 
   constructor(config: TartConfig, context: BackendContext, options: TartBackendOptions = {}) {
+    this.id = context.id;
     this.#config = config;
     this.#context = context;
     this.#options = options;
@@ -246,7 +247,7 @@ export class TartBackend implements Backend {
       count: Math.max(0, pending.length - placed.length),
       memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
     };
-    const hosts = this.#config.hosts.map((host) => this.#room(host, states.get(host.name)!, size, unplaced));
+    const hosts = this.#on().map((host) => this.#room(host, states.get(host.name)!, size, unplaced));
     const ok = hosts.some((host) => host.capacity.ok);
     return {
       ok,
@@ -303,7 +304,13 @@ export class TartBackend implements Backend {
     return { capacity: { host: host.name, ok: why === null, limits }, why };
   }
 
+  /** The Macs that take new boxes now: a Mac that is off keeps its boxes and takes no more (029). */
+  #on(): TartHost[] {
+    return this.#config.hosts.filter((host) => this.#context.hostOn(host.name));
+  }
+
   #full(kind: string, hosts: readonly { why: string | null }[]): string {
+    if (!hosts.length) return `Every Mac is off in bb-box's settings, so none takes a new ${kind} box.`;
     const reasons = [...new Set(hosts.map((host) => host.why).filter((why): why is string => why !== null))];
     return `No Mac can take this ${kind} box: ${reasons.join("; ")}.`;
   }
@@ -312,7 +319,7 @@ export class TartBackend implements Backend {
   #place(box: BoxIdentity, signal: AbortSignal): Promise<TartHost> {
     const placed = this.#placement.then(async () => {
       const states = await this.#states(signal);
-      const rooms = this.#config.hosts.map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size) }));
+      const rooms = this.#on().map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size) }));
       const chosen = rooms.find((room) => room.capacity.ok);
       if (!chosen) throw new BackendError("no_capacity", this.#full(box.kind, rooms));
       this.#placing.set(box.boxId, { host: chosen.host.name, vm: vmName(box.boxId), memoryMiB: box.size.memoryMiB });
@@ -492,6 +499,9 @@ export class TartBackend implements Backend {
       push("tart.ssh-key", "SSH key", "fail", message(error), "Check the SSH private key in bb-box's settings, or clear it so bb-box makes one.");
     }
 
+    if (!this.#config.hosts.length) {
+      push("tart.hosts", "Macs", "fail", "There are no Macs yet.", "Add a Mac, with its address, user and host key, as setup/tart/README.md says.");
+    }
     const states = keys ? await this.#states(signal) : new Map<string, HostState | Error>();
     const others = new Map<string, number>();
     for (const host of this.#config.hosts) {

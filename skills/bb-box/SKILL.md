@@ -84,7 +84,7 @@ display mode and the reason for it.
 ## Sizes
 
 A box's size is chosen when it is made. Each kind has three presets. These
-are bb-box's own; the `box-sizes` setting can change them, and `box_list`
+are bb-box's own; bb-box's configuration can change them, and `box_list`
 and `bb box kinds` show the ones in use:
 
 | Kind | small (the default) | medium | large | largest custom size |
@@ -151,7 +151,7 @@ with `computer_observe` first, and act on its references. Take an image with
 
 ## BB machines
 
-When `enrol-boxes` is on, a ready box is added to BB as a machine, so threads
+When enrolment is on, a ready box is added to BB as a machine, so threads
 and terminals can use it and BB's own secrets and Git credentials reach it.
 This takes a few seconds after the box is ready; `box_acquire` and `box_run`
 wait up to 10 s for it, and `box_status` shows how long it took.
@@ -193,28 +193,52 @@ section in bb-box's settings shows each backend's state, its setup guide
 and what it still needs, and runs the doctor. The design is in
 `docs/design/panel.md`.
 
-## Settings
+## Configuration
 
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `boxes-per-thread` | `0` | The most boxes one thread may hold. 0 means no limit. |
-| `enrol-boxes` | `true` | Adds ready boxes to BB as machines. |
-| `box-sizes` | empty | Changes to each kind's presets, default preset and largest size, as JSON. |
+bb-box's configuration is one document, which bb-box checks before every
+write. Its settings page in BB edits it, and so does the CLI:
 
-`box-sizes` holds an entry per kind ID. Each entry may set `default` to
-`small`, `medium` or `large`, and change any of `small`, `medium`, `large`
-and `largest` with `cores`, `memoryMiB` and `diskGiB` (`null` keeps the
-kind's own disk). Parts left out keep bb-box's own. For example:
+| Command | What it does |
+| --- | --- |
+| `bb box config show` | Shows the configuration. Secrets show only as set or not set. |
+| `bb box config show --json` | Prints it as a file, with no secret in it: keep it to set bb-box up again. |
+| `bb box config check <file> [--test]` | Checks a file without saving it. `--test` also runs the doctor of each backend in it that is on. |
+| `bb box config apply <file> [--replace]` | Saves the file as the whole configuration. `--replace` saves over it whatever revision the file names, as when setting bb-box up again from an export. |
+| `bb box config migrated [--remove]` | Shows, or removes, the copy of BB's settings bb-box kept when it moved them into the configuration. |
+
+The file is read on the machine BB's server runs on, and a relative path is
+from where you run `bb`. A `revision` in the file must be the current one;
+leave it out to apply over what is there. In the file, give a secret as a
+string to set it, `null` to clear it, or `{"set": true}` to keep it.
+
+The document has three parts:
+
+- `backends`: the backends, in the order bb-box tries them. Each has an `id`
+  (its type, such as `proxmox-lxc`), its `type`, `enabled`, its `fields`,
+  and `warm`, the ready boxes to keep per kind.
+- `kinds`: each kind's `enabled`, its `presets` (`small`, `medium` and
+  `large`, each with `cores`, `memoryMiB` and `diskGiB`, where `null` keeps
+  the kind's own disk), its `default` preset and its `largest` custom size.
+  Parts left out keep bb-box's own.
+- `general`: `boxesPerThread` (0 means no limit), `enrol` (adds ready boxes
+  to BB as machines, `true` by default) and `defaultKind` (`linux` by
+  default).
+
+For example:
 
 ```json
-{"linux": {"default": "medium", "large": {"cores": 12, "memoryMiB": 24576}, "largest": {"diskGiB": 512}}}
+{
+  "backends": [{ "id": "proxmox-lxc", "type": "proxmox-lxc", "enabled": true, "fields": { "url": "https://192.0.2.10:8006" }, "warm": { "linux": 1 } }],
+  "kinds": { "linux": { "default": "medium", "presets": { "large": { "cores": 12, "memoryMiB": 24576 } }, "largest": { "diskGiB": 512 } } },
+  "general": { "boxesPerThread": 4 }
+}
 ```
 
-An entry with a mistake is ignored, and the doctor names it.
-
-Each backend's settings start with its name, for example `proxmox-lxc-url`.
-`setup/proxmox-lxc/README.md` explains how to set up a Proxmox host, and its
-section 7 lists every `proxmox-lxc-` setting.
+Turning a backend or a kind off stops new boxes only: boxes already made keep
+working and can be released. A backend that is on, or has boxes, cannot be
+saved with problems; one that is off and has none can, so its setup can stop
+part way. A backend with boxes cannot be removed. `setup/proxmox-lxc/README.md`
+explains how to set up a Proxmox host, and its section 7 lists every field.
 
 A backend refuses a new box when the host would fall below its memory or disk
 reserve, cannot make the size asked for, or has no free address or GPU. The
@@ -229,7 +253,7 @@ refusal says what to do instead.
 - A guest whose record was lost, as when bb-box loses its storage, keeps
   running. The sweep restores its box from the guest's labels while its
   thread is live, and releases it only once BB says the thread ended. When
-  `enrol-boxes` is on, a restored box is a BB machine again once it runs
+  enrolment is on, a restored box is a BB machine again once it runs
   and answers. If the thread ended first, the guest goes, but its BB
   machine stays until someone removes it in BB.
   `bb plugin logs bb-box` shows each guest the sweep released, restored or

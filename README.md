@@ -168,14 +168,20 @@ bb plugin build
 bb plugin install .
 ```
 
-Then set a backend up with its guide, fill in its settings in BB under
-bb-box, and check them with `bb box doctor`. Each thread gets a Boxes panel,
+Then set a backend up with its guide, fill in its fields on bb-box's
+settings page in BB, and check them with `bb box doctor`. `bb box config`
+shows and saves the same configuration from a terminal. Each thread gets a Boxes panel,
 agents get the `box_` tools, and `skills/bb-box/SKILL.md` describes both.
 
 ## Upgrade
 
-Do not remove bb-box to upgrade it: `bb plugin remove` deletes its settings
-and secrets. `bb plugin source bb-box` shows what it was installed from.
+Do not remove bb-box to upgrade it: `bb plugin remove` deletes its
+configuration, secrets and storage. `bb box config show --json` prints the
+configuration without its secrets; `bb box config apply --replace` sets
+bb-box up again from it. Give the secrets again: as strings in the file in
+place of `{"set": true}`, or apply it with those backends off and give them
+on the settings page. `bb plugin source bb-box` shows
+what it was installed from.
 
 - From a path, as above: pull, run `npm install` and `bb plugin build`, then
   `bb plugin reload bb-box`.
@@ -187,7 +193,7 @@ and secrets. `bb plugin source bb-box` shows what it was installed from.
 
 If bb-box loses its storage, its boxes keep running: take its install ID
 back with `bb box install-id --set <id>`, and the next sweep restores the
-boxes of live threads from their guests. When `enrol-boxes` is on, each
+boxes of live threads from their guests. When enrolment is on, each
 becomes a BB machine again once it runs and answers.
 
 ## Develop

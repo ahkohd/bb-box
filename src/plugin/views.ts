@@ -5,7 +5,10 @@ import type { BackendStatus, OfferedKind } from "../backends/index.ts";
 import type { BoxSize, DoctorReport } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
-import { PRESETS, describeSize, kindSizes, type Preset, type SizeChanges } from "../core/sizes.ts";
+import type { Problem } from "../core/document.ts";
+import type { MovedCopy } from "../core/move.ts";
+import { PRESETS, describeSize, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
+import type { ConfigState } from "./configuration.ts";
 import type { DisplayProtocol } from "../transports/types.ts";
 
 export interface BoxView {
@@ -248,6 +251,91 @@ export function doctorText(view: DoctorView): string {
     }
     for (const note of report.notes) lines.push(`  Note: ${note}`);
   }
-  if (!view.sections.length) lines.push("No backend is on. Turn one on in bb-box's settings.");
+  if (!view.sections.length) lines.push("No backend is on. Turn one on in bb-box's settings, or with bb box config apply.");
+  return lines.join("\n");
+}
+
+/** One problem per line, with its field's path. */
+export function problemsText(problems: readonly Problem[]): string {
+  return problems.map((problem) => `  ${problem.path || "(the file)"}: ${problem.message}`).join("\n");
+}
+
+function fieldValue(value: unknown): string {
+  if (typeof value === "object" && value !== null && "set" in value) return (value as { set: boolean }).set ? "set" : "not set";
+  const text = String(value);
+  return text.includes("\n") ? `${text.split("\n").length} lines` : JSON.stringify(value);
+}
+
+function changeWords(change: SizeChange | undefined): string | null {
+  if (!change) return null;
+  const parts = [
+    change.cores !== undefined ? `${change.cores} cores` : null,
+    change.memoryMiB !== undefined ? `${change.memoryMiB / 1024} GiB memory` : null,
+    change.diskGiB !== undefined ? (change.diskGiB === null ? "the base disk" : `${change.diskGiB} GiB disk`) : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+}
+
+/** The configuration in words, for bb box config show. Secrets show only as set or not. */
+export function configText(state: ConfigState): string {
+  const { document } = state;
+  const lines = [`bb-box's configuration, revision ${state.revision}.`, ""];
+  if (!document.backends.length) lines.push("Backends: none. Add one on bb-box's settings page, or with bb box config apply.");
+  else lines.push("Backends, in the order they are tried:");
+  for (const backend of document.backends) {
+    const status = state.backends.find((candidate) => candidate.id === backend.id);
+    const words = { active: "ready", off: "off", misconfigured: "needs setting up" }[status?.state ?? "misconfigured"];
+    const offers = status?.kinds.length ? `, offers ${status.kinds.join(", ")}` : "";
+    const boxes = status?.boxes ? `, ${status.boxes} ${status.boxes === 1 ? "box" : "boxes"}` : "";
+    lines.push(`- ${backend.id} (${status?.label ?? backend.type}): ${backend.enabled ? "on" : "off"}, ${words}${offers}${boxes}.`);
+    for (const [key, value] of Object.entries(backend.fields)) lines.push(`    ${key}: ${fieldValue(value)}`);
+    const warm = Object.entries(backend.warm ?? {});
+    if (warm.length) lines.push(`    warm: ${warm.map(([kind, count]) => `${count} ${kind}`).join(", ")}`);
+    for (const host of backend.hosts ?? []) {
+      lines.push(`    host ${host.name}: ${host.enabled ? "on" : "off"}${Object.entries(host.fields).map(([key, value]) => `, ${key} ${fieldValue(value)}`).join("")}`);
+    }
+  }
+  lines.push("");
+  const kinds = Object.entries(document.kinds);
+  if (!kinds.length) lines.push("Kinds: all on, at bb-box's own sizes.");
+  else {
+    lines.push("Kinds changed from bb-box's own (any other is on, at bb-box's sizes):");
+    for (const [id, kind] of kinds) {
+      const parts = [
+        kind.enabled === false ? "off" : null,
+        ...PRESETS.map((preset) => {
+          const words = changeWords(kind.presets?.[preset]);
+          return words ? `${preset} ${words}` : null;
+        }),
+        kind.default ? `default ${kind.default}` : null,
+        changeWords(kind.largest) ? `largest ${changeWords(kind.largest)}` : null,
+      ].filter(Boolean);
+      lines.push(`- ${id}: ${parts.join("; ") || "as shipped"}`);
+    }
+  }
+  lines.push("");
+  const general = { ...state.defaults.general, ...document.general };
+  lines.push(
+    `Boxes per thread: ${general.boxesPerThread || "no limit"}. Enrol boxes as BB machines: ${general.enrol ? "yes" : "no"}. Default kind: ${general.defaultKind}.`,
+  );
+  if (state.problems.length) lines.push("", "Problems:", problemsText(state.problems));
+  if (state.migrated) {
+    lines.push(
+      "",
+      `bb-box keeps a copy of the BB settings it moved into this configuration on ${new Date(state.migrated.at).toISOString()}. bb box config migrated shows it, and --remove removes it.`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/** The copy of BB's settings the move kept, for bb box config migrated. */
+export function movedText(copy: MovedCopy): string {
+  const lines = [
+    `bb-box ${copy.version} moved these BB settings into its configuration on ${new Date(copy.at).toISOString()}. Secrets show only whether they were set.`,
+    "",
+    ...Object.entries(copy.values).map(([key, value]) => `${key}: ${fieldValue(value)}`),
+  ];
+  if (copy.notes.length) lines.push("", "Not carried over as they were:", ...copy.notes.map((note) => `- ${note}`));
+  lines.push("", "bb box config migrated --json prints the values in full. --remove removes the copy.");
   return lines.join("\n");
 }

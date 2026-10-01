@@ -1,32 +1,18 @@
-// The backends built into bb-box, and the set that is active under the
-// current settings. Each driver owns the settings under its own prefix and
-// has an enable switch, so several backends can be active at once. A backend
-// is rebuilt only when its own settings or the install ID change, so a warm
-// pool or an open connection survives changes to other settings.
+// The backends built into bb-box, and the set built from the configuration
+// document (029), in its order. A backend is built when its fields are
+// valid, whether it is on or off: off stops new boxes only, so the boxes it
+// has keep working. A backend is rebuilt only when its own fields or the
+// install ID change. Switches and warm counts reach it live, so a warm pool
+// or an open connection survives them and changes to other backends.
 
-import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
 import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
-import type { Backend, BackendDriver, BackendStorage, BoxKind, DoctorCheck } from "./types.ts";
+import { backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
+import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
+import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck } from "./types.ts";
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, sshPoolDriver, tartDriver];
-
-/** Sizes the Proxmox LXC settings gave boxes before 028, read once into the box-sizes setting. */
-export { earlierLxcSizes } from "./proxmox-lxc/config.ts";
-
-/** Every backend setting, in driver order. Setting keys must be unique. */
-export function backendSettings(drivers: readonly BackendDriver<any>[] = DRIVERS): Record<string, PluginSettingDescriptor> {
-  const settings: Record<string, PluginSettingDescriptor> = {};
-  for (const driver of drivers) {
-    for (const [key, descriptor] of Object.entries(driver.settings)) {
-      if (!key.startsWith(`${driver.type}-`)) throw new Error(`Setting ${key} of backend ${driver.type} must start with "${driver.type}-".`);
-      if (key in settings) throw new Error(`Setting ${key} is defined twice.`);
-      settings[key] = descriptor;
-    }
-  }
-  return settings;
-}
 
 /** Keys under `prefix`, with the prefix hidden from the backend. */
 export function scopedStorage(storage: BackendStorage, prefix: string): BackendStorage {
@@ -38,13 +24,56 @@ export function scopedStorage(storage: BackendStorage, prefix: string): BackendS
   };
 }
 
+/**
+ * A layer over a backend's storage for a backend built only to be checked.
+ * Reads see the storage. A write of a key the storage does not have yet,
+ * such as the SSH key a backend makes on first use, goes through, so the key
+ * the check shows is the one the backend uses. Every other write, and every
+ * delete, stays in the layer and goes with it, so the live backend's records
+ * are never touched.
+ */
+export function layeredStorage(storage: BackendStorage): BackendStorage {
+  const layer = new Map<string, unknown>();
+  const deleted = new Set<string>();
+  return {
+    async get<T>(key: string) {
+      if (deleted.has(key)) return undefined;
+      if (layer.has(key)) return structuredClone(layer.get(key)) as T;
+      return storage.get<T>(key);
+    },
+    async set(key, value) {
+      if (!deleted.has(key) && !layer.has(key) && (await storage.get(key)) === undefined) {
+        await storage.set(key, value);
+        return;
+      }
+      deleted.delete(key);
+      layer.set(key, structuredClone(value));
+    },
+    async delete(key) {
+      layer.delete(key);
+      deleted.add(key);
+    },
+    async list(prefix = "") {
+      const keys = new Set([...(await storage.list(prefix)), ...[...layer.keys()].filter((key) => key.startsWith(prefix))]);
+      return [...keys].filter((key) => !deleted.has(key)).sort();
+    },
+  };
+}
+
 export interface BackendStatus {
+  readonly id: string;
   readonly type: string;
+  /** The backend's display name. */
   readonly label: string;
   readonly nature: Backend["nature"];
+  /** Off: no new boxes. Misconfigured: on, or holding boxes, with fields that are not valid, so it is not built. */
   readonly state: "off" | "active" | "misconfigured";
-  /** What to fix in settings, when misconfigured. */
+  /** What to fix, in words, when its fields are not valid. */
   readonly problems: readonly string[];
+  /** The same, each at its field's path. */
+  readonly fieldProblems: readonly Problem[];
+  /** The kinds it offers now: none while it or they are off. */
+  readonly kinds: readonly string[];
 }
 
 export interface OfferedKind {
@@ -104,8 +133,9 @@ export function offerChecks(offered: readonly OfferedKind[]): DoctorCheck[] {
 }
 
 interface Entry {
+  readonly id: string;
   readonly driver: BackendDriver<any>;
-  /** The settings the backend was built from, to tell when they change. */
+  /** The fields the backend was built from, to tell when they change. */
   readonly signature: string;
   readonly backend: Backend;
 }
@@ -116,7 +146,8 @@ export class Backends {
   readonly #logError: (operation: string, error: unknown) => void;
   readonly #entries = new Map<string, Entry>();
   #installId: string;
-  #values: Readonly<Record<string, unknown>> = {};
+  #document: ConfigDocument | null = null;
+  #secrets: Secrets = {};
   #statuses: BackendStatus[] = [];
 
   constructor(options: {
@@ -136,72 +167,149 @@ export class Backends {
     return this.#installId;
   }
 
+  get drivers(): readonly BackendDriver<any>[] {
+    return this.#drivers;
+  }
+
   /** Rebuilds every backend with another install ID, for an install that takes back its old one. */
   async useInstallId(id: string): Promise<void> {
     this.#installId = id;
-    await this.configure(this.#values);
+    if (this.#document) await this.configure(this.#document, this.#secrets);
   }
 
-  /** Builds, keeps or disposes each backend to match `values`. */
-  async configure(values: Readonly<Record<string, unknown>>): Promise<void> {
-    this.#values = values;
+  /** The context a backend of the configuration gets. Switches and warm counts are read live. */
+  context(id: string, storage: BackendStorage = scopedStorage(this.#storage, `backend/${id}/`)): BackendContext {
+    return {
+      id,
+      storage,
+      installId: this.#installId,
+      logError: this.#logError,
+      warm: (kind) => {
+        const document = this.#document;
+        const backend = document?.backends.find((candidate) => candidate.id === id);
+        if (!document || !backend?.enabled || !kindOn(document, kind)) return 0;
+        return backend.warm?.[kind] ?? 0;
+      },
+      hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
+      kind: (kind) => {
+        const document = this.#document;
+        const backend = document?.backends.find((candidate) => candidate.id === id);
+        const sizes = kindSizes(kind, document ? sizeChanges(document.kinds) : {});
+        return { enabled: !!document && !!backend?.enabled && kindOn(document, kind), defaultSize: defaultSize(sizes), presets: presetSizes(sizes) };
+      },
+    };
+  }
+
+  /** Builds, keeps or disposes each backend to match the document. */
+  async configure(document: ConfigDocument, secrets: Secrets): Promise<void> {
+    this.#document = document;
+    this.#secrets = secrets;
     const statuses: BackendStatus[] = [];
-    for (const driver of this.#drivers) {
-      const parsed = driver.parse(values);
-      const current = this.#entries.get(driver.type);
-      const base = { type: driver.type, label: driver.label, nature: driver.nature };
-      if (!parsed.enabled || !parsed.ok) {
+    const listed = new Set(document.backends.map((backend) => backend.id));
+    for (const entry of [...this.#entries.values()]) if (!listed.has(entry.id)) await this.#dispose(entry);
+    for (const config of document.backends) {
+      const driver = this.#drivers.find((candidate) => candidate.type === config.type);
+      const base = { id: config.id, type: config.type, label: config.label ?? driver?.label ?? config.type, nature: driver?.nature ?? ("virtual" as const) };
+      const current = this.#entries.get(config.id);
+      if (!driver) {
         if (current) await this.#dispose(current);
-        statuses.push(
-          parsed.enabled ? { ...base, state: "misconfigured", problems: parsed.problems } : { ...base, state: "off", problems: [] },
-        );
+        const problem = { path: `backends.${config.id}`, message: `This bb-box has no ${config.type} backend.` };
+        statuses.push({ ...base, state: "misconfigured", problems: [problem.message], fieldProblems: [problem], kinds: [] });
+        continue;
+      }
+      const parsed = driver.parse(backendPart(config, driver, secrets));
+      if (!parsed.ok) {
+        if (current) await this.#dispose(current);
+        const fieldProblems = parsed.problems.map((problem) => ({ path: `backends.${config.id}${problem.path ? `.${problem.path}` : ""}`, message: problem.message }));
+        statuses.push({
+          ...base,
+          state: config.enabled ? "misconfigured" : "off",
+          problems: parsed.problems.map((problem) => problem.message),
+          fieldProblems,
+          kinds: [],
+        });
         continue;
       }
       const signature = JSON.stringify([this.#installId, parsed.config]);
       if (current?.signature !== signature) {
         if (current) await this.#dispose(current);
-        const backend = driver.create(parsed.config, {
-          storage: scopedStorage(this.#storage, `backend/${driver.type}/`),
-          installId: this.#installId,
-          logError: this.#logError,
-        });
-        this.#entries.set(driver.type, { driver, signature, backend });
+        const backend = driver.create(parsed.config, this.context(config.id));
+        this.#entries.set(config.id, { id: config.id, driver, signature, backend });
       }
-      statuses.push({ ...base, state: "active", problems: [] });
+      statuses.push({ ...base, state: config.enabled ? "active" : "off", problems: [], fieldProblems: [], kinds: [] });
     }
+    // The registry tries backends in the document's order.
+    const order = [...listed];
+    const sorted = [...this.#entries.values()].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    this.#entries.clear();
+    for (const entry of sorted) this.#entries.set(entry.id, entry);
     this.#statuses = statuses;
   }
 
   async #dispose(entry: Entry): Promise<void> {
-    this.#entries.delete(entry.driver.type);
-    await entry.backend.dispose?.().catch((error) => this.#logError(`dispose ${entry.driver.type}`, error));
+    this.#entries.delete(entry.id);
+    await entry.backend.dispose?.().catch((error) => this.#logError(`dispose ${entry.id}`, error));
   }
 
-  /** Every driver and whether it is off, active or needs its settings fixed. */
+  /**
+   * Each backend of the configuration, then each driver without one as off,
+   * so a new install lists every backend bb-box has.
+   */
   statuses(): readonly BackendStatus[] {
-    return this.#statuses;
+    const offered = this.kinds();
+    const listed = this.#statuses.map((status) => ({
+      ...status,
+      kinds: [...new Set(offered.filter((offer) => offer.backend.id === status.id).map((offer) => offer.kind.id))],
+    }));
+    const missing = this.#drivers
+      .filter((driver) => !listed.some((status) => status.type === driver.type))
+      .map((driver) => ({
+        id: driver.type,
+        type: driver.type,
+        label: driver.label,
+        nature: driver.nature,
+        state: "off" as const,
+        problems: [],
+        fieldProblems: [],
+        kinds: [],
+      }));
+    return [...listed, ...missing];
   }
 
+  /** Every built backend, on or off: their boxes work, and the sweep looks after them. */
   active(): Backend[] {
     return [...this.#entries.values()].map((entry) => entry.backend);
   }
 
+  /** Built backends that are on, for the doctor. */
+  on(): Backend[] {
+    return [...this.#entries.values()].filter((entry) => this.#config(entry.id)?.enabled).map((entry) => entry.backend);
+  }
+
   get(id: string): Backend | null {
-    return this.active().find((backend) => backend.id === id) ?? null;
+    return this.#entries.get(id)?.backend ?? null;
+  }
+
+  #config(id: string): BackendConfig | undefined {
+    return this.#document?.backends.find((backend) => backend.id === id);
   }
 
   /**
-   * Every offer of every kind the active backends have now, in driver order.
-   * Several backends may offer the same kind; acquire uses the first with
-   * room, and `offerChecks` warns when their offers disagree.
+   * Every offer new boxes can come from, in the document's order: a kind
+   * that is on, from a backend that is on. Several backends may offer the
+   * same kind; acquire uses the first with room, and `offerChecks` warns
+   * when their offers disagree.
    */
   kinds(): OfferedKind[] {
+    const document = this.#document;
+    if (!document) return [];
     const offered: OfferedKind[] = [];
-    for (const backend of this.active()) {
+    for (const entry of this.#entries.values()) {
+      if (!this.#config(entry.id)?.enabled) continue;
       try {
-        for (const kind of backend.kinds()) offered.push({ kind, backend });
+        for (const kind of entry.backend.kinds()) if (kindOn(document, kind.id)) offered.push({ kind, backend: entry.backend });
       } catch (error) {
-        this.#logError(`kinds ${backend.id}`, error);
+        this.#logError(`kinds ${entry.id}`, error);
       }
     }
     return offered;

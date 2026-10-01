@@ -43,7 +43,7 @@ import {
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
-import { hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
+import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, parseStatus, releaseInput, type MachineStatus, type Marker } from "./protocol.ts";
 
 const SSH_KEY = "ssh-key";
@@ -147,6 +147,7 @@ interface SshKeys {
 
 type Check = readonly [id: string, name: string];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
+const MACHINES_CHECK: Check = ["machines", "Machines"];
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
@@ -223,7 +224,7 @@ function bySize(a: View, b: View): number {
 }
 
 export class SshPoolBackend implements Backend {
-  readonly id = "ssh-pool";
+  readonly id: string;
   readonly nature = "real" as const;
   readonly label: string;
   readonly restores: "home" | "machine";
@@ -243,6 +244,7 @@ export class SshPoolBackend implements Backend {
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(config: SshPoolConfig, context: BackendContext, options: SshPoolBackendOptions = {}) {
+    this.id = context.id;
     this.#config = config;
     this.#context = context;
     this.#options = options;
@@ -636,6 +638,9 @@ export class SshPoolBackend implements Backend {
       fail(SSH_KEY_CHECK, message(error), "Check the SSH private key in bb-box's settings, or clear it so bb-box makes one.");
     }
 
+    if (!this.#config.machines.length) {
+      fail(MACHINES_CHECK, "The pool has no machines yet.", `Set up a machine with setup.sh and this public key, then add the line it prints to the machines, like ${EXAMPLE}.`);
+    }
     const views = keys?.publicKey ? await this.#survey(signal) : [];
     const others = new Map<string, number>();
     for (const machine of this.#config.machines) {
