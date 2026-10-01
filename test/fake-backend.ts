@@ -400,8 +400,12 @@ export class FakeBackend implements Backend {
   /** What relabel was asked: the box's ID, its new owner and name, and the name it had. */
   readonly relabels: { boxId: string; threadId: string; name: string; from: string }[] = [];
 
+  /** How long relabel takes. */
+  relabelMs = 0;
+
   async relabel(_guest: Guest, box: BoxIdentity, from: string): Promise<void> {
     this.relabels.push({ boxId: box.boxId, threadId: box.threadId, name: box.name, from });
+    if (this.relabelMs) await new Promise((resolve) => setTimeout(resolve, this.relabelMs));
   }
 
   async maintain(): Promise<void> {
