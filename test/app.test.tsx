@@ -1185,6 +1185,9 @@ test("the settings page lists your machines with their threads and actions, and 
   expect(slot.getByText("Your machines")).toBeTruthy();
   expect(slot.getByText("Working: Fix the login form · 1 more")).toBeTruthy();
   expect(slot.getByText("scratch")).toBeTruthy();
+  // A ready machine says how a project with a repository runs on it; a stopped one does not.
+  expect(slot.getByText('For a project with a repository, search for build-1 in BB\'s new-thread picker and choose "Set up on build-1" once.')).toBeTruthy();
+  expect(slot.queryByText(/search for scratch/)).toBeNull();
   expect(slot.getByRole("button", { name: "Open desktop" })).toBeTruthy();
   expect(slot.getByRole("button", { name: "Open terminal" })).toBeTruthy();
   expect(slot.getByRole("button", { name: "Stop" })).toBeTruthy();

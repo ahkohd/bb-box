@@ -176,6 +176,12 @@ function MachineRow({ entry, now, busy, onStop, onStart, onRemove }: { entry: Ma
           />
         </div>
         {box.error ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
+        {ready && box.enrol.state === "enrolled" ? (
+          // A project with a repository needs a source on a machine once; BB's picker sets it up (036).
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+            For a project with a repository, search for {box.name} in BB's new-thread picker and choose "Set up on {box.name}" once.
+          </p>
+        ) : null}
       </div>
       <span data-row-action className="flex shrink-0 items-center gap-0.5">
         {box.desktop && ready ? <IconButton label="Open desktop" icon={`${pluginId}/monitor`} onClick={openDesktop} /> : null}
