@@ -164,6 +164,12 @@ node --test test/conformance.test.ts
   operator can also run the helper's `reset` on the machine, which bb-box
   sees as a clean machine at a later generation. Neither resets a machine
   a box holds.
+- A machine without the helper's tools is out of service. Enrolment's
+  tools only fail the doctor: Node.js 22.19 or newer with npm for BB's
+  installer, and, as a warning, git and gh for the thread's GitHub access.
+  The helper reports them as `node` and `lacks`. A helper from before them
+  leaves both out at the same version, so the doctor warns rather than
+  taking its machine out of service.
 
 `test/ssh-pool.test.ts` runs the suite and the pool's own checks against a
 fake helper. To run them against real machines, start the Docker rig, then:

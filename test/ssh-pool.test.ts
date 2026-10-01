@@ -503,6 +503,43 @@ describe("SSH host pool", () => {
     await backend.dispose();
   });
 
+  it("fails its doctor without Node.js or npm for BB's installer, and warns without git or gh", async () => {
+    machine("192.0.2.67");
+    machine("192.0.2.68", { node: "v22.19.0" });
+    machine("192.0.2.69", { node: "" });
+    machine("192.0.2.70", { node: "v22.18.1" });
+    machine("192.0.2.71", { lacks: "npm gh" });
+    machine("192.0.2.72", { lacks: "git gh" });
+    machine("192.0.2.73", { "no-enrolment": "" });
+    const { backend } = pool(
+      ["ok 192.0.2.67", "edge 192.0.2.68", "bare 192.0.2.69", "old 192.0.2.70", "nonpm 192.0.2.71", "nogit 192.0.2.72", "older 192.0.2.73"].map((line) => `${line} linux`).join("\n"),
+    );
+    const doctor = await backend.doctor();
+    const tools = (name: string) => doctor.checks.find((check) => check.id === `machine.${name}.tools`)!;
+    assert.equal(doctor.ok, false);
+    assert.equal(tools("ok").status, "ok");
+    assert.match(tools("ok").detail, /^Everything the helper, enrolment and the thread's GitHub access need, with Node\.js 24\.21\.0\./);
+    assert.equal(tools("edge").status, "ok", "BB's installer takes 22.19");
+    assert.equal(tools("bare").status, "fail");
+    assert.equal(tools("bare").detail, "bare lacks node.");
+    assert.match(tools("bare").fix!, /^On bare: Install Node\.js 22\.19 or newer with npm, such as Node\.js 24 from NodeSource or nodejs\.org\. Debian's and Ubuntu's own nodejs is too old\./);
+    assert.equal(tools("old").status, "fail");
+    assert.equal(tools("old").detail, "old has Node.js 22.18.1, but BB's installer needs 22.19 or newer.");
+    assert.equal(tools("nonpm").status, "fail");
+    assert.equal(tools("nonpm").detail, "nonpm lacks npm, gh.");
+    assert.match(tools("nonpm").fix!, /Install Node\.js .* Install git and gh\. On Debian or Ubuntu: sudo apt-get install git gh\.$/);
+    assert.equal(tools("nogit").status, "warn");
+    assert.match(tools("nogit").detail, /^nogit lacks git, gh\. Boxes there enrol in BB, but cannot use the thread's GitHub access/);
+    assert.equal(tools("nogit").fix, "On nogit: Install git and gh. On Debian or Ubuntu: sudo apt-get install git gh.");
+    assert.equal(tools("older").status, "warn");
+    assert.match(tools("older").detail, /^The helper does not say whether older has Node\.js, npm, git and gh/);
+    assert.equal(tools("older").fix, "Run this bb-box's setup/ssh-pool/setup.sh on older as root.");
+    assert.equal(doctor.checks.find((check) => check.id === "machine.older.helper")!.status, "ok", "the helper's version has not changed");
+    // A box there still runs commands, so the machine stays in service.
+    assert.equal((await member(backend, "bare")).state, "free");
+    await backend.dispose();
+  });
+
   it("notes machines held by another install in the doctor", async () => {
     machine("192.0.2.59");
     const mine = pool("o 192.0.2.59 linux", new MemoryStorage(), "mine").backend;

@@ -7,6 +7,8 @@
 //   helper           the helper version status reports instead of 1
 //   arch, missing    what status reports instead of x86_64 and nothing missing
 //   cores, memory, disk  what status reports instead of 4 cores, 7861 MiB and 40 GiB free
+//   node, lacks      what status reports instead of Node.js v24.21.0 and none of npm, git and gh lacking
+//   no-enrolment     status leaves out node and lacks, as an older helper does
 //   docker, hook     status reports Docker and a reset-machine command
 //   dirty            what an earlier box left; claim refuses, status reports it
 //   restore-steps    how many more times a whole-machine reset says it is running
@@ -46,6 +48,7 @@ function status() {
   const lines = [`helper=${flag("helper") ?? 1}`, `arch=${flag("arch") ?? "x86_64"}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
   if (kind !== "none") lines.push(...read(kind).trim().split("\n").map((line) => `marker.${line}`));
   lines.push(`hook=${flag("hook") !== null ? 1 : 0}`, `docker=${flag("docker") !== null ? 1 : 0}`, "systemd=0", `cores=${flag("cores") ?? 4}`, `memory=${flag("memory") ?? 7861}`, `disk=${flag("disk") ?? 40}`, `missing=${flag("missing") ?? ""}`);
+  if (flag("no-enrolment") === null) lines.push(`node=${flag("node") ?? "v24.21.0"}`, `lacks=${flag("lacks") ?? ""}`);
   lines.push(`dirty=${kind === "none" ? (flag("dirty") ?? "") : ""}`);
   console.log(lines.join("\n"));
 }

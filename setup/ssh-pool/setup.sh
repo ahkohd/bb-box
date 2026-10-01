@@ -119,7 +119,8 @@ EOF
 fi
 
 "$LIBEXEC/machine" init >/dev/null
-generation=$("$LIBEXEC/machine" status | sed -n 's/^generation=//p')
+status=$("$LIBEXEC/machine" status)
+generation=$(printf '%s\n' "$status" | sed -n 's/^generation=//p')
 
 # What sshd lets box users and the admin user do.
 warnings=''
@@ -138,6 +139,16 @@ else
   fi
   if value denyusers | grep -q .; then warn "sshd has DenyUsers. Check that it denies neither $admin nor bbx-*."; fi
 fi
+
+# What BB's installer and a box's GitHub access need.
+node=$(printf '%s\n' "$status" | sed -n 's/^node=v\{0,1\}//p')
+lacks=$(printf '%s\n' "$status" | sed -n 's/^lacks=//p' | sed 's/ /, /g')
+if [ -z "$node" ]; then
+  warn "Node.js is missing. BB's installer needs Node.js 22.19 or newer with npm, such as Node.js 24 from NodeSource. Debian's and Ubuntu's own nodejs is too old."
+elif ! printf '%s\n' "$node" | awk -F. '{ exit !($1 > 22 || ($1 == 22 && $2 >= 19)) }'; then
+  warn "Node.js is $node, but BB's installer needs 22.19 or newer with npm, such as Node.js 24 from NodeSource."
+fi
+[ -z "$lacks" ] || warn "This machine lacks $lacks. BB's installer needs npm, and boxes need git and gh for the thread's GitHub access. On Debian or Ubuntu: apt-get install git gh."
 
 docker=no
 command -v docker >/dev/null 2>&1 && getent group docker >/dev/null && docker=yes

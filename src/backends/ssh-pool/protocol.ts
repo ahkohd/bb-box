@@ -57,8 +57,18 @@ export interface MachineStatus {
   readonly diskGiB: number | null;
   /** Tools the helper or enrolment needs that the machine lacks. */
   readonly missing: readonly string[];
+  /** Node.js, npm, git and gh, or null when the helper is too old to say. */
+  readonly enrolment: Enrolment | null;
   /** The first thing an earlier box left, or null when the machine is clean. */
   readonly dirty: string | null;
+}
+
+/** What BB's installer and a box's GitHub access need, beyond the helper's tools. */
+export interface Enrolment {
+  /** Node.js's version, such as 24.21.0, or null when the machine has no node. */
+  readonly node: string | null;
+  /** Those of npm, git and gh the machine lacks. */
+  readonly lacks: readonly string[];
 }
 
 /** name=value lines as a map. A later line does not replace an earlier one. */
@@ -75,6 +85,10 @@ export function fields(text: string): Map<string, string> {
 
 function whole(value: string | undefined): number | null {
   return value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+}
+
+function words(value: string | undefined): string[] {
+  return (value ?? "").split(/\s+/).filter(Boolean);
 }
 
 export function parseStatus(stdout: string): MachineStatus {
@@ -107,7 +121,8 @@ export function parseStatus(stdout: string): MachineStatus {
     cores: whole(values.get("cores")),
     memoryMiB: whole(values.get("memory")),
     diskGiB: whole(values.get("disk")),
-    missing: (values.get("missing") ?? "").split(/\s+/).filter(Boolean),
+    missing: words(values.get("missing")),
+    enrolment: values.has("node") ? { node: values.get("node")?.replace(/^v/, "") || null, lacks: words(values.get("lacks")) } : null,
     dirty: values.get("dirty") || null,
   };
 }

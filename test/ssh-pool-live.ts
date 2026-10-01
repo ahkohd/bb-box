@@ -110,6 +110,29 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
     assert.ok(report.ok, report.summary);
   });
 
+  it("fails its doctor without Node.js on a machine, and warns without gh", async () => {
+    const pool = backend("settings.json");
+    const tools = async () => (await pool.doctor()).checks.find((check) => check.id === "machine.plain.tools")!;
+    assert.match((await tools()).detail, /with Node\.js 24\.\d+\.\d+\./);
+    await onMachine("plain", "mv /usr/local/bin/node /usr/local/bin/node.saved");
+    try {
+      const without = await tools();
+      assert.equal(without.status, "fail");
+      assert.equal(without.detail, "plain lacks node.");
+    } finally {
+      await onMachine("plain", "mv /usr/local/bin/node.saved /usr/local/bin/node");
+    }
+    await onMachine("plain", "mv /usr/bin/gh /usr/bin/gh.saved");
+    try {
+      const without = await tools();
+      assert.equal(without.status, "warn");
+      assert.match(without.detail, /^plain lacks gh\. /);
+    } finally {
+      await onMachine("plain", "mv /usr/bin/gh.saved /usr/bin/gh");
+    }
+    assert.equal((await tools()).status, "ok");
+  });
+
   it("removes what a box left on a machine without systemd", async () => {
     const pool = backend("settings.json");
     const guest = await acquire(pool, "linux");
