@@ -145,6 +145,18 @@ remove_ipc() {
   done
 }
 
+# The CPUs a process may use: those its CPU set allows, as nproc counts, and
+# no more than its cgroup's CPU quota. A machine that is a container with a CPU
+# limit has one or the other, and online CPUs would count the host's.
+cores() (
+  n=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null) || n=
+  if [ -n "$n" ] && [ -r /sys/fs/cgroup/cpu.max ] && read -r quota period </sys/fs/cgroup/cpu.max && [ "$quota" != max ]; then
+    q=$(((quota + period - 1) / period))
+    [ "$q" -ge "$n" ] || n=$q
+  fi
+  echo "$n"
+)
+
 status() {
   echo "helper=$VERSION"
   echo "arch=$(uname -m)"
@@ -162,8 +174,8 @@ status() {
   [ -x "$HOOK" ] && echo hook=1 || echo hook=0
   command -v docker >/dev/null 2>&1 && echo docker=1 || echo docker=0
   [ -d /run/systemd/system ] && echo systemd=1 || echo systemd=0
-  # The machine's size: online cores, memory in MiB, and free disk under /home in GiB.
-  echo "cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
+  # The machine's size: the cores a box can use, memory in MiB, and free disk under /home in GiB.
+  echo "cores=$(cores)"
   echo "memory=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo 2>/dev/null)"
   echo "disk=$(df -Pk /home 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }')"
   missing=''

@@ -31,7 +31,15 @@ export function hostState(host: DockerHostView): { tone: Tone; text: string } {
   if (!host.connected) return { tone: "warn", text: `Offline in BB${held}` };
   if (host.backend?.enabled) return { tone: "ok", text: `Hosts boxes${held}` };
   if (host.backend) return { tone: "off", text: `Off: takes no new boxes${held}` };
-  return { tone: host.docker ? "off" : "bad", text: host.docker ? "Can host boxes" : "Cannot host boxes" };
+  if (host.docker) return { tone: "off", text: "Can host boxes" };
+  // No Docker is the normal state of most machines (the lead's note of 1 October 2026); Docker that is there but fails is a fault.
+  return host.absent ? { tone: "off", text: "No Docker" } : { tone: "bad", text: "Cannot host boxes" };
+}
+
+/** Hosts in the order the list shows them: those with Docker or a backend first, machines with no Docker last, each group as BB lists them. */
+export function orderHosts(hosts: readonly DockerHostView[]): DockerHostView[] {
+  const useful = (host: DockerHostView) => !!host.docker || !!host.backend || !host.absent;
+  return [...hosts.filter(useful), ...hosts.filter((host) => !useful(host))];
 }
 
 /** The machine's image build, as the row says it, or null when there is nothing to say. */
@@ -96,7 +104,7 @@ export function DockerHostsSection() {
           {notice}
         </p>
       ) : null}
-      {hosts.map((host) => {
+      {orderHosts(hosts).map((host) => {
         const state = hostState(host);
         const build = buildWords(host);
         const on = host.backend?.enabled ?? false;

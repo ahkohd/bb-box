@@ -31,6 +31,12 @@ export function envFile(os: GuestOs): string {
 export interface Access {
   readonly names: readonly string[];
   readonly parent: string;
+  /**
+   * Of `names`, those a box's commands must have before it counts as having
+   * the thread's access, such as GH_TOKEN, which git needs. BB can give a
+   * new machine some variables before others. Any name counts when empty.
+   */
+  readonly required?: readonly string[];
 }
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -344,14 +350,18 @@ export const ACCESS_CHECK_EXITS = { found: 0, waiting: 1, noDaemon: 2 } as const
  * Run with the env file sourced, once a box's BB daemon connects: whether
  * the box's commands have the thread's access yet. BB starts the workers
  * that carry the variables a moment after its daemon connects. Exits 0 when
- * the env file set any of the names, 1 while the daemon runs without such a
- * worker, and 2 when nothing runs the daemon's program, so there is nothing
- * to wait for. Null for Windows, or when there are no names.
+ * the env file set every required name, or any name when none is required,
+ * 1 while the daemon runs without them, and 2 when nothing runs the
+ * daemon's program, so there is nothing to wait for. Null for Windows, or
+ * when there are no names.
  */
 export function accessCheck(os: GuestOs, access: Access): string | null {
   const names = accessNames(access);
   if (os === "windows" || !names.length) return null;
-  const set = names.map((name) => `[ -n "\${${name}:-}" ]`).join(" || ");
+  const required = (access.required ?? []).filter((name) => names.includes(name));
+  const set = required.length
+    ? required.map((name) => `[ -n "\${${name}:-}" ]`).join(" && ")
+    : names.map((name) => `[ -n "\${${name}:-}" ]`).join(" || ");
   return (
     `if ${set}; then exit ${ACCESS_CHECK_EXITS.found}; fi\n` +
     `ps -ww -U "$(id -u)" -o command= 2>/dev/null |\n` +

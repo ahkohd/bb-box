@@ -51,8 +51,8 @@ async function onMachine(machine: string, script: string): Promise<string> {
   return (await child).stdout.trim();
 }
 
-async function acquire(pool: Backend, kind: string): Promise<Guest> {
-  return pool.acquire(identity(kind), null, recordingHooks().hooks, AbortSignal.timeout(120_000));
+async function acquire(pool: Backend, kind: string, size = sizeOf(kind)): Promise<Guest> {
+  return pool.acquire(identity(kind, size), null, recordingHooks().hooks, AbortSignal.timeout(120_000));
 }
 
 async function inBox(pool: Backend, guest: Guest, kind: string, script: string): Promise<string> {
@@ -316,6 +316,33 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
     await onMachine("plain", `${HELPER} reset </dev/null`);
     assert.equal((await member(pool, "plain")).state, "free");
     assert.equal(await onMachine("plain", "getent passwd bbx-stray | wc -l; ls /home | wc -l"), "0\n0");
+  });
+
+  it("says the cores a box can use when the machine is a container with a CPU limit", async (t) => {
+    const [all, cpus] = (await onMachine("plain", "nproc; cat /sys/fs/cgroup/cpuset.cpus.effective")).split("\n");
+    if (Number(all) < 2) return t.skip("plain has one CPU");
+    const cores = async () => {
+      const pool = backend("settings.json");
+      // One core, so a machine limited to one still has the size.
+      const guest = await acquire(pool, "linux", { ...sizeOf("linux"), cores: 1 });
+      try {
+        assert.equal(guest.ref, "plain");
+        return { size: guest.size?.cores, nproc: Number(await inBox(pool, guest, "linux", "nproc")) };
+      } finally {
+        await pool.release(guest, releaseHooks().hooks);
+      }
+    };
+    // Where the rig runs in a container with some of the host's CPUs, online CPUs count them all.
+    assert.deepEqual(await cores(), { size: Number(all), nproc: Number(all) });
+    // A CPU quota of one CPU, as docker run --cpus 1 sets: the box still sees every CPU.
+    await run("docker", ["update", "--cpu-quota", "100000", "bbbox-sshpool-plain"]);
+    try {
+      assert.deepEqual(await cores(), { size: 1, nproc: Number(all) });
+    } finally {
+      await run("docker", ["update", "--cpu-quota", "-1", "bbbox-sshpool-plain"]);
+    }
+    // A CPU set of one CPU. Docker may not know the CPUs a container like this one has now, so taskset sets it.
+    assert.equal(await onMachine("plain", `taskset -c ${cpus!.split(/[,-]/)[0]} ${HELPER} status </dev/null | grep '^cores='`), "cores=1");
   });
 
   it("reaches a machine through a jump host", async () => {

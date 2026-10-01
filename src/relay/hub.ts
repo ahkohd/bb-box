@@ -67,6 +67,8 @@ interface Machine {
 
 interface Pending {
   readonly hostId: string;
+  /** Whether bb-box took a socket for it, or stopped waiting. */
+  settled: boolean;
   resolve(mux: Mux): void;
   reject(error: Error): void;
 }
@@ -147,6 +149,11 @@ export class RelayHub {
       onOpen: (socket: RelaySocket) => {
         if (!pending) {
           socket.close(1008, "This relay secret is unknown or used.");
+          return;
+        }
+        // A socket that opens after bb-box stopped waiting would make a relay nothing uses, whose pings keep the worker's lease.
+        if (pending.settled) {
+          socket.close(1008, "bb-box stopped waiting for this relay.");
           return;
         }
         mux = new Mux(
@@ -265,20 +272,24 @@ export class RelayHub {
     const accepted = new Promise<Mux>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(secret);
-        reject(new Error(`the machine's worker did not connect to bb-box within ${Math.round(this.#acceptMs / 1000)} s`));
+        pending.reject(new Error(`the machine's worker did not connect to bb-box within ${Math.round(this.#acceptMs / 1000)} s`));
       }, this.#acceptMs);
       timer.unref?.();
-      this.#pending.set(secret, {
+      const pending: Pending = {
         hostId,
+        settled: false,
         resolve: (mux) => {
+          pending.settled = true;
           clearTimeout(timer);
           resolve(mux);
         },
         reject: (error) => {
+          pending.settled = true;
           clearTimeout(timer);
           reject(error);
         },
-      });
+      };
+      this.#pending.set(secret, pending);
     });
     accepted.catch(() => abort.abort());
     try {

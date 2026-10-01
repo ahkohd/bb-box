@@ -350,11 +350,13 @@ the machine when it answers again. Its power shows as unknown meanwhile.
 - **Boot.** `/etc/tmpfiles.d/bb-box.conf` clears BB's lock and PID files in
   box homes at boot, so BB's daemon starts again after a hard stop.
 - **Sizes.** Every machine is lent whole. bb-box claims the smallest free
-  machine of at least the size a box asks for: as many online cores, 90%
-  of the memory or more (the kernel keeps some of it), and, when the size
-  names a disk, that much free under `/home`. The doctor shows each
-  machine's cores, memory and free disk. If your machines are smaller than
-  the presets, change them in the kinds part of BB Box's settings.
+  machine of at least the size a box asks for: as many cores, 90% of the
+  memory or more (the kernel keeps some of it), and, when the size names a
+  disk, that much free under `/home`. It counts the cores a process may
+  use, so on a machine that is a container with a CPU limit, it counts the
+  limit, not the host's cores. The doctor shows each machine's cores,
+  memory and free disk. If your machines are smaller than the presets,
+  change them in the kinds part of BB Box's settings.
 - **Desktops.** The pool lends headless machines only. Desktops are not
   supported yet.
 
