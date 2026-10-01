@@ -20,10 +20,10 @@ Every result ends with a `Next:` line that says what to do next.
 | `box_status` | `box` | Shows one box, checking its power state with the backend. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
 | `box_copy` | `box`, `direction`, `from`, `to?` | Copies one file between the thread's workspace and a box: `to_box` or `from_box`. |
-| `box_stop` | `box` | Stops a box and keeps its disk. |
+| `box_stop` | `box` | Stops a box and keeps its disk. Refused while a thread runs on the box, naming it. |
 | `box_start` | `box` | Starts a stopped box again. |
 | `box_thread` | `box`, `prompt`, `title` | Starts a child thread on a box that is a BB machine, in a worktree of the project cloned onto the box. It is archived with this thread. |
-| `box_release` | `box` | Releases a box. Its disk is deleted. |
+| `box_release` | `box` | Releases a box. Its disk is deleted. Refused while a thread runs on the box, naming it: archive that thread first, or ask the user. |
 | `computer_windows` | `box` | Lists the windows on a desktop box's screen, with their IDs. |
 | `computer_observe` | `box`, `window`, `query?`, `limit?`, `screenshot?` | Reads a window's accessibility tree, with a reference such as `e12` for each element you can act on. |
 | `computer_screenshot` | `box`, `window?` | Returns an image of a window, or of the whole desktop by default. |
@@ -193,7 +193,7 @@ Most take `--json`.
 | `bb box acquire <kind>` | Makes a box and waits for it. `--no-wait` returns at once. |
 | `bb box status <box>` | Shows one box. |
 | `bb box thread <box> --prompt <text>` | Starts a child thread on a box, as `box_thread` does. |
-| `bb box release <box>` | Releases a box. |
+| `bb box release <box> [--force]` | Releases a box. A box a thread runs on needs `--force`. |
 | `bb box sweep` | Runs the clean-up now. |
 | `bb box install-id` | Shows this install's ID, which it records on its guests. `--set <id>` takes back the ID it had before it lost its storage, once no box holds a guest. |
 
