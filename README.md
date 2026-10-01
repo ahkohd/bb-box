@@ -70,7 +70,7 @@ services and builds, so that work runs on a box and not on your own machine.
 | Backend | Virtual or real | Kinds | Status |
 | --- | --- | --- | --- |
 | Proxmox LXC | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |
-| Proxmox QEMU | virtual | Windows desktop | planned |
+| Proxmox QEMU | virtual | Windows desktop | in development |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
 | Apple Virtualization framework, with [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS, macOS desktop | in development |
 | Docker | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |

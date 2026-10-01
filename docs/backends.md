@@ -16,7 +16,7 @@ means merged and in daily use.
 | Linux | Linux | container | Proxmox LXC | plain, Docker, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU; `linux-desktop-cpu`: none |
 | Linux | Linux | container | Docker | plain, Docker, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU through CDI |
 | Linux | Linux | physical | SSH host pool | plain, Docker | working | x86_64 | none offered |
-| Linux | Windows | VM | Proxmox QEMU | desktop | spike, #46 | x86_64 | none at first: Windows draws on the CPU; a whole card passed through later |
+| Linux | Windows | VM | Proxmox QEMU | desktop | in progress, #46 | x86_64 | none at first: Windows draws on the CPU; a whole card passed through later |
 | Linux | macOS | - | - | - | not possible: macOS runs only on Apple hardware | - | - |
 | Mac | macOS | VM | Tart | plain, desktop | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
 | Mac | macOS | physical | physical Mac | desktop | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
@@ -171,6 +171,36 @@ node --test test/conformance.test.ts
 - Ownership lives in Proxmox tags (`bb-box`, `install.<id>`, `thread.<id>`,
   `box.<id>`, `kind.<kind>`), and in the description the clone writes, which
   names the install and the box before the tags are set.
+
+## Proxmox QEMU
+
+- Virtual. Code in [src/backends/proxmox-qemu/](../src/backends/proxmox-qemu/),
+  on the same Proxmox client, ownership tags and settings as Proxmox LXC.
+- The Windows template is built by `setup/proxmox-qemu/build.sh`, on a host
+  set up as for Proxmox LXC: the same bridge, pool, token and SSH key. Its
+  guide lists the settings. The backend has its own VMID range and
+  addresses, apart from Proxmox LXC's.
+- A box is a linked clone of a template that is not generalized, so it boots
+  as the same installed Windows. Its address reaches Windows in the SMBIOS
+  serial: `base64=1`, and the serial is `address/prefix gateway` in base64,
+  such as `10.200.0.12/24 10.200.0.1`. The template's `boot.ps1` reads it at
+  each boot. smbios1 is set whole, so each clone gets a fresh UUID too.
+- Commands run over SSH in PowerShell 7, as the template's box user, an
+  administrator
+  ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)).
+  The box's key goes in
+  `C:\ProgramData\ssh\administrators_authorized_keys`.
+- A larger disk grows before the VM starts, and the acquire then extends C:
+  over it. Capacity is `memory`, `disk` on the template's storage, and
+  `guests` in the VMID range. A box cannot enrol yet
+  ([BB request 1](bb-requests.md#1-bbs-host-app-on-windows)).
+- Still to come: the display through the API's VNC proxy, desktop commands
+  in the user's session, computer use, stop and start, and a hibernated warm
+  pool. The conformance suite does not run against it yet, as Windows boxes
+  have no file copies.
+- The tests run against the fake API, and the fake ssh as a Windows host,
+  with a sh stand-in for PowerShell where a test needs one
+  ([test/proxmox-qemu.test.ts](../test/proxmox-qemu.test.ts)).
 
 ## SSH host pool
 

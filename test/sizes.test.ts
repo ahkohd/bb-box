@@ -36,7 +36,8 @@ test("each kind ships three presets, small by default, and a largest size twice 
   });
   assert.deepEqual(macos.largest, { cores: 16, memoryMiB: 64 * GiB, diskGiB: 256 });
   assert.deepEqual(kindSizes("macos-desktop"), macos);
-  assert.deepEqual(kindSizes("windows-desktop"), linux, "a kind bb-box has no sizes for takes linux's");
+  assert.deepEqual(kindSizes("windows-desktop"), desktop);
+  assert.deepEqual(kindSizes("solaris"), linux, "a kind bb-box has no sizes for takes linux's");
 });
 
 test("the box-sizes setting changes a kind's presets, default and largest", () => {

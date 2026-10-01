@@ -82,6 +82,9 @@ export class FakeProxmox {
       template: true,
       config: {
         scsi0: `local-lvm:base-${vmid}-disk-1,discard=on,iothread=1,size=64G`,
+        ide2: "none,media=cdrom",
+        boot: "order=scsi0;ide2",
+        net0: "virtio=BC:24:11:00:00:01,bridge=vmbr1",
         ostype: "win11",
         agent: "1",
         cores: "4",
@@ -220,6 +223,8 @@ export class FakeProxmox {
       if (type === "qemu") {
         name = config.name = params.name ?? `VM${newid}`;
         config.scsi0 = config.scsi0!.replace(/^local-lvm:base-(\d+)-disk-(\d+)/, `local-lvm:base-$1-disk-$2/vm-${newid}-disk-$2`);
+        // A clone's NIC gets a MAC of its own.
+        if (config.net0) config.net0 = config.net0.replace(/=[0-9A-F:]{17}/, `=BC:24:11:${String(newid).padStart(6, "0").replace(/(..)(?!$)/g, "$1:")}`);
       } else {
         name = config.hostname = params.hostname ?? `CT${newid}`;
         config.rootfs = `local-lvm:base-${source.vmid}-disk-0/vm-${newid}-disk-0,size=${/size=([^,]+)/.exec(source.config.rootfs ?? "")?.[1] ?? "8G"}`;
@@ -251,11 +256,13 @@ export class FakeProxmox {
       }
     }
 
-    if ((match = /^\/nodes\/[^/]+\/lxc\/(\d+)\/resize$/.exec(path)) && method === "PUT") {
-      const vmid = Number(match[1]);
-      const guest = this.guests.get(vmid);
-      if (!guest) return this.#missing(vmid);
-      guest.config.rootfs = guest.config.rootfs!.replace(/size=[^,]+/, `size=${params.size}`);
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/resize$/.exec(path)) && method === "PUT") {
+      const vmid = Number(match[2]);
+      const guest = this.#of(match[1]!, vmid);
+      if (!guest) return this.#missing(vmid, match[1]);
+      const disk = params.disk ?? "";
+      if (!guest.config[disk]) return respond(500, `disk '${disk}' does not exist`, { data: null });
+      guest.config[disk] = guest.config[disk]!.replace(/size=[^,]+/, `size=${params.size}`);
       return ok(this.#task("resize", vmid));
     }
 
