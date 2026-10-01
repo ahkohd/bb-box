@@ -1,0 +1,110 @@
+#!/bin/bash
+# bb-box: a Docker box's main process, run as root under docker-init (bb-box
+# creates each box with --init). It does at each start what systemd and the
+# template's units do in a Proxmox LXC box, then waits until `docker stop`.
+#
+# - Clears what a hard stop leaves behind: BB's daemon lock and PID file, and
+#   X's lock for :99. bb-box runs BB's bootstrap again after each start, which
+#   starts BB's daemon (017).
+# - In a linux-docker box (BBBOX_DOCKERD=1), starts Docker's daemon.
+# - In a desktop box, starts the display, the XFCE session and Cua Driver as
+#   the box user, and starts each again when it exits, as their units do.
+# - Then writes /run/bb-box/ready, which bb-box waits for. /run is a tmpfs, so
+#   the file is new at each start.
+#
+# Installed as /usr/local/sbin/bb-box-start by setup/docker/Dockerfile.
+set -u
+user=box
+home=/home/$user
+uid=$(id -u "$user")
+run=/run/bb-box
+log() { echo "bb-box-start: $*" >&2; }
+cd "$home" || exit 1
+
+# On `docker stop`, stop everything this script started, then exit.
+stop() {
+  trap '' TERM INT
+  kill -TERM 0 2>/dev/null
+  wait
+  exit 0
+}
+trap stop TERM INT
+
+rm -f "$home"/.bb-machines/*/daemon.lock.lock "$home"/.bb-machines/*/install-daemon.pid
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+install -d -m 0755 -o "$user" -g "$user" "$run"
+install -d -m 0700 -o "$user" -g "$user" "/run/user/$uid"
+# finalize.sh leaves the machine ID empty, so each box makes its own.
+[ -s /etc/machine-id ] || systemd-machine-id-setup >/dev/null 2>&1 || dbus-uuidgen --ensure=/etc/machine-id
+
+# What the box user's programs get, as a login over SSH would give them.
+set -a
+# shellcheck disable=SC1091
+[ ! -r /etc/environment ] || . /etc/environment
+set +a
+box_env=(HOME="$home" USER="$user" LOGNAME="$user" SHELL=/bin/bash LANG=C.UTF-8 PATH="$PATH")
+as_box() { setpriv --reuid="$user" --regid="$user" --init-groups env -i "${box_env[@]}" "$@"; }
+# Runs a command again a second after it exits, as Restart=always does.
+keep() { while :; do "$@"; sleep 1; done; }
+
+if [ "${BBBOX_DOCKERD:-0}" = 1 ]; then
+  # On cgroup v2, move this container's processes into a child group, so
+  # dockerd can make groups of its own beside it, as Docker's dind image does.
+  if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+    mkdir -p /sys/fs/cgroup/init
+    xargs -rn1 </sys/fs/cgroup/cgroup.procs >/sys/fs/cgroup/init/cgroup.procs 2>/dev/null || :
+    sed -e 's/ / +/g' -e 's/^/+/' </sys/fs/cgroup/cgroup.controllers >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || :
+  fi
+  rm -f /var/run/docker.pid /run/containerd/containerd.pid
+  keep dockerd >>/var/log/dockerd.log 2>&1 &
+  for _ in $(seq 1 300); do
+    docker info >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  docker info >/dev/null 2>&1 || log "dockerd did not answer within 30 s; see /var/log/dockerd.log"
+fi
+
+if [ -x /usr/local/libexec/bb-box/display ]; then
+  # The system D-Bus, for the session's services that look for it.
+  install -d -m 0755 /run/dbus
+  keep dbus-daemon --system --nofork --nopidfile &
+  /usr/local/libexec/bb-box/vnc-password "$user"
+  set -a
+  # shellcheck disable=SC1091
+  [ ! -r /etc/bb-box/desktop.env ] || . /etc/bb-box/desktop.env
+  set +a
+  display_env=(DISPLAY_MODE="${DISPLAY_MODE:-cpu}" DISPLAY_GEOMETRY="${DISPLAY_GEOMETRY:-1920x1080}" VNC_AUTH="${VNC_AUTH:-password}")
+  # The NVIDIA Container Toolkit brings the host driver's own userspace, so it
+  # always matches; the display still takes the CPU when the GPU is full.
+  if [ "${BBBOX_GPU:-0}" = 1 ] && [ -r /sys/module/nvidia/version ]; then
+    cat /sys/module/nvidia/version >/usr/share/bb-box/nvidia-version
+    display_env[0]=DISPLAY_MODE=auto
+  fi
+  keep as_box env "${display_env[@]}" /usr/local/libexec/bb-box/display &
+  session_env=(DISPLAY=:99 XAUTHORITY="$run/Xauthority" XDG_RUNTIME_DIR="/run/user/$uid"
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" XDG_SESSION_TYPE=x11
+    XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce)
+  # The session's D-Bus, which user@1000.service gives an LXC box.
+  keep as_box env "${session_env[@]}" dbus-daemon --session --address="unix:path=/run/user/$uid/bus" --nofork --nopidfile &
+  # The session, and Cua Driver with it, each time the display is up.
+  session() {
+    as_box /usr/local/libexec/bb-box/display wait || return
+    as_box env "${session_env[@]}" sh -c 'set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
+      CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve &
+      cua=$!
+      xfce4-session
+      kill "$cua" 2>/dev/null'
+  }
+  keep session &
+  as_box /usr/local/libexec/bb-box/display wait || log "the display did not come up"
+  for _ in $(seq 1 100); do
+    [ -S "$home/.cache/cua-driver/cua-driver.sock" ] && break
+    sleep 0.1
+  done
+fi
+
+touch "$run/ready"
+while :; do
+  sleep 3600 &
+  wait $!
+done

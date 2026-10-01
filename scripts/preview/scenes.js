@@ -197,12 +197,29 @@ const DRIVERS = [
     hostFields: [field("address", "Address", "connection", { description: "The Mac's address, with :port when SSH is not on 22." }), field("user", "User", "connection", { description: "The user bb-box logs in to the Mac as." }), field("host-keys", "Host keys", "connection", { experimental_multiline: true })],
     setup: { guide: "setup/tart/README.md", scripts: ["setup/tart/setup-mac.sh"] },
   },
+  {
+    type: "docker",
+    label: "Docker",
+    description: "Linux boxes, with or without a desktop, as containers on a Docker host. It needs only Docker.",
+    nature: "virtual",
+    kinds: ["linux", "linux-docker", "linux-desktop-cpu", "linux-desktop"],
+    fields: [
+      field("host", "Host", "connection", { description: "unix:///path/to/docker.sock or ssh://user@host. Empty uses the docker CLI's own default." }),
+      field("linux-image", "Linux image", "boxes", { default: "bbbox/linux:1" }),
+      field("desktop-image", "Desktop image", "boxes", { default: "bbbox/linux-desktop:1" }),
+      { key: "privileged", type: "boolean", label: "Privileged linux-docker boxes", group: "boxes", default: false },
+      { key: "gpu-desktops", type: "boolean", label: "GPU desktops", group: "boxes", default: false },
+      { key: "boxes", type: "number", label: "Most boxes", group: "advanced", default: 10 },
+    ],
+    hostFields: [],
+    setup: { guide: "setup/docker/README.md", scripts: ["setup/docker/build.sh"] },
+  },
 ];
 const KIND_INFO = [
-  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, drivers: ["proxmox-lxc", "ssh-pool"] },
-  { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, drivers: ["proxmox-lxc"] },
-  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, drivers: ["proxmox-lxc"] },
-  { id: "linux-desktop-cpu", label: "Linux desktop (no GPU)", description: "A Linux desktop without a GPU.", gpu: false, desktop: true, drivers: ["proxmox-lxc"] },
+  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
+  { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop-cpu", label: "Linux desktop (no GPU)", description: "A Linux desktop without a GPU.", gpu: false, desktop: true, drivers: ["proxmox-lxc", "docker"] },
   { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, drivers: ["tart"] },
   { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, drivers: ["tart"] },
 ];

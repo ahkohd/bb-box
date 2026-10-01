@@ -49,9 +49,9 @@ Limits:
   relative box path, or one that starts with `~/`, is under the box user's
   home.
 - `box_status` says whether the box user can use `sudo`, and `box_list`
-  says it for each kind. On Proxmox LXC boxes and the SSH host pool's
-  `linux-docker` it can, without a password; on the pool's `linux` it
-  cannot.
+  says it for each kind. On Proxmox LXC boxes, Docker boxes and the SSH
+  host pool's `linux-docker` it can, without a password; on the pool's
+  `linux` it cannot.
 - Each command reads `~/.config/bb-box/env`, which sets `BB_BOX_ID`,
   `BB_BOX_NAME`, `BB_BOX_KIND` and `BB_THREAD_ID`, and `BB_HOST_ID` once the
   box is a BB machine.
@@ -66,7 +66,10 @@ backend offers:
 - `linux-desktop`: a desktop with a GPU
 - `linux-desktop-cpu`: a desktop without a GPU
 
-A kind is on offer only when its templates are set. The earlier IDs
+A kind is on offer only when its templates are set. The Docker backend
+offers the same kinds as containers, with the same tools, and
+`linux-docker` and `linux-desktop` only when the operator turns them on. A
+Docker box runs no systemd, so `systemctl` does not work in it. The earlier IDs
 `linux-headless` and `linux-headless-docker` still work in `box_acquire`, as
 `linux` and `linux-docker`.
 
@@ -100,7 +103,8 @@ cannot make a size says so, and bb-box tries the next backend that offers
 the kind. `box_status` shows the size the box has, read from its guest. The
 SSH host pool lends the smallest free machine of at least the size, so its
 box may have more. A Tart macOS box keeps its image's disk, so Tart refuses
-a `disk_gib` for now.
+a `disk_gib` for now. A Docker box shares its host's disk, so Docker refuses
+one too.
 
 `bb box acquire <kind>` takes `--size`, `--cores`, `--memory-gib` and
 `--disk-gib`.
@@ -244,6 +248,7 @@ working and can be released. A backend that is on, or has boxes, cannot be
 saved with problems; one that is off and has none can, so its setup can stop
 part way. A backend with boxes cannot be removed. `setup/proxmox-lxc/README.md`
 explains how to set up a Proxmox host, and its section 7 lists every field.
+`setup/docker/README.md` does the same for Docker.
 
 A backend refuses a new box when the host would fall below its memory or disk
 reserve, cannot make the size asked for, or has no free address or GPU. The

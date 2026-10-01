@@ -35,3 +35,4 @@ that changes gets a new record that supersedes the old one.
 | [028](028-a-box-size-is-chosen-when-it-is-made.md) | A box's size is chosen when it is made, from presets per kind |
 | [029](029-configuration-is-one-checked-document.md) | Configuration is one checked document in bb-box's storage, set through its page and CLI |
 | [030](030-a-mac-runs-desktop-commands-through-launchctl-asuser.md) | A Mac runs desktop commands through `launchctl asuser` |
+| [031](031-docker-boxes-are-reached-through-docker-exec.md) | Docker boxes are reached through `docker exec` |
