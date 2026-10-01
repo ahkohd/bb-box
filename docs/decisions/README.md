@@ -43,3 +43,5 @@ that changes gets a new record that supersedes the old one.
 | [036](036-your-machines-are-boxes-you-own.md) | Your machines are boxes you own, kept as BB machines |
 | [037](037-a-panel-keeps-a-boxs-desktop-and-terminal.md) | A panel keeps a box's desktop and terminal across tab switches |
 | [038](038-the-agent-can-take-control-back.md) | The agent can take control back when asked |
+| [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md) | Windows desktops are clones of a template that is not generalized |
+| [040](040-linux-on-arm64-has-kinds-of-its-own.md) | Linux on arm64 has kinds of its own |

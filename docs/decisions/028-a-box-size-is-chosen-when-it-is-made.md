@@ -2,6 +2,10 @@
 
 Status: accepted, 1 October 2026. Partly supersedes
 [011](011-interface-v1.md): a kind's `size`, and what `capacity` is asked.
+Extended by
+[039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)
+and [040](040-linux-on-arm64-has-kinds-of-its-own.md): the presets of the
+Windows and arm64 kinds.
 
 ## Context
 

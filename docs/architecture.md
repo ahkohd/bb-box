@@ -118,11 +118,19 @@ and `start` and `stop` throw `gone`.
 | `linux-docker` | as above, plus the feature `docker` | Proxmox LXC (`nesting=1`), Docker when privileged, an SSH pool machine whose reset restores the whole machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
 | `linux-desktop-cpu` | a Linux desktop without a GPU | Docker, an SSH pool machine, Proxmox LXC from a CPU-only desktop template |
+| `linux-arm64` | Linux on arm64, no GPU | Tart |
+| `linux-arm64-docker` | as above, plus the feature `docker` | Tart |
+| `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
 | `macos` | macOS, no GPU | a physical Mac, Tart |
 | `macos-desktop` | a macOS desktop, no GPU | a physical Mac, Tart |
 | `macos-desktop-xcode` | as above, plus the features `xcode` and `ios-simulator` | a physical Mac or Tart image with Xcode |
 
+- A kind's ID names its architecture when it is not the OS's usual one:
+  `-arm64` follows the OS, and the rest is the x86_64 kind's. An agent
+  asking for `linux` never gets arm64, where amd64 images and x86_64
+  binaries fail
+  ([040](decisions/040-linux-on-arm64-has-kinds-of-its-own.md)).
 - "No GPU" means no scarce GPU is taken. Macs render with Metal, and Tart
   through its paravirtualised GPU, so macOS kinds declare `gpu: false`.
 - A `linux-desktop` box whose display fell back to the CPU
@@ -146,8 +154,8 @@ and `start` and `stop` throw `gone`.
   (`restores: "machine"`). Rootless Docker kept in the box user's home may
   allow it after a home reset; that is untested.
 - Each kind sets `readyTimeoutMs`, the longest an acquire may take: about
-  30 s for an LXC or Docker box, 5 min for a macOS VM, 10 min for a Windows
-  clone's first boot after sysprep.
+  30 s for an LXC or Docker box, 3 min for a Windows VM, 5 min for a macOS
+  VM.
 
 ### Capabilities
 
@@ -226,10 +234,14 @@ last ([021](decisions/021-desktop-resize-through-the-backend.md)).
 - Windows starts with RFB through Proxmox's console: nothing to install in the
   guest, the same noVNC client, and it shows the console session the agent
   uses. `vncproxy` returns a one-time ticket, which authorises the WebSocket,
-  and a one-time password, which the relay answers as the VNC password. RDP
-  is not planned. It needs a gateway and a second client, and an RDP login
-  moves the session off the console, so you and the agent could not share one
-  desktop.
+  and a one-time password, which the relay answers as the VNC password. The
+  route pins the certificate the API serves, not the `cert` in `vncproxy`'s
+  answer. Windows' VirtIO GPU driver ignores a viewer's resize, so the
+  backend sets the mode in the desktop session
+  ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)).
+  RDP is not planned. It needs a gateway and a second client, and an RDP
+  login moves the session off the console, so you and the agent could not
+  share one desktop.
 
 **SSH access** gives host, port, user, the host keys, and an optional jump
 host (the Mac host for Tart, a bastion for a pool). The SSH transport is built
@@ -287,7 +299,9 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   helper for the OS unless the transport already runs there: `DISPLAY` and the
   session bus on Linux, `launchctl asuser` on macOS
   ([030](decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md)),
-  a scheduled task with `/IT` on Windows.
+  a one-off scheduled task with an interactive logon on Windows, whose
+  output comes back at exit
+  ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)).
 
 ### Guests
 
@@ -940,8 +954,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
   SHA-256, with telemetry and the update check off. The pin moves only after
   the conformance suite passes.
 - **In the box.** `cua-driver serve` runs in the logged-in desktop session:
-  a user service on Linux, a per-user Scheduled Task at logon on Windows, a
-  LaunchAgent that starts Cua's signed app on macOS.
+  a user service on Linux, an elevated Scheduled Task at logon on Windows
+  ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)),
+  a LaunchAgent that starts Cua's signed app on macOS.
 - **From the plugin.** One session per box runs `cua-driver mcp --socket
   <socket>` through the command transport's `spawn`, and the plugin speaks
   MCP over it: 2 to 4 ms per call, against 165 ms for a new SSH connection.
@@ -1151,12 +1166,12 @@ fills in the details.
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
 | Nature | virtual | virtual | virtual | real | real | virtual |
-| Acquire | linked clone, start | linked clone, start | create and start a container from the kind's image | claim a machine | claim a Mac, prepare the box user | `tart clone` (copy on write), `tart run` headless |
+| Acquire | linked clone, start | resume a hibernated warm VM, or a linked clone of a template that is not generalized, start | create and start a container from the kind's image | claim a machine | claim a Mac, prepare the box user | `tart clone` (copy on write), `tart run` headless |
 | Release | delete | delete | remove the container | remove the box user and what it left, or restore the whole machine | reset the box user | `tart delete` |
-| Command | SSH | OpenSSH for Windows with PowerShell, or the QEMU guest agent | `docker exec` | SSH | SSH | SSH through the Mac host |
+| Command | SSH | OpenSSH for Windows with PowerShell 7 | `docker exec` | SSH | SSH | SSH through the Mac host |
 | Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | none yet; RFB through SSH later | RFB (Screen Sharing) through SSH | RFB through the Mac host |
 | Ownership record | tags | tags | labels set at creation, and the container name `bbbox-<box ID>` | marker file on the machine, with a reset generation | marker file and plugin storage | an owner file per VM on the Mac, written before the clone with noclobber and removed last. A warm VM's says `filling`, then `warm`, and a claim rewrites it with the box's fields, so warm VMs are claimed in it rather than renamed, since `tart rename` does not check whether a VM is running |
-| Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), desktops per GPU | machines | machines | guests (two VMs per Mac), memory, disk |
+| Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk (a hibernated VM's memory is on disk), guests (the ID range) | memory, guests (a container budget), desktops per GPU | machines | machines | guests (two macOS VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
 | Enrol | yes | not until BB's host app runs on Windows | yes, without systemd | yes | yes | yes |
 
@@ -1185,14 +1200,17 @@ Notes:
   and bb-box calls `bootstrap` again, which starts the daemon
   ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
   `access.dockerHost` is null.
-- **Windows** on Proxmox QEMU streams its console through Proxmox's API, so
-  nothing is installed in the guest for the desktop. Commands need OpenSSH for
-  Windows or the QEMU guest agent, whose calls Proxmox limits to 64 KiB of
-  stdin and 60 KiB per file write, so the transport splits larger data. It
-  cannot enrol in BB until BB's host app runs on Windows. Computer use needs
-  OpenSSH, automatic logon and a standard user, since Cua runs unelevated in
-  the desktop session. A sysprepped clone's first boot takes minutes, so
-  Windows needs a warm pool to feel quick.
+- **Windows** on Proxmox QEMU
+  ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md))
+  clones a template that is not generalized: a clone shows its desktop
+  with Cua in about 20 s, and a hibernated warm VM resumes to it in about
+  4 s. The backend sets the guest's clock after each resume. The box's
+  address is in the VM's SMBIOS serial, which a startup task reads.
+  Commands use OpenSSH with PowerShell 7, elevated; the guest agent is for
+  readiness only. The desktop is Proxmox's console, so nothing is
+  installed in the guest for it. Cua's daemon runs elevated in the desktop
+  session, started at logon. It cannot enrol in BB until BB's host app
+  runs on Windows.
 - **SSH host pool** needs nothing but SSH access to each machine, directly
   or through a jump host, and an admin user that may run only bb-box's
   helper as root. Each box gets a new user, removed with everything it left
@@ -1234,6 +1252,11 @@ Notes:
     ([setup guide](../setup/tart/README.md#the-desktops-vnc-server)).
   - A suspended VM holds no slot and no memory, so `stop` suspends (macOS 14
     or later on the host), and `start` resumes in about 4 s.
+  - Tart runs Linux VMs too, as the arm64 kinds
+    ([040](decisions/040-linux-on-arm64-has-kinds-of-its-own.md)).
+    They do not count against the two-VM limit, and a clone answers SSH in
+    about 5.5 s. Tart cannot resume a suspended Linux VM, so `stop` shuts
+    one down.
 - **Clouds, microsandbox and Crabbox** fit as virtual backends with SSH and
   instance tags; a cloud's capacity is its quota.
 
@@ -1272,7 +1295,7 @@ Notes:
 | Question | Where it is answered |
 | --- | --- |
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
-| First boot of a Windows clone, Tart boot and resume, a physical Mac's reset; until then `readyTimeoutMs` values are estimates | [later backends](research/later-backends.md) |
+| A physical Mac's reset; until then its `readyTimeoutMs` is an estimate | [later backends](research/later-backends.md) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
 | Whether the Docker backend runs as it is against Docker Engine in WSL2, and how fast Hyper-V clones and resumes | the experiments in [Windows hosts](research/windows-hosts.md) |
