@@ -94,6 +94,11 @@ shutdown() {
   wait "$pid" 2>/dev/null || :
   pid=
 }
+reboot() {
+  shutdown
+  boot
+  as_root timeout 120 systemctl is-system-running --wait >/dev/null </dev/null || :
+}
 
 if exists "$build"; then tart delete "$build"; fi
 step "cloning $from to $build"
@@ -119,7 +124,10 @@ as_root sh -c 'command -v jq >/dev/null || { apt-get update -q >/dev/null && DEB
 as_root env BBBOX_ENV=/nonexistent BBBOX_BB_URL="$bb_url" bash "$src/fetch-artifacts.sh" "$src/artifacts" "$artifacts" arm64 </dev/null
 step "customising $build (the Linux template's customize-base.sh)"
 as_root bash "$src/guest/customize-base.sh" "$src" </dev/null
-step "checking $build as the box user"
+# Each check runs after a boot, as in a new box: Docker, for one, is stopped
+# then (041).
+step "booting $build again, as a box would, and checking it as the box user"
+reboot
 as_root runuser -l box -c "bb-box-check-headless" </dev/null | tee "$work/check.txt"
 # Each line is the check's name in 34 columns, a space, then ok or FAIL.
 ! grep -qE '^.{35}FAIL' "$work/check.txt" || die "a check failed (above)"
@@ -127,9 +135,7 @@ if [ "$desktop" = 1 ]; then
   step "adding the desktop to $build (customize-desktop.sh)"
   as_root bash "$src/guest/customize-desktop.sh" "$src" </dev/null
   step "booting $build again, as a box would, and checking the desktop as the box user"
-  shutdown
-  boot
-  as_root timeout 120 systemctl is-system-running --wait >/dev/null </dev/null || :
+  reboot
   as_root runuser -l box -c "bb-box-check-desktop" </dev/null | tee "$work/check.txt"
   # Each line is the check's name in 26 columns, a space, then ok or FAIL.
   ! grep -qE '^.{27}FAIL' "$work/check.txt" || die "a check failed (above)"

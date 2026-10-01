@@ -93,7 +93,26 @@ cat >/etc/docker/daemon.json <<'EOF'
   "default-address-pools": [{ "base": "172.16.0.0/12", "size": 24 }]
 }
 EOF
-systemctl enable containerd.service docker.service >/dev/null
+# Docker starts on first use (041): docker.socket starts it, with containerd,
+# at the first docker command, about 0.3 s, and an idle box pays nothing for
+# it. A box with containers starts it at boot, so their restart policies work
+# as before.
+systemctl disable containerd.service docker.service >/dev/null 2>&1
+systemctl enable docker.socket >/dev/null
+cat >/etc/systemd/system/bb-box-docker-containers.service <<'EOF'
+[Unit]
+Description=bb-box: start Docker at boot when the box has containers
+ConditionDirectoryNotEmpty=/var/lib/docker/containers
+After=docker.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl start --no-block docker.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable bb-box-docker-containers.service >/dev/null
 
 # SSH: a plain service, keys only. The template holds no host keys; the
 # service makes them before its first start in each clone, and again when a
