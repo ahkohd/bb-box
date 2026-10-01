@@ -353,7 +353,7 @@ export class FakeBackend implements Backend {
       }),
     );
     const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);
-    return { command: new FakeTransport(this.#home(guest.ref), power), displays, access: null };
+    return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal), displays, access: null };
   }
 
   async #resize(size: DisplaySize): Promise<void> {
@@ -436,6 +436,22 @@ export class FakeBackend implements Backend {
     return !!record && record.install === this.#installId && (record.owner?.boxId ?? null) === (guest.data?.box ?? null);
   }
 
+  /** Aborted when the guest goes, which stops its commands, as deleting a real guest does. */
+  readonly #running = new Map<string, AbortController>();
+
+  #commands(ref: string): AbortController {
+    let controller = this.#running.get(ref);
+    if (!controller) this.#running.set(ref, (controller = new AbortController()));
+    return controller;
+  }
+
+  /** Stops the guest's commands, then deletes its directory. A write already under way can land after the stop, so the delete tries again. */
+  async #wipe(ref: string): Promise<void> {
+    this.#running.get(ref)?.abort(new TransportError("unreachable", "The fake box is gone."));
+    this.#running.delete(ref);
+    await rm(this.#home(ref), { recursive: true, force: true, maxRetries: 10, retryDelay: 10 });
+  }
+
   #home(ref: string): string {
     return join(this.#options.root, this.id, ref);
   }
@@ -467,7 +483,7 @@ export class FakeBackend implements Backend {
     const started = performance.now();
     if (this.nature === "virtual") {
       await this.#storage.delete(`guest/${guest.ref}`);
-      await rm(this.#home(guest.ref), { recursive: true, force: true });
+      await this.#wipe(guest.ref);
       hooks?.timing("delete", Math.round(performance.now() - started));
       return;
     }
@@ -482,7 +498,7 @@ export class FakeBackend implements Backend {
       await this.#pool.outOfService(guest.ref, reason);
       return;
     }
-    await rm(this.#home(guest.ref), { recursive: true, force: true });
+    await this.#wipe(guest.ref);
     await this.#storage.delete(`power/${guest.ref}`);
     hooks?.timing("reset", Math.round(performance.now() - started));
     await this.#pool.free(guest.ref);
@@ -501,11 +517,18 @@ export class FakeTransport implements CommandTransport {
   readonly #home: string;
   readonly #line: CommandLine;
   readonly #power: () => Promise<PowerState | null>;
+  /** Aborted when the guest is deleted. */
+  readonly #gone: AbortSignal;
 
-  constructor(home: string, power: () => Promise<PowerState | null>) {
+  constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal) {
     this.#home = home;
     this.#line = new CommandLine({ argv: (script) => ["sh", "-c", script], cwd: home, env: { PATH: process.env.PATH, HOME: home } });
     this.#power = power;
+    this.#gone = gone;
+  }
+
+  #signal(signal?: AbortSignal): AbortSignal {
+    return signal ? AbortSignal.any([signal, this.#gone]) : this.#gone;
   }
 
   async probe(): Promise<boolean> {
@@ -518,22 +541,22 @@ export class FakeTransport implements CommandTransport {
 
   async run(script: string, options?: RunOptions): Promise<RunResult> {
     await this.#answer();
-    return this.#line.run(script, options);
+    return this.#line.run(script, { ...options, signal: this.#signal(options?.signal) });
   }
 
   async stream(script: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {
     await this.#answer();
-    return this.#line.stream(script, options);
+    return this.#line.stream(script, { ...options, signal: this.#signal(options.signal) });
   }
 
   async writeFile(path: string, data: Uint8Array, options?: { mode?: string; signal?: AbortSignal }): Promise<void> {
     await this.#answer();
-    return this.#line.writeFile(path, data, options);
+    return this.#line.writeFile(path, data, { ...options, signal: this.#signal(options?.signal) });
   }
 
   async readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array> {
     await this.#answer();
-    return this.#line.readFile(path, options);
+    return this.#line.readFile(path, { ...options, signal: this.#signal(options.signal) });
   }
 
   /** A fake box's ports are the test machine's. */
@@ -546,7 +569,7 @@ export class FakeTransport implements CommandTransport {
     await this.#answer();
     // The fake Cua Driver is the box's cua-driver command.
     const path = `${FAKE_CUA_BIN}:${process.env.PATH ?? ""}`;
-    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && ${script}`] }, signal);
+    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && ${script}`] }, this.#signal(signal));
   }
 }
 

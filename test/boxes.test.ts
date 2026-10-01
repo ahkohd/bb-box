@@ -145,6 +145,19 @@ test("a kind's ID from before 027 is taken in an acquire, a stored record and a 
   assert.deepEqual(world.enrolled, [`${box.name}, restored`], "it is the kind it was, so it enrols again");
 });
 
+test("a box is released while a command still writes in it, as BB's installer may during enrolment", async () => {
+  for (let round = 0; round < 10; round++) {
+    const world = setup();
+    const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }));
+    // Writes files for about 150 ms; release does not wait for it, as a real delete would not.
+    const writing = world.boxes.run(THREAD, box.name, "i=0; while [ $i -lt 150 ]; do : > f$i; i=$((i+1)); sleep 0.001; done").catch(() => null);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const left = await world.boxes.release(THREAD, box.name);
+    assert.equal(left, null, `round ${round}: ${left?.error}`);
+    await writing;
+  }
+});
+
 test("names are unique within a thread and unknown boxes are named in the error", async () => {
   const world = setup();
   const a = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
