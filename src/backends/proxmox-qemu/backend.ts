@@ -728,6 +728,11 @@ export class ProxmoxQemuBackend implements Backend {
     }
   }
 
+  asOffered(guest: Guest): boolean {
+    const template = guest.data?.template;
+    return typeof template === "number" && this.#config.templates.includes(template);
+  }
+
   /** Whether the guest at the reference is still `guest` (018): it names this install and the box in `guest.data.box`, or no box when that is absent. */
   async #still(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<boolean> {
     const config = await this.#guestConfig(api, this.#vmid(guest), signal);

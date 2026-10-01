@@ -1144,6 +1144,12 @@ export class ProxmoxLxcBackend implements Backend {
     return LXC_FLAVOURS.find((flavour) => this.#config.flavours[flavour].templates.some((listed) => listed.vmid === template)) ?? null;
   }
 
+  asOffered(guest: Guest, kind: string): boolean {
+    const template = guest.data?.template;
+    const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
+    return typeof template === "number" && !!offer && offer.config.templates.some((listed) => listed.vmid === template);
+  }
+
   #offer(kind: string): Offer {
     const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
     if (!offer) throw new BackendError("unsupported", `${this.label} has no ${kind} boxes.`);

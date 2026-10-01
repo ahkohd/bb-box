@@ -367,6 +367,14 @@ export interface Backend {
    */
   relabel?(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void>;
 
+  /**
+   * Whether `guest`, made as a box of `kind`, comes from what the backend
+   * offers the kind from now, such as one of its templates, so the kind's
+   * capabilities describe it too. The core then gives an older box what a
+   * new release adds to its kind (#215). Without it, the core assumes so.
+   */
+  asOffered?(guest: Guest, kind: string): boolean;
+
   /** The command transport, the displays, and how the thread reaches a box of `kind`. */
   transports(guest: Guest, kind: string): Promise<BoxTransports>;
 
