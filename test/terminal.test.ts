@@ -142,7 +142,7 @@ test("a session ends when its shell exits, and tells its tab", { skip }, async (
 
 test("a close reason fits a WebSocket's 123 bytes, cut at a character", () => {
   assert.equal(closeReason("The shell exited."), "The shell exited.");
-  const long = `ssh: connect to host 10.78.0.85 port 22: No route to host ${"x".repeat(2_000)}`;
+  const long = `ssh: connect to host 192.0.2.85 port 22: No route to host ${"x".repeat(2_000)}`;
   const cut = closeReason(long);
   assert.ok(new TextEncoder().encode(cut).byteLength <= 123, "within 123 bytes");
   assert.ok(cut.endsWith("…"));
@@ -209,7 +209,7 @@ test("the route opens a shell for a tab, takes its input and resizes, and detach
 
 test("the route tells a tab why a shell could not open, within a close reason's size, and logs the rest", { skip }, async () => {
   const logged: string[] = [];
-  const detail = `ssh: connect to host 10.78.0.85 port 22: No route to host\n${"x".repeat(1_500)}`;
+  const detail = `ssh: connect to host 192.0.2.85 port 22: No route to host\n${"x".repeat(1_500)}`;
   const { open } = route({ terminal: async () => Promise.reject(new Error(`The terminal ended before it started: ${detail}`)) }, { logged });
   const tab = socket();
   await open("box=box_1&session=sess-0003-cccc&cols=80&rows=24").onOpen!(tab);

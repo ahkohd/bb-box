@@ -86,7 +86,7 @@ test("parses the fields, with the setup guide's defaults", () => {
   assert.equal(all.boxes, 3);
   assert.equal(dockerConfig({ "host": "unix:///run/user/1000/docker.sock" }).host, "unix:///run/user/1000/docker.sock");
   // A BB machine, reached through bb-box's relay (042).
-  assert.deepEqual([dockerConfig({ host: "bb:host_ajdbftx7ha" }).host, dockerConfig({ host: "bb:host_ajdbftx7ha" }).machine], ["bb:host_ajdbftx7ha", "host_ajdbftx7ha"]);
+  assert.deepEqual([dockerConfig({ host: "bb:host_m1" }).host, dockerConfig({ host: "bb:host_m1" }).machine], ["bb:host_m1", "host_m1"]);
   // An empty image turns its kinds off.
   assert.deepEqual(dockerConfig({ "desktop-image": "", "gpu-desktops": true }).images, {
     linux: "bbbox/linux:1",
