@@ -495,7 +495,12 @@ test("capacity says when the daemon does not answer", async () => {
 
 test("the doctor checks the CLI, the daemon, the images, the network and the room, and names the install", async () => {
   const { fake, make, backend } = setup({ privileged: true });
+  // The host is named by its address until the daemon answers, then by its own name (docker info's Name); a local daemon has no address.
+  assert.deepEqual(backend.hosts, []);
+  const remote = setup({ host: "ssh://builder@docker.example" }).backend;
+  assert.deepEqual(remote.hosts, ["docker.example"]);
   const report = await backend.doctor(signal());
+  assert.deepEqual(backend.hosts, ["fake-docker"]);
   assert.equal(report.ok, true, JSON.stringify(report));
   assert.equal(report.summary, "Docker 29.0.0 on fake-docker");
   assert.deepEqual(
