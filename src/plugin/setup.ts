@@ -178,6 +178,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     changed: () => {
       notify(null);
       needsConfiguration();
+      // A kind may keep more or fewer spares now.
+      void boxes.keepSpares();
     },
     logError,
   });
@@ -239,6 +241,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     enrol: (box, options) => enrolment.enrol(box, { since: options?.restored ? "restored" : "ready" }),
     unenrol: (box) => enrolment.unenrol(box),
     reconnect: (box) => enrolment.reconnect(box),
+    claimable: async (box) => !box.enrol.hostId || (await bb.sdk.threads.count({ hostId: box.enrol.hostId })).total === 0,
+    claimed: (box) => enrolment.claimed(box),
     access: async (box) => ({ names: await names(box), parent: options.daemonParent ?? DAEMON_PARENT }),
     logError,
     log: (message) => bb.log.info(message),

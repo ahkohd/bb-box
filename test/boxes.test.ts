@@ -10,7 +10,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { BoxError, Boxes, extraFeatures, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
+import { BoxError, Boxes, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, MAC_DESKTOP_EXITS, accessCheck, accessSetup, accessSetupMs, canRunInDesktop, command, envScript } from "../src/core/in-box.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
@@ -22,7 +22,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "enrolWaitMs" | "recorded" | "reconnect"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "claimable" | "claimed" | "enrolWaitMs" | "log" | "recorded" | "reconnect"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -32,7 +32,7 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
     backend: make() as FakeBackend,
     /** False when the backend is off in settings. */
     active: true,
-    general: { perThreadLimit: null, enrol: true, sizes: {} } as GeneralConfig,
+    general: { perThreadLimit: null, enrol: true, sizes: {}, spares: {} } as GeneralConfig,
     threads: new Map<string, ThreadLiveness>(),
     notified: [] as string[],
     errors: [] as string[],
@@ -265,7 +265,7 @@ test("a backend that cannot make a size refuses it through capacity, and the nex
       active: () => all,
       kinds: () => all.flatMap((backend) => backend.kinds().map((kind) => ({ kind, backend }))),
     },
-    general: async () => ({ perThreadLimit: null, enrol: false, defaultKind: "linux", sizes: {} }),
+    general: async () => ({ perThreadLimit: null, enrol: false, defaultKind: "linux", sizes: {}, spares: {} }),
     notify: () => {},
     thread: async () => "live",
     logError: () => {},
@@ -982,6 +982,172 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
     (await world.backend.held()).map((guest) => guest.owner?.boxId).sort(),
     [stopped.id, silent.id, unsure.id].sort(),
   );
+});
+
+test("a kind's spares are made and enrolled ahead, and an acquire of the kind at its default size claims one at once (032)", async () => {
+  const gate = deferred();
+  const claimed: string[] = [];
+  const logs: string[] = [];
+  const world = setup(
+    {},
+    {
+      enrolWaitMs: 5_000,
+      claimed: async (box) => {
+        claimed.push(`${machineName(box)} of ${box.threadId}`);
+        await gate.promise;
+      },
+      log: (line) => logs.push(line),
+    },
+  );
+  world.general = { ...world.general, perThreadLimit: 1, spares: { linux: 2 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const spares = await world.boxes.list(SPARES);
+  assert.equal(spares.length, 2, "the per-thread limit is for threads");
+  for (const spare of spares) {
+    assert.equal(spare.state, "ready");
+    assert.equal(spare.enrol.state, "enrolled");
+    assert.equal(machineName(spare), `${spare.name} (spare)`);
+  }
+  assert.deepEqual([...world.enrolled].sort(), spares.map((spare) => spare.name).sort());
+  const [spare] = spares;
+
+  const started = Date.now();
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
+  assert.ok(Date.now() - started < 250, "the claim does not wait for its machine's rename");
+  assert.deepEqual(
+    { id: box.id, state: box.state, threadId: box.threadId, projectId: box.projectId, name: box.name, enrol: box.enrol, guest: box.guest },
+    { id: spare!.id, state: "ready", threadId: THREAD, projectId: "prj", name: spare!.name, enrol: spare!.enrol, guest: spare!.guest },
+  );
+  assert.equal(machineName(box), box.name);
+  assert.deepEqual(Object.keys(box.timings).sort(), ["spare", "total"]);
+  assert.match(boxDetail(box), /\nTimings: claiming a spare \d/);
+  assert.deepEqual(await world.boxes.find(box.id), box);
+  assert.deepEqual(await world.boxes.list(THREAD), [box]);
+  assert.deepEqual(claimed, [`${box.name} of ${THREAD}`]);
+  assert.ok(logs.includes(`Claimed spare box ${box.name} for thread ${THREAD}.`));
+  assert.ok(world.notified.includes(SPARES) && world.notified.includes(THREAD));
+
+  // Its commands wait a while for the machine's rename, as after a start.
+  setTimeout(gate.resolve, 300);
+  assert.equal((await world.boxes.run(THREAD, box.name, "echo claimed")).result.stdout, "claimed\n");
+  assert.ok(Date.now() - started >= 250, "the command waited for the claim");
+
+  // Another spare takes its place; the claimed box does not enrol again.
+  await until(async () => (await world.boxes.list(SPARES)).filter((spare) => spare.enrol.state === "enrolled").length === 2);
+  const after = await world.boxes.list(SPARES);
+  assert.ok(!after.some((spare) => spare.id === box.id));
+  assert.equal(world.enrolled.length, 3);
+  assert.ok(!world.enrolled.slice(2).includes(box.name));
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }), /already has 1 boxes/);
+  assert.equal((await world.boxes.list(SPARES)).length, 2, "a claim keeps to the thread's limit");
+  assert.deepEqual(world.errors, []);
+});
+
+test("a claim takes only a ready, enrolled spare of the kind and size whose BB machine no thread uses, and keeps names unique (032)", async () => {
+  let usable: boolean | Error = true;
+  const logs: string[] = [];
+  const world = setup(
+    {},
+    {
+      claimable: async () => {
+        if (usable instanceof Error) throw usable;
+        return usable;
+      },
+      log: (line) => logs.push(line),
+    },
+  );
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  assert.ok(spare);
+  const acquire = (input: Partial<Parameters<Boxes["acquire"]>[0]> = {}) => world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", ...input });
+  const notClaimed = async (input: Partial<Parameters<Boxes["acquire"]>[0]> = {}) => {
+    const box = await acquire(input);
+    assert.equal(box.state, "acquiring");
+    assert.notEqual(box.id, spare.id);
+    assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => spare.id), [spare.id]);
+    await world.boxes.release(THREAD, box.name);
+  };
+  await notClaimed({ kind: "linux-desktop" });
+  await notClaimed({ size: { preset: "large" } });
+  await world.boxes.update(spare, () => ({ enrol: { state: "enrolling", hostId: "host-late", error: null } }));
+  await notClaimed();
+  await world.boxes.update(spare, () => ({ enrol: { state: "enrolled", hostId: `host-${spare.id}`, error: null } }));
+  usable = false;
+  await notClaimed();
+  assert.ok(logs.includes(`Skipped spare box ${spare.name}: a thread uses its BB machine.`));
+  usable = new Error("BB did not answer");
+  await notClaimed();
+  assert.deepEqual(world.errors, ["claim: BB did not answer"]);
+
+  // A thread with a box of the spare's name gives the claimed box another.
+  usable = true;
+  const other = await ready(world.boxes, await acquire({ kind: "linux-desktop" }));
+  await world.boxes.update(other, () => ({ name: spare.name }));
+  const box = await acquire();
+  assert.equal(box.id, spare.id);
+  assert.notEqual(box.name, spare.name);
+  assert.deepEqual((await world.boxes.list(THREAD)).map((box) => box.name).sort(), [box.name, spare.name].sort());
+});
+
+test("the sweep keeps spares, restores a lost one as a spare, and releases those no kind keeps or no claim can take (032)", async () => {
+  const world = setup();
+  world.general = { ...world.general, spares: { linux: 2 } };
+  // BB knows no thread of that ID; the sweep never asks.
+  world.threads.set(SPARES, "ended");
+  await world.boxes.sweep();
+  await world.boxes.idle();
+  const made = await world.boxes.list(SPARES);
+  assert.equal(made.length, 2);
+  await world.boxes.sweep();
+  await world.boxes.idle();
+  assert.deepEqual(await world.boxes.list(SPARES), made, "the sweep kept them");
+
+  // A lost record comes back as a spare.
+  const [lost, kept] = made;
+  await world.kv.delete(`box/${SPARES}/${lost!.id}`);
+  await world.kv.delete(`index/${lost!.id}`);
+  assert.equal((await world.boxes.sweep()).adopted, 1);
+  await world.boxes.idle();
+  const restored = await world.boxes.find(lost!.id);
+  assert.equal(restored?.threadId, SPARES);
+  assert.equal(restored?.enrol.state, "enrolled");
+  assert.equal((await world.boxes.list(SPARES)).length, 2);
+
+  // A claimed spare whose old record outlived the move is not released.
+  const claimed = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  await world.boxes.idle();
+  await world.kv.set(`box/${SPARES}/${claimed.id}`, { ...claimed, threadId: SPARES });
+  await world.boxes.sweep();
+  await world.boxes.idle();
+  assert.equal((await world.boxes.find(claimed.id))?.threadId, THREAD);
+  assert.ok(!(await world.boxes.list(SPARES)).some((spare) => spare.id === claimed.id));
+
+  // A spare whose machine was removed in BB, or that stopped, is replaced.
+  const spares = await world.boxes.list(SPARES);
+  assert.equal(spares.length, 2);
+  await world.boxes.update(spares[0]!, () => ({ enrol: { state: "off", hostId: null, error: null } }));
+  await world.boxes.stop(SPARES, spares[1]!.name);
+  await world.boxes.sweep();
+  await world.boxes.idle();
+  const replaced = await world.boxes.list(SPARES);
+  assert.equal(replaced.length, 2);
+  assert.ok(!replaced.some((spare) => spares.some((old) => old.id === spare.id)));
+
+  // A new default size replaces them, and a kind that keeps none releases them.
+  world.general = { ...world.general, sizes: parseSizeChanges({ linux: { default: "medium" } }).changes };
+  await world.boxes.sweep();
+  await world.boxes.idle();
+  assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => spare.size), [{ cores: 4, memoryMiB: 8 * GiB, diskGiB: null }, { cores: 4, memoryMiB: 8 * GiB, diskGiB: null }]);
+  world.general = { ...world.general, spares: {} };
+  await world.boxes.sweep();
+  await world.boxes.idle();
+  assert.deepEqual(await world.boxes.list(SPARES), []);
+  assert.deepEqual((await world.backend.held()).map((guest) => guest.owner?.boxId), [claimed.id]);
+  assert.equal((await world.boxes.find(kept!.id)), null);
+  assert.deepEqual(world.errors, []);
 });
 
 test("the sweep never releases a guest whose record is missing while its thread is live or unknown", async () => {

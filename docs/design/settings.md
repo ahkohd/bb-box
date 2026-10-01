@@ -170,8 +170,8 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
   default marked), the largest custom size, and the warm count.
 - Clicking a row opens its editor: three fields per preset (cores, memory
   GiB, disk GiB with "0 keeps the base disk"), which preset is the default,
-  the largest custom size, and the warm count per offering backend. "Save"
-  applies.
+  the largest custom size, the warm count per offering backend, and the
+  spare boxes to keep (032). "Save" applies.
 - A kind that is on but that no backend can make shows "Not offered: no
   backend has it" in warning text, and says which backend setting would
   provide it.

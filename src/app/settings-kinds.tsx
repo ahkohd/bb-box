@@ -1,5 +1,5 @@
 // The Kinds section of the settings page: a row per kind with its switch,
-// presets, largest size and warm counts, and an editor for them.
+// presets, largest size, warm counts and spares, and an editor for them.
 
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { useState, type ReactNode } from "react";
@@ -37,6 +37,7 @@ export function KindRow({ model, open, onToggle, onSwitch, switching, children }
   const { info, sizes, backends } = model;
   const offering = backends.filter((backend) => backend.offers);
   const warm = backends.filter((backend) => backend.warm > 0).map((backend) => `${backend.warm} warm on ${backend.label}`);
+  const spares = sizes.spares > 0 ? [`${sizes.spares} ${sizes.spares === 1 ? "spare" : "spares"}`] : [];
   const presets = PRESET_NAMES.map((preset) => `${PRESET_LABELS[preset]} ${sizeWords(sizes.presets[preset])}${preset === sizes.default ? " (default)" : ""}`);
   const forms = [...new Set(backends.map((backend) => backend.form).filter((form): form is BoxForm => form !== null))];
   return (
@@ -54,6 +55,7 @@ export function KindRow({ model, open, onToggle, onSwitch, switching, children }
               items={[
                 !sizes.enabled ? "Off" : offering.length ? `From ${offering.map((backend) => backend.label).join(" and ")}` : <span className="text-warning-text">Not offered: no backend has it</span>,
                 ...warm,
+                ...spares,
               ]}
             />
           </div>
@@ -110,6 +112,7 @@ export function KindForm({ model, onSave, onClose }: { model: KindRowModel; onSa
   const [largest, setLargest] = useState<SizeFields>(fieldsOf(sizes.largest));
   const [chosen, setChosen] = useState<Preset>(sizes.default);
   const [warm, setWarm] = useState<Record<string, string>>(Object.fromEntries(model.backends.map((backend) => [backend.id, String(backend.warm)])));
+  const [spares, setSpares] = useState(String(sizes.spares));
   const [problems, setProblems] = useState<readonly Problem[]>(model.problems);
   const [busy, setBusy] = useState(false);
 
@@ -128,7 +131,9 @@ export function KindForm({ model, onSave, onClose }: { model: KindRowModel; onSa
       if (!Number.isFinite(count)) return null;
       counts[id] = count;
     }
-    return { sizes: { enabled: sizes.enabled, presets: next, default: chosen, largest: top }, warm: counts };
+    const spareCount = Number(spares.trim() || "0");
+    if (!Number.isFinite(spareCount)) return null;
+    return { sizes: { enabled: sizes.enabled, presets: next, default: chosen, largest: top, spares: spareCount }, warm: counts };
   };
   const edit = built();
   const save = async () => {
@@ -142,7 +147,7 @@ export function KindForm({ model, onSave, onClose }: { model: KindRowModel; onSa
       setBusy(false);
     }
   };
-  const shown = [...PRESET_NAMES.flatMap((preset) => [`${path}.presets.${preset}`, `${path}.presets.${preset}.cores`, `${path}.presets.${preset}.memoryMiB`, `${path}.presets.${preset}.diskGiB`]), `${path}.largest`, `${path}.default`];
+  const shown = [...PRESET_NAMES.flatMap((preset) => [`${path}.presets.${preset}`, `${path}.presets.${preset}.cores`, `${path}.presets.${preset}.memoryMiB`, `${path}.presets.${preset}.diskGiB`]), `${path}.largest`, `${path}.default`, `${path}.spares`];
   const rest = problemsLeft(problems, path, shown);
   const sizeRow = (label: string, key: Preset | "largest", fields: SizeFields, set: (next: SizeFields) => void, extra?: ReactNode) => {
     const at = key === "largest" ? `${path}.largest` : `${path}.presets.${key}`;
@@ -210,6 +215,15 @@ export function KindForm({ model, onSave, onClose }: { model: KindRowModel; onSa
           </div>
         </div>
       ) : null}
+      <div className="space-y-2">
+        <FormHeading>Spare boxes</FormHeading>
+        <p className="text-2xs leading-snug text-subtle-foreground/75">
+          Boxes made and added to BB ahead, so a box of the default size is ready with the thread's access at once. Each holds its memory, and BB lists it as a machine whose name ends in "(spare)" until a thread takes it. 0 keeps none.
+        </p>
+        <FieldShell label="Spares" problem={problemAt(problems, `${path}.spares`)}>
+          <Input className="h-8 w-24 text-xs" inputMode="numeric" aria-label={`Spare ${info.label} boxes`} value={spares} onChange={(event) => setSpares(event.target.value)} />
+        </FieldShell>
+      </div>
       {rest.length ? (
         <ul role="alert" className="space-y-0.5 text-xs leading-snug text-destructive-text">
           {rest.map((problem) => (

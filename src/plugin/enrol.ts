@@ -6,7 +6,8 @@
 // disconnected, bootstrap runs again with the same key to start BB's daemon
 // (017). A box the sweep restores from its guest enrols again with the same
 // key once it runs and answers, and BB gives back the machine it still has
-// for it (025, 026).
+// for it (025, 026). A spare's machine is named "<name> (spare)" until an
+// acquire claims the box, which gives it the box's name (032).
 //
 // Plugins can read the names of BB's machine variables but not their values;
 // BB gives the values, and GH_TOKEN, to its daemon in the box. Commands in a
@@ -29,7 +30,7 @@
 
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { describeError, type BoxRecord, type Boxes } from "../core/boxes.ts";
+import { describeError, machineName, type BoxRecord, type Boxes } from "../core/boxes.ts";
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 
@@ -39,6 +40,7 @@ export const MACHINE_PROVIDER_ID = "bb-box";
 export interface HostApi {
   experimental_create(args: { machineProviderId: string; key: string; inputs: { boxId: string }; wait: false }): Promise<HostState>;
   get(args: { hostId: string; signal?: AbortSignal }): Promise<HostState>;
+  update(args: { hostId: string; name: string }): Promise<unknown>;
   delete(args: { hostId: string }): Promise<unknown>;
 }
 
@@ -258,7 +260,7 @@ export class Enrolment {
           report.step(`Installing BB in box ${box.name}`);
           await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
           phases?.mark("bootstrapped");
-          return { status: "created", name: box.name, resource: { boxId: box.id } };
+          return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
           return { status: "failed", message: describeError(error, `Enrolling box ${box.name}`) };
         }
@@ -487,6 +489,23 @@ export class Enrolment {
     } finally {
       this.#reconnecting.delete(box.id);
     }
+  }
+
+  /**
+   * After an acquire claims a spare (032): gives its machine the box's name,
+   * and starts BB's daemon again if BB shows the machine disconnected.
+   */
+  async claimed(box: BoxRecord): Promise<void> {
+    const hostId = box.enrol.hostId;
+    if (!hostId) return;
+    const [, host] = await Promise.all([
+      this.#deps
+        .hosts()
+        .update({ hostId, name: machineName(box) })
+        .catch((error) => this.#deps.logError("rename machine", error)),
+      this.#deps.hosts().get({ hostId }),
+    ]);
+    if (host.lifecycle.phase === "active" && host.status !== "connected") await this.reconnect(box);
   }
 
   /**

@@ -10,7 +10,7 @@ import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-s
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
 import type { BackendDriver } from "../src/backends/types.ts";
-import type { BoxRecord } from "../src/core/boxes.ts";
+import { SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases } from "../src/plugin/enrol.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
@@ -88,6 +88,8 @@ async function start(
     projectKind: "standard" as "standard" | "personal",
     /** How long after bootstrap returns BB shows a machine it has connected again, or null for never. */
     connectAfterMs: 0 as number | null,
+    /** How many threads run on each machine, by host ID. */
+    hostThreads: new Map<string, number>(),
   };
   const { bb, harness } = createFakePluginHost({
     pluginId: "bb-box",
@@ -101,6 +103,7 @@ async function start(
           if (!thread) throw threadNotFound();
           return thread;
         },
+        count: async ({ hostId }: { hostId: string }) => ({ total: world.hostThreads.get(hostId) ?? 0 }),
         update: async (args: unknown) => {
           world.updated.push(args);
           return makeThreadResponse({ id: (args as { threadId: string }).threadId, projectId: PROJECT });
@@ -172,6 +175,12 @@ async function start(
           const host = hosts.get(hostId);
           if (!host) throw notFound("Host");
           return host;
+        },
+        update: async ({ hostId, name }: { hostId: string; name: string }) => {
+          const host = hosts.get(hostId);
+          if (!host) throw notFound("Host");
+          hosts.set(hostId, { ...host, name });
+          return hosts.get(hostId)!;
         },
         delete: async ({ hostId }: { hostId: string }) => {
           world.events.push(`delete ${hostId}`);
@@ -612,6 +621,45 @@ test("the sweep starts BB's daemon again in a ready box that BB shows disconnect
   await app.enrolment.sweep();
   assert.equal((await app.boxes.find(box.id))?.enrol.state, "off");
   assert.equal(world.bootstraps.length, 2);
+});
+
+test("a kind keeps a spare box as a BB machine, which box_acquire claims, renames and reconnects, and another takes its place (032)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { linux: { spares: 1 } } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  const spare = await until("a spare", async () => (await app.boxes.list(SPARES)).find((box) => box.enrol.state === "enrolled"));
+  const hostId = `host-${spare.id}`;
+  await until("its machine", async () => world.hosts.get(hostId)?.lifecycle.phase === "active");
+  assert.equal(world.hosts.get(hostId)?.name, `${spare.name} (spare)`);
+  assert.doesNotMatch(text(await tool("box_list", {})), new RegExp(spare.name));
+
+  // A thread runs on the spare's machine, so an acquire leaves it.
+  world.hostThreads.set(hostId, 1);
+  const other = text(await tool("box_acquire", { kind: "linux" }));
+  assert.doesNotMatch(other, new RegExp(spare.name));
+  await tool("box_release", { box: (await only(app)).name });
+  world.hostThreads.delete(hostId);
+
+  // BB shows the spare's machine disconnected, as after the box rebooted.
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  const bootstraps = world.bootstraps.length;
+  const acquired = text(await tool("box_acquire", { kind: "linux" }));
+  assert.match(acquired, new RegExp(`\\b${spare.name}\\b`));
+  assert.match(acquired, /BB machine: enrolled/);
+  assert.match(acquired, /Timings: claiming a spare \d+\.\d s, total \d+\.\d s/);
+  const box = await only(app);
+  assert.equal(box.id, spare.id);
+  assert.equal(world.hosts.get(hostId)?.name, box.name);
+  assert.equal(text(await tool("box_run", { box: box.name, command: "echo claimed" })).match(/stdout:\n(\w+)/)?.[1], "claimed");
+  assert.deepEqual(world.bootstraps.slice(bootstraps).filter((key) => key === box.id), [box.id], "the claim started BB's daemon again, with the box ID");
+  assert.equal(world.hosts.get(hostId)?.status, "connected");
+
+  const next = await until("another spare", async () => (await app.boxes.list(SPARES)).find((spare) => spare.enrol.state === "enrolled"));
+  assert.notEqual(next.id, box.id);
+  await until("its machine", async () => world.hosts.get(`host-${next.id}`)?.name === `${next.name} (spare)`);
 });
 
 test("when BB removes a box's machine, the box is no longer enrolled", async (t) => {

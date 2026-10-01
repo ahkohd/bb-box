@@ -181,7 +181,7 @@ const STATE_WORDS: Record<BoxState, string> = {
 };
 
 /** Words for timings whose names alone do not say what they are. */
-const STEP_WORDS: Readonly<Record<string, string>> = { template: "waiting for the template", enrol: "BB enrolment" };
+const STEP_WORDS: Readonly<Record<string, string>> = { template: "waiting for the template", enrol: "BB enrolment", spare: "claiming a spare" };
 
 function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
