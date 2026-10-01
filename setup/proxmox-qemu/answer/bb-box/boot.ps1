@@ -1,6 +1,6 @@
 # Gives the VM its address. At each boot, run as SYSTEM by the task
 # "bb-box address", it reads the address from the SMBIOS serial, which the
-# backend sets on each box as "10.78.0.12/24 10.78.0.1": the address with its
+# backend sets on each box as "10.200.0.12/24 10.200.0.1": the address with its
 # prefix, then the gateway (qm set --smbios1 base64=1,serial=<base64>). With no
 # such serial it leaves the network alone, on DHCP in the template. The first
 # logon passes the build's address as parameters. Logs to C:\bb-box\boot.log

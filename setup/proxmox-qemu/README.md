@@ -40,12 +40,13 @@ backend, so set that up first ([../proxmox-lxc/README.md](../proxmox-lxc/README.
 
 ## Build it
 
-    ./build.sh windows 9804
+    ./build.sh windows 9104
 
 It takes about 45 minutes, most of it Windows Setup. The VM's console in the
 Proxmox UI shows how far it is. At the end it clones the new template, starts
 the clone at `BBBOX_BUILD_ADDRESS`, and runs `check.ps1` in it over SSH with
-the plugin's key, as the backend will:
+the plugin's key, as the backend will. Then it hibernates the clone and
+resumes it, as the warm pool does, and checks SSH and Cua again:
 
     ok    PowerShell 7 over SSH              7.6.6
     ok    UTF-8 code page                    ACP 65001, output utf-8
@@ -84,7 +85,7 @@ The backend sets each box's SMBIOS serial to its address with its prefix,
 then the gateway, base64 encoded since Proxmox takes only base64 characters
 there:
 
-    qm set <box> --smbios1 "base64=1,uuid=<new>,serial=$(printf '10.78.0.12/24 10.78.0.1' | base64)"
+    qm set <box> --smbios1 "base64=1,uuid=<new>,serial=$(printf '10.200.0.12/24 10.200.0.1' | base64)"
 
 At each boot `boot.ps1` reads it and sets the address, with the DNS servers of
 the build. It logs to `C:\bb-box\boot.log`. A VM with no such serial stays on

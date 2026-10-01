@@ -221,7 +221,7 @@ qm clone "$vm" "$check_vm" --name bb-box-windows-check --pool "$BBBOX_POOL" >/de
 serial=$(printf '%s/%s %s' "$BBBOX_BUILD_ADDRESS" "$BBBOX_PREFIX" "$BBBOX_GATEWAY" | base64 -w0)
 qm set "$check_vm" --smbios1 "base64=1,uuid=$(cat /proc/sys/kernel/random/uuid),serial=$serial" >/dev/null
 ssh_box() { ssh -i "$BBBOX_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=3 "box@$BBBOX_BUILD_ADDRESS" "$@"; }
-desktop_up() { ssh_box 'if (Get-Process cua-driver -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0) { exit 0 } else { exit 1 }'; }
+desktop_up() { ssh_box 'if (Get-Process cua-driver -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0) { cua-driver status *> $null; exit $LASTEXITCODE } else { exit 1 }'; }
 qm start "$check_vm"
 wait_for "a clone answers SSH" 300 1 ssh_box exit || { screen "$check_vm"; die "a clone of the template did not answer SSH at $BBBOX_BUILD_ADDRESS"; }
 wait_for "a clone's desktop has Cua" 300 1 desktop_up || die "Cua did not start in a clone's desktop session"
@@ -229,6 +229,20 @@ scp -q -i "$BBBOX_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostK
   "$here/check.ps1" "box@$BBBOX_BUILD_ADDRESS:C:/bb-box/check.ps1"
 checked=0
 ssh_box '& C:\bb-box\check.ps1' || checked=$?
+# The warm pool hibernates boxes and resumes them (039), so the clone must too.
+if [ "$checked" = 0 ]; then
+  start=$(date +%s%N)
+  qm suspend "$check_vm" --todisk 1 >/dev/null
+  log "the clone hibernated in $((($(date +%s%N) - start) / 1000000)) ms"
+  sleep 5
+  start=$(date +%s%N)
+  qm start "$check_vm" >/dev/null
+  log "qm start resumed the clone in $((($(date +%s%N) - start) / 1000000)) ms"
+  wait_for "the resumed clone answers SSH" 120 1 ssh_box exit &&
+    wait_for "the resumed clone's Cua answers" 120 1 desktop_up || checked=1
+  clock=$(ssh_box '[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()' 2>/dev/null || echo 0)
+  log "the resumed clone's clock is $((clock - $(date -u +%s))) s off the host's (the backend sets it)"
+fi
 qm stop "$check_vm" >/dev/null
 qm destroy "$check_vm" --purge 1 >/dev/null
 check_vm=
