@@ -158,3 +158,26 @@ sh setup/ssh-pool/test/rig.sh up /tmp/bbbox-rig
 npm run conformance -- --backend ssh-pool --settings /tmp/bbbox-rig/settings.json
 SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.ts
 ```
+
+## Tart
+
+- Virtual. Code in [src/backends/tart/](../src/backends/tart/): the
+  settings in `config.ts`, the scripts it runs on a Mac in `host.ts`, and
+  the backend in `backend.ts`.
+- Each Mac and its image are set up by `setup/tart/`, whose guide lists the
+  settings. bb-box reaches a Mac over SSH as a host user, with the Mac's host
+  key pinned, and each VM through the Mac as the jump host.
+- Ownership lives in an owner file per VM on the Mac,
+  `~/.bb-box/tart/owners/<VM>`, which names the install, the box, its
+  thread, name, kind and creation time. It is written with noclobber before
+  the clone and removed after the VM is deleted. VM names hold the box ID, so
+  references are never reused.
+- Capacity is per Mac: `guests`, the running macOS VMs Tart lists there, at
+  most two; `memory`, less a reserve and every running VM's; and `disk`. A
+  box gets its size's cores and memory with `tart set`, and may not have
+  more cores than the Mac. It keeps its image's disk, so a disk size is
+  refused for now. `Guest.size` comes from the VM's
+  config.json, with `diskGiB` null.
+- The tests run the real host scripts against a fake `tart` on a fake Mac
+  ([test/fake-tart.mjs](../test/fake-tart.mjs),
+  [test/fake-mac.ts](../test/fake-mac.ts)).

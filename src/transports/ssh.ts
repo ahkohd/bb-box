@@ -493,6 +493,30 @@ export async function generateKeyPair(binary = "ssh-keygen"): Promise<{ privateK
   }
 }
 
+/**
+ * An OpenSSH private key in its usual form. Accepts a key pasted into a
+ * one-line field, whose line breaks became spaces, and a base64-encoded key file.
+ */
+export function normalisePrivateKey(value: string): string | null {
+  let key = value.trim();
+  if (!key) return null;
+  if (!key.includes("-----BEGIN")) {
+    try {
+      const decoded = Buffer.from(key, "base64").toString("utf8").trim();
+      if (!decoded.startsWith("-----BEGIN")) return null;
+      key = decoded;
+    } catch {
+      return null;
+    }
+  }
+  const match = /^-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----$/.exec(key);
+  if (!match) return null;
+  const body = match[2]!.replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/=]+$/.test(body)) return null;
+  const lines = body.match(/.{1,70}/g) ?? [];
+  return `-----BEGIN ${match[1]}-----\n${lines.join("\n")}\n-----END ${match[1]}-----\n`;
+}
+
 /** The public key for a private key file, for the template's authorized_keys. */
 export function publicKey(keyPath: string, binary = "ssh-keygen"): Promise<string | null> {
   return new Promise((resolve) => {

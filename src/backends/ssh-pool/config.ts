@@ -15,7 +15,7 @@
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { currentKindId } from "../kinds.ts";
-import { normalisePrivateKey } from "../proxmox-lxc/config.ts";
+import { normalisePrivateKey } from "../../transports/ssh.ts";
 import type { ParsedSettings } from "../types.ts";
 
 export const SSH_POOL_KINDS = ["linux", "linux-docker"] as const;

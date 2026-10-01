@@ -1,10 +1,13 @@
 // Runs the backend conformance suite against the fake backend, in both
-// natures, and against the Proxmox LXC backend on a fake Proxmox and fake SSH.
+// natures, against the Proxmox LXC backend on a fake Proxmox and fake SSH,
+// and against the Tart backend on a fake Mac.
 
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
+import { TartBackend } from "../src/backends/tart/backend.ts";
 import type { CommandTransport } from "../src/transports/types.ts";
 import { conformance, type ConformanceBb } from "./conformance/suite.ts";
 import { FakeBackend } from "./fake-backend.ts";
+import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
@@ -77,6 +80,24 @@ await conformance({
     docker: "the fake SSH runs commands on the test machine",
     display: "the fake Proxmox has no desktop to stream",
     "computer-use": "the fake SSH host has no computer-use driver",
+    size: "the fake SSH runs commands on the test machine",
+  },
+  timeoutMs: 20_000,
+});
+
+// A fresh fake ssh for the fake Mac, whose VMs answer as hosts of their own.
+const mac = fakeSsh().home(FAKE_MAC);
+fakeMacTools(mac);
+addImage(mac);
+const tart = tartConfig();
+await conformance({
+  name: "Tart on a fake Mac",
+  storage: new MemoryStorage(),
+  create: (storage, installId) => new TartBackend(tart, testContext(storage, installId), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }),
+  skip: {
+    arch: "the fake SSH runs commands on the test machine",
+    display: "the fake Mac has no VNC server to stream",
+    "computer-use": "the fake VM has no computer-use driver",
     size: "the fake SSH runs commands on the test machine",
   },
   timeoutMs: 20_000,

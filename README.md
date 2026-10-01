@@ -72,7 +72,7 @@ services and builds, so that work runs on a box and not on your own machine.
 | Proxmox LXC | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |
 | Proxmox QEMU | virtual | Windows desktop | planned |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
-| Apple Virtualization framework, for example [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS desktop, iOS Simulator | planned |
+| Apple Virtualization framework, with [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS, macOS desktop | in development |
 | Docker | virtual | Linux, Linux desktop | planned, early |
 | SSH host pool | real | Linux, Linux with Docker, on Linux machines you own | in development |
 | Physical pool | real | Linux or Windows machines you own | possible |
@@ -226,3 +226,4 @@ package, in `node_modules/@novnc/novnc` after `npm install`.
 - [Research](docs/research)
 - [Setting up the Proxmox LXC backend](setup/proxmox-lxc/README.md)
 - [Setting up the SSH host pool backend](setup/ssh-pool/README.md)
+- [Setting up the Tart backend](setup/tart/README.md)

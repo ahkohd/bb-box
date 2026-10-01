@@ -7,9 +7,10 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
 import { sshPoolDriver } from "./ssh-pool/index.ts";
+import { tartDriver } from "./tart/index.ts";
 import type { Backend, BackendDriver, BackendStorage, BoxKind, DoctorCheck } from "./types.ts";
 
-export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, sshPoolDriver];
+export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, sshPoolDriver, tartDriver];
 
 /** Sizes the Proxmox LXC settings gave boxes before 028, read once into the box-sizes setting. */
 export { earlierLxcSizes } from "./proxmox-lxc/config.ts";

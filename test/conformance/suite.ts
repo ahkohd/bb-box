@@ -476,16 +476,16 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             const digest = await command.run(SHA256, { stdin: input, timeoutMs: 60_000 });
             assert.equal(digest.exitCode, 0, digest.stderr);
             assert.equal(digest.stdout.trim(), sha256(input), "1 MiB of stdin arrives intact");
-            const uname = await command.run("uname -s", { timeoutMs: 30_000 });
-            assert.equal(uname.exitCode, 0);
-            assert.equal(uname.stdout.trim(), capabilities.os === "macos" ? "Darwin" : "Linux");
             const slow = await command.run("sleep 30", { timeoutMs: 500 });
             assert.equal(slow.timedOut, true);
             assert.ok(slow.durationMs < 10_000);
           });
 
-          it("runs on the architecture it declares", { timeout, skip: skip.arch ?? scripts }, async () => {
+          it("runs the OS and architecture it declares", { timeout, skip: skip.arch ?? scripts }, async () => {
             const { command } = need();
+            const uname = await command.run("uname -s", { timeoutMs: 30_000 });
+            assert.equal(uname.exitCode, 0);
+            assert.equal(uname.stdout.trim(), capabilities.os === "macos" ? "Darwin" : "Linux");
             const machine = (await command.run("uname -m", { timeoutMs: 30_000 })).stdout.trim();
             assert.equal(machine === "aarch64" ? "arm64" : machine === "amd64" ? "x86_64" : machine, capabilities.arch);
           });

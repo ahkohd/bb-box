@@ -35,12 +35,24 @@ const DESKTOP: KindSizes = {
   largest: size(32, 64, 256),
 };
 
+/**
+ * macOS VMs on a Mac, where at most two run, so the presets leave room for a
+ * second. For now Tart refuses a disk of a box's own: a box keeps its image's.
+ */
+const MACOS: KindSizes = {
+  presets: { small: size(4, 8), medium: size(6, 16), large: size(8, 32) },
+  default: "small",
+  largest: size(16, 64, 256),
+};
+
 /** What bb-box ships, by kind. A kind with none takes linux's until its backend brings its own. */
 const SHIPPED: Readonly<Record<string, KindSizes>> = {
   linux: LINUX,
   "linux-docker": LINUX,
   "linux-desktop": DESKTOP,
   "linux-desktop-cpu": DESKTOP,
+  macos: MACOS,
+  "macos-desktop": MACOS,
 };
 
 /** Part of a size in the box-sizes setting. A disk of null is the base. */

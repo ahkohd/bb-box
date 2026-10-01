@@ -14,6 +14,12 @@ const MAX_TEXT_BYTES = 64 * 1024;
 /** A pseudo-encoding that makes PointerEvent 7 bytes long when its top bit is set. */
 const EXTENDED_MOUSE_BUTTONS = -316;
 export const EXTENDED_DESKTOP_SIZE = -308;
+/**
+ * The plain DesktopSize pseudo-encoding. The Virtualization framework's VNC
+ * server, which Tart's macOS VMs use, ends the VM when a client asks for a
+ * framebuffer update without it.
+ */
+export const DESKTOP_SIZE = -223;
 
 export class RfbError extends Error {
   constructor(message: string) {

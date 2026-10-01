@@ -8,6 +8,7 @@ import { openRoute } from "../transports/route.ts";
 import type { ByteChannel, Display, DisplayAuth } from "../transports/types.ts";
 import {
   ClientParser,
+  DESKTOP_SIZE,
   EXTENDED_DESKTOP_SIZE,
   RfbError,
   SECURITY_OK,
@@ -313,8 +314,10 @@ export function desktopSize(open: OpenDisplay): Promise<Size> {
 export function restoreSize(open: OpenDisplay, size: Size, screen: Screen): Promise<boolean> {
   return joined(open, async (connection, init) => {
     if (init.width === size.width && init.height === size.height) return false;
-    // TigerVNC answers SetDesktopSize only to a client that understands the answer.
-    await connection.writer.write(concat(setEncodings([EXTENDED_DESKTOP_SIZE]), setDesktopSize(size.width, size.height, screen)));
+    // TigerVNC answers SetDesktopSize only to a client that understands the
+    // answer. DesktopSize too: the Virtualization framework's server ends the
+    // VM on an update request from a client without it.
+    await connection.writer.write(concat(setEncodings([EXTENDED_DESKTOP_SIZE, DESKTOP_SIZE]), setDesktopSize(size.width, size.height, screen)));
     await connection.writer.write(Uint8Array.of(3, 1, 0, 0, 0, 0, 0, 1, 0, 1));
     await withTimeout(connection.reader.next(), RELEASE_TIMEOUT_MS);
     return true;

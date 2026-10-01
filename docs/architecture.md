@@ -1064,7 +1064,7 @@ details.
 | Release | delete | delete | remove the container | remove the box user and what it left, or restore the whole machine | reset the box user | `tart delete` |
 | Command | SSH | OpenSSH for Windows with PowerShell, or the QEMU guest agent | `docker exec`, or SSH if the image runs it | SSH | SSH | SSH through the Mac host |
 | Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | none yet; RFB through SSH later | RFB (Screen Sharing) through SSH | RFB through the Mac host |
-| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file on the machine, with a reset generation | marker file and plugin storage | VM name for boxes made on demand; the pool store for warm VMs, which are claimed rather than renamed, since `tart rename` does not check whether a VM is running |
+| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file on the machine, with a reset generation | marker file and plugin storage | an owner file per VM on the Mac, written before the clone with noclobber and removed last; warm VMs, later, are claimed in it rather than renamed, since `tart rename` does not check whether a VM is running |
 | Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), GPU | machines | machines | guests (two VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
 | Enrol | yes | not until BB's host app runs on Windows | yes, without systemd | yes | yes | yes |
@@ -1127,12 +1127,19 @@ Notes:
   - Tart, Orchard and tart-guest-agent are under FSL-1.1-ALv2, where internal
     use is a permitted purpose. bb-box drives Tart and does not redistribute
     it.
-  - The VNC port and password change on every `tart run`. The backend runs
-    `tart run` under a launchd job that writes them to a file only its admin
-    user can read, and `open()` reads the file each time. The password never
-    goes in `Guest.data`.
-  - A suspended VM holds no slot and no memory, so `stop` can suspend
-    (macOS 14 or later on the host).
+  - The VNC port and password change on every `tart run`. The backend starts
+    `tart run` detached from its SSH session, with its output in a file only
+    the host user can read, and `open()` reads the file each time. The
+    password never goes in `Guest.data`. A launchd job would load only in the
+    GUI session of a host user logged in at the Mac.
+  - Tart's VNC server (the Virtualization framework's) listens on every
+    interface of the Mac, ignores SetDesktopSize, and ends the VM when a
+    client asks for an update without the DesktopSize pseudo-encoding. The
+    guest's own Screen Sharing gives a VNC client a separate session at the
+    login window, not the logged-in desktop, so it does not fit
+    ([setup guide](../setup/tart/README.md#the-desktops-vnc-server)).
+  - A suspended VM holds no slot and no memory, so `stop` suspends (macOS 14
+    or later on the host), and `start` resumes in about 4 s.
 - **Clouds, microsandbox and Crabbox** fit as virtual backends with SSH and
   instance tags; a cloud's capacity is its quota.
 
