@@ -20,10 +20,17 @@ runtime=${BOX_RUNTIME:-lxc}
 export DEBIAN_FRONTEND=noninteractive
 die() { echo "customize-desktop: $*" >&2; exit 1; }
 [ -f /etc/apt/apt.conf.d/50bb-box-build-snapshot ] || die "run customize-base.sh first (no apt snapshot)"
+# 1000 except in a Tart VM, where the image's own user has it (customize-base.sh).
+uid=$(id -u "$user") || die "no user $user (run customize-base.sh first)"
 
-# desktop-pins.tsv columns: name, file, URL, SHA-256.
-pin() { awk -F'\t' -v n="$1" '$1 == n { print $4 }' "$build/desktop-pins.tsv"; }
-file_of() { awk -F'\t' -v n="$1" '$1 == n { print $2 }' "$build/desktop-pins.tsv"; }
+# desktop-pins.tsv columns: name, file, URL, SHA-256, architecture.
+case "$(uname -m)" in
+  x86_64) arch=x86_64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *) die "no desktop artifacts are pinned for $(uname -m)" ;;
+esac
+pin() { awk -F'\t' -v n="$1" -v a="$arch" '$1 == n && $5 == a { print $4 }' "$build/desktop-pins.tsv"; }
+file_of() { awk -F'\t' -v n="$1" -v a="$arch" '$1 == n && $5 == a { print $2 }' "$build/desktop-pins.tsv"; }
 check() { # pin name -> path of the checked artifact
   local f
   f=$art/$(file_of "$1")
@@ -73,6 +80,8 @@ done
 install -d -m 0755 /usr/share/bb-box
 if [ "${DESKTOP_GPU:-nvidia}" = none ]; then
   nvidia=none
+elif [ "$arch" != x86_64 ]; then
+  die "a desktop on $arch is CPU-only: set DESKTOP_GPU=none"
 else
   nvidia=$(cat /sys/module/nvidia/version 2>/dev/null) || die "the host has no NVIDIA driver loaded"
   run=$art/NVIDIA-Linux-x86_64-$nvidia.run
@@ -186,17 +195,17 @@ EOF
 cat >/etc/systemd/system/bb-box-session.service <<EOF
 [Unit]
 Description=bb-box: XFCE session on :99
-After=bb-box-display.service user@1000.service
+After=bb-box-display.service user@$uid.service
 Requires=bb-box-display.service
-Wants=user@1000.service
+Wants=user@$uid.service
 PartOf=bb-box-display.service
 
 [Service]
 User=$user
 Group=$user
 WorkingDirectory=~
-Environment=DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority XDG_RUNTIME_DIR=/run/user/1000
-Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus XDG_SESSION_TYPE=x11
+Environment=DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority XDG_RUNTIME_DIR=/run/user/$uid
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus XDG_SESSION_TYPE=x11
 Environment=XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce
 EnvironmentFile=-/run/bb-box/display.env
 ExecStart=/usr/bin/xfce4-session
