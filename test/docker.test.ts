@@ -127,9 +127,12 @@ test("reads its part of bb-box's configuration", () => {
   assert.ok(parsed.ok);
   assert.equal(parsed.config.images["linux-docker"], "bbbox/linux:1");
   assert.equal(parsed.config.boxes, 3);
-  // A field Docker does not have is a problem at its path.
-  const wrong = toConfiguration({ backends: [{ id: "docker", type: "docker", enabled: true, fields: { "docker-privileged": true } }] });
-  assert.match(wrong.problems.join(" "), /^backends\.docker\.docker-privileged: There is no field/);
+  // A field Docker does not have is a problem at its path, naming the key it has now when it is its old name in BB's settings.
+  const wrong = toConfiguration({ backends: [{ id: "docker", type: "docker", enabled: true, fields: { "docker-privileged": true, colour: "blue" } }] });
+  assert.deepEqual(wrong.problems, [
+    `backends.docker.docker-privileged: Backend docker has no field "docker-privileged". That was its name in BB's settings; here it is "privileged".`,
+    `backends.docker.colour: Backend docker has no field "colour". The fields are ${Object.keys(dockerDriver.fields).join(", ")}.`,
+  ]);
 });
 
 test("offers kinds by image, and its offers agree with Proxmox LXC's", async () => {
