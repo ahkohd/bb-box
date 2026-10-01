@@ -1051,6 +1051,18 @@ test("a thread that runs on one of your machines sees it in box_list, uses it wi
   assert.equal((await app.boxes.find(machine.id))?.state, "ready");
 });
 
+test("a thread found on a spare makes it yours at once, not at the next sweep (036)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const { kinds: _, ...rest } = app.configuration.exported();
+  assert.ok(((await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { linux: { spares: 1 } } }, revision: rest.revision })) as { ok: boolean }).ok);
+  const spare = await until("a spare", async () => (await app.boxes.list(SPARES)).find((box) => box.enrol.state === "enrolled"));
+  world.workspaceHost = spare.enrol.hostId!;
+  world.onHost.set(spare.enrol.hostId!, [{ id: THREAD, title: null, status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  await tool("box_list", {});
+  await until("yours", async () => (await app.boxes.find(spare.id))?.threadId === OPERATOR);
+});
+
 test("a spare a thread started on reads as becoming yours until it is, and is not released from the thread (036)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());

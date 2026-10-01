@@ -6,7 +6,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks } from "../backends/index.ts";
 import type { BackendDriver, DoctorReport } from "../backends/types.ts";
-import { BoxError, Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
+import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { emptyDocument, type ConfigDocument } from "../core/document.ts";
@@ -464,7 +464,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         }
         threadHosts.set(threadId, hostId);
       }
-      return (await boxes.all()).find((box) => box.enrol.hostId === hostId && box.state !== "gone" && box.state !== "releasing") ?? null;
+      const box = (await boxes.all()).find((box) => box.enrol.hostId === hostId && box.state !== "gone" && box.state !== "releasing") ?? null;
+      // A thread on a spare: the spare upkeep makes it yours now, not at the next sweep (036).
+      if (box?.threadId === SPARES) void boxes.keepSpares();
+      return box;
     },
     async resolve(threadId, ref, signal) {
       try {

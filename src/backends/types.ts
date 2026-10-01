@@ -362,7 +362,8 @@ export interface Backend {
    * yours (032, 036): records them on the guest, as its owner for the sweep
    * (019), and gives the guest the box's name inside where it was `from`.
    * Without it, a restored record keeps the owner and name the guest was
-   * made with.
+   * made with. Best effort: core logs a failure and the box carries on under
+   * its old labels, so a backend need not retry.
    */
   relabel?(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void>;
 
