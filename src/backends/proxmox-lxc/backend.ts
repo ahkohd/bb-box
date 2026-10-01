@@ -478,8 +478,12 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #reserved = new Set<number>();
   /** Warm guests being prepared: their VMID and their template's. */
   readonly #filling = new Map<number, number>();
-  /** Acquires running in this process, by box, with their template once chosen and their VMID once claimed. */
-  readonly #acquiring = new Map<string, { readonly flavour: LxcFlavour; template: number | null; vmid: number | null }>();
+  /**
+   * Acquires running in this process, by box, with their template once
+   * chosen and their VMID once claimed. Once one holds its guest, `held` is
+   * the memory that guest had: a warm guest's, or 0 for a new one.
+   */
+  readonly #acquiring = new Map<string, { readonly flavour: LxcFlavour; template: number | null; vmid: number | null; held: number | null }>();
   /** GPUs whose desktop lately started without them, and until when new desktops avoid them. */
   readonly #avoid = new Map<string, number>();
   /** Root disk storage, disk size and memory of each template. */
@@ -515,7 +519,9 @@ export class ProxmoxLxcBackend implements Backend {
     const builds = await this.templateBuilds(api, guests, signal);
     const ready = guests.filter((guest) => this.warmOf(guest, builds)?.flavour === offer.flavour && guest.status === "running");
     const fitting = ready.filter((guest) => guest.size?.cores === size.cores);
-    const waiting = pending.filter((other) => flavourOf(other.kind) === offer.flavour).length;
+    // Acquires here that hold their guest need no warm guest.
+    const holding = [...this.#acquiring.values()].filter((acquire) => acquire.flavour === offer.flavour && acquire.held !== null).length;
+    const waiting = Math.max(0, pending.filter((other) => flavourOf(other.kind) === offer.flavour).length - holding);
     // Any of them may be claimed, so the one with the least memory is assumed.
     const warmMiB = fitting.length > waiting ? Math.min(...fitting.map((guest) => guest.size?.memoryMiB ?? 0)) : null;
     return this.#room(api, offer, size, guests, pending, { ready: ready.length, target: this.#warmTarget(offer.flavour) }, warmMiB, signal);
@@ -543,7 +549,9 @@ export class ProxmoxLxcBackend implements Backend {
     const [node, disk] = await Promise.all([api.nodeStatus(signal), api.storageStatus(storage, signal)]);
     const reserve = this.#config.reserve;
     const kind = offer.kind.id;
-    const pendingMiB = pending.reduce((sum, other) => sum + other.size.memoryMiB, 0);
+    // A warm guest an acquire here holds has its memory already, as a warm claim needs only what it adds.
+    const heldMiB = [...this.#acquiring.values()].reduce((sum, acquire) => sum + (acquire.held ?? 0), 0);
+    const pendingMiB = Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - heldMiB);
     const memoryTotal = Math.floor(node.memoryTotal / MiB);
     const memoryUsed = memoryTotal - Math.floor(node.memoryAvailable / MiB) + pendingMiB;
     const memoryFree = memoryTotal - memoryUsed;
@@ -675,7 +683,7 @@ export class ProxmoxLxcBackend implements Backend {
         hooks.timing(name, Math.round(performance.now() - started));
       }
     };
-    const acquiring = { flavour: offer.flavour, template: null as number | null, vmid: null as number | null };
+    const acquiring = { flavour: offer.flavour, template: null as number | null, vmid: null as number | null, held: null as number | null };
     this.#acquiring.set(box.boxId, acquiring);
     let vmid: number | null = null;
     let claimed: number | null = null;
@@ -688,15 +696,18 @@ export class ProxmoxLxcBackend implements Backend {
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
         vmid = Number(previous.ref);
         acquiring.vmid = vmid;
+        acquiring.held = 0;
         acquiring.template = typeof previous.data?.template === "number" ? previous.data.template : null;
       }
       let warm = false;
       if (vmid === null) {
+        let memory = 0;
         const member = await step("warm", () =>
           this.#warm.claim(box.kind, box, {
-            fits: (candidate) => this.#warmStore.coresOf(candidate.ref) === box.size.cores,
+            fits: (candidate) => this.#warmStore.sizeOf(candidate.ref)?.cores === box.size.cores,
             before: (candidate) => {
               acquiring.template = this.#warmStore.templateOf(candidate.ref);
+              memory = this.#warmStore.sizeOf(candidate.ref)?.memoryMiB ?? 0;
               return claim(Number(candidate.ref));
             },
             signal,
@@ -705,6 +716,7 @@ export class ProxmoxLxcBackend implements Backend {
         if (member) {
           vmid = Number(member.ref);
           warm = true;
+          acquiring.held = memory;
           this.#kick();
         } else {
           acquiring.template = null;
@@ -726,6 +738,7 @@ export class ProxmoxLxcBackend implements Backend {
             acquiring.template = choice.template.vmid;
             const description = describe(box, this.#context.installId);
             vmid = await this.#clone(api, guests, acquiring.template, box.name, description, claim, signal, (ms) => (away = (away ?? 0) + ms));
+            acquiring.held = 0;
           } finally {
             if (away !== null) hooks.timing("template", away);
             hooks.timing("clone", Math.round(performance.now() - cloning - (away ?? 0)));
@@ -768,12 +781,15 @@ export class ProxmoxLxcBackend implements Backend {
         claimed = null;
         acquiring.vmid = null;
         acquiring.template = null;
+        acquiring.held = null;
         warm = false;
         const left = offer.config.templates.some((candidate) => candidate.gpu !== null && !failed.has(candidate.gpu));
         if (!left) throw noGpu(failed, `No other GPU on ${api.node} has a linux-desktop template.`);
         if (Date.now() >= deadline) throw noGpu(failed, "There is no time left to try another GPU.");
       }
     } catch (error) {
+      // Counted as pending in full again before its guest goes, so never not at all.
+      acquiring.held = null;
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
       if (leftover !== null && (vmid !== null || (await this.#owns(api, leftover, box.boxId).catch(() => false)))) {
@@ -1719,8 +1735,8 @@ class WarmStore implements PoolStore<BoxIdentity> {
   readonly #pool: string;
   /** The template of each warm guest, as last listed. */
   readonly #templates = new Map<string, number>();
-  /** The cores of each warm guest, as last listed. */
-  readonly #cores = new Map<string, number>();
+  /** The size of each warm guest, as last listed. */
+  readonly #sizes = new Map<string, BoxSize>();
 
   constructor(backend: ProxmoxLxcBackend, pool: string) {
     this.#backend = backend;
@@ -1731,14 +1747,14 @@ class WarmStore implements PoolStore<BoxIdentity> {
     const api = await this.#backend.client();
     const members: PoolMember[] = [];
     this.#templates.clear();
-    this.#cores.clear();
+    this.#sizes.clear();
     const guests = await api.listPool(this.#pool, signal);
     const builds = await this.#backend.templateBuilds(api, guests, signal);
     for (const guest of guests) {
       const warm = this.#backend.warmOf(guest, builds);
       if (!warm || guest.status !== "running") continue;
       this.#templates.set(String(guest.vmid), warm.template);
-      if (guest.size) this.#cores.set(String(guest.vmid), guest.size.cores);
+      if (guest.size) this.#sizes.set(String(guest.vmid), guest.size);
       members.push({
         ref: String(guest.vmid),
         host: guest.node || api.node,
@@ -1756,8 +1772,8 @@ class WarmStore implements PoolStore<BoxIdentity> {
     return this.#templates.get(ref) ?? null;
   }
 
-  coresOf(ref: string): number | null {
-    return this.#cores.get(ref) ?? null;
+  sizeOf(ref: string): BoxSize | null {
+    return this.#sizes.get(ref) ?? null;
   }
 
   hold(member: PoolMember, box: BoxIdentity, signal?: AbortSignal): Promise<void> {

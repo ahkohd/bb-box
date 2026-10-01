@@ -999,6 +999,30 @@ test("a warm guest needs only the memory a claim adds (028)", async () => {
   assert.match(disk.message!, /^The local-lvm storage on pve has 100 GiB free\. A 60 GiB disk needs 52 GiB more than the template's/);
 });
 
+test("an acquire that holds a warm guest needs no other, and counts only the memory it adds (#122)", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 2 });
+  await backend.maintain();
+  // Too little memory for a new guest, so no warm guest is made meanwhile.
+  proxmox.memory = { total: 64 * GiB, available: 1 * GiB };
+  let started = false;
+  let go!: () => void;
+  const gate = new Promise<void>((resolve) => (go = resolve));
+  const starting = () => ((started = true), gate);
+  const acquired = backend.acquire(identity(), null, { ...hooks().value, starting }, signal());
+  while (!started) await new Promise((resolve) => setTimeout(resolve, 5));
+
+  // The first box holds one warm guest, so the other serves the next.
+  assert.equal((await backend.capacity("linux", sized("linux"), waiting("linux"), signal())).ok, true);
+  assert.equal((await backend.capacity("linux", sized("linux"), waiting("linux", "linux"), signal())).ok, false, "unless another acquire waits for it");
+  // A new guest has the memory the first box does not add to its warm guest's.
+  proxmox.memory = { total: 64 * GiB, available: 9 * GiB };
+  const clone = await backend.capacity("linux", { cores: 4, memoryMiB: 4096, diskGiB: null }, waiting("linux"), signal());
+  assert.equal(clone.ok, true, "9 GiB free less 4 GiB leaves the 4 GiB kept free");
+  assert.equal(clone.hosts[0]!.limits[0]!.used, 55 * 1024);
+  go();
+  await acquired;
+});
+
 test("warm guests beyond the target are removed, and a count changes without the backend being built again (029)", async () => {
   const { backend, proxmox, context, warm } = setup({ "proxmox-lxc-linux-warm": 2 });
   await backend.maintain();
