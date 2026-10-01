@@ -160,6 +160,34 @@ export function formValue(fields: Readonly<Record<string, FieldValue | SecretSta
   return value;
 }
 
+function isEmpty(value: FormValue | undefined): boolean {
+  return value === undefined || value === null || (typeof value === "string" && !value.trim()) || (isSecretState(value) && !value.set);
+}
+
+/** The backend a driver's empty fields take values from, as the server picks it: the first other backend of the type they name. */
+export function inheritSource(document: ConfigDocument, fields: readonly FieldView[], id: string): BackendConfig | null {
+  const from = fields.find((field) => field.inherits)?.inherits?.from;
+  return (from && document.backends.find((other) => other.type === from && other.id !== id)) || null;
+}
+
+/**
+ * What the form's empty fields take from `source`, the backend their driver
+ * inherits from, as the server fills them in: for each set all empty in
+ * `values`, the source's values, or whether its secrets are set. Only values
+ * the source has are given.
+ */
+export function inheritedValues(fields: readonly FieldView[], values: Readonly<Record<string, FormValue>>, source: BackendConfig | null): Record<string, FieldValue | SecretState> {
+  const out: Record<string, FieldValue | SecretState> = {};
+  if (!source) return out;
+  for (const field of fields) {
+    if (!field.inherits || field.inherits.from !== source.type) continue;
+    if (!field.inherits.set.every((key) => isEmpty(values[key]))) continue;
+    const value = source.fields[field.key];
+    if (!isEmpty(value)) out[field.key] = value!;
+  }
+  return out;
+}
+
 /** The fields for the draft: empty text takes the default, numbers are numbers, and secrets go as the control holds them. */
 export function draftFields(values: Readonly<Record<string, FormValue>>, fields: readonly FieldView[]): Record<string, FieldValue | SecretState | null> {
   const out: Record<string, FieldValue | SecretState | null> = {};

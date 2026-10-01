@@ -10,6 +10,8 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { Badge } from "./common.tsx";
+import type { FieldValue } from "../backends/types.ts";
+import type { SecretState } from "../core/document.ts";
 import type { FieldView } from "../plugin/configuration.ts";
 import { isSecretField, isSecretState, type FormValue } from "./config.ts";
 
@@ -109,9 +111,16 @@ function SecretControl({ id, field, value, onChange }: { id: string; field: Fiel
   );
 }
 
-export function FieldControl({ field, value, onChange, problem }: { field: FieldView; value: FormValue; onChange: (value: FormValue) => void; problem: string | null }) {
+/**
+ * A field's control. `inherited` is what the field takes, while empty, from
+ * the backend its driver inherits from: shown as a chip, and for text as the
+ * placeholder.
+ */
+export function FieldControl({ field, value, onChange, problem, inherited }: { field: FieldView; value: FormValue; onChange: (value: FormValue) => void; problem: string | null; inherited?: FieldValue | SecretState }) {
   const id = useId();
-  const placeholder = field.default !== undefined && field.default !== "" ? String(field.default) : undefined;
+  const from = inherited !== undefined && field.inherits ? <Chip>from {field.inherits.label}</Chip> : null;
+  const shown = inherited !== undefined && !isSecretState(inherited) ? inherited : field.default;
+  const placeholder = shown !== undefined && shown !== "" ? String(shown) : undefined;
   if (isSecretField(field)) {
     const set = isSecretState(value) ? value.set : typeof value === "string" ? true : false;
     return (
@@ -121,7 +130,7 @@ export function FieldControl({ field, value, onChange, problem }: { field: Field
         chips={
           <>
             <Chip>secret</Chip>
-            <Chip tone={set ? "muted" : "warn"}>{set ? "set" : "not set"}</Chip>
+            {from ?? <Chip tone={set ? "muted" : "warn"}>{set ? "set" : "not set"}</Chip>}
           </>
         }
         description={field.description}
@@ -159,13 +168,13 @@ export function FieldControl({ field, value, onChange, problem }: { field: Field
   const text = typeof value === "string" || typeof value === "number" ? String(value) : "";
   if (field.type === "string" && field.experimental_multiline) {
     return (
-      <FieldShell label={field.label} htmlFor={id} description={field.description} problem={problem} wide>
+      <FieldShell label={field.label} htmlFor={id} chips={from} description={field.description} problem={problem} wide>
         <Textarea id={id} className="min-h-16 font-mono text-xs" rows={3} value={text} placeholder={placeholder} aria-invalid={problem ? true : undefined} onChange={(event) => onChange(event.target.value)} />
       </FieldShell>
     );
   }
   return (
-    <FieldShell label={field.label} htmlFor={id} description={field.description} problem={problem}>
+    <FieldShell label={field.label} htmlFor={id} chips={from} description={field.description} problem={problem}>
       <Input id={id} className="h-8 text-xs" inputMode={field.type === "number" ? "numeric" : undefined} value={text} placeholder={placeholder} aria-invalid={problem ? true : undefined} onChange={(event) => onChange(event.target.value)} />
     </FieldShell>
   );

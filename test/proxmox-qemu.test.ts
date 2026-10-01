@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { boxForm } from "../src/backends/index.ts";
+import { Backends, DRIVERS, boxForm } from "../src/backends/index.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
+import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxQemuBackend, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
 import { parseQemuPart, type QemuConfig } from "../src/backends/proxmox-qemu/config.ts";
+import { proxmoxQemuDriver } from "../src/backends/proxmox-qemu/index.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { backendPart, checkDocument, type BackendConfig, type ConfigDocument, type Secrets } from "../src/core/document.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
+import { driverFields } from "../src/plugin/configuration.ts";
+import { generateKeyPair } from "../src/transports/ssh.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
@@ -132,6 +137,94 @@ test("the settings list Windows templates by VMID", () => {
   assert.deepEqual(problems({ "windows-templates": "9104 9104" }), [{ path: "windows-templates", message: "Template 9104 is listed more than once. List each template once." }]);
   assert.deepEqual(problems({ "windows-templates": "9701" }), [{ path: "vmid-first", message: "Move template 9701 out of the box VMID range." }]);
   assert.deepEqual(problems({ "ssh-user": "Box User" }).map((problem) => problem.path), ["ssh-user"]);
+});
+
+/** A host that runs Linux boxes already: Proxmox LXC's connection and key, as the setup guide gives them. */
+const LXC: BackendConfig = {
+  id: "proxmox-lxc",
+  type: "proxmox-lxc",
+  enabled: true,
+  fields: { url: "https://pve.example.com:8006/api2/json", "token-id": FAKE_TOKEN.tokenId, "tls-fingerprint": "AB:".repeat(31) + "AB", node: "pve-lxc" },
+};
+const LXC_SECRETS = { "token-secret": FAKE_TOKEN.tokenSecret, "ssh-private-key": KEY };
+const WINDOWS_FIELDS = { "windows-templates": "9104", bridge: "vmbr1", subnet: "192.0.2.0/24", gateway: "192.0.2.1", addresses: "192.0.2.150-192.0.2.159", "vmid-first": 9700, "vmid-last": 9709 };
+
+/** Proxmox QEMU's part beside Proxmox LXC, with `fields` and `secrets` of its own. */
+function besideLxc(fields: Record<string, string | number> = {}, secrets: Record<string, string> = {}, lxc: BackendConfig | null = LXC) {
+  const qemu: BackendConfig = { id: "proxmox-qemu", type: "proxmox-qemu", enabled: true, fields: { ...WINDOWS_FIELDS, ...fields } };
+  const all: Secrets = { "proxmox-lxc": LXC_SECRETS, "proxmox-qemu": secrets };
+  return backendPart(qemu, proxmoxQemuDriver, all, lxc ? [lxc, qemu] : [qemu]);
+}
+
+test("an empty connection and SSH key take Proxmox LXC's, and the node stays this backend's", () => {
+  const part = besideLxc();
+  assert.equal(part.fields.url, LXC.fields.url);
+  assert.equal(part.fields["token-id"], FAKE_TOKEN.tokenId);
+  assert.equal(part.fields["token-secret"], FAKE_TOKEN.tokenSecret);
+  assert.equal(part.fields["tls-fingerprint"], LXC.fields["tls-fingerprint"]);
+  assert.equal(part.fields["ca-certificate"], "", "Proxmox LXC has no CA certificate, so none comes");
+  assert.equal(part.fields["ssh-private-key"], KEY);
+  assert.equal(part.fields.node, "", "the template's node may not be Proxmox LXC's");
+  const parsed = parseQemuPart(part);
+  assert.ok(parsed.ok, JSON.stringify(parsed));
+  assert.equal(parsed.config.proxmox.tokenSecret, FAKE_TOKEN.tokenSecret);
+  assert.equal(parsed.config.ssh.privateKey?.trim(), KEY, "the key as normalised");
+  assert.equal(besideLxc({ url: "  " }).fields.url, LXC.fields.url, "a blank URL is empty");
+});
+
+test("a connection or key set here is this backend's whole, and nothing comes without Proxmox LXC", () => {
+  const own = besideLxc({ url: "https://other.example.com:8006/api2/json" });
+  assert.equal(own.fields.url, "https://other.example.com:8006/api2/json");
+  assert.equal(own.fields["token-id"], "", "Proxmox LXC's token is not for another host");
+  assert.equal(own.fields["token-secret"], undefined);
+  assert.equal(own.fields["tls-fingerprint"], "", "nor its certificate");
+  assert.equal(own.fields["ssh-private-key"], KEY, "the key goes on its own");
+  const parsed = parseQemuPart(own);
+  assert.ok(!parsed.ok);
+  assert.deepEqual(parsed.problems.map((problem) => problem.path), ["token-id", "token-secret"]);
+
+  const key = besideLxc({}, { "ssh-private-key": "own key" });
+  assert.equal(key.fields["ssh-private-key"], "own key");
+  assert.equal(key.fields["token-secret"], FAKE_TOKEN.tokenSecret, "the connection still comes from Proxmox LXC");
+
+  const alone = besideLxc({}, {}, null);
+  assert.equal(alone.fields.url, "");
+  assert.equal(alone.fields["ssh-private-key"], undefined);
+});
+
+test("the document check and the backends take Proxmox LXC's connection, and a change to it rebuilds the backend", async () => {
+  const lxcProblems = { ...proxmoxLxcDriver, parse: () => ({ ok: false as const, problems: [{ path: "", message: "Not under test." }] }) };
+  const qemu: BackendConfig = { id: "proxmox-qemu", type: "proxmox-qemu", enabled: true, fields: WINDOWS_FIELDS };
+  const document = (lxc: BackendConfig): ConfigDocument => ({ schema: 1, revision: 1, backends: [lxc, qemu], kinds: {}, general: {} });
+  const secrets: Secrets = { "proxmox-lxc": LXC_SECRETS };
+  const ofQemu = (doc: ConfigDocument) => checkDocument(doc, secrets, DRIVERS).filter((problem) => problem.path.startsWith("backends.proxmox-qemu"));
+  assert.deepEqual(ofQemu(document(LXC)), []);
+  assert.deepEqual(
+    ofQemu({ ...document(LXC), backends: [qemu] }).map((problem) => problem.path),
+    ["backends.proxmox-qemu.url", "backends.proxmox-qemu.token-id", "backends.proxmox-qemu.token-secret"],
+  );
+
+  const backends = new Backends({ storage: new MemoryStorage(), installId: "test", logError: () => {}, drivers: [lxcProblems, proxmoxQemuDriver] });
+  try {
+    await backends.configure(document(LXC), secrets);
+    const first = backends.get("proxmox-qemu");
+    assert.ok(first, JSON.stringify(backends.statuses()));
+    await backends.configure(document(LXC), secrets);
+    assert.equal(backends.get("proxmox-qemu"), first, "the same fields keep the backend");
+    await backends.configure(document({ ...LXC, fields: { ...LXC.fields, url: "https://pve2.example.com:8006/api2/json" } }), secrets);
+    assert.notEqual(backends.get("proxmox-qemu"), first, "a new URL in Proxmox LXC rebuilds it");
+  } finally {
+    await backends.dispose();
+  }
+});
+
+test("the settings page learns which fields come from Proxmox LXC, set by set", () => {
+  const fields = Object.fromEntries(driverFields(proxmoxQemuDriver, DRIVERS).map((field) => [field.key, field.inherits]));
+  const connection = ["url", "token-id", "token-secret", "tls-fingerprint", "ca-certificate"];
+  for (const key of connection) assert.deepEqual(fields[key], { from: "proxmox-lxc", label: "Proxmox LXC", set: connection }, key);
+  assert.deepEqual(fields["ssh-private-key"], { from: "proxmox-lxc", label: "Proxmox LXC", set: ["ssh-private-key"] });
+  assert.equal(fields.node, undefined);
+  assert.equal(fields["windows-templates"], undefined);
 });
 
 test("the serial carries the address, prefix and gateway in base64, with a UUID", () => {
@@ -356,7 +449,7 @@ test("a box's VM is relabelled with its new owner and name (036)", async () => {
   assert.equal(tags.at(-1), "template.9104", "the template tag stays");
 });
 
-test("doctor passes on a complete setup and shows the generated public key", async () => {
+test("doctor passes on a complete setup, and warns that a template from build.sh lacks a key bb-box made", async () => {
   const { backend, storage } = setup({ "ssh-private-key": "" });
   const report = await backend.doctor();
   assert.equal(report.ok, true, JSON.stringify(report, null, 2));
@@ -371,15 +464,24 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["template.9104", "Windows template 9104", "ok"],
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
-      ["ssh.key", "SSH key", "ok"],
+      ["ssh.key", "SSH key", "warn"],
     ],
   );
+  assert.match(report.checks.at(-1)!.fix!, /^Paste BBBOX_SSH_KEY, the key build\.sh put in the template, here or in Proxmox LXC's settings\./);
   const notes = report.notes.join("\n");
   assert.match(notes, /^This install's ID is test\. Its VMs carry the tag install\.test\.$/m);
   assert.match(notes, /C:\\ProgramData\\ssh\\administrators_authorized_keys: ssh-ed25519 \S+ bb-box$/m);
   const stored = await storage.get<{ privateKey: string; publicKey: string }>("ssh-key");
   assert.ok(stored?.privateKey.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"));
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE KEY|s3cret-token-value/);
+});
+
+test("doctor passes the key from the settings", async () => {
+  const { privateKey } = await generateKeyPair();
+  const report = await setup({ "ssh-private-key": privateKey }).backend.doctor();
+  const key = report.checks.find((check) => check.id === "ssh.key")!;
+  assert.equal(key.status, "ok", JSON.stringify(key));
+  assert.equal(key.detail, "From bb-box's settings; its public key is below.");
 });
 
 test("doctor says what is missing", async () => {

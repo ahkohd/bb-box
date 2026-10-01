@@ -225,7 +225,7 @@ export class Backends {
         statuses.push({ ...base, state: "misconfigured", problems: [problem.message], fieldProblems: [problem], kinds: [] });
         continue;
       }
-      const parsed = driver.parse(backendPart(config, driver, secrets));
+      const parsed = driver.parse(backendPart(config, driver, secrets, document.backends));
       if (!parsed.ok) {
         if (current) await this.#dispose(current);
         const fieldProblems = parsed.problems.map((problem) => ({ path: `backends.${config.id}${problem.path ? `.${problem.path}` : ""}`, message: problem.message }));

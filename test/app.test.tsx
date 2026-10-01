@@ -810,6 +810,37 @@ test("a backend's setup shows its fields by group with problems, saves the whole
   await waitFor(() => expect(slot.queryByRole("button", { name: "Save" })).toBeNull());
 });
 
+test("an empty field another backend fills says where its value comes from, until its set is filled here", async () => {
+  const inherits = (set: string[]) => ({ from: "fake", label: "Fake host", set });
+  const windows: ConfigState["drivers"][number] = {
+    type: "win",
+    label: "Fake Windows",
+    description: "Windows boxes on the fake host.",
+    nature: "virtual",
+    kinds: ["linux"],
+    fields: [
+      { key: "url", type: "string", label: "API URL", group: "connection", default: "", inherits: inherits(["url", "key"]) },
+      { key: "token", type: "string", label: "API token", secret: true, group: "credentials", inherits: inherits(["token"]) },
+      { key: "key", type: "string", label: "SSH key", secret: true, group: "credentials", inherits: inherits(["url", "key"]) },
+    ],
+    hostFields: [],
+    setup: { guide: "setup/win/README.md", scripts: [] },
+  };
+  const slot = settings(server([], { config: { drivers: [...configState({}).drivers, windows] } }).handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake Windows" }));
+  const url = slot.getByLabelText(/API URL/) as HTMLInputElement;
+  expect(url.value).toBe("");
+  expect(url.placeholder).toBe("https://192.0.2.10:8006");
+  // The fake host has a URL and a key, but no token.
+  expect(slot.getAllByText("from Fake host")).toHaveLength(2);
+  expect(slot.getAllByText("not set")).toHaveLength(1);
+
+  // A URL set here takes its set with it: the key is this backend's now.
+  fireEvent.change(url, { target: { value: "https://192.0.2.20:8006" } });
+  expect(slot.queryByText("from Fake host")).toBeNull();
+  expect(slot.getAllByText("not set")).toHaveLength(2);
+});
+
 test("a refused save shows each problem at its field, and a stale revision reloads", async () => {
   const { handlers } = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.url", message: "Use an https URL." }, { path: "backends.fake", message: "bb-box runs one Fake host backend for now." }] } });
   const slot = settings(handlers);

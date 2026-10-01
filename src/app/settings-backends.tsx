@@ -12,7 +12,7 @@ import type { DoctorCheck, DoctorReport, FieldValue } from "../backends/types.ts
 import type { BackendConfig, HostConfig, Problem } from "../core/document.ts";
 import type { BackendState, DriverView, FieldView } from "../plugin/configuration.ts";
 import { Meta, relativeTime, StatusDot, type Tone } from "./common.tsx";
-import { draftFields, formValue, groupFields, problemAt, problemsLeft, type DraftBackend, type FormValue } from "./config.ts";
+import { draftFields, formValue, groupFields, inheritedValues, problemAt, problemsLeft, type DraftBackend, type FormValue } from "./config.ts";
 import { Chip, FieldControl, FieldShell, FormHeading } from "./settings-fields.tsx";
 
 /** Where the setup guides and scripts are read, as pages. */
@@ -54,6 +54,8 @@ export function Report({ report }: { report: DoctorReport }) {
 export interface BackendRowModel {
   readonly driver: DriverView;
   readonly config: BackendConfig | null;
+  /** The backend of the type the driver inherits empty fields from, if the configuration has one. */
+  readonly source?: BackendConfig | null;
   readonly state: BackendState | null;
   /** Problems with the stored document under this backend. */
   readonly problems: readonly Problem[];
@@ -204,6 +206,7 @@ export function BackendForm({
   const setField = (key: string, value: FormValue) => setDraft((current) => ({ ...current, fields: { ...current.fields, [key]: value } }));
   const setHost = (index: number, patch: Partial<HostDraft>) => setDraft((current) => ({ ...current, hosts: current.hosts.map((host, n) => (n === index ? { ...host, ...patch } : host)) }));
   const groups = groupFields(driver.fields);
+  const inherited = inheritedValues(driver.fields, draft.fields, model.source ?? null);
   const shown = [...driver.fields.map((field) => `${path}.${field.key}`), ...draft.hosts.flatMap((_, n) => [`${path}.hosts.${n}.name`, ...driver.hostFields.map((field) => `${path}.hosts.${n}.${field.key}`)])];
   const rest = problemsLeft(problems, path, shown);
 
@@ -289,7 +292,14 @@ export function BackendForm({
             {!folded || advanced ? (
               <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
                 {group.fields.map((field) => (
-                  <FieldControl key={field.key} field={field} value={field.key in draft.fields ? draft.fields[field.key]! : ""} onChange={(value) => setField(field.key, value)} problem={problemAt(problems, `${path}.${field.key}`)} />
+                  <FieldControl
+                    key={field.key}
+                    field={field}
+                    value={field.key in draft.fields ? draft.fields[field.key]! : ""}
+                    onChange={(value) => setField(field.key, value)}
+                    problem={problemAt(problems, `${path}.${field.key}`)}
+                    inherited={inherited[field.key]}
+                  />
                 ))}
               </div>
             ) : null}

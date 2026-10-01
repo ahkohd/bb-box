@@ -34,7 +34,11 @@ const DOCTOR_PREFIX = "config/doctor/";
 /** The longest a check of a draft may run its backend's doctor. */
 export const TEST_TIMEOUT_MS = 30_000;
 
-export type FieldView = FieldDescriptor & { readonly key: string };
+export type FieldView = FieldDescriptor & {
+  readonly key: string;
+  /** The backend type whose value the field takes while it and the rest of its set are empty, and that type's label. */
+  readonly inherits?: { readonly from: string; readonly label: string; readonly set: readonly string[] };
+};
 
 export interface DriverView {
   readonly type: string;
@@ -130,8 +134,17 @@ export interface ConfigurationDeps {
   readonly testTimeoutMs?: number;
 }
 
-function fieldViews(fields: Readonly<Record<string, FieldDescriptor>> | undefined): FieldView[] {
-  return Object.entries(fields ?? {}).map(([key, field]) => ({ key, ...field }));
+function fieldViews(fields: Readonly<Record<string, FieldDescriptor>> | undefined, inherits?: { readonly from: string; readonly label: string; readonly sets: readonly (readonly string[])[] }): FieldView[] {
+  return Object.entries(fields ?? {}).map(([key, field]) => {
+    const set = inherits?.sets.find((candidate) => candidate.includes(key));
+    return set ? { key, ...field, inherits: { from: inherits!.from, label: inherits!.label, set } } : { key, ...field };
+  });
+}
+
+/** A driver's fields for the settings page. Each it inherits names the type it takes values from, with that type's label. */
+export function driverFields(driver: BackendDriver<any>, drivers: readonly BackendDriver<any>[]): FieldView[] {
+  const inherits = driver.inherits && { ...driver.inherits, label: drivers.find((other) => other.type === driver.inherits!.from)?.label ?? driver.inherits.from };
+  return fieldViews(driver.fields, inherits);
 }
 
 function failedReport(detail: string): DoctorReport {
@@ -272,7 +285,7 @@ export class Configuration {
         description: driver.description,
         nature: driver.nature,
         kinds: driver.kinds,
-        fields: fieldViews(driver.fields),
+        fields: driverFields(driver, drivers),
         hostFields: fieldViews(driver.hostFields),
         setup: driver.setup,
       })),
@@ -315,12 +328,12 @@ export class Configuration {
     // A backend of a type this version lacks cannot be built; checkDocument's problem says why.
     const driver = drivers.find((candidate) => candidate.type === backend.type);
     if (!driver) return { problems, doctor: null };
-    const parsed = driver.parse(backendPart(backend, driver, secrets));
+    const parsed = driver.parse(backendPart(backend, driver, secrets, draft.document.backends));
     if (!parsed.ok) return { problems, doctor: null };
     const doctor = await this.#test(backend.id, driver, parsed.config, signal);
     // The report is the backend's own when the draft's fields are those it was built from.
     const stored = this.#document.backends.find((candidate) => candidate.id === backend.id);
-    const live = stored && driver.parse(backendPart(stored, driver, this.#secrets));
+    const live = stored && driver.parse(backendPart(stored, driver, this.#secrets, this.#document.backends));
     if (live?.ok && JSON.stringify(live.config) === JSON.stringify(parsed.config)) await this.recordDoctor(backend.id, doctor);
     return { problems, doctor };
   }

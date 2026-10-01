@@ -179,7 +179,10 @@ node --test test/conformance.test.ts
 - The Windows template is built by `setup/proxmox-qemu/build.sh`, on a host
   set up as for Proxmox LXC: the same bridge, pool, token and SSH key. Its
   guide lists the settings. The backend has its own VMID range and
-  addresses, apart from Proxmox LXC's.
+  addresses, apart from Proxmox LXC's. Its connection (the URL, token,
+  fingerprint and CA certificate) and its SSH key, left empty, take
+  Proxmox LXC's; each goes whole, so a URL set here never meets Proxmox
+  LXC's token.
 - A box is a linked clone of a template that is not generalized, so it boots
   as the same installed Windows. Its address reaches Windows in the SMBIOS
   serial: `base64=1`, and the serial is `address/prefix gateway` in base64,
