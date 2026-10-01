@@ -26,7 +26,7 @@ export interface DockerConfig {
   readonly machine: string | null;
   /** The image of each kind, or null when the kind is off. */
   readonly images: Readonly<Record<DockerKind, string | null>>;
-  /** Whether linux boxes are privileged containers with their own Docker daemon (041). */
+  /** Whether boxes are privileged containers with their own Docker daemon: on unless set (041). A GPU desktop never is. */
   readonly docker: boolean;
   /** The network bb-box makes for its boxes and keeps them on. */
   readonly network: string;
@@ -83,11 +83,11 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   },
   [DOCKER_KEYS.privileged]: {
     type: "boolean",
-    label: "Docker in linux boxes",
+    label: "Docker in boxes",
     description:
-      "Give each linux box its own Docker daemon. Each runs as a privileged container, which can take over the Docker host. Turn it on only where the agents may. Off, linux boxes say No Docker.",
+      "Give each box its own Docker daemon, started by its first docker command. Each runs as a privileged container, which can take over the Docker host. A GPU desktop never does. Off, or on rootless Docker, boxes say No Docker.",
     group: "boxes",
-    default: false,
+    default: true,
   },
   [DOCKER_KEYS.gpuDesktops]: {
     type: "boolean",
@@ -169,7 +169,8 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
     if (image && !IMAGE.test(image)) problem(key, `Docker: the ${what} image "${image}" is not an image reference bb-box can use.`);
   }
   if (!linux && !desktop) problem(DOCKER_KEYS.linuxImage, "Docker: give a linux or a desktop image.");
-  const privileged = values[DOCKER_KEYS.privileged] === true;
+  // On unless set to false (041).
+  const privileged = values[DOCKER_KEYS.privileged] !== false;
   const gpu = values[DOCKER_KEYS.gpuDesktops] === true;
   const images: Record<DockerKind, string | null> = {
     linux: linux || null,
@@ -187,5 +188,5 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   if (!(reserveMemoryMiB >= 0)) problem(DOCKER_KEYS.reserveMemoryMiB, "Docker: the memory kept free cannot be negative.");
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { host: host || null, machine: BB_MACHINE.exec(host)?.[1] ?? null, images, docker: privileged && Boolean(linux), network, boxes, desktopsPerGpu, reserveMemoryMiB } };
+  return { ok: true, config: { host: host || null, machine: BB_MACHINE.exec(host)?.[1] ?? null, images, docker: privileged, network, boxes, desktopsPerGpu, reserveMemoryMiB } };
 }

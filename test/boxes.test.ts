@@ -1830,6 +1830,24 @@ test("an acquire through an alias takes only offers with its features, and says 
   await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
 });
 
+test("an offer must still have an alias's features once its room is checked, and a box records what it has then (041)", async () => {
+  const [headless] = FAKE_KINDS;
+  const world = setup({ kinds: [{ ...headless!, capabilities: { ...headless!.capabilities, features: ["docker"] } }] });
+  // As a Docker backend learns that its host is rootless Docker when it first asks it for room.
+  const capacity = world.backend.capacity.bind(world.backend);
+  world.backend.capacity = async (kind, size, pending) => {
+    world.backend.kinds = () => [headless!];
+    return capacity(kind, size, pending);
+  };
+  await assert.rejects(
+    world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-docker" }),
+    (error: unknown) => error instanceof BoxError && error.code === "no_capacity" && error.message === `linux boxes from ${world.backend.label} have no Docker.`,
+  );
+  assert.deepEqual(await world.boxes.list(THREAD), [], "nothing was made");
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  assert.deepEqual(box.capabilities.features, []);
+});
+
 test("a desktop command runs in the desktop session, and a box without a desktop has none", async () => {
   const world = setup();
   const desktop = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" }));

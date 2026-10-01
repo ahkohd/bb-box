@@ -6,7 +6,10 @@
 # - Clears what a hard stop leaves behind: BB's daemon lock and PID file, and
 #   X's lock for :99. bb-box runs BB's bootstrap again after each start, which
 #   starts BB's daemon (017).
-# - In a linux box with Docker (BBBOX_DOCKERD=1), starts Docker's daemon.
+# - In a box with Docker (BBBOX_DOCKERD=1), listens on Docker's socket, so
+#   the first docker command starts Docker's daemon, as docker.socket does
+#   in an LXC box (041). A box with containers starts it at once, so their
+#   restart policies work.
 # - In a desktop box, starts the display, the XFCE session and Cua Driver as
 #   the box user, and starts each again when it exits, as their units do.
 # - Then writes /run/bb-box/ready, which bb-box waits for. /run is a tmpfs, so
@@ -56,12 +59,24 @@ if [ "${BBBOX_DOCKERD:-0}" = 1 ]; then
     sed -e 's/ / +/g' -e 's/^/+/' </sys/fs/cgroup/cgroup.controllers >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || :
   fi
   rm -f /var/run/docker.pid /run/containerd/containerd.pid
-  keep dockerd >>/var/log/dockerd.log 2>&1 &
-  for _ in $(seq 1 300); do
-    docker info >/dev/null 2>&1 && break
-    sleep 0.1
-  done
-  docker info >/dev/null 2>&1 || log "dockerd did not answer within 30 s; see /var/log/dockerd.log"
+  # systemd-socket-activate runs dockerd with the socket when the first
+  # client connects. The socket is root's until it is the docker group's,
+  # as docker.socket makes it.
+  docker_socket() {
+    rm -f /run/docker.sock
+    systemd-socket-activate -l /run/docker.sock dockerd -H fd:// &
+    local activate=$!
+    for _ in $(seq 1 50); do
+      [ -S /run/docker.sock ] && break
+      sleep 0.1
+    done
+    chgrp docker /run/docker.sock && chmod 660 /run/docker.sock
+    if [ -n "$(ls -A /var/lib/docker/containers 2>/dev/null)" ]; then
+      docker version >/dev/null 2>&1 &
+    fi
+    wait "$activate"
+  }
+  keep docker_socket >>/var/log/dockerd.log 2>&1 &
 fi
 
 if [ -x /usr/local/libexec/bb-box/display ]; then

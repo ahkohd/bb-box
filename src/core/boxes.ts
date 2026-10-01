@@ -524,7 +524,7 @@ export class Boxes {
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
         const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
-        const chosen = await this.#place(input, offered, everywhere, sized.size);
+        const chosen = await this.#place(input, offered, everywhere, sized.size, features);
         const box: BoxRecord = {
           id: newBoxId(this.#random),
           threadId: input.threadId,
@@ -897,9 +897,9 @@ export class Boxes {
    * when none has it. With `on`, only the named offer is tried, and a
    * refusal names the kind's other providers (044).
    */
-  async #place(input: { threadId: string; on?: string }, offered: OfferedKind[], everywhere: OfferedKind[], size: BoxSize): Promise<OfferedKind> {
+  async #place(input: { threadId: string; on?: string }, offered: OfferedKind[], everywhere: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
     try {
-      return input.threadId === SPARES ? await this.#choose(offered, size) : await this.#chooseFreeing(offered, size);
+      return input.threadId === SPARES ? await this.#choose(offered, size, features) : await this.#chooseFreeing(offered, size, features);
     } catch (error) {
       if (input.on === undefined || !(error instanceof BoxError) || error.code !== "no_capacity") throw error;
       const others = everywhere.filter((candidate) => candidate.backend.id !== offered[0]!.backend.id).map((candidate) => this.#providerName(candidate.backend));
@@ -910,8 +910,8 @@ export class Boxes {
     }
   }
 
-  /** The first backend with room for a box of the kind and size, or the reasons none has. */
-  async #choose(offered: OfferedKind[], size: BoxSize): Promise<OfferedKind> {
+  /** The first backend with room for a box of the kind and size, and still the features asked for, or the reasons none has. */
+  async #choose(offered: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
     const all = await this.all();
     const reasons: string[] = [];
     for (const candidate of offered) {
@@ -919,8 +919,15 @@ export class Boxes {
       const pending = await Promise.all(acquiring.map(async (box) => ({ kind: box.kind, size: await this.#size(box) })));
       try {
         const capacity = await candidate.backend.capacity(candidate.kind.id, size, pending);
-        if (capacity.ok) return candidate;
-        reasons.push(capacity.message ?? `${candidate.backend.label} has no room.`);
+        if (!capacity.ok) {
+          reasons.push(capacity.message ?? `${candidate.backend.label} has no room.`);
+          continue;
+        }
+        // Checking room can show a backend lacks what it offered, as a rootless Docker host lacks Docker (041).
+        const kind = candidate.backend.kinds().find((other) => other.id === candidate.kind.id) ?? candidate.kind;
+        const missing = features.filter((feature) => !kind.capabilities.features.includes(feature));
+        if (!missing.length) return { ...candidate, kind };
+        reasons.push(`${candidate.kind.id} boxes from ${candidate.backend.label} have no ${missing.map(featureWord).join(" or ")}.`);
       } catch (error) {
         this.#deps.logError("capacity", error);
         reasons.push(describeError(error, `Checking room on ${candidate.backend.label}`));
@@ -934,9 +941,9 @@ export class Boxes {
    * offered backend gives its room back and the choice is made once more:
    * on a Mac a spare holds one of its two VM slots (#120).
    */
-  async #chooseFreeing(offered: OfferedKind[], size: BoxSize): Promise<OfferedKind> {
+  async #chooseFreeing(offered: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
     try {
-      return await this.#choose(offered, size);
+      return await this.#choose(offered, size, features);
     } catch (error) {
       if (!(error instanceof BoxError) || error.code !== "no_capacity") throw error;
       const spares = (await this.list(SPARES)).filter((spare) => spare.state !== "releasing" && !this.#holdsNothing(spare));
@@ -944,7 +951,7 @@ export class Boxes {
       if (!spare) throw error;
       this.#deps.log?.(`Releasing spare box ${spare.name}: a thread's ${offered[0]!.kind.id} box needs its room.`);
       if (await this.#release(spare)) throw error;
-      return this.#choose(offered, size);
+      return this.#choose(offered, size, features);
     }
   }
 

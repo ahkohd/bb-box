@@ -158,7 +158,8 @@ and `start` and `stop` throw `gone`.
   viewer's resize themselves. Both desktops resize to the viewer while you
   hold control.
 - Docker comes with Proxmox LXC (`nesting=1`) and Tart, and with the
-  Docker backend's boxes when they are privileged, as they are by default.
+  Docker backend's boxes when they are privileged, as they are by default
+  but for GPU desktops.
   A box user in the `docker` group is root on the machine, so an SSH pool
   gives Docker only if its reset restores the whole machine
   (`restores: "machine"`). Rootless Docker kept in the box user's home may
@@ -1308,7 +1309,8 @@ Notes:
   `--init` and a start script, and no systemd
   ([013](decisions/013-docker-boxes-run-unprivileged.md)). Docker inside a
   box needs a privileged container, which is root on the Docker host. Boxes
-  are privileged unless the operator turns it off
+  are privileged unless the operator turns it off, or the host is rootless
+  Docker, but a GPU desktop never is: it would see every GPU on the host
   ([041](decisions/041-every-linux-box-has-docker.md)). Without
   systemd, BB's installer leaves its host daemon running in the background.
   After a restart, the start script removes BB's daemon lock and PID file,

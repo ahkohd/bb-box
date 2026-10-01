@@ -9,9 +9,9 @@ the code goes and how to prove a backend works.
 
 One row per host and box OS. A box is a container, a VM or a physical
 machine; its kinds are plain or with a desktop. "Working" means merged and
-in daily use. Linux boxes have Docker, except Docker backend boxes without
-its `privileged` field, its desktops for now, and SSH host pool boxes
-unless every machine lists `linux-docker`
+in daily use. Linux boxes have Docker, except Docker backend boxes with its
+`privileged` field off or on rootless Docker, its GPU desktops, and SSH host
+pool boxes unless every machine lists `linux-docker`
 ([041](decisions/041-every-linux-box-has-docker.md)).
 
 | Host | Box | Form | Backend | Kinds | Status | Arch | GPU |
@@ -380,6 +380,13 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   desktops. A box gets its size's cores and memory as container limits, and
   may not have more cores than the host. A disk size is refused, and
   `Guest.size` has `diskGiB` null. There is no warm pool.
+- Each box but a GPU desktop is a privileged container with Docker's data
+  on an anonymous volume, unless `privileged` is off. Its start script
+  listens on Docker's socket with `systemd-socket-activate`, so `dockerd`
+  starts with the first `docker` command, or at once when the box has
+  containers. A privileged GPU desktop would see every GPU on the host. On
+  rootless Docker, `kinds()` drops `docker` once the daemon has said so
+  ([041](decisions/041-every-linux-box-has-docker.md)).
 - The tests run against a fake `docker` CLI whose daemon state is a
   directory, and whose `docker exec` runs commands on the test machine
   ([test/fake-docker.mjs](../test/fake-docker.mjs),
@@ -388,6 +395,6 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
 To run the suite against a real Docker host with the images built:
 
 ```sh
-echo '{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": { "privileged": true } }] }' > /tmp/docker.json
+echo '{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": {} }] }' > /tmp/docker.json
 npm run conformance -- --backend docker --settings /tmp/docker.json
 ```

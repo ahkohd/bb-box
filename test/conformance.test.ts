@@ -128,7 +128,7 @@ await conformance({
 
 // A container's name comes from its box ID, so the Docker backend has no ref to reuse.
 const docker = fakeDockerHost();
-const dockerSettings = dockerConfig({ privileged: true });
+const dockerSettings = dockerConfig();
 await conformance({
   name: "Docker on a fake host",
   storage: new MemoryStorage(),
