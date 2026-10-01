@@ -38,7 +38,8 @@ export function KindRow({ model, open, onToggle, onSwitch, switching, children }
   const offering = backends.filter((backend) => backend.offers);
   const warm = backends.filter((backend) => backend.warm > 0).map((backend) => `${backend.warm} warm on ${backend.label}`);
   const presets = PRESET_NAMES.map((preset) => `${PRESET_LABELS[preset]} ${sizeWords(sizes.presets[preset])}${preset === sizes.default ? " (default)" : ""}`);
-  const forms = [...new Set(backends.map((backend) => backend.form).filter((form): form is BoxForm => form !== null))];
+  // The badges say what its boxes are on the backends that offer it now, as the "From" line names them.
+  const forms = [...new Set(offering.map((backend) => backend.form).filter((form): form is BoxForm => form !== null))];
   return (
     <div className="py-3 first:pt-0 last:pb-0">
       <div className="flex items-start gap-3">
