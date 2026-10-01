@@ -144,9 +144,16 @@ document, bb-box builds it from BB's settings:
 - Proxmox LXC is in the document, with ID `proxmox-lxc` and its switch as it
   was, if any of its keys was set. Its boxes, storage and guests carry over,
   and no guest is touched. A new install starts with no backends.
-- The secrets are written first, then the document at revision 1. The
-  document marks the move as done, so it happens once, and a failed write
-  leaves BB's settings as they were for the next start to try again.
+- The secrets are written first, then a copy of the non-secret values
+  BB's settings gave, then the document at revision 1. The document marks
+  the move as done, so it happens once, and a failed write leaves BB's
+  settings as they were for the next start to try again.
+- The copy is kept in plugin storage under
+  `config/migrated-from-bb-settings`, with the time of the move and the
+  bb-box version that made it, so a value that moved wrongly can be
+  compared with what it was. `bb box config migrated` prints it, and
+  `--remove` removes it. `bb box config show` mentions it until then.
+  Secrets are not copied: they exist on their hosts.
 - Then bb-box clears the old values from BB's settings, so no second copy of
   a secret is left. It declares the old keys only while there is no
   document, for this move to read them.

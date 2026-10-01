@@ -1016,7 +1016,9 @@ bb-box's configuration is one checked document in its plugin storage
   `config.apply(draft, revision)`. Every write is checked, and a revision
   stops two people overwriting each other. `show --json` is the export.
 - The first start of the version that brings it moves BB's settings into
-  the document once, and leaves boxes and guests as they are.
+  the document once, and leaves boxes and guests as they are. It keeps a
+  copy of the non-secret values it moved, which `bb box config migrated`
+  prints, until the operator removes it.
 
 ## Data ownership
 
