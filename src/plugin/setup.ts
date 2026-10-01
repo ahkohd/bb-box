@@ -177,7 +177,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       }
     },
     projectOf,
-    enrol: (box) => enrolment.enrol(box),
+    enrol: (box, options) => enrolment.enrol(box, { since: options?.restored ? "restored" : "ready" }),
     unenrol: (box) => enrolment.unenrol(box),
     reconnect: (box) => enrolment.reconnect(box),
     access: async (box) => ({ names: await names(box), parent: options.daemonParent ?? DAEMON_PARENT }),

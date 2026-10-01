@@ -4,7 +4,8 @@
 // as the box user. Releasing a box removes its machine first. After bb-box
 // starts a stopped box, or when the sweep finds a ready box's machine
 // disconnected, bootstrap runs again with the same key to start BB's daemon
-// (017).
+// (017). A box the sweep restores from its guest enrols again with the same
+// key, and BB gives back the machine it still has for it (025).
 //
 // Plugins can read the names of BB's machine variables but not their values;
 // BB gives the values, and GH_TOKEN, to its daemon in the box. Commands in a
@@ -30,7 +31,7 @@ export const MACHINE_PROVIDER_ID = "bb-box";
 
 /** The parts of BB's host API enrolment uses. */
 export interface HostApi {
-  experimental_create(args: { machineProviderId: string; key: string; inputs: { boxId: string }; wait: false }): Promise<{ id: string }>;
+  experimental_create(args: { machineProviderId: string; key: string; inputs: { boxId: string }; wait: false }): Promise<HostState>;
   get(args: { hostId: string; signal?: AbortSignal }): Promise<HostState>;
   delete(args: { hostId: string }): Promise<unknown>;
 }
@@ -127,20 +128,29 @@ const STEPS: readonly Step[] = [
 ];
 
 /**
- * When each step of one enrolment ended, counted from when the box was
- * ready, or for an enrolment `resumed` after a restart, from then.
+ * What an enrolment's time counts from: the box being ready, bb-box
+ * resuming the enrolment after a restart, or the sweep restoring the box.
  */
+export type EnrolSince = "ready" | "resumed" | "restored";
+
+const SINCE: Record<EnrolSince, string> = {
+  ready: "it was ready",
+  resumed: "bb-box resumed following it",
+  restored: "the sweep restored it",
+};
+
+/** When each step of one enrolment ended, counted from `origin`. */
 export class Phases {
   readonly origin: number;
-  readonly resumed: boolean;
+  readonly since: EnrolSince;
   readonly #now: () => number;
   readonly marks = new Map<string, number>();
   #wake: (() => void) | null = null;
 
-  constructor(origin: number, now: () => number = Date.now, resumed = false) {
+  constructor(origin: number, now: () => number = Date.now, since: EnrolSince = "ready") {
     this.origin = origin;
     this.#now = now;
-    this.resumed = resumed;
+    this.since = since;
   }
 
   mark(step: string, at = this.#now()): void {
@@ -178,8 +188,7 @@ export class Phases {
         .map((step) => step.text)
         .join(", ");
     const last = Math.max(this.origin, ...this.marks.values());
-    const from = this.resumed ? "bb-box resumed following it" : "it was ready";
-    return `Enrolled box ${boxName} ${seconds(last - this.origin)} after ${from}: ${describe(STEPS)}.`;
+    return `Enrolled box ${boxName} ${seconds(last - this.origin)} after ${SINCE[this.since]}: ${describe(STEPS)}.`;
   }
 }
 
@@ -257,15 +266,18 @@ export class Enrolment {
   }
 
   /**
-   * Makes a ready box a BB machine and waits until its daemon connects, or
-   * with `resumed`, follows an enrolment a restart interrupted. Never throws.
+   * Makes a ready box a BB machine and waits until its daemon connects.
+   * `since` "resumed" follows an enrolment a restart interrupted, and
+   * "restored" enrols a box the sweep restored. Never throws.
    */
-  async enrol(box: BoxRecord, options: { resumed?: boolean } = {}): Promise<void> {
+  async enrol(box: BoxRecord, options: { since?: EnrolSince } = {}): Promise<void> {
     if (this.#following.has(box.id)) return;
     this.#following.add(box.id);
     // Enrolment starts once the box is ready, so its time counts from then.
-    // A resumed one's time from then would count the restart too.
-    const phases = options.resumed ? new Phases(Date.now(), Date.now, true) : new Phases(box.readyAt ?? Date.now());
+    // A resumed one's time from then would count the restart too, and a
+    // restored box was ready long before.
+    const since = options.since ?? "ready";
+    const phases = new Phases(since === "ready" ? (box.readyAt ?? Date.now()) : Date.now(), Date.now, since);
     this.#phases.set(box.id, phases);
     try {
       let current: BoxRecord = box;
@@ -284,6 +296,14 @@ export class Enrolment {
           return;
         }
         current = recorded;
+        // BB still had the box's machine, as for a box the sweep restored,
+        // and its daemon is not running. BB does not create the machine
+        // again, so bootstrap with the same key starts the daemon.
+        if (host.lifecycle.phase === "active" && host.status !== "connected") {
+          const transport = await this.#transport(current);
+          await this.#deps.bootstrap({ key: box.id, executor: executor(transport, phases), report: QUIET, signal: AbortSignal.timeout(this.#timeoutMs) });
+          phases.mark("bootstrapped");
+        }
       }
       await this.#follow(current, phases, this.#setUpAccess(current, phases));
     } catch (error) {
@@ -312,7 +332,7 @@ export class Enrolment {
         // A resumed enrolment's own time is only its last part, so the box shows none.
         const enrolled = await this.#deps.boxes.update(box, (latest) => ({
           enrol: { state: "enrolled", hostId, error: null },
-          ...(phases.resumed ? {} : { timings: { ...latest.timings, enrol: Date.now() - phases.origin } }),
+          ...(phases.since === "resumed" ? {} : { timings: { ...latest.timings, enrol: Date.now() - phases.origin } }),
         }));
         phases.mark("enrolled");
         if (enrolled) this.#deps.log?.(phases.line(enrolled.name));
@@ -427,7 +447,7 @@ export class Enrolment {
   async resume(): Promise<void> {
     for (const box of await this.#deps.boxes.all()) {
       if (box.state !== "ready" || box.enrol.state !== "enrolling") continue;
-      void this.enrol(box, { resumed: true });
+      void this.enrol(box, { since: "resumed" });
     }
   }
 }

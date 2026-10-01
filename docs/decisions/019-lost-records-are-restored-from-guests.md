@@ -1,7 +1,9 @@
 # 019: The sweep restores lost records, and only BB ends a thread
 
 Status: accepted, 30 September 2026. Extends
-[018](018-guests-name-their-install-and-box.md).
+[018](018-guests-name-their-install-and-box.md). Partly superseded by
+[025](025-a-restored-box-enrols-again.md): whether a restored box is a BB
+machine.
 
 ## Context
 

@@ -104,8 +104,12 @@ export interface BoxesDeps {
   thread(threadId: string): Promise<ThreadLiveness>;
   /** A thread's project, for a box the sweep restores from its guest. */
   projectOf?(threadId: string): Promise<string | null>;
-  /** Enrols a ready box as a BB machine. Called without awaiting. */
-  enrol?(box: BoxRecord): Promise<void>;
+  /**
+   * Enrols a ready box as a BB machine, with the box ID as the key. With
+   * `restored`, the sweep has just restored the box, so its enrolment counts
+   * from now. Called without awaiting.
+   */
+  enrol?(box: BoxRecord, options?: { restored?: boolean }): Promise<void>;
   /** Removes a box's BB machine. Awaited before the backend releases the box. */
   unenrol?(box: BoxRecord): Promise<void>;
   /**
@@ -488,10 +492,15 @@ export class Boxes {
     }
     // A release waiting behind this task releases the guest next.
     if (next.state !== "ready") return;
+    await this.#enrol(next);
+  }
+
+  /** Starts enrolling a ready box as a BB machine, when its kind can enrol and bb-box enrols boxes. */
+  async #enrol(box: BoxRecord, options: { restored?: boolean } = {}): Promise<void> {
     const general = await this.#deps.general();
-    if (next.capabilities.enrol && general.enrol && this.#deps.enrol) {
-      const enrolling = await this.update(next, () => ({ enrol: { state: "enrolling", hostId: null, error: null } }));
-      if (enrolling) void this.#deps.enrol(enrolling).catch((error) => this.#deps.logError("enrol", error));
+    if (box.capabilities.enrol && general.enrol && this.#deps.enrol) {
+      const enrolling = await this.update(box, () => ({ enrol: { state: "enrolling", hostId: null, error: null } }));
+      if (enrolling) void this.#deps.enrol(enrolling, options).catch((error) => this.#deps.logError("enrol", error));
     }
   }
 
@@ -983,7 +992,8 @@ export class Boxes {
    * Rebuilds the record of a live thread's guest, for example after storage
    * was lost, from what the guest names: its box, thread, name, kind and
    * creation, with its reference, address and data. A running guest is ready
-   * when its command transport answers. Its BB machine is not restored.
+   * when its command transport answers, and enrols again as a BB machine with
+   * the same key, so BB gives back the machine it still has (025).
    */
   async #restore(backend: Backend, held: HeldGuest, signal?: AbortSignal): Promise<boolean> {
     const { owner: found, power, ...guest } = held;
@@ -1028,6 +1038,8 @@ export class Boxes {
     });
     if (restored) {
       this.#deps.log?.(`Restored box ${restored.name} of thread ${restored.threadId} from guest ${guest.ref}, whose record was lost. It is ${restored.state}.`);
+      // Only a running guest answers.
+      if (answers) await this.#enrol(restored, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
     }
     return restored !== null;
   }
