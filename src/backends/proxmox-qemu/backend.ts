@@ -521,10 +521,10 @@ export class ProxmoxQemuBackend implements Backend {
             }
           }
         } catch (error) {
-          const missing = error instanceof ProxmoxError && error.notFound;
+          const missing = error instanceof ProxmoxError && error.gone;
           fail(
             name,
-            missing ? `VM ${template} does not exist on ${node}.` : message(error),
+            missing ? `VM ${template} does not exist on ${node}, or is not in pool ${pool}.` : message(error),
             missing
               ? "Build it with setup/proxmox-qemu/build.sh, or remove it from the Windows templates in bb-box's settings."
               : audit(error, `Give the token VM.Audit and VM.Clone on /vms/${template}.`),
@@ -657,7 +657,7 @@ export class ProxmoxQemuBackend implements Backend {
     try {
       return await api.config(vmid, signal);
     } catch (error) {
-      if (error instanceof ProxmoxError && error.notFound) return null;
+      if (error instanceof ProxmoxError && error.gone) return null;
       throw error;
     }
   }
@@ -742,8 +742,8 @@ export class ProxmoxQemuBackend implements Backend {
     try {
       config = await api.config(template, signal);
     } catch (error) {
-      if (error instanceof ProxmoxError && error.notFound) {
-        throw new Error(`Windows template ${template} does not exist on ${api.node}. Run the doctor check in bb-box's panel.`);
+      if (error instanceof ProxmoxError && error.gone) {
+        throw new Error(`Windows template ${template} does not exist on ${api.node}, or is not in pool ${this.#config.proxmox.pool}. Run the doctor check in bb-box's panel.`);
       }
       throw error;
     }
@@ -765,7 +765,7 @@ export class ProxmoxQemuBackend implements Backend {
       const config = await api.config(template, signal);
       return !isTemplate(config) || config.lock !== undefined;
     } catch (error) {
-      if (error instanceof ProxmoxError && (error.notFound || error.forbidden)) return true;
+      if (error instanceof ProxmoxError && error.gone) return true;
       throw error;
     }
   }

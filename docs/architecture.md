@@ -1214,11 +1214,13 @@ Notes:
   swapping, which leaves its VMID without a template for about 3 s. When a
   clone fails and the template is missing, not yet a template or locked,
   the backend waits up to 10 s for it, then clones again on the next VMID.
-  The token reaches only the pool's guests, so a missing template may
-  answer 403. When the template is there after a failure, the clone is
-  tried once more at once, as the template may have come back meanwhile.
-  The box's timings show the wait as `template`, apart from `clone`. Warm
-  guests and the capacity check wait the same way.
+  The token reaches only the pool's guests, so Proxmox answers 403 for a
+  VMID that is not there, and both Proxmox backends count a guest or
+  template that answers 403 as missing, as one that answers 404. When the
+  template is there after a failure, the clone is tried once more at once,
+  as the template may have come back meanwhile. The box's timings show the
+  wait as `template`, apart from `clone`. Warm guests and the capacity check
+  wait the same way.
 - **Docker** runs the `docker` CLI against a local socket or a Docker host
   over `ssh://`. Commands, file copies and the desktop all go through
   `docker exec`, so BB's server needs no network path to a box
