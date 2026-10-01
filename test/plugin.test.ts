@@ -804,7 +804,7 @@ test("an agent reads a desktop box's window, acts on references and is told what
   assert.equal(text(gone), `${deleteThree} (push button 'Delete Task 3') is no longer on screen. Call computer_observe again.`);
 
   const typed = text(await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" }));
-  assert.match(typed, /^Typed 8 characters into e\d+ \(text 'New task'\), in the foreground because Cua could not do it in the background/);
+  assert.match(typed, /^Typed 8 characters into e\d+ \(text 'New task'\), with the real keyboard \(the desktop's focus may have moved\)\./);
   assert.match(typed, new RegExp(`${field} now reads: \\[${field}\\] text "New task" value="Buy milk"`));
   const types = readDesktop(file).calls.filter((call) => call.tool === "type_text").map((call) => call.args.delivery_mode);
   assert.deepEqual(types, ["background", "foreground"]);
@@ -814,6 +814,15 @@ test("an agent reads a desktop box's window, acts on references and is told what
   assert.match(pressed, /\+ \[e\d+\] list item "Buy milk"/);
   const press = lastCall(file, "press_key");
   assert.deepEqual([press?.args.key, press?.args.modifiers], ["Return", []]);
+
+  // computer_act presses keys too, as agents look for it there.
+  assert.match(text(await tool("computer_act", { box: box.name, action: "key", keys: "ctrl+a", window: 100 })), /^Pressed ctrl\+a in window 100\./);
+  assert.deepEqual(lastCall(file, "press_key")?.args, { pid: 5000, window_id: 100, key: "a", modifiers: ["ctrl"], delivery_mode: "background" });
+  // Some harnesses send a window ID as a string where "desktop" may go.
+  assert.match(text(await tool("computer_act", { box: box.name, action: "key", keys: "ctrl+a", window: "100" })), /^Pressed ctrl\+a in window 100\./);
+  assert.match(text(await tool("computer_type", { box: box.name, keys: "ctrl+a", window: "100" })), /^Pressed ctrl\+a in window 100\./);
+  assert.match(text(await tool("computer_screenshot", { box: box.name, window: "100" })), /^window 100: tasks "Tasks"/);
+  assert.match(text(await tool("computer_act", { box: box.name, action: "key", window: 100 })), /^key needs keys: a key or chord, such as Escape or ctrl\+a\./);
 
   const queried = text(await tool("computer_observe", { box: box.name, window: 100, query: "task 2" }));
   assert.match(queried, /2 lines match "task 2", shown with their ancestors\./);
@@ -838,7 +847,7 @@ test("a dialog is named with its window, and an action that closes a window says
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
   const opened = text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Clear all"') }));
   assert.match(opened, /A modal dialog "Clear all tasks\?", window 101, is open over this window\./);
-  assert.match(opened, /Next: .*Observe a dialog or popup by its window ID to act in it\./);
+  assert.match(opened, /Next: .*Observe a dialog by its window ID to act in it\./);
   const dialog = text(await tool("computer_observe", { box: box.name, window: 101 }));
   assert.match(dialog, /^Window 101: tasks "Clear all tasks\?", 300 by 150\./);
   const cleared = text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(dialog, '"Clear"') }));
@@ -880,7 +889,8 @@ test("pixels count only against the agent's latest image of the window or the de
     /^Clicked \(784, 441\) on the desktop, \(960, 540\) on the screen\. Image 1568x882 of screen 1920x1080, scale 0\.817; x and y are image pixels\.\n\nNo window opened, closed or changed and nothing changed in the tree of window 100, which is under that point\./,
   );
   const click = lastCall(file, "click");
-  assert.deepEqual(click?.args, { x: 960, y: 540, scope: "desktop", button: "left", count: 1, delivery_mode: "background" }, "the desktop's pixels become the screen's");
+  assert.deepEqual(click?.args, { x: 784, y: 441, scope: "desktop", button: "left", count: 1, delivery_mode: "foreground" }, "Cua maps the desktop's pixels to the screen itself");
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 })), /^Clicked \(784, 441\) on the desktop, \(960, 540\) on the screen\./, "an image serves for more than one click");
 
   const launched = text(await tool("computer_launch", { box: box.name, app: "wide" }));
   const wide = Number(/window (\d+): wide/.exec(launched)?.[1]);
@@ -898,11 +908,12 @@ test("computer_launch opens apps and URLs and says which windows opened", async 
 
   // A browser's window is untitled until its page loads.
   const page = text(await tool("computer_launch", { box: box.name, url: "https://example.com/" }));
-  assert.match(page, /^Opened https:\/\/example\.com\/\. Its window:\n- window 103: browser "example\.com - Browser", 1280 by 800\n\nNext: Call computer_observe with window 103/);
+  assert.match(page, /^Opened https:\/\/example\.com\/\. Its window:\n- window 103: browser "Welcome to example\.com - Browser", 1280 by 800\n\nNext: Call computer_observe with window 103/);
+  // In a browser already open, the title is the URL until the page loads, as Chrome's is.
   const reused = text(await tool("computer_launch", { box: box.name, url: "https://example.org/" }));
-  assert.match(reused, /^Opened https:\/\/example\.org\/ in a window that was already open:\n- window 103: browser "example\.org - Browser", 1280 by 800\n\nNext/);
+  assert.match(reused, /^Opened https:\/\/example\.org\/ in a window that was already open:\n- window 103: browser "Welcome to example\.org - Browser", 1280 by 800\n\nNext/);
   const slow = text(await tool("computer_launch", { box: box.name, url: "https://example.net/slow" }));
-  assert.match(slow, /^Opened https:\/\/example\.net\/slow in a window that was already open:\n- window 103: browser "Untitled - Browser", 1280 by 800\n\nThe page is still loading: its window's title is still "Untitled - Browser"\./);
+  assert.match(slow, /^Opened https:\/\/example\.net\/slow in a window that was already open:\n- window 103: browser "example\.net\/slow - Browser", 1280 by 800\n\nThe page is still loading: its window's title is still "example\.net\/slow - Browser"\./);
 
   // Cua's advice names its own tools, which the agent does not have.
   const missing = await tool("computer_launch", { box: box.name, app: "missing" });
@@ -922,8 +933,8 @@ test("a web page's runs of text are one line each, and the limit counts every li
   const id = Number(/window (\d+): browser/.exec(opened)?.[1]);
 
   const page = text(await tool("computer_observe", { box: box.name, window: id }));
-  assert.match(page, new RegExp(`^Window ${id}: browser "example\\.com - Browser", 1280 by 800\\. 65 elements, 128 lines\\.\n`));
-  assert.match(page, /\n {4}- static = "The quick brown fox jumps over the lazy dog\."\n {4}- \[e\d+\] link "Read more" \[actions=\[click\]\]\n {4}- static = "Hello world"\n {4}- \[e\d+\] link "" \[actions=\[click\]\]\n {4}- \[e\d+\] list "Results"\n/);
+  assert.match(page, new RegExp(`^Window ${id}: browser "Welcome to example\\.com - Browser", 1280 by 800\\. 65 elements, 128 lines\\.\n`));
+  assert.match(page, /\n {4}- heading = "Welcome"\n {4}- static = "The quick brown fox jumps over the lazy dog\."\n {4}- \[e\d+\] link "Read more" \[actions=\[click\]\]\n {4}- static = "Hello world"\n {4}- \[e\d+\] link "" \[actions=\[click\]\]\n {4}- \[e\d+\] list "Results"\n/);
   assert.match(page, /- \[e\d+\] list item ""\n {8}- static = "Result 60"\n/);
   assert.doesNotMatch(page, /\uFFFC/, "names made only of object replacement characters are noise");
   assert.doesNotMatch(page, /Partial/);
@@ -950,12 +961,15 @@ test("a text area keeps its reference when typing into it renames its document",
   const typed = text(await tool("computer_type", { box: box.name, ref: area, text: "Hello" }));
   assert.match(typed, new RegExp(`^Typed 5 characters into ${area} \\(text\\)\\.`));
   assert.match(typed, /The window's title is now "\*Untitled 1 - Editor"\./);
-  assert.match(typed, new RegExp(`${area} now reads: \\[${area}\\] text "" value="Hello"`));
+  assert.match(typed, new RegExp(`${area} now reads: \\[${area}\\] text "Hello" value="Hello"`));
   assert.equal(lastCall(file, "type_text")?.args.delivery_mode, "background");
 
+  // The text area is named after its text, as Mousepad's is: the reference follows it through its own rename.
   const again = text(await tool("computer_type", { box: box.name, ref: area, text: " world" }));
-  assert.match(again, new RegExp(`${area} now reads: \\[${area}\\] text "" value="Hello world"`));
-  assert.match(text(await tool("computer_observe", { box: box.name, window: id })), new RegExp(`- \\[${area}\\] text "" value="Hello world"`));
+  assert.match(again, new RegExp(`^Typed 6 characters into ${area} \\(text 'Hello'\\)\\.`));
+  assert.match(again, new RegExp(`${area} now reads: \\[${area}\\] text "Hello world" value="Hello world"`));
+  assert.match(text(await tool("computer_observe", { box: box.name, window: id })), new RegExp(`- \\[${area}\\] text "Hello world" value="Hello world"`));
+  assert.deepEqual(readDesktop(file).fields[id], "Hello world");
 });
 
 test("a button in a list whose rows all changed does not keep the old row's reference", async (t) => {
@@ -981,7 +995,7 @@ test("a button in a list whose rows all changed does not keep the old row's refe
 });
 
 test("an action on the desktop says which windows opened, closed or changed, or suggests a screenshot", async (t) => {
-  const { harness, box, tool } = await desktopBox();
+  const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   const shot = text(await tool("computer_screenshot", { box: box.name }));
   assert.match(shot, /^The desktop\. Image 1568x882 of screen 1920x1080, scale 0\.817;/);
@@ -998,13 +1012,137 @@ test("an action on the desktop says which windows opened, closed or changed, or 
   assert.match(closed, /Windows that changed \(\+ opened, - closed, ~ changed\):\n- window 101: tasks "Clear all tasks\?", 300 by 150/);
 
   // A context menu is missing from the window list, but not from the tree of the window it opened over.
-  const menu = text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 245 }));
-  assert.match(menu, /A popup, window 102, is open over this window\./);
-  assert.doesNotMatch(menu, /Windows that changed/);
+  // Task 3, at (400, 240) on the screen.
+  const menu = text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 }));
+  assert.match(menu, /\n\nOpened a context menu on list item 'Task 3' \(window 102\):\n- \[e\d+\] menu ""\n {2}- \[e\d+\] menu item "Rename"/);
+  assert.match(menu, /Next: Act on its items by reference\. To close it, press Escape with computer_type and window 102\.$/);
+  assert.doesNotMatch(menu, /Nothing changed|Windows that changed|No window opened/);
+  assert.match(text(await tool("computer_observe", { box: box.name, window: 100 })), /\n\nThe context menu on list item 'Task 3', window 102, is open over this window\.\n\nNext/);
+
+  // A menu never becomes the active window: its keys go to the desktop, where it has the focus.
+  const escaped = text(await tool("computer_type", { box: box.name, window: 102, keys: "Escape" }));
+  assert.equal(
+    escaped,
+    "Pressed Escape with the real keyboard, for the context menu on list item 'Task 3' (window 102).\n\n" +
+      "Closed the context menu on list item 'Task 3' (window 102).\n\nNext: Call computer_observe with window 100 to read the window it was open over.",
+  );
+  assert.deepEqual(lastCall(file, "press_key")?.args, { scope: "desktop", key: "Escape", modifiers: [], delivery_mode: "foreground" });
+  const gone = await tool("computer_type", { box: box.name, window: 102, keys: "Escape" });
+  assert.equal(isError(gone), true);
+  assert.match(text(gone), /^Box .* has no window 102\./);
+
+  // By reference, after reads that made the window's earlier tokens stale.
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const byRef = text(await tool("computer_act", { box: box.name, action: "right_click", ref: refOf(tree, 'list item "Task 2"') }));
+  assert.match(byRef, /\n\nOpened a context menu on list item 'Task 2' \(window 103\):\n- \[e\d+\] menu ""/);
+  assert.doesNotMatch(byRef, /Nothing changed/);
+  const desktopKey = text(await tool("computer_act", { box: box.name, action: "key", keys: "Escape", window: "desktop" }));
+  assert.match(desktopKey, /^Pressed Escape with the real keyboard, into whatever has the focus\.\n\nClosed the context menu on list item 'Task 2' \(window 103\)\./);
+
+  // A menu's items are references.
+  const again = text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 }));
+  const rename = refOf(again, 'menu item "Rename"');
+  const picked = text(await tool("computer_act", { box: box.name, action: "click", ref: rename }));
+  assert.match(picked, new RegExp(`^Clicked ${rename} \\(menu item 'Rename'\\)\\.\\n\\nClosed the context menu on list item 'Task 3' \\(window 104\\)\\.`));
+
+  // When the desktop gives another window's elements for a menu, bb-box says it cannot read the menu's.
+  editDesktop(file, (desktop) => {
+    desktop.misreadPopups = true;
+  });
+  const misread = text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 }));
+  assert.match(misread, /\n\nOpened a context menu on list item 'Task 3' \(window 105\), whose items bb-box cannot read\.\n\nNext: Call computer_screenshot with window "desktop" to see it, then click its items by pixels\.$/);
+  const unread = await tool("computer_observe", { box: box.name, window: 105 });
+  assert.equal(isError(unread), true);
+  assert.match(text(unread), /^bb-box cannot read the items of the context menu on list item 'Task 3' \(window 105\): the desktop gives another window's instead\./);
+  assert.match(text(await tool("computer_type", { box: box.name, window: 105, keys: "Escape" })), /\n\nClosed the context menu on list item 'Task 3' \(window 105\)\./);
+
+  // When its items show in its window's tree instead, as a GTK app's do, bb-box says so, and they are references.
+  editDesktop(file, (desktop) => {
+    desktop.menusInWindow = true;
+  });
+  const inWindow = text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 }));
+  assert.match(inWindow, /\n\nOpened a context menu on list item 'Task 3' \(window 106\)\. Its items show in window 100's tree below\.\n\nWhat changed in window 100 \(\+ appeared, - went, ~ changed\):\n/);
+  assert.match(inWindow, /Next: Act on its items by reference\. To close it, press Escape with computer_type and window 106\. /);
+  const item = refOf(inWindow, 'menu item "Delete"');
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", ref: item })), /\n\nClosed the context menu on list item 'Task 3' \(window 106\)\./);
 
   // Nothing is under (960, 540), and nothing changes.
   const nothing = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 }));
   assert.match(nothing, /\n\nNo window opened, closed or changed\. Anything else that changed shows only in pixels\.\n\nNext: Call computer_screenshot with window "desktop" to see the desktop now\.$/);
+});
+
+test("a click on the desktop reads only a small tree under the point, and says when it did not", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { smallTree: 5 } });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_screenshot", { box: box.name });
+
+  // The heading of window 100, at (500, 115) on the screen.
+  const clicked = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 408, y: 94 }));
+  assert.match(
+    clicked,
+    /\n\nNo window opened, closed or changed\. bb-box did not read the tree of window 100, which is under that point, as it is too large to read quickly\.\n\nNext: Call computer_observe with window 100 to see what changed in it, or computer_screenshot with window "desktop"\.$/,
+  );
+  const reads = readDesktop(file).calls.filter((call) => call.tool === "get_window_state").map((call) => call.args.max_elements);
+  assert.equal(reads[0], 5);
+  assert.ok(reads.length > 1 && reads.slice(1).every((budget) => budget === 1), `reads: ${reads.join()}`);
+
+  // Once known to be large, its tree is not read at all.
+  const calls = readDesktop(file).calls.length;
+  await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 408, y: 94 });
+  const later = readDesktop(file).calls.slice(calls).filter((call) => call.tool === "get_window_state");
+  assert.ok(later.length > 0 && later.every((call) => call.args.max_elements === 1));
+});
+
+test("a window a few pixels from another of its app's is moved apart, so that its own tree is read", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  // A second window of the Tasks app, 10 pixels from the first, as a browser places a new window.
+  editDesktop(file, (desktop) => {
+    const window = { id: desktop.nextWindow++, pid: 5000, app: "tasks", title: "Errands", x: 110, y: 110, width: 800, height: 600, onScreen: true };
+    desktop.windows.push(window);
+    desktop.tasks[window.id] = ["Post a letter"];
+    desktop.fields[window.id] = "";
+  });
+
+  const first = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  assert.match(first, /list item "Task 1"/);
+  assert.doesNotMatch(first, /moved/);
+
+  const second = text(await tool("computer_observe", { box: box.name, window: 101 }));
+  assert.match(second, /frame "Errands"/);
+  assert.match(second, /list item "Post a letter"/);
+  assert.doesNotMatch(second, /Task 1/);
+  assert.match(
+    second,
+    /\n\nbb-box moved window 101 to \(140, 140\) on the screen: it lay within a few pixels of window 100, another window of its app, and the desktop gave that window's tree for both\.\n\nNext:/,
+  );
+  const moves = () => readDesktop(file).calls.filter((call) => call.tool === "set_window_frame");
+  assert.deepEqual(
+    moves().map((call) => call.args),
+    [{ pid: 5000, window_id: 101, x: 140, y: 140, width: 800, height: 600 }],
+  );
+
+  // Its references act in it, and once apart, neither window moves again.
+  const added = text(await tool("computer_type", { box: box.name, ref: refOf(second, '"New task"'), text: "Buy stamps" }));
+  assert.match(added, /value="Buy stamps"/);
+  assert.equal(readDesktop(file).fields[101], "Buy stamps");
+  assert.equal(readDesktop(file).fields[100], "");
+  await tool("computer_observe", { box: box.name, window: 100 });
+  assert.equal(moves().length, 1);
+
+  // A maximised window stays where it is, and the agent is told what to do.
+  editDesktop(file, (desktop) => {
+    const window = { id: desktop.nextWindow++, pid: 5000, app: "tasks", title: "Shopping", x: 100, y: 100, width: 800, height: 600, onScreen: true, maximised: true };
+    desktop.windows.push(window);
+    desktop.tasks[window.id] = ["Bread"];
+    desktop.fields[window.id] = "";
+  });
+  const stuck = await tool("computer_observe", { box: box.name, window: 102 });
+  assert.ok(isError(stuck));
+  assert.equal(
+    text(stuck),
+    'bb-box cannot read window 102: the desktop gives the tree of window 100, "Tasks", which lies within a few pixels of it, and window 102 would not move, as when it is maximised.\n\nNext: Un-maximise or close one of the two windows, for example by double-clicking its title bar, then observe it again. Or act on window 102 by pixels: call computer_screenshot with window 102.',
+  );
 });
 
 test("while a person holds a desktop the computer tools wait, and afterwards the agent is told to observe", async (t) => {

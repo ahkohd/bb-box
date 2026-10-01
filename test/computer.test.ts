@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ComputerError, chord, pngSize } from "../src/core/computer.ts";
+import { ComputerError, chord, explain, pngSize } from "../src/core/computer.ts";
 import { driverCommand } from "../src/core/in-box.ts";
 import { McpClosedError, McpError, McpSession } from "../src/core/mcp.ts";
 import { openRoute } from "../src/transports/route.ts";
@@ -28,6 +28,21 @@ test("pngSize reads a PNG's size from its header, and nothing from anything else
   assert.deepEqual(pngSize(png(1568, 882)), { width: 1568, height: 882 });
   assert.equal(pngSize(Buffer.from("not an image at all, not even close").toString("base64")), null);
   assert.equal(pngSize(""), null);
+});
+
+test("explain says why the desktop refused in bb-box's words, without Cua's codes, tools or hex window IDs", () => {
+  const refused = (text: string, structured?: Record<string, unknown>) => ({ content: [{ type: "text", text }], structuredContent: structured, isError: true });
+  const focus =
+    "foreground_unavailable: window 0x1000122 did not become the active, focused window within 1.5s (active=0x0 focus_within_target=true); " +
+    "no input was sent. bring_to_front it or target that dialog instead.";
+  assert.equal(explain(refused(focus, { status: "refused", refusal: { code: "foreground_unavailable" } })), "Window 16777506 could not be made the active window, so nothing was sent to it.");
+  assert.equal(explain(refused(focus)), "Window 16777506 did not become the active, focused window within 1.5s; no input was sent.");
+  assert.equal(
+    explain(refused("element_token is stale; call get_window_state again to refresh", { status: "refused", refusal: { code: "stale_element_token" } })),
+    "The element changed since bb-box last read its window, so nothing was done.",
+  );
+  assert.equal(explain(refused("Cua Driver could not do that.")), "The desktop gave no reason.");
+  assert.equal(explain(refused("The app is not responding \u2014 call get_window_state to check it.")), "The app is not responding.");
 });
 
 /** A channel whose other end is this test: `send` writes lines to the client, `sent` holds what the client wrote. */

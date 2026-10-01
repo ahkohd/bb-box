@@ -233,13 +233,15 @@ test("a script given a directory that does not exist runs none of its lines", as
   assert.equal(result.stdout, "");
 });
 
-test("the env file sets only valid names, and quotes values", () => {
+test("the env file sets only valid names, quotes values, and makes package installs ask nothing", () => {
   const dir = tempDir("env");
   const script = envScript("linux", { GREETING: "it's\nhere", "BAD-NAME": "x" });
   assert.doesNotMatch(script, /BAD-NAME/);
   writeFileSync(join(dir, "env"), script);
-  const out = execFileSync("sh", ["-c", '. ./env && printf %s "$GREETING"'], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
-  assert.equal(out, "it's\nhere");
+  const out = execFileSync("sh", ["-c", '. ./env && printf %s "$GREETING|$DEBIAN_FRONTEND"'], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
+  assert.equal(out, "it's\nhere|noninteractive");
+  writeFileSync(join(dir, "env"), envScript("linux", { DEBIAN_FRONTEND: "readline" }));
+  assert.equal(execFileSync("sh", ["-c", '. ./env && printf %s "$DEBIAN_FRONTEND"'], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } }), "readline");
 });
 
 test("commands in an enrolled box take the thread's access from BB's daemon as they start, and never store it", async (t) => {

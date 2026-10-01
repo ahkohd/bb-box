@@ -3,22 +3,32 @@
 // uses. The desktop it drives lives in the JSON file named by --socket, so
 // every session of a box sees one desktop, and a test can change it between
 // calls. Element tokens hold a prefix of the process's own, so like Cua's
-// they die with the session.
+// they die with the session, and the number of the window's read they came
+// from, so like Cua's they go stale when the window is read again. Element
+// frames are in the screen's pixels. A read stops at max_elements.
 //
 // The desktop has Tasks windows: a list of tasks, each with a "Delete Task N"
 // button, a "New task" field that refuses background typing, an Add button
 // and a "Clear all" button that opens a modal dialog. A right click in one
 // opens a context menu, which, like a real one, is missing from the window
-// list. A window of app "wide" is wider than the longest edge bb-box gives
-// the agent.
+// list and never becomes the active window: keys reach it only on the
+// desktop, where Escape closes it. With misreadPopups, a read of a menu gives
+// its window's elements instead, as Cua does for some popups. A window of
+// app "wide" is wider than the longest edge bb-box gives the agent. A click
+// on the desktop works only in the foreground. Like Cua, it takes pixels of
+// the session's latest image of the desktop, or of the screen before one.
 //
-// App "editor" is like Mousepad: a text area with no name, inside a tab
-// named after the document, which gains a "*" once edited, as does the title.
-// A URL opens in app "browser", whose window is titled "Untitled" until its
-// page loads; a URL with "slow" in it never does. A second URL goes to the
-// browser window already open. Its page gives each word, and each letter, of
-// some text a line of its own, as Chrome does, and has names made only of
-// U+FFFC.
+// App "editor" is like Mousepad: a text area named after its text, inside a
+// tab named after the document, which gains a "*" once edited, as does the
+// title. A URL opens in app "browser", whose window is titled "Untitled"
+// until its page loads; a URL with "slow" in it never does. A second URL goes
+// to the browser window already open, whose title is the URL while it loads,
+// as Chrome's is. Its page gives each word, and each letter, of some text a
+// line of its own, as Chrome does, and has names made only of U+FFFC.
+//
+// Like Cua, it finds a window's tree by where the window is: of two windows
+// of one app within 20 pixels of each other, a read of either gives the
+// first's tree. set_window_frame moves a window, unless it is maximised.
 
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -42,6 +52,8 @@ export interface FakeWindow {
   menuOf?: number;
   /** Every task's button is named "Delete", as rows' buttons often are. */
   plainButtons?: boolean;
+  /** set_window_frame leaves it where it is. */
+  maximised?: boolean;
 }
 
 export interface FakeDesktop {
@@ -61,6 +73,10 @@ export interface FakeDesktop {
   calls: { tool: string; args: Record<string, unknown> }[];
   /** How many sessions have started. */
   sessions: number;
+  /** A read of a menu gives its window's elements, moved to the menu. */
+  misreadPopups?: boolean;
+  /** A Tasks window's tree holds the items of its open menu, as a GTK app's does. */
+  menusInWindow?: boolean;
 }
 
 export function emptyDesktop(): FakeDesktop {
@@ -172,7 +188,8 @@ function tree(desktop: FakeDesktop, window: FakeWindow): Node {
   const whole = frame(0, 0, window.width, window.height);
   if (window.app === "editor") {
     const edited = desktop.fields[window.id] ? "*" : "";
-    const area: Node = { key: "document", role: "text", label: "", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(0, 60, window.width, window.height - 60), children: [] };
+    const typed = desktop.fields[window.id] ?? "";
+    const area: Node = { key: "document", role: "text", label: typed, value: typed, actions: [], frame: frame(0, 60, window.width, window.height - 60), children: [] };
     const pane: Node = { key: "pane", role: "scroll pane", label: "", actions: [], frame: area.frame, children: [area] };
     const tab: Node = { key: "tab", role: "page tab", label: `${edited}Untitled 1`, actions: ["click"], frame: frame(0, 30, 120, 30), children: [pane] };
     return { key: "frame", role: "frame", label: window.title, actions: [], frame: whole, children: [tab] };
@@ -237,6 +254,7 @@ function tree(desktop: FakeDesktop, window: FakeWindow): Node {
       { key: "field", role: "text", label: "New task", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(0, 520, 600, 40), children: [] },
       { key: "add", role: "push button", label: "Add", actions: ["click"], frame: frame(620, 520, 80, 40), children: [] },
       { key: "clear", role: "push button", label: "Clear all", actions: ["click"], frame: frame(710, 520, 80, 40), children: [] },
+      ...(desktop.menusInWindow ? desktop.windows.filter((menu) => menu.menuOf === window.id).map((menu) => tree(desktop, menu)) : []),
     ],
   };
 }
@@ -283,6 +301,11 @@ export class FakeCua {
   readonly #prefix = randomBytes(4).toString("hex");
   /** Per window, the size of the screenshot of the latest get_window_state, or null for none. */
   readonly #shots = new Map<number, { width: number; height: number } | null>();
+  /** Per window, how many times this session read it. */
+  readonly #reads = new Map<number, number>();
+  /** How this session's latest image of the desktop scales to the screen, as Cua maps desktop pixels by it; null before the first. */
+  #frame: { x: number; y: number } | null = null;
+  #captures = 0;
 
   constructor(socket: string) {
     // Only a file under the box's home holds the desktop; any other socket gets a desktop of its own.
@@ -304,7 +327,7 @@ export class FakeCua {
   }
 
   #token(window: FakeWindow, key: string): string {
-    return `${this.#prefix}|${window.id}|${key}`;
+    return `${this.#prefix}|${window.id}|${this.#reads.get(window.id) ?? 0}|${key}`;
   }
 
   #window(desktop: FakeDesktop, args: Args): FakeWindow | Result {
@@ -354,9 +377,21 @@ export class FakeCua {
         return this.#launch(args);
       case "list_apps":
         return this.#apps();
+      case "set_window_frame":
+        return this.#move(args);
       default:
         return text(`Unknown tool ${tool}.`, { code: "unknown_tool" }, true);
     }
+  }
+
+  #move(args: Args): Result {
+    return this.#change((desktop) => {
+      const window = this.#window(desktop, args);
+      if (!("id" in window)) return window;
+      if (window.maximised) return text("The window frame did not settle at the requested geometry.", { effect: "suspected_noop" });
+      Object.assign(window, { x: args.x, y: args.y, width: args.width, height: args.height });
+      return text("Set and verified the requested window frame.", { effect: "confirmed" });
+    });
   }
 
   #listWindows(): Result {
@@ -369,21 +404,28 @@ export class FakeCua {
     const desktop = this.#load();
     const window = this.#window(desktop, args);
     if (!("id" in window)) return window;
-    const flat = flatten(tree(desktop, window));
-    const elements = flat
-      .filter((entry) => !entry.node.text)
-      .map((entry) => ({
-        element_index: entry.index,
-        role: entry.node.role,
-        depth: entry.depth,
-        element_token: this.#token(window, entry.node.key),
-        label: entry.node.label,
-        value: entry.node.value ?? null,
-        enabled: true,
-        actions: entry.node.actions,
-        parent_index: entry.parent,
-        frame: entry.node.frame,
-      }));
+    this.#reads.set(window.id, (this.#reads.get(window.id) ?? 0) + 1);
+    const owner = desktop.windows.find((other) => other.id === window.menuOf);
+    const placed = owner
+      ? window
+      : (desktop.windows.find((other) => other.pid === window.pid && other.menuOf === undefined && Math.abs(other.x - window.x) <= 20 && Math.abs(other.y - window.y) <= 20) ?? window);
+    let flat = flatten(tree(desktop, desktop.misreadPopups && owner ? owner : placed));
+    const all = flat.filter((entry) => !entry.node.text);
+    const budget = typeof args.max_elements === "number" ? args.max_elements : Infinity;
+    const truncated = all.length > budget;
+    if (truncated) flat = flat.filter((entry) => entry.index <= all[budget - 1]!.index);
+    const elements = all.slice(0, budget).map((entry) => ({
+      element_index: entry.index,
+      role: entry.node.role,
+      depth: entry.depth,
+      element_token: this.#token(window, entry.node.key),
+      label: entry.node.label,
+      value: entry.node.value ?? null,
+      enabled: true,
+      actions: entry.node.actions,
+      parent_index: entry.parent,
+      frame: { x: placed.x + entry.node.frame.x, y: placed.y + entry.node.frame.y, w: entry.node.frame.width, h: entry.node.frame.height },
+    }));
     const dialogs = desktop.windows
       .filter((other) => other.dialogOf === window.id)
       .map((dialog) => ({ window_id: dialog.id, title: dialog.title, transient_for: window.id, modal: true, bounds: { x: dialog.x, y: dialog.y, width: dialog.width, height: dialog.height } }));
@@ -391,8 +433,9 @@ export class FakeCua {
       window_id: window.id,
       pid: window.pid,
       element_count: elements.length,
-      elements_complete: true,
-      truncated: false,
+      elements_complete: !truncated,
+      truncated,
+      ...(truncated ? { truncation_reason: "node_budget" } : {}),
       elements,
       snapshot_id: `${this.#prefix}-${Date.now()}`,
       app_name: window.app,
@@ -419,6 +462,7 @@ export class FakeCua {
     const desktop = this.#load();
     const { width, height } = desktop.screen;
     const size = shotSize(width, height, typeof args.max_image_dimension === "number" ? args.max_image_dimension : undefined);
+    this.#frame = { x: width / size.width, y: height / size.height };
     return {
       content: [
         { type: "text", text: "The desktop." },
@@ -431,7 +475,7 @@ export class FakeCua {
         screen_height: height,
         scale_factor: 1,
         windows: desktop.windows.map((window) => this.#windowJson(window)),
-        capture_id: `${this.#prefix}-desktop`,
+        capture_id: `${this.#prefix}-desktop-${++this.#captures}`,
       },
     };
   }
@@ -439,9 +483,12 @@ export class FakeCua {
   /** The element a token names, in the window as it is now. */
   #element(desktop: FakeDesktop, window: FakeWindow, token: unknown): Node | Result {
     if (typeof token !== "string") return text("Give element_token or x and y.", { code: "invalid_arguments" }, true);
-    const [prefix, id, key] = token.split("|");
+    const [prefix, id, read, key] = token.split("|");
     if (prefix !== this.#prefix) return text("element_token is not from this session. Call get_window_state again.", { code: "stale_token" }, true);
     if (Number(id) !== window.id) return text("element_token belongs to another window.", { code: "invalid_arguments" }, true);
+    if (Number(read) !== this.#reads.get(window.id)) {
+      return text("element_token is stale; call get_window_state again to refresh", { status: "refused", refusal: { code: "stale_element_token" } }, true);
+    }
     const node = flatten(tree(desktop, window)).find((entry) => entry.node.key === key)?.node;
     return node ?? text("The element is no longer in the window. Call get_window_state again.", { code: "stale_element" }, true);
   }
@@ -450,14 +497,22 @@ export class FakeCua {
     return this.#change((desktop) => {
       if (args.pid === undefined && args.window_id === undefined) {
         if (args.scope !== "desktop") return text('click: x,y given with no pid/window_id requires scope="desktop".', { code: "desktop_coordinate_scope_required" }, true);
+        if (args.delivery_mode !== "foreground") {
+          return text('Background delivery is not available for scope="desktop"; retry with delivery_mode:"foreground".', {
+            code: "background_unavailable",
+            effect: "none",
+            escalation: { recommended: "foreground" },
+          }, true);
+        }
+        // x and y are pixels of the latest image of the desktop, or of the screen before one.
+        const x = Math.round(Number(args.x) * (this.#frame?.x ?? 1));
+        const y = Math.round(Number(args.y) * (this.#frame?.y ?? 1));
         // The topmost window at the point gets it, as on a real screen.
-        const x = Number(args.x);
-        const y = Number(args.y);
         const under = desktop.windows
           .filter((window) => window.onScreen && x >= window.x && x < window.x + window.width && y >= window.y && y < window.y + window.height)
           .sort((a, b) => b.id - a.id)[0];
         if (under) this.#activate(desktop, under, hit(desktop, under, x - under.x, y - under.y), args);
-        return text(`Sent screen-absolute click at (${String(args.x)},${String(args.y)}) (desktop scope).`, { effect: "unverifiable" });
+        return text(`Sent screen-absolute click at (${x},${y}) (desktop scope).`, { effect: "unverifiable" });
       }
       const window = this.#window(desktop, args);
       if (!("id" in window)) return window;
@@ -500,6 +555,7 @@ export class FakeCua {
 
   #type(args: Args): Result {
     return this.#change((desktop) => {
+      if (args.scope === "desktop") return this.#onDesktop(desktop, args, () => {});
       const window = this.#window(desktop, args);
       if (!("id" in window)) return window;
       if (args.element_token !== undefined) {
@@ -526,6 +582,13 @@ export class FakeCua {
 
   #press(args: Args): Result {
     return this.#change((desktop) => {
+      if (args.scope === "desktop") {
+        return this.#onDesktop(desktop, args, () => {
+          // Escape closes the menu on top, where the focus is.
+          const menu = desktop.windows.filter((window) => window.menuOf !== undefined).at(-1);
+          if (String(args.key).toLowerCase() === "escape" && menu) desktop.windows = desktop.windows.filter((window) => window !== menu);
+        });
+      }
       const window = this.#window(desktop, args);
       if (!("id" in window)) return window;
       const key = String(args.key).toLowerCase();
@@ -540,6 +603,20 @@ export class FakeCua {
       }
       return text(`Pressed ${String(args.key)}.`, { delivery_mode: String(args.delivery_mode ?? "background") });
     });
+  }
+
+  /** Keys or text sent to the desktop, to whatever has the focus: only in the foreground. */
+  #onDesktop(desktop: FakeDesktop, args: Args, effect: () => void): Result {
+    if (args.pid !== undefined || args.window_id !== undefined) return text('scope="desktop" takes no pid or window_id.', { code: "invalid_arguments" }, true);
+    if (args.delivery_mode !== "foreground") {
+      return text('Background delivery is not available for scope="desktop"; retry with delivery_mode:"foreground".', {
+        code: "background_unavailable",
+        effect: "none",
+        escalation: { recommended: "foreground" },
+      }, true);
+    }
+    effect();
+    return text("Sent to the focused window (desktop scope).", { delivery_mode: "foreground", effect: "unverifiable" });
   }
 
   #setValue(args: Args): Result {
@@ -591,14 +668,14 @@ export class FakeCua {
         setTimeout(() => {
           this.#change((later) => {
             const window = later.windows.find((candidate) => candidate.id === id);
-            if (window && later.pages?.[id] === url) window.title = `${hostname(url)} - Browser`;
+            if (window && later.pages?.[id] === url) window.title = `Welcome to ${hostname(url)} - Browser`;
           });
         }, 600);
       };
       const open = desktop.windows.find((window) => window.app === "browser");
       if (open) {
         (desktop.pages ??= {})[open.id] = url;
-        open.title = "Untitled - Browser";
+        open.title = `${url.replace(/^[a-z]+:\/\//i, "")} - Browser`;
         loaded(open.id);
       } else {
         const pid = desktop.nextPid++;
@@ -616,8 +693,13 @@ export class FakeCua {
   }
 
   #apps(): Result {
-    const installed = ["Tasks", "Editor", "Browser", "Wide", "Editor"].map((name) => ({ name, kind: "desktop", launch_path: name.toLowerCase(), running: false }));
-    const apps = [...installed, { name: "Xvfb", kind: null, launch_path: null, running: true }];
+    const installed = ["Tasks", "Editor", "Browser", "Wide", "Editor"].map((name) => ({ name, kind: "desktop", bundle_id: name.toLowerCase(), launch_path: name.toLowerCase(), running: false }));
+    const apps = [
+      ...installed,
+      { name: "Settings Manager", kind: "desktop", bundle_id: "xfce-settings-manager", launch_path: "xfce4-settings-manager", running: false },
+      { name: "Log Out", kind: "desktop", bundle_id: "xfce4-session-logout", launch_path: "xfce4-session-logout", running: false },
+      { name: "Xvfb", kind: null, launch_path: null, running: true },
+    ];
     return text(`${apps.length} apps.`, { apps });
   }
 }

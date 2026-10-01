@@ -133,7 +133,9 @@ unset -f bb_box_access
 
 /**
  * The file that sets `variables` for commands in the box, and on Linux takes
- * the thread's access. Names that are not valid shell names are left out.
+ * the thread's access. Names that are not valid shell names are left out. On
+ * Linux, package installs ask nothing, since nobody could answer; a variable
+ * of the thread's own can say otherwise.
  */
 export function envScript(os: GuestOs, variables: Readonly<Record<string, string>>, access?: Access): string {
   const names = Object.keys(variables)
@@ -143,8 +145,9 @@ export function envScript(os: GuestOs, variables: Readonly<Record<string, string
     return names.map((name) => `$env:${name} = ${ps(variables[name]!)}`).join("\r\n") + "\r\n";
   }
   const header = "# Written by bb-box: the thread's environment for commands in this box.\n";
+  const defaults = os === "linux" ? "export DEBIAN_FRONTEND=noninteractive\n" : "";
   const loader = access && os === "linux" ? accessLoader(access) : "";
-  return header + names.map((name) => `export ${name}=${sh(variables[name]!)}`).join("\n") + "\n" + loader;
+  return header + defaults + names.map((name) => `export ${name}=${sh(variables[name]!)}`).join("\n") + "\n" + loader;
 }
 
 /** The line an enrolled Linux box's ~/.bashrc starts with, above anything that returns early. */

@@ -708,8 +708,8 @@ A box is a resource of its thread and gets what the thread's own machine has.
   | `computer_windows` | lists windows with ID, app, title and size |
   | `computer_observe` | reads a window's tree, with an optional query, limit and screenshot |
   | `computer_screenshot` | returns an image of a window or the desktop |
-  | `computer_act` | clicks, double-clicks, right-clicks, scrolls or sets a value, by reference or by pixel |
-  | `computer_type` | types text or a key chord, optionally into a reference |
+  | `computer_act` | clicks, double-clicks, right-clicks, scrolls or sets a value, by reference or by pixel, or presses a key chord |
+  | `computer_type` | types text or a key chord, into a reference, a window's focused element, a menu or the desktop |
   | `computer_launch` | opens an app or URL and returns its window ID |
 
 - **Tree text** has no frames, and uses the plugin's references such as
@@ -722,25 +722,61 @@ A box is a resource of its thread and gets what the thread's own machine has.
   and its ancestors' roles and names; never its value. An old reference is
   found again in the latest tree, or refused if it matches none or several.
   With raw Cua tokens, a stale reference in foreground mode clicked the wrong
-  element. When only an ancestor's name changed, as an editor's tab does when
-  its document is edited, an element keeps the reference of the element in
-  its place: the same role and name, under ancestors with the same roles, at
-  the same position among siblings of its role. A row among rows keeps its
-  name in the place, so a button in a list whose rows all changed gets a new
-  reference ([022](decisions/022-references-follow-renames-not-rows.md)).
+  element. When only names changed, as an editor's tab and text area do
+  when its document is edited, an element keeps the reference of the element
+  in its place: the same role, under ancestors with the same roles, at the
+  same position among siblings of its role. An element or ancestor that
+  shares its role with a sibling, such as a row among rows, keeps its name in
+  the place, so a button in a list whose rows all changed gets a new
+  reference ([022](decisions/022-references-follow-renames-not-rows.md),
+  [023](decisions/023-a-reference-follows-its-element-through-its-own-rename.md)).
+  Cua's tokens for a window go stale each time it is read, even for one
+  element, so the next action on a reference reads the window again first.
 - **Pixels.** The agent sees only pixels of images the plugin returned, at or
   under 1568 pixels on the long edge. A pixel action is accepted only against
   the latest image of that window. Each image and pixel action states the
   image's size, the window's or screen's size and the scale between them.
+  The plugin passes the agent's pixels to Cua as they are. Cua maps a
+  window's pixels by its latest image of the window, and the desktop's by
+  its latest image of the desktop in the session; the plugin takes no image
+  of the desktop but the agent's. Cua's `capture_id`, which binds pixels to
+  one image, serves one action only, so the plugin does not pass it.
 - **After each action** the plugin reads the tree again and returns what
   changed. Cua cannot check a click on the desktop, so the plugin compares
-  the window list before and after, and reads the window under the point;
-  when it sees no change, it suggests a screenshot.
-- **Cua's own advice** names tools the agent does not have, such as
-  `list_apps`. The plugin drops those sentences, and when an app will not
-  open, lists the apps installed in the box.
+  the window list before and after, and reads the window under the point
+  only when its tree has at most 200 elements: a read stops at that budget,
+  and a web page's full read takes 0.2 to 3 s. A window found too large is
+  then only checked for popups, which takes 6 to 7 ms. When the plugin sees
+  no change, it suggests a screenshot.
+- **Menus and popups** are missing from the window list. A read of the
+  window under them lists them, with their bounds. The plugin reads a popup
+  that opened and shows its items, but only when their frames fill the
+  popup's bounds: for some popups Cua gives another window's elements. A
+  GTK app's menu, such as Mousepad's File menu, is one: its items show in
+  its window's tree instead, and the plugin points to them there. It
+  names the popup after what opened it, such as "the context menu on list
+  item 'Task 3'", and says when it closes. A popup never becomes the active
+  window, so keys for it go to the desktop in the foreground.
+- **Cua's own words** name tools and codes the agent does not have, such as
+  `list_apps`, `bring_to_front` or `foreground_unavailable`, and window IDs
+  in hex. The plugin says why in its own words, with window IDs as
+  `computer_windows` gives them, and when an app will not open, lists the
+  apps installed in the box, without settings panels and session actions.
 - **Delivery.** Background first, which does not move the shared pointer.
-  When Cua refuses, in 2 to 4 ms, the plugin retries in foreground.
+  When Cua refuses, in 2 to 4 ms, the plugin retries in foreground and says
+  that the desktop's focus may have moved. On the desktop and in popups only
+  the foreground works.
+- **A URL** opens in a new browser window, or in a tab of one already open,
+  whose title changes. Until the page has a title, Chrome's is its address,
+  so the plugin waits up to 10 s for a title that is not.
+- **Two windows of one app** within about 20 pixels of each other, as Chrome
+  places a new window 10 pixels from the last, get one tree from Cua: it
+  finds a window's tree by where the window is, and takes the app's first
+  window there. The plugin knows a tree is another window's when its frame
+  bears that window's title. It then moves the window it reads 40 pixels
+  from the other with Cua's `set_window_frame`, says so, and reads it again.
+  A maximised window does not move: the plugin asks the agent to un-maximise
+  or close one of the two.
 
 ## Clean-up and crash recovery
 

@@ -12,11 +12,20 @@ import { next } from "./views.ts";
 const INSTRUCTIONS =
   "bb-box computer use: to use the apps on a desktop box, get a window ID from computer_windows or computer_launch, read the window with computer_observe, " +
   "then act with computer_act or computer_type, giving an element's reference such as e12. Each action says what changed, so observe again only to see the whole window. " +
+  "An action that opens a menu or popup says so, with its items' references; press keys in it with its window ID, or window \"desktop\". " +
   "Use computer_screenshot when appearance matters, and give pixels only from your latest image. " +
   "When a tool says a person has taken control of the desktop, stop using the computer tools until they hand it back.";
 
 const windowId = z.number().int().nonnegative();
+// Some agents' harnesses send a number as a string where it may also be "desktop".
+const windowOrDesktop = z.union([windowId, z.literal("desktop"), z.string().regex(/^\d+$/)]);
 const pixel = z.number().int().nonnegative();
+const keysParam = z.string().min(1).describe('One key or chord to press, such as Escape, Return, Tab, ctrl+a or ctrl+shift+t: modifiers and a key joined by "+". Write ctrl++ for ctrl and the + key.');
+
+/** A window ID given as digits, as a number. */
+function windowRef<T>(window: T | string): T | number {
+  return typeof window === "string" && /^\d+$/.test(window) ? Number(window) : (window as T);
+}
 
 function result(done: ComputerResult): PluginAgentToolResult {
   const text = `${done.text}${next(...done.hints)}`;
@@ -83,14 +92,11 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     presentation: { label: { pending: "Taking a screenshot", completed: "Took a screenshot" } },
     parameters: z.object({
       box: boxParam,
-      window: z
-        .union([windowId, z.literal("desktop")])
-        .optional()
-        .describe('The window\'s ID, or "desktop" for the whole screen. Defaults to "desktop".'),
+      window: windowOrDesktop.optional().describe('The window\'s ID, or "desktop" for the whole screen. Defaults to "desktop".'),
     }),
     async execute({ box: ref, window }, { threadId, signal }) {
       try {
-        return result(await computer.screenshot(await boxes.get(thread(threadId), ref), window ?? "desktop", signal));
+        return result(await computer.screenshot(await boxes.get(thread(threadId), ref), windowRef(window ?? "desktop"), signal));
       } catch (error) {
         return refusal(error, "Taking the screenshot");
       }
@@ -101,26 +107,27 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     name: "computer_act",
     description:
       "Click, double-click, right-click, scroll or set a value on a desktop box: on an element by its reference from computer_observe, " +
-      "or at x and y in your latest image of a window or the desktop. Says what changed in the window, or on the desktop which windows opened, closed or changed.",
+      "or at x and y in your latest image of a window or the desktop. Or press a key or chord with action key and keys, as computer_type does. " +
+      "Says what changed in the window, which menus or popups opened or closed, and on the desktop which windows opened, closed or changed.",
     presentation: { label: { pending: "Acting on the desktop", completed: "Acted on the desktop" } },
     parameters: z.object({
       box: boxParam,
-      action: z.enum(["click", "double_click", "right_click", "scroll", "set_value"]),
+      action: z.enum(["click", "double_click", "right_click", "scroll", "set_value", "key"]),
       ref: z.string().min(1).optional().describe("The element's reference from computer_observe, such as e12."),
-      window: z
-        .union([windowId, z.literal("desktop")])
+      window: windowOrDesktop
         .optional()
-        .describe('With x and y: the window whose image they are pixels of, or "desktop".'),
+        .describe('With x and y: the window whose image they are pixels of, or "desktop". For key without ref: the window that gets the key, or "desktop" for whatever has the focus.'),
       x: pixel.optional().describe("Pixels from the left of your latest image of the window."),
       y: pixel.optional().describe("Pixels from the top of your latest image of the window."),
       value: z.string().optional().describe("For set_value: the value, such as a field's text or a slider's number."),
       direction: z.enum(["up", "down", "left", "right"]).optional().describe("For scroll."),
       amount: z.number().int().min(1).max(50).optional().describe("For scroll: how many steps. Defaults to 3."),
+      keys: keysParam.optional().describe("For key: the key or chord, such as Escape or ctrl+a."),
     }),
     async execute(input, { threadId, signal }) {
       try {
-        const { box: ref, ...act } = input;
-        return result(await computer.act(await boxes.get(thread(threadId), ref), act, signal));
+        const { box: ref, window, ...act } = input;
+        return result(await computer.act(await boxes.get(thread(threadId), ref), { ...act, window: window === undefined ? undefined : windowRef(window) }, signal));
       } catch (error) {
         return refusal(error, "Acting on the desktop");
       }
@@ -130,20 +137,22 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
   bb.agents.registerTool({
     name: "computer_type",
     description:
-      "Type text, or press a key or chord such as Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. " +
-      "Says what the element reads afterwards.",
+      "Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. " +
+      'For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards.',
     presentation: { label: { pending: "Typing", completed: "Typed" } },
     parameters: z.object({
       box: boxParam,
       text: z.string().optional().describe("Characters to type."),
-      keys: z.string().min(1).optional().describe('One key or chord to press: modifiers and a key joined by "+". Write ctrl++ for ctrl and the + key.'),
+      keys: keysParam.optional(),
       ref: z.string().min(1).optional().describe("The element's reference from computer_observe, such as e12."),
-      window: windowId.optional().describe("Without ref: the window whose focused element gets the input."),
+      window: windowOrDesktop
+        .optional()
+        .describe('Without ref: the window whose focused element gets the input, a menu or popup by its window ID, or "desktop" for whatever has the focus.'),
     }),
     async execute(input, { threadId, signal }) {
       try {
-        const { box: ref, ...typed } = input;
-        return result(await computer.type(await boxes.get(thread(threadId), ref), typed, signal));
+        const { box: ref, window, ...typed } = input;
+        return result(await computer.type(await boxes.get(thread(threadId), ref), { ...typed, window: window === undefined ? undefined : windowRef(window) }, signal));
       } catch (error) {
         return refusal(error, "Typing");
       }
@@ -153,7 +162,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
   bb.agents.registerTool({
     name: "computer_launch",
     description:
-      "Open an app on a desktop box by its name or path, or open a URL in the box's browser. Says which windows it opened; for a URL, waits a few seconds for the page's title.",
+      "Open an app on a desktop box by its name or path, or open a URL in the box's browser. Says which windows it opened; for a URL, waits up to 10 s for the page's title.",
     presentation: { label: { pending: "Opening an app", completed: "Opened an app" } },
     parameters: z.object({
       box: boxParam,

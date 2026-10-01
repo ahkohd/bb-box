@@ -27,3 +27,4 @@ that changes gets a new record that supersedes the old one.
 | [020](020-control-belongs-to-a-viewer.md) | Control belongs to one viewer, and a GPU desktop is retried on another GPU |
 | [021](021-desktop-resize-through-the-backend.md) | A desktop whose VNC server cannot resize is resized by its backend |
 | [022](022-references-follow-renames-not-rows.md) | A reference follows its element through a rename, not into another row |
+| [023](023-a-reference-follows-its-element-through-its-own-rename.md) | A reference follows its element through its own rename |
