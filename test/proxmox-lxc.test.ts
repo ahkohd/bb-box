@@ -10,6 +10,7 @@ import {
   ownerFromDescription,
   ownerFromTags,
   warmNameScript,
+  nameScript,
   type LxcBackendOptions,
 } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
@@ -952,6 +953,37 @@ test("a claimed warm guest is named after its box inside, and no other machine i
   const refused = name("bb-box-warm", pve("127.0.1.1 bb-box-warm"));
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /a password is required/);
+});
+
+test("a spare's guest that changes owner and name is relabelled, and named after its box inside (036)", async () => {
+  const { backend, proxmox, ssh } = setup();
+  const box = identity("linux", "spare");
+  const guest = await backend.acquire(box, null, hooks().value, signal());
+  const vmid = Number(guest.ref);
+  assert.equal(ownerFromTags(parseTags(proxmox.guests.get(vmid)!.config.tags))?.threadId, "spare");
+
+  await backend.relabel(guest, { ...box, threadId: "operator", name: "build-1" }, box.name, signal());
+  const config = proxmox.guests.get(vmid)!.config;
+  const owner = ownerFromTags(parseTags(config.tags));
+  assert.deepEqual([owner?.threadId, owner?.boxId], ["operator", box.boxId], "the sweep would restore it to you");
+  assert.match(String(config.description), /^bb-box build-1\n/);
+  assert.equal(proxmox.guests.get(vmid)!.name, "build-1");
+  assert.ok(ssh.log().some((entry) => entry.command.includes(`-c ${quote(nameScript(box.name, "build-1"))}`)), "named inside");
+});
+
+test("a guest named after a spare is renamed inside, and only that guest (036)", () => {
+  const { dir, etc, auth, env } = warmNameStage("spare-name");
+  writeFileSync(join(dir, "kernel"), "polite-pine\n");
+  writeFileSync(join(etc, "hostname"), "polite-pine\n");
+  writeFileSync(join(etc, "hosts"), "127.0.0.1 localhost\n127.0.1.1 polite-pine\n");
+  const run = () => spawnSync("sh", ["-c", nameScript("polite-pine", "build-1", etc, auth)], { encoding: "utf8", env });
+  assert.equal(run().status, 0);
+  assert.equal(readFileSync(join(dir, "kernel"), "utf8"), "build-1\n");
+  assert.equal(readFileSync(join(etc, "hosts"), "utf8"), "127.0.0.1 localhost\n127.0.1.1 build-1\n");
+  // Now named build-1, it is not polite-pine: a second run changes nothing.
+  writeFileSync(join(etc, "hostname"), "kept\n");
+  assert.equal(run().status, 0);
+  assert.equal(readFileSync(join(etc, "hostname"), "utf8"), "kept\n");
 });
 
 test("a claimed warm desktop's display cookie still serves X clients under the box's name", { skip: !HAS_XAUTH && "xauth is not installed" }, () => {

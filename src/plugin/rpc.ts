@@ -2,7 +2,7 @@
 // panel to show, not as an RPC error.
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { BoxError, OPERATOR, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
 import { ControlError } from "../core/control.ts";
 import { contract, type BoxResult } from "./contract.ts";
 import type { BbBox } from "./setup.ts";
@@ -41,7 +41,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   bb.rpc.register(contract, {
     async state({ threadId }) {
       const [list, kinds, machine] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId)]);
-      const runsOn = machine && !list.some((box) => box.id === machine.id) ? { box: app.view(machine), owner: machine.threadId === OPERATOR ? ("yours" as const) : ("thread" as const) } : null;
+      const runsOn = machine && !list.some((box) => box.id === machine.id) ? { box: app.view(machine), owner: machine.threadId === OPERATOR || machine.threadId === SPARES ? ("yours" as const) : ("thread" as const) } : null;
       return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn };
     },
     acquire: ({ threadId, kind, size }) =>

@@ -6,7 +6,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks } from "../backends/index.ts";
 import type { BackendDriver, DoctorReport } from "../backends/types.ts";
-import { BoxError, Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
+import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { emptyDocument, type ConfigDocument } from "../core/document.ts";
@@ -330,9 +330,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   needsConfiguration();
 
   bb.events.on("thread.archived", ({ thread }) => {
+    threadHosts.delete(thread.id);
     void boxes.releaseThread(thread.id).catch((error) => logError("thread archived", error));
   });
   bb.events.on("thread.deleted", ({ thread }) => {
+    threadHosts.delete(thread.id);
     void boxes.releaseThread(thread.id).catch((error) => logError("thread deleted", error));
   });
   bb.events.on("experimental_host.deleted", ({ host }) => {
@@ -352,6 +354,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
   });
 
+  /** Each thread's machine, once it has an environment. */
+  const threadHosts = new Map<string, string>();
   const api: BbBox = {
     boxes,
     backends,
@@ -450,13 +454,20 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     projectOf,
     async runsOn(threadId, signal) {
-      let hostId: string;
-      try {
-        hostId = (await api.workspace(threadId, signal)).hostId;
-      } catch {
-        return null;
+      // A thread's host does not change once it has an environment, and the panel asks on every update.
+      let hostId = threadHosts.get(threadId);
+      if (hostId === undefined) {
+        try {
+          hostId = (await api.workspace(threadId, signal)).hostId;
+        } catch {
+          return null;
+        }
+        threadHosts.set(threadId, hostId);
       }
-      return (await boxes.all()).find((box) => box.enrol.hostId === hostId && box.state !== "gone" && box.state !== "releasing") ?? null;
+      const box = (await boxes.all()).find((box) => box.enrol.hostId === hostId && box.state !== "gone" && box.state !== "releasing") ?? null;
+      // A thread on a spare: the spare upkeep makes it yours now, not at the next sweep (036).
+      if (box?.threadId === SPARES) void boxes.keepSpares();
+      return box;
     },
     async resolve(threadId, ref, signal) {
       try {
