@@ -370,12 +370,14 @@ export function pointerEvent(mask: number, x: number, y: number): Uint8Array {
   return bytes;
 }
 
-export function setDesktopSize(width: number, height: number, screen: Screen): Uint8Array {
-  const bytes = new Uint8Array(8 + 16);
+/** A SetDesktopSize with one screen of the whole size, or with none. */
+export function setDesktopSize(width: number, height: number, screen: Screen | null): Uint8Array {
+  const bytes = new Uint8Array(screen ? 8 + 16 : 8);
   const view = new DataView(bytes.buffer);
   view.setUint8(0, 251);
   view.setUint16(2, width);
   view.setUint16(4, height);
+  if (!screen) return bytes;
   view.setUint8(6, 1);
   view.setUint32(8, screen.id);
   view.setUint16(16, width);

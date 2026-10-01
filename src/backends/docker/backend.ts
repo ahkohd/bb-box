@@ -19,7 +19,7 @@
 
 import { hostname as localHostname } from "node:os";
 import { performance } from "node:perf_hooks";
-import type { Display, DisplaySize } from "../../transports/types.ts";
+import { MIN_DESKTOP, type Display, type DisplaySize } from "../../transports/types.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -566,6 +566,7 @@ export class DockerBackend implements Backend {
           return { route: await command.route(VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
         },
         ...(kind === "linux-desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
+        minSize: MIN_DESKTOP,
       }),
     );
     // No SSH server runs in a box, and its Docker is reached only through it, so only BB's server reaches it.

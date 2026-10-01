@@ -126,6 +126,10 @@ kinds.
   and puts the machine out of service if the reset fails. Keep the pool
   member's generation in `Guest.data`, so a repeated release of an old box
   never resets a machine that the next box holds.
+- Give a resizable Linux or Windows desktop's display
+  `minSize: MIN_DESKTOP`, 800x600, since their apps are hard to use below
+  it. The relay raises a smaller size to it, and the viewer scales the
+  desktop down to fit its pane.
 - Put what a person should know about a box, such as a desktop's display
   mode, in `Guest.facts`. Status and the panel show them in order. Like
   `data`, they are stored with the box and are never a secret.
@@ -227,8 +231,8 @@ node --test test/conformance.test.ts
   else the largest. The mode is kept for the next logon.
 - The driver offers a size from QEMU only if it is at least 640x480, and
   Windows is hard to use below 800x600. So the display's `minSize` is
-  800x600: the relay raises a smaller size to it, in each dimension, and
-  the viewer scales the desktop down to fit its pane.
+  800x600, as for Linux desktops: the relay raises a smaller size to it, in
+  each dimension, and the viewer scales the desktop down to fit its pane.
 - Computer use goes through Cua Driver, at the version `build.sh` installs.
   A task at logon starts its daemon in the box user's session, on the pipe
   `\\.\pipe\cua-driver`. It runs elevated, as SSH sessions do, since an

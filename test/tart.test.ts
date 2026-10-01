@@ -150,6 +150,7 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   assert.equal((await command!.run("echo hello")).stdout, "hello\n");
   assert.deepEqual(access?.ssh?.jump, { host: MAC, port: 22, user: "bbbox-admin", hostKeys: [`${MAC} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForTests`] });
   assert.equal(access?.ssh?.user, "admin");
+  assert.equal(displays[0]!.minSize, undefined, "a viewer cannot resize a macOS desktop");
   const opened = await displays[0]!.open();
   assert.equal(opened.route.type, "command");
   assert.ok(opened.route.type === "command" && opened.route.argv.includes("-W") && opened.route.argv.at(-1) === `bbbox-admin@${MAC}`);
@@ -268,7 +269,7 @@ test("a Linux desktop box waits for its desktop, and opens it through SSH to the
   assert.equal(waits(), 1);
 
   const { displays } = await backend.transports(guest, "linux-arm64-desktop-cpu");
-  assert.deepEqual(displays.map((display) => [display.id, display.resizable, Boolean(display.resize)]), [["desktop", true, false]]);
+  assert.deepEqual(displays.map((display) => [display.id, display.resizable, Boolean(display.resize), display.minSize]), [["desktop", true, false, { width: 800, height: 600 }]]);
   const { route, auth } = await displays[0]!.open(signal());
   assert.equal(route.type, "command");
   const argv = route.type === "command" ? route.argv : [];

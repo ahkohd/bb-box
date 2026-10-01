@@ -820,7 +820,7 @@ test("transports reach the box over SSH, and desktops over VNC", async () => {
   const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   const [display, ...others] = (await backend.transports(desktop, "linux-desktop")).displays;
   assert.equal(others.length, 0);
-  assert.deepEqual([display!.id, display!.label, display!.protocol, display!.resizable], ["desktop", "Desktop", "rfb", true]);
+  assert.deepEqual([display!.id, display!.label, display!.protocol, display!.resizable, display!.minSize], ["desktop", "Desktop", "rfb", true, { width: 800, height: 600 }]);
   assert.deepEqual(await display!.open(), { route: { type: "tcp", host: "192.0.2.101", port: 5900 }, auth: { type: "none" } });
 });
 
@@ -861,6 +861,7 @@ test("a GPU desktop is resized with xrandr as the box user, a size X cannot take
   const cpu = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
   const [stream] = (await backend.transports(cpu, "linux-desktop-cpu")).displays;
   assert.equal(stream!.resize, undefined, "Xtigervnc takes a viewer's SetDesktopSize itself");
+  assert.deepEqual(stream!.minSize, { width: 800, height: 600 });
 });
 
 test("the warm pool fills, hands out a ready guest and refills", async () => {

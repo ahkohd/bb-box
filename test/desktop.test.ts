@@ -17,6 +17,7 @@ import {
   setDesktopSize,
   setEncodings,
   vncResponse,
+  type Screen,
 } from "../src/core/rfb.ts";
 import { FakeRfb, until } from "./fake-rfb.ts";
 
@@ -200,6 +201,40 @@ test("a resize below the display's smallest size is raised to it, in each dimens
     [{ width: 1280, height: 800 }, SCREEN],
     [{ width: 800, height: 600 }, null],
   ]);
+  await relay.relay.close();
+});
+
+test("a raised size asked for again goes with no screens, so that Xvnc refuses it and noVNC stops asking", async () => {
+  const server = new FakeRfb();
+  const relay = relayTo(server, { minSize: () => ({ width: 800, height: 600 }) });
+  await relay.init();
+  relay.give(true);
+  const [box] = server.connections;
+  // Xvnc sets 800x722 and says so, so noVNC asks for its pane again, which
+  // is refused. Asked for later, or after a size the box takes as it is, the
+  // size is raised again. A pane of another size raised to the size just
+  // set is refused; one raised to another width or height is not.
+  const asks = [[518, 722], [518, 722], [518, 722], [1280, 800], [518, 722], [518, 500], [1024, 500], [1024, 300]];
+  const passes: [number, number, Screen | null][] = [
+    [800, 722, SCREEN],
+    [800, 722, null],
+    [800, 722, SCREEN],
+    [1280, 800, SCREEN],
+    [800, 722, SCREEN],
+    [800, 600, SCREEN],
+    [1024, 600, SCREEN],
+    [1024, 600, null],
+  ];
+  for (const [width, height] of asks) await relay.relay.receive(setDesktopSize(width!, height!, SCREEN));
+  const passed = passes.map(([width, height, screen]) => setDesktopSize(width, height, screen)).reduce(concat);
+  await until("the resizes", () => box!.received.byteLength >= passed.byteLength);
+  assert.equal(hex(box!.received), hex(passed));
+  assert.equal(hex(setDesktopSize(800, 722, null)), "fb00032002d20000", "a SetDesktopSize with no screens");
+  assert.deepEqual(
+    relay.resizes,
+    passes.map(([width, height]) => [{ width, height }, SCREEN]),
+    "the backend hears of each, so its own resize is as before",
+  );
   await relay.relay.close();
 });
 

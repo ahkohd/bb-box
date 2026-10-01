@@ -26,7 +26,7 @@ import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import { TransportError, type Display, type GuestOs, type RunResult, type SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, TransportError, type Display, type GuestOs, type RunResult, type SshAccess } from "../../transports/types.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -1074,6 +1074,7 @@ export class TartBackend implements Backend {
           const vnc = await this.#vnc(host, guest.ref, signal);
           return { route: ssh.route(mac, vnc.port), auth: { type: "vnc-password", password: vnc.password } };
         },
+        ...(os === "linux" ? { minSize: MIN_DESKTOP } : {}),
       }),
     );
     return { command, displays, access: { ssh: access, dockerHost: null } };
