@@ -463,11 +463,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   bb.events.on("thread.archived", ({ thread }) => {
     threadHosts.delete(thread.id);
-    void boxes.releaseThread(thread.id).catch((error) => logError("thread archived", error));
+    void boxes.releaseThread(thread.id, "archived").catch((error) => logError("thread archived", error));
   });
   bb.events.on("thread.deleted", ({ thread }) => {
     threadHosts.delete(thread.id);
-    void boxes.releaseThread(thread.id).catch((error) => logError("thread deleted", error));
+    void boxes.releaseThread(thread.id, "deleted").catch((error) => logError("thread deleted", error));
   });
   bb.events.on("experimental_host.deleted", ({ host }) => {
     holders.forget(host.id);
