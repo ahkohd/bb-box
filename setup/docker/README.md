@@ -1,8 +1,9 @@
 # Docker backend
 
 This backend runs Linux boxes as containers on one Docker host: the Docker on
-BB's server, or another machine's over SSH. It is the quickest way to try
-bb-box, as it needs only Docker. It offers three kinds:
+BB's server, another machine's over SSH, or a BB machine's, through BB. It is
+the quickest way to try bb-box, as it needs only Docker. It offers three
+kinds:
 
 - **linux**: Ubuntu 24.04 with the same tools as a Proxmox LXC linux box;
 - **linux-desktop-cpu**: XFCE and Chrome, drawn by the CPU, shown in the
@@ -68,8 +69,9 @@ stream 0.6 s.
 ## Requirements
 
 - Docker Engine with BuildKit, on Linux, or Docker Desktop. bb-box was tested
-  with Docker 29.8, rootful, on Linux. Docker Desktop and rootless Docker
-  have not yet been tested. Rootless Docker cannot run the privileged
+  with Docker 29.8, rootful, on Linux, and with Docker Desktop on Windows as
+  a BB machine's ([Docker Desktop on a Windows PC](#docker-desktop-on-a-windows-pc)).
+  Rootless Docker has not yet been tested. It cannot run the privileged
   containers that give boxes Docker, so there boxes say No Docker, and the
   doctor warns.
 - The `docker` CLI on BB's server, on the PATH of the user BB runs as, and
@@ -158,6 +160,60 @@ npm run conformance -- --backend docker --settings docker.json
 It acquires a box of each kind, checks it, and releases it. Without BB, it
 skips enrolling the boxes, and says so.
 
+## Docker Desktop on a Windows PC
+
+A Windows PC with Docker Desktop can be the Docker host as a BB machine,
+reached through BB ([042](../../docs/decisions/042-a-docker-host-can-be-a-bb-machine.md)).
+BB's host app runs in a WSL 2 distribution that has Desktop's WSL
+integration, and bb-box reaches Desktop's socket there. Over `ssh://` it
+does not work (#158). For a PC that hosts boxes with nobody signed in, use
+[Docker in WSL](../docker-wsl/README.md) instead.
+
+We tested it with Docker Desktop 4.93 and Ubuntu 26.04, in a Windows 11 Pro
+VM with 8 cores and 16 GiB (#233). Building both images took 14 minutes. A
+linux box was ready 1.9 s after it was asked for, and a linux-desktop-cpu
+box 1.5 s, its desktop and computer use working. Each enrolled in BB in
+22 to 25 s, most of it BB's installer, as the images bb-box builds on a
+machine do not hold BB's host app. A command took 0.2 s, a 16 MiB copy
+under 4 s, and Docker in a box worked.
+
+1. Install WSL and Ubuntu, in PowerShell as an administrator:
+   `wsl --install -d Ubuntu`. Restart Windows if it asks. Ubuntu runs
+   systemd.
+2. In Ubuntu, choose the user BB will run as. Make it the default user,
+   under `[user]` in `/etc/wsl.conf`, so that Desktop puts it in the
+   `docker` group. Turn on linger for it, so its services run with no one
+   logged in to it: `sudo loginctl enable-linger <user>`.
+3. Install Node.js 22.19 or later, with npm, which BB's installer needs.
+4. Install Docker Desktop with the WSL 2 backend. In its settings, turn on
+   Start Docker Desktop when you sign in, and, under Resources, WSL
+   integration for Ubuntu. Both were off after a quiet install.
+5. Check that `docker version` in Ubuntu, as that user, shows the server.
+   Desktop makes the `docker` group there, and puts the default user in it,
+   when integration first starts.
+6. Enrol Ubuntu in BB as a machine, as that user. If BB's host app was
+   there before step 4, restart the user's services so it has the group:
+   `sudo systemctl restart user@$(id -u <user>).service`.
+7. In BB Box's settings, turn the machine on under Docker on BB machines.
+
+Before you rely on it:
+
+- Desktop runs only while someone is signed in to Windows. It keeps the
+  distribution running, and stops it when it quits, so the machine is
+  offline in BB then, and boxes there with it. After Desktop started again,
+  the machine was back in 25 s and its boxes in 50 s, with their files.
+- Docker has the memory WSL gives its VM, half the PC's by default. bb-box
+  keeps 4 GiB of it free, so on a 16 GiB PC one small box fits. Set
+  `memory` in `.wslconfig` in your Windows profile for more.
+- `build.sh`'s check of the disk free sees Desktop's virtual disk, about
+  1 TB, which grows as it fills, not the Windows drive. Building both
+  images grew it by 16 GB, so check the drive has about 25 GB free.
+- With no containers running for 5 minutes, Desktop's Resource Saver
+  pauses Docker, and the next call takes about 2.5 s.
+- When Windows restarts, BB may go on showing the machine connected until
+  the connection times out: 16 minutes in our test. Until then, bb-box
+  takes it as connected, and a call to Docker there fails after 30 s.
+
 ## GPU desktops
 
 A linux-desktop box gets one NVIDIA GPU through the Container Device
@@ -220,7 +276,10 @@ GPU desktops have not yet been tested on a Docker host with a GPU.
 - **"has no image"**: build the images (step 1) on the Docker host the
   `host` field names.
 - **"permission denied" on the Docker socket**: add the user BB runs as to the
-  `docker` group, then restart BB.
+  `docker` group, then restart BB. For a BB machine's Docker, that is the
+  user BB's host app runs as. Restart its services so it has the group:
+  `sudo systemctl restart user@$(id -u <user>).service`. An earlier bb-box
+  said only `EOF`.
 - **A box does not come up**: `docker logs bbbox-<box ID>` shows its main
   process's output. bb-box's error message gives the last lines too.
 - **A box does not enrol**: see Enrolment under Limits.

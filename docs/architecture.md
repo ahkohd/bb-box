@@ -1490,4 +1490,3 @@ Notes:
 | A physical Mac's reset; until then its `readyTimeoutMs` is an estimate | [later backends](research/later-backends.md) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
-| Whether a BB machine's relay reaches Docker Desktop's socket in WSL, and a privileged box there starts and enrols | a check on a Windows PC with Docker Desktop ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)) |

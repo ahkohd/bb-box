@@ -135,9 +135,10 @@ See [its guide](setup/ssh-pool/README.md).
 Runs boxes as containers on one Docker host: the Docker on BB's server,
 another machine's over SSH, or a BB machine's, reached through BB with no
 SSH at all (turn the machine on under "Docker on BB machines" in bb-box's
-settings, and bb-box builds its images there). It needs only Docker, so it
-is the quickest way to try bb-box. A Linux box is ready in about a third
-of a second, and a desktop in under a second.
+settings, and bb-box builds its images there). A BB machine's Docker can be
+Docker Desktop on a Windows PC, in WSL. It needs only Docker, so it is the
+quickest way to try bb-box. A Linux box is ready in about a third of a
+second, and a desktop in under a second.
 
 - **Images**: built on the Docker host by `setup/docker/build.sh`, from the
   same guest scripts as the Proxmox LXC templates, so a box has the same
