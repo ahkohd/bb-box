@@ -9,13 +9,13 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Contract, DesktopState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { forThread, message, Notice, StatusDot, useLive, type Tone } from "./common.tsx";
-import { claimKept, dropKept, releaseKept, type Kept } from "./kept.ts";
+import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { XTERM_CSS } from "./xterm-css.ts";
 
 export const TERMINAL_ACTION = "terminal";
@@ -266,15 +266,23 @@ function BoxTerminal({ threadId, boxId }: { threadId: string; boxId: string }) {
   const key = `terminal:${boxId}:${session}`;
 
   const holder = useRef<HTMLDivElement>(null);
-  const [connection, setConnection] = useState<Connection>({ state: "connecting" });
+  // A kept terminal shows at once, before the box's state has loaded; the state can only confirm or end it.
+  const [connection, setConnection] = useState<Connection>(() => keptFree<TerminalClient>(key)?.connection ?? { state: "connecting" });
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const ready = can && path !== null;
+  const pathNow = useRef(path);
+  pathNow.current = path;
+  const wanted = ready || keptFree(key) !== undefined;
 
   // The shell's terminal is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
-  useEffect(() => {
+  // A layout effect, so a kept terminal is in the page before it paints.
+  useLayoutEffect(() => {
     const screen = holder.current;
-    if (!can || !path || !screen) return;
-    const claimed = claimKept(key, () => new TerminalClient((size) => socketUrl(path, boxId, session, size)));
+    if (!wanted || !screen) return;
+    const latestPath = pathNow.current;
+    if (keptFree(key) === undefined && !latestPath) return;
+    const claimed = claimKept(key, () => new TerminalClient((size) => socketUrl(latestPath!, boxId, session, size)));
     const client = claimed.session;
     screen.appendChild(client.element);
     const unsubscribe = client.subscribe(() => setConnection(client.connection));
@@ -289,7 +297,7 @@ function BoxTerminal({ threadId, boxId }: { threadId: string; boxId: string }) {
       if (claimed.kept) releaseKept(key);
       else client.dispose();
     };
-  }, [can, path, boxId, session, key]);
+  }, [wanted, boxId, session, key]);
 
   // A box that stops or goes takes its shell with it.
   useEffect(() => {
@@ -333,7 +341,8 @@ function BoxTerminal({ threadId, boxId }: { threadId: string; boxId: string }) {
   } else {
     words = "Connecting…";
   }
-  const showing = can && connection.state !== "ended";
+  // Before the box's state has loaded, a kept terminal still shows.
+  const showing = connection.state !== "ended" && (state === null || can);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

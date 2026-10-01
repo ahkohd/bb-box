@@ -9,6 +9,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/p
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
+import { forgetLive } from "../src/app/common.tsx";
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
@@ -124,6 +125,7 @@ const app = await loadPluginApp(() => import("../app.tsx"));
 afterEach(() => {
   cleanup();
   dropAllKept();
+  forgetLive();
   vi.useRealTimers();
   applied = null;
   novnc.FakeRfb.made = [];
@@ -893,10 +895,11 @@ test("a desktop tab keeps its viewer ID when it remounts, and two tabs never sha
   second.unmount();
   expect(novnc.FakeRfb.made.map((client) => client.disconnected)).toEqual([false, false]);
   const again = desktopTab(handlers);
-  await again.findByText("Connecting to the desktop…");
-  // The tab takes back the kept session for its viewer ID; no new client, no handshake.
-  expect(novnc.FakeRfb.made).toHaveLength(2);
+  // The tab takes back the kept session for its viewer ID at once, before its state has refetched: no new client, no handshake, no blank frame.
   expect(again.getByTestId("desktop-screen").contains(novnc.FakeRfb.made[1]!.target)).toBe(true);
+  expect(again.getByText("Connecting…")).toBeTruthy();
+  await again.findByText("Connecting to the desktop…");
+  expect(novnc.FakeRfb.made).toHaveLength(2);
   expect(new URL(novnc.FakeRfb.made[1]!.url).searchParams.get("viewer")).toBe(b);
 });
 
@@ -1069,11 +1072,13 @@ test("a remounted terminal tab attaches to the same shell, and a stopped box off
   const session = new URL(FakeSocket.made[0]!.url).searchParams.get("session");
   first.unmount();
   expect(FakeSocket.made[0]!.readyState).toBe(0);
+  act(() => FakeSocket.made[0]!.open());
   const again = terminalTab(handlers);
-  await again.findByText("Connecting…");
-  // The tab takes back the kept shell: the same socket, no new connection.
-  expect(FakeSocket.made).toHaveLength(1);
+  // The tab takes back the kept shell at once, before its state has refetched: the same socket, already connected, in the page.
   expect(again.getByTestId("terminal-screen").contains(xterm.FakeTerminal.made[0]!.target)).toBe(true);
+  expect(again.getByText("Connected")).toBeTruthy();
+  expect(again.getByTestId("terminal-screen").className).not.toContain("invisible");
+  expect(FakeSocket.made).toHaveLength(1);
   expect(session).toBeTruthy();
   vi.useFakeTimers();
   again.unmount();

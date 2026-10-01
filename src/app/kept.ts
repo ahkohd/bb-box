@@ -87,6 +87,12 @@ export function dropKept(key: string): void {
   drop(key);
 }
 
+/** The session kept under `key`, when no tab shows it: a tab can take it before its box's state loads. */
+export function keptFree<K extends Kept>(key: string): K | undefined {
+  const entry = entries.get(key);
+  return entry && !entry.inUse ? (entry.kept as K) : undefined;
+}
+
 /** The session kept under `key`, for tests. */
 export function keptUnder(key: string): Kept | undefined {
   return entries.get(key)?.kept;

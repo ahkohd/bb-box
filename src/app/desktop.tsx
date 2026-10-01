@@ -4,14 +4,14 @@
 
 import RFB from "@novnc/novnc";
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { BoxResult, Contract, DesktopEntry, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { EmptyPanel, forThread, IconButton, KindBadges, message, Meta, Notice, osName, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
-import { claimKept, dropKept, releaseKept, type Kept } from "./kept.ts";
+import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 
 export const DESKTOP_ACTION = "desktop";
@@ -211,16 +211,24 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const session = useRef<DesktopSession | null>(null);
   const mineNow = useRef(false);
   mineNow.current = mine;
-  const [connection, setConnection] = useState<Connection>({ state: "connecting" });
+  const key = `desktop:${boxId}:${viewer}`;
+  // A kept session shows at once, before the box's state has loaded; the state can only confirm or end it.
+  const [connection, setConnection] = useState<Connection>(() => keptFree<DesktopSession>(key)?.connection ?? { state: "connecting" });
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const key = `desktop:${boxId}:${viewer}`;
+  const ready = showing && path !== null;
+  const pathNow = useRef(path);
+  pathNow.current = path;
+  const wanted = ready || keptFree(key) !== undefined;
 
   // The viewer's session is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
-  useEffect(() => {
+  // A layout effect, so a kept frame is in the page before it paints.
+  useLayoutEffect(() => {
     const screen = target.current;
-    if (!showing || !path || !screen) return;
-    const claimed = claimKept(key, () => new DesktopSession(socketUrl(path, boxId, viewer)));
+    if (!wanted || !screen) return;
+    const latestPath = pathNow.current;
+    if (keptFree(key) === undefined && !latestPath) return;
+    const claimed = claimKept(key, () => new DesktopSession(socketUrl(latestPath!, boxId, viewer)));
     const current = claimed.session;
     screen.appendChild(current.element);
     session.current = current;
@@ -249,7 +257,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           : {},
       );
     };
-  }, [showing, path, boxId, viewer, key, rpc, threadId]);
+  }, [wanted, boxId, viewer, key, rpc, threadId]);
 
   useEffect(() => {
     session.current?.setControl(mine, resizable);
