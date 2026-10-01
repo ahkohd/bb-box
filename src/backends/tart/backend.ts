@@ -49,7 +49,6 @@ import {
 import { ReadyPool } from "../pool.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
-  arpScript,
   claimScript,
   cloneScript,
   deleteScript,
@@ -59,9 +58,10 @@ import {
   ipScript,
   ownerText,
   parseConfig,
+  macScript,
   normalMac,
-  parseArp,
   parseFields,
+  parseMacs,
   parseState,
   parseVnc,
   powerScript,
@@ -1152,8 +1152,7 @@ export class TartBackend implements Backend {
     const result = await command.run(identityScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new Error(`${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
     if (result.stdout.trim() !== "none") return;
-    const expected = (await this.#state(host, signal)).configs.get(vm)?.macAddress ?? null;
-    const answered = parseArp((await this.#run(host, arpScript(address), { timeoutMs: 15_000, signal })).stdout);
+    const { answered, expected } = parseMacs((await this.#run(host, macScript(vm, address), { timeoutMs: 15_000, signal })).stdout);
     if (!expected || !answered || normalMac(expected) !== normalMac(answered)) {
       throw new Error(
         `${host.name}: the VM that answers at ${address} keeps no name, and its MAC address is ${answered ?? "unknown"}, not ${vm}'s ${expected ?? "(unknown)"}.`,

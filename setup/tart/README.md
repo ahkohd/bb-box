@@ -268,9 +268,9 @@ A suspended VM takes no slot and no memory.
   `warm`, and names the image and its build (its disk file's inode and
   modification time, so running the image to change it counts), Tart's
   version and the Mac's macOS build; a change of any of them, or of the
-  kind's default size, retires it, and so does running it. A box at that size takes it: bb-box
-  rewrites the owner file with the box's fields, resumes the VM, and names
-  it after the box. A VM whose saved state does not restore is deleted, and
+  kind's default size, retires it, and so does running it. A box at that
+  size takes it: bb-box rewrites the owner file with the box's fields,
+  resumes the VM, and names it after the box. A VM whose saved state does not restore is deleted, and
   the box gets a clone. An acquire that finds a warm VM being made in the
   last slot takes it over when it suits, or stops it.
 - **Stop and start.** Stop suspends the VM, which frees its memory and its

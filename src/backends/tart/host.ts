@@ -274,14 +274,26 @@ fi
 `);
 }
 
-/** The MAC address the Mac's ARP table has for an address on the VMs' network, after bb-box has just reached it. */
-export function arpScript(address: string): string {
-  return script(`arp -n ${quote(address)} 2>/dev/null || :\n`);
+/**
+ * The MAC address the Mac's ARP table has for a VM's address, after bb-box
+ * has just reached it, and the one in the VM's config, in one trip.
+ */
+export function macScript(vm: string, address: string): string {
+  return script(String.raw`home=$HOME/.tart; [ -z "$TART_HOME" ] || home=$TART_HOME
+echo @arp; arp -n ${quote(address)} 2>/dev/null || :
+echo @config; sed -n 's/.*"macAddress" *: *"\([^"]*\)".*/\1/p' "$home/vms/"${quote(vm)}"/config.json" 2>/dev/null | head -n 1
+`);
 }
 
 /** The MAC address in `arp -n` output, or null. */
 export function parseArp(text: string): string | null {
   return /\bat ([0-9a-f]{1,2}(?::[0-9a-f]{1,2}){5})\b/i.exec(text)?.[1] ?? null;
+}
+
+/** What macScript printed: the MAC address that answered, and the VM's own. */
+export function parseMacs(text: string): { answered: string | null; expected: string | null } {
+  const parts = sections(text);
+  return { answered: parseArp(parts.get("arp") ?? ""), expected: parts.get("config")?.trim() || null };
 }
 
 /** A MAC address in one form, as arp drops leading zeros: lower case, two digits a byte. */
