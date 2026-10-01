@@ -211,8 +211,8 @@ Before you rely on it:
 - With no containers running for 5 minutes, Desktop's Resource Saver
   pauses Docker, and the next call takes about 2.5 s.
 - When Windows restarts, BB may go on showing the machine connected until
-  the connection times out: 16 minutes in our test. Until then, bb-box
-  takes it as connected, and a call to Docker there fails after 30 s.
+  the connection times out: 16 minutes in our test. bb-box takes it as
+  offline once BB has not heard from it for a minute.
 
 ## GPU desktops
 
