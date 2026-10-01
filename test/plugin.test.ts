@@ -936,7 +936,8 @@ test("bb box install-id shows the install's ID, and --set takes an old one back 
   assert.match(refused.stderr ?? "", new RegExp(`Release ${box.name} first\\. Its guest carries this install's ID ${id}`));
   assert.equal(app.backends.installId, id);
 
-  await harness.behavior.runCli(["release", box.name, "--thread", THREAD]);
+  const released = await harness.behavior.runCli(["release", box.name, "--thread", THREAD]);
+  assert.equal(released.exitCode, 0, released.stderr);
   const before = world.backend;
   const set = await harness.behavior.runCli(["install-id", "--set", "old-install"]);
   assert.equal(set.exitCode, 0, set.stderr);
