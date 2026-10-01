@@ -2,7 +2,10 @@
 
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "./views.ts";
+
+export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 
 export interface PanelState {
   readonly boxes: readonly BoxView[];
@@ -44,6 +47,9 @@ const whole = z.number().int().positive().optional();
  */
 const size = z.object({ preset: z.string().min(1).optional(), cores: whole, memoryGiB: whole, diskGiB: whole });
 
+/** A whole configuration document as JSON (029). bb-box checks it. */
+const draft = z.unknown();
+
 export const contract = defineRpcContract({
   state: { input: thread, output: z.custom<PanelState>() },
   acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional() }), output: boxResult },
@@ -57,6 +63,12 @@ export const contract = defineRpcContract({
   desktops: { input: z.null(), output: z.custom<DesktopEntry[]>() },
   backends: { input: z.null(), output: z.custom<BackendView[]>() },
   doctor: { input: z.null(), output: z.custom<DoctorView>() },
+  /** The configuration, its defaults and problems, and each backend's state (029). */
+  "config.get": { input: z.null(), output: z.custom<ConfigState>() },
+  /** Problems with a draft, saving nothing. `test`, a backend's ID, also runs its doctor against the draft, within 30 s. */
+  "config.check": { input: z.object({ draft, test: z.string().min(1).optional() }), output: z.custom<CheckResult>() },
+  /** Saves a draft whole, if `revision` is the current one. The draft's own revision is ignored. */
+  "config.apply": { input: z.object({ draft, revision: z.number().int().min(0) }), output: z.custom<ApplyResult>() },
 });
 
 export type Contract = typeof contract;

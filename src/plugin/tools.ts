@@ -16,7 +16,6 @@ export const RUN_OUTPUT_BYTES = 32 * 1024;
 export const COPY_MAX_BYTES = 16 * 1024 * 1024;
 const RUN_TIMEOUT_S = 10 * 60;
 const RUN_TIMEOUT_MAX_S = 60 * 60;
-const DEFAULT_KIND = "linux";
 
 const HINTS: Record<BoxErrorCode, string> = {
   not_found: "Call box_list to see this thread's boxes.",
@@ -26,7 +25,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   no_capacity: "Try again later, release a box you no longer need, or pick another kind.",
   not_ready: "Call box_status to see its state. box_start starts a stopped box.",
   unsupported: "Call box_status to see what the box can do.",
-  backend_off: "Ask the user to turn its backend back on in bb-box's settings, or release the box.",
+  backend_off: "Ask the user to fix its backend's settings in bb-box's settings, or release the box.",
   released: "Acquire a new box with box_acquire.",
   unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
 };
@@ -118,7 +117,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .string()
         .min(1)
         .optional()
-        .describe(`The kind of box, for example linux, linux-docker or linux-desktop. Defaults to ${DEFAULT_KIND}. box_list shows every kind.`),
+        .describe("The kind of box, for example linux, linux-docker or linux-desktop. Defaults to the user's default kind, linux unless they changed it. box_list shows every kind."),
       size: z
         .string()
         .min(1)
@@ -134,7 +133,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         const box = await boxes.acquire({
           threadId: thread(threadId),
           projectId: projectId ?? null,
-          kind: kind ?? DEFAULT_KIND,
+          kind: kind ?? (await app.general()).defaultKind,
           size: { preset: size, cores, memoryGiB: memory_gib, diskGiB: disk_gib },
         });
         if (wait === false) {

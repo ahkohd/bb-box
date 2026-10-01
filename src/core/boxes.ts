@@ -551,7 +551,7 @@ export class Boxes {
   }
 
   #backendOff(box: BoxRecord): string {
-    return `The ${box.backendLabel} backend that holds box ${box.name} is off or its settings need fixing. Fix them in bb-box's settings.`;
+    return `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing. Fix them in bb-box's settings.`;
   }
 
   #backend(box: BoxRecord): Backend {

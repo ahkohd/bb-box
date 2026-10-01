@@ -1,12 +1,14 @@
 import type { BackendDriver } from "../types.ts";
 import { ProxmoxLxcBackend } from "./backend.ts";
-import { LXC_SETTINGS, parseLxcSettings, type LxcConfig } from "./config.ts";
+import { FLAVOUR_KINDS, earlierLxcSizes, LXC_FIELDS, LXC_FLAVOURS, LXC_SETTINGS, parseLxcPart, readEarlierLxc, type LxcConfig } from "./config.ts";
 
 export const proxmoxLxcDriver: BackendDriver<LxcConfig> = {
   type: "proxmox-lxc",
   label: "Proxmox LXC",
+  description: "Linux boxes, with or without a desktop, as containers on a Proxmox VE host.",
   nature: "virtual",
-  settings: LXC_SETTINGS,
+  kinds: LXC_FLAVOURS.flatMap((flavour) => FLAVOUR_KINDS[flavour]),
+  fields: LXC_FIELDS,
   setup: {
     guide: "setup/proxmox-lxc/README.md",
     scripts: [
@@ -16,6 +18,7 @@ export const proxmoxLxcDriver: BackendDriver<LxcConfig> = {
       "setup/proxmox-lxc/host/setup-token.sh",
     ],
   },
-  parse: parseLxcSettings,
+  parse: parseLxcPart,
   create: (config, context) => new ProxmoxLxcBackend(config, context),
+  earlier: { settings: LXC_SETTINGS, read: readEarlierLxc, sizes: earlierLxcSizes },
 };

@@ -7,7 +7,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseLxcSettings, type LxcConfig } from "../src/backends/proxmox-lxc/config.ts";
-import type { BackendContext, BackendStorage } from "../src/backends/types.ts";
+import type { BackendContext, BackendStorage, KindSettings } from "../src/backends/types.ts";
+import { defaultSize, kindSizes, presetSizes } from "../src/core/sizes.ts";
 import { Ssh } from "../src/transports/ssh.ts";
 import type { SshAccess } from "../src/transports/types.ts";
 
@@ -100,11 +101,31 @@ export class MemoryStorage implements BackendStorage {
   }
 }
 
-export function testContext(storage: BackendStorage = new MemoryStorage(), installId = "test"): BackendContext & { errors: string[] } {
+/** Warm counts by kind from the Proxmox LXC settings before 029: each flavour's goes to its first kind. */
+export function lxcWarm(values: Readonly<Record<string, unknown>>): Record<string, number> {
+  const kinds = { linux: "linux", desktop: "linux-desktop", "desktop-cpu": "linux-desktop-cpu" };
+  return Object.fromEntries(Object.entries(kinds).map(([flavour, kind]) => [kind, Number(values[`proxmox-lxc-${flavour}-warm`] ?? 0)]));
+}
+
+/** A kind as bb-box ships it, switched on. */
+export function shippedKind(id: string): KindSettings {
+  const sizes = kindSizes(id);
+  return { enabled: true, defaultSize: defaultSize(sizes), presets: presetSizes(sizes) };
+}
+
+export function testContext(
+  storage: BackendStorage = new MemoryStorage(),
+  installId = "test",
+  options: { id?: string; warm?: Readonly<Record<string, number>> } = {},
+): BackendContext & { errors: string[] } {
   const errors: string[] = [];
   return {
+    id: options.id ?? "test",
     storage,
     installId,
+    warm: (kind) => options.warm?.[kind] ?? 0,
+    hostOn: () => true,
+    kind: shippedKind,
     errors,
     logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
   };

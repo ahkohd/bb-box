@@ -108,9 +108,10 @@ commands as you there anyway, so this adds no reach BB lacks.
 
 ## 2. bb-box's key
 
-In BB, turn on the Tart backend in bb-box's settings, list the Mac (section
-4) and save. `bb box doctor` then shows bb-box's public key in its notes. Add
-it to the host user's `~/.ssh/authorized_keys`:
+In BB, set up the Tart backend in bb-box's settings, leaving it off for now,
+and press "Check". Its notes show bb-box's public key; the check fails until
+a Mac is listed, which is expected here. Add the key to the host user's
+`~/.ssh/authorized_keys`:
 
 ```sh
 printf '%s\n' 'ssh-ed25519 AAAA... bb-box' >> ~/.ssh/authorized_keys
@@ -197,18 +198,31 @@ resume, raises no dialog.
 
 ## 4. Settings
 
-In BB, under bb-box's settings:
+In BB, under bb-box's settings, add each Mac as a host of the Tart backend.
+A host has a short name, a switch, and these fields:
 
-| Setting | Example | Meaning |
+| Field | Example | Meaning |
 | --- | --- | --- |
-| Tart: enabled | on | |
-| Tart: Macs | `mac1 bbbox-admin@192.0.2.20` | One line per Mac: a short name, and the host user at its address |
-| Tart: Mac host keys | `192.0.2.20 ssh-ed25519 AAAA...` | `ssh-keyscan -t ed25519 192.0.2.20` prints it. bb-box checks it on every connection |
-| Tart: SSH private key | empty | Empty makes bb-box generate one; its public key is in `bb box doctor` |
-| Tart: VM user | `admin` | The image's user |
-| Tart: macos image, macos-desktop image | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
-| Tart: VMs per Mac | 2 | At most 2 |
-| Tart: memory kept free, disk kept free | 16384 MiB, 50 GiB | A new box is refused when the Mac would have less. With 16 GiB kept free, a 16 GiB Mac takes no box and a 32 GiB Mac takes two 8 GiB boxes, so lower it on a small Mac you do not use yourself |
+| `address` | `192.0.2.20` | The Mac's address, with `:port` when SSH is not on 22 |
+| `user` | `bbbox-admin` | The host user bb-box logs in as |
+| `host-keys` | `192.0.2.20 ssh-ed25519 AAAA...` | `ssh-keyscan -t ed25519 192.0.2.20` prints it. bb-box checks it on every connection |
+
+A new box goes to the first Mac in the list with room. A Mac that is off
+keeps its boxes and takes no new ones. The backend's own fields:
+
+| Field | Example | Meaning |
+| --- | --- | --- |
+| `ssh-private-key` | empty | A secret. Empty makes bb-box generate one; its public key is in `bb box doctor` |
+| `macos-image`, `macos-desktop-image` | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
+| `vm-user` | `admin` | The image's user |
+| `vms-per-host` | 2 | At most 2 |
+| `reserve-memory-mib`, `reserve-disk-gib` | 16384, 50 | A new box is refused when the Mac would have less. With 16 GiB kept free, a 16 GiB Mac takes no box and a 32 GiB Mac takes two 8 GiB boxes, so lower it on a small Mac you do not use yourself |
+
+From a terminal, `bb box config show --json` prints the configuration and
+`bb box config apply <file>` saves it; the Macs are the backend's `hosts`.
+Before bb-box's configuration document, these were BB settings starting
+`tart-`; the first start of the version that brings it moves them in, with
+each Mac as a host.
 
 Then `bb box doctor` checks each Mac: that SSH as the host user works with
 its pinned key, that it is Apple silicon with Tart, that each kind's image is

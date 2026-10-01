@@ -19,6 +19,8 @@ import {
   BackendError,
   type AcquireHooks,
   type Backend,
+  type BackendContext,
+  type BackendDriver,
   type BackendStorage,
   type BoxIdentity,
   type BoxKind,
@@ -536,4 +538,51 @@ export class FakeTransport implements CommandTransport {
     const path = `${FAKE_CUA_BIN}:${process.env.PATH ?? ""}`;
     return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && ${script}`] }, signal);
   }
+}
+
+/**
+ * A driver for the fake backend (029). Its one field, "address", must be
+ * set unless it is "broken". Hosts are named as the fake guests name theirs.
+ * Its settings before the configuration, "fake-enabled" and "fake-broken",
+ * move into it like any backend's.
+ */
+export function fakeDriver(
+  root: string,
+  world: { backend: FakeBackend | null; contexts?: BackendContext[] } = { backend: null },
+  options: Partial<FakeBackendOptions> = {},
+): BackendDriver<{ address: string }> {
+  return {
+    type: "fake",
+    label: "Fake host",
+    description: "Guests in directories on this machine.",
+    nature: options.nature ?? "virtual",
+    kinds: (options.kinds ?? FAKE_KINDS).map((kind) => kind.id),
+    fields: {
+      address: { type: "string", label: "Address", description: "Where the fake host is.", group: "connection", default: "here" },
+      token: { type: "string", label: "Token", group: "credentials", secret: true },
+    },
+    hostFields: { address: { type: "string", label: "Address", group: "connection", default: "" } },
+    setup: { guide: "setup/fake/README.md", scripts: ["setup/fake/host.sh"] },
+    parse(part) {
+      if (part.fields.address === "broken") return { ok: false, problems: [{ path: "address", message: "Fill in the fake host's address." }] };
+      return { ok: true, config: { address: String(part.fields.address) } };
+    },
+    create(_config, context) {
+      world.contexts?.push(context);
+      return (world.backend = new FakeBackend({ ...options, root, id: context.id, storage: context.storage, installId: context.installId }));
+    },
+    earlier: {
+      settings: {
+        "fake-enabled": { type: "boolean", label: "Fake host", description: "Use the fake host.", default: false },
+        "fake-broken": { type: "boolean", label: "Broken", description: "Make the settings wrong.", default: false },
+        "fake-token": { type: "string", label: "Token", secret: true },
+      },
+      read(values) {
+        if (values["fake-enabled"] !== true && values["fake-broken"] !== true && !values["fake-token"]) return null;
+        const fields: Record<string, string> = values["fake-broken"] === true ? { address: "broken" } : {};
+        const secrets: Record<string, string> = typeof values["fake-token"] === "string" && values["fake-token"] ? { token: values["fake-token"] } : {};
+        return { enabled: values["fake-enabled"] === true, fields, secrets, warm: {} };
+      },
+    },
+  };
 }

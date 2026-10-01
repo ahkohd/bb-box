@@ -86,6 +86,17 @@ async function member(backend: Backend, ref: string) {
   return found;
 }
 
+describe("an SSH host pool with no machines yet", () => {
+  it("fails its doctor, and gives the public key setup.sh needs first", async () => {
+    const { backend } = pool("");
+    const doctor = await backend.doctor();
+    assert.equal(doctor.ok, false);
+    assert.equal(doctor.checks.find((check) => check.id === "machines")?.status, "fail");
+    assert.ok(doctor.notes.some((note) => /^Give setup\/ssh-pool\/setup\.sh this public key with --key, .*: ssh-ed25519 /.test(note)));
+    assert.deepEqual(backend.kinds(), []);
+  });
+});
+
 describe("SSH host pool settings", () => {
   it("parse a machine per line, with defaults", () => {
     const parsed = config("build-1 192.0.2.21 linux\nbuild-2 ops@192.0.2.22:2222 linux,linux-docker via=jump@192.0.2.9 reset=machine labels=fast,big # the big one");
@@ -128,7 +139,8 @@ describe("SSH host pool settings", () => {
   });
 
   it("say what to fix", () => {
-    assert.match(problems(settings("")), /List at least one machine/);
+    const empty = parseSshPoolSettings(settings(""));
+    assert.ok(empty.enabled && empty.ok, "a pool with no machines yet parses, so its doctor can give the public key");
     assert.match(problems(settings("Build 192.0.2.21 linux")), /lower-case letters/);
     assert.match(problems(settings("a 192.0.2.21 linux-desktop")), /cannot serve kind "linux-desktop"/);
     assert.match(problems(settings("a 192.0.2.21 linux-docker")), /needs reset=machine/);

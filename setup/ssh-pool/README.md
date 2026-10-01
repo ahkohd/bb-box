@@ -56,13 +56,17 @@ keeps for its own users. Elsewhere box users take 70000 to 79999.
 
 ## 1. Get bb-box's key
 
-1. In BB, open bb-box's settings and turn on **SSH host pool: enabled**.
-2. Leave **SSH host pool: SSH private key** empty. bb-box makes a key.
-3. Open bb-box's doctor. Under SSH host pool, a note shows the public key,
-   starting `ssh-ed25519`.
+1. In BB, open bb-box's settings and set up **SSH host pool**. Leave it off
+   until a machine is ready.
+2. Leave **SSH private key** empty. bb-box makes a key.
+3. Press "Check". A note shows the public key, starting `ssh-ed25519`. The
+   check fails until the pool has a machine; that is expected here.
 
-To use a key you already have, paste its private key into the setting
+To use a key you already have, paste its private key into the field
 instead. It must have no passphrase.
+
+From a terminal, `bb box config check <file> --test` runs the same check on
+a configuration file, as `bb box config show --json` prints it.
 
 ## 2. Set up each machine
 
@@ -139,12 +143,11 @@ Then reload sshd. `setup.sh` warns when it finds either setting.
 
 ## 3. Add the machine to bb-box
 
-1. Add the line `setup.sh` printed to **SSH host pool: machines**, one line
-   per machine.
-2. Add the host keys to **SSH host pool: host keys**. bb-box connects only
-   to machines whose keys are there.
-3. Open bb-box's doctor. Each machine should pass `SSH`, `helper`,
-   `architecture`, `tools` and `state`.
+1. Add the line `setup.sh` printed to **Machines**, one line per machine.
+2. Add the host keys to **Host keys**. bb-box connects only to machines
+   whose keys are there.
+3. Press "Check". Each machine should pass `SSH`, `helper`, `architecture`,
+   `tools` and `state`. Then turn the pool on and save.
 
 A line is:
 
@@ -331,7 +334,7 @@ the machine when it answers again. Its power shows as unknown meanwhile.
   of the memory or more (the kernel keeps some of it), and, when the size
   names a disk, that much free under `/home`. The doctor shows each
   machine's cores, memory and free disk. If your machines are smaller than
-  the presets, change them with the `box-sizes` setting.
+  the presets, change them in the kinds part of bb-box's settings.
 - **Desktops.** The pool lends headless machines only. Desktops are not
   supported yet.
 

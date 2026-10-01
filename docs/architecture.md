@@ -326,7 +326,7 @@ memory and root disk, where a disk of null is the backend's base.
 
 - Each kind has the presets `small`, `medium` and `large`, a default preset
   and a largest custom size, in bb-box's configuration, the same on every
-  offer. The general `box-sizes` setting changes them per kind.
+  offer. The configuration's kinds part changes them per kind.
   `box_acquire` and `bb box acquire` take a preset or a custom size; core
   refuses one above the largest.
 - The backend gets the size in `BoxIdentity.size`, and `capacity` is asked
@@ -611,16 +611,26 @@ export interface DoctorCheck {
 
 export interface BackendDriver<C = unknown> {
   // type, label and nature as built. `settings` gives way to (029):
+  /** One line on what the backend is for, shown while it is off. */
+  readonly description: string;
+  /** The kinds its backends can make, which take warm counts. */
+  readonly kinds: readonly string[];
   /** The backend's fields, named within it; the settings page renders them. */
   readonly fields: Readonly<Record<string, FieldDescriptor>>;
   /** The fields of each host, for a backend with several hosts set up alike. */
   readonly hostFields?: Readonly<Record<string, FieldDescriptor>>;
   /** Reads the backend's part of the configuration. */
-  parse(part: BackendPart): ParsedSettings<C>;
+  parse(part: BackendPart): ParsedBackend<C>;
   /** Built again only when the backend's fields or the install ID change. */
   create(config: C, context: BackendContext): Backend;
   /** Paths in the repository, linked from the settings page, the guide first. */
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
+  /** The BB settings it declared before 029, read once into the document. */
+  readonly earlier?: {
+    readonly settings: Readonly<Record<string, PluginSettingDescriptor>>;
+    read(values: Readonly<Record<string, unknown>>): EarlierBackend | null;
+    sizes?(values: Readonly<Record<string, unknown>>): Readonly<Record<string, BoxSize>>;
+  };
 }
 
 /**
@@ -638,24 +648,20 @@ export type FieldDescriptor = PluginSettingDescriptor & {
  */
 export interface BackendPart {
   readonly id: string;
-  readonly fields: Readonly<Record<string, unknown>>;
-  readonly hosts: readonly HostPart[];
-}
-
-export interface HostPart {
-  /** `Guest.host`; cannot change while the host has boxes. */
-  readonly name: string;
-  readonly fields: Readonly<Record<string, unknown>>;
+  /** Every declared field: the operator's value or its default, secrets included. */
+  readonly fields: Readonly<Record<string, string | number | boolean | undefined>>;
+  /** `name` is `Guest.host`; it cannot change while the host has boxes. */
+  readonly hosts: readonly { readonly name: string; readonly fields: Readonly<Record<string, string | number | boolean | undefined>> }[];
 }
 
 /** The switch leaves the settings, and each problem names its field. */
-export type ParsedSettings<C> =
+export type ParsedBackend<C> =
   | { readonly ok: true; readonly config: C }
   | { readonly ok: false; readonly problems: readonly FieldProblem[] };
 
 export interface FieldProblem {
-  /** A path within the backend's part, such as `url` or `hosts.0.address`. */
-  readonly field: string | null;
+  /** A path within the backend's part, such as `url` or `hosts.0.address`; "" for the whole backend. */
+  readonly path: string;
   readonly message: string;
 }
 

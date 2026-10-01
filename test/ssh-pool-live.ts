@@ -14,11 +14,12 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { promisify } from "node:util";
+import { parseSshPoolSettings } from "../src/backends/ssh-pool/config.ts";
 import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
 import type { Backend, Guest } from "../src/backends/types.ts";
 import { readSettings } from "../scripts/smoke.ts";
 import { identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
-import { MemoryStorage } from "./helpers.ts";
+import { MemoryStorage, shippedKind } from "./helpers.ts";
 
 const rig = process.env.SSH_POOL_RIG;
 const run = promisify(execFile);
@@ -28,11 +29,15 @@ const HELPER = "/usr/local/libexec/bb-box/machine";
 const made: Backend[] = [];
 
 function backend(file: string, errors: string[] = []): Backend {
-  const parsed = sshPoolDriver.parse(readSettings(join(rig!, file)));
+  const parsed = parseSshPoolSettings(readSettings(join(rig!, file)));
   assert.ok(parsed.enabled && parsed.ok, `${file} parses`);
   const pool = sshPoolDriver.create(parsed.config, {
+    id: "ssh-pool",
     storage: new MemoryStorage(),
     installId: "live",
+    warm: () => 0,
+    hostOn: () => true,
+    kind: shippedKind,
     logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
   });
   made.push(pool);

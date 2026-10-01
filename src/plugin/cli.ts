@@ -1,11 +1,15 @@
 // `bb box`: the same boxes from a terminal, for people and scripts. Commands
 // about a thread's boxes use the thread they run in, or --thread.
 
+import { readFile } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { BoxError, describeError } from "../core/boxes.ts";
+import type { DoctorReport } from "../backends/types.ts";
+import type { Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, boxLine, doctorText } from "./views.ts";
+import { adminText, boxDetail, boxLine, configText, doctorText, movedText, problemsText } from "./views.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -43,6 +47,37 @@ async function guard(action: string, task: () => Promise<PluginCliResult>): Prom
     const code = error instanceof BoxError ? error.code : "failed";
     return { exitCode: 1, stderr: `${describeError(error, action)} (${code})\n` };
   }
+}
+
+const fileArgument = [
+  {
+    name: "file",
+    description: "A JSON file in the form bb box config show --json prints. It is read on the machine BB's server runs on; a relative path is from where you run bb.",
+    required: true,
+  },
+] as const;
+
+/** A configuration file, read where BB's server runs: the command runs there and gets no input. */
+async function readConfigFile(path: string, ctx: PluginCliContext): Promise<unknown> {
+  const file = isAbsolute(path) ? path : resolve(ctx.cwd ?? process.cwd(), path);
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    throw new PluginCliError(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, {
+      code: "invalid_input",
+      hint: "The file is read on the machine BB's server runs on.",
+    });
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new PluginCliError(`${file} is not JSON: ${error instanceof Error ? error.message : String(error)}`, { code: "invalid_input" });
+  }
+}
+
+function refused(problems: readonly Problem[], what: string): PluginCliResult {
+  return { exitCode: 1, stderr: `${what}\n${problemsText(problems)}\n` };
 }
 
 export function registerCli(bb: BbPluginApi, app: BbBox): void {
@@ -136,6 +171,68 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               if (installId === before) return out(`This install's ID is ${installId}.`);
               return out(`This install's ID is now ${installId}. The next sweep restores the boxes of the guests that carry it; run bb box sweep to do it now.`);
             }),
+        }),
+        "config show": cliCommand({
+          summary: "Show bb-box's configuration. --json prints it as a file for config apply, with no secret in it: keep it to set bb-box up again.",
+          options: jsonOption,
+          async run({ options }) {
+            const state = await app.configuration.state();
+            if (options.json) return json(state.document);
+            return out(configText(state));
+          },
+        }),
+        "config check": cliCommand({
+          summary: "Check a configuration file without saving it. --test also runs the doctor of each backend in it that is on, within 30 s each.",
+          positionals: fileArgument,
+          options: { ...jsonOption, test: { type: "boolean", description: "Run each backend's doctor against the file's settings. It acquires nothing." } },
+          run: ({ positionals, options }, ctx) =>
+            guard("Checking the configuration", async () => {
+              const draft = await readConfigFile(positionals.file, ctx);
+              const { configuration } = app;
+              const result = await configuration.check(draft, undefined, ctx.signal);
+              const tested: { id: string; report: DoctorReport | null }[] = [];
+              for (const id of options.test ? configuration.enabledIn(draft) : []) {
+                tested.push({ id, report: (await configuration.check(draft, id, ctx.signal)).doctor });
+              }
+              if (options.json) return json({ problems: result.problems, doctors: tested });
+              const lines = [result.problems.length ? `Problems:\n${problemsText(result.problems)}` : "No problems."];
+              for (const { id, report } of tested) {
+                lines.push(report ? doctorText({ ok: report.ok, sections: [{ title: id, report }] }) : `${id}: not checked, since its settings have problems.`);
+              }
+              const ok = !result.problems.length && tested.every(({ report }) => report?.ok);
+              return { exitCode: ok ? 0 : 1, stdout: `${lines.join("\n")}\n` };
+            }),
+        }),
+        "config apply": cliCommand({
+          summary:
+            "Save a configuration file as bb-box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one is applied over what is there.",
+          positionals: fileArgument,
+          options: jsonOption,
+          run: ({ positionals, options }, ctx) =>
+            guard("Applying the configuration", async () => {
+              const draft = await readConfigFile(positionals.file, ctx);
+              const revision = (draft as { revision?: unknown })?.revision;
+              const result = await app.configuration.apply(draft, typeof revision === "number" ? revision : null);
+              if (options.json) return { exitCode: result.ok ? 0 : 1, stdout: `${JSON.stringify(result.ok ? result.state.document : result, null, 2)}\n` };
+              if (result.ok) return out(`Saved revision ${result.state.revision}. bb box config show shows it, and bb box doctor checks the backends.`);
+              if (result.reason === "revision") {
+                return { exitCode: 1, stderr: `The configuration changed since revision ${String(revision)}: it is at revision ${result.state.revision}. Run bb box config show --json again and make your change there.\n` };
+              }
+              return refused(result.problems, "Nothing was saved. Fix these first:");
+            }),
+        }),
+        "config migrated": cliCommand({
+          summary: "Show the copy of BB's settings bb-box kept when it moved them into its configuration. --remove removes it.",
+          options: { ...jsonOption, remove: { type: "boolean", description: "Remove the copy." } },
+          async run({ options }) {
+            if (options.remove) {
+              const had = await app.configuration.removeMigrated();
+              return out(had ? "Removed the copy of BB's settings." : "There is no copy of BB's settings.");
+            }
+            const copy = await app.configuration.migrated();
+            if (options.json) return json(copy);
+            return out(copy ? movedText(copy) : "There is no copy of BB's settings: bb-box never moved any, or the copy was removed.");
+          },
         }),
         sweep: cliCommand({
           summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers.",

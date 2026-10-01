@@ -64,5 +64,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     },
     backends: () => app.backendViews(),
     doctor: () => app.doctor(),
+    "config.get": () => app.configuration.state(),
+    "config.check": ({ draft, test }) => app.configuration.check(draft, test),
+    "config.apply": ({ draft, revision }) => app.configuration.apply(draft, revision),
   });
 }

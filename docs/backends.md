@@ -19,13 +19,24 @@ The core uses only [src/backends/types.ts](../src/backends/types.ts) and
 ## Adding a backend
 
 1. Create `src/backends/<type>/` with a `BackendDriver`:
-   - `type`, which is also the backend's ID and its settings prefix;
-   - `settings`, including an enable switch;
-   - `parse`, which turns setting values into a typed config or a list of
-     problems;
+   - `type`, which is also the ID of the first backend of the type;
+   - `label`, `description` and the `kinds` its backends can make;
+   - `fields`, and `hostFields` for a backend whose hosts are set up alike:
+     BB's setting descriptors, each with a group (`connection`,
+     `credentials`, `boxes` or `advanced`), in the order the settings page
+     shows them. A secret field is kept apart from the configuration;
+   - `parse`, which turns the backend's part of the configuration into a
+     typed config, or problems each at its field;
    - `setup`, the path of its guide and of the scripts it runs, in order.
      The settings page links the guide first, then the scripts;
-   - `create`, which builds the `Backend`.
+   - `create`, which builds the `Backend`. Its context gives the backend's
+     ID, its storage, and its warm counts, kinds and hosts as the
+     configuration has them now. A switch or a count changes them without
+     the backend being built again, so read them when needed.
+
+   A backend that kept BB settings before the configuration document (029)
+   also has `earlier`: those settings, and how to read them once into the
+   document.
 2. Reuse a transport from `src/transports/`, or add one there. A backend
    that serves a display inside the box builds it from the command
    transport's `route(port)`. A kind with computer use needs a command

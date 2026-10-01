@@ -406,6 +406,8 @@ export interface BackendStorage {
 }
 
 export interface BackendContext {
+  /** The backend's ID: its type, or "<type>:<name>" for another of the type (029). */
+  readonly id: string;
   /** Scoped to this backend. */
   readonly storage: BackendStorage;
   /**
@@ -414,31 +416,113 @@ export interface BackendContext {
    * that carry it.
    */
   readonly installId: string;
+  /**
+   * Ready guests to keep for a kind: the configuration's count, or 0 while
+   * the backend or the kind is off. Read it each time it is needed: a switch
+   * or a count changes it without the backend being built again.
+   */
+  warm(kind: string): number;
+  /** Whether a host takes new boxes. Read each time, like `warm`. */
+  hostOn(name: string): boolean;
+  /** What the configuration says now about a kind here. Read each time, like `warm`. */
+  kind(id: string): KindSettings;
   logError(operation: string, error: unknown): void;
 }
 
+/** A kind as the configuration has it now (028, 029). Its sizes are the same on every backend. */
+export interface KindSettings {
+  /** Off when the kind or this backend is: no new boxes of the kind here, and no warm guests. */
+  readonly enabled: boolean;
+  /** The size of a box made with no size asked for. */
+  readonly defaultSize: BoxSize;
+  /** Every preset's size, the default's among them, smallest first. */
+  readonly presets: readonly BoxSize[];
+}
+
+/** A driver's settings parsed from flat keys, as its tests and the smoke script give them. */
 export type ParsedSettings<C> =
   | { readonly enabled: false }
   | { readonly enabled: true; readonly ok: true; readonly config: C }
   | { readonly enabled: true; readonly ok: false; readonly problems: readonly string[] };
 
+/** Where the settings page shows a field (029). */
+export type FieldGroup = "connection" | "credentials" | "boxes" | "advanced";
+
+/** A field of a backend or of its hosts: BB's setting descriptor and its group. */
+export type FieldDescriptor = PluginSettingDescriptor & { readonly group: FieldGroup };
+
+export type FieldValue = string | number | boolean;
+
+/** A field BB would keep as a secret: write-only, and kept apart from the configuration. */
+export function isSecret(field: PluginSettingDescriptor): boolean {
+  return field.type === "string" && field.secret === true;
+}
+
+/** A problem with the configuration, at its field's path, such as "url" or "hosts.0.address". */
+export interface FieldProblem {
+  readonly path: string;
+  readonly message: string;
+}
+
+/** A backend's part of bb-box's configuration, as its driver parses it. */
+export interface BackendPart {
+  readonly id: string;
+  /** Every declared field: the operator's value or the declared default. Secrets included. */
+  readonly fields: Readonly<Record<string, FieldValue | undefined>>;
+  readonly hosts: readonly { readonly name: string; readonly fields: Readonly<Record<string, FieldValue | undefined>> }[];
+}
+
+export type ParsedBackend<C> =
+  | { readonly ok: true; readonly config: C }
+  | { readonly ok: false; readonly problems: readonly FieldProblem[] };
+
+/** What a driver read from BB's settings before 029, for the move into the document. */
+export interface EarlierBackend {
+  /** The backend's switch as it was. */
+  readonly enabled: boolean;
+  /** Fields whose value differs from their default. */
+  readonly fields: Readonly<Record<string, FieldValue>>;
+  /** Secret fields that were set. */
+  readonly secrets: Readonly<Record<string, string>>;
+  /** Ready guests per kind. */
+  readonly warm: Readonly<Record<string, number>>;
+  readonly hosts?: readonly { readonly name: string; readonly enabled: boolean; readonly fields: Readonly<Record<string, FieldValue>> }[];
+}
+
 /**
- * A backend type built into bb-box. Its settings appear in bb-box's settings
- * under its own prefix, with an enable switch, so several backends can be
- * active at once.
+ * A backend type built into bb-box. The configuration lists its backends,
+ * each with this driver's fields, and the settings page shows them (029).
  */
 export interface BackendDriver<C = unknown> {
-  /** Also the backend ID of its single instance. */
+  /** Also the ID of the first backend of the type. */
   readonly type: string;
   readonly label: string;
+  /** One line on what the backend is for, shown while it is off. */
+  readonly description: string;
   readonly nature: MachineNature;
-  /** Setting keys start with the driver's prefix. One of them enables the backend. */
-  readonly settings: Readonly<Record<string, PluginSettingDescriptor>>;
+  /** The kinds its backends can make, which take warm counts. */
+  readonly kinds: readonly string[];
+  /** In the order the settings page shows them. */
+  readonly fields: Readonly<Record<string, FieldDescriptor>>;
+  /** Fields of each host, for a backend whose hosts are set up alike. Hosts have a name and a switch besides. */
+  readonly hostFields?: Readonly<Record<string, FieldDescriptor>>;
   /**
    * Paths in bb-box's repository. The guide is the entry point: the settings
    * page links it first, then the scripts in the order the guide runs them.
    */
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
-  parse(values: Readonly<Record<string, unknown>>): ParsedSettings<C>;
+  /** Checks the backend's part and gives each problem at its field. */
+  parse(part: BackendPart): ParsedBackend<C>;
   create(config: C, context: BackendContext): Backend;
+  /**
+   * The BB settings the driver declared before 029, read once when they
+   * move into the configuration. The keys start with the driver's type.
+   */
+  readonly earlier?: {
+    readonly settings: Readonly<Record<string, PluginSettingDescriptor>>;
+    /** Null when none of its settings was set, so the backend is not in the configuration. */
+    read(values: Readonly<Record<string, unknown>>): EarlierBackend | null;
+    /** Sizes per kind its settings gave boxes before 028, which become the kinds' default presets once. */
+    sizes?(values: Readonly<Record<string, unknown>>): Readonly<Record<string, BoxSize>>;
+  };
 }

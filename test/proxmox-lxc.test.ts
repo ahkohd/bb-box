@@ -14,7 +14,7 @@ import { parseTags } from "../src/backends/proxmox/api.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, lxcWarm, tempDir, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
 
@@ -48,9 +48,11 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
     "proxmox-lxc-vmid-last": 7009,
     ...values,
   });
-  const context = testContext(storage);
+  /** Warm counts by kind, which the backend reads live. */
+  const warm = lxcWarm(values);
+  const context = testContext(storage, "test", { id: "proxmox-lxc", warm });
   const make = (on = context) => track(new ProxmoxLxcBackend(config, on, { ...fakes(proxmox), ...options }));
-  return { ssh, proxmox, context, storage, make, backend: make() };
+  return { ssh, proxmox, context, storage, make, warm, backend: make() };
 }
 
 /** The size a box of the kind gets by default. */
@@ -956,19 +958,17 @@ test("a warm guest needs only the memory a claim adds (028)", async () => {
   assert.match(disk.message!, /^The local-lvm storage on pve has 100 GiB free\. A 60 GiB disk needs 52 GiB more than the template's/);
 });
 
-test("warm guests beyond the target are removed", async () => {
-  const { backend, proxmox, context } = setup({ "proxmox-lxc-linux-warm": 2 });
+test("warm guests beyond the target are removed, and a count changes without the backend being built again (029)", async () => {
+  const { backend, proxmox, context, warm } = setup({ "proxmox-lxc-linux-warm": 2 });
   await backend.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 2);
-  const smaller = track(
-    new ProxmoxLxcBackend(
-      lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009, "proxmox-lxc-linux-warm": 1 }),
-      context,
-      fakes(proxmox),
-    ),
-  );
-  await smaller.maintain();
+  warm.linux = 1;
+  await backend.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 1);
+  // linux-docker's count adds to linux's: their guests are the same.
+  warm["linux-docker"] = 1;
+  await backend.maintain();
+  assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 2);
   assert.deepEqual(context.errors, []);
 });
 

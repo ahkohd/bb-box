@@ -16,7 +16,7 @@ import { Phases } from "../src/plugin/enrol.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
-import { FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
+import { FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -39,30 +39,6 @@ function notFound(what: string): Error {
 /** What BB's SDK throws for a thread that does not exist or was deleted. */
 function threadNotFound(): Error {
   return Object.assign(new Error("HTTP 404: Thread not found"), { status: 404, code: "thread_not_found" });
-}
-
-/** A backend driver for the fake backend, switched on by "fake-enabled". "fake-broken" makes its settings wrong. */
-function fakeDriver(
-  root: string,
-  world: { backend: FakeBackend | null },
-  options: Pick<FakeBackendOptions, "resize"> = {},
-): BackendDriver<Record<string, never>> {
-  return {
-    type: "fake",
-    label: "Fake host",
-    nature: "virtual",
-    settings: {
-      "fake-enabled": { type: "boolean", label: "Fake host", description: "Use the fake host.", default: false },
-      "fake-broken": { type: "boolean", label: "Broken", description: "Make the settings wrong.", default: false },
-    },
-    setup: { guide: "setup/fake/README.md", scripts: ["setup/fake/host.sh"] },
-    parse(values) {
-      if (values["fake-enabled"] !== true) return { enabled: false };
-      if (values["fake-broken"] === true) return { enabled: true, ok: false, problems: ["Fill in the fake host's address."] };
-      return { enabled: true, ok: true, config: {} };
-    },
-    create: (_config, context) => (world.backend = new FakeBackend({ ...options, root, storage: context.storage, installId: context.installId })),
-  };
 }
 
 function variables(names: readonly string[]) {
@@ -202,7 +178,7 @@ async function start(
     },
   });
   const setupOptions: SetupOptions = {
-    drivers: [fakeDriver(root, world, { resize: options.resize }), ...(options.drivers ?? [])],
+    drivers: [fakeDriver(root, world, options.resize ? { resize: options.resize } : {}), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
   };
@@ -672,21 +648,22 @@ test("refusals say what to do next", async (t) => {
   assert.match(text(noDesktop), /has no desktop/);
 });
 
-test("with no backend on, the plugin asks for its settings, and a change takes effect at once", async (t) => {
+test("with no backend on, the plugin asks for its settings, and a saved configuration takes effect at once", async (t) => {
   const { harness, app, tool } = await start({});
   t.after(() => harness.lifecycle.dispose());
 
-  assert.deepEqual(harness.inspection.needsConfigurationMessages, ["Turn on a backend in bb-box's settings, then fill in its settings."]);
+  assert.deepEqual(harness.inspection.needsConfigurationMessages, ["Turn on a backend in bb-box's settings, then set it up."]);
   assert.match(text(await tool("box_list", {})), /No backend is set up/);
   const refused = await tool("box_acquire", {});
   assert.match(text(refused), /No backend is set up, so there are no boxes to acquire/);
 
-  await harness.behavior.setSettings({ "fake-enabled": true });
+  const { revision } = app.configuration.document;
+  const applied = await harness.behavior.callRpc("config.apply", { draft: { backends: [{ id: "fake", type: "fake", enabled: true }] }, revision });
+  assert.equal((applied as { ok: boolean }).ok, true);
   await until("the backend", async () => (await app.kinds()).length > 0);
   assert.ok(harness.inspection.realtimeSignals.some((signal) => signal.channel === "changed"));
   assert.ok(!isError(await tool("box_acquire", {})));
 });
-
 test("box_acquire takes a preset or a custom size, and box_list shows each kind's sizes (028)", async (t) => {
   const { harness, app, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
@@ -731,7 +708,11 @@ test("sizes saved in the Proxmox LXC settings before 028 become the kinds' defau
   assert.equal(desktop.presets[0]!.words, "4 cores, 8 GiB memory", "a kind with nothing saved keeps the shipped sizes");
 
   // The operator takes the entry out. A restart does not put it back.
-  await harness.behavior.setSettings({ "box-sizes": null });
+  // Proxmox LXC moved in on, as it was, with problems: a write that keeps it on is refused, so it goes off.
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const draft = { ...rest, backends: rest.backends.map((backend) => (backend.type === "proxmox-lxc" ? { ...backend, enabled: false } : backend)) };
+  const applied = (await harness.behavior.callRpc("config.apply", { draft, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
   let restarted: Awaited<ReturnType<typeof setup>> | null = null;
   await harness.lifecycle.reload(async (bb) => {
     restarted = await setup(bb, setupOptions);
@@ -739,19 +720,17 @@ test("sizes saved in the Proxmox LXC settings before 028 become the kinds' defau
   const again = (await restarted!.kinds()).find((kind) => kind.id === "linux")!;
   assert.equal(again.presets[0]!.words, "2 cores, 4 GiB memory");
 });
-
-test("a box-sizes entry with a mistake is a warning in the doctor, and its kind keeps bb-box's sizes (028)", async (t) => {
+test("a box-sizes entry with a mistake is left out of the configuration, and the copy says so (028, 029)", async (t) => {
   const { harness, app } = await start({ "fake-enabled": true, "box-sizes": '{"linux":{"default":"huge"},"linux-desktop":{"default":"large"}}' });
   t.after(() => harness.lifecycle.dispose());
 
-  const doctor = await harness.behavior.runCli(["doctor"]);
-  assert.equal(doctor.exitCode, 0, doctor.stderr);
-  assert.match(doctor.stdout ?? "", /bb-box: Some settings need fixing\. Until then bb-box uses their defaults\.\n {2}\[warn\] Settings: linux\.default must be small, medium or large\./);
   const kinds = await app.kinds();
   assert.equal(kinds.find((kind) => kind.id === "linux")!.defaultPreset, "small");
   assert.equal(kinds.find((kind) => kind.id === "linux-desktop")!.defaultPreset, "large", "a good entry still counts");
+  const copy = await app.configuration.migrated();
+  assert.deepEqual(copy!.notes, ["Box sizes: linux.default must be small, medium or large. bb-box ignored it, so it was left out."]);
+  assert.equal(copy!.values["box-sizes"], '{"linux":{"default":"huge"},"linux-desktop":{"default":"large"}}', "the copy keeps the setting as it was");
 });
-
 test("wrong settings are named in the status and the doctor", async (t) => {
   const { harness } = await start({ "fake-enabled": true, "fake-broken": true });
   t.after(() => harness.lifecycle.dispose());

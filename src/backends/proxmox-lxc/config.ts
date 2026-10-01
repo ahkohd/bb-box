@@ -28,7 +28,18 @@
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
-import type { BoxSize, ParsedSettings } from "../types.ts";
+import {
+  isSecret,
+  type BackendPart,
+  type BoxSize,
+  type EarlierBackend,
+  type FieldDescriptor,
+  type FieldGroup,
+  type FieldProblem,
+  type FieldValue,
+  type ParsedBackend,
+  type ParsedSettings,
+} from "../types.ts";
 
 export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu"] as const;
 export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
@@ -54,8 +65,6 @@ export interface LxcTemplate {
 export interface LxcFlavourConfig {
   /** In the order the settings list them. Empty when the flavour's kinds are off. */
   readonly templates: readonly LxcTemplate[];
-  /** Ready boxes kept in the warm pool. */
-  readonly warm: number;
 }
 
 export interface LxcConfig {
@@ -101,6 +110,8 @@ export const LXC_DEFAULTS = {
   reserveMemoryMiB: 4096,
   reserveDiskGiB: 50,
 } as const;
+
+export const LXC_PREFIX = "proxmox-lxc-";
 
 /** Setting keys. Every key starts with "proxmox-lxc-". */
 export const LXC_KEYS = {
@@ -342,6 +353,86 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
 };
 
 /**
+ * The backend's fields in bb-box's configuration (029): the settings above
+ * without the prefix, in the order the setup guide gives their values.
+ */
+const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
+  [LXC_KEYS.url, "connection"],
+  [LXC_KEYS.node, "connection"],
+  [LXC_KEYS.tlsFingerprint, "connection"],
+  [LXC_KEYS.caCertificate, "connection"],
+  [LXC_KEYS.tokenId, "credentials"],
+  [LXC_KEYS.tokenSecret, "credentials"],
+  [LXC_KEYS.sshPrivateKey, "credentials"],
+  [LXC_KEYS.pool, "boxes"],
+  [flavourKey("linux", "templates"), "boxes"],
+  [flavourKey("desktop", "templates"), "boxes"],
+  [flavourKey("desktop-cpu", "templates"), "boxes"],
+  [LXC_KEYS.perGpu, "advanced"],
+  [LXC_KEYS.bridge, "advanced"],
+  [LXC_KEYS.subnet, "advanced"],
+  [LXC_KEYS.gateway, "advanced"],
+  [LXC_KEYS.addresses, "advanced"],
+  [LXC_KEYS.vmidFirst, "advanced"],
+  [LXC_KEYS.vmidLast, "advanced"],
+  [LXC_KEYS.sshUser, "advanced"],
+  [LXC_KEYS.reserveMemoryMiB, "advanced"],
+  [LXC_KEYS.reserveDiskGiB, "advanced"],
+];
+
+export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
+  FIELD_GROUPS.map(([key, group]) => {
+    const setting = LXC_SETTINGS[key]!;
+    const field = { ...setting, label: setting.label.replace(/^Proxmox LXC: /, ""), group } as FieldDescriptor;
+    // The Linux templates have a default of their own now that no earlier key stands in for it.
+    if (key === flavourKey("linux", "templates")) {
+      Object.assign(field, { default: String(LXC_DEFAULTS.linuxTemplate), description: FLAVOUR_WORDS.linux.templates });
+    }
+    return [key.slice(LXC_PREFIX.length), field];
+  }),
+);
+
+/** Where each flavour's warm count goes in the configuration: its first kind (029). */
+const WARM_KIND: Readonly<Record<LxcFlavour, string>> = { linux: "linux", desktop: "linux-desktop", "desktop-cpu": "linux-desktop-cpu" };
+
+function isSet(value: unknown): boolean {
+  return value !== undefined && value !== null;
+}
+
+/**
+ * The backend's settings from before 029, for the move into the
+ * configuration: values that differ from their defaults, with an unset Linux
+ * key read from its key before 027. Null when none of its settings was set.
+ * The sizes before 028 are read by earlierLxcSizes.
+ */
+export function readEarlierLxc(input: Readonly<Record<string, unknown>>): EarlierBackend | null {
+  const values = withEarlierKeys(input);
+  const earlier = new Set(FLAVOUR_FIELDS.map(earlierFlavourKey));
+  let any = false;
+  const fields: Record<string, FieldValue> = {};
+  const secrets: Record<string, string> = {};
+  const warm: Record<string, number> = {};
+  for (const [key, setting] of Object.entries(LXC_SETTINGS)) {
+    const value = values[key];
+    if (earlier.has(key) || !isSet(value)) continue;
+    if ("default" in setting && value === setting.default) continue;
+    if (setting.type === "string" && setting.secret && value === "") continue;
+    any = true;
+    const name = key.slice(LXC_PREFIX.length);
+    const field = LXC_FIELDS[name];
+    if (field) {
+      if (isSecret(field)) secrets[name] = String(value);
+      else if (!("default" in field) || value !== field.default) fields[name] = value as FieldValue;
+      continue;
+    }
+    const flavour = LXC_FLAVOURS.find((candidate) => key === flavourKey(candidate, "warm"));
+    if (flavour && typeof value === "number" && value !== 0) warm[WARM_KIND[flavour]] = value;
+  }
+  if (!any) return null;
+  return { enabled: values[LXC_KEYS.enabled] !== false, fields, secrets, warm };
+}
+
+/**
  * The size each kind's boxes had under the settings before 028, for the
  * kinds whose flavour had any of them saved. Unset parts are what bb-box
  * made then: 2 cores and 4 GiB for Linux boxes, 4 cores and 8 GiB for
@@ -403,11 +494,7 @@ function wholeInRange(value: number, min: number, max: number): boolean {
  * or by spaces when there are no GPU IDs. A GPU desktop entry is a VMID and a
  * GPU ID, separated by a space or "=".
  */
-function templateList(
-  values: Readonly<Record<string, unknown>>,
-  flavour: LxcFlavour,
-  problems: string[],
-): LxcTemplate[] {
+function templateList(values: Readonly<Record<string, unknown>>, flavour: LxcFlavour, problem: Problem): LxcTemplate[] {
   const key = flavourKey(flavour, "templates");
   const raw = values[key];
   const fallback = flavour === "linux" ? String(LXC_DEFAULTS.linuxTemplate) : "";
@@ -421,7 +508,8 @@ function templateList(
     const [vmidText = "", id = "", ...rest] = entry.split(/\s*=\s*|\s+/);
     const vmid = Number(vmidText);
     if (!wholeInRange(vmid, 100, 999_999_999) || rest.length || (!gpu && id)) {
-      problems.push(
+      problem(
+        key,
         gpu
           ? `Use one line per GPU desktop template, with its VMID and its GPU's ID, like "9101 GPU-0a1b2c3d". "${entry}" is not.`
           : `Use VMIDs from 100 for the ${name} templates. "${entry}" is not one.`,
@@ -429,7 +517,7 @@ function templateList(
       continue;
     }
     if (gpu && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(id)) {
-      problems.push(`Give GPU desktop template ${vmid} the ID of its GPU, like "${vmid} GPU-0a1b2c3d".`);
+      problem(key, `Give GPU desktop template ${vmid} the ID of its GPU, like "${vmid} GPU-0a1b2c3d".`);
       continue;
     }
     templates.push({ vmid, gpu: gpu ? id : null });
@@ -445,68 +533,81 @@ export function normaliseFingerprint(value: string): string | null {
   return hex.match(/../g)!.join(":");
 }
 
+/** Adds a problem with the setting at `key`. */
+type Problem = (key: string, message: string) => void;
+
+/** Flat settings, as the tests and the smoke script give them. A problem names no field. */
 export function parseLxcSettings(input: Readonly<Record<string, unknown>>): ParsedSettings<LxcConfig> {
   if (input[LXC_KEYS.enabled] === false) return { enabled: false };
-  const values = withEarlierKeys(input);
-  const problems: string[] = [];
+  const { config, problems } = checkLxc(withEarlierKeys(input));
+  if (problems.length) return { enabled: true, ok: false, problems: problems.map((problem) => problem.message) };
+  return { enabled: true, ok: true, config: config! };
+}
+
+/** Proxmox LXC's part of bb-box's configuration (029), with each problem at its field. */
+export function parseLxcPart(part: BackendPart): ParsedBackend<LxcConfig> {
+  const values: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(part.fields)) values[LXC_PREFIX + field] = value;
+  const { config, problems } = checkLxc(values);
+  return problems.length ? { ok: false, problems } : { ok: true, config: config! };
+}
+
+function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfig | null; problems: FieldProblem[] } {
+  const problems: FieldProblem[] = [];
+  const problem: Problem = (key, message) => problems.push({ path: key.slice(LXC_PREFIX.length), message });
 
   // The setup guide's token file gives the URL with /api2/json, which the client adds itself.
   const apiUrl = text(values, LXC_KEYS.url).replace(/\/+$/, "").replace(/\/api2\/json$/, "");
-  if (!apiUrl) problems.push("Set the Proxmox API URL.");
+  if (!apiUrl) problem(LXC_KEYS.url, "Set the Proxmox API URL.");
   else {
     try {
       const url = new URL(apiUrl);
       if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error();
-      if (url.username || url.password) problems.push("Remove credentials from the Proxmox API URL.");
+      if (url.username || url.password) problem(LXC_KEYS.url, "Remove credentials from the Proxmox API URL.");
     } catch {
-      problems.push("Use an https URL for the Proxmox API, for example https://pve.example.com:8006.");
+      problem(LXC_KEYS.url, "Use an https URL for the Proxmox API, for example https://pve.example.com:8006.");
     }
   }
   const tokenId = text(values, LXC_KEYS.tokenId);
-  if (!tokenId) problems.push("Set the Proxmox API token ID.");
-  else if (!/^[^\s@!=]+@[^\s@!=]+![^\s@!=]+$/.test(tokenId)) problems.push("Use a token ID like bbbox@pve!plugin.");
+  if (!tokenId) problem(LXC_KEYS.tokenId, "Set the Proxmox API token ID.");
+  else if (!/^[^\s@!=]+@[^\s@!=]+![^\s@!=]+$/.test(tokenId)) problem(LXC_KEYS.tokenId, "Use a token ID like bbbox@pve!plugin.");
   const tokenSecret = text(values, LXC_KEYS.tokenSecret);
-  if (!tokenSecret) problems.push("Set the Proxmox API token secret.");
+  if (!tokenSecret) problem(LXC_KEYS.tokenSecret, "Set the Proxmox API token secret.");
   const fingerprintText = text(values, LXC_KEYS.tlsFingerprint);
   const tlsFingerprint = fingerprintText ? normaliseFingerprint(fingerprintText) : null;
-  if (fingerprintText && !tlsFingerprint) problems.push("Use a SHA-256 fingerprint like AB:CD:..., with 32 pairs of hex digits.");
+  if (fingerprintText && !tlsFingerprint) problem(LXC_KEYS.tlsFingerprint, "Use a SHA-256 fingerprint like AB:CD:..., with 32 pairs of hex digits.");
   const caCertificate = text(values, LXC_KEYS.caCertificate) || null;
   if (caCertificate && !caCertificate.includes("-----BEGIN CERTIFICATE-----")) {
-    problems.push("Use a PEM certificate for the Proxmox CA, or leave it empty.");
+    problem(LXC_KEYS.caCertificate, "Use a PEM certificate for the Proxmox CA, or leave it empty.");
   }
   const node = text(values, LXC_KEYS.node) || null;
-  if (node && !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(node)) problems.push("Use the node's name as Proxmox shows it.");
+  if (node && !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(node)) problem(LXC_KEYS.node, "Use the node's name as Proxmox shows it.");
   const pool = text(values, LXC_KEYS.pool, LXC_DEFAULTS.pool);
-  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(pool)) problems.push("Use a Proxmox pool name such as bbbox.");
+  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(pool)) problem(LXC_KEYS.pool, "Use a Proxmox pool name such as bbbox.");
 
   const flavours = {} as Record<LxcFlavour, LxcFlavourConfig>;
   for (const flavour of LXC_FLAVOURS) {
-    const name = FLAVOUR_WORDS[flavour].name;
-    const config: LxcFlavourConfig = {
-      templates: templateList(values, flavour, problems),
-      warm: number(values, flavourKey(flavour, "warm"), 0),
-    };
-    if (!wholeInRange(config.warm, 0, 20)) problems.push(`Keep 0 to 20 warm ${name} boxes.`);
-    flavours[flavour] = config;
+    flavours[flavour] = { templates: templateList(values, flavour, problem) };
   }
   const listed = LXC_FLAVOURS.flatMap((flavour) => flavours[flavour].templates.map((template) => template.vmid));
   for (const vmid of new Set(listed.filter((vmid, index) => listed.indexOf(vmid) !== index))) {
-    problems.push(`Template ${vmid} is listed more than once. List each template once, under one flavour.`);
+    const first = LXC_FLAVOURS.find((flavour) => flavours[flavour].templates.some((template) => template.vmid === vmid))!;
+    problem(flavourKey(first, "templates"), `Template ${vmid} is listed more than once. List each template once, under one flavour.`);
   }
-  if (!listed.length) problems.push("Set the VMID of at least one CT template: Linux, GPU desktop or CPU desktop.");
+  if (!listed.length) problem(flavourKey("linux", "templates"), "Set the VMID of at least one CT template: Linux, GPU desktop or CPU desktop.");
 
   const first = number(values, LXC_KEYS.vmidFirst, LXC_DEFAULTS.vmidFirst);
   const last = number(values, LXC_KEYS.vmidLast, LXC_DEFAULTS.vmidLast);
   if (!wholeInRange(first, 100, 999_999_999) || !wholeInRange(last, first, 999_999_999)) {
-    problems.push("Use a VMID range from 100 whose last VMID is not below its first.");
+    problem(wholeInRange(first, 100, 999_999_999) ? LXC_KEYS.vmidLast : LXC_KEYS.vmidFirst, "Use a VMID range from 100 whose last VMID is not below its first.");
   }
   for (const vmid of new Set(listed)) {
-    if (vmid >= first && vmid <= last) problems.push(`Move template ${vmid} out of the box VMID range.`);
+    if (vmid >= first && vmid <= last) problem(LXC_KEYS.vmidFirst, `Move template ${vmid} out of the box VMID range.`);
   }
 
   const bridge = text(values, LXC_KEYS.bridge, LXC_DEFAULTS.bridge);
-  if (!bridge) problems.push("Set the network bridge.");
-  else if (!/^[A-Za-z0-9_.-]{1,15}$/.test(bridge)) problems.push("Use a Linux bridge name such as vmbr1.");
+  if (!bridge) problem(LXC_KEYS.bridge, "Set the network bridge.");
+  else if (!/^[A-Za-z0-9_.-]{1,15}$/.test(bridge)) problem(LXC_KEYS.bridge, "Use a Linux bridge name such as vmbr1.");
   const [networkText = "", prefixText = ""] = text(values, LXC_KEYS.subnet, LXC_DEFAULTS.subnet).split("/");
   const network = parseIpv4(networkText);
   const prefix = Number(prefixText);
@@ -514,23 +615,23 @@ export function parseLxcSettings(input: Readonly<Record<string, unknown>>): Pars
   const gateway = parseIpv4(gatewayText);
   const addresses: string[] = [];
   if (network === null || !wholeInRange(prefix, 8, 30)) {
-    problems.push("Set the subnet in CIDR form, for example 10.10.10.0/24.");
+    problem(LXC_KEYS.subnet, "Set the subnet in CIDR form, for example 10.10.10.0/24.");
   } else if (gateway === null) {
-    problems.push("Set the gateway address, for example 10.10.10.1.");
+    problem(LXC_KEYS.gateway, "Set the gateway address, for example 10.10.10.1.");
   } else {
     const size = 2 ** (32 - prefix);
     const base = network - (network % size);
     const broadcast = base + size - 1;
-    if (gateway <= base || gateway >= broadcast) problems.push("Put the gateway inside the subnet.");
+    if (gateway <= base || gateway >= broadcast) problem(LXC_KEYS.gateway, "Put the gateway inside the subnet.");
     let low = base + 1;
     let high = broadcast - 1;
     const range = text(values, LXC_KEYS.addresses, LXC_DEFAULTS.addresses);
     if (range) {
       const [from, to] = range.split("-").map((part) => parseIpv4(part));
       if (from == null || to == null || from > to) {
-        problems.push("Use a box address range like 10.10.10.100-10.10.10.199.");
+        problem(LXC_KEYS.addresses, "Use a box address range like 10.10.10.100-10.10.10.199.");
       } else if (from < low || to > high) {
-        problems.push("Keep the box address range inside the subnet.");
+        problem(LXC_KEYS.addresses, "Keep the box address range inside the subnet.");
       } else {
         low = from;
         high = to;
@@ -541,28 +642,27 @@ export function parseLxcSettings(input: Readonly<Record<string, unknown>>): Pars
       if (address !== gateway) addresses.push(formatIpv4(address));
     }
     if (count > 0 && addresses.length < count) {
-      problems.push(`The box address range has ${addresses.length} addresses for ${count} VMIDs. Widen it or narrow the VMID range.`);
+      problem(LXC_KEYS.addresses, `The box address range has ${addresses.length} addresses for ${count} VMIDs. Widen it or narrow the VMID range.`);
     }
   }
 
   const keyText = text(values, LXC_KEYS.sshPrivateKey);
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
-  if (keyText && !privateKey) problems.push("Use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
+  if (keyText && !privateKey) problem(LXC_KEYS.sshPrivateKey, "Use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
   const user = text(values, LXC_KEYS.sshUser) || LXC_DEFAULTS.sshUser;
-  if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user)) problems.push("Use a Linux user name for SSH.");
+  if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user)) problem(LXC_KEYS.sshUser, "Use a Linux user name for SSH.");
 
   const perGpu = number(values, LXC_KEYS.perGpu, 0);
-  if (!wholeInRange(perGpu, 0, 1_000)) problems.push("Use 0 or more for the desktops per GPU.");
+  if (!wholeInRange(perGpu, 0, 1_000)) problem(LXC_KEYS.perGpu, "Use 0 or more for the desktops per GPU.");
 
   const reserveMemoryMiB = number(values, LXC_KEYS.reserveMemoryMiB, LXC_DEFAULTS.reserveMemoryMiB);
   const reserveDiskGiB = number(values, LXC_KEYS.reserveDiskGiB, LXC_DEFAULTS.reserveDiskGiB);
-  if (!wholeInRange(reserveMemoryMiB, 0, 16_777_216)) problems.push("Keep 0 MiB or more of memory free.");
-  if (!wholeInRange(reserveDiskGiB, 0, 1_048_576)) problems.push("Keep 0 GiB or more of disk free.");
+  if (!wholeInRange(reserveMemoryMiB, 0, 16_777_216)) problem(LXC_KEYS.reserveMemoryMiB, "Keep 0 MiB or more of memory free.");
+  if (!wholeInRange(reserveDiskGiB, 0, 1_048_576)) problem(LXC_KEYS.reserveDiskGiB, "Keep 0 GiB or more of disk free.");
 
-  if (problems.length) return { enabled: true, ok: false, problems };
+  if (problems.length) return { config: null, problems };
   return {
-    enabled: true,
-    ok: true,
+    problems,
     config: {
       proxmox: { apiUrl, tokenId, tokenSecret, caCertificate, tlsFingerprint, node, pool },
       flavours,
