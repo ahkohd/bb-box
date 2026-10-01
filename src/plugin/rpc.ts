@@ -41,7 +41,11 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   bb.rpc.register(contract, {
     async state({ threadId }) {
       const [list, kinds, machine] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId)]);
-      const runsOn = machine && !list.some((box) => box.id === machine.id) ? { box: app.view(machine), owner: machine.threadId === OPERATOR || machine.threadId === SPARES ? ("yours" as const) : ("thread" as const) } : null;
+      const yours = machine !== null && (machine.threadId === OPERATOR || machine.threadId === SPARES);
+      const runsOn =
+        machine && !list.some((box) => box.id === machine.id)
+          ? { box: app.view(machine), owner: yours ? ("yours" as const) : ("thread" as const), threadId: yours ? null : machine.threadId }
+          : null;
       return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn };
     },
     acquire: ({ threadId, kind, size }) =>

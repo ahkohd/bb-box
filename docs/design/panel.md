@@ -251,6 +251,18 @@ still carries the title "New box".
   under the button in destructive text, with the backend's words, and the
   popover stays open so the person can pick another size or kind.
 
+### The box this thread runs on
+
+A thread that runs on a box's BB machine, one of your machines (036) or
+another thread's, shows that box first, under the caption "This thread
+runs on it", in a card of its own above the thread's boxes; the count
+above the list counts the thread's own. The row is the box row with a
+"Yours" badge for your machine, and without Stop, Start, Release or "New
+thread on this box": a line under its status says where those are,
+"Remove or stop it in BB Box's settings." (a link), or names the thread
+that holds it, "Held by <title>", which opens that thread. Open desktop,
+Open terminal, Copy address and Check now stay.
+
 ### Empty states
 
 - **No boxes**: BB's dashed empty panel: "No boxes yet", then "A computer
