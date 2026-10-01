@@ -19,9 +19,27 @@ fetch() { # url sha256 file
   fi
   # A download of its own, so builds running at the same time can fetch the
   # same file.
-  curl -fsSL --retry 3 -o "$art/$name.part.$$" "$url"
-  echo "$sha  $art/$name.part.$$" | sha256sum -c --quiet - || die "checksum mismatch: $name"
-  mv "$art/$name.part.$$" "$art/$name"
+  local part=$art/$name.part.$$ got
+  got=$(curl -fsSL --retry 3 -w '%{http_code} %{content_type}' -o "$part" "$url") || {
+    rm -f "$part"
+    case ${got%% *} in
+      000 | '') die "download failed (no answer): $name from $url" ;;
+      *) die "download failed (HTTP ${got%% *}): $name from $url" ;;
+    esac
+  }
+  # A host in an outage may answer with a web page, as SourceForge does, and
+  # no artifact is one.
+  case ${got#* } in
+    text/html*)
+      rm -f "$part"
+      die "download failed (HTTP ${got%% *}, a web page): $name from $url"
+      ;;
+  esac
+  echo "$sha  $part" | sha256sum -c --quiet - || {
+    rm -f "$part"
+    die "checksum mismatch: $name from $url"
+  }
+  mv "$part" "$art/$name"
   echo "fetched $name"
 }
 
