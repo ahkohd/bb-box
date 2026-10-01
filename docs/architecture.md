@@ -783,11 +783,12 @@ real backend's pool of free, reset machines is the same thing
   rewrites it with the box's fields; `held()` leaves out warm VMs and the
   ones the instance is filling, and lists a fill left by a restart with no
   owner, for the sweep to release.
-- Warm guests are not enrolled. Nothing thread-specific is fixed at
-  enrolment, but BB has no way to hide a machine, so an enrolled warm guest
-  would show in BB's machine list for anyone to start a thread on
+- Warm guests are not enrolled
   ([014](decisions/014-enrol-through-machine-providers.md)). A box enrols
-  when it is claimed, and runs commands meanwhile.
+  when it is claimed, and runs commands meanwhile. Spare boxes, which core
+  will keep enrolled for the kinds the operator chooses, are to hide that
+  wait. BB shows them in its machine list until a thread claims them
+  ([032](decisions/032-spare-boxes-are-enrolled-ahead.md)).
 
 ## Thread access
 
