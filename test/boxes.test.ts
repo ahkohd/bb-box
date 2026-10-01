@@ -548,6 +548,25 @@ test("commands in an enrolled box take the thread's access from BB's daemon as t
   assert.equal(asked.length, 2);
 });
 
+test("a worker that ends between being counted and being read is passed over, not the cause of no access, and says nothing", async (t) => {
+  const daemon = await fakeDaemon([{ FOO: "value-old" }, { FOO: "value-new" }]);
+  t.after(daemon.stop);
+  const newest = daemon.workers().at(-1)!;
+  // grep ends the newest worker once it has counted its names, as BB may as a command starts.
+  const bin = tempDir("grep");
+  const grep = execFileSync("sh", ["-c", "command -v grep"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    join(bin, "grep"),
+    `#!/bin/sh\n"${grep}" "$@"; status=$?\ncase "$1 $3" in "-zcE /proc/${newest}/environ") kill -9 ${newest}; while [ -e /proc/${newest} ] && ! "${grep}" -q '^State:.*Z' /proc/${newest}/status 2>/dev/null; do sleep 0.01; done;; esac\nexit $status\n`,
+    { mode: 0o755 },
+  );
+  const dir = tempDir("env");
+  writeFileSync(join(dir, "env"), envScript("linux", {}, { names: ["FOO"], parent: daemon.parent }));
+  const run = spawnSync("sh", ["-c", '. ./env && printf %s "${FOO-unset}"'], { cwd: dir, encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(run.stdout, "value-old", "the next newest worker's");
+  assert.equal(run.stderr, "");
+});
+
 test("commands in an enrolled box take a project's variables from the agent of a thread of the project on the box (#109)", async (t) => {
   // BB gives a project's variables only to the agent its worker starts for the thread, not to the worker.
   const daemon = await fakeDaemon([{ GH_TOKEN: "value-token" }, { GH_TOKEN: "value-token" }], {

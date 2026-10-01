@@ -189,7 +189,9 @@ function accessNames(access: Access): string[] {
  * Sets the named variables from the newest of the processes below `parent`
  * that has the most of them, afresh each time the env file is sourced, so a
  * change in BB reaches the next command. BB gives some workers only some of
- * its variables. Values never reach the disk. Needs GNU grep and sed.
+ * its variables. Each is read as it is counted, so one that ends before then
+ * is passed over, not left as the one with none. Values never reach the
+ * disk. Needs GNU grep and sed.
  */
 function accessLoader(access: Access): string {
   const names = accessNames(access);
@@ -203,10 +205,12 @@ function accessLoader(access: Access): string {
       best= most=0
       while read -r _ pid; do
         count=$(grep -zcE ${pattern} "/proc/$pid/environ" 2>/dev/null) || continue
-        if [ "$count" -gt "$most" ]; then best=$pid most=$count; fi
+        [ "$count" -gt "$most" ] || continue
+        found=$(grep -zE ${pattern} "/proc/$pid/environ" 2>/dev/null |
+          sed -z "s/'/'\\\\''/g; s/=/='/; s/^/export /; s/\$/'/" | tr '\0' '\n')
+        if [ -n "$found" ]; then best=$found most=$count; fi
       done
-      [ -n "$best" ] && grep -zE ${pattern} "/proc/$best/environ" |
-        sed -z "s/'/'\\\\''/g; s/=/='/; s/^/export /; s/\$/'/" | tr '\0' '\n'
+      [ -n "$best" ] && printf '%s\n' "$best"
     }
 )
 eval "$(bb_box_access)"
