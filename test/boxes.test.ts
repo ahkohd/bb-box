@@ -615,6 +615,11 @@ test("the access check says whether the env file set any of the names, or else w
   assert.equal(check(daemon.parent), ACCESS_CHECK_EXITS.waiting, "the daemon runs, with no worker that has the names");
   assert.equal(check(daemon.parent, { MACHINE_VAR: "" }), ACCESS_CHECK_EXITS.waiting, "an empty value does not count");
   assert.equal(check(join(tempDir("access-check"), "no-daemon")), ACCESS_CHECK_EXITS.noDaemon);
+  // With GH_TOKEN required, the other names do not end the wait: BB can give a new machine GH_TOKEN after them.
+  const required = (env: Record<string, string>) =>
+    spawnSync("sh", ["-c", accessCheck("linux", { names: ["GH_TOKEN", "MACHINE_VAR"], parent: daemon.parent, required: ["GH_TOKEN"] })!], { env: { PATH: process.env.PATH, ...env } }).status;
+  assert.equal(required({ MACHINE_VAR: "value-machine" }), ACCESS_CHECK_EXITS.waiting);
+  assert.equal(required({ MACHINE_VAR: "value-machine", GH_TOKEN: "value-token" }), ACCESS_CHECK_EXITS.found);
   assert.equal(accessCheck("windows", { names: ["GH_TOKEN"], parent: daemon.parent }), null);
   assert.equal(accessCheck("linux", { names: ["not a name"], parent: daemon.parent }), null);
 });

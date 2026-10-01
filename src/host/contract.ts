@@ -7,11 +7,11 @@ export const hostContract = defineRpcContract({
   /**
    * Keeps a process holding the variables BB gives this call, of which
    * `names` matter, for the env file's loader. Says whether it started a new
-   * one, and its process ID.
+   * one, its process ID, and which of `names` this call did not bring.
    */
   access: {
     input: z.object({ names: z.array(z.string().max(256)).max(1_000) }).strict(),
-    output: z.object({ started: z.boolean(), pid: z.number().int().nullable() }).strict(),
+    output: z.object({ started: z.boolean(), pid: z.number().int().nullable(), missing: z.array(z.string()).optional() }).strict(),
   },
   /**
    * Whether Docker is on the machine: finds it as the docker CLI would, and

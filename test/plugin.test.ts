@@ -3,7 +3,7 @@
 // and settings.
 
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
@@ -501,21 +501,26 @@ test("the enrolment waits for BB's daemon to start a worker with the thread's va
   assert.match(logged ?? "", /, waiting for a worker with the thread's variables (0\.[5-9]|[1-4]\.\d)\d s, finishing /);
 });
 
-test("a worker with only the user's git identity ends the enrolment's wait, and git uses the identity", async (t) => {
+test("the enrolment waits for GH_TOKEN, which BB can give a new machine after its other variables, so the first command has it and the git identity", async (t) => {
   const connected = join(tempDir("connected"), "connected");
   const identity = { GIT_AUTHOR_NAME: "A Person", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A Person", GIT_COMMITTER_EMAIL: "a@example.com" };
+  // A worker with the git identity a second after the machine connects; GH_TOKEN a second or so later.
   const daemon = await fakeDaemon([identity], { startOn: { file: connected, seconds: 1 } });
   t.after(daemon.stop);
   const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent });
   t.after(() => harness.lifecycle.dispose());
-  world.installer = `: > '${connected}'`;
+  world.installer = `: > '${connected}'; (sleep 2; : > '${connected}.token') >/dev/null 2>&1 &`;
+  void (async () => {
+    for (let i = 0; i < 200 && !existsSync(`${connected}.token`); i++) await new Promise((resolve) => setTimeout(resolve, 25));
+    daemon.start({ ...identity, GH_TOKEN: "value-token" });
+  })();
 
   assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
   const box = await only(app);
   const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
-  assert.match(logged ?? "", /, waiting for a worker with the thread's variables (0\.[5-9]|[1-4]\.\d)\d s, finishing /);
-  const run = await tool("box_run", { box: box.name, command: "git var GIT_AUTHOR_IDENT; git var GIT_COMMITTER_IDENT" });
-  assert.match(text(run), /stdout:\nA Person <a@example\.com> \d+ [+-]\d{4}\nA Person <a@example\.com> \d+ [+-]\d{4}\n/);
+  assert.match(logged ?? "", /, waiting for a worker with the thread's variables [1-9]\.\d+ s, finishing /, "past the identity, until GH_TOKEN");
+  const run = await tool("box_run", { box: box.name, command: 'printf "%s\\n" "${GH_TOKEN:+token}"; git var GIT_AUTHOR_IDENT; git var GIT_COMMITTER_IDENT' });
+  assert.match(text(run), /stdout:\ntoken\nA Person <a@example\.com> \d+ [+-]\d{4}\nA Person <a@example\.com> \d+ [+-]\d{4}\n/);
 });
 
 test("box_start waits for the box's BB daemon to start again with a worker with the thread's variables", async (t) => {
@@ -675,7 +680,7 @@ test("the enrolment waits only so long for a worker with the thread's variables"
   const box = await only(app);
   const messages = harness.inspection.logEntries.map((entry) => entry.message);
   assert.ok(
-    messages.includes(`BB's daemon in box ${box.name} had no worker with the thread's variables 0.3 s after the machine connected. Its commands take them once one has.`),
+    messages.includes(`BB's daemon in box ${box.name} had no process with the thread's GH_TOKEN 0.3 s after the machine connected. Its commands take it once one has.`),
     messages.join("\n"),
   );
   // The wait counts from when the machine connected, so any wait for the access setup is part of it.

@@ -380,7 +380,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     access: async (box) => {
       const listed = await names(box);
       if (box.enrol.hostId) await holders.ensure(box.enrol.hostId, listed);
-      return { names: listed, parent: options.daemonParent ?? DAEMON_PARENT };
+      // git needs GH_TOKEN, which BB can give a new machine after its other variables.
+      return { names: listed, parent: options.daemonParent ?? DAEMON_PARENT, required: listed.includes("GH_TOKEN") ? ["GH_TOKEN"] : [] };
     },
     logError,
     log: (message) => bb.log.info(message),
