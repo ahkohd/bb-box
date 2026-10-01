@@ -224,6 +224,19 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               );
             }),
         }),
+        "docker-build": cliCommand({
+          summary: "Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout, through bb-box's relay (042). Waits for the build.",
+          positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list. It must be turned on under Docker on BB machines.", required: true }],
+          run: ({ positionals }) =>
+            guard("Building the images", async () => {
+              const host = (await app.dockerHosts.list()).find((candidate) => candidate.hostId === positionals.machine || candidate.name === positionals.machine);
+              if (!host?.backend) throw new BoxError("not_found", `${positionals.machine} is not a Docker host in bb-box's settings. Turn it on under Docker on BB machines first.`);
+              const build = await app.dockerImages.ensure(host.hostId);
+              const took = build.endedAt ? ` in ${Math.round((build.endedAt - build.startedAt) / 1000)} s` : "";
+              if (build.state === "failed") return { exitCode: 1, stderr: `Building the images on ${host.name} failed${took}: ${build.detail ?? "no reason given"}\n` };
+              return out(build.targets.length ? `Built ${build.targets.join(" and ")} on ${host.name}${took}.` : `${host.name} has every image it needs.${build.detail ? ` ${build.detail}` : ""}`);
+            }),
+        }),
         "install-id": cliCommand({
           summary: "Show this install's ID, which it records on its guests. --set takes back the ID it had before it lost its storage.",
           options: { ...jsonOption, set: { type: "string", description: "The ID to use from now on, as bb box doctor lists it." } },
