@@ -3,7 +3,9 @@
 Status: accepted, 30 September 2026. Partly supersedes
 [011](011-interface-v1.md). Partly superseded by
 [027](027-a-kind-says-when-it-has-a-desktop.md): the kinds without a desktop
-are `linux` and `linux-docker`.
+are `linux` and `linux-docker`; and by
+[041](041-every-linux-box-has-docker.md): `linux-docker` is an alias of
+`linux` with the feature `docker`.
 
 ## Context
 

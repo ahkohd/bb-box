@@ -3,7 +3,9 @@
 Status: accepted, 1 October 2026. Extends
 [027](027-a-kind-says-when-it-has-a-desktop.md): where an architecture
 goes in a kind's ID; and [028](028-a-box-size-is-chosen-when-it-is-made.md):
-the arm64 kinds' presets.
+the arm64 kinds' presets. Partly superseded by
+[041](041-every-linux-box-has-docker.md): `linux-arm64-docker` is an alias
+of `linux-arm64` with the feature `docker`.
 
 ## Context
 
