@@ -31,6 +31,8 @@ export interface TerminalSessionsDeps {
   /** Opens a shell in the box at `size`. Rejects, in words for the tab, when the box has none. */
   open(boxId: string, size: TerminalSize): Promise<Terminal>;
   logError(operation: string, error: unknown): void;
+  /** A line for the plugin's log when a shell opens or ends. */
+  log?(message: string): void;
   readonly idleMs?: number;
 }
 
@@ -89,19 +91,21 @@ export class TerminalSession {
   readonly #backlog = new Backlog(BACKLOG_BYTES);
   readonly #idleMs: number;
   readonly #logError: (operation: string, error: unknown) => void;
+  readonly #log: (message: string) => void;
   readonly #onEnd: (session: TerminalSession) => void;
   #viewer: TerminalViewer | null = null;
   #idle: ReturnType<typeof setTimeout> | null = null;
   #writes: Promise<void> = Promise.resolve();
   #ended = false;
 
-  constructor(boxId: string, id: string, terminal: Terminal, options: { idleMs: number; logError: (operation: string, error: unknown) => void; onEnd: (session: TerminalSession) => void }) {
+  constructor(boxId: string, id: string, terminal: Terminal, options: { idleMs: number; logError: (operation: string, error: unknown) => void; log?: (message: string) => void; onEnd: (session: TerminalSession) => void }) {
     this.boxId = boxId;
     this.id = id;
     this.#terminal = terminal;
     this.#writer = terminal.writable.getWriter();
     this.#idleMs = options.idleMs;
     this.#logError = options.logError;
+    this.#log = options.log ?? (() => {});
     this.#onEnd = options.onEnd;
     void this.#pump();
     this.#rest();
@@ -168,14 +172,20 @@ export class TerminalSession {
     this.#terminal.resize(clampSize(size)).catch((error) => this.#logError("resize the terminal", error));
   }
 
+  /** Ends the shell, whatever else fails: the tab is told when it can be, and the shell is killed either way. */
   async end(reason: string): Promise<void> {
     if (this.#ended) return;
     this.#ended = true;
     this.#clearIdle();
     const viewer = this.#viewer;
     this.#viewer = null;
-    this.#onEnd(this);
-    viewer?.close(1000, reason);
+    this.#log(`Ended terminal ${this.id} on box ${this.boxId}: ${reason}`);
+    try {
+      this.#onEnd(this);
+      viewer?.close(1000, reason);
+    } catch (error) {
+      this.#logError("tell the terminal's tab", error);
+    }
     try {
       await this.#terminal.close();
     } catch (error) {
@@ -215,11 +225,13 @@ export class TerminalSessions {
     const session = new TerminalSession(boxId, sessionId, terminal, {
       idleMs: this.#deps.idleMs ?? IDLE_MS,
       logError: this.#deps.logError,
+      log: this.#deps.log,
       onEnd: (ended) => {
         if (this.#sessions.get(key) === ended) this.#sessions.delete(key);
       },
     });
     this.#sessions.set(key, session);
+    this.#deps.log?.(`Opened terminal ${sessionId} on box ${boxId}`);
     return session;
   }
 
@@ -262,6 +274,7 @@ export function registerTerminals(bb: BbPluginApi, deps: { boxes: Boxes; logErro
   const sessions = new TerminalSessions({
     idleMs: deps.idleMs,
     logError: deps.logError,
+    log: (message) => bb.log.info(message),
     async open(boxId, size) {
       const box = await deps.boxes.find(boxId);
       if (!box) throw new Error("bb-box has no such box. It may have been released.");

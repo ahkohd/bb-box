@@ -157,7 +157,7 @@ type Handlers = ReturnType<Parameters<BbPluginApi["http"]["experimental_websocke
 /** The route's handlers for a box whose transport opens `command`, with the plugin's socket faked. */
 function route(command: Partial<CommandTransport> | null, options: { idleMs?: number; logged?: string[] } = {}) {
   let handler: Parameters<BbPluginApi["http"]["experimental_websocket"]>[1] | null = null;
-  const bb = { pluginId: "bb-box", http: { experimental_websocket: (_path: string, given: typeof handler) => void (handler = given) } } as unknown as BbPluginApi;
+  const bb = { pluginId: "bb-box", log: { info() {}, error() {} }, http: { experimental_websocket: (_path: string, given: typeof handler) => void (handler = given) } } as unknown as BbPluginApi;
   const boxes = {
     find: async (id: string) => ({ id, name: "calm-otter", state: "ready" }),
     transports: async () => ({ command, displays: [], access: null }),
@@ -226,4 +226,19 @@ test("the route tells a tab why a shell could not open, within a close reason's 
   const noShell = socket();
   await without("box=box_1&session=sess-0004-dddd&cols=80&rows=24").onOpen!(noShell);
   assert.deepEqual(noShell.closed, { code: 1011, reason: "Box calm-otter has no terminal: its transport cannot open a shell on a PTY." });
+});
+
+test("a tab whose close throws does not keep the shell alive when its session ends", { skip }, async () => {
+  const errors: string[] = [];
+  const sessions = new TerminalSessions({ logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`), open: (_box, size) => openTerminal(["/bin/sh", "-c", "echo hello; cat"], size) });
+  const broken = viewer();
+  broken.close = () => {
+    throw new Error("the socket is already closed");
+  };
+  const session = await sessions.attach("box_3", "sess-0003-cccc", broken, { cols: 80, rows: 24 });
+  await until(() => broken.text().includes("hello"));
+  await sessions.end("box_3", "The box was released.");
+  assert.equal(session.ended, true);
+  assert.equal(sessions.size, 0);
+  assert.deepEqual(errors, ["tell the terminal's tab: the socket is already closed"]);
 });
