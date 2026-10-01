@@ -17,18 +17,20 @@
 #   generation  completed resets, written last by each reset
 #   owner       the box that holds the machine; made with ln, so one claim wins
 #   resetting   the owner marker, renamed when its reset starts
-#   restore/    a whole-machine reset that has started
+#   restore/    a whole-machine reset that has started; its "restarting" file
+#               says the hook restarts the machine to finish
 #   restore.failed/  the last whole-machine reset that failed, with its log
 #
 # Each box gets a new user, bbx-<generation>, whose UID and GID are 70000
 # plus the generation modulo 10000, so an ID comes back only after 10000
 # boxes. A machine that is itself an unprivileged container may map only IDs
-# 0 to 65535; there they are 60100 plus the generation modulo 1000, above
-# login.defs' users and below systemd's dynamic users. A
-# reset ends the user's sessions and processes, and removes its linger,
-# crontab, at jobs, SysV IPC objects, sudo rule, every file it owns on a
-# local filesystem, and the user. "machine" first runs the operator's
-# reset-machine command, which restores the whole machine and may reboot it.
+# 0 to 65535; there they are 60706 plus the generation modulo 478, between
+# systemd's greeter users (60578 to 60705) and its dynamic users (61184 to
+# 65519). A reset ends the user's sessions and processes, and removes its
+# linger, crontab, at jobs, SysV IPC objects, sudo rule, every file it owns
+# on a local filesystem, and the user. "machine" first runs the operator's
+# reset-machine command, which restores the whole machine. A hook that
+# restarts the machine to finish touches $BB_BOX_RESTARTING first.
 #
 # Exit codes: 0 done; 1 failed, with the reason on stderr; 2 usage; 3 another
 # box holds the machine; 4 not this box's, so release does nothing; 5 not
@@ -83,7 +85,7 @@ id_range() {
   if mapped /proc/self/uid_map 70000 10000 && mapped /proc/self/gid_map 70000 10000; then
     id_base=70000 id_span=10000
   else
-    id_base=60100 id_span=1000
+    id_base=60706 id_span=478
   fi
 }
 
@@ -309,27 +311,30 @@ restore_machine() {
     [ -x "$HOOK" ] || fail "$HOOK is missing, so the machine cannot be reset whole."
     mkdir -p "$dir"
     boot_id | put "$dir/boot"
-    # Detached, without the lock, as it may reboot the machine.
-    setsid sh -c '"$1" >"$2/log" 2>&1; echo $? >"$2/status.new" && mv -f "$2/status.new" "$2/status"' sh "$HOOK" "$dir" \
+    # Detached, without the lock, as it may restart the machine.
+    BB_BOX_RESTARTING=$dir/restarting setsid sh -c '"$1" >"$2/log" 2>&1; echo $? >"$2/status.new" && mv -f "$2/status.new" "$2/status"' sh "$HOOK" "$dir" \
       </dev/null >/dev/null 2>&1 9>&- &
     echo restore=started
     exit 10
   fi
-  # A restart ends it, as a reset that reboots the machine does: the reboot may have stopped it first.
+  code=$(cat "$dir/status" 2>/dev/null)
   if [ "$(cat "$dir/boot")" != "$(boot_id)" ]; then
-    :
-  elif [ -e "$dir/status" ]; then
-    code=$(cat "$dir/status")
-    if [ "$code" != 0 ]; then
-      # Reported once. The next reset runs it again; its log stays for the operator.
-      log=$(tail -n 3 "$dir/log" 2>/dev/null | tr '\n' ' ')
-      rm -rf "$STATE/restore.failed" && mv -f "$dir" "$STATE/restore.failed"
-      fail "$HOOK exited with $code: $log"
-    fi
-  else
+    # The machine restarted. That finishes the reset only if the hook had
+    # finished, or had said with the restarting file that it would restart.
+    [ -e "$dir/restarting" ] || [ "$code" = 0 ] || restore_failed "The machine restarted before reset-machine finished."
+  elif [ -n "$code" ] && [ "$code" != 0 ]; then
+    restore_failed "$HOOK exited with $code: $(tail -n 3 "$dir/log" 2>/dev/null | tr '\n' ' ')"
+  elif [ -z "$code" ] || [ -e "$dir/restarting" ]; then
+    # Still running, or done and waiting for the restart it asked for.
     echo restore=running
     exit 10
   fi
+}
+
+# Reported once: the next reset runs the hook again. Its log stays for the operator.
+restore_failed() {
+  rm -rf "$STATE/restore.failed" && mv -f "$STATE/restore" "$STATE/restore.failed"
+  fail "$1"
 }
 
 # Resets the machine from the marker that names the box. It is safe to run
@@ -381,17 +386,16 @@ release() {
   finish "$marker" "$mode"
 }
 
-# For a machine out of service: resets whatever is on it. From bb-box, it
-# leaves alone a machine another install holds. Run by an operator, with no
-# input, it leaves alone a machine a box holds.
+# For a machine out of service: resets whatever is on it. It leaves alone a
+# machine a box holds, whoever asks, and from bb-box, a machine another
+# install is resetting. An operator runs it with no input.
 reset() {
   mode=${1:-}
   case $mode in '' | machine) ;; *) quit 2 "usage: machine reset [machine]" ;; esac
   read_input optional
   lock -w 900
   if [ -e "$STATE/owner" ]; then
-    marker=$STATE/owner
-    [ -n "$install" ] || quit 4 "Box $(field "$marker" name) of bb-box install $(field "$marker" install) holds the machine. Release the box first."
+    quit 4 "Box $(field "$STATE/owner" name) of bb-box install $(field "$STATE/owner" install) holds the machine. Release the box first."
   elif [ -e "$STATE/resetting" ]; then
     marker=$STATE/resetting
   else
@@ -400,8 +404,11 @@ reset() {
     printf 'install=%s\ngeneration=%s\n' "$install" "$current" | put "$STATE/resetting"
     marker=$STATE/resetting
   fi
-  [ -z "$install" ] || [ "$(field "$marker" install)" = "$install" ] ||
-    quit 4 "Another bb-box install, $(field "$marker" install), holds the machine."
+  other=$(field "$marker" install)
+  if [ -n "$install" ] && [ "$other" != "$install" ]; then
+    [ -n "$other" ] || quit 4 "An operator's reset of the machine has not finished. Run it again on the machine."
+    quit 4 "Another bb-box install, $other, is resetting the machine."
+  fi
   if [ -z "$install" ] && [ "$mode" = machine ]; then
     # An operator waits here for the whole-machine reset; bb-box asks again instead.
     while :; do

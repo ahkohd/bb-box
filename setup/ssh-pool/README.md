@@ -46,8 +46,9 @@ installs can share machines: each leaves alone the boxes of the other.
   through a jump host.
 
 A machine that is itself an unprivileged container, such as a Proxmox LXC
-container, works. Box users there take user IDs 60100 to 61099, as the
-container has only 65536 IDs. Elsewhere they take 70000 to 79999.
+container, works. Box users there take user IDs 60706 to 61183, as the
+container has only 65536 IDs. That range is between the ranges systemd
+keeps for its own users. Elsewhere box users take 70000 to 79999.
 
 ## 1. Get bb-box's key
 
@@ -109,6 +110,17 @@ Read any warnings at the end, and fix them before you go on.
 Run `setup.sh` again to update the helper or the key. It keeps the reset
 generation. It never changes a user it did not make: if `bbbox-admin`
 already exists for something else, choose another name with `--admin`.
+
+### If 2 bb-box installs lend the same machine
+
+Give `--key` once for each install's key:
+
+```sh
+sudo sh ssh-pool/setup.sh --key "ssh-ed25519 AAAA... bb-box" --key "ssh-ed25519 BBBB... bb-box"
+```
+
+`setup.sh` replaces the admin user's keys each time it runs, so give every
+install's key whenever you run it again.
 
 ### If sshd lets only some users in
 
@@ -212,10 +224,15 @@ It must:
   which it must keep: the reset generation lives there
 - exit 0 when the machine is restored, or exit non-zero with the reason on
   standard error
+- if it restarts the machine to finish, create the file named in
+  `BB_BOX_RESTARTING` just before it does
 
 The helper runs it as root, detached, without a terminal. It may take up to
-15 minutes. It may reboot the machine: when the machine comes back, the
-helper counts the restore as done and finishes the reset.
+15 minutes. When the machine comes back after a restart, the helper counts
+the restore as done only if the hook had created that file or had exited
+0. Otherwise the restart cut the hook short: the reset fails with "The
+machine restarted before reset-machine finished", and the machine goes out
+of service.
 
 For example, a machine whose root filesystem is an overlay on tmpfs, with
 `overlayroot` on Ubuntu, loses every change when it reboots. Its hook can
@@ -223,14 +240,19 @@ be:
 
 ```sh
 #!/bin/sh
+touch "$BB_BOX_RESTARTING"
 systemctl reboot
+sleep 600
+echo "The machine did not restart." >&2
+exit 1
 ```
 
 Keep `/var/lib/bb-box` on a filesystem the overlay leaves alone, or the
 machine forgets its reset generation, and the helper refuses to lend it.
 
 A virtual machine your hypervisor restores from a snapshot works the same
-way, if `/var/lib/bb-box` is on a disk the snapshot does not cover.
+way, if `/var/lib/bb-box` is on a disk the snapshot does not cover. Its
+hook creates the `BB_BOX_RESTARTING` file before it asks for the restore.
 
 `test/reset-machine-docker.sh` is not a whole-machine reset. It removes
 Docker's containers, images and volumes and empties the temporary
@@ -273,6 +295,9 @@ If the whole-machine reset fails, its log is in
 
 bb-box lends the machine again once it is clean. The helper refuses to
 reset a machine that a box holds. Release the box first.
+
+If your reset was cut short, for example because your SSH session ended,
+the machine stays resetting, and the doctor says so. Run the reset again.
 
 ### A machine that does not answer
 
@@ -322,7 +347,9 @@ sh setup/ssh-pool/test/rig.sh down
 The conformance suite checks the backend as it checks every backend. The
 pool checks in `test/ssh-pool-live.ts` leave a box's processes, jobs, files
 and IPC objects, then check the reset removed them. They also check a
-failed reset, a restart during a whole-machine reset, a reset cut short,
+failed reset, a restart during a whole-machine reset, with and without
+the hook saying it would restart, a reset cut short, a reset refused while
+a box holds the machine,
 returning a machine to service, an old box released again after its machine
 went to the next box, linger, and a jump host.
 

@@ -4,6 +4,7 @@
 // with test/fake-ssh.mjs each fake host is a pool machine. It makes no users.
 // Files in .bb-box-state/flags/ change what it does:
 //
+//   helper           the helper version status reports instead of 1
 //   arch, missing    what status reports instead of x86_64 and nothing missing
 //   docker, hook     status reports Docker and a reset-machine command
 //   dirty            what an earlier box left; claim refuses, status reports it
@@ -41,7 +42,7 @@ const marker = () => (read("owner") !== null ? "owner" : read("resetting") !== n
 
 function status() {
   const kind = marker();
-  const lines = [`helper=1`, `arch=${flag("arch") ?? "x86_64"}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
+  const lines = [`helper=${flag("helper") ?? 1}`, `arch=${flag("arch") ?? "x86_64"}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
   if (kind !== "none") lines.push(...read(kind).trim().split("\n").map((line) => `marker.${line}`));
   lines.push(`hook=${flag("hook") !== null ? 1 : 0}`, `docker=${flag("docker") !== null ? 1 : 0}`, "systemd=0", "cores=4", "memory=7861", "disk=40", `missing=${flag("missing") ?? ""}`);
   lines.push(`dirty=${kind === "none" ? (flag("dirty") ?? "") : ""}`);
@@ -113,7 +114,7 @@ function release(expected, mode) {
 function reset(mode) {
   const values = input();
   let kind = marker();
-  if (kind === "owner" && !values.install) quit(EXIT.notOurs, "A box holds the machine. Release the box first.");
+  if (kind === "owner") quit(EXIT.notOurs, "A box holds the machine. Release the box first.");
   if (kind === "none") {
     writeFileSync(join(state, "resetting"), `install=${values.install ?? ""}\ngeneration=${generation() ?? 0}\n`);
     kind = "resetting";

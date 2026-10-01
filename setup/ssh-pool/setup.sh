@@ -6,9 +6,10 @@
 #     [--address 192.0.2.21] [--port 22] [--admin bbbox-admin]
 #     [--reset-hook /path/to/reset-machine]
 #
-# --key is the public key bb-box's doctor shows. It:
+# --key is the public key bb-box's doctor shows. Give it once for each
+# bb-box install that lends the machine. It:
 #
-# - makes bb-box's admin user, which accepts only that key, with no
+# - makes bb-box's admin user, which accepts only those keys, with no
 #   forwarding or terminal, and may run only bb-box's helper as root
 # - installs the helper, machine.sh, as /usr/local/libexec/bb-box/machine,
 #   and with --reset-hook the operator's whole-machine reset as
@@ -17,8 +18,8 @@
 # - starts the machine's reset generation at 0
 # - prints the line for bb-box's machines setting and the host keys
 #
-# Running it again updates the helper, the hook and the key, and keeps the
-# reset generation.
+# Running it again updates the helper, the hook and the keys, and keeps the
+# reset generation. It replaces the keys, so give every install's key again.
 
 set -eu
 umask 022
@@ -27,18 +28,27 @@ export PATH
 
 LIBEXEC=/usr/local/libexec/bb-box
 here=$(cd "$(dirname "$0")" && pwd)
-key='' admin=bbbox-admin name='' address='' port='' hook=''
+keys='' admin=bbbox-admin name='' address='' port='' hook=''
 
 die() {
   printf 'setup.sh: %s\n' "$*" >&2
   exit 1
 }
-usage() { die "usage: setup.sh --key <public key> [--name <name>] [--address <host>] [--port <port>] [--admin <user>] [--reset-hook <path>]"; }
+usage() { die "usage: setup.sh --key <public key> [--key <another install's key>] [--name <name>] [--address <host>] [--port <port>] [--admin <user>] [--reset-hook <path>]"; }
 
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || usage
   case $1 in
-    --key) key=$2 ;;
+    --key)
+      case $2 in
+        *"
+"*) die "Give each --key one public key on one line." ;;
+        "ssh-ed25519 "* | "ssh-rsa "* | "ecdsa-sha2-"*) ;;
+        *) die "Give --key the public key bb-box's doctor shows, starting ssh-ed25519." ;;
+      esac
+      keys="$keys$2
+"
+      ;;
     --admin) admin=$2 ;;
     --name) name=$2 ;;
     --address) address=$2 ;;
@@ -51,12 +61,7 @@ done
 
 [ "$(id -u)" = 0 ] || die "Run it as root, with sudo."
 [ "$(uname -s)" = Linux ] || die "The SSH host pool lends Linux machines only."
-case $key in
-  "ssh-ed25519 "* | "ssh-rsa "* | "ecdsa-sha2-"*) ;;
-  *) die "Give --key the public key bb-box's doctor shows, starting ssh-ed25519." ;;
-esac
-case $key in *"
-"*) die "Give --key one public key on one line." ;; esac
+[ -n "$keys" ] || die "Give --key the public key bb-box's doctor shows, starting ssh-ed25519."
 printf '%s\n' "$admin" | grep -Eq '^[a-z_][a-z0-9_-]{0,31}$' || die "--admin must be a user name."
 case $admin in bbx-*) die "bbx- names are for box users. Choose another admin user." ;; esac
 [ -f "$here/machine.sh" ] || die "machine.sh must be beside setup.sh. Copy the whole setup/ssh-pool directory."
@@ -82,7 +87,7 @@ fi
 usermod -p '*' "$admin"
 home=$(getent passwd "$admin" | cut -d: -f6)
 install -d -m 0700 -o "$admin" -g "$(id -g "$admin")" "$home/.ssh"
-printf 'restrict %s\n' "$key" >"$home/.ssh/authorized_keys.new"
+printf '%s' "$keys" | sed 's/^/restrict /' >"$home/.ssh/authorized_keys.new"
 chown "$admin:$(id -g "$admin")" "$home/.ssh/authorized_keys.new"
 chmod 0600 "$home/.ssh/authorized_keys.new"
 mv -f "$home/.ssh/authorized_keys.new" "$home/.ssh/authorized_keys"

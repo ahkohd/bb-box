@@ -505,19 +505,25 @@ export class SshPoolBackend implements Backend {
 
   /**
    * Resets a machine out of service and lends it again. The reset completes
-   * the one that failed, so the generation moves on by one. A machine held
-   * by a box or by another install is left alone.
+   * the one that failed, so the generation moves on by one. A machine a box
+   * holds, of any install, is left alone, as is one another install resets.
    */
   async returnToService(ref: string, signal?: AbortSignal): Promise<void> {
     const machine = this.#machines.get(ref);
     if (!machine) throw new Error(`There is no machine ${ref} in the SSH host pool.`);
     const view = await this.#look(machine, signal);
+    const { status } = view.probe;
+    if (status?.marker === "owner" && status.owner) {
+      const { install, name, box } = status.owner;
+      const of = install === this.#context.installId ? "" : ` of bb-box install ${install || "with no ID"}`;
+      throw new Error(`Machine ${ref} is held by box ${name || box || "with no ID"}${of}. Release the box first.`);
+    }
     if (view.state === "free") return;
     if (view.state !== "out-of-service") throw new Error(`Machine ${ref} is ${view.state}, not out of service.`);
-    const { status } = view.probe;
     if (!status) throw new Error(`Machine ${ref} cannot be reset: ${view.probe.problem}`);
     if (status.owner && status.owner.install !== this.#context.installId) {
-      throw new Error(`Machine ${ref} is held by another bb-box install, ${status.owner.install || "with no ID"}. Leave it to that install.`);
+      const by = status.owner.install ? `another bb-box install, ${status.owner.install}` : "an operator on the machine";
+      throw new Error(`Machine ${ref} is being reset by ${by}. Leave it to finish, or run the reset again on the machine.`);
     }
     this.#resetting.add(ref);
     try {
@@ -608,21 +614,19 @@ export class SshPoolBackend implements Backend {
         if (problem) fail(DOCKER, problem, `Install Docker on ${name}, and its reset-machine command with setup.sh --reset-hook, or take linux-docker off its line.`);
         else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
-      if (status.owner && status.owner.install !== this.#context.installId) {
-        const install = status.owner.install || "none";
-        others.set(install, (others.get(install) ?? 0) + 1);
-      }
+      // An operator's reset names no install.
+      const install = status.owner?.install;
+      if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
+      const reset = `"sudo /usr/local/libexec/bb-box/machine reset${machine.reset === "machine" ? " machine" : ""}"`;
       if (view.state === "out-of-service") {
-        warn(
-          STATE,
-          `Out of service: ${view.reason}`,
-          `Fix the cause on ${name}, then reset it there with "sudo /usr/local/libexec/bb-box/machine reset${machine.reset === "machine" ? " machine" : ""}". bb-box lends it again once it is clean.`,
-        );
+        warn(STATE, `Out of service: ${view.reason}`, `Fix the cause on ${name}, then reset it there with ${reset}. bb-box lends it again once it is clean.`);
+      } else if (view.state === "resetting" && status.owner && !install) {
+        warn(STATE, "An operator's reset on the machine has not finished.", `If it is not still running, run ${reset} on ${name} again. bb-box lends it again once it is clean.`);
       } else pass(STATE, this.#describe(view));
     }
 
     if (others.size) {
-      const parts = [...others].map(([install, count]) => `${plural(count, "machine")} held by ${install === "none" ? "no install ID" : `install ${install}`}`);
+      const parts = [...others].map(([install, count]) => `${plural(count, "machine")} held by install ${install}`);
       notes.push(
         `This install leaves alone ${parts.join(", ")}. They still count against capacity. ` +
           "If one of these IDs was this install's before it lost its storage, take it back with bb box install-id --set <id>.",
@@ -774,6 +778,8 @@ export class SshPoolBackend implements Backend {
     const { status } = probe;
     if (probe.unreachable) return record?.state === "out-of-service" ? out(record.reason ?? "A reset failed.") : out(`It does not answer over SSH: ${probe.problem}`);
     if (!status) return out(`bb-box's helper did not run: ${probe.problem} Run setup/ssh-pool/setup.sh on it.`);
+    // Whatever else is wrong, a box holds it: an old helper only stops new claims.
+    if (status.marker === "owner") return { state: "held", reason: null };
     if (status.helper === null || status.helper < HELPER_VERSION) return out("bb-box's helper is missing or too old. Run this bb-box's setup/ssh-pool/setup.sh on it.");
     if (status.generation === null) return out("It has no reset generation. Run setup/ssh-pool/setup.sh on it.");
     if (record?.state === "out-of-service") {
@@ -781,7 +787,6 @@ export class SshPoolBackend implements Backend {
       const back = status.marker === "none" && !status.dirty && status.generation > record.generation;
       if (!back) return out(record.reason ?? "A reset failed.");
     }
-    if (status.marker === "owner") return { state: "held", reason: null };
     if (status.marker === "resetting") return { state: "resetting", reason: null };
     if (status.arch !== ARCH) return out(`It is ${status.arch || "of unknown architecture"}, not ${ARCH}.`);
     if (status.missing.length) return out(`It lacks ${status.missing.join(", ")}.`);

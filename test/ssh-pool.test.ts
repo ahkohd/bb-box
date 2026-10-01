@@ -240,7 +240,7 @@ describe("SSH host pool", () => {
     assert.equal((await member(backend, "f")).generation, 1, "returning a free machine to service does nothing");
     const next = await acquire(backend);
     assert.equal(next.guest.data?.user, "bbx-1");
-    await assert.rejects(backend.returnToService!("f"), /f is held, not out of service/);
+    await assert.rejects(backend.returnToService!("f"), /f is held by box .+\. Release the box first\./);
     await backend.release(next.guest, releaseHooks().hooks);
     await backend.dispose();
   });
@@ -380,6 +380,46 @@ describe("SSH host pool", () => {
     await backend.dispose();
   });
 
+  it("keeps a box's machine held when its helper is too old, and never resets it", async () => {
+    machine("192.0.2.62");
+    const { backend } = pool("h 192.0.2.62 linux");
+    const { guest } = await acquire(backend);
+    // As after an upgrade that needs a newer helper.
+    setFlag("192.0.2.62", "helper", "0");
+    assert.equal((await member(backend, "h")).state, "held", "an old helper only stops new claims");
+    assert.equal((await backend.held()).length, 1);
+    await assert.rejects(backend.returnToService!("h"), /h is held by box .+\. Release the box first\./);
+    assert.equal(await backend.power(guest), "running", "the box's machine was not reset");
+    assert.equal((await member(backend, "h")).generation, 0);
+    await backend.release(guest, releaseHooks().hooks);
+    const out = await member(backend, "h");
+    assert.equal(out.state, "out-of-service");
+    assert.match(out.reason!, /helper is missing or too old/);
+    clearFlag("192.0.2.62", "helper");
+    const back = await member(backend, "h");
+    assert.equal(back.state, "free");
+    assert.equal(back.generation, 1);
+    await backend.dispose();
+  });
+
+  it("tells the operator to run again a reset on the machine that was cut short", async () => {
+    machine("192.0.2.63");
+    write("192.0.2.63", "resetting", "install=\ngeneration=0\n");
+    const { backend } = pool("r 192.0.2.63 linux");
+    assert.equal((await member(backend, "r")).state, "resetting");
+    const doctor = await backend.doctor();
+    const state = doctor.checks.find((check) => check.id === "machine.r.state")!;
+    assert.equal(state.status, "warn");
+    assert.match(state.detail, /An operator's reset on the machine has not finished/);
+    assert.match(state.fix!, /run "sudo \/usr\/local\/libexec\/bb-box\/machine reset" on r again/);
+    assert.doesNotMatch(doctor.notes.join("\n"), /leaves alone/, "it is no other install's");
+    assert.deepEqual(await backend.held(), [], "the sweep leaves it to the operator");
+    const reset = await fake.ssh.run({ host: "192.0.2.63", port: 22, user: "bbbox-admin", hostKeys: [] }, `${HELPER} reset </dev/null`, { timeoutMs: 20_000 });
+    assert.equal(reset.exitCode, 0, reset.stderr);
+    assert.equal((await member(backend, "r")).state, "free");
+    await backend.dispose();
+  });
+
   it("notes machines held by another install in the doctor", async () => {
     machine("192.0.2.59");
     const mine = pool("o 192.0.2.59 linux", new MemoryStorage(), "mine").backend;
@@ -390,7 +430,8 @@ describe("SSH host pool", () => {
     assert.match(doctor.notes.join("\n"), /This install's ID is other/);
     assert.match(doctor.notes.join("\n"), /leaves alone 1 machine held by install mine\. They still count against capacity/);
     assert.match(doctor.checks.find((check) => check.id === "machine.o.state")!.detail, /Held by install mine/);
-    await assert.rejects(other.returnToService!("o"), /o is held, not out of service/);
+    await assert.rejects(other.returnToService!("o"), /o is held by box .+ of bb-box install mine\. Release the box first\./);
+    assert.equal(await mine.power(guest), "running", "the box's machine was not reset");
     await mine.release(guest, releaseHooks().hooks);
     await mine.dispose();
     await other.dispose();

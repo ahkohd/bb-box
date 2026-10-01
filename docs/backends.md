@@ -138,10 +138,12 @@ node --test test/conformance.test.ts
   many are not free. There is no warm pool.
 - `restores` is `machine` only when every machine has a whole-machine
   reset (`reset=machine`); only those machines serve `linux-docker`.
-- `members()` reads each machine now. `returnToService(ref)` resets an
-  out-of-service machine again; an operator can also run the helper's
-  `reset` on the machine, which bb-box sees as a clean machine at a later
-  generation.
+- `members()` reads each machine now, and shows a machine whose marker
+  names a box as held, even when its helper is too old to lend it again.
+  `returnToService(ref)` resets an out-of-service machine again; an
+  operator can also run the helper's `reset` on the machine, which bb-box
+  sees as a clean machine at a later generation. Neither resets a machine
+  a box holds.
 
 `test/ssh-pool.test.ts` runs the suite and the pool's own checks against a
 fake helper. To run them against real machines, start the Docker rig, then:

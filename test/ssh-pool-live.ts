@@ -165,15 +165,16 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
 
   it("finishes a whole-machine reset after the machine restarts during it", async () => {
     const pool = backend("settings.json");
-    await onMachine("systemd", `cp ${HOOK} ${HOOK}.saved && printf '#!/bin/sh\\nsleep 600\\n' >${HOOK}`);
+    // A hook that says it restarts the machine to finish.
+    await onMachine("systemd", `cp ${HOOK} ${HOOK}.saved && printf '#!/bin/sh\\ntouch "$BB_BOX_RESTARTING"\\nsleep 600\\n' >${HOOK}`);
     try {
       const guest = await acquire(pool, "linux-docker");
       const user = String(guest.data?.user);
       const uid = await inBox(pool, guest, "linux-docker", "id -u");
       const generation = (await member(pool, "systemd")).generation;
       const released = pool.release(guest, releaseHooks().hooks);
-      await onMachine("systemd", "until [ -e /var/lib/bb-box/restore/boot ]; do sleep 0.2; done; sleep 1");
-      // A reset that reboots the machine, as docker restart does to the rig's machine.
+      await onMachine("systemd", "until [ -e /var/lib/bb-box/restore/restarting ]; do sleep 0.2; done");
+      // The restart the hook asked for, as docker restart does to the rig's machine.
       await run("docker", ["restart", "bbbox-sshpool-systemd"], { timeout: 120_000 });
       await released;
       const after = await member(pool, "systemd");
@@ -183,6 +184,56 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
     } finally {
       await onMachine("systemd", `[ ! -e ${HOOK}.saved ] || mv -f ${HOOK}.saved ${HOOK}`);
     }
+  });
+
+  it("puts a machine out of service when it restarts before its whole-machine reset finishes", async () => {
+    const errors: string[] = [];
+    const pool = backend("settings.json", errors);
+    // A hook that does not say it restarts the machine, so a restart cuts it short.
+    await onMachine("systemd", `cp ${HOOK} ${HOOK}.saved && printf '#!/bin/sh\\nsleep 600\\n' >${HOOK}`);
+    try {
+      const guest = await acquire(pool, "linux-docker");
+      const user = String(guest.data?.user);
+      const uid = await inBox(pool, guest, "linux-docker", "id -u");
+      const generation = (await member(pool, "systemd")).generation;
+      const released = pool.release(guest, releaseHooks().hooks);
+      await onMachine("systemd", "until [ -e /var/lib/bb-box/restore/boot ]; do sleep 0.2; done; sleep 1");
+      await run("docker", ["restart", "bbbox-sshpool-systemd"], { timeout: 120_000 });
+      await released;
+      const broken = await member(pool, "systemd");
+      assert.equal(broken.state, "out-of-service");
+      assert.match(broken.reason ?? "", /The machine restarted before reset-machine finished/);
+      assert.equal(await onMachine("systemd", "ls /var/lib/bb-box/restore.failed/log | wc -l"), "1", "the hook's log stays for the operator");
+
+      await onMachine("systemd", `mv -f ${HOOK}.saved ${HOOK}`);
+      await pool.returnToService!("systemd");
+      const back = await member(pool, "systemd");
+      assert.equal(back.state, "free", back.reason ?? "");
+      assert.equal(back.generation, generation + 1);
+      assert.deepEqual(await leftovers("systemd", user, uid), NOTHING);
+    } finally {
+      await onMachine("systemd", `[ ! -e ${HOOK}.saved ] || mv -f ${HOOK}.saved ${HOOK}`);
+    }
+  });
+
+  it("never resets a machine a box holds, even when its helper is too old", async () => {
+    const pool = backend("settings.json");
+    const guest = await acquire(pool, "linux");
+    const user = String(guest.data?.user);
+    try {
+      // The helper refuses, from bb-box and from an operator.
+      assert.equal(await onMachine("plain", `printf 'install=live\\n' | ${HELPER} reset; echo $?`), "4");
+      assert.equal(await onMachine("plain", `${HELPER} reset </dev/null; echo $?`), "4");
+      // As after an upgrade that needs a newer helper.
+      await onMachine("plain", `cp ${HELPER} ${HELPER}.saved && sed -i 's/^VERSION=.*/VERSION=0/' ${HELPER}`);
+      assert.equal((await member(pool, "plain")).state, "held");
+      await assert.rejects(pool.returnToService!("plain"), /plain is held by box .+\. Release the box first\./);
+      assert.equal(await inBox(pool, guest, "linux", "id -un"), user);
+    } finally {
+      await onMachine("plain", `[ ! -e ${HELPER}.saved ] || mv -f ${HELPER}.saved ${HELPER}`);
+    }
+    await pool.release(guest, releaseHooks().hooks);
+    assert.equal((await member(pool, "plain")).state, "free");
   });
 
   it("finishes a reset cut short, from a new instance on empty storage", async () => {
