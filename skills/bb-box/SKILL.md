@@ -1,13 +1,13 @@
 ---
 name: bb-box
-description: Use bb-box to give a BB thread fresh Linux boxes for commands, builds, tests, servers and Docker, and to set up, check or clean up bb-box's backends with the bb box command.
+description: Boxes for BB threads, Linux or macOS computers for commands, builds, tests, servers and Docker, and the bb box command to set up, check and clean up their backends.
 ---
 
 # bb-box
 
-bb-box gives each BB thread its own boxes: small Linux computers that start
-in seconds. A box belongs to the thread that acquired it. It stays until the
-thread releases it, or until the thread is archived or deleted.
+bb-box gives each BB thread its own boxes: computers, Linux or macOS, that
+start in seconds. A box belongs to the thread that acquired it, until the
+thread releases it or is archived or deleted.
 
 ## Agent tools
 
@@ -266,7 +266,7 @@ so switching back is instant; a hidden tab that holds a desktop's control
 hands it back after a minute. The Desktops page lists every desktop box.
 The design is in `docs/design/panel.md`.
 
-bb-box's settings page in BB has four parts: Your machines, boxes you own
+BB Box's settings page in BB has four parts: Your machines, boxes you own
 kept as BB machines, each with its threads and actions, and "Add machine";
 Backends, each with a switch,
 its state in words and a setup area with the driver's fields, hosts,
