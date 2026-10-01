@@ -1753,6 +1753,11 @@ test("a reload while a person has control gives it back and sets the desktop's s
     harness.inspection.logEntries.filter((entry) => entry.level === "error").map((entry) => entry.message),
     [],
   );
+  assert.deepEqual(
+    harness.inspection.logEntries.filter((entry) => entry.level === "warn").map((entry) => entry.message),
+    [`bb-box is stopping, as for an update or a reload, so control of box ${box.name}'s desktop goes back to the agent.`],
+    "the log says why control went back, which the viewer sees as a dropped connection",
+  );
 });
 
 test("a box without a desktop has no desktop to control", async (t) => {
