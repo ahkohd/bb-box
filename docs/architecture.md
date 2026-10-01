@@ -649,16 +649,27 @@ export interface Backend {
   acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest>;
   release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void>;
   power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null>;
-  start?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
   stamp?(boxId: string, guest: Guest, signal?: AbortSignal): Promise<Guest>;
+  relabel?(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void>;
+  asOffered?(guest: Guest, kind: string, createdAt: number, signal?: AbortSignal): Promise<boolean>;
+  /** What its boxes take that another backend's must not, for the doctor. */
+  footprint?(): Footprint;
   transports(guest: Guest, kind: string): Promise<BoxTransports>;
   doctor(signal?: AbortSignal): Promise<DoctorReport>;
   maintain?(signal?: AbortSignal): Promise<void>;
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   dispose?(): Promise<void>;
+}
+
+export interface Footprint {
+  /** Guest IDs it may use, such as a Proxmox cluster's VMIDs. */
+  readonly ids?: { readonly scope: string; readonly first: number; readonly last: number };
+  /** Addresses its boxes may get, such as those on one node's bridge. */
+  readonly addresses?: { readonly scope: string; readonly list: readonly string[] };
 }
 
 export interface DoctorCheck {
