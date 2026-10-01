@@ -150,16 +150,16 @@ elif ! printf '%s\n' "$node" | awk -F. '{ exit !($1 > 22 || ($1 == 22 && $2 >= 1
 fi
 [ -z "$lacks" ] || warn "This machine lacks $lacks. BB's installer needs npm, and boxes need git and gh for the thread's GitHub access. On Debian or Ubuntu: apt-get install git gh."
 
+# A machine with a whole-machine reset gives its boxes Docker (041).
 docker=no
 command -v docker >/dev/null 2>&1 && getent group docker >/dev/null && docker=yes
+kinds=linux
 if [ -x "$LIBEXEC/reset-machine" ]; then
   reset=machine
-  kinds=linux
-  [ "$docker" = no ] || kinds=linux,linux-docker
+  [ "$docker" = yes ] || warn "This machine has a whole-machine reset, so its boxes get Docker, but Docker is not installed. Install Docker Engine, then run setup.sh again. Until then, in a pool whose boxes have Docker, bb-box does not lend it."
 else
   reset=home
-  kinds=linux
-  [ "$docker" = no ] || warn "Docker is installed, but linux-docker needs a whole-machine reset: run setup.sh again with --reset-hook. Until then boxes here are not in the docker group."
+  [ "$docker" = no ] || warn "Docker is installed, but boxes get it only on a machine with a whole-machine reset: run setup.sh again with --reset-hook. Until then boxes here are not in the docker group."
 fi
 
 [ -n "$name" ] || name=$(hostname -s 2>/dev/null | tr 'A-Z_.' 'a-z--' || true)

@@ -62,7 +62,7 @@ const RESET_POLL_MS = 2_000;
 
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
 
-/** The pool's one offer. With Docker, which gives root, only when every machine's line lists linux-docker (041). */
+/** The pool's one offer. With Docker, which gives root, only when every machine has a whole-machine reset (041). */
 function linuxOffer(docker: boolean): BoxKind {
   return {
     id: "linux",
@@ -658,7 +658,7 @@ export class SshPoolBackend implements Backend {
       const check = (what: string, label: string): Check => [`machine.${name}.${what}`, `${name}: ${label}`];
       const SSH = check("ssh", "SSH"), HELPER = check("helper", "helper"), ARCH_CHECK = check("arch", "architecture");
       const TOOLS = check("tools", "tools"), DOCKER = check("docker", "Docker"), STATE = check("state", "state");
-      const rest = [HELPER, ARCH_CHECK, TOOLS, ...(machine.docker ? [DOCKER] : []), STATE];
+      const rest = [HELPER, ARCH_CHECK, TOOLS, ...(this.#docker ? [DOCKER] : []), STATE];
       const view = views.find((other) => other.machine === machine);
       const where = `${machine.admin.user}@${machine.admin.host}${machine.admin.port === 22 ? "" : `:${machine.admin.port}`}${machine.jump ? ` through ${machine.jump.host}` : ""}`;
       if (!view) {
@@ -682,7 +682,7 @@ export class SshPoolBackend implements Backend {
       const { status } = probe;
       if (!status || status.helper === null) {
         fail(HELPER, `bb-box's helper did not run: ${probe.problem ?? "it gave no version."}`, `Run setup/ssh-pool/setup.sh on ${name} as root.`);
-        skip(ARCH_CHECK, TOOLS, ...(machine.docker ? [DOCKER] : []), STATE);
+        skip(ARCH_CHECK, TOOLS, ...(this.#docker ? [DOCKER] : []), STATE);
         continue;
       }
       if (status.helper < HELPER_VERSION || status.generation === null) {
@@ -717,10 +717,12 @@ export class SshPoolBackend implements Backend {
         const linger = status.systemd ? "It has systemd, so BB's daemon lingers." : "There is no systemd, so BB's daemon runs without linger.";
         pass(TOOLS, `Everything the helper, enrolment and the thread's GitHub access need, with Node.js ${node}. ${linger}`);
       }
-      if (machine.docker) {
+      // A machine's Docker matters only when the pool's boxes get it.
+      if (this.#docker) {
         const problem = this.#dockerProblem(view);
-        if (problem) fail(DOCKER, problem, `Install Docker on ${name}, and its reset-machine command with setup.sh --reset-hook, or take linux-docker off its line.`);
-        else pass(DOCKER, "Docker and a whole-machine reset are installed.");
+        if (problem) {
+          fail(DOCKER, `${problem} Its line has reset=machine, so its boxes get Docker.`, `Install Docker on ${name}, and its reset-machine command with setup.sh --reset-hook, as the SSH host pool's setup guide says.`);
+        } else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
       // An operator's reset names no install.
       const install = status.owner?.install;
@@ -745,9 +747,9 @@ export class SshPoolBackend implements Backend {
       const names = without.map((machine) => machine.name).join(", ");
       warn(
         DOCKER_CHECK,
-        `${names} ${without.length === 1 ? "does" : "do"} not list linux-docker, so none of the pool's linux boxes have Docker, and each says No Docker.`,
+        `${names} ${without.length === 1 ? "has" : "have"} no whole-machine reset, so none of the pool's linux boxes have Docker, and each says No Docker.`,
         // bb-box runs one SSH host pool, so the fix is the lines, not a second pool.
-        `To give them Docker, set up a whole-machine reset on ${names} and add linux-docker and reset=machine to ${without.length === 1 ? "its line" : "their lines"}, as the SSH host pool's setup guide says. Otherwise take linux-docker off every line.`,
+        `To give them Docker, set up a whole-machine reset on ${names} and add reset=machine to ${without.length === 1 ? "its line" : "their lines"}, as the SSH host pool's setup guide says.`,
       );
     }
     if (this.restores === "home") {

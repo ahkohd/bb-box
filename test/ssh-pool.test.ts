@@ -99,7 +99,7 @@ describe("an SSH host pool with no machines yet", () => {
 
 describe("SSH host pool settings", () => {
   it("parse a machine per line, with defaults", () => {
-    const parsed = config("build-1 192.0.2.21 linux\nbuild-2 ops@192.0.2.22:2222 linux,linux-docker via=jump@192.0.2.9 reset=machine labels=fast,big # the big one");
+    const parsed = config("build-1 192.0.2.21 linux\nbuild-2 ops@192.0.2.22:2222 linux via=jump@192.0.2.9 reset=machine labels=fast,big # the big one");
     assert.deepEqual(parsed.machines[0], {
       name: "build-1",
       admin: { host: "192.0.2.21", port: 22, user: "bbbox-admin" },
@@ -121,11 +121,13 @@ describe("SSH host pool settings", () => {
     assert.equal(parsed.privateKey, null, "bb-box makes a key when none is given");
   });
 
-  it("accept the kind IDs from before 027, and linux-docker as linux with Docker (041)", () => {
+  it("give Docker on a machine with reset=machine, and accept the kind IDs from before 027 and linux-docker on its line (041)", () => {
     const old = config("old 192.0.2.23 linux-headless,linux-headless-docker reset=machine").machines[0]!;
     assert.deepEqual([old.kinds, old.docker], [["linux"], true]);
     const alone = config("d 192.0.2.24 linux-docker reset=machine").machines[0]!;
     assert.deepEqual([alone.kinds, alone.docker], [["linux"], true]);
+    const both = config("b 192.0.2.25 linux,linux-docker reset=machine").machines[0]!;
+    assert.deepEqual([both.kinds, both.docker], [["linux"], true]);
   });
 
   it("take IPv6 addresses in brackets and known_hosts names off port 22", () => {
@@ -163,10 +165,10 @@ describe("SSH host pool settings", () => {
   });
 });
 
-// Two machines serve linux, so two installs can each hold one. Only the second lists linux-docker, so neither gives Docker.
+// Two machines serve linux, so two installs can each hold one. Only the second has reset=machine, so neither gives Docker.
 machine("192.0.2.31");
 machine("192.0.2.32", { docker: "", hook: "", "restore-steps": "2" });
-const conformanceLines = "c1 192.0.2.31 linux\nc2 192.0.2.32 linux,linux-docker reset=machine";
+const conformanceLines = "c1 192.0.2.31 linux\nc2 192.0.2.32 linux reset=machine";
 await conformance({
   name: "SSH host pool on fakes",
   storage: new MemoryStorage(),
@@ -180,26 +182,27 @@ await conformance({
 });
 
 describe("SSH host pool", () => {
-  it("offers linux, with Docker and root only when every machine gives Docker, and restores the machine only when every machine does", () => {
+  it("offers linux, with Docker and root only when every machine has a whole-machine reset, which it then restores (041)", () => {
     const home = pool("h1 192.0.2.41 linux").backend;
     assert.deepEqual(home.kinds().map((kind) => kind.id), ["linux"]);
     assert.equal(home.restores, "home");
     assert.deepEqual(home.kinds()[0]!.capabilities.features, []);
     assert.equal(home.kinds()[0]!.capabilities.command?.admin, false, "a linux box cannot become root");
-    const whole = pool("w1 192.0.2.42 linux,linux-docker reset=machine").backend;
+    const whole = pool("w1 192.0.2.42 linux reset=machine").backend;
     assert.deepEqual(whole.kinds().map((kind) => kind.id), ["linux"], "linux-docker is an alias, not an offer (041)");
     assert.equal(whole.restores, "machine");
     assert.deepEqual(whole.kinds()[0]!.capabilities.features, ["docker"]);
     assert.equal(whole.kinds()[0]!.capabilities.command?.admin, true, "Docker gives root, so the box says so");
-    const mixed = pool("w1 192.0.2.42 linux-docker reset=machine\nh1 192.0.2.41 linux reset=machine").backend;
+    const mixed = pool("w1 192.0.2.42 linux-docker reset=machine\nh1 192.0.2.41 linux").backend;
     assert.deepEqual(mixed.kinds()[0]!.capabilities.features, [], "each box of a backend's offer has Docker, or none does");
     assert.equal(mixed.kinds()[0]!.capabilities.command?.admin, false);
+    assert.equal(mixed.restores, "home");
   });
 
-  it("gives Docker access over SSH when every machine gives Docker, and claims machines in turn", async () => {
+  it("gives Docker access over SSH when every machine has a whole-machine reset, and claims machines in turn", async () => {
     machine("192.0.2.43", { docker: "", hook: "" });
     machine("192.0.2.44", { docker: "", hook: "" });
-    const { backend } = pool("d1 192.0.2.43 linux-docker reset=machine\nd2 192.0.2.44 linux,linux-docker reset=machine");
+    const { backend } = pool("d1 192.0.2.43 linux reset=machine\nd2 192.0.2.44 linux,linux-docker reset=machine");
     const { guest } = await acquire(backend);
     assert.equal(guest.ref, "d1");
     assert.deepEqual(guest.data, { box: guest.data!.box, generation: 0, user: "bbx-0" });
@@ -218,18 +221,35 @@ describe("SSH host pool", () => {
     await backend.dispose();
   });
 
-  it("gives no Docker in a pool where some machines do not, and its doctor says so", async () => {
-    machine("192.0.2.67", { docker: "", hook: "" });
+  it("gives no Docker in a pool where some machines have no whole-machine reset, and its doctor says so", async () => {
+    machine("192.0.2.67", { hook: "" });
     machine("192.0.2.68");
-    const { backend } = pool("both 192.0.2.67 linux,linux-docker reset=machine\nplain 192.0.2.68 linux");
+    const { backend } = pool("both 192.0.2.67 linux reset=machine\nplain 192.0.2.68 linux");
     const { guest } = await acquire(backend);
     assert.equal((await backend.transports(guest, "linux")).access?.dockerHost, null);
     const doctor = await backend.doctor();
     const docker = doctor.checks.find((check) => check.id === "docker");
     assert.equal(docker?.status, "warn");
-    assert.match(docker!.detail, /^plain does not list linux-docker, so none of the pool's linux boxes have Docker, and each says No Docker\.$/);
-    assert.match(docker!.fix!, /^To give them Docker, set up a whole-machine reset on plain and add linux-docker and reset=machine to its line, /);
-    assert.equal(doctor.checks.find((check) => check.id === "machine.both.docker")?.status, "ok", "both is still checked for Docker");
+    assert.match(docker!.detail, /^plain has no whole-machine reset, so none of the pool's linux boxes have Docker, and each says No Docker\.$/);
+    assert.match(docker!.fix!, /^To give them Docker, set up a whole-machine reset on plain and add reset=machine to its line, /);
+    assert.equal(doctor.checks.find((check) => check.id === "machine.both.docker"), undefined, "both lacks Docker, which no box here gets");
+    await backend.release(guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
+  it("does not lend a machine with reset=machine but no Docker when the pool's boxes have Docker, and its doctor fails it (041)", async () => {
+    machine("192.0.2.74", { hook: "" });
+    machine("192.0.2.75", { docker: "", hook: "" });
+    const { backend } = pool("bare 192.0.2.74 linux reset=machine\nfull 192.0.2.75 linux reset=machine");
+    assert.deepEqual(backend.kinds()[0]!.capabilities.features, ["docker"]);
+    const { guest } = await acquire(backend);
+    assert.equal(guest.ref, "full", "bare has no Docker to give");
+    const doctor = await backend.doctor();
+    const bare = doctor.checks.find((check) => check.id === "machine.bare.docker");
+    assert.equal(bare?.status, "fail");
+    assert.equal(bare!.detail, "Docker is not installed. Its line has reset=machine, so its boxes get Docker.");
+    assert.match(bare!.fix!, /^Install Docker on bare, /);
+    assert.equal(doctor.checks.find((check) => check.id === "machine.full.docker")?.status, "ok");
     await backend.release(guest, releaseHooks().hooks);
     await backend.dispose();
   });
@@ -269,8 +289,9 @@ describe("SSH host pool", () => {
   });
 
   it("gives each acquire that has not claimed the machine its claim would take, whatever its size", async () => {
+    // s is a little smaller than d, so every claim tries s first: machines of one size go in the order their probes answered.
     machine("192.0.2.64", { cores: "2", memory: "3900" });
-    machine("192.0.2.65", { cores: "2", memory: "3900" });
+    machine("192.0.2.65", { cores: "2", memory: "3950" });
     machine("192.0.2.66", { cores: "8", memory: "15900" });
     const { backend } = pool("s 192.0.2.64 linux\nd 192.0.2.65 linux\nl 192.0.2.66 linux");
     const small = sizeOf("linux");
@@ -401,7 +422,7 @@ describe("SSH host pool", () => {
   });
 
   it("waits for a whole-machine reset to finish", async () => {
-    machine("192.0.2.54", { hook: "", "restore-steps": "3" });
+    machine("192.0.2.54", { docker: "", hook: "", "restore-steps": "3" });
     const { backend } = pool("m 192.0.2.54 linux reset=machine");
     const { guest } = await acquire(backend);
     sleeps.length = 0;
