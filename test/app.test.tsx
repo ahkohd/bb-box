@@ -468,14 +468,14 @@ test("releasing a box asks first", async () => {
 });
 
 test("a box a thread runs on is released or stopped only once the user says so", async () => {
-  const { handlers, changes } = server([box()], { inUse: [{ id: "thr_worker", title: "Build the app" }] });
+  const { handlers, changes } = server([box()], { inUse: [{ id: "thr_worker", title: "Build the app", running: true }] });
   const slot = panel(handlers);
   await slot.findByText("calm-otter");
 
   fireEvent.click(slot.getByRole("button", { name: "Stop" }));
   let dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Stop calm-otter anyway?")).toBeTruthy();
-  expect(within(dialog).getByText("Build the app runs on it, and would lose its machine.")).toBeTruthy();
+  expect(within(dialog).getByText("Build the app is working on it, and would lose its machine.")).toBeTruthy();
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(changes).toEqual([]);

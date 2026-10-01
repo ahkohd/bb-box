@@ -133,7 +133,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
               {inUse?.method === "stop" ? "Stop" : "Release"} {inUse?.box.name} anyway?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {inUse ? `${inUse.threads.map((thread) => thread.title ?? thread.id).join(", ")} ${inUse.threads.length === 1 ? "runs" : "run"} on it, and would lose ${inUse.threads.length === 1 ? "its" : "their"} machine.` : null}
+              {inUse ? `${inUse.threads.map((thread) => thread.title ?? thread.id).join(", ")} ${inUse.threads.length === 1 ? "is" : "are"} working on it, and would lose ${inUse.threads.length === 1 ? "its" : "their"} machine.` : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

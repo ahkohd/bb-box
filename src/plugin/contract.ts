@@ -33,7 +33,7 @@ export interface BoxResult {
   /** Null when the box is gone, for example once released. */
   readonly box: BoxView | null;
   readonly error: string | null;
-  /** Threads that run on the box's BB machine, when a release or stop left it alone for them. Ask, then send `force`. */
+  /** Threads working on the box's BB machine, when a release or stop left it alone for them. Ask, then send `force`. */
   readonly threads?: readonly ThreadOnBox[];
 }
 
@@ -41,6 +41,8 @@ export interface BoxResult {
 export interface ThreadOnBox {
   readonly id: string;
   readonly title: string | null;
+  /** Working now: busy, or waiting on a question to the user. An idle thread has finished. */
+  readonly running: boolean;
 }
 
 /** What starting a thread on a box returns: the new thread, or why it did not start. */
@@ -68,7 +70,7 @@ const draft = z.unknown();
 export const contract = defineRpcContract({
   state: { input: thread, output: z.custom<PanelState>() },
   acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional() }), output: boxResult },
-  /** Without `force`, a box a thread runs on is left alone, and the answer names the threads. */
+  /** Without `force`, a box a thread is working on is left alone, and the answer names the threads. */
   release: { input: forceable, output: boxResult },
   stop: { input: forceable, output: boxResult },
   start: { input: oneBox, output: boxResult },

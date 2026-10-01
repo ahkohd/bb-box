@@ -9,6 +9,7 @@ import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
 import { PRESETS, describeSize, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
 import type { ConfigState } from "./configuration.ts";
+import type { ThreadOnBox } from "./contract.ts";
 import type { DisplayProtocol } from "../transports/types.ts";
 
 export interface BoxView {
@@ -339,4 +340,19 @@ export function movedText(copy: MovedCopy): string {
   if (copy.notes.length) lines.push("", "Not carried over as they were:", ...copy.notes.map((note) => `- ${note}`));
   lines.push("", "bb box config migrated --json prints the values in full. --remove removes the copy.");
   return lines.join("\n");
+}
+
+/** What a release or stop did to the idle threads on a box: "" when there were none. */
+export function idleWords(threads: readonly ThreadOnBox[], stopped: boolean): string {
+  if (!threads.length) return "";
+  const one = threads.length === 1;
+  return stopped
+    ? ` ${threadsWords(threads).replace(/^t/, "T")}, idle on it, ${one ? "has" : "have"} no machine until it starts again.`
+    : ` ${threadsWords(threads).replace(/^t/, "T")}, idle on it, lost ${one ? "its" : "their"} machine. Archive ${one ? "it" : "them"} if ${one ? "it is" : "they are"} done.`;
+}
+
+/** "thread Fix the build (thr_1)", or several. */
+export function threadsWords(threads: readonly ThreadOnBox[]): string {
+  const each = threads.map((thread) => `${thread.title ? `"${thread.title}" ` : ""}(${thread.id})`);
+  return `${threads.length === 1 ? "thread" : "threads"} ${each.join(", ")}`;
 }

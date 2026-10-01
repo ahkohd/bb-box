@@ -23,7 +23,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     if (!force) {
       try {
         const box = await boxes.get(threadId, ref);
-        const threads = await app.threadsOn(box);
+        const threads = (await app.threadsOn(box)).filter((thread) => thread.running);
         if (threads.length) return { box: app.view(box), error: null, threads };
       } catch (error) {
         return { box: null, error: describeError(error, "Checking the box") };
