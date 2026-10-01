@@ -277,6 +277,19 @@ describe("SSH host pool", () => {
     await backend.dispose();
   });
 
+  it("lends a machine with a whole-machine reset last in a mixed pool, even when it has been free longer", async () => {
+    machine("192.0.2.76", { hook: "" });
+    machine("192.0.2.77");
+    const { backend } = pool("whole 192.0.2.76 linux reset=machine\nhome 192.0.2.77 linux");
+    const first = await acquire(backend);
+    assert.equal(first.guest.ref, "home");
+    await backend.release(first.guest, releaseHooks().hooks);
+    const next = await acquire(backend);
+    assert.equal(next.guest.ref, "home", "home has been free for less time than whole, but its reset needs no restart");
+    await backend.release(next.guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
   it("counts acquires that have not claimed a machine yet", async () => {
     machine("192.0.2.45");
     const { backend } = pool("p 192.0.2.45 linux");
