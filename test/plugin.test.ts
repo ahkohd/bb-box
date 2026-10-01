@@ -102,7 +102,7 @@ async function start(
     sources: [] as { hostId: string; type: string }[],
     /** The thread's project's kind: BB's personal project has no repository. */
     projectKind: "standard" as "standard" | "personal",
-    /** How long after bootstrap returns BB shows a machine it has connected again, or null for never. */
+    /** How long after bootstrap returns BB shows a machine it has connected again, or null for never, nor a new one. */
     connectAfterMs: 0 as number | null,
     /** How many threads run on each machine, by host ID. */
     hostThreads: new Map<string, number>(),
@@ -218,7 +218,7 @@ async function start(
             hosts.set(
               id,
               result.status === "created"
-                ? { ...current, name: result.name, status: "connected", lifecycle: { ...current.lifecycle, phase: "active" } }
+                ? { ...current, name: result.name, status: world.connectAfterMs === null ? "disconnected" : "connected", lifecycle: { ...current.lifecycle, phase: "active" } }
                 : { ...current, lifecycle: { ...current.lifecycle, phase: "destroyed", message: result.message } },
             );
           })();
@@ -717,6 +717,78 @@ test("the enrolment waits only so long for a worker with the thread's variables"
   const step = (label: string) => Number(new RegExp(`, ${label} (\\d+\\.\\d+) s,`).exec(line)?.[1] ?? 0);
   assert.match(line, /, waiting for a worker with the thread's variables 0\.\d+ s, finishing /);
   assert.ok(step("waiting for the access setup") + step("waiting for a worker with the thread's variables") >= 0.29, line);
+});
+
+test("an enrolment fails, and says why, when BB's daemon stops soon after the machine connects, as in a box out of memory (#286)", async (t) => {
+  // A worker without the thread's variables keeps the enrolment waiting while the daemon stops.
+  const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
+  t.after(daemon.stop);
+  const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent, variablesWaitMs: 1_500 });
+  t.after(() => harness.lifecycle.dispose());
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { linux: { presets: { small: { memoryMiB: 1024 } } } } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+
+  const acquired = tool("box_acquire", { kind: "linux", size: "small" });
+  const box = await until("BB to show the machine connected", async () => {
+    const [current] = await app.boxes.list(THREAD);
+    return current && world.hosts.get(`host-${current.id}`)?.status === "connected" ? current : null;
+  });
+  // The enrolment notices within 100 ms, then waits for a worker with the thread's variables.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const hostId = `host-${box.id}`;
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+
+  const reason =
+    `BB's daemon in box ${box.name} stopped soon after it connected, and BB did not show the machine connected again within 1.5 s. ` +
+    "The box has 1 GiB memory: with less than 2 GiB it can run out of memory as it becomes a BB machine.";
+  const result = text(await acquired);
+  assert.ok(result.includes(`BB machine: enrolment failed: ${reason}\n`), result);
+  assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "failed", hostId, error: reason });
+  const messages = harness.inspection.logEntries.map((entry) => entry.message);
+  assert.ok(messages.includes(reason), messages.join("\n"));
+  assert.ok(!messages.some((line) => line.startsWith(`Enrolled box ${box.name} `)), messages.join("\n"));
+
+  // Its machine goes with it.
+  await tool("box_release", { box: box.name });
+  assert.deepEqual(world.events, [`create ${hostId}`, `delete ${hostId}`]);
+});
+
+test("an enrolment that finds the machine disconnected as its waits end gives BB a while to show it connected again (#286)", async (t) => {
+  const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
+  t.after(daemon.stop);
+  const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent, variablesWaitMs: 1_000 });
+  t.after(() => harness.lifecycle.dispose());
+
+  const acquired = tool("box_acquire", { kind: "linux" });
+  const box = await until("BB to show the machine connected", async () => {
+    const [current] = await app.boxes.list(THREAD);
+    return current && world.hosts.get(`host-${current.id}`)?.status === "connected" ? current : null;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const hostId = `host-${box.id}`;
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await until("the wait for the variables to end", async () =>
+    harness.inspection.logEntries.some((entry) => entry.message.startsWith(`BB's daemon in box ${box.name} had no process`)),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "connected" });
+
+  assert.match(text(await acquired), /BB machine: enrolled\n/);
+  assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "enrolled", hostId, error: null });
+});
+
+test("an enrolment fails, and says why, when BB does not show the machine connected soon after its daemon started (#286)", async (t) => {
+  const { harness, app, world, tool } = await start(undefined, { variablesWaitMs: 300 });
+  t.after(() => harness.lifecycle.dispose());
+  world.connectAfterMs = null;
+
+  // box_acquire waits for the enrolment for 20 s at most, well short of its 5 minutes.
+  const result = text(await tool("box_acquire", { kind: "linux" }));
+  const box = await only(app);
+  const reason = `BB's daemon in box ${box.name} started, but BB did not show the machine connected within 0.3 s.`;
+  assert.ok(result.includes(`BB machine: enrolment failed: ${reason}\n`), result);
+  assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "failed", hostId: `host-${box.id}`, error: reason });
 });
 
 test("the enrolment's log lists its steps in the order they started, with the access setup's parts", () => {

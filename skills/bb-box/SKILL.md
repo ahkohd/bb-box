@@ -201,6 +201,8 @@ and terminals can use it and BB's own secrets and Git credentials reach it.
 This takes a few seconds after the box is ready; `box_acquire` and `box_run`
 wait up to 20 s for it, and `box_status` shows how long it took. A box you
 start again joins BB again, and `box_start` and `box_run` wait for that too.
+If BB's daemon stops as the box joins, as in a box with too little memory,
+`box_status` says the enrolment failed and why.
 `bb plugin logs bb-box` shows how long each step of it took.
 bb-box removes the machine before it releases the box.
 

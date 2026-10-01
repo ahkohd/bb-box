@@ -336,7 +336,8 @@ export function describePresets(sizes: KindSizes): string {
   return `${each.slice(0, -1).join(", ")} and ${each.at(-1)}`;
 }
 
-function formatMiB(value: number): string {
+/** For example "512 MiB" or "1.5 GiB". */
+export function formatMiB(value: number): string {
   if (value < 1024) return `${Math.round(value)} MiB`;
   return `${(value / 1024).toFixed(1).replace(/\.0$/, "")} GiB`;
 }
