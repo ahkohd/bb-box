@@ -4,7 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
-import { BoxError, describeError } from "../core/boxes.ts";
+import { BoxError, OPERATOR, describeError } from "../core/boxes.ts";
 import type { DoctorReport } from "../backends/types.ts";
 import type { Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
@@ -146,6 +146,42 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             guard("Checking the box", async () => {
               const box = await boxes.refresh(threadOf(options.thread, ctx), positionals.box, ctx.signal);
               return options.json ? json(app.view(box)) : out(boxDetail(box, app.control(box)));
+            }),
+        }),
+        machines: cliCommand({
+          summary: "List your machines: boxes you own, kept as BB machines, which no thread ending releases.",
+          options: jsonOption,
+          async run({ options }) {
+            const machines = (await boxes.list(OPERATOR)).filter((box) => box.state !== "releasing").sort((a, b) => a.createdAt - b.createdAt);
+            if (options.json) return json(machines.map(app.view));
+            if (!machines.length) return out("You have no machines. bb box machines add <kind> adds one.");
+            return out(machines.map(boxLine).join("\n"));
+          },
+        }),
+        "machines add": cliCommand({
+          summary: "Add a machine of your own: a box of the kind, kept as a BB machine under the name until you remove it.",
+          positionals: [{ name: "kind", description: "The kind of box, from bb box kinds. It must be able to become a BB machine.", required: true }],
+          options: { ...jsonOption, ...sizeOptions, name: { type: "string", description: "Its name, which is also its BB machine's: a lower-case letter first, then letters, digits and \"-\". bb-box picks one when left out." }, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
+          run: ({ positionals, options }) =>
+            guard("Adding the machine", async () => {
+              const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
+              let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}) });
+              if (!options["no-wait"]) box = await boxes.enrolled((await boxes.settled(box)) ?? box);
+              if (options.json) return json(app.view(box));
+              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };
+            }),
+        }),
+        "machines remove": cliCommand({
+          summary: "Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force.",
+          positionals: [{ name: "machine", description: "The machine's name or ID, from bb box machines.", required: true }],
+          options: { force: { type: "boolean", description: "Remove it even while threads are working on it, which ends their work." } },
+          run: ({ positionals, options }) =>
+            guard("Removing the machine", async () => {
+              const box = await boxes.get(OPERATOR, positionals.machine);
+              const idle = options.force ? await app.threadsOn(box) : await app.checkInUse(box, "Releasing");
+              const left = await boxes.release(OPERATOR, box.id);
+              if (left) return { exitCode: 1, stderr: `Machine ${left.name} is still being removed: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
+              return out(`Removed machine ${box.name}.${idleWords(idle, false)}`);
             }),
         }),
         thread: cliCommand({

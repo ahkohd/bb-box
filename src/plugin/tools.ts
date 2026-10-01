@@ -28,6 +28,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   backend_off: "Ask the user to fix its backend's settings in bb-box's settings, or release the box.",
   released: "Acquire a new box with box_acquire.",
   unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
+  invalid_name: "Pick another name: a lower-case letter first, then letters, digits and \"-\".",
   in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
 };
 

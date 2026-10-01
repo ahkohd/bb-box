@@ -25,10 +25,18 @@ export interface DesktopState {
   readonly terminalPath: string;
 }
 
-/** A desktop box in any thread, for the Desktops page. */
+/** A desktop box in any thread, or one of your machines, for the Desktops page. */
 export interface DesktopEntry {
   readonly threadId: string;
   readonly box: BoxView;
+  /** "yours" for one of your machines (036). */
+  readonly owner: "thread" | "yours";
+}
+
+/** One of your machines (036), and the threads on its BB machine. */
+export interface MachineEntry {
+  readonly box: BoxView;
+  readonly threads: readonly ThreadOnBox[];
 }
 
 /** What a change to one box returns: the box as it is now, or why the change failed. */
@@ -60,6 +68,8 @@ const oneBox = thread.extend({ box: z.string().min(1) });
 const viewer = oneBox.extend({ viewer: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) });
 const boxResult = z.custom<BoxResult>();
 const forceable = oneBox.extend({ force: z.boolean().optional() });
+/** One of your machines, by ID or name. */
+const machineRef = z.object({ box: z.string().min(1) });
 const whole = z.number().int().positive().optional();
 /**
  * A preset, and any parts of a custom size (028). Leave the key out for the
@@ -82,6 +92,17 @@ export const contract = defineRpcContract({
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },
   desktops: { input: z.null(), output: z.custom<DesktopEntry[]>() },
+  /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
+  "machines.list": { input: z.null(), output: z.custom<{ machines: MachineEntry[]; kinds: KindView[] }>() },
+  /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */
+  "machines.add": {
+    input: z.object({ kind: z.string().min(1), size: size.optional(), name: z.string().min(1).optional() }),
+    output: boxResult,
+  },
+  /** Without `force`, one a thread is working on is left alone, and the answer names the threads. */
+  "machines.remove": { input: machineRef.extend({ force: z.boolean().optional() }), output: boxResult },
+  "machines.stop": { input: machineRef.extend({ force: z.boolean().optional() }), output: boxResult },
+  "machines.start": { input: machineRef, output: boxResult },
   /** The kinds on offer now, for "New box" in BB's new-thread screen. */
   kinds: { input: z.null(), output: z.custom<KindView[]>() },
   /** Starts a child thread on a box's BB machine. */

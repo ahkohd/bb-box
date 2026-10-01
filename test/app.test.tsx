@@ -228,7 +228,13 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
-    desktops: () => boxes.filter((candidate) => candidate.desktop).map((found) => ({ threadId: THREAD, box: found })),
+    desktops: () => boxes.filter((candidate) => candidate.desktop).map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
+    // Your machines' section is the UI/UX worker's; these answer as an install with none.
+    "machines.list": () => ({ machines: [], kinds: options.kinds ?? KINDS }),
+    "machines.add": () => result(null),
+    "machines.remove": () => result(null),
+    "machines.stop": () => result(null),
+    "machines.start": () => result(null),
     kinds: () => options.kinds ?? KINDS,
     thread: ({ box: ref, prompt }) => {
       changes.push(`thread ${ref} ${prompt}`);

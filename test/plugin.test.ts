@@ -10,7 +10,7 @@ import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-s
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
 import type { BackendDriver } from "../src/backends/types.ts";
-import { SPARES, type BoxRecord } from "../src/core/boxes.ts";
+import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases } from "../src/plugin/enrol.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
@@ -657,11 +657,12 @@ test("a kind keeps a spare box as a BB machine, which box_acquire claims, rename
   assert.deepEqual(config.kinds.find((kind) => kind.id === "linux")!.spares, { ready: 1, making: 0 });
 
   // A thread runs on the spare's machine, so an acquire leaves it.
-  world.hostThreads.set(hostId, 1);
+  world.onHost.set(hostId, [{ id: "thr_picker", title: null, status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
   const other = text(await tool("box_acquire", { kind: "linux" }));
   assert.doesNotMatch(other, new RegExp(spare.name));
   await tool("box_release", { box: (await only(app)).name });
-  world.hostThreads.delete(hostId);
+  // An archived thread does not hold it (036).
+  world.onHost.set(hostId, [{ id: "thr_picker", title: null, status: "idle", hasPendingInteraction: false, archivedAt: 1, deletedAt: null }]);
 
   // BB shows the spare's machine disconnected, as after the box rebooted.
   world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
@@ -935,6 +936,96 @@ test("New box: a create cut short is cleaned up, and a key that is no thread fai
   await app.boxes.acquire({ threadId: THREAD, projectId: PROJECT, kind: "linux", role: "machine" });
   assert.deepEqual(await provider.reconcileCleanup({ key: THREAD, report: { step: () => {}, log: () => {} }, signal: new AbortController().signal } as never), { status: "removed" });
   assert.deepEqual(await app.boxes.list(THREAD), []);
+});
+
+/** One of your machines added over RPC, waited for until it is a BB machine. */
+async function addMachine(harness: Awaited<ReturnType<typeof start>>["harness"], app: Awaited<ReturnType<typeof start>>["app"], input: Record<string, unknown>) {
+  const added = (await harness.behavior.callRpc("machines.add", input)) as { box: { id: string; name: string } | null; error: string | null };
+  assert.equal(added.error, null);
+  const box = (await app.boxes.find(added.box!.id))!;
+  return app.boxes.enrolled((await app.boxes.settled(box)) ?? box);
+}
+
+test("your machines: added in settings under a name, BB machines whatever the enrolment setting, and kept by the sweep (036)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true, "enrol-boxes": false, "boxes-per-thread": 1 });
+  t.after(() => harness.lifecycle.dispose());
+  const box = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  assert.equal(box.threadId, OPERATOR);
+  assert.equal(box.projectId, null);
+  assert.equal(box.enrol.state, "enrolled", "it enrols although enrolment is off");
+  assert.equal(world.hosts.get(box.enrol.hostId!)?.name, "build-1");
+
+  const taken = (await harness.behavior.callRpc("machines.add", { kind: "linux", name: "build-1" })) as { error: string };
+  assert.equal(taken.error, "There is a machine called build-1 already.", "the words the settings form shows under the field");
+  const bad = (await harness.behavior.callRpc("machines.add", { kind: "linux", name: "Build_1" })) as { error: string };
+  assert.match(bad.error, /"Build_1" is not one\./);
+  const named = await addMachine(harness, app, { kind: "linux" });
+  assert.match(named.name, /^[a-z]+-[a-z]+$/, "bb-box picks a name");
+
+  // No thread exists, and BB says so: the sweep keeps them all.
+  world.threads.clear();
+  await app.boxes.sweep();
+  const listed = (await harness.behavior.callRpc("machines.list", null)) as { machines: { box: { name: string }; threads: unknown[] }[]; kinds: { id: string }[] };
+  assert.deepEqual(listed.machines.map((entry) => [entry.box.name, entry.threads.length]), [["build-1", 0], [named.name, 0]]);
+  assert.ok(listed.kinds.some((kind) => kind.id === "linux"));
+});
+
+test("your machines: removed in settings or in BB, without either waiting on the other (036)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box")!;
+  const bbOwned = (box: { id: string; enrol: { hostId: string | null } }) => {
+    let removing: Promise<unknown> | null = null;
+    const removal = () => (removing ??= provider.remove({ resource: { boxId: box.id }, hostId: box.enrol.hostId } as never));
+    world.bbRemovals.set(box.enrol.hostId!, removal);
+    return removal;
+  };
+
+  // Removed in settings: the release deletes its BB machine, and BB's removal calls back.
+  const first = await addMachine(harness, app, { kind: "linux", name: "first" });
+  bbOwned(first);
+  assert.deepEqual(await within(harness.behavior.callRpc("machines.remove", { box: "first" }), "removing in settings"), { box: null, error: null });
+  assert.equal(await app.boxes.find(first.id), null);
+
+  // Removed in BB: the box goes too.
+  const second = await addMachine(harness, app, { kind: "linux", name: "second" });
+  const removal = bbOwned(second);
+  assert.deepEqual(await within(removal(), "BB's removal"), { status: "removed" });
+  assert.equal(await app.boxes.find(second.id), null);
+});
+
+test("your machines: removing or stopping one a thread is working on asks first (036)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const box = await addMachine(harness, app, { kind: "linux", name: "busy" });
+  world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const listed = (await harness.behavior.callRpc("machines.list", null)) as { machines: { threads: unknown[] }[] };
+  assert.deepEqual(listed.machines[0]!.threads, [{ id: "thr_worker", title: "Build", running: true }]);
+  for (const method of ["machines.remove", "machines.stop"]) {
+    const asked = (await harness.behavior.callRpc(method, { box: "busy" })) as { box: { state: string }; threads: unknown[] };
+    assert.equal(asked.box.state, "ready", method);
+    assert.deepEqual(asked.threads, [{ id: "thr_worker", title: "Build", running: true }]);
+  }
+  const cli = await harness.behavior.runCli(["machines", "remove", "busy"]);
+  assert.equal(cli.exitCode, 1);
+  assert.deepEqual(await harness.behavior.callRpc("machines.remove", { box: "busy", force: true }), { box: null, error: null });
+});
+
+test("a spare a thread started on through BB's picker becomes yours, not another thread's, and a new spare is made (036)", async (t) => {
+  const { harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const { kinds: _, ...rest } = app.configuration.exported();
+  assert.ok(((await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { linux: { spares: 1 } } }, revision: rest.revision })) as { ok: boolean }).ok);
+  const spare = await until("a spare", async () => (await app.boxes.list(SPARES)).find((box) => box.enrol.state === "enrolled"));
+  world.onHost.set(spare.enrol.hostId!, [{ id: "thr_picker", title: null, status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+
+  await app.boxes.keepSpares();
+  const [yours] = await app.boxes.list(OPERATOR);
+  assert.equal(yours?.id, spare.id);
+  assert.equal(yours?.name, spare.name);
+  await until("its machine renamed", async () => world.hosts.get(spare.enrol.hostId!)?.name === spare.name);
+  assert.ok(harness.inspection.logEntries.some((entry) => entry.message === `Spare box ${spare.name} is now yours: thread thr_picker started on it from BB's picker.`));
+  await until("a new spare", async () => (await app.boxes.list(SPARES)).some((box) => box.id !== spare.id));
 });
 
 test("enrolment can be switched off", async (t) => {

@@ -2,7 +2,7 @@
 // panel to show, not as an RPC error.
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { BoxError, SPARES, describeError, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, OPERATOR, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
 import { ControlError } from "../core/control.ts";
 import { contract, type BoxResult } from "./contract.ts";
 import type { BbBox } from "./setup.ts";
@@ -72,10 +72,23 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async desktops() {
       const all = await boxes.all();
       return all
-        .filter((box) => box.capabilities.displays.length > 0 && box.state !== "releasing" && box.threadId !== SPARES)
+        .filter((box) => box.capabilities.displays.length > 0 && box.state !== "releasing" && (ownedByThread(box.threadId) || box.threadId === OPERATOR))
         .sort((a, b) => a.createdAt - b.createdAt)
-        .map((box) => ({ threadId: box.threadId, box: app.view(box) }));
+        .map((box) => ({ threadId: box.threadId, box: app.view(box), owner: box.threadId === OPERATOR ? ("yours" as const) : ("thread" as const) }));
     },
+    async "machines.list"() {
+      const records = (await boxes.list(OPERATOR)).filter((box) => box.state !== "releasing").sort((a, b) => a.createdAt - b.createdAt);
+      const [machines, kinds] = await Promise.all([
+        Promise.all(records.map(async (box) => ({ box: app.view(box), threads: await app.threadsOn(box).catch(() => []) }))),
+        app.kinds(),
+      ]);
+      return { machines, kinds: kinds.filter((kind) => kind.enrol) };
+    },
+    "machines.add": ({ kind, size, name }) =>
+      change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}) })),
+    "machines.remove": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Removing the machine", () => boxes.release(OPERATOR, box))),
+    "machines.stop": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Stopping the machine", () => boxes.stop(OPERATOR, box))),
+    "machines.start": ({ box }) => change("Starting the machine", () => boxes.start(OPERATOR, box)),
     async thread({ threadId, box, prompt }) {
       try {
         return { threadId: await app.startThread({ threadId, box, prompt }), error: null };
