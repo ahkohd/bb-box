@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ComputerError, chord, explain, pngSize } from "../src/core/computer.ts";
+import { ComputerError, chord, explain, launchArgs, pngSize } from "../src/core/computer.ts";
 import { driverCommand } from "../src/core/in-box.ts";
 import { McpClosedError, McpError, McpSession } from "../src/core/mcp.ts";
 import { openRoute } from "../src/transports/route.ts";
@@ -22,6 +22,24 @@ test("chord splits a key chord into its key and lowercase modifiers", () => {
   for (const bad of ["ctrl+", "", "ctrl++shift+a", "++"]) {
     assert.throws(() => chord(bad), (error: unknown) => error instanceof ComputerError && error.code === "input", bad);
   }
+});
+
+test("launchArgs opens a Windows Chromium browser with its page in the accessibility tree (039)", () => {
+  const flag = ["--force-renderer-accessibility"];
+  assert.deepEqual(launchArgs("windows", { app: "msedge" }), { name: "msedge", additional_arguments: flag });
+  assert.deepEqual(launchArgs("windows", { app: "Microsoft Edge" }), { name: "Microsoft Edge", additional_arguments: flag });
+  assert.deepEqual(launchArgs("windows", { app: "chrome.exe" }), { name: "chrome.exe", additional_arguments: flag });
+  const edge = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+  assert.deepEqual(launchArgs("windows", { app: edge }), { launch_path: edge, additional_arguments: flag });
+  assert.deepEqual(launchArgs("windows", { app: "notepad" }), { name: "notepad" });
+  assert.deepEqual(launchArgs("windows", { app: "C:\\Windows\\notepad.exe" }), { launch_path: "C:\\Windows\\notepad.exe" });
+  // URLs go through the default browser's handler, which the template gives the flag.
+  assert.deepEqual(launchArgs("windows", { url: "https://example.com/" }), { urls: ["https://example.com/"] });
+  // Linux templates wrap Chrome with the flag, so Linux and macOS launches are as they were.
+  assert.deepEqual(launchArgs("linux", { app: "google-chrome" }), { name: "google-chrome" });
+  assert.deepEqual(launchArgs("linux", { app: "/usr/bin/chrome" }), { launch_path: "/usr/bin/chrome" });
+  assert.deepEqual(launchArgs("linux", { app: "a\\b" }), { name: "a\\b" });
+  assert.deepEqual(launchArgs("macos", { app: "Google Chrome" }), { name: "Google Chrome" });
 });
 
 test("pngSize reads a PNG's size from its header, and nothing from anything else", () => {

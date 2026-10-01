@@ -7,7 +7,7 @@
 // The agent never sees Cua's own words for what went wrong.
 
 import { createHash } from "node:crypto";
-import type { ByteChannel } from "../transports/types.ts";
+import type { ByteChannel, GuestOs } from "../transports/types.ts";
 import { BoxError, type BoxRecord } from "./boxes.ts";
 import type { Owner } from "./control.ts";
 import { driverCommand } from "./in-box.ts";
@@ -582,6 +582,25 @@ function foreignFrame(structured: Json, title: string): string | null {
   return name && name !== clean(title).trim() ? name : null;
 }
 
+/** Chromium browsers on Windows, by program name or path. */
+const WINDOWS_CHROMIUM = /(^|[\\/])(msedge|chrome|brave|microsoft edge|google chrome)(\.exe)?$/i;
+
+/**
+ * What launch_app gets for an app or a URL. A path has a slash, or on
+ * Windows a backslash. On Windows a Chromium browser started by name or path
+ * gets --force-renderer-accessibility, without which it shows Cua only its
+ * toolbar (039); the template's link handler passes it for URLs, as Linux
+ * templates wrap Chrome with it.
+ */
+export function launchArgs(os: GuestOs, input: { app?: string; url?: string }): Json {
+  if (input.url !== undefined) return { urls: [input.url] };
+  const app = input.app!;
+  const path = app.includes("/") || (os === "windows" && app.includes("\\"));
+  const args: Json = path ? { launch_path: app } : { name: app };
+  if (os === "windows" && WINDOWS_CHROMIUM.test(app.trim())) args.additional_arguments = ["--force-renderer-accessibility"];
+  return args;
+}
+
 /** Apps the launch refusal leaves out: settings panels and session actions, by their IDs and programs. */
 const NOT_APPS = /settings|preferences|logout|log-out|lock-?screen|xflock|shutdown|reboot|suspend|hibernate/i;
 
@@ -861,7 +880,7 @@ export class Computer {
       }
       const what = input.url ?? input.app!;
       const before = await this.#listWindows(use);
-      const args = input.url !== undefined ? { urls: [input.url] } : input.app!.includes("/") ? { launch_path: input.app } : { name: input.app };
+      const args = launchArgs(box.capabilities.os, input);
       const { result } = await this.#call(use, "launch_app", args, { readOnly: false });
       if (result.isError) {
         const reason = sentence(explain(result).replace(/^failed to launch:\s*/i, ""));
