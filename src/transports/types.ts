@@ -129,7 +129,7 @@ export interface CommandTransport {
   probe(signal?: AbortSignal): Promise<boolean>;
   run(script: string, options?: RunOptions): Promise<RunResult>;
   stream(script: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }>;
-  /** Writes a file, creating parent directories. A relative path is under the box user's home. */
+  /** Writes a file, creating parent directories. A relative path is under the box user's home. Windows boxes ignore `mode`. */
   writeFile(path: string, data: Uint8Array, options?: { mode?: string; signal?: AbortSignal }): Promise<void>;
   readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array>;
   /** A route to a TCP port inside the box, for a display served there. */

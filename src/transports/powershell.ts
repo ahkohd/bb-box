@@ -104,6 +104,37 @@ function literal(value: string): string {
 }
 
 /**
+ * Runs `body` once $p is `path` as PowerShell resolves it: a relative path,
+ * or one starting with ~, is under the box user's home, where sshd starts
+ * the shell. A failure exits 1 with the reason, not PowerShell's wrapper.
+ */
+function onFile(path: string, body: string): string {
+  return (
+    `try{$p=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(${literal(path)});` +
+    `if([IO.Directory]::Exists($p)){throw ($p+' is a directory.')};${body}}` +
+    "catch{$e=$_.Exception;if($e.InnerException){$e=$e.InnerException};[Console]::Error.WriteLine($e.Message);exit 1}"
+  );
+}
+
+/** Writes stdin, byte for byte, to `path`, creating parent directories. */
+export function writeFileScript(path: string): string {
+  return onFile(
+    path,
+    "$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($p));" +
+      "$f=[IO.File]::Create($p);try{[Console]::OpenStandardInput().CopyTo($f)}finally{$f.Close()}",
+  );
+}
+
+/** Writes `path` to stdout, byte for byte. A file another process is writing can be read too. */
+export function readFileScript(path: string): string {
+  return onFile(
+    path,
+    "$f=[IO.FileStream]::new($p,'Open','Read','ReadWrite, Delete');" +
+      "try{$o=[Console]::OpenStandardOutput();$f.CopyTo($o);$o.Flush()}finally{$f.Close()}",
+  );
+}
+
+/**
  * What a desktop command exits with when the box user is not logged in to
  * the desktop, and on a Mac when sudo does not allow the wrapper: sysexits'
  * EX_UNAVAILABLE and EX_NOPERM.

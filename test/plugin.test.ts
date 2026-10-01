@@ -393,6 +393,19 @@ test("box_copy takes relative paths under the workspace and the box user's home,
   assert.equal(readFileSync(join(world.root, "outside.txt"), "utf8"), "notes\nnotes\n");
 });
 
+test("box_copy names a file from a Windows box after its source", async (t) => {
+  // Without FAKE_PWSH, the fake box copies files with sh, as it does for Linux.
+  const { harness, world, tool } = await start({ "fake-enabled": true }, { kinds: [FAKE_WINDOWS_KIND] });
+  t.after(() => harness.lifecycle.dispose());
+  const name = /Box (\S+) \(/.exec(text(await tool("box_acquire", { kind: "windows" })))![1]!;
+  writeFileSync(join(world.workspace, "in.txt"), "from Windows\n");
+  const into = await tool("box_copy", { box: name, direction: "to_box", from: "in.txt", to: "C:\\Users\\box\\out.txt" });
+  assert.ok(!isError(into), text(into));
+  const out = await tool("box_copy", { box: name, direction: "from_box", from: "C:\\Users\\box\\out.txt" });
+  assert.ok(!isError(out), text(out));
+  assert.equal(readFileSync(join(world.workspace, "out.txt"), "utf8"), "from Windows\n");
+});
+
 test("workspace and box paths", () => {
   assert.equal(workspacePath("/work/thread", "a/../b.txt"), "/work/thread/b.txt");
   assert.equal(workspacePath("/work/thread", "/etc/hosts"), "/etc/hosts");
