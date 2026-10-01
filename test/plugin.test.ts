@@ -16,7 +16,7 @@ import { Phases } from "../src/plugin/enrol.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
-import { FAKE_KINDS, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
+import { FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -51,7 +51,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "kinds"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -235,7 +235,7 @@ async function start(
     },
   });
   const setupOptions: SetupOptions = {
-    drivers: [fakeDriver(root, world, { ...(options.resize ? { resize: options.resize } : {}), ...(options.kinds ? { kinds: options.kinds } : {}) }), ...(options.drivers ?? [])],
+    drivers: [fakeDriver(root, world, { resize: options.resize, kinds: options.kinds, shell: options.shell }), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
@@ -326,14 +326,12 @@ test("an agent acquires a box, runs commands, copies files both ways and release
 });
 
 test("a run that times out says how to start a long job in the box's own shell", async (t) => {
-  const [linux] = FAKE_KINDS;
-  const windows = { ...linux!, id: "windows", label: "Windows", capabilities: { ...linux!.capabilities, os: "windows" as const, enrol: false } };
-  const { harness, tool } = await start({ "fake-enabled": true }, { kinds: [linux!, windows] });
-  t.after(() => harness.lifecycle.dispose());
-  for (const [kind, background] of [
-    ["linux", "nohup <cmd> >job.log 2>&1 &"],
-    ["windows", "Start-Detached { <cmd> } job.log"],
+  for (const [kind, options, background] of [
+    ["linux", {}, "nohup <cmd> >job.log 2>&1 &"],
+    ["windows", { kinds: [FAKE_WINDOWS_KIND], shell: FAKE_PWSH }, "Start-Detached { <cmd> } job.log"],
   ] as const) {
+    const { harness, tool } = await start({ "fake-enabled": true }, options);
+    t.after(() => harness.lifecycle.dispose());
     const name = /Box (\S+) \(/.exec(text(await tool("box_acquire", { kind })))![1]!;
     const ran = await tool("box_run", { box: name, command: "sleep 5", timeout_seconds: 1 });
     assert.equal(isError(ran), true);

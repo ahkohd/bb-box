@@ -81,6 +81,8 @@ export interface FakeBackendOptions {
   readonly largest?: BoxSize;
   /** Warm guests to keep per kind, read at each maintain, as a backend reads its context's. None by default. */
   readonly warm?: (kind: string) => number;
+  /** The $SHELL that runs guests' scripts, such as FAKE_PWSH. The user's login shell by default. */
+  readonly shell?: string;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -108,6 +110,8 @@ const HOST = "fake";
 const LARGEST: BoxSize = { cores: 16, memoryMiB: 65536, diskGiB: 256 };
 /** Where the fake `cua-driver` command is. */
 export const FAKE_CUA_BIN = fileURLToPath(new URL("./fake-cua", import.meta.url));
+/** A Windows box's fake PowerShell, for the backend's `shell`. */
+export const FAKE_PWSH = fileURLToPath(new URL("./fake-pwsh", import.meta.url));
 
 const COMMAND: CommandCapability = { transport: "local", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
 
@@ -142,6 +146,14 @@ export const FAKE_KINDS: readonly BoxKind[] = [
     readyTimeoutMs: 10_000,
   },
 ];
+
+/** A Windows box with no enrolment. Its scripts need FAKE_PWSH as the backend's `shell`. */
+export const FAKE_WINDOWS_KIND: BoxKind = {
+  ...FAKE_KINDS[0]!,
+  id: "windows",
+  label: "Windows",
+  capabilities: { ...FAKE_KINDS[0]!.capabilities, os: "windows", enrol: false },
+};
 
 export class FakeBackend implements Backend {
   readonly id: string;
@@ -364,7 +376,7 @@ export class FakeBackend implements Backend {
       }),
     );
     const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);
-    return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal), displays, access: null };
+    return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal, this.#options.shell), displays, access: null };
   }
 
   async #resize(size: DisplaySize): Promise<void> {
@@ -542,9 +554,10 @@ export class FakeTransport implements CommandTransport {
   /** Aborted when the guest is deleted. */
   readonly #gone: AbortSignal;
 
-  constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal) {
+  constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal, shell?: string) {
     this.#home = home;
-    this.#line = new CommandLine({ argv: (script) => ["sh", "-c", script], cwd: home, env: { PATH: process.env.PATH, HOME: home } });
+    const env = { PATH: process.env.PATH, HOME: home, ...(shell ? { SHELL: shell } : {}) };
+    this.#line = new CommandLine({ argv: (script) => ["sh", "-c", script], cwd: home, env });
     this.#power = power;
     this.#gone = gone;
   }
