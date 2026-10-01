@@ -909,7 +909,7 @@ test("the configuration takes several Docker backends, one per host, and still o
   const docker = (id: string, host?: string) => ({ id, type: "docker", enabled: true, fields: host === undefined ? {} : { host } });
   const problems = (backends: unknown[]) =>
     checkDocument(readDraft({ schema: 1, backends, kinds: {}, general: {} }, DRIVERS).document, {}, DRIVERS).filter((problem) => /both Docker|one .* backend for now/.test(problem.message));
-  assert.deepEqual(problems([docker("docker"), docker("docker:behemoth", "bb:host_m1"), docker("docker:lab", "ssh://me@lab")]), []);
+  assert.deepEqual(problems([docker("docker"), docker("docker:devpc", "bb:host_m1"), docker("docker:lab", "ssh://me@lab")]), []);
   assert.deepEqual(problems([docker("docker:one", "bb:host_m1"), docker("docker:two", "bb:host_m1")]).map((problem) => `${problem.path}: ${problem.message}`), [
     "backends.docker:two: docker:two and docker:one are both Docker on bb:host_m1. Give each its own host, or remove one.",
   ]);

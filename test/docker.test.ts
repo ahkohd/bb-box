@@ -681,15 +681,15 @@ test("a Docker host that is a BB machine is reached through bb-box's relay, name
       dockerHost: (hostId: string) => `unix:///tmp/bb-box-relay/${hostId}.sock`,
       ready: async (hostId: string) => {
         state.readies++;
-        if (state.connected !== true) throw new Error(`behemoth is offline in BB.`);
+        if (state.connected !== true) throw new Error(`devpc is offline in BB.`);
         assert.equal(hostId, "host_m1");
       },
-      name: () => "behemoth",
+      name: () => "devpc",
       connected: async () => state.connected,
     },
   };
   const backend = new DockerBackend(dockerConfig({ host: "bb:host_m1" }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
-  assert.equal(backend.label, "Docker on behemoth");
+  assert.equal(backend.label, "Docker on devpc");
 
   const room = await backend.capacity("linux", SMALL, [], signal());
   assert.equal(room.ok, true, room.message ?? "");
@@ -701,14 +701,14 @@ test("a Docker host that is a BB machine is reached through bb-box's relay, name
   state.connected = false;
   const before = fake.calls().length;
   const offline = await backend.capacity("linux", SMALL, [], signal());
-  assert.deepEqual([offline.ok, offline.message], [false, "behemoth is offline in BB."]);
+  assert.deepEqual([offline.ok, offline.message], [false, "devpc is offline in BB."]);
   assert.equal(fake.calls().length, before);
   // A command on one of its boxes fails at once, saying so.
-  await assert.rejects(() => backend.transports({ ref: "bbbox-x", host: "behemoth", address: null, size: null }, "linux"), /behemoth is offline in BB\./);
+  await assert.rejects(() => backend.transports({ ref: "bbbox-x", host: "devpc", address: null, size: null }, "linux"), /devpc is offline in BB\./);
   const report = await backend.doctor(signal());
   const daemon = report.checks.find((check) => check.id === "docker.daemon");
   assert.equal(daemon?.status, "fail");
-  assert.match(daemon?.detail ?? "", /behemoth is offline in BB\./);
+  assert.match(daemon?.detail ?? "", /devpc is offline in BB\./);
   assert.match(daemon?.fix ?? "", /bb box docker-check host_m1/);
   assert.equal(report.checks.find((check) => check.id === "docker.cli")?.status, "ok", "the CLI's own version needs no machine");
 });

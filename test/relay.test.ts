@@ -17,7 +17,11 @@ function pair(options: { pingMs?: number; deadMs?: number; drop?: () => boolean 
       const copy = Uint8Array.from(data);
       setImmediate(() => to().receive(copy));
     },
-    close: () => setImmediate(() => to().close("the other side closed")),
+    // A silent link carries no close either, so each side finds it dead on its own.
+    close: () => {
+      if (options.drop?.()) return;
+      setImmediate(() => to().close("the other side closed"));
+    },
   });
   const opened: Channel[] = [];
   a = new Mux(link("a", () => b), { opener: true, pingMs: options.pingMs, deadMs: options.deadMs });
@@ -323,10 +327,10 @@ test("a connection to a relay that went quiet asks BB first: it fails at once wh
   assert.equal(opens, 1);
 
   await new Promise((r) => setTimeout(r, 100));
-  offline = "behemoth is offline in BB.";
+  offline = "devpc is offline in BB.";
   const started = Date.now();
   const refused = await get(path, "/_ping");
-  assert.deepEqual([refused.status, refused.text], [503, "bb-box could not reach Docker on the BB machine: behemoth is offline in BB."]);
+  assert.deepEqual([refused.status, refused.text], [503, "bb-box could not reach Docker on the BB machine: devpc is offline in BB."]);
   assert.ok(Date.now() - started < 1_000, "at once, not when the pings stop");
 
   // Back online: a new relay serves it.
