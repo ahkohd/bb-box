@@ -356,7 +356,11 @@ export class TartBackend implements Backend {
       memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
     };
     const hosts = this.#on().map((host) => this.#room(host, states.get(host.name)!, size, unplaced));
-    const ok = hosts.some((host) => host.capacity.ok);
+    // A warm VM being filled gives its slot to a box, as #place stops it or takes it over (#145).
+    const filling = new Set([...this.#filling].filter(([, fill]) => !fill.adopted).map(([vm]) => vm));
+    const ok =
+      hosts.some((host) => host.capacity.ok) ||
+      (filling.size > 0 && this.#on().some((host) => this.#room(host, states.get(host.name)!, size, unplaced, filling).capacity.ok));
     let ready = 0;
     for (const host of this.#on()) {
       const state = states.get(host.name)!;
@@ -378,13 +382,13 @@ export class TartBackend implements Backend {
     return new Map(entries);
   }
 
-  /** Whether a box of `size` fits on the Mac, and if not, why, with what to do. */
-  #room(host: TartHost, state: HostState | Error, size: BoxSize, unplaced: Unplaced = NONE_UNPLACED): { capacity: HostCapacity; why: string | null } {
+  /** Whether a box of `size` fits on the Mac, and if not, why, with what to do. VMs `yielding` count as gone. */
+  #room(host: TartHost, state: HostState | Error, size: BoxSize, unplaced: Unplaced = NONE_UNPLACED, yielding: ReadonlySet<string> = new Set()): { capacity: HostCapacity; why: string | null } {
     if (state instanceof Error) return { capacity: { host: host.name, ok: false, limits: [] }, why: `${host.name} did not answer: ${state.message}` };
     // Every running VM takes memory; only macOS VMs count against Apple's two.
-    const running = state.vms.filter((vm) => vm.running);
+    const running = state.vms.filter((vm) => vm.running && !yielding.has(vm.name));
     const macos = running.filter((vm) => (state.configs.get(vm.name)?.os ?? "darwin") === "darwin");
-    const placing = [...this.#placing.values()].filter((other) => other.host === host.name && !running.some((vm) => vm.name === other.vm));
+    const placing = [...this.#placing.values()].filter((other) => other.host === host.name && !yielding.has(other.vm) && !running.some((vm) => vm.name === other.vm));
     const starting = placing.length + unplaced.count;
     const memoryUsed =
       running.reduce((sum, vm) => sum + (state.configs.get(vm.name)?.memoryMiB ?? 0), 0) + placing.reduce((sum, other) => sum + other.memoryMiB, 0) + unplaced.memoryMiB;

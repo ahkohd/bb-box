@@ -216,6 +216,9 @@ test("an acquire that meets a fill holding the last slot takes it over at the fi
     // The fill has its address, and waits for SSH there.
     await until(() => warmVms().length === 1 && existsSync(join(vmsDir, warmVms()[0]!, "lease")), "the fill to wait for its VM");
     const [fill] = warmVms();
+    const room = await backend.capacity("macos", size, []);
+    assert.equal(room.ok, true, "the fill gives its slot to a box (#145)");
+    assert.equal(room.hosts[0]!.limits.find((limit) => limit.resource === "guests")!.used, 2, "while it holds the slot");
     const box = identity("macos", size);
     const recorded = hooks();
     const acquiring = backend.acquire(box, null, recorded.hooks, signal());
