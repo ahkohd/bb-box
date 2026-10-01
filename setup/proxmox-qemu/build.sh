@@ -157,11 +157,14 @@ qm create "$vm" --name "bb-box-windows-$vm" --pool "$BBBOX_POOL" --ostype win11 
   --efidisk0 "$BBBOX_STORAGE:1,efitype=4m,pre-enrolled-keys=1" --tpmstate0 "$BBBOX_STORAGE:1,version=v2.0" \
   "${disk[@]}" --net0 "virtio,bridge=$BBBOX_BRIDGE" --vga virtio --agent enabled=1 \
   --ide2 "$BBBOX_WINDOWS_ISO,media=cdrom" --ide0 "$BBBOX_VIRTIO_ISO,media=cdrom" --ide3 "$iso_store:iso/$answer_name,media=cdrom" \
-  --boot "order=$boot_disk;ide2" --tags "bbbox;windows;$build" --description "bb-box windows template being built, $(date -u +%F)"
+  --boot "order=ide2;$boot_disk" --tags "bbbox;windows;$build" --description "bb-box windows template being built, $(date -u +%F)"
 created=1
 qm start "$vm"
-# Past the ISO's "Press any key to boot from CD or DVD".
-for _ in $(seq 20); do qm sendkey "$vm" ret >/dev/null 2>&1 || true; sleep 1; done
+# The ISO boots first and waits a few seconds for a key ("Press any key to
+# boot from CD or DVD"), so Enter goes in throughout its first minute. When
+# Setup restarts minutes later no key comes, the prompt times out, and the VM
+# boots from its disk.
+for _ in $(seq 60); do qm sendkey "$vm" ret >/dev/null 2>&1 || true; sleep 1; done
 
 # A PowerShell command in the VM through the guest agent: its output, and
 # success when it exited 0.
@@ -208,7 +211,7 @@ gexec "$vm" 30 'Select-String -Path C:\bb-box\firstlogon.log -Pattern "^\d\d:\d\
 gexec "$vm" 60 '$n = Get-NetAdapter -Physical | Select-Object -First 1; Remove-NetRoute -InterfaceIndex $n.ifIndex -DestinationPrefix 0.0.0.0/0 -Confirm:$false -ErrorAction SilentlyContinue; Get-NetIPAddress -InterfaceIndex $n.ifIndex -AddressFamily IPv4 | Remove-NetIPAddress -Confirm:$false; Set-NetIPInterface -InterfaceIndex $n.ifIndex -Dhcp Enabled; Clear-Content C:\bb-box\boot.log' >/dev/null ||
   die "could not clear the build address in VM $vm"
 qm shutdown "$vm" --timeout 300
-qm set "$vm" --delete ide0,ide2,ide3 >/dev/null
+qm set "$vm" --delete ide0,ide2,ide3 --boot "order=$boot_disk" >/dev/null
 rm -f "$answer_iso"
 qm template "$vm"
 log "VM $vm is a template; checking a linked clone of it"
