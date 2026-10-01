@@ -222,9 +222,9 @@ describe("SSH host pool", () => {
   });
 
   it("claims machines it first sees free together in the order they are listed, whichever answers first", async () => {
-    machine("192.0.2.76", { "slow-status": "300" });
-    machine("192.0.2.77");
-    const { backend } = pool("first 192.0.2.76 linux\nsecond 192.0.2.77 linux");
+    machine("192.0.2.78", { "slow-status": "300" });
+    machine("192.0.2.79");
+    const { backend } = pool("first 192.0.2.78 linux\nsecond 192.0.2.79 linux");
     const one = await acquire(backend);
     const two = await acquire(backend);
     assert.deepEqual([one.guest.ref, two.guest.ref], ["first", "second"]);
@@ -286,6 +286,19 @@ describe("SSH host pool", () => {
     assert.equal((await backend.capacity("linux", size(8, 4), [])).ok, false, "no free machine has 8 cores");
     assert.equal((await backend.capacity("linux", size(1, 3), [])).ok, true, "tiny serves a box of 3 GiB");
     await backend.release(disked.guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
+  it("lends a machine with a whole-machine reset last in a mixed pool, even when it has been free longer", async () => {
+    machine("192.0.2.76", { hook: "" });
+    machine("192.0.2.77");
+    const { backend } = pool("whole 192.0.2.76 linux reset=machine\nhome 192.0.2.77 linux");
+    const first = await acquire(backend);
+    assert.equal(first.guest.ref, "home");
+    await backend.release(first.guest, releaseHooks().hooks);
+    const next = await acquire(backend);
+    assert.equal(next.guest.ref, "home", "home has been free for less time than whole, but its reset needs no restart");
+    await backend.release(next.guest, releaseHooks().hooks);
     await backend.dispose();
   });
 

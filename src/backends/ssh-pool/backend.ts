@@ -229,6 +229,11 @@ function bySize(a: View, b: View): number {
   return (x?.cores ?? 0) - (y?.cores ?? 0) || (x?.memoryMiB ?? 0) - (y?.memoryMiB ?? 0);
 }
 
+/** 1 for a machine with a whole-machine reset, which may restart it, so a mixed pool lends it last, as before 041. */
+function wholeReset(view: View): number {
+  return view.machine.reset === "machine" ? 1 : 0;
+}
+
 export class SshPoolBackend implements Backend {
   readonly id: string;
   readonly nature = "real" as const;
@@ -308,7 +313,7 @@ export class SshPoolBackend implements Backend {
   #candidates(views: readonly View[], kind: string, size: BoxSize): View[] {
     return views
       .filter((view) => this.#lists(view.machine, kind) && view.state === "free" && this.#ready(view, kind) === null && fits(view.probe.status, size))
-      .sort((a, b) => bySize(a, b) || a.since - b.since);
+      .sort((a, b) => bySize(a, b) || wholeReset(a) - wholeReset(b) || a.since - b.since);
   }
 
   /** Why no machine is free for `kind` at `size`, in words for the user. `waited` machines would be free but for acquires waiting to claim. */
@@ -385,7 +390,7 @@ export class SshPoolBackend implements Backend {
     return null;
   }
 
-  /** Claims the smallest free machine of at least the box's size, then the one free longest, then the first listed. */
+  /** Claims the smallest free machine of at least the box's size, then one without a whole-machine reset, then the one free longest, then the first listed. */
   #claim(
     box: BoxIdentity,
     kind: BoxKind,
