@@ -294,6 +294,13 @@ from a thread's Boxes panel."
 Agent-facing text is unchanged by the panel; the tools keep saying
 `box_acquire` and friends to agents, where those are the right words.
 
+## Seeing it
+
+`scripts/preview/` renders the built panels outside BB with BB's theme and
+the fixtures of each state, and `scripts/preview/shoot.mjs` screenshots
+every scene with headless Chrome. The screenshots in
+[mockups/built](mockups/built/) come from it.
+
 ## What the panel needs from the core
 
 - Nothing for the first version: it reads `PanelState`, `BoxView` and

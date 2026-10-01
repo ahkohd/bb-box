@@ -806,9 +806,10 @@ A box is a resource of its thread and gets what the thread's own machine has.
 | Control | take and hand back | its computer tools refuse while you hold control |
 
 - **Desktop viewer.** Each desktop box in the panel has "Open desktop", which
-  opens the box's desktop in a thread panel tab of its own, and "New browser
-  tab", which opens it on the plugin's Desktops page. The Desktops page also
-  lists every desktop box. Each viewer opens one WebSocket on the plugin's
+  opens the box's desktop in a thread panel tab of its own, and "Open desktop
+  in a browser tab", which opens it on the plugin's Desktops page. The
+  Desktops page also lists every desktop box. The panel's design is in
+  [docs/design/panel.md](design/panel.md). Each viewer opens one WebSocket on the plugin's
   `/desktop?box=<id>&viewer=<id>` route. The relay opens the display's route,
   answers the box's RFB authentication itself (VNC authentication with the
   password the box wrote at boot), offers the viewer security type None, and

@@ -176,7 +176,10 @@ node scripts/smoke.ts <settings.json>
 ```
 
 The tests and scripts need Node 22.18 or later, which runs TypeScript
-directly. The tests run against a fake Proxmox API and a fake `ssh`, so they
+directly. `scripts/preview/` renders the built panels outside BB, with BB's
+theme and fixtures, for screenshots: serve the repository root and open
+`scripts/preview/index.html#panel-list`, or run `node scripts/preview/shoot.mjs`
+on a machine with Chrome. The tests run against a fake Proxmox API and a fake `ssh`, so they
 need no host. The smoke script runs against a real backend without BB; see
 [section 6 of the Proxmox LXC guide](setup/proxmox-lxc/README.md#6-smoke-test).
 
