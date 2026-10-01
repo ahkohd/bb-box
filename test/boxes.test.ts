@@ -637,6 +637,22 @@ test("access setup puts the env file above ~/.bashrc's early return, once, and k
   assert.deepEqual([untimed.exitCode, untimed.stdout, accessSetupMs(untimed.stdout)], [0, "", null]);
 });
 
+test("access setup has git fetch GitHub's SSH URLs over HTTPS, and leaves other URLs and rewrites as they are", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  // A rewrite of the user's own, to the same place, stays.
+  assert.equal((await world.boxes.run(THREAD, box.name, "git config --global url.https://github.com/.insteadOf gh:")).result.exitCode, 0);
+  for (let i = 0; i < 2; i++) assert.equal((await world.boxes.run(THREAD, box.name, accessSetup("linux")!)).result.exitCode, 0);
+  const urls = ["git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "gh:o/r.git", "https://example.com/a.git", "git@example.com:a.git"];
+  const { result } = await world.boxes.run(THREAD, box.name, `for url in ${urls.join(" ")}; do git ls-remote --get-url "$url"; done; git config --global --get-all url.https://github.com/.insteadOf`);
+  assert.equal(
+    result.stdout,
+    "https://github.com/o/r.git\nhttps://github.com/o/r.git\nhttps://github.com/o/r.git\nhttps://example.com/a.git\ngit@example.com:a.git\n" +
+      "gh:\ngit@github.com:\nssh://git@github.com/\n",
+    result.stderr,
+  );
+});
+
 test("in a macOS box, access setup puts the env file at the top of ~/.zshenv, once, and keeps the file's mode", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
