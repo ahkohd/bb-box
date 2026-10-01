@@ -171,6 +171,10 @@ node --test test/conformance.test.ts
 - Ownership lives in Proxmox tags (`bb-box`, `install.<id>`, `thread.<id>`,
   `box.<id>`, `kind.<kind>`), and in the description the clone writes, which
   names the install and the box before the tags are set.
+- A release stops the guest if it runs, then deletes it. Proxmox waits 10 s
+  for a guest's lock, and a stop can hold it for over a minute while the
+  guest quits, so while another task holds it the release tries again, for
+  up to 2 minutes.
 
 ## Proxmox QEMU
 
@@ -223,9 +227,9 @@ node --test test/conformance.test.ts
   disk's storage, and the VM stops. A start resumes it, with its apps
   open, then sets Windows' clock over SSH, as the resume leaves it at the
   time the VM stopped. Proxmox locks a hibernated VM's config until it
-  starts. Hibernation needs VM.PowerMgmt and VM.Config.Disk, which the
-  setup's role has, and Datastore.AllocateSpace on that storage, which the
-  token has.
+  starts, but a release deletes it, with its state. Hibernation needs
+  VM.PowerMgmt and VM.Config.Disk, which the setup's role has, and
+  Datastore.AllocateSpace on that storage, which the token has.
 - Still to come: a hibernated warm pool. The conformance suite runs against
   it, but skips the checks whose scripts are written for sh: commands,
   streaming, the architecture, file copies and enrolment.
