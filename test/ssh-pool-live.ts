@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { promisify } from "node:util";
 import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
 import type { Backend, Guest } from "../src/backends/types.ts";
@@ -25,14 +25,18 @@ const run = promisify(execFile);
 const HOOK = "/usr/local/libexec/bb-box/reset-machine";
 const HELPER = "/usr/local/libexec/bb-box/machine";
 
+const made: Backend[] = [];
+
 function backend(file: string, errors: string[] = []): Backend {
   const parsed = sshPoolDriver.parse(readSettings(join(rig!, file)));
   assert.ok(parsed.enabled && parsed.ok, `${file} parses`);
-  return sshPoolDriver.create(parsed.config, {
+  const pool = sshPoolDriver.create(parsed.config, {
     storage: new MemoryStorage(),
     installId: "live",
     logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
   });
+  made.push(pool);
+  return pool;
 }
 
 /** Runs a script as root on a rig machine, and gives its output. */
@@ -89,6 +93,11 @@ ipcmk -M 4096 >/dev/null && ipcmk -Q >/dev/null && ipcmk -S 1 >/dev/null
 id -u`;
 
 describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_RIG to the directory rig.sh up wrote" }, () => {
+  // Closes the shared SSH connections, which would otherwise outlive the run.
+  after(async () => {
+    for (const pool of made) await pool.dispose?.();
+  });
+
   it("starts with every machine free", async () => {
     const pool = backend("settings.json");
     for (const found of await pool.members!()) assert.equal(found.state, "free", `${found.ref}: ${found.reason}`);
