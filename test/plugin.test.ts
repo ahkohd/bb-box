@@ -80,6 +80,8 @@ async function start(
     spawned: [] as unknown[],
     /** The project's sources, by machine, as BB keeps them. */
     sources: [] as { hostId: string; type: string }[],
+    /** The thread's project's kind: BB's personal project has no repository. */
+    projectKind: "standard" as "standard" | "personal",
     /** How long after bootstrap returns BB shows a machine it has connected again, or null for never. */
     connectAfterMs: 0 as number | null,
   };
@@ -110,7 +112,7 @@ async function start(
         },
       },
       projects: {
-        get: async ({ projectId }: { projectId: string }) => ({ id: projectId, sources: world.sources }) as never,
+        list: async () => [{ id: PROJECT, kind: world.projectKind, sources: world.projectKind === "personal" ? [] : world.sources }] as never,
         sources: {
           add: async ({ hostId, type }: { hostId: string; type: string }) => {
             world.sources.push({ hostId, type });
@@ -645,6 +647,19 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
   const cli = await harness.behavior.runCli(["thread", name, "--prompt", "Once more", "--thread", THREAD]);
   assert.equal(cli.stdout, `Started thread thr_child3 on box ${name}.\n`);
   assert.equal(world.sources.length, 1, "later threads use the same clone");
+});
+
+test("in BB's personal project, a thread on a box takes a personal workspace there, with no clone (#55)", async (t) => {
+  const { harness, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.projectKind = "personal";
+  await tool("box_acquire", {});
+  const { boxes } = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { boxes: { name: string; enrol: { hostId: string } }[] };
+  const started = text(await tool("box_thread", { box: boxes[0]!.name, prompt: "Run uname -a" }));
+  assert.match(started, /^Started thread thr_child1 on box /);
+  const [args] = world.spawned as { environment: unknown }[];
+  assert.deepEqual(args!.environment, { type: "host", hostId: boxes[0]!.enrol.hostId, workspace: { type: "personal" } });
+  assert.deepEqual(world.sources, [], "nothing is cloned");
 });
 
 test("a box that is not a BB machine cannot run a thread, and says why (#55)", async (t) => {

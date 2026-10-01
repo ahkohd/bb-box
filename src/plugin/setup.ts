@@ -74,7 +74,8 @@ export interface BbBox {
    * Starts a child thread of `threadId` on a box's BB machine, with the
    * parent's project, in a worktree of the project's repository there. The
    * first thread on a box clones the repository onto it; BB forgets that
-   * clone with the machine. The thread is archived and deleted with its
+   * clone with the machine. In BB's personal project, which has no
+   * repository, the thread gets a personal workspace on the box instead. The thread is archived and deleted with its
    * parent, which is also when the box goes. Returns its ID.
    */
   startThread(input: { threadId: string; box: string; prompt: string; title?: string; signal?: AbortSignal }): Promise<string>;
@@ -404,14 +405,23 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const projectId = box.projectId ?? (await projectOf(threadId));
       if (!projectId) throw new BoxError("unsupported", "This thread has no project, so a thread on its box would have none either.");
       const hostId = box.enrol.hostId;
-      // A thread of a project runs where the project has a source; a box gets a clone of its repository.
-      const { sources } = await bb.sdk.projects.get({ projectId });
-      if (!sources.some((source) => source.hostId === hostId)) await bb.sdk.projects.sources.add({ projectId, type: "clone", hostId });
+      // BB's personal project has no repository, and its threads take a personal workspace. A thread
+      // of any other project runs where the project has a source, so a box gets a clone of its repository.
+      const project = ((await bb.sdk.projects.list({ includePersonal: true })) as { id: string; kind: string; sources: { hostId: string }[] }[]).find(
+        (candidate) => candidate.id === projectId,
+      );
+      if (!project) throw new BoxError("not_found", `BB has no project ${projectId} for a thread on box ${box.name}.`);
+      const personal = project.kind === "personal";
+      if (!personal && !project.sources.some((source) => source.hostId === hostId)) await bb.sdk.projects.sources.add({ projectId, type: "clone", hostId });
       const thread = await bb.sdk.threads.spawn({
         projectId,
         parentThreadId: threadId,
         lifecycleOwnerThreadId: threadId,
-        environment: { type: "host", hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
+        environment: {
+          type: "host",
+          hostId,
+          workspace: personal ? { type: "personal" } : { type: "managed-worktree", baseBranch: { kind: "default" } },
+        },
         prompt,
         title: title ?? `On box ${box.name}`,
       });
