@@ -292,6 +292,21 @@ test("commands to one box share a connection that bb-box opens once", async () =
   assert.deepEqual(log().filter((entry) => entry.control === "exit").map((entry) => entry.target).sort(), ["box@192.0.2.20", "box@192.0.2.20", "box@192.0.2.21"]);
 });
 
+test("forget closes only its own box's connection, when boxes behind one host share a user and address", async () => {
+  const { ssh, log } = fakeSsh({ share: true });
+  const vm = (port: number, mac: string) => ({ host: "127.0.0.1", port, user: "box", hostKeys: [], jump: at(mac) });
+  const boxes = [vm(50001, "192.0.2.40"), vm(50002, "192.0.2.40"), vm(50001, "192.0.2.41")];
+  for (const box of boxes) await ssh.run(box, "true");
+  const paths = log()
+    .filter((entry) => entry.control === "master")
+    .map((entry) => entry.args.find((arg) => arg.startsWith("ControlPath="))!);
+  assert.equal(new Set(paths).size, 3, "a connection each");
+  const closed = () => log().filter((entry) => entry.control === "exit").map((entry) => entry.args.find((arg) => arg.startsWith("ControlPath="))!);
+  await ssh.forget(boxes[0]!);
+  assert.deepEqual(closed(), [paths[0]]);
+  await ssh.dispose();
+});
+
 test("no more than 8 commands share a connection, and the rest dial alone", async () => {
   const { ssh, log } = fakeSsh({ share: true });
   const box = at("192.0.2.22");

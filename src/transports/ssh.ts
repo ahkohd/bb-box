@@ -71,6 +71,8 @@ const SHARE_START_TIMEOUT_MS = 15_000;
 interface Shared {
   readonly path: string;
   readonly target: string;
+  /** Which box it reaches: see route(). */
+  readonly route: string;
   state: "opening" | "open" | "failed" | "retired";
   readonly opened: Promise<boolean>;
   users: number;
@@ -89,6 +91,16 @@ export class SshError extends Error {
     super(message);
     this.name = "SshError";
   }
+}
+
+/**
+ * The box an access reaches, through its jump hosts. Boxes behind one host
+ * can share a user, host and address, as the Windows VMs on a Mac do,
+ * reached through it at 127.0.0.1 on ports of their own.
+ */
+function route(access: SshAccess): string {
+  const self = `${access.user}@${access.host}:${access.port}`;
+  return access.jump ? `${self} via ${route(access.jump)}` : self;
 }
 
 function pinned(access: SshAccess): boolean {
@@ -168,7 +180,7 @@ export class Ssh {
       shared = undefined;
     }
     if (!shared) {
-      shared = this.#open(options, target, join(dir, `${key}-${++this.#count}`));
+      shared = this.#open(options, target, route(access), join(dir, `${key}-${++this.#count}`));
       this.#shared.set(key, shared);
     }
     if (shared.users >= SHARE_MAX_SESSIONS) return null;
@@ -203,12 +215,13 @@ export class Ssh {
   }
 
   /** Starts a shared connection, which ssh keeps in the background once it is up. */
-  #open(options: readonly string[], target: string, path: string): Shared {
+  #open(options: readonly string[], target: string, box: string, path: string): Shared {
     const persist = `${Math.ceil(this.#idleMs / 1000)}s`;
     const argv = [...options, "-o", "ControlMaster=yes", "-o", `ControlPath=${path}`, "-o", `ControlPersist=${persist}`, "-N", target];
     const shared: Shared = {
       path,
       target,
+      route: box,
       state: "opening",
       users: 0,
       since: Date.now(),
@@ -259,15 +272,15 @@ export class Ssh {
 
   /** Closes the box's shared connections, retired ones too, as before it stops or goes. */
   async forget(access: SshAccess): Promise<void> {
-    const target = `${access.user}@${access.host}`;
+    const box = route(access);
     const closing: Promise<void>[] = [];
     for (const [key, shared] of this.#shared) {
-      if (shared.target !== target) continue;
+      if (shared.route !== box) continue;
       this.#shared.delete(key);
       closing.push(this.#end(shared));
     }
     for (const shared of this.#retired) {
-      if (shared.target !== target) continue;
+      if (shared.route !== box) continue;
       this.#retired.delete(shared);
       closing.push(this.#end(shared));
     }
