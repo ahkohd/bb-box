@@ -168,10 +168,16 @@ qm create "$vm" --name "bb-box-windows-$vm" --pool "$BBBOX_POOL" --ostype win11 
 created=1
 qm start "$vm"
 # The ISO boots first and waits a few seconds for a key ("Press any key to
-# boot from CD or DVD"), so Enter goes in throughout its first minute. When
-# Setup restarts minutes later no key comes, the prompt times out, and the VM
-# boots from its disk.
-for _ in $(seq 60); do qm sendkey "$vm" ret >/dev/null 2>&1 || true; sleep 1; done
+# boot from CD or DVD"). Down arrow answers it, and unlike Enter it cannot
+# press Setup's Cancel button once Setup shows. The keys stop once Setup
+# writes to the disk, or after a minute. When Setup restarts minutes later no
+# key comes, the prompt times out, and the VM boots from its disk.
+written() { qm status "$vm" --verbose 2>/dev/null | awk '/^diskwrite:/ { exit !($2 > 1048576) }'; }
+for _ in $(seq 60); do
+  written && break
+  qm sendkey "$vm" down >/dev/null 2>&1 || true
+  sleep 1
+done
 
 # A PowerShell command in the VM through the guest agent: its output, and
 # success when it exited 0.
