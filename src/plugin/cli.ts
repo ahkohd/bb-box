@@ -229,7 +229,8 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list. It must be turned on under Docker on BB machines.", required: true }],
           run: ({ positionals }) =>
             guard("Building the images", async () => {
-              const host = (await app.dockerHosts.list()).find((candidate) => candidate.hostId === positionals.machine || candidate.name === positionals.machine);
+              // From BB's record and the configuration: listing would look at every machine's Docker.
+              const host = await app.dockerHostOf(positionals.machine);
               if (!host?.backend) throw new BoxError("not_found", `${positionals.machine} is not a Docker host in bb-box's settings. Turn it on under Docker on BB machines first.`);
               const build = await app.dockerImages.ensure(host.hostId);
               const took = build.endedAt ? ` in ${Math.round((build.endedAt - build.startedAt) / 1000)} s` : "";
