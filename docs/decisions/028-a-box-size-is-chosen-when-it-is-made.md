@@ -38,10 +38,11 @@ What the backends can do:
 | --- | --- | --- | --- |
 | `linux`, `linux-docker` | 2 cores, 4 GiB | 4 cores, 8 GiB | 8 cores, 16 GiB |
 | `linux-desktop`, `linux-desktop-cpu` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB |
+| `macos`, `macos-desktop` | 4 cores, 8 GiB | 6 cores, 16 GiB | 8 cores, 32 GiB |
 
 - The default preset is `small`, which is the size Proxmox LXC makes today.
   The largest custom size is twice `large`'s cores and memory, and 256 GiB
-  of disk. The macOS and Windows kinds get theirs with their backends.
+  of disk. The Windows kinds get theirs with their backend.
 - `box_acquire` and the panel take a size: a preset's name, or a custom
   size, where any part left out comes from the default preset. No size
   means the default preset. Core refuses a custom size above the kind's
