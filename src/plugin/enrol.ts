@@ -23,7 +23,8 @@
 // every 500 ms, and every 100 ms once bootstrap has returned, since BB shows
 // the machine connected soon after. BB starts the daemon's workers, which
 // carry the variables, a moment after that, so the enrolment ends once the
-// box's commands find one, or 10 s later, and the box's first command has
+// box's commands find GH_TOKEN, which BB can give a new machine some seconds
+// after its other variables, or 30 s later, and the box's first command has
 // them. A reconnect waits in the same way for BB to show the machine
 // connected again, then for such a worker.
 // Each enrolment logs how long its steps took.
@@ -235,7 +236,8 @@ export class Enrolment {
     this.#timeoutMs = deps.timeoutMs ?? 5 * 60_000;
     this.#pollMs = deps.pollMs ?? 500;
     this.#fastPollMs = deps.fastPollMs ?? 100;
-    this.#variablesWaitMs = deps.variablesWaitMs ?? 10_000;
+    // BB can give a new machine GH_TOKEN some seconds after it connects.
+    this.#variablesWaitMs = deps.variablesWaitMs ?? 30_000;
   }
 
   /** The machine provider BB calls to create and remove a box's machine. */
@@ -442,7 +444,7 @@ export class Enrolment {
           throw new Error(`Looking for the thread's variables in box ${box.name} exited with ${result.exitCode ?? "no code"}: ${result.stderr.trim()}`);
         }
         if (Date.now() >= deadline) {
-          this.#deps.log?.(`BB's daemon in box ${box.name} had no worker with the thread's variables ${waited(this.#variablesWaitMs)} after ${since}. Its commands take them once one has.`);
+          this.#deps.log?.(`BB's daemon in box ${box.name} had no process with the thread's GH_TOKEN ${waited(this.#variablesWaitMs)} after ${since}. Its commands take it once one has.`);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, VARIABLES_POLL_MS));

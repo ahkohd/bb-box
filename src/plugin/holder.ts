@@ -31,9 +31,12 @@ export interface RetiredTerminals {
   close(args: { terminalId: string; mode: "force" }): Promise<unknown>;
 }
 
+/** Names the holder asks again for soon when its call did not bring them: git needs GH_TOKEN. */
+const AWAITED = ["GH_TOKEN"];
+
 export interface HoldersDeps {
-  /** Calls the host entry's "access" on machine `hostId`. */
-  access(hostId: string, names: readonly string[]): Promise<unknown>;
+  /** Calls the host entry's "access" on machine `hostId`. It says which names the call did not bring. */
+  access(hostId: string, names: readonly string[]): Promise<{ readonly missing?: readonly string[] } | void>;
   readonly terminals: () => RetiredTerminals;
   logError(operation: string, error: unknown): void;
   /** A line for the plugin's log that is not an error. */
@@ -78,9 +81,12 @@ export class Holders {
 
   async #call(hostId: string, names: readonly string[], key: string): Promise<void> {
     let held = false;
+    let complete = true;
     try {
-      await this.#deps.access(hostId, names);
+      const answer = await this.#deps.access(hostId, names);
       held = true;
+      // BB gave the machine some variables but not yet GH_TOKEN, as on a new machine: ask again soon.
+      complete = !AWAITED.some((name) => names.includes(name) && answer?.missing?.includes(name));
       this.#unconnected.delete(hostId);
     } catch (error) {
       if (!(error instanceof Error && NOT_CONNECTED.test(error.message))) this.#deps.logError("access holder", error);
@@ -90,7 +96,7 @@ export class Holders {
       }
     }
     // A failure is tried again soon, not before every command.
-    this.#called.set(hostId, { until: this.#now() + (held ? CHECK_MS : RETRY_MS), names: key });
+    this.#called.set(hostId, { until: this.#now() + (held && complete ? CHECK_MS : RETRY_MS), names: key });
     // Only once the host entry holds them, so a box never loses its last source.
     if (held && !this.#retired.has(hostId)) {
       this.#retired.add(hostId);

@@ -132,7 +132,7 @@ test("the host entry holds a process with the call's variables, kept until they 
   assert.equal(harness.experimental_getRetainedWorkerLeaseCount(), 1);
 
   const again = await harness.experimental_call("access", { names: ["BBBOX_TEST_TOKEN"] });
-  assert.deepEqual(again, { started: false, pid: first.pid }, "the same values keep the same process");
+  assert.deepEqual(again, { started: false, pid: first.pid, missing: [] }, "the same values keep the same process");
 
   process.env.BBBOX_TEST_TOKEN = "value-two";
   const changed = await harness.experimental_call("access", { names: ["BBBOX_TEST_TOKEN"] });
@@ -144,4 +144,44 @@ test("the host entry holds a process with the call's variables, kept until they 
   await harness.experimental_dispose();
   assert.ok(await gone(changed.pid!), "the process ends with the worker");
   assert.equal(harness.experimental_getRetainedWorkerLeaseCount(), 0);
+});
+
+test("a call that brings no GH_TOKEN, as on a new machine BB has not given it yet, is made again after 2 s, then every 30 s once it does", async () => {
+  let clock = 1_000_000;
+  let missing: string[] = ["GH_TOKEN"];
+  const calls: number[] = [];
+  const holders = new Holders({
+    access: async () => (calls.push(clock), { missing }),
+    terminals: () => ({ list: async () => ({ sessions: [] }), close: async () => ({}) }),
+    logError: () => {},
+    now: () => clock,
+  });
+  await holders.ensure("host_a", ["GH_TOKEN", "GIT_AUTHOR_NAME"]);
+  clock += 2_000;
+  await holders.ensure("host_a", ["GH_TOKEN", "GIT_AUTHOR_NAME"]);
+  assert.equal(calls.length, 2, "asked again 2 s later");
+  missing = [];
+  clock += 2_000;
+  await holders.ensure("host_a", ["GH_TOKEN", "GIT_AUTHOR_NAME"]);
+  clock += 2_000;
+  await holders.ensure("host_a", ["GH_TOKEN", "GIT_AUTHOR_NAME"]);
+  assert.equal(calls.length, 3, "with it, 30 s again");
+  // A name the machine never has does not make it ask every 2 s.
+  missing = ["LINEAR_API_TOKEN"];
+  clock += 30_000;
+  await holders.ensure("host_a", ["GH_TOKEN", "LINEAR_API_TOKEN"]);
+  clock += 2_000;
+  await holders.ensure("host_a", ["GH_TOKEN", "LINEAR_API_TOKEN"]);
+  assert.equal(calls.length, 4);
+});
+
+test("the host entry's access says which of the names its call did not bring", async (t) => {
+  const harness = experimental_createHostEntryHarness(hostEntry({ access: { command: ["sleep", "300"] } }));
+  t.after(() => harness.experimental_dispose());
+  const saved = process.env.BBBOX_TEST_TOKEN;
+  delete process.env.BBBOX_TEST_TOKEN;
+  t.after(() => (saved === undefined ? delete process.env.BBBOX_TEST_TOKEN : (process.env.BBBOX_TEST_TOKEN = saved)));
+  assert.deepEqual((await harness.experimental_call("access", { names: ["PATH", "BBBOX_TEST_TOKEN"] })).missing, ["BBBOX_TEST_TOKEN"]);
+  process.env.BBBOX_TEST_TOKEN = "value";
+  assert.deepEqual((await harness.experimental_call("access", { names: ["PATH", "BBBOX_TEST_TOKEN"] })).missing, []);
 });

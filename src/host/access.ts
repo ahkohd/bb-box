@@ -40,7 +40,9 @@ export function accessHandlers(options: { command?: readonly string[] } = {}) {
           context.lifecycle.signal.addEventListener("abort", stop, { once: true });
         }
         const now = fingerprint(names, process.env);
-        if (held && running(held.child) && held.fingerprint === now) return { started: false, pid: held.child.pid ?? null };
+        // BB can give a new machine some variables, such as GH_TOKEN, after others.
+        const missing = [...new Set(names)].filter((name) => !process.env[name]);
+        if (held && running(held.child) && held.fingerprint === now) return { started: false, pid: held.child.pid ?? null, missing };
         const old = held;
         const child = spawn(program!, args, { env: { ...process.env }, stdio: "ignore" });
         // A program that cannot start must not take the worker down with it.
@@ -48,7 +50,7 @@ export function accessHandlers(options: { command?: readonly string[] } = {}) {
         held = { child, fingerprint: now };
         // The new one runs first, so commands always have one.
         old?.child.kill("SIGTERM");
-        return { started: true, pid: child.pid ?? null };
+        return { started: true, pid: child.pid ?? null, missing };
       },
     },
     async dispose() {
