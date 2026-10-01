@@ -33,6 +33,8 @@ export interface ControlDeps {
   logError(operation: string, error: unknown): void;
   /** How long a holder's viewer may be gone before control goes back to the agent. */
   readonly staleMs?: number;
+  /** How long a holder's viewer has to connect again after the box ended its connection. */
+  readonly reconnectMs?: number;
 }
 
 export class ControlError extends Error {
@@ -57,6 +59,8 @@ interface BoxControl {
 }
 
 const STALE_MS = 60_000;
+/** The viewer tries again after 1 s, then 2 s more, so two tries fit. */
+export const RECONNECT_MS = 5_000;
 const AGENT: ControlView = { owner: "agent", holder: null };
 
 export class Control {
@@ -104,22 +108,20 @@ export class Control {
 
   /**
    * A connection ended. When the holder has none left, control goes back to
-   * the agent: at once if the box ended it, or after staleMs if the viewer
-   * went away and does not come back.
+   * the agent unless the viewer connects again: within reconnectMs if the box
+   * ended it, as the viewer tries again by itself, or staleMs if the viewer
+   * went away.
    */
   detach(boxId: string, connection: ViewerConnection, by: "viewer" | "box"): void {
     const state = this.#boxes.get(boxId);
     if (!state?.connections.delete(connection)) return;
     if (this.#disposed || state.owner !== "human" || state.holder !== connection.viewer || this.connected(boxId, connection.viewer)) return;
-    if (by === "box") {
-      void this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error));
-      return;
-    }
     if (state.stale) clearTimeout(state.stale);
+    const wait = by === "box" ? (this.#deps.reconnectMs ?? RECONNECT_MS) : (this.#deps.staleMs ?? STALE_MS);
     state.stale = setTimeout(() => {
       state.stale = null;
       void this.handBack(boxId).catch((error) => this.#deps.logError("hand back", error));
-    }, this.#deps.staleMs ?? STALE_MS);
+    }, wait);
     state.stale.unref?.();
   }
 
