@@ -357,6 +357,15 @@ export interface Backend {
    */
   stamp?(boxId: string, guest: Guest, signal?: AbortSignal): Promise<Guest>;
 
+  /**
+   * The box's owner or name changed, as when a spare is claimed or becomes
+   * yours (032, 036): records them on the guest, as its owner for the sweep
+   * (019), and gives the guest the box's name inside where it was `from`.
+   * Without it, a restored record keeps the owner and name the guest was
+   * made with.
+   */
+  relabel?(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void>;
+
   /** The command transport, the displays, and how the thread reaches a box of `kind`. */
   transports(guest: Guest, kind: string): Promise<BoxTransports>;
 

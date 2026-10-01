@@ -1226,6 +1226,26 @@ test("a spare gives its room to a thread's box that finds none, and comes back o
   assert.deepEqual(world.errors, []);
 });
 
+test("a claimed spare's guest is relabelled for its new owner, and renamed when its name changes (036)", async () => {
+  const world = setup();
+  world.general = { ...world.general, spares: { linux: 2 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const spares = await world.boxes.list(SPARES);
+  const mine = await world.boxes.acquire({ threadId: OPERATOR, projectId: null, kind: "linux", name: "build-1" });
+  const theirs = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  assert.ok(spares.some((spare) => spare.id === mine.id) && spares.some((spare) => spare.id === theirs.id), "both took a spare");
+  await until(async () => world.backend.relabels.length === 2);
+  const from = (id: string) => spares.find((spare) => spare.id === id)!.name;
+  assert.deepEqual(
+    [...world.backend.relabels].sort((a, b) => a.threadId.localeCompare(b.threadId)),
+    [
+      { boxId: mine.id, threadId: OPERATOR, name: "build-1", from: from(mine.id) },
+      { boxId: theirs.id, threadId: THREAD, name: theirs.name, from: from(theirs.id) },
+    ].sort((a, b) => a.threadId.localeCompare(b.threadId)),
+  );
+});
+
 test("the sweep keeps your machines, and restores a lost one to you under its name, asking BB for no project (036)", async () => {
   const projects: string[] = [];
   const world = setup({}, { projectOf: async (threadId) => (projects.push(threadId), null) });

@@ -501,7 +501,7 @@ export class Boxes {
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
         const spare = claims ? await this.#claim(input, offered, sized.size, taken, requested) : null;
-        if (spare) return { box: spare, claimed: true };
+        if (spare) return { box: spare.box, claimed: spare.from };
         const chosen = input.threadId === SPARES ? await this.#choose(offered, sized.size) : await this.#chooseFreeing(offered, sized.size);
         const box: BoxRecord = {
           id: newBoxId(this.#random),
@@ -528,10 +528,10 @@ export class Boxes {
           enrol: { state: "off", hostId: null, error: null },
         };
         await this.#deps.kv.set(indexKey(box.id), box.threadId);
-        return { box: await this.#write(box), claimed: false };
+        return { box: await this.#write(box), claimed: null };
       }),
     );
-    if (claimed) this.#claimed(box);
+    if (claimed !== null) this.#claimed(box, claimed);
     else this.#startAcquire(box);
     return box;
   }
@@ -547,7 +547,7 @@ export class Boxes {
     size: BoxSize,
     taken: Set<string>,
     requested: number,
-  ): Promise<BoxRecord | null> {
+  ): Promise<{ box: BoxRecord; from: string } | null> {
     return this.#locked(SPARES, async () => {
       for (const spare of await this.list(SPARES)) {
         if (!offered.some((candidate) => candidate.backend.id === spare.backend && candidate.kind.id === spare.kind)) continue;
@@ -573,7 +573,7 @@ export class Boxes {
         await this.#write(box);
         await this.#deps.kv.delete(recordKey(SPARES, box.id));
         this.#deps.notify(SPARES);
-        return box;
+        return { box, from: spare.name };
       }
       return null;
     });
@@ -601,9 +601,9 @@ export class Boxes {
    * After a claim: renames the box's BB machine, and makes another spare.
    * Its commands wait only when its machine must reconnect (#128).
    */
-  #claimed(box: BoxRecord): void {
+  #claimed(box: BoxRecord, from: string): void {
     this.#deps.log?.(`Claimed spare box ${box.name} for thread ${box.threadId}.`);
-    this.#renamed(box);
+    this.#renamed(box, from);
     void this.keepSpares();
   }
 
@@ -702,7 +702,7 @@ export class Boxes {
       return false;
     }
     if (threadId === null) return false;
-    const box = await this.#locked(OPERATOR, () =>
+    const moved = await this.#locked(OPERATOR, () =>
       this.#locked(SPARES, async () => {
         const current = await this.#read(SPARES, spare.id);
         if (!current) return null;
@@ -712,18 +712,32 @@ export class Boxes {
         await this.#deps.kv.set(indexKey(yours.id), OPERATOR);
         await this.#write(yours);
         await this.#deps.kv.delete(recordKey(SPARES, yours.id));
-        return yours;
+        return { box: yours, from: current.name };
       }),
     );
-    if (!box) return false;
+    if (!moved) return false;
+    const { box, from } = moved;
     this.#deps.log?.(`Spare box ${box.name} is now yours: thread ${threadId} started on it from BB's picker.`);
     this.#deps.notify(SPARES);
-    this.#renamed(box);
+    this.#renamed(box, from);
     return true;
   }
 
-  /** Renames a box's BB machine after it changed owner, and reconnects it if BB shows it disconnected. */
-  #renamed(box: BoxRecord): void {
+  /**
+   * After a spare changed owner, and perhaps name (`from` was its name): the
+   * backend records them on the guest and names it inside, BB's machine is
+   * renamed, and reconnected if BB shows it disconnected. Commands wait for
+   * the guest's new name only when it changed (#128).
+   */
+  #renamed(box: BoxRecord, from: string): void {
+    const backend = this.#deps.backends.get(box.backend);
+    if (backend?.relabel && box.guest) {
+      const guest = box.guest;
+      const relabel = this.#size(box)
+        .then((size) => backend.relabel!(guest, identity(box, size), from))
+        .catch((error) => this.#deps.logError("relabel", error));
+      if (from !== box.name) this.#waitFor(box.id, relabel);
+    }
     const { claimed, reconnect } = this.#deps;
     if (!box.enrol.hostId || !claimed) return;
     void claimed(box).then(

@@ -381,10 +381,15 @@ export interface LxcBackendOptions {
  * `auth` are for tests.
  */
 export function warmNameScript(name: string, etc = "/etc", auth = DISPLAY_AUTH_FILE): string {
-  return String.raw`[ "$(hostname)" = ${WARM_HOSTNAME} ] || exit 0
-sudo -n sh -s -- ${quote(name)} ${quote(etc)} <<'NAME' || exit
+  return nameScript(WARM_HOSTNAME, name, etc, auth);
+}
+
+/** As warmNameScript, for a guest named `from`, as a spare that changes owner and name (036). */
+export function nameScript(from: string, name: string, etc = "/etc", auth = DISPLAY_AUTH_FILE): string {
+  return String.raw`[ "$(hostname)" = ${quote(from)} ] || exit 0
+sudo -n sh -s -- ${quote(name)} ${quote(etc)} ${quote(from)} <<'NAME' || exit
 set -e
-awk -v old=${WARM_HOSTNAME} -v new="$1" '
+awk -v old="$3" -v new="$1" '
   $1 == "127.0.1.1" {
     for (i = 2; i <= NF; i++) {
       if ($i == old) $i = new
@@ -1514,16 +1519,27 @@ export class ProxmoxLxcBackend implements Backend {
     return new SshTransport((await this.#keys()).ssh, this.#access(vmid), "linux");
   }
 
-  /** Names a claimed warm guest after its box inside. A failure is logged, and leaves the guest's name as it was. */
-  async #name(vmid: number, name: string, signal?: AbortSignal): Promise<void> {
+  /** Records a box's new owner and name on its guest, and names the guest after it inside (036). */
+  async relabel(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void> {
+    const api = await this.client();
+    const vmid = Number(guest.ref);
+    const installId = this.#context.installId;
+    const template = templateFromTags(parseTags((await api.config(vmid, signal)).tags));
+    await api.configure(vmid, { hostname: box.name, description: describe(box, installId) }, signal);
+    await api.configure(vmid, { tags: boxTags(box, installId, template) }, signal);
+    if (from !== box.name) await this.#name(vmid, box.name, signal, from);
+  }
+
+  /** Names a claimed warm guest, or one named `from`, after its box inside. A failure is logged, and leaves the guest's name as it was. */
+  async #name(vmid: number, name: string, signal?: AbortSignal, from = WARM_HOSTNAME): Promise<void> {
     try {
       const command = await this.#command(vmid);
-      const result = await command.run(warmNameScript(name), { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+      const result = await command.run(nameScript(from, name), { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
       if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `exit code ${result.exitCode}`);
     } catch (error) {
       signal?.throwIfAborted();
       const why = error instanceof Error ? error.message : String(error);
-      this.#context.logError("name the box", new Error(`Naming box ${name} inside failed, so it may keep the warm guest's hostname, ${WARM_HOSTNAME}, or its desktop may open no windows: ${why}`));
+      this.#context.logError("name the box", new Error(`Naming box ${name} inside failed, so it may keep the hostname ${from}, or its desktop may open no windows: ${why}`));
     }
   }
 

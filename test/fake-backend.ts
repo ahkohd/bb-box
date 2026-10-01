@@ -397,6 +397,13 @@ export class FakeBackend implements Backend {
   /** Warm guests kept per kind: maintain makes or retires them to match `warm`. */
   readonly warmGuests = new Map<string, number>();
 
+  /** What relabel was asked: the box's ID, its new owner and name, and the name it had. */
+  readonly relabels: { boxId: string; threadId: string; name: string; from: string }[] = [];
+
+  async relabel(_guest: Guest, box: BoxIdentity, from: string): Promise<void> {
+    this.relabels.push({ boxId: box.boxId, threadId: box.threadId, name: box.name, from });
+  }
+
   async maintain(): Promise<void> {
     this.calls.push("maintain");
     for (const kind of this.#kinds) {
