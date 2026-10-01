@@ -130,6 +130,7 @@ and `start` and `stop` throw `gone`.
 | `linux-arm64` | Linux on arm64, no GPU | Tart |
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
+| `windows-arm64-desktop` | a Windows desktop on arm64, no GPU | Tart's Macs, in QEMU (planned, 046) |
 | `macos` | macOS, no GPU | Tart; a physical Mac later (#47) |
 | `macos-desktop` | a macOS desktop, no GPU | Tart; a physical Mac later (#47) |
 
@@ -144,6 +145,8 @@ and `start` and `stop` throw `gone`.
   asking for `linux` never gets arm64, where amd64 images and x86_64
   binaries fail
   ([040](decisions/040-linux-on-arm64-has-kinds-of-its-own.md)).
+  Windows on arm64 is `windows-arm64-desktop`
+  ([046](decisions/046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md)).
 - "No GPU" means no scarce GPU is taken. Macs render with Metal, and Tart
   through its paravirtualised GPU, so macOS kinds declare `gpu: false`.
 - A `linux-desktop` box whose display fell back to the CPU
@@ -1329,8 +1332,9 @@ Push work to Git or copy it out before releasing a box.
 ## Backends
 
 How each backend fits the interface. Proxmox LXC, Proxmox QEMU (Windows),
-Docker, the SSH host pool and Tart are built. Physical Macs and clouds
-are planned, and the later-backends research fills in the details.
+Docker, the SSH host pool and Tart are built. Windows on a Mac, physical
+Macs and clouds are planned, and the later-backends research fills in the
+details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1418,6 +1422,12 @@ Notes:
     macOS Server or personal non-commercial use, and not as a service bureau
     or time-sharing service. Agents developing and testing on your own Macs
     fit.
+  - Windows on arm64 (planned) runs in QEMU with HVF, as a second engine
+    of the same backend, so one survey of each Mac counts every VM's
+    memory and disk. A box is a qcow2 overlay on an image the setup builds
+    on each Mac, reached through the Mac as Tart's VMs are, and saved to a
+    file when stopped. Windows VMs do not count against the two macOS VMs
+    ([046](decisions/046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md)).
   - Tart, Orchard and tart-guest-agent are under FSL-1.1-ALv2, where internal
     use is a permitted purpose. bb-box drives Tart and does not redistribute
     it.
