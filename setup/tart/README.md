@@ -151,7 +151,8 @@ What the image has:
   is still `admin`, for the console only.
 - The login PATH, Homebrew and Node for SSH commands (`~/.zshenv`): SSH
   commands run in a non-login zsh, which otherwise gets only
-  `/usr/bin:/bin:/usr/sbin:/sbin`.
+  `/usr/bin:/bin:/usr/sbin:/sbin`. When the box enrols, bb-box adds a line
+  at the top that gives them the thread's environment and access.
 - No sleep, no screen saver, no automatic updates, no Spotlight indexing.
 - A launch daemon that clears BB's daemon lock and PID file at boot
   ([017](../../docs/decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).

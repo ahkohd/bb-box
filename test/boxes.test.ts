@@ -6,8 +6,8 @@ import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
 import { BackendError, type Backend, type BoxSize, type ReleaseHooks } from "../src/backends/types.ts";
-import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BoxError, Boxes, extraFeatures, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
@@ -491,6 +491,96 @@ test("commands in an enrolled box take the thread's access from BB's daemon as t
   assert.equal(asked.length, 2);
 });
 
+interface MacProcess {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly etime: string;
+  readonly command: string;
+  readonly env?: readonly (readonly [string, string])[];
+}
+
+/**
+ * A stand-in for macOS's ps, in a directory of its own to put first on the
+ * PATH. It lists `processes` with the columns the access loader asks for, and
+ * with -E, the environments of those named with -p after their arguments,
+ * with a newline as \012 and a tab as \011, as macOS prints them.
+ */
+function fakeMacPs(processes: readonly MacProcess[]) {
+  const dir = tempDir("mac-ps");
+  const column = (value: string | number, width: number) => String(value).padStart(width);
+  const escape = (value: string) => value.replaceAll("\n", "\\012").replaceAll("\t", "\\011");
+  writeFileSync(join(dir, "plain"), processes.map((p) => `${column(p.pid, 5)} ${column(p.ppid, 5)} ${column(p.etime, 10)} ${p.command}\n`).join(""));
+  writeFileSync(
+    join(dir, "env"),
+    processes.map((p) => [column(p.pid, 5), p.command, ...(p.env ?? []).map(([name, value]) => `${name}=${escape(value)}`)].join(" ") + "\n").join(""),
+  );
+  writeFileSync(
+    join(dir, "ps"),
+    `#!/bin/sh
+printf '%s\\n' "$*" >> '${dir}/calls'
+case " $* " in
+*" -E "*)
+  while [ "$#" -gt 0 ] && [ "$1" != -p ]; do shift; done
+  awk -v list="$2" 'BEGIN { n = split(list, p, ","); for (i = 1; i <= n; i++) want[p[i]] = 1 } $1 in want' '${dir}/env' ;;
+*) cat '${dir}/plain' ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  return {
+    dir,
+    /** The process IDs whose environments ps -E was asked for, in order. */
+    read: () =>
+      readFileSync(join(dir, "calls"), "utf8")
+        .split("\n")
+        .filter((call) => / -E /.test(` ${call} `))
+        .map((call) => call.split(" ").at(-1)!.split(",").map(Number).sort((a, b) => a - b)),
+  };
+}
+
+test("in a macOS box, the env file takes the thread's access from the daemon's newest worker with the most names, as on Linux", () => {
+  const parent = "host-daemon/dist/daemon-bundle";
+  const worker = "node /app/bb-provider-bridge-worker.mjs";
+  const multiline = "it's\ntwo lines\tand a tab";
+  const others: MacProcess["env"] = [["FOO", "value-other"], ["BAR", "x"], ["QUOTE", "x"]];
+  const ps = fakeMacPs([
+    { pid: 1, ppid: 0, etime: "3-01:02:03", command: "/sbin/launchd" },
+    { pid: 500, ppid: 1, etime: "2-00:00:00", command: `node /app/${parent}.mjs` },
+    // Older than 503 and 504 by the days in its elapsed time.
+    { pid: 501, ppid: 500, etime: "1-00:00:00", command: worker, env: [["FOO", "value-old"], ["BAR", "x"], ["QUOTE", "x"]] },
+    { pid: 502, ppid: 500, etime: "00:05", command: worker, env: [["FOO", "value-few"]] },
+    // As old as 504, whose process ID is higher, as on Linux.
+    { pid: 503, ppid: 500, etime: "01:00:00", command: worker, env: [["FOO", "value-tie"], ["BAR", "x"], ["QUOTE", "x"]] },
+    // Its arguments look like a variable, which the environment follows.
+    {
+      pid: 504,
+      ppid: 500,
+      etime: "01:00:00",
+      command: `${worker} FOO=from-arguments`,
+      env: [["PATH", "/usr/bin"], ["FOO", "value-new"], ["BAR", "spaces,  é = and a quote ' "], ["QUOTE", multiline], ["UNLISTED", "value-unlisted"]],
+    },
+    // Not the daemon's workers, though one's parent names it in its arguments.
+    { pid: 600, ppid: 1, etime: "00:01", command: worker, env: others },
+    { pid: 601, ppid: 1, etime: "00:01", command: `zsh -c ${parent}` },
+    { pid: 602, ppid: 601, etime: "00:01", command: worker, env: others },
+  ]);
+  const dir = tempDir("env");
+  const access = { names: ["BAR", "FOO", "GH_TOKEN", "QUOTE", "not a name"], parent };
+  writeFileSync(join(dir, "env"), envScript("macos", { BB_BOX_NAME: "box" }, access));
+  writeFileSync(join(dir, "no-daemon"), envScript("macos", { BB_BOX_NAME: "box" }, { ...access, parent: "no-daemon" }));
+  assert.doesNotMatch(readFileSync(join(dir, "env"), "utf8"), /DEBIAN_FRONTEND/);
+  const show = (file: string) => `PATH='${ps.dir}':$PATH; . ./${file} && printf "%s|" "$FOO" "$BAR" "$QUOTE" "\${GH_TOKEN-unset}" "\${UNLISTED-unset}" "$BB_BOX_NAME"`;
+  // zsh runs SSH commands on macOS, and the env file from ~/.zshenv.
+  const shells = spawnSync("zsh", ["-fc", ":"]).status === 0 ? ["sh", "zsh"] : ["sh"];
+  for (const shell of shells) {
+    const out = execFileSync(shell, ["-c", show("env")], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
+    assert.equal(out, `value-new|spaces,  é = and a quote ' |${multiline}|unset|unset|box|`, shell);
+    const none = execFileSync(shell, ["-c", show("no-daemon")], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
+    assert.equal(none, "|||unset|unset|box|", shell);
+  }
+  assert.deepEqual(ps.read(), shells.map(() => [501, 502, 503, 504]), "only the daemon's workers' environments are read");
+});
+
 test("when bb-box cannot tell which variables to take, commands keep the env file they had", async () => {
   let fail = false;
   const world = setup(
@@ -525,11 +615,31 @@ test("access setup puts the env file above ~/.bashrc's early return, once, and k
     result.stdout,
     `640\n# Added by bb-box: the thread's environment and access, for SSH commands too.\nif [ -r "$HOME/.config/bb-box/env" ]; then . "$HOME/.config/bb-box/env"; fi\n\ncase $- in *i*) ;; *) return;; esac\nexport MINE=1\n${box.name}`,
   );
-  assert.equal(accessSetup("macos"), null);
+  assert.equal(accessSetup("windows"), null);
 
   // A date that cannot give nanoseconds leaves the time out, and the script's exit code as it was.
   const { result: untimed } = await world.boxes.run(THREAD, box.name, `date() { echo 1700000000N; }\n${accessSetup("linux")!}`);
   assert.deepEqual([untimed.exitCode, untimed.stdout, accessSetupMs(untimed.stdout)], [0, "", null]);
+});
+
+test("in a macOS box, access setup puts the env file at the top of ~/.zshenv, once, and keeps the file's mode", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  await world.boxes.writeFile(THREAD, box.name, ".zshenv", Buffer.from('export PATH="/opt/homebrew/bin:$PATH"\n'), { mode: "640" });
+  for (let i = 0; i < 2; i++) {
+    const { result } = await world.boxes.run(THREAD, box.name, accessSetup("macos")!);
+    assert.equal(result.exitCode, 0);
+    assert.equal(typeof accessSetupMs(result.stdout), "number", result.stdout);
+  }
+  const { result } = await world.boxes.run(THREAD, box.name, "stat -c %a .zshenv; cat .zshenv");
+  assert.equal(
+    result.stdout,
+    `640\n# Added by bb-box: the thread's environment and access, for SSH commands too.\nif [ -r "$HOME/.config/bb-box/env" ]; then . "$HOME/.config/bb-box/env"; fi\n\nexport PATH="/opt/homebrew/bin:$PATH"\n`,
+  );
+  if (spawnSync("zsh", ["-fc", ":"]).status !== 0) return;
+  // A zsh that is not a login shell, as SSH runs, reads it.
+  const { result: zsh } = await world.boxes.run(THREAD, box.name, `env -i HOME="$HOME" PATH="$PATH" zsh -c 'printf %s "$BB_BOX_NAME"'`);
+  assert.equal(zsh.stdout, box.name);
 });
 
 test("a command that times out stops in the box, with everything it started", async () => {

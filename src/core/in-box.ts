@@ -8,20 +8,20 @@ import type { GuestOs } from "../transports/types.ts";
 /**
  * The thread's environment for commands in the box, relative to the box
  * user's home. bb-box writes it, readable by the box user only, before every
- * command it runs, and sources it. An enrolled Linux box's ~/.bashrc sources
- * it too, so the thread's own SSH commands get it.
+ * command it runs, and sources it. An enrolled box's ~/.bashrc, or ~/.zshenv
+ * on macOS, sources it too, so the thread's own SSH commands get it.
  */
 export function envFile(os: GuestOs): string {
   return os === "windows" ? ".config/bb-box/env.ps1" : ".config/bb-box/env";
 }
 
 /**
- * Where commands in a Linux box take the thread's access from: the named
- * variables of a live process whose parent runs a program whose path holds
- * `parent`. In a box that is a BB machine, that parent is BB's daemon, whose
- * workers carry BB's machine variables and GH_TOKEN. Only the program's path
- * counts, not the rest of its command line: commands bb-box runs carry the
- * env file, and with it `parent`, on theirs.
+ * Where commands in a Linux or macOS box take the thread's access from: the
+ * named variables of a live process whose parent runs a program whose path
+ * holds `parent`. In a box that is a BB machine, that parent is BB's daemon,
+ * whose workers carry BB's machine variables and GH_TOKEN. Only the
+ * program's path counts, not the rest of its command line: commands bb-box
+ * runs carry the env file, and with it `parent`, on theirs.
  */
 export interface Access {
   readonly names: readonly string[];
@@ -102,6 +102,11 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
   return `${write}${env}${desktop}${cd}if command -v timeout >/dev/null 2>&1; then exec ${timeout}; else exec ${shell}; fi`;
 }
 
+/** The names to take, valid and once each. */
+function accessNames(access: Access): string[] {
+  return [...new Set(access.names.filter((name) => NAME.test(name)))].sort();
+}
+
 /**
  * Sets the named variables from the newest of the processes under `parent`
  * that has the most of them, afresh each time the env file is sourced, so a
@@ -109,9 +114,9 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
  * its variables. Values never reach the disk. Needs GNU grep and sed.
  */
 function accessLoader(access: Access): string {
-  const names = access.names.filter((name) => NAME.test(name));
+  const names = accessNames(access);
   if (!names.length) return "";
-  const pattern = sh(`^(${[...new Set(names)].sort().join("|")})=`);
+  const pattern = sh(`^(${names.join("|")})=`);
   return String.raw`bb_box_access() (
   ps -u "$(id -u)" -o pid= -o ppid= -o etimes= -o args= 2>/dev/null |
     awk -v parent=${sh(access.parent)} '{ up[$1] = $2; age[$1] = $3; program[$1] = $5 }
@@ -132,10 +137,72 @@ unset -f bb_box_access
 }
 
 /**
- * The file that sets `variables` for commands in the box, and on Linux takes
- * the thread's access. Names that are not valid shell names are left out. On
- * Linux, package installs ask nothing, since nobody could answer; a variable
- * of the thread's own can say otherwise.
+ * The same on macOS, which has no /proc: `ps -E` prints a process's
+ * environment after its arguments. Each variable runs from ` NAME=` to the
+ * next ` WORD=`, and ps prints a newline in a value as `\012` and a tab as
+ * `\011`, but a backslash as it is. So a value holding a space then `WORD=`,
+ * or a backslash then three digits, can read wrongly. Elapsed times read
+ * [[DD-]HH:]MM:SS.
+ */
+function macAccessLoader(access: Access): string {
+  const names = accessNames(access);
+  if (!names.length) return "";
+  return String.raw`bb_box_access() (
+  LC_ALL=en_US.UTF-8 ps -ww -U "$(id -u)" -o pid= -o ppid= -o etime= -o command= 2>/dev/null |
+    LC_ALL=C awk -v parent=${sh(access.parent)} -v names=${sh(names.join(" "))} '
+      function secs(t, p, n) { n = split(t, p, /[-:]/); return p[n] + 60 * p[n - 1] + 3600 * p[n - 2] + 86400 * p[n - 3] }
+      function decode(s, out, c) {
+        while (match(s, /\\[0-3][0-7][0-7]/)) {
+          c = substr(s, RSTART + 1, 3)
+          out = out substr(s, 1, RSTART - 1) sprintf("%c", substr(c, 1, 1) * 64 + substr(c, 2, 1) * 8 + substr(c, 3, 1))
+          s = substr(s, RSTART + RLENGTH)
+        }
+        return out s
+      }
+      function quote(s, out, i) {
+        while ((i = index(s, q))) { out = out substr(s, 1, i - 1) q "\\" q q; s = substr(s, i + 1) }
+        return q out s q
+      }
+      BEGIN { q = "\047"; n = split(names, list, " "); for (i = 1; i <= n; i++) wanted[list[i]] = 1 }
+      $1 ~ /^[0-9]+$/ {
+        up[$1] = $2; age[$1] = secs($3); program[$1] = $5
+        line = $0; sub(/^ *[0-9]+ +[0-9]+ +[^ ]+ +/, "", line); args[$1] = line
+      }
+      END {
+        for (pid in up) if (index(program[up[pid]], parent)) pids = pids (pids == "" ? "" : ",") pid
+        if (pids == "") exit
+        ps = "LC_ALL=en_US.UTF-8 ps -E -ww -o pid= -o command= -p " pids " 2>/dev/null"
+        while ((ps | getline line) > 0) {
+          pid = line; sub(/^ */, "", pid); sub(/ .*/, "", pid); sub(/^ *[0-9]+ +/, "", line)
+          if (!(pid in args) || substr(line, 1, length(args[pid]) + 1) != args[pid] " ") continue
+          rest = substr(line, length(args[pid]) + 1); name = ""
+          for (;;) {
+            value = rest; next_name = ""
+            if (match(rest, / [A-Za-z_][A-Za-z0-9_]*=/)) {
+              value = substr(rest, 1, RSTART - 1); next_name = substr(rest, RSTART + 1, RLENGTH - 2)
+              rest = substr(rest, RSTART + RLENGTH)
+            }
+            if ((name in wanted) && !((pid, name) in got)) { got[pid, name] = value; count[pid]++ }
+            if (next_name == "") break
+            name = next_name
+          }
+        }
+        close(ps)
+        for (pid in count)
+          if (count[pid] > most || (count[pid] == most && (age[pid] < age[best] || (age[pid] == age[best] && pid + 0 > best + 0)))) { best = pid; most = count[pid] }
+        for (i = 1; i <= n; i++) if ((best, list[i]) in got) print "export " list[i] "=" quote(decode(got[best, list[i]]))
+      }'
+)
+eval "$(bb_box_access)"
+unset -f bb_box_access
+`;
+}
+
+/**
+ * The file that sets `variables` for commands in the box, and on Linux and
+ * macOS takes the thread's access. Names that are not valid shell names are
+ * left out. On Linux, package installs ask nothing, since nobody could
+ * answer; a variable of the thread's own can say otherwise.
  */
 export function envScript(os: GuestOs, variables: Readonly<Record<string, string>>, access?: Access): string {
   const names = Object.keys(variables)
@@ -146,29 +213,32 @@ export function envScript(os: GuestOs, variables: Readonly<Record<string, string
   }
   const header = "# Written by bb-box: the thread's environment for commands in this box.\n";
   const defaults = os === "linux" ? "export DEBIAN_FRONTEND=noninteractive\n" : "";
-  const loader = access && os === "linux" ? accessLoader(access) : "";
+  const loader = !access ? "" : os === "macos" ? macAccessLoader(access) : accessLoader(access);
   return header + defaults + names.map((name) => `export ${name}=${sh(variables[name]!)}`).join("\n") + "\n" + loader;
 }
 
-/** The line an enrolled Linux box's ~/.bashrc starts with, above anything that returns early. */
-const BASHRC_HOOK = `# Added by bb-box: the thread's environment and access, for SSH commands too.
+/** The line an enrolled box's shell startup file starts with, above anything that returns early. */
+const SHELL_HOOK = `# Added by bb-box: the thread's environment and access, for SSH commands too.
 if [ -r "$HOME/${envFile("linux")}" ]; then . "$HOME/${envFile("linux")}"; fi
 `;
 
 /**
- * Run once a Linux box is a BB machine, after the env file is written:
- * ~/.bashrc sources the env file first, and git asks gh for GitHub
- * credentials, so both use GH_TOKEN. Prints how long it took in the box, in
- * milliseconds, for the enrolment's log, when the box's date can tell.
- * Null for other systems.
+ * Run once a Linux or macOS box is a BB machine, after the env file is
+ * written: the shell's startup file sources the env file first, and git asks
+ * gh for GitHub credentials, so both use GH_TOKEN. That file is ~/.bashrc,
+ * or ~/.zshenv on macOS, since an SSH command there runs a zsh that is not a
+ * login shell, which reads only ~/.zshenv. Prints how long it took in the
+ * box, in milliseconds, for the enrolment's log, when the box's date can
+ * tell. Null for Windows.
  */
 export function accessSetup(os: GuestOs): string | null {
-  if (os !== "linux") return null;
+  if (os === "windows") return null;
+  // cp -p gives the new file the old one's mode, which writing it keeps.
   return String.raw`started=$(date +%s%N)
-f="$HOME/.bashrc"
+f="$HOME/${os === "macos" ? ".zshenv" : ".bashrc"}"
 if ! grep -qsF ${sh(envFile(os))} "$f"; then
-  { printf '%s\n' ${sh(BASHRC_HOOK)} && { [ ! -e "$f" ] || cat "$f"; }; } > "$f.bb-box" &&
-    { [ ! -e "$f" ] || chmod --reference="$f" "$f.bb-box"; } && mv -f "$f.bb-box" "$f"
+  { [ ! -e "$f" ] || cp -p "$f" "$f.bb-box"; } &&
+    { printf '%s\n' ${sh(SHELL_HOOK)} && { [ ! -e "$f" ] || cat "$f"; }; } > "$f.bb-box" && mv -f "$f.bb-box" "$f"
 fi
 if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   gh auth setup-git >/dev/null 2>&1 || {
