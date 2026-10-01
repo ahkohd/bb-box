@@ -33,15 +33,16 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   };
 
   const desktopBox = async (threadId: string, ref: string): Promise<BoxRecord> => {
-    const box = await boxes.get(threadId, ref);
+    const { box } = await app.resolve(threadId, ref);
     if (!box.capabilities.displays.length) throw new ControlError(`Box ${box.name} has no desktop.`);
     return box;
   };
 
   bb.rpc.register(contract, {
     async state({ threadId }) {
-      const list = await boxes.list(threadId);
-      return { boxes: list.map(app.view), kinds: await app.kinds(), backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path };
+      const [list, kinds, machine] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId)]);
+      const runsOn = machine && !list.some((box) => box.id === machine.id) ? { box: app.view(machine), owner: machine.threadId === OPERATOR ? ("yours" as const) : ("thread" as const) } : null;
+      return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn };
     },
     acquire: ({ threadId, kind, size }) =>
       change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size })),
@@ -51,10 +52,13 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     refresh: ({ threadId, box }) => change("Checking the box", () => boxes.refresh(threadId, box)),
     async desktop({ threadId, box: ref }) {
       // A released box shows as gone, not as an error.
-      const box = await boxes.get(threadId, ref).catch((error) => {
-        if (error instanceof BoxError && error.code === "not_found") return null;
-        throw error;
-      });
+      const box = await app.resolve(threadId, ref).then(
+        (found) => found.box,
+        (error) => {
+          if (error instanceof BoxError && error.code === "not_found") return null;
+          throw error;
+        },
+      );
       return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path };
     },
     takeControl: ({ threadId, box: ref, viewer }) =>

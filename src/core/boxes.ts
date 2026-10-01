@@ -205,7 +205,9 @@ export type BoxErrorCode =
   /** A thread runs on the box's BB machine. */
   | "in_use"
   /** A name for one of your machines that is not a hostname label, or is taken. */
-  | "invalid_name";
+  | "invalid_name"
+  /** The box this thread runs on belongs to another owner, who releases or stops it (036). */
+  | "not_owner";
 
 export class BoxError extends Error {
   readonly code: BoxErrorCode;

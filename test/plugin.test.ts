@@ -78,6 +78,8 @@ async function start(
     names: [] as string[],
     /** Threads bb-box asked BB to start. */
     spawned: [] as unknown[],
+    /** The machine the thread's workspace is on. */
+    workspaceHost: "host-workspace",
     /**
      * Machines BB owns, as for "New box": deleting one runs BB's removal, which
      * calls the provider's remove and waits for it, with no time limit.
@@ -122,7 +124,7 @@ async function start(
         },
       },
       environments: {
-        get: async () => ({ id: "env_one", hostId: "host-workspace", path: workspace }) as never,
+        get: async () => ({ id: "env_one", hostId: world.workspaceHost, path: workspace }) as never,
       },
       system: {
         machineEnvironment: async () => {
@@ -1026,6 +1028,40 @@ test("a spare a thread started on through BB's picker becomes yours, not another
   await until("its machine renamed", async () => world.hosts.get(spare.enrol.hostId!)?.name === spare.name);
   assert.ok(harness.inspection.logEntries.some((entry) => entry.message === `Spare box ${spare.name} is now yours: thread thr_picker started on it from BB's picker.`));
   await until("a new spare", async () => (await app.boxes.list(SPARES)).some((box) => box.id !== spare.id));
+});
+
+test("a thread that runs on one of your machines sees it in box_list, uses it with the box tools, and cannot release or stop it (036)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const machine = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  world.workspaceHost = machine.enrol.hostId!;
+
+  const listed = text(await tool("box_list", {}));
+  assert.match(listed, /^The machine this thread runs on:\n- build-1: Linux .*; yours\n\nThis thread has no boxes\./);
+  assert.match(text(await tool("box_run", { box: "build-1", command: "echo on it" })), /stdout:\non it/);
+  assert.match(text(await tool("box_status", { box: "build-1" })), /^Box build-1 /);
+  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { runsOn: { box: { name: string }; owner: string } };
+  assert.deepEqual([state.runsOn.box.name, state.runsOn.owner], ["build-1", "yours"]);
+
+  for (const name of ["box_release", "box_stop"]) {
+    const refused = await tool(name, { box: "build-1" });
+    assert.ok(isError(refused), name);
+    assert.match(text(refused), /^Box build-1 is your machine, which this thread runs on\. Remove or stop it in BB Box's settings\.\n\nNext: Keep using it with box_run/);
+  }
+  assert.equal((await app.boxes.find(machine.id))?.state, "ready");
+});
+
+test("a box this thread runs on that belongs to another thread is named with that thread, and only that thread releases it (036)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  world.threads.set("thr_two", makeThreadResponse({ id: "thr_two", projectId: PROJECT, environmentId: "env_two" }));
+  const theirs = await app.boxes.enrolled((await app.boxes.settled(await app.boxes.acquire({ threadId: "thr_two", projectId: PROJECT, kind: "linux" }))) ?? (null as never));
+  world.workspaceHost = theirs.enrol.hostId!;
+  assert.match(text(await tool("box_list", {})), new RegExp(`^The machine this thread runs on:\\n- ${theirs.name}: .*; thread thr_two's`));
+  const refused = await tool("box_release", { box: theirs.name });
+  assert.match(text(refused), new RegExp(`Box ${theirs.name} is thread thr_two's, and this thread runs on it\\. Release it from that thread\\.`));
+  // A box of its own still comes first in its lookups.
+  assert.match(text(await tool("box_status", { box: "nope" })), /There is no box "nope"|not found|no box/i);
 });
 
 test("enrolment can be switched off", async (t) => {

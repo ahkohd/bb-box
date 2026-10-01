@@ -15,6 +15,11 @@ export interface PanelState {
   readonly desktopPath: string;
   /** The terminal's WebSocket path on the BB server. */
   readonly terminalPath: string;
+  /**
+   * The box whose BB machine this thread runs on, when it is not one of the
+   * thread's own boxes (036): one of your machines, or another thread's box.
+   */
+  readonly runsOn: { readonly box: BoxView; readonly owner: "yours" | "thread" } | null;
 }
 
 /** One box's desktop or terminal, for its tab. */

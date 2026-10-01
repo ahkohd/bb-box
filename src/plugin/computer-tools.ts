@@ -48,7 +48,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     parameters: z.object({ box: boxParam }),
     async execute({ box: ref }, { threadId, signal }) {
       try {
-        return result(await computer.windows(await boxes.get(thread(threadId), ref), signal));
+        return result(await computer.windows((await app.resolve(thread(threadId), ref, signal)).box, signal));
       } catch (error) {
         return refusal(error, "Listing the windows");
       }
@@ -77,7 +77,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     }),
     async execute({ box: ref, window, query, limit, screenshot }, { threadId, signal }) {
       try {
-        return result(await computer.observe(await boxes.get(thread(threadId), ref), { window, query, limit, screenshot }, signal));
+        return result(await computer.observe((await app.resolve(thread(threadId), ref, signal)).box, { window, query, limit, screenshot }, signal));
       } catch (error) {
         return refusal(error, "Reading the window");
       }
@@ -96,7 +96,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     }),
     async execute({ box: ref, window }, { threadId, signal }) {
       try {
-        return result(await computer.screenshot(await boxes.get(thread(threadId), ref), windowRef(window ?? "desktop"), signal));
+        return result(await computer.screenshot((await app.resolve(thread(threadId), ref, signal)).box, windowRef(window ?? "desktop"), signal));
       } catch (error) {
         return refusal(error, "Taking the screenshot");
       }
@@ -127,7 +127,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     async execute(input, { threadId, signal }) {
       try {
         const { box: ref, window, ...act } = input;
-        return result(await computer.act(await boxes.get(thread(threadId), ref), { ...act, window: window === undefined ? undefined : windowRef(window) }, signal));
+        return result(await computer.act((await app.resolve(thread(threadId), ref, signal)).box, { ...act, window: window === undefined ? undefined : windowRef(window) }, signal));
       } catch (error) {
         return refusal(error, "Acting on the desktop");
       }
@@ -152,7 +152,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     async execute(input, { threadId, signal }) {
       try {
         const { box: ref, window, ...typed } = input;
-        return result(await computer.type(await boxes.get(thread(threadId), ref), { ...typed, window: window === undefined ? undefined : windowRef(window) }, signal));
+        return result(await computer.type((await app.resolve(thread(threadId), ref, signal)).box, { ...typed, window: window === undefined ? undefined : windowRef(window) }, signal));
       } catch (error) {
         return refusal(error, "Typing");
       }
@@ -171,7 +171,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     }),
     async execute({ box: ref, app: name, url }, { threadId, signal }) {
       try {
-        return result(await computer.launch(await boxes.get(thread(threadId), ref), { app: name, url }, signal));
+        return result(await computer.launch((await app.resolve(thread(threadId), ref, signal)).box, { app: name, url }, signal));
       } catch (error) {
         return refusal(error, "Opening the app");
       }
