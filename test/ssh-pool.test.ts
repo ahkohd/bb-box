@@ -218,6 +218,18 @@ describe("SSH host pool", () => {
     await backend.dispose();
   });
 
+  it("claims machines it first sees free together in the order they are listed, whichever answers first", async () => {
+    machine("192.0.2.74", { "slow-status": "300" });
+    machine("192.0.2.75");
+    const { backend } = pool("first 192.0.2.74 linux\nsecond 192.0.2.75 linux");
+    const one = await acquire(backend);
+    const two = await acquire(backend);
+    assert.deepEqual([one.guest.ref, two.guest.ref], ["first", "second"]);
+    await backend.release(one.guest, releaseHooks().hooks);
+    await backend.release(two.guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
   it("gives no Docker in a pool where some machines do not, and its doctor says so", async () => {
     machine("192.0.2.67", { docker: "", hook: "" });
     machine("192.0.2.68");

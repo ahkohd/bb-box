@@ -385,7 +385,7 @@ export class SshPoolBackend implements Backend {
     return null;
   }
 
-  /** Claims the smallest free machine of at least the box's size, then the one with the fewest other kinds, free longest. */
+  /** Claims the smallest free machine of at least the box's size, then the one free longest, then the first listed. */
   #claim(
     box: BoxIdentity,
     kind: BoxKind,
@@ -596,7 +596,7 @@ export class SshPoolBackend implements Backend {
   async returnToService(ref: string, signal?: AbortSignal): Promise<void> {
     const machine = this.#machines.get(ref);
     if (!machine) throw new Error(`There is no machine ${ref} in the SSH host pool.`);
-    const view = await this.#look(machine, signal);
+    const view = await this.#look(machine, Date.now(), signal);
     const { status } = view.probe;
     if (status?.marker === "owner" && status.owner) {
       const { install, name, box } = status.owner;
@@ -855,8 +855,10 @@ export class SshPoolBackend implements Backend {
     }
   }
 
+  /** Looks at every machine at once. A state new to its record starts when the survey does, so machines found free together are claimed as listed. */
   async #survey(signal?: AbortSignal): Promise<View[]> {
-    const views = await Promise.all(this.#config.machines.map((machine) => this.#look(machine, signal)));
+    const now = Date.now();
+    const views = await Promise.all(this.#config.machines.map((machine) => this.#look(machine, now, signal)));
     this.#surveyed = views;
     return views;
   }
@@ -870,11 +872,12 @@ export class SshPoolBackend implements Backend {
     return this.#surveyed.filter((view) => this.#lists(view.machine, kind) && view.state === "free" && this.#ready(view, kind) === null).length;
   }
 
-  async #look(machine: SshPoolMachine, signal?: AbortSignal): Promise<View> {
+  /** `machine` as it is now. A state that its record does not have began at `now`, or for a held machine, when its box was made. */
+  async #look(machine: SshPoolMachine, now: number, signal?: AbortSignal): Promise<View> {
     const [record, probe] = await Promise.all([this.#read(machine), this.#status(machine, signal)]);
     const { state, reason } = this.#judge(probe, record);
     const marker = probe.status?.owner ?? null;
-    const since = record?.state === state ? record.since : state === "held" && marker?.createdAt ? marker.createdAt : Date.now();
+    const since = record?.state === state ? record.since : state === "held" && marker?.createdAt ? marker.createdAt : now;
     const generation = probe.status?.generation ?? record?.generation ?? 0;
     if (probe.status && !this.#resetting.has(machine.name) && !this.#claiming.has(machine.name)) {
       await this.#sync(machine, record, state, probe.status, since);

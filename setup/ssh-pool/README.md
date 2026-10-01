@@ -175,8 +175,9 @@ A line is:
 | `reset=machine` | The machine has a whole-machine reset. `setup.sh` adds it when you give `--reset-hook` |
 | `labels=` | Words for your own use |
 
-bb-box lends the smallest free machine that fits the box's size. The pool's
-boxes have Docker only when every machine's line lists `linux-docker`
+bb-box lends the smallest free machine that fits the box's size, then the
+one free longest, then the first listed. The pool's boxes have Docker only
+when every machine's line lists `linux-docker`
 ([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md)).
 When only some lines list it, no box has Docker, each says No Docker, and
 the doctor warns.
