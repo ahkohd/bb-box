@@ -19,13 +19,21 @@
 // use through Cua's daemon, which runs there elevated, as SSH does. The
 // viewer's size sets the desktop's mode, through a desktop command. A stop
 // hibernates the VM, and a start resumes it and sets Windows' clock, which
-// the resume leaves behind. The warm pool is still to come.
+// the resume leaves behind.
+//
+// The warm pool keeps hibernated clones at the kind's default size, each
+// filled once Windows' desktop is up. Proxmox refuses a hibernated VM's
+// config changes, tags too, so bb-box marks a warm VM it claims or deletes
+// in memory until the VM resumes or goes. A claim resumes the VM, gives it
+// the box's tags, name and description, waits for SSH and sets the clock.
 
 import { createHash, randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
 import {
+  BUILD,
   TAG,
   boxTags,
+  buildFromTags,
   describe,
   fromBuild,
   installFromDescription,
@@ -37,9 +45,11 @@ import {
   ownerFromTags,
   templateBuild,
   templateFromTags,
+  templateTag,
 } from "../proxmox/owner.ts";
 import { addressFor, proxmoxFootprint } from "../proxmox/settings.ts";
 import { proxmoxFetch } from "../proxmox/tls.ts";
+import { ReadyPool } from "../pool.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -57,6 +67,7 @@ import {
   type Guest,
   type HeldGuest,
   type Limit,
+  type PoolMember,
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
@@ -91,6 +102,13 @@ const TEMPLATE_POLL_MS = 250;
 const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" };
 /** Where boot.ps1 logs how it set the box's address. */
 const BOOT_LOG = "C:\\bb-box\\boot.log";
+/** Tags of a warm VM: filling while bb-box makes it, warm once it is ready. */
+const WARM = "warm";
+const FILLING = "filling";
+/** A warm VM's name until a box claims it. */
+const WARM_NAME = "bb-box-warm";
+/** How often a fill checks whether Windows' desktop is up. */
+const DESKTOP_POLL_MS = 1_000;
 
 const KIND: BoxKind = {
   id: "windows-desktop",
@@ -236,6 +254,14 @@ export function setClock(ms: number): string {
 Set-Date -Date $bbNow -ErrorAction Stop | Out-Null`;
 }
 
+/**
+ * Exits 0 once Windows' desktop is up: Explorer runs in a desktop session
+ * and Cua's daemon listens on its pipe. A fill hibernates a warm VM then, so
+ * a claim resumes a desktop that is ready for computer use.
+ */
+export const DESKTOP_UP = `if ((Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0) -and (Test-Path -LiteralPath '${CUA_DRIVER.socket}')) { exit 0 }
+exit 1`;
+
 /** A doctor check's stable ID and its name. */
 type Check = readonly [id: string, name: string];
 const API: Check = ["proxmox.api", "Proxmox API"];
@@ -302,6 +328,16 @@ function gone(vmid: number): BackendError {
   return new BackendError("gone", `The box's VM ${vmid} no longer exists.`);
 }
 
+/**
+ * Whether a warm VM of `size` serves a box of `wanted`: Proxmox cannot
+ * change a hibernated VM, so the cores and memory must be the same, and the
+ * disk at least the size asked for.
+ */
+function serves(size: BoxSize, wanted: BoxSize): boolean {
+  if (size.cores !== wanted.cores || size.memoryMiB !== wanted.memoryMiB) return false;
+  return wanted.diskGiB === null || (size.diskGiB !== null && size.diskGiB >= wanted.diskGiB);
+}
+
 export interface QemuBackendOptions {
   /** Replaces the Proxmox API's fetch; the TLS settings are then ignored. */
   readonly fetch?: FetchLike;
@@ -346,6 +382,14 @@ interface TemplateInfo {
 /** A box the registry is acquiring here, which capacity counts as coming. */
 type Pending = { readonly kind: string; readonly size: BoxSize };
 
+/** A warm VM that a claim can take, with the template, build and size it was filled with. */
+interface WarmVm {
+  readonly guest: PoolGuest;
+  readonly template: number;
+  readonly build: string | null;
+  readonly size: BoxSize;
+}
+
 export class ProxmoxQemuBackend implements Backend {
   readonly id: string;
   readonly nature = "virtual" as const;
@@ -368,6 +412,20 @@ export class ProxmoxQemuBackend implements Backend {
   #nextVmid: number | null = null;
   /** Display helpers compiling for new boxes, by VMID, which a resize waits for. */
   readonly #compiling = new Map<number, Promise<void>>();
+  /** The template of each warm VM this process is filling, by VMID. */
+  readonly #filling = new Map<number, number>();
+  /** Warm VMs that acquires here have claimed, which keep their warm tags until they resume. */
+  readonly #claimed = new Set<number>();
+  /** Warm VMs this process is deleting, for the same reason. */
+  readonly #retiring = new Set<number>();
+  /** The ready warm VMs as the pool last listed them, by VMID. */
+  readonly #listed = new Map<string, WarmVm>();
+  readonly #warm = new ReadyPool<BoxIdentity>({
+    members: (signal) => this.#members(signal),
+    hold: async (member) => void this.#claimed.add(Number(member.ref)),
+  });
+  readonly #stopping = new AbortController();
+  #maintaining: Promise<void> | null = null;
 
   constructor(config: QemuConfig, context: BackendContext, options: QemuBackendOptions = {}) {
     this.id = context.id;
@@ -389,6 +447,28 @@ export class ProxmoxQemuBackend implements Backend {
     this.#offer(kind);
     const api = await this.client();
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
+    const ready = await this.#ready(api, guests, signal);
+    // Acquires here that hold a warm VM need no other.
+    const waiting = Math.max(0, pending.length - this.#claimed.size);
+    const fromPool = ready.filter((warm) => serves(warm.size, size)).length > waiting;
+    return this.#room(api, size, guests, pending, { ready: ready.length, target: this.#warmTarget() }, fromPool, signal);
+  }
+
+  /**
+   * Room on the node for a box of `size`, with `pending` boxes still to
+   * come. With `fromPool`, the box is a warm VM, which resumes with its
+   * memory but needs no VMID or disk of its own.
+   */
+  async #room(
+    api: Proxmox,
+    size: BoxSize,
+    guests: readonly PoolGuest[],
+    pending: readonly Pending[],
+    warm: { ready: number; target: number },
+    fromPool: boolean,
+    signal?: AbortSignal,
+  ): Promise<Capacity> {
+    const kind = KIND.id;
     const template = await this.#templateOf(api, this.#choose(guests), signal);
     const { storage } = template;
     const [node, disk] = await Promise.all([api.nodeStatus(signal), api.storageStatus(storage, signal)]);
@@ -417,27 +497,30 @@ export class ProxmoxQemuBackend implements Backend {
     if (node.cpus !== null && size.cores > node.cpus) {
       problems.push(`${api.node} has ${node.cpus} CPU threads, fewer than the ${size.cores} cores asked for. Ask for at most ${node.cpus} cores.`);
     }
-    const grow = size.diskGiB !== null ? Math.max(0, size.diskGiB - (template.diskGiB ?? 0)) : 0;
+    const grow = size.diskGiB !== null && !fromPool ? Math.max(0, size.diskGiB - (template.diskGiB ?? 0)) : 0;
     if (grow > 0 && diskFree - grow * 1024 < reserve.diskGiB * 1024) {
       problems.push(
         `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free. A ${size.diskGiB} GiB disk needs ${Math.ceil(grow)} GiB more than the template's, ` +
           `and ${reserve.diskGiB} GiB is kept free. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.`,
       );
     }
-    if (diskFree < reserve.diskGiB * 1024) {
+    if (diskFree < reserve.diskGiB * 1024 && !fromPool) {
       problems.push(
         `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free, less than the ${reserve.diskGiB} GiB kept free. ` +
           "Release boxes, free some space, or lower the disk kept free in bb-box's settings.",
       );
     }
-    if (this.#freeVmid(guests) === null) {
+    if (this.#freeVmid(guests) === null && !fromPool) {
       problems.push(`Every VMID from ${first} to ${last} is in use. Release a box, or widen the VMID range in bb-box's settings.`);
     }
     const ok = problems.length === 0;
-    return { ok, message: ok ? null : problems[0]!, warm: { ready: 0, target: 0 }, hosts: [{ host: api.node, ok, limits }] };
+    return { ok, message: ok ? null : problems[0]!, warm, hosts: [{ host: api.node, ok, limits }] };
   }
 
-  /** The least used template, counting guests in the range by their template tag and acquires here that have chosen one. */
+  /**
+   * The least used template, counting guests in the range by their template
+   * tag, and acquires and fills here that have chosen one.
+   */
   #choose(guests: readonly PoolGuest[]): number {
     const counts = new Map<number, number>();
     const add = (template: number | null) => {
@@ -445,6 +528,9 @@ export class ProxmoxQemuBackend implements Backend {
     };
     for (const guest of guests) if (this.#inRange(guest.vmid)) add(templateFromTags(guest.tags));
     for (const template of this.#acquiring.values()) add(template);
+    // A fill's VM counts once, by its tag once it has one.
+    const tagged = new Set(guests.filter((guest) => templateFromTags(guest.tags) !== null).map((guest) => guest.vmid));
+    for (const [vmid, template] of this.#filling) if (!tagged.has(vmid)) add(template);
     const uses = (template: number) => counts.get(template) ?? 0;
     return this.#config.templates.reduce((best, template) => (uses(template) < uses(best) ? template : best));
   }
@@ -459,6 +545,7 @@ export class ProxmoxQemuBackend implements Backend {
     let claimed: number | null = null;
     let template: number | null = null;
     let build: string | null = null;
+    let warm: number | null = null;
     const claim = async (id: number) => {
       claimed = id;
       await hooks.claim(this.#guest(api.node, id, template, box.boxId, null, build));
@@ -470,6 +557,39 @@ export class ProxmoxQemuBackend implements Backend {
         template = typeof previous.data?.template === "number" ? previous.data.template : null;
         build = typeof previous.data?.build === "string" ? previous.data.build : null;
         resumed = true;
+      }
+      if (vmid === null) {
+        const member = await step("warm", () =>
+          this.#warm.claim(KIND.id, box, {
+            fits: (candidate) => {
+              const listed = this.#listed.get(candidate.ref);
+              return !!listed && serves(listed.size, box.size);
+            },
+            before: (candidate) => {
+              const listed = this.#listed.get(candidate.ref)!;
+              template = listed.template;
+              build = listed.build;
+              return claim(Number(candidate.ref));
+            },
+            signal,
+          }),
+        );
+        if (member) warm = vmid = Number(member.ref);
+      }
+      if (warm !== null) {
+        const id = warm;
+        await hooks.starting();
+        await step("resume", () => api.start(id, signal));
+        // The tags first, as a running VM tagged warm is deleted. onboot was off while it was warm.
+        await step("relabel", () =>
+          api.configure(id, { tags: boxTags(box, installId, template), name: box.name, description: describe(box, installId), onboot: true }, signal),
+        );
+        const size = api.config(id, signal).then(sizeOf, () => null);
+        await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step);
+        await step("clock", () => this.#setClock(id, signal));
+        this.#compileDisplay(id);
+        this.#kick();
+        return this.#guest(api.node, id, template, box.boxId, await size, build);
       }
       if (vmid === null) {
         // Time spent waiting for a template that is being replaced shows apart from the clone.
@@ -516,6 +636,8 @@ export class ProxmoxQemuBackend implements Backend {
       throw error;
     } finally {
       this.#acquiring.delete(box.boxId);
+      // The box's now, or deleted after a failed claim.
+      if (warm !== null) this.#claimed.delete(warm);
     }
   }
 
@@ -560,12 +682,16 @@ export class ProxmoxQemuBackend implements Backend {
     if (status.status === "running") await api.hibernate(vmid, signal);
   }
 
-  /** This install's guests, from the pool listing. Only a guest not yet tagged costs a config read. */
+  /**
+   * This install's guests, from the pool listing, but not warm VMs, which
+   * are the pool's. Only a guest not yet tagged costs a config read.
+   */
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {
     const api = await this.client();
     const held: HeldGuest[] = [];
     for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
       if (guest.type !== "qemu" || guest.template || !this.#inRange(guest.vmid) || this.#reserved.has(guest.vmid)) continue;
+      if (this.#filling.has(guest.vmid) || guest.tags.includes(WARM)) continue;
       let install = installFromTags(guest.tags);
       let owner = ownerFromTags(guest.tags, guest.name || null);
       if (!guest.tags.includes(TAG) || !owner) {
@@ -761,7 +887,19 @@ export class ProxmoxQemuBackend implements Backend {
     };
   }
 
+  maintain(signal?: AbortSignal): Promise<void> {
+    if (!this.#maintaining) {
+      const run = this.#topUp(signal ?? this.#stopping.signal).finally(() => {
+        this.#maintaining = null;
+      });
+      this.#maintaining = run;
+    }
+    return this.#maintaining;
+  }
+
   async dispose(): Promise<void> {
+    this.#stopping.abort(new Error("bb-box is stopping."));
+    await this.#maintaining?.catch(() => undefined);
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
     await this.#keyFile.dispose();
     await this.#http.close();
@@ -1153,5 +1291,160 @@ export class ProxmoxQemuBackend implements Backend {
       });
     }
     return this.#ssh;
+  }
+
+  /** Warm VMs to keep: the kind's count, or none while no template is listed. */
+  #warmTarget(): number {
+    return this.#config.templates.length ? this.#context.warm(KIND.id) : 0;
+  }
+
+  /** Whether `guest` is one of this install's warm VMs that no fill, claim or delete here is using. */
+  #isWarm(guest: PoolGuest): boolean {
+    if (guest.type !== "qemu" || guest.template || !this.#inRange(guest.vmid) || !guest.tags.includes(WARM)) return false;
+    if (installFromTags(guest.tags) !== this.#context.installId) return false;
+    return !this.#filling.has(guest.vmid) && !this.#claimed.has(guest.vmid) && !this.#retiring.has(guest.vmid);
+  }
+
+  /**
+   * The warm VMs in `guests` that a claim can take: hibernated, so stopped,
+   * at the kind's default size, and from the current build of a template
+   * that is listed in the settings.
+   */
+  async #ready(api: Proxmox, guests: readonly PoolGuest[], signal?: AbortSignal): Promise<WarmVm[]> {
+    const wanted = this.#context.kind(KIND.id).defaultSize;
+    const builds = new Map<number, string | null | undefined>();
+    const ready: WarmVm[] = [];
+    for (const guest of guests) {
+      if (!this.#isWarm(guest) || guest.status !== "stopped" || !guest.size) continue;
+      if (guest.size.cores !== wanted.cores || guest.size.memoryMiB !== wanted.memoryMiB) continue;
+      const template = templateFromTags(guest.tags);
+      if (template === null || !this.#config.templates.includes(template)) continue;
+      if (!builds.has(template)) builds.set(template, await templateBuild(api, guests, template, signal));
+      // A template that is away, as while build.sh --replace swaps it, has no build to compare.
+      const build = builds.get(template);
+      if (build === undefined || build !== buildFromTags(guest.tags)) continue;
+      ready.push({ guest, template, build, size: guest.size });
+    }
+    return ready;
+  }
+
+  /** The ready warm VMs, as the shared ready pool sees them. */
+  async #members(signal?: AbortSignal): Promise<PoolMember[]> {
+    const api = await this.client();
+    const ready = await this.#ready(api, await api.listPool(this.#config.proxmox.pool, signal), signal);
+    this.#listed.clear();
+    for (const warm of ready) this.#listed.set(String(warm.guest.vmid), warm);
+    return ready.map(({ guest }) => ({ ref: String(guest.vmid), host: guest.node || api.node, kinds: [KIND.id], state: "free", reason: null, since: 0, generation: 0 }));
+  }
+
+  /** Tops up the warm pool in the background after a warm VM is claimed. */
+  #kick(): void {
+    if (this.#warmTarget() === 0) return;
+    this.maintain(this.#stopping.signal).catch((error) => this.#context.logError("warm pool", error));
+  }
+
+  /** Deletes the warm VMs that cannot serve or are beyond the count, then fills the pool to the count, one VM at a time. */
+  async #topUp(signal: AbortSignal): Promise<void> {
+    const api = await this.client();
+    const pool = this.#config.proxmox.pool;
+    // Chosen while no claim runs, and marked here until they are gone, as
+    // Proxmox cannot retag a hibernated VM.
+    const retired = await this.#warm.exclusive(async () => {
+      const guests = await api.listPool(pool, signal);
+      const kept = new Set((await this.#ready(api, guests, signal)).slice(0, this.#warmTarget()).map((warm) => warm.guest.vmid));
+      const out = guests.filter((guest) => this.#isWarm(guest) && !kept.has(guest.vmid)).map((guest) => guest.vmid);
+      for (const vmid of out) this.#retiring.add(vmid);
+      return out;
+    });
+    for (const vmid of retired) {
+      try {
+        await this.#forget(vmid);
+        await api.destroy(vmid, signal);
+      } catch (error) {
+        this.#context.logError("retire a warm box", error);
+      } finally {
+        this.#retiring.delete(vmid);
+      }
+    }
+
+    const target = this.#warmTarget();
+    if (target === 0) return;
+    const size = this.#context.kind(KIND.id).defaultSize;
+    const guests = await api.listPool(pool, signal);
+    const ready = (await this.#ready(api, guests, signal)).length;
+    for (let missing = target - ready; missing > 0; missing--) {
+      signal.throwIfAborted();
+      const room = await this.#room(api, size, await api.listPool(pool, signal), [], { ready, target }, false, signal);
+      if (!room.ok) {
+        this.#context.logError("warm pool", new Error(room.message ?? "No room for a warm box."));
+        break;
+      }
+      await this.#fill(api, size, signal);
+    }
+  }
+
+  /**
+   * Makes a warm VM at `size`: a clone, started, with the display helper
+   * compiled, and hibernated once Windows' desktop is up. It is tagged warm
+   * just before, as Proxmox refuses tags after.
+   */
+  async #fill(api: Proxmox, size: BoxSize, signal: AbortSignal): Promise<void> {
+    const install = installTag(this.#context.installId);
+    let vmid: number | null = null;
+    const claimed: number[] = [];
+    try {
+      const guests = await api.listPool(this.#config.proxmox.pool, signal);
+      const template = this.#choose(guests);
+      // Read before the clone, so it is never newer than the clone's build. A
+      // template replaced in between retires the VM later, which is safe.
+      const build = await templateBuild(api, guests, template, signal);
+      const tags = (state: string) => [TAG, install, state, templateTag(template), ...(build ? [`${BUILD}${build}`] : [])];
+      const description = `bb-box warm ${KIND.id}\ninstall ${this.#context.installId}`;
+      const before = async (id: number) => {
+        this.#filling.set(id, template);
+        claimed.push(id);
+      };
+      vmid = await this.#clone(api, guests, template, WARM_NAME, description, before, signal, () => {});
+      const id = vmid;
+      const config = await api.config(id, signal);
+      // Off at the node's boot, as a warm VM that runs is deleted.
+      await api.configure(id, { ...this.#settings(size, id, config), onboot: false }, signal);
+      await api.configure(id, { tags: tags(FILLING) }, signal);
+      const grew = await this.#grow(api, id, config, size.diskGiB, untimed, signal);
+      await api.start(id, signal);
+      const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
+      await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal);
+      if (grew) await this.#extend(id, signal);
+      await this.#desktopUp(id, Math.max(1_000, deadline - Date.now()), signal);
+      // A failure is left to the box's first resize, which compiles it again.
+      const command = await this.#command(id);
+      await command.run(DISPLAY_HELPER, { timeoutMs: RESIZE_TIMEOUT_MS, signal, maxOutputBytes: 4096 }).catch(() => undefined);
+      await api.configure(id, { tags: tags(WARM) }, signal);
+      await this.#forget(id);
+      await api.hibernate(id, signal);
+    } catch (error) {
+      if (vmid !== null) {
+        await this.#forget(vmid);
+        await api.destroy(vmid).catch((cause) => this.#context.logError("release a failed warm box", cause));
+      }
+      throw error;
+    } finally {
+      for (const id of claimed) this.#filling.delete(id);
+    }
+  }
+
+  /** Waits until DESKTOP_UP says Windows' desktop is up. */
+  async #desktopUp(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    const command = await this.#command(vmid);
+    const up = {
+      probe: async (signal?: AbortSignal) =>
+        (await command.run(DESKTOP_UP, { timeoutMs: 10_000, signal, maxOutputBytes: 4096 }).catch(() => null))?.exitCode === 0,
+    };
+    if (!(await waitUntilAnswers(up, { timeoutMs, intervalMs: DESKTOP_POLL_MS, signal, sleep: this.#options.sleep }))) {
+      throw new Error(
+        `Windows' desktop in warm VM ${vmid} was not up within ${Math.round(timeoutMs / 1000)} s: Explorer did not run in a desktop session, ` +
+          `or Cua's daemon did not listen on ${CUA_DRIVER.socket}. Check the VM's console in Proxmox, and that the template signs the box user in.`,
+      );
+    }
   }
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { Backends, DRIVERS, boxForm, overlapChecks } from "../src/backends/index.ts";
@@ -51,15 +51,15 @@ after(async () => {
   for (const backend of made) await backend.dispose();
 });
 
-/** The fake Proxmox, SSH and network, and no waiting. */
-function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage(), options: QemuBackendOptions = {}) {
+/** The fake Proxmox, SSH and network, and no waiting. `warm` gives warm counts by kind, which a test may change. */
+function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage(), options: QemuBackendOptions = {}, warm: Record<string, number> = {}) {
   const ssh = fakeSsh();
   // Each box address answers as Windows does, in PowerShell.
   for (let last = 150; last <= 159; last++) ssh.windows(`192.0.2.${last}`);
   const proxmox = new FakeProxmox();
   proxmox.addVmTemplate(9104);
   proxmox.addVmTemplate(9105);
-  const context = testContext(storage, "test", { id: "proxmox-qemu" });
+  const context = testContext(storage, "test", { id: "proxmox-qemu", warm });
   const config = qemuConfig(values);
   const fakes: QemuBackendOptions = { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
   const make = () => {
@@ -261,7 +261,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   });
   assert.deepEqual(hook.claimed[0]?.data, { template: 9104, box: box.boxId }, "the claim records the box");
   assert.deepEqual(hook.events, ["claim 9700", "clone 9700", "starting"]);
-  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags"]);
+  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags", "warm"], "with no warm VM to claim");
   const clone = proxmox.calls.find((call) => call.path.endsWith("/clone"))!;
   assert.equal(clone.path, "/nodes/pve/qemu/9104/clone");
   assert.equal(clone.params.full, "0", "a linked clone");
@@ -681,4 +681,227 @@ test("the doctor warns when Proxmox QEMU's VMIDs or box addresses overlap Proxmo
   assert.deepEqual(overlapChecks([lxc(), qemu({ url: "https://other.example.com:8006/", "vmid-first": 3000, addresses: "192.0.2.10-192.0.2.249" })]), []);
   // Only the addresses its VMIDs use count: the rest of a longer range is never handed out.
   assert.deepEqual(overlapChecks([lxc({ "proxmox-lxc-addresses": "192.0.2.10-192.0.2.254" }), qemu()]), []);
+});
+
+/**
+ * setup() with `count` warm VMs. Windows' desktop is up in every VM unless
+ * $HOME/no-desktop exists, and the clock and display helper scripts are kept.
+ */
+function warmSetup(count: number, values: Record<string, unknown> = {}, options: QemuBackendOptions = {}) {
+  const warm = { [KIND]: count };
+  const env = setup(values, new MemoryStorage(), options, warm);
+  for (let last = 150; last <= 159; last++) {
+    mkdirSync(env.ssh.home(`192.0.2.${last}`), { recursive: true });
+    env.ssh.powershell(
+      `192.0.2.${last}`,
+      `case "$1" in\n  *"Get-Process explorer"*) [ -f "$HOME/no-desktop" ] && exit 1; exit 0;;\n  *Set-Date*) printf "%s" "$1" > "$HOME/clock"; exit 0;;\n  *Resize-Partition*) exit 0;;\n  *Add-Type*) printf "%s" "$1" > "$HOME/compiled"; exit 0;;\n  *) exec sh -c "$1";;\nesac\n`,
+    );
+  }
+  return { ...env, warm };
+}
+
+/** The VMIDs of the warm VMs, and of the VMs deleted. */
+const warmVms = (proxmox: FakeProxmox) => [...proxmox.guests.values()].filter((guest) => parseTags(guest.config.tags).includes("warm")).map((guest) => guest.vmid);
+const deleted = (proxmox: FakeProxmox) => proxmox.calls.filter((call) => call.method === "DELETE").map((call) => Number(call.path.split("/")[4]));
+const clones = (proxmox: FakeProxmox) => proxmox.calls.filter((call) => call.path.endsWith("/clone")).length;
+
+test("the warm pool keeps hibernated VMs at the kind's default size, each filled once Windows' desktop is up", async () => {
+  const { backend, proxmox, ssh, context } = warmSetup(1);
+  await backend.maintain(signal());
+  const vm = proxmox.guests.get(9700)!;
+  assert.deepEqual([vm.status, vm.config.lock], ["stopped", "suspended"], "hibernated");
+  assert.deepEqual(parseTags(vm.config.tags), ["bb-box", "install.test", "warm", "template.9104"]);
+  assert.equal(vm.name, "bb-box-warm");
+  assert.deepEqual([vm.config.cores, vm.config.memory, vm.config.onboot], ["4", "8192", "0"], "and not started at the node's boot");
+  assert.equal(installFromDescription(vm.config.description), "test");
+  assert.equal(ownerFromDescription(vm.config.description), null);
+  assert.ok(existsSync(join(ssh.home("192.0.2.150"), "compiled")), "the display helper is compiled before the hibernate");
+  assert.deepEqual(await backend.held(), [], "a warm VM is no box's");
+  assert.deepEqual((await backend.capacity(KIND, sized(), [], signal())).warm, { ready: 1, target: 1 });
+
+  await backend.maintain(signal());
+  assert.equal(clones(proxmox), 1, "a full pool makes no more");
+  assert.deepEqual(context.errors, []);
+});
+
+test("a claim resumes a warm VM as the box, gives it the box's tags and name, sets its clock, and the pool fills again", async () => {
+  const { proxmox, ssh, make, context } = warmSetup(1);
+  await make().maintain(signal());
+  // Another backend, as after a restart, finds the warm VM.
+  const backend = make();
+  const box = identity();
+  const hook = hooks();
+  const before = Date.now();
+  const guest = await backend.acquire(box, null, hook.value, signal());
+  assert.deepEqual(guest, { ref: "9700", host: "pve", address: "192.0.2.150", size: { cores: 4, memoryMiB: 8192, diskGiB: 64 }, data: { template: 9104, box: box.boxId } });
+  assert.deepEqual(hook.events, ["claim 9700", "starting"]);
+  assert.deepEqual(hook.claimed[0]?.data, { template: 9104, box: box.boxId }, "the claim records the box");
+  assert.deepEqual(Object.keys(hook.timings).sort(), ["clock", "network", "relabel", "resume", "ssh", "warm"]);
+  const vm = proxmox.guests.get(9700)!;
+  assert.deepEqual([vm.status, vm.config.lock, vm.config.vmstate], ["running", undefined, undefined]);
+  assert.equal(vm.name, box.name);
+  assert.equal(vm.config.onboot, "1");
+  const tags = parseTags(vm.config.tags);
+  assert.equal(tags.includes("warm"), false);
+  assert.deepEqual(ownerFromTags(tags), { boxId: box.boxId, threadId: box.threadId, name: null, kind: KIND, createdAt: box.createdAt });
+  assert.equal(tags.at(-1), "template.9104");
+  assert.equal(ownerFromDescription(vm.config.description)?.boxId, box.boxId);
+  const ms = Number(/FromUnixTimeMilliseconds\((\d+)\)/.exec(readFileSync(join(ssh.home("192.0.2.150"), "clock"), "utf8"))?.[1]);
+  assert.ok(ms >= before && ms <= Date.now(), "the clock is set to BB's server's time");
+
+  // The claim began a fill: this waits for its clone, then joins it.
+  for (let tries = 0; !proxmox.guests.has(9701) && tries < 300; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(proxmox.guests.has(9701), "the claim began a fill");
+  await backend.maintain(signal());
+  assert.deepEqual(warmVms(proxmox), [9701]);
+  assert.equal(proxmox.guests.get(9701)!.config.lock, "suspended");
+  assert.deepEqual((await backend.held()).map((one) => [one.ref, one.owner?.boxId]), [["9700", box.boxId]]);
+  assert.deepEqual(context.errors, []);
+});
+
+test("a box the warm VMs do not fit is cloned, and a box with a smaller disk takes one", async () => {
+  const { backend, proxmox } = warmSetup(1);
+  await backend.maintain(signal());
+  const cores = await backend.acquire(identity(sized({ cores: 8 })), null, hooks().value, signal());
+  const disk = await backend.acquire(identity(sized({ diskGiB: 100 })), null, hooks().value, signal());
+  assert.deepEqual([cores.ref, disk.ref], ["9701", "9702"]);
+  assert.equal(proxmox.guests.get(9700)!.config.lock, "suspended", "the warm VM waits for a box it fits");
+  const hook = hooks();
+  const smaller = await backend.acquire(identity(sized({ diskGiB: 40 })), null, hook.value, signal());
+  assert.deepEqual([smaller.ref, smaller.size?.diskGiB], ["9700", 64]);
+  assert.equal(typeof hook.timings.resume, "number");
+  await backend.maintain(signal());
+});
+
+test("two acquires never claim the same warm VM", async () => {
+  const { backend, proxmox } = warmSetup(1);
+  await backend.maintain(signal());
+  // Neither resumes its VM until both have claimed one.
+  let claims = 0;
+  let bothClaimed!: () => void;
+  const both = new Promise<void>((resolve) => (bothClaimed = resolve));
+  const waiting = (): AcquireHooks => {
+    const hook = hooks().value;
+    return {
+      ...hook,
+      claim: async (guest) => {
+        await hook.claim(guest);
+        if (++claims === 2) bothClaimed();
+      },
+      starting: () => both,
+    };
+  };
+  const [first, second] = await Promise.all([backend.acquire(identity(), null, waiting(), signal()), backend.acquire(identity(), null, waiting(), signal())]);
+  assert.deepEqual([first.ref, second.ref].sort(), ["9700", "9701"]);
+  await backend.maintain(signal());
+  assert.deepEqual(warmVms(proxmox), [9702]);
+  assert.equal(clones(proxmox), 3);
+});
+
+test("a warm VM that fails to resume is deleted", async () => {
+  const { backend, proxmox } = warmSetup(1);
+  await backend.maintain(signal());
+  proxmox.nextTaskExit.set("qmstart", "start failed: QEMU exited with code 1");
+  await assert.rejects(backend.acquire(identity(), null, hooks().value, signal()), /QEMU exited with code 1/);
+  assert.deepEqual(deleted(proxmox), [9700]);
+  await backend.maintain(signal());
+  assert.deepEqual(warmVms(proxmox), [9701], "and a fill takes its place");
+});
+
+test("the pool deletes warm VMs beyond the count, from a replaced build or a template no longer listed, at another size, or running", async () => {
+  const { backend, proxmox, warm, context } = warmSetup(2, { "windows-templates": "9104 9105" });
+  for (const vmid of [9104, 9105]) proxmox.guests.get(vmid)!.config.tags = "bbbox;windows;build.20260920-000000-aaaa";
+  await backend.maintain(signal());
+  assert.deepEqual(warmVms(proxmox), [9700, 9701]);
+  assert.deepEqual(parseTags(proxmox.guests.get(9701)!.config.tags).slice(-2), ["template.9105", "build.20260920-000000-aaaa"]);
+
+  warm[KIND] = 1;
+  await backend.maintain(signal());
+  assert.deepEqual([deleted(proxmox), warmVms(proxmox)], [[9701], [9700]]);
+
+  // build.sh --replace swaps the template: the warm VM is from the old build.
+  proxmox.guests.get(9104)!.config.tags = "bbbox;windows;build.20260925-000000-bbbb";
+  const acquired = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(acquired.ref, "9702", "a warm VM from the old build is not handed out");
+  await backend.maintain(signal());
+  assert.deepEqual(deleted(proxmox), [9701, 9700]);
+  assert.deepEqual(warmVms(proxmox), [9703]);
+  assert.deepEqual(parseTags(proxmox.guests.get(9703)!.config.tags).slice(-2), ["template.9104", "build.20260925-000000-bbbb"], "filled from the new build");
+
+  const changes = [
+    (vm: { status: string; config: Record<string, string> }) => (vm.config.cores = "8"),
+    (vm: { status: string; config: Record<string, string> }) => {
+      vm.status = "running";
+      delete vm.config.lock;
+    },
+  ];
+  for (const change of changes) {
+    const [vmid] = warmVms(proxmox);
+    change(proxmox.guests.get(vmid!)!);
+    await backend.maintain(signal());
+    assert.equal(deleted(proxmox).at(-1), vmid);
+    assert.equal(warmVms(proxmox).length, 1);
+  }
+  assert.deepEqual(context.errors, []);
+
+  // A template no longer listed: its warm VMs are deleted, and the pool fills from the one that is.
+  const [last] = warmVms(proxmox);
+  const unlisted = warmSetup(1, { "windows-templates": "9105" });
+  unlisted.proxmox.guests.set(last!, { ...proxmox.guests.get(last!)! });
+  await unlisted.backend.maintain(signal());
+  assert.deepEqual(deleted(unlisted.proxmox), [last]);
+  const [fresh] = warmVms(unlisted.proxmox);
+  assert.equal(parseTags(unlisted.proxmox.guests.get(fresh!)!.config.tags).at(-1), "template.9105");
+  assert.deepEqual(unlisted.context.errors, []);
+});
+
+test("warm VMs of another install, and a warm VM a fill was cut short making, are left for their owners and the registry", async () => {
+  const { backend, proxmox } = warmSetup(0);
+  proxmox.guests.set(9705, { vmid: 9705, type: "qemu", name: "bb-box-warm", pool: "bbbox", status: "stopped", template: false, config: { tags: "bb-box;install.other;warm;template.9104", cores: "4", memory: "8192" } });
+  proxmox.guests.set(9706, { vmid: 9706, type: "qemu", name: "bb-box-warm", pool: "bbbox", status: "running", template: false, config: { tags: "bb-box;install.test;filling;template.9104", description: "bb-box warm windows-desktop\ninstall test", cores: "4", memory: "8192" } });
+  await backend.maintain(signal());
+  assert.deepEqual(deleted(proxmox), []);
+  // The registry releases a guest that names no box.
+  assert.deepEqual((await backend.held()).map((one) => [one.ref, one.owner]), [["9706", null]]);
+});
+
+test("a fill whose desktop never comes up is deleted, with the reason", async () => {
+  const { backend, proxmox, ssh } = warmSetup(1);
+  writeFileSync(join(ssh.home("192.0.2.150"), "no-desktop"), "");
+  await assert.rejects(
+    backend.maintain(signal()),
+    /^Error: Windows' desktop in warm VM 9700 was not up within 1 s: Explorer did not run in a desktop session, or Cua's daemon did not listen on \\\\\.\\pipe\\cua-driver\./,
+  );
+  assert.equal(proxmox.guests.has(9700), false);
+  assert.deepEqual(warmVms(proxmox), []);
+});
+
+test("the pool fills only while there is room, and a box a ready warm VM serves needs no VMID", async () => {
+  const { backend, proxmox, context } = warmSetup(3, { "vmid-last": 9701 });
+  await backend.maintain(signal());
+  assert.deepEqual(warmVms(proxmox), [9700, 9701]);
+  assert.match(context.errors.join("\n"), /^warm pool: .*VMID/m);
+  const ok = await backend.capacity(KIND, sized(), [], signal());
+  assert.equal(ok.ok, true, ok.message ?? "");
+  assert.deepEqual(ok.warm, { ready: 2, target: 3 });
+  assert.equal((await backend.capacity(KIND, sized(), [{ kind: KIND, size: sized() }, { kind: KIND, size: sized() }], signal())).ok, false, "two pending acquires take both");
+  assert.equal((await backend.capacity(KIND, sized({ cores: 8 }), [], signal())).ok, false, "a box they do not fit needs a VMID");
+
+  const low = warmSetup(1);
+  low.proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
+  await low.backend.maintain(signal());
+  assert.equal(clones(low.proxmox), 0);
+  assert.match(low.context.errors.join("\n"), /^warm pool: pve has 10 GiB of memory free/m);
+});
+
+test("dispose stops a warm fill", async () => {
+  const { backend, proxmox } = warmSetup(1);
+  let disposed: Promise<void> | null = null;
+  proxmox.intercept = (call) => {
+    if (call.path.endsWith("/status/start")) disposed ??= backend.dispose();
+    return undefined;
+  };
+  await assert.rejects(backend.maintain(), /bb-box is stopping/);
+  await disposed;
+  assert.equal(proxmox.guests.has(9700), false, "the VM it was filling is deleted");
 });

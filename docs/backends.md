@@ -243,9 +243,22 @@ node --test test/conformance.test.ts
   starts, but a release deletes it, with its state. Hibernation needs
   VM.PowerMgmt and VM.Config.Disk, which the setup's role has, and
   Datastore.AllocateSpace on that storage, which the token has.
-- Still to come: a hibernated warm pool. The conformance suite runs against
-  it, but skips the checks whose scripts are written for sh: commands,
-  streaming, the architecture, file copies and enrolment.
+- The warm pool keeps hibernated clones at the kind's default size. A fill
+  clones and starts a VM, waits until Explorer runs in a desktop session
+  and Cua's daemon listens on its pipe, compiles the display helper, then
+  hibernates the VM. Proxmox refuses a hibernated VM's config changes,
+  tags too, so a warm VM is tagged `warm` before it hibernates, and bb-box
+  marks one it claims or deletes in memory until it resumes or goes. A
+  claim resumes the VM, then gives it the box's tags, name and description,
+  waits for SSH and sets the clock: the box's timings show warm, resume,
+  relabel, network, SSH and clock. A warm VM serves a box with its cores
+  and memory, and a disk at least the size asked for; capacity counts no
+  VMID or disk for such a box. One whose template has another build or is
+  no longer listed, at another size, or running is deleted by
+  `maintain()`. A warm VM does not start at the node's boot.
+- The conformance suite runs against the backend, but skips the checks
+  whose scripts are written for sh: commands, streaming, the architecture,
+  file copies and enrolment.
 - The tests run against the fake API, and the fake ssh as a Windows host,
   with a sh stand-in for PowerShell where a test needs one
   ([test/proxmox-qemu.test.ts](../test/proxmox-qemu.test.ts)).

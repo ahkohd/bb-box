@@ -871,6 +871,13 @@ real backend's pool of free, reset machines is the same thing
   rewrites it with the box's fields; `held()` leaves out warm VMs and the
   ones the instance is filling, and lists a fill left by a restart with no
   owner, for the sweep to release.
+- Proxmox QEMU's warm VMs are hibernated, filled once Windows' desktop and
+  Cua's daemon are up. Proxmox refuses a hibernated VM's config changes,
+  tags too, so the pool's membership is the `warm` tag plus, in memory, the
+  VMs a claim or `maintain()` has taken. A claim resumes the VM and only
+  then gives it the box's tags. A running VM tagged `warm`, as after a
+  restart cut a claim short, is retired; a fill left tagged `filling` names
+  no box, so the sweep releases it.
 - Warm guests are not enrolled
   ([014](decisions/014-enrol-through-machine-providers.md)). A box enrols
   when it is claimed, and runs commands meanwhile. Spare boxes, which core
@@ -1255,9 +1262,10 @@ Push work to Git or copy it out before releasing a box.
 
 How each backend fits the interface. Proxmox LXC, the SSH host pool, Tart
 and Docker are built. Proxmox QEMU makes Windows boxes, runs their
-commands, shows and resizes their desktops, offers computer use, and
-hibernates them on stop; its warm pool and file copies come next (#46). The
-rest are planned, and the later-backends research fills in the details.
+commands, shows and resizes their desktops, offers computer use,
+hibernates them on stop and keeps a hibernated warm pool; file copies come
+next (#46). The rest are planned, and the later-backends research fills in
+the details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
