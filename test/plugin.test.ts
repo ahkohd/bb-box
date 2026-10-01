@@ -1566,6 +1566,21 @@ test("wrong settings are named in the status and the doctor", async (t) => {
   assert.match(doctor.stdout ?? "", /Fake host: Its settings need fixing.\n {2}\[fail\] Settings: Fill in the fake host's address./);
 });
 
+test("the doctor warns, and does not fail, when a Linux preset has less than 2 GiB memory", async (t) => {
+  const { harness, app } = await start();
+  t.after(() => harness.lifecycle.dispose());
+
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { linux: { presets: { small: { memoryMiB: 1024 } } } } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  const doctor = await harness.behavior.runCli(["doctor"]);
+  assert.equal(doctor.exitCode, 0);
+  assert.match(
+    doctor.stdout ?? "",
+    /Sizes: Some presets of Linux kinds have less than 2 GiB memory.\n {2}\[warn\] Box sizes: The small linux preset, 2 cores, 1 GiB memory, has less than 2 GiB memory, so its boxes can run out of memory as they become BB machines.\n {8}Fix: Give it at least 2 GiB memory in bb-box's settings, under Kinds./,
+  );
+});
+
 test("the panel lists, acquires, stops, starts and releases boxes over RPC", async (t) => {
   const { harness, app } = await start();
   t.after(() => harness.lifecycle.dispose());

@@ -12,6 +12,7 @@ import type { GeneralConfig } from "../core/config.ts";
 import { emptyDocument, type BackendConfig, type ConfigDocument } from "../core/document.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
+import { LINUX_LEAST_MEMORY_GIB, presetMemoryChecks } from "../core/sizes.ts";
 import type { ControlView } from "../core/control.ts";
 import { Configuration, boundedDoctor, type ApplyResult } from "./configuration.ts";
 import { registerCli } from "./cli.ts";
@@ -650,6 +651,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Kinds",
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
+        });
+      }
+      const small = presetMemoryChecks((await general()).sizes);
+      if (small.length) {
+        sections.push({
+          title: "Sizes",
+          report: { ok: true, summary: `Some presets of Linux kinds have less than ${LINUX_LEAST_MEMORY_GIB} GiB memory.`, checks: small, notes: [] },
         });
       }
       const overlaps = overlapChecks(backends.on());
