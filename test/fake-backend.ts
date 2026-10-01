@@ -417,7 +417,9 @@ export class FakeBackend implements Backend {
 
   async relabel(_guest: Guest, box: BoxIdentity, from: string): Promise<void> {
     this.relabels.push({ boxId: box.boxId, threadId: box.threadId, name: box.name, from });
-    if (this.relabelMs) await new Promise((resolve) => setTimeout(resolve, this.relabelMs));
+    // A timer can fire a little early by the wall clock, which core times it with.
+    const end = Date.now() + this.relabelMs;
+    while (Date.now() < end) await new Promise((resolve) => setTimeout(resolve, end - Date.now()));
   }
 
   async maintain(): Promise<void> {
