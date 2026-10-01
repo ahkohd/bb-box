@@ -157,15 +157,18 @@ const USER = /^[a-z_][a-z0-9_.-]{0,31}$/i;
 const VM_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** One Mac per line: `name user@address[:port]`. */
-export function parseHosts(value: string): { hosts: TartHost[]; problems: string[] } {
+export function parseHosts(value: string): { hosts: TartHost[]; problems: string[]; skipped: string[] } {
   const hosts: TartHost[] = [];
   const problems: string[] = [];
+  /** Lines in the wrong form, which give no Mac. */
+  const skipped: string[] = [];
   for (const line of value.split("\n").map((entry) => entry.trim())) {
     if (!line || line.startsWith("#")) continue;
     const [name, target, ...rest] = line.split(/\s+/);
     const match = /^([^@\s]+)@(\[[0-9a-fA-F:.]+\]|[^:@\s]+)(?::(\d+))?$/.exec(target ?? "");
     if (!name || !match || rest.length) {
       problems.push(`Tart: Mac line "${line}" must be a name, a space and user@address, for example mac1 bbbox-admin@192.0.2.20.`);
+      skipped.push(line);
       continue;
     }
     const [, user, rawAddress, rawPort] = match;
@@ -176,7 +179,7 @@ export function parseHosts(value: string): { hosts: TartHost[]; problems: string
     if (!Number.isInteger(port) || port < 1 || port > 65535) problems.push(`Tart: port ${rawPort} of ${name} is not a port.`);
     hosts.push({ name, user: user!, address: rawAddress!.replace(/^\[|\]$/g, ""), port });
   }
-  return { hosts, problems };
+  return { hosts, problems, skipped };
 }
 
 /** Adds a problem with the setting at `key`. */
@@ -313,8 +316,9 @@ export function readEarlierTart(values: Readonly<Record<string, unknown>>): Earl
     else fields[name] = value as FieldValue;
   }
   if (!any) return null;
-  // The Macs as they were. A line with a mistake made Tart misconfigured before; it is left out, and noted.
-  const { hosts, problems } = parseHosts(text(values, TART_KEYS.hosts));
+  // The Macs as they were. A mistake made Tart misconfigured before. A line in the wrong form gives no
+  // Mac, so it is left out; any other mistake moves with its Mac, for the checks to name. Both are noted.
+  const { hosts, problems, skipped } = parseHosts(text(values, TART_KEYS.hosts));
   const keys = text(values, TART_KEYS.hostKeys)
     .split("\n")
     .map((line) => line.trim())
@@ -327,7 +331,10 @@ export function readEarlierTart(values: Readonly<Record<string, unknown>>): Earl
     fields,
     secrets,
     warm: {},
-    notes: problems.map((problem) => `${problem} The Mac was left out; add it on the settings page.`),
+    notes: [
+      ...skipped.map((line) => `Tart: Mac line "${line}" is not a name, a space and user@address, so the Mac was left out; add it on the settings page.`),
+      ...problems.filter((problem) => !skipped.some((line) => problem.includes(`"${line}"`))).map((problem) => `${problem} Fix it on the settings page.`),
+    ],
     hosts: hosts.map((host, n) => ({
       name: host.name,
       enabled: true,
