@@ -2,8 +2,49 @@
 
 A backend is where bb-box gets boxes from. The interface it implements, and
 how each planned backend fits it, is in [the architecture](architecture.md)
-under "Interface v1" and "Backends". This guide says where the code goes and
-how to prove a backend works.
+under "Interface v1" and "Backends". This guide says what runs where, where
+the code goes and how to prove a backend works.
+
+## What runs where
+
+One row per host and box OS. A box is a container, a VM or a physical
+machine; its kinds are plain, with Docker, or with a desktop. "Working"
+means merged and in daily use.
+
+| Host | Box | Form | Backend | Kinds | Status | Arch | GPU |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Linux | Linux | container | Proxmox LXC | plain, Docker, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU; `linux-desktop-cpu`: none |
+| Linux | Linux | container | Docker | plain, Docker, desktop | working | x86_64 | `linux-desktop`: an NVIDIA GPU through CDI |
+| Linux | Linux | physical | SSH host pool | plain, Docker | working | x86_64 | none offered |
+| Linux | Windows | VM | Proxmox QEMU | desktop | spike, #46 | x86_64 | none at first: Windows draws on the CPU; a whole card passed through later |
+| Linux | macOS | - | - | - | not possible: macOS runs only on Apple hardware | - | - |
+| Mac | macOS | VM | Tart | plain, desktop | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
+| Mac | macOS | physical | physical Mac | desktop | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
+| Mac | Linux | VM | Tart | plain, Docker, desktop | research, #148 | arm64; x86_64 programs through Rosetta | to research |
+| Mac | Windows | VM | QEMU with HVF, UTM or Parallels | desktop | research, #150 | arm64 | to research |
+| Windows | Linux | VM | Hyper-V | plain, Docker, desktop | research, #158 | x86_64 | to research |
+| Windows | Linux | WSL2 distribution | WSL2 | plain, Docker | research, #158 | x86_64 | to research |
+| Windows | Linux | container | Docker Desktop | plain, Docker, desktop | research, #158 | x86_64 | to research |
+| Windows | Windows | VM | Hyper-V | desktop | research, #158 | x86_64 | to research |
+| Windows | macOS | - | - | - | not possible | - | - |
+
+Across the table:
+
+- **Architecture.** Every Linux kind is x86_64 today, and every Mac box
+  arm64. Each kind's capabilities name its `arch`. How a kind's ID shows
+  it is open in #148.
+- **Enrolment.** Linux and macOS boxes can become BB machines. Windows boxes
+  cannot until BB's host app runs on Windows
+  ([BB request 1](bb-requests.md#1-bbs-host-app-on-windows)).
+- **Physical machines.** Linux machines join through the SSH host pool, and
+  Macs through #47, planned as the same driver with a reset per OS. There is
+  no plan for physical Windows machines yet.
+- **Phone emulators.** The iOS Simulator runs only on Macs: on a physical
+  Mac (#47), or in a Tart image with Xcode. Android emulators are in
+  research (#161), for Linux hosts with KVM, Macs and Windows hosts.
+- **Cloud hosts.** A cloud VM that runs Linux is a Linux host above:
+  the Docker backend over `ssh://` and the SSH host pool reach one today. A
+  backend that makes cloud VMs itself is later, with no issue yet.
 
 ## Where the code goes
 
