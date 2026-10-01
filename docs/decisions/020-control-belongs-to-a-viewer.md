@@ -2,7 +2,9 @@
 
 Status: accepted, 30 September 2026. Extends
 [006](006-gpu-desktop-on-xorg.md), [008](008-shared-control.md) and
-[011](011-interface-v1.md).
+[011](011-interface-v1.md). Extended by
+[038](038-the-agent-can-take-control-back.md): the agent can take control
+from a viewer.
 
 ## Context
 
