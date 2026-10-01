@@ -845,6 +845,59 @@ test("warm guests beyond the target are removed", async () => {
   assert.deepEqual(context.errors, []);
 });
 
+test("warm guests of a template that build.sh replaced are retired, not handed out", async () => {
+  const { backend, proxmox, context } = setup({ "proxmox-lxc-headless-warm": 1 });
+  // In the pool, as build.sh puts it, so the pool's listing shows its tags.
+  const template = proxmox.guests.get(9000)!;
+  template.pool = "bbbox";
+  template.config.tags = "build.one";
+  await backend.maintain();
+  assert.deepEqual(parseTags(proxmox.guests.get(7000)!.config.tags), ["bb-box", "install.test", "warm", "template.9000", "build.one"]);
+
+  // While build.sh --replace copies the new build to the template's VMID, that is not yet a template.
+  template.template = false;
+  assert.deepEqual((await backend.capacity("linux-headless", [], signal())).warm, { ready: 0, target: 1 });
+  // Then it is, with an ID of its own.
+  template.template = true;
+  template.config.tags = "build.two";
+  assert.deepEqual((await backend.capacity("linux-headless", [], signal())).warm, { ready: 0, target: 1 });
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.notEqual(guest.ref, "7000", "the old build's warm guest is not handed out");
+
+  await backend.maintain();
+  assert.equal(proxmox.guests.has(7000), false, "it is retired");
+  const warm = [...proxmox.guests.values()].filter((other) => parseTags(other.config.tags).includes("warm"));
+  assert.deepEqual(
+    warm.map((other) => parseTags(other.config.tags)),
+    [["bb-box", "install.test", "warm", "template.9000", "build.two"]],
+  );
+  assert.deepEqual(context.errors, []);
+});
+
+test("a warm guest is not ready while its template is away, nor once a template without a build ID gets one", async () => {
+  const { backend, proxmox, context } = setup({ "proxmox-lxc-headless-warm": 1 });
+  // Outside the pool, so read on its own.
+  await backend.maintain();
+  assert.deepEqual(parseTags(proxmox.guests.get(7000)!.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
+  assert.deepEqual((await backend.capacity("linux-headless", [], signal())).warm, { ready: 1, target: 1 });
+
+  // As between build.sh removing the old template and making the new one a template.
+  const template = proxmox.guests.get(9000)!;
+  proxmox.guests.delete(9000);
+  assert.deepEqual((await backend.capacity("linux-headless", [], signal())).warm, { ready: 0, target: 1 });
+  proxmox.guests.set(9000, { ...template, template: false, config: { ...template.config, lock: "create" } });
+  assert.deepEqual((await backend.capacity("linux-headless", [], signal())).warm, { ready: 0, target: 1 });
+
+  // The first build.sh that stamps it.
+  proxmox.guests.set(9000, { ...template, config: { ...template.config, tags: "build.one" } });
+  assert.deepEqual((await backend.capacity("linux-headless", [], signal())).warm, { ready: 0, target: 1 });
+  await backend.maintain();
+  assert.equal(proxmox.guests.has(7000), false);
+  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000", "build.one"]);
+  assert.deepEqual((await backend.capacity("linux-headless", [], signal())).warm, { ready: 1, target: 1 });
+  assert.deepEqual(context.errors, []);
+});
+
 test("the warm pool stops at the capacity guard", async () => {
   const { backend, proxmox, context } = setup({ "proxmox-lxc-headless-warm": 3 });
   proxmox.memory = { total: 16 * GiB, available: 9 * GiB };

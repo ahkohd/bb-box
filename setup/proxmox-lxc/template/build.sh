@@ -52,6 +52,10 @@ if [ "$kind" = desktop ] && [ -z "$gpu" ] && [ -z "$cpu" ] && [ ! -d /proc/drive
   cpu=1
 fi
 command -v jq >/dev/null || die "jq is required (apt install jq)"
+# The build ID: a tag of its own on each template this makes, which the build
+# CT carries from the start and the template keeps through --replace. Warm
+# boxes copy it, and the plugin retires those whose template now has another.
+build=build.$(date -u +%Y%m%d-%H%M%S)-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')
 in_use() { pct config "$1" >/dev/null 2>&1 || qm config "$1" >/dev/null 2>&1; }
 
 # On LVM-thin a linked clone is a thin snapshot, which needs nothing of its
@@ -130,7 +134,7 @@ make_template() { # vmid description
   # The pool's ACL lets the plugin's token delete guests in it; protection
   # keeps it from deleting templates. Clones inherit the flag, so the plugin
   # clears it on each box (delete=protection) when it configures the box.
-  pct set "$1" --description "$2" --protection 1
+  pct set "$1" --description "$2" --tags "$build" --protection 1
 }
 # Puts the finished, stopped CT <ct> in template <vmid>'s place, and says how
 # long no template had that VMID: from removing the old one to `pct template`
@@ -149,7 +153,7 @@ replace_with() { # ct vmid hostname description
   copy_ct "$1" "$2" "$3"
   pct template "$2"
   echo "template $2 was missing for $((($(date +%s%N) - start) / 1000000)) ms"
-  pct set "$2" --description "$4" --protection 1
+  pct set "$2" --description "$4" --tags "$build" --protection 1
   pct destroy "$1"
 }
 
@@ -164,7 +168,7 @@ if [ "$kind" = copy-desktop ]; then
   copy_ct "$from" "$ct" "bb-box-desktop-$vmid"
   pct set "$ct" --delete protection 2>/dev/null || true
   # shellcheck disable=SC2046
-  pct set "$ct" $(grep -v '^#' <<<"$lines")
+  pct set "$ct" --tags "$build" $(grep -v '^#' <<<"$lines")
   if [ "$ct" != "$vmid" ]; then
     replace_with "$ct" "$vmid" "bb-box-desktop-$vmid" "$description"
   else
@@ -216,7 +220,7 @@ lines=
 if [ "$kind" = desktop ] && [ -z "$cpu" ]; then lines=$(gpu_lines "$gpu"); fi
 [ -z "$cpu" ] || lines="# cpu only"
 pct create "$ct" "$BBBOX_OS_TEMPLATE" --hostname "bb-box-$kind" --pool "$BBBOX_POOL" --unprivileged 1 \
-  --features nesting=1 --cores 16 --memory 16384 --swap 1024 --rootfs "$BBBOX_STORAGE:$size" \
+  --features nesting=1 --cores 16 --memory 16384 --swap 1024 --rootfs "$BBBOX_STORAGE:$size" --tags "$build" \
   --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX,gw=$BBBOX_GATEWAY,type=veth" \
   --nameserver "$BBBOX_DNS" --ostype ubuntu --onboot 0
 # Device lines are root@pam only; the plugin's clones copy them.
