@@ -122,7 +122,7 @@ test("reads Tart's pretty-printed listing and its VNC URL", () => {
     ].join("\n"),
   );
   assert.deepEqual(state.vms, [{ name: "bb-box-bx1", state: "running", running: true }]);
-  assert.deepEqual(state.configs.get("bb-box-bx1"), { os: "darwin", memoryMiB: 8192, cpus: 4 });
+  assert.deepEqual(state.configs.get("bb-box-bx1"), { os: "darwin", macAddress: null, memoryMiB: 8192, cpus: 4 });
   assert.deepEqual(state.owners.get("bb-box-bx1"), { install: "k3v9q2m7xa", box: "bx1" });
   assert.equal(state.memoryMiB, 131072);
   assert.equal(state.disk.freeMiB, Math.floor(150000000 / 1024));

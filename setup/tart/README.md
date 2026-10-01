@@ -265,9 +265,10 @@ A suspended VM takes no slot and no memory.
   with `scutil`.
 - **A warm VM** is a clone named `bb-box-warm-<random>`, booted to the
   logged-in desktop and suspended. Its owner file says `filling`, then
-  `warm`, and names the image and its build (the image disk's file), Tart's
+  `warm`, and names the image and its build (its disk file's inode and
+  modification time, so running the image to change it counts), Tart's
   version and the Mac's macOS build; a change of any of them, or of the
-  kind's default size, retires it. A box at that size takes it: bb-box
+  kind's default size, retires it, and so does running it. A box at that size takes it: bb-box
   rewrites the owner file with the box's fields, resumes the VM, and names
   it after the box. A VM whose saved state does not restore is deleted, and
   the box gets a clone. An acquire that finds a warm VM being made in the
@@ -278,6 +279,9 @@ A suspended VM takes no slot and no memory.
   know it. The Mac's DHCP leases last an hour, so after a long suspend the
   address may have gone to another VM: each VM keeps its own name in
   `~/.config/bb-box/vm`, and bb-box refuses a VM that answers with another.
+  A VM that keeps no name, as one made before names were kept or whose file
+  was removed, gets one only when the Mac's ARP table gives its own MAC
+  address for the address it answers at; otherwise bb-box refuses it.
   A saved state that does not restore, as after an update of macOS or Tart,
   is dropped, and the VM boots afresh from its disk.
 - **Release.** `tart stop` and `tart delete`, then the owner file last, so a

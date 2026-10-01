@@ -193,12 +193,15 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   refused for now. `Guest.size` comes from the VM's
   config.json, with `diskGiB` null.
 - The warm pool keeps suspended clones at a kind's default size. A VM
-  serves a kind while the kind's image and its build (the image disk's
-  file), the default size, Tart's version and the Mac's macOS build are the
-  ones it was filled with; `maintain()` retires it otherwise. Each VM keeps
-  its own name in `~/.config/bb-box/vm`, which bb-box checks after every
-  start, as the Mac's DHCP lease lasts an hour and a resumed VM can find
-  its address given to another.
+  serves a kind while the kind's image and its build (the inode and
+  modification time of the image's disk file), the default size, Tart's
+  version and the Mac's macOS build are the ones it was filled with, and it
+  is suspended; `maintain()` retires it otherwise. Each VM keeps its own
+  name in `~/.config/bb-box/vm`, which bb-box checks after every start, as
+  the Mac's DHCP lease lasts an hour and a resumed VM can find its address
+  given to another. A VM that keeps no name gets one only when the Mac's
+  ARP table, just after bb-box reached the address, gives the MAC address in
+  the VM's config.
 - The tests run the real host scripts against a fake `tart` on a fake Mac
   ([test/fake-tart.mjs](../test/fake-tart.mjs),
   [test/fake-mac.ts](../test/fake-mac.ts)).

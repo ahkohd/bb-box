@@ -3,7 +3,7 @@
 // retired when their image, Tart or macOS changes.
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
@@ -253,6 +253,42 @@ test("a VM that answers as another is refused", async () => {
   await backend.release(guest, releasing);
 });
 
+test("a VM that keeps no name is named only when the Mac's ARP table gives its MAC address", async () => {
+  const { ssh, vmsDir, make } = setup({});
+  const backend = make();
+  const guest = await backend.acquire(identity("macos", MEDIUM), null, hooks().hooks, signal());
+  const marker = join(ssh.home(guest.address!), ".config", "bb-box", "vm");
+  // As a box made before names were kept: its own address, so it is named.
+  rmSync(marker);
+  await backend.stop(guest);
+  await backend.start(guest);
+  assert.equal(readFileSync(marker, "utf8").trim(), guest.ref);
+  // Its address now held by another VM, which keeps no name either.
+  rmSync(marker);
+  await backend.stop(guest);
+  const intruder = join(vmsDir, "someone-else");
+  mkdirSync(intruder);
+  writeFileSync(join(intruder, "config.json"), JSON.stringify({ os: "darwin", cpuCount: 4, memorySize: 8 * 2 ** 30, macAddress: "0a:0b:0c:0d:0e:0f" }));
+  writeFileSync(join(intruder, "lease"), guest.address!);
+  utimesSync(join(intruder, "lease"), new Date(), new Date(Date.now() + 60_000));
+  await assert.rejects(backend.start(guest), /keeps no name, and its MAC address is a:b:c:d:e:f, not bb-box-/);
+  assert.ok(!existsSync(marker), "nothing is written into a VM that is not the box's");
+  rmSync(intruder, { recursive: true });
+  await backend.release(guest, releasing);
+});
+
+test("a warm VM that someone ran is retired and replaced", async () => {
+  const { make, vmsDir, warmVms } = setup();
+  const backend = make();
+  await backend.maintain();
+  const [warm] = warmVms();
+  rmSync(join(vmsDir, warm!, "state.vzvmsave"));
+  writeFileSync(join(vmsDir, warm!, "running"), String(process.pid));
+  await backend.maintain();
+  assert.ok(!existsSync(join(vmsDir, warm!)), "the warm VM that runs is retired");
+  assert.equal(warmVms().length, 1, "and a new one is made");
+});
+
 test("warm VMs of an image built again, or saved under another macOS build, are retired and replaced", async () => {
   const { mac, vmsDir, make, warmVms } = setup();
   const backend = make();
@@ -265,10 +301,15 @@ test("warm VMs of an image built again, or saved under another macOS build, are 
   await backend.maintain();
   const [second] = warmVms();
   assert.ok(second && second !== first && !existsSync(join(vmsDir, first!)), "the old warm VM is retired, and a new one made");
+  // The image run to change it: the same file, changed.
+  utimesSync(disk, new Date(), new Date(Date.now() + 120_000));
+  await backend.maintain();
+  const [changed] = warmVms();
+  assert.ok(changed && changed !== second && !existsSync(join(vmsDir, second!)), "an image changed in place retires it too");
   writeFileSync(join(mac, ".fake-macos-build"), "27A2\n");
   await backend.maintain();
   const [third] = warmVms();
-  assert.ok(third && third !== second && !existsSync(join(vmsDir, second!)), "a macOS update retires it too");
+  assert.ok(third && third !== changed && !existsSync(join(vmsDir, changed!)), "a macOS update retires it too");
 });
 
 test("two installs never share warm VMs", async () => {
