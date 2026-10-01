@@ -194,7 +194,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${adminText(kind.admin)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${adminText(kind)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. Ask the user to set one up in BB Box's settings in BB.",
         );
         const hints = list.length

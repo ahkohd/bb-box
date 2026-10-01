@@ -351,13 +351,16 @@ test("box details and kind lists say whether the box user can become root", asyn
   const other = { id: "ssh-pool:rooted", label: "Rooted host" } as Backend;
   const views = kindViews([{ kind: FAKE_KINDS[0]!, backend: world.backend }, ...rooted.map((kind) => ({ kind, backend: other }))], {});
   assert.deepEqual(
-    views.map((view) => [view.id, view.admin, adminText(view.admin)]),
+    views.map((view) => [view.id, view.admin, adminText(view)]),
     [
       ["linux", null, "Root: on some of its backends, through sudo; box_status says for each box."],
       ["linux-desktop", true, "Root: yes, through sudo without a password."],
     ],
   );
-  assert.equal(adminText(false), "Root: no, the box user cannot use sudo.");
+  assert.equal(adminText({ admin: false, os: "linux" }), "Root: no, the box user cannot use sudo.");
+  assert.equal(adminText({ admin: true, os: "windows" }), "Administrator: yes, and commands run elevated.");
+  assert.equal(adminText({ admin: false, os: "windows" }), "Administrator: no, the box user is a standard user.");
+  assert.equal(adminText({ admin: null, os: "windows" }), "Administrator: on some of its backends; box_status says for each box.");
   const commandless = { ...FAKE_KINDS[0]!, capabilities: { ...FAKE_KINDS[0]!.capabilities, command: null } };
   assert.equal(kindViews([{ kind: commandless, backend: other }], {})[0]!.admin, false, "a kind without commands gives no root");
 });
