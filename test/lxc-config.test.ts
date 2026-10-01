@@ -3,7 +3,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LXC_SETTINGS, addressFor, earlierLxcSizes, net0For, parseLxcSettings, readEarlierLxc } from "../src/backends/proxmox-lxc/config.ts";
+import { LXC_SETTINGS, earlierLxcSizes, net0For, parseLxcSettings, readEarlierLxc } from "../src/backends/proxmox-lxc/config.ts";
+import { addressFor } from "../src/backends/proxmox/settings.ts";
 import { normalisePrivateKey } from "../src/transports/ssh.ts";
 import { VALID, lxcConfig, tempDir } from "./helpers.ts";
 

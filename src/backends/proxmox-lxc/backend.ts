@@ -32,10 +32,26 @@
 // installs, or with no install, count against capacity but are otherwise
 // left alone.
 
-import type { TLSSocket } from "node:tls";
-import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest } from "../proxmox/api.ts";
+import {
+  BUILD,
+  TAG,
+  boxTags,
+  buildFromTags,
+  describe,
+  installFromDescription,
+  installFromTags,
+  installTag,
+  isTemplate,
+  namesOf,
+  ownerFromDescription,
+  ownerFromTags,
+  templateFromTags,
+  templateTag,
+} from "../proxmox/owner.ts";
+import { addressFor } from "../proxmox/settings.ts";
+import { proxmoxFetch } from "../proxmox/tls.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -43,7 +59,6 @@ import {
   type BackendContext,
   type BoxIdentity,
   type BoxKind,
-  type BoxOwner,
   type BoxSize,
   type BoxTransports,
   type Capacity,
@@ -65,7 +80,6 @@ import type { Display, DisplaySize, SshAccess } from "../../transports/types.ts"
 import {
   FLAVOUR_KINDS,
   LXC_FLAVOURS,
-  addressFor,
   flavourOf,
   net0For,
   type LxcConfig,
@@ -74,12 +88,9 @@ import {
   type LxcTemplate,
 } from "./config.ts";
 
-const TAG = "bb-box";
 const WARM = "warm";
 const FILLING = "filling";
 const RETIRED = "retired";
-const INSTALL = "install.";
-const BUILD = "build.";
 const MiB = 2 ** 20;
 const GiB = 2 ** 30;
 const VNC_PORT = 5900;
@@ -170,21 +181,6 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
   },
 ];
 
-/** The tag that says which template a guest is a clone of. */
-function templateTag(template: number): string {
-  return `template.${template}`;
-}
-
-export function templateFromTags(tags: readonly string[]): number | null {
-  const vmid = Number(tags.find((tag) => /^template\.\d+$/.test(tag))?.slice(9));
-  return Number.isInteger(vmid) && vmid > 0 ? vmid : null;
-}
-
-/** The build ID build.sh tags a template with, which its warm guests copy: null without one. */
-export function buildFromTags(tags: readonly string[]): string | null {
-  return tags.find((tag) => tag.startsWith(BUILD))?.slice(BUILD.length) || null;
-}
-
 /** How the doctor names each flavour's templates. */
 const FLAVOUR_NAMES: Readonly<Record<LxcFlavour, string>> = { linux: "Linux", desktop: "GPU desktop", "desktop-cpu": "CPU desktop" };
 
@@ -202,80 +198,6 @@ function powerOf(status: string): PowerState {
   if (status === "running") return "running";
   if (status === "stopped") return "stopped";
   return "unknown";
-}
-
-const tagPattern = /^[a-z0-9_][a-z0-9_+.-]*$/i;
-
-export function installTag(installId: string): string {
-  return `${INSTALL}${installId}`;
-}
-
-export function installFromTags(tags: readonly string[]): string | null {
-  return tags.find((tag) => tag.startsWith(INSTALL))?.slice(INSTALL.length) || null;
-}
-
-export function installFromDescription(text: unknown): string | null {
-  if (typeof text !== "string" || !text.startsWith("bb-box ")) return null;
-  return /^install (\S+)$/m.exec(text)?.[1] ?? null;
-}
-
-export function boxTags(box: BoxIdentity, installId: string, template: number | null): string[] {
-  const tags = [TAG, installTag(installId), `box.${box.boxId}`, `kind.${box.kind}`, `created.${Math.floor(box.createdAt / 1000)}`];
-  if (tagPattern.test(`thread.${box.threadId}`)) tags.splice(2, 0, `thread.${box.threadId}`);
-  if (template !== null) tags.push(templateTag(template));
-  return tags;
-}
-
-/** Written by the clone, before the tags, so an interrupted acquire still names its install and box. */
-export function describe(box: BoxIdentity, installId: string): string {
-  return [
-    `bb-box ${box.name}`,
-    `install ${installId}`,
-    `box ${box.boxId}`,
-    `thread ${box.threadId}`,
-    `kind ${box.kind}`,
-    `created ${new Date(box.createdAt).toISOString()}`,
-  ].join("\n");
-}
-
-export function ownerFromTags(tags: readonly string[], name: string | null = null): BoxOwner | null {
-  const value = (prefix: string) => tags.find((tag) => tag.startsWith(prefix))?.slice(prefix.length);
-  const threadId = value("thread.");
-  const boxId = value("box.");
-  if (!tags.includes(TAG) || !threadId || !boxId) return null;
-  const created = Number(value("created."));
-  return {
-    boxId,
-    threadId,
-    name,
-    kind: value("kind.") ?? null,
-    createdAt: Number.isFinite(created) && created > 0 ? created * 1000 : null,
-  };
-}
-
-export function ownerFromDescription(text: unknown): BoxOwner | null {
-  if (typeof text !== "string" || !text.startsWith("bb-box ")) return null;
-  const field = (name: string) => new RegExp(`^${name} (\\S+)$`, "m").exec(text)?.[1];
-  const threadId = field("thread");
-  const boxId = field("box");
-  if (!threadId || !boxId) return null;
-  const created = Date.parse(field("created") ?? "");
-  return {
-    boxId,
-    threadId,
-    name: field("bb-box") ?? null,
-    kind: field("kind") ?? null,
-    createdAt: Number.isFinite(created) ? created : null,
-  };
-}
-
-/** The install and the box a guest's config names, from its tags or, before those are written, its description. */
-function namesOf(config: Record<string, unknown>): { install: string | null; box: string | null } {
-  const tags = parseTags(config.tags);
-  return {
-    install: installFromTags(tags) ?? installFromDescription(config.description),
-    box: (ownerFromTags(tags) ?? ownerFromDescription(config.description))?.boxId ?? null,
-  };
 }
 
 /** A linux-desktop box got no GPU, and no other GPU can take it. */
@@ -312,46 +234,6 @@ function formatMiB(value: number): string {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isTemplate(config: Record<string, unknown>): boolean {
-  return config.template === 1 || config.template === "1";
-}
-
-/**
- * A fetch for the Proxmox API. With a fingerprint it trusts that certificate
- * alone, which suits Proxmox's self-signed one; otherwise it trusts `ca`, or
- * the system roots when that is null.
- */
-function proxmoxFetch(tls: { ca: string | null; fingerprint: string | null }): { fetch: FetchLike; close(): Promise<void> } {
-  let agent: Agent;
-  if (tls.fingerprint) {
-    const expected = tls.fingerprint;
-    // No cached sessions: a resumed session may not carry the certificate to check.
-    const connect = buildConnector({ rejectUnauthorized: false, maxCachedSessions: 0 });
-    agent = new Agent({
-      connect: (options, callback) =>
-        connect(options, (error, socket) => {
-          if (error) return callback(error, null);
-          if (options.protocol !== "https:") return callback(null, socket!);
-          const actual = (socket as TLSSocket).getPeerCertificate().fingerprint256;
-          if (actual === expected) return callback(null, socket!);
-          socket!.destroy();
-          callback(
-            new Error(
-              `the API's certificate has SHA-256 fingerprint ${actual || "(none)"}, not the one in bb-box's settings. ` +
-                "If the certificate was renewed, set the new fingerprint.",
-            ),
-            null,
-          );
-        }),
-    });
-  } else if (tls.ca) {
-    agent = new Agent({ connect: { ca: tls.ca } });
-  } else {
-    return { fetch: (url, init) => fetch(url, init), close: async () => {} };
-  }
-  return { fetch: (url, init) => undiciFetch(url, { ...init, dispatcher: agent }), close: () => agent.close() };
 }
 
 export interface LxcBackendOptions {

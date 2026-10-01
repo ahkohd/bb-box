@@ -1,6 +1,7 @@
-// A small Proxmox VE client for the LXC calls bb-box makes, authenticated with
-// an API token. Every call goes through one `fetch`, so tests pass a fake API.
-// The token secret appears only in the Authorization header, never in errors.
+// A small Proxmox VE client for the calls bb-box makes on containers or VMs,
+// authenticated with an API token. Each client works on one type of guest.
+// Every call goes through one `fetch`, so tests pass a fake API. The token
+// secret appears only in the Authorization header, never in errors.
 
 import type { BoxSize } from "../types.ts";
 
@@ -16,6 +17,9 @@ export type FetchLike = (
   init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal },
 ) => Promise<FetchResponse>;
 
+/** Containers or VMs. */
+export type GuestType = "lxc" | "qemu";
+
 export interface ProxmoxOptions {
   /** For example https://pve.example.com:8006, with or without /api2/json. */
   readonly apiUrl: string;
@@ -23,6 +27,8 @@ export interface ProxmoxOptions {
   readonly tokenId: string;
   readonly tokenSecret: string;
   readonly node: string;
+  /** The type of guest the client clones and runs: containers unless it says VMs. */
+  readonly type?: GuestType;
   readonly fetch?: FetchLike;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Task poll interval. A linked clone or start finishes in about a second, so polls are close together. */
@@ -70,14 +76,18 @@ export class ProxmoxError extends Error {
   }
 }
 
-export interface LxcSettings {
+/** A guest's settings. hostname, swap and net0 are a container's; name and smbios1 a VM's. */
+export interface GuestSettings {
   readonly hostname?: string;
+  readonly name?: string;
   readonly cores?: number;
   /** MiB */
   readonly memory?: number;
   /** MiB */
   readonly swap?: number;
   readonly net0?: string;
+  /** SMBIOS type 1 fields, such as serial=<base64>,base64=1. */
+  readonly smbios1?: string;
   readonly tags?: readonly string[];
   readonly description?: string;
   readonly onboot?: boolean;
@@ -85,7 +95,7 @@ export interface LxcSettings {
   readonly delete?: readonly string[];
 }
 
-export interface LxcStatus {
+export interface GuestStatus {
   readonly vmid: number;
   readonly status: "running" | "stopped" | string;
   readonly name?: string;
@@ -169,6 +179,7 @@ function listedSize(entry: Record<string, unknown>): BoxSize | null {
 
 export class Proxmox {
   readonly node: string;
+  readonly type: GuestType;
   readonly #base: string;
   readonly #auth: string;
   readonly #fetch: FetchLike;
@@ -179,6 +190,7 @@ export class Proxmox {
 
   constructor(options: ProxmoxOptions) {
     this.node = options.node;
+    this.type = options.type ?? "lxc";
     this.#base = `${options.apiUrl.replace(/\/+$/, "").replace(/\/api2\/json$/, "")}/api2/json`;
     this.#auth = `PVEAPIToken=${options.tokenId}=${options.tokenSecret}`;
     this.#fetch = options.fetch ?? ((url, init) => fetch(url, init));
@@ -225,8 +237,9 @@ export class Proxmox {
   }
 
   /**
-   * Linked clone of a CT template into the pool. Proxmox rejects `storage` for
-   * a linked clone, so none is sent. Tags cannot be set here with a pool-scoped
+   * Linked clone of a template into the pool, with `hostname` as a
+   * container's hostname or a VM's name. Proxmox rejects `storage` for a
+   * linked clone, so none is sent. Tags cannot be set here with a pool-scoped
    * token; set them with `configure` once the clone is in the pool.
    */
   async cloneLinked(
@@ -235,45 +248,47 @@ export class Proxmox {
   ): Promise<void> {
     const upid = await this.#request<string>(
       "POST",
-      `/nodes/${enc(this.node)}/lxc/${input.template}/clone`,
-      { newid: input.vmid, hostname: input.hostname, full: 0, pool: input.pool, description: input.description },
+      this.#guest(input.template, "/clone"),
+      { newid: input.vmid, [this.type === "qemu" ? "name" : "hostname"]: input.hostname, full: 0, pool: input.pool, description: input.description },
       signal,
     );
     await this.waitTask(upid, signal);
   }
 
-  async configure(vmid: number, settings: LxcSettings, signal?: AbortSignal): Promise<void> {
+  async configure(vmid: number, settings: GuestSettings, signal?: AbortSignal): Promise<void> {
     const params: Params = {
       hostname: settings.hostname,
+      name: settings.name,
       cores: settings.cores,
       memory: settings.memory,
       swap: settings.swap,
       net0: settings.net0,
+      smbios1: settings.smbios1,
       tags: settings.tags?.join(";"),
       description: settings.description,
       onboot: settings.onboot === undefined ? undefined : settings.onboot ? 1 : 0,
       delete: settings.delete?.length ? settings.delete.join(",") : undefined,
     };
     if (Object.values(params).every((value) => value === undefined)) return;
-    const result = await this.#request<unknown>("PUT", `/nodes/${enc(this.node)}/lxc/${vmid}/config`, params, signal);
+    const result = await this.#request<unknown>("PUT", this.#guest(vmid, "/config"), params, signal);
     if (typeof result === "string" && result.startsWith("UPID:")) await this.waitTask(result, signal);
   }
 
   async config(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    return (await this.#request<Record<string, unknown>>("GET", `/nodes/${enc(this.node)}/lxc/${vmid}/config`, undefined, signal)) ?? {};
+    return (await this.#request<Record<string, unknown>>("GET", this.#guest(vmid, "/config"), undefined, signal)) ?? {};
   }
 
   /**
-   * Grows the root disk to `sizeGiB` if it is smaller. Proxmox cannot shrink
-   * disks. On a running container this takes about a second; on a stopped
-   * linked clone it can take much longer.
+   * Grows a container's root disk to `sizeGiB` if it is smaller. Proxmox
+   * cannot shrink disks. On a running container this takes about a second; on
+   * a stopped linked clone it can take much longer.
    */
   async growRootDisk(vmid: number, sizeGiB: number, signal?: AbortSignal): Promise<boolean> {
     const currentGiB = rootDiskGiB(await this.config(vmid, signal));
     if (currentGiB !== null && currentGiB >= sizeGiB) return false;
     const result = await this.#request<unknown>(
       "PUT",
-      `/nodes/${enc(this.node)}/lxc/${vmid}/resize`,
+      this.#guest(vmid, "/resize"),
       { disk: "rootfs", size: `${sizeGiB}G` },
       signal,
     );
@@ -282,22 +297,22 @@ export class Proxmox {
   }
 
   async start(vmid: number, signal?: AbortSignal): Promise<void> {
-    const upid = await this.#request<string>("POST", `/nodes/${enc(this.node)}/lxc/${vmid}/status/start`, {}, signal);
+    const upid = await this.#request<string>("POST", this.#guest(vmid, "/status/start"), {}, signal);
     await this.waitTask(upid, signal);
   }
 
   /** Hard stop: boxes are disposable, so there is no clean shutdown wait. */
   async stop(vmid: number, signal?: AbortSignal): Promise<void> {
-    const upid = await this.#request<string>("POST", `/nodes/${enc(this.node)}/lxc/${vmid}/status/stop`, {}, signal);
+    const upid = await this.#request<string>("POST", this.#guest(vmid, "/status/stop"), {}, signal);
     await this.waitTask(upid, signal);
   }
 
-  /** Null when the CT does not exist. */
-  async status(vmid: number, signal?: AbortSignal): Promise<LxcStatus | null> {
+  /** Null when the guest does not exist. */
+  async status(vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
     try {
       const data = await this.#request<Record<string, unknown>>(
         "GET",
-        `/nodes/${enc(this.node)}/lxc/${vmid}/status/current`,
+        this.#guest(vmid, "/status/current"),
         undefined,
         signal,
       );
@@ -313,7 +328,7 @@ export class Proxmox {
     }
   }
 
-  /** Stops the CT if it runs, then deletes it and its disks. A missing CT counts as deleted. */
+  /** Stops the guest if it runs, then deletes it and its disks. A missing guest counts as deleted. */
   async destroy(vmid: number, signal?: AbortSignal): Promise<void> {
     const current = await this.status(vmid, signal);
     if (!current) return;
@@ -328,7 +343,7 @@ export class Proxmox {
     const remove = async () => {
       const upid = await this.#request<string>(
         "DELETE",
-        `/nodes/${enc(this.node)}/lxc/${vmid}`,
+        this.#guest(vmid),
         { purge: 1, "destroy-unreferenced-disks": 1 },
         signal,
       );
@@ -405,6 +420,11 @@ export class Proxmox {
       if (Date.now() >= deadline) throw new ProxmoxError("TASK", taskLabel(upid), 504, "task did not finish in time");
       await this.#sleep(this.#taskPollMs, signal);
     }
+  }
+
+  /** The path of a guest of the client's type, or of `rest` below it. */
+  #guest(vmid: number, rest = ""): string {
+    return `/nodes/${enc(this.node)}/${this.type}/${vmid}${rest}`;
   }
 
   async #request<T>(method: string, path: string, params: Params | undefined, signal?: AbortSignal): Promise<T> {
