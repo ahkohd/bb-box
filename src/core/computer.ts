@@ -457,11 +457,14 @@ function refusedInBackground(result: McpResult): boolean {
   return /^Background delivery is not available/.test(rawText(result));
 }
 
+/** The window Cua's agent cursor is drawn in on Windows. It covers the screen above the desktop, and is not an app's. */
+const CURSOR_OVERLAY = /^Cua\.AgentCursorOverlay\b/;
+
 function windowOf(value: unknown): WindowInfo | null {
   const raw = obj(value);
   const id = num(raw.window_id);
   const pid = num(raw.pid);
-  if (id === undefined || pid === undefined) return null;
+  if (id === undefined || pid === undefined || CURSOR_OVERLAY.test(str(raw.title) ?? "")) return null;
   const bounds = obj(raw.bounds);
   return {
     id,

@@ -317,9 +317,11 @@ export class Ssh {
     });
   }
 
-  /** Runs `remoteCommand` with its stdin and stdout as the channel, over `ssh -T`. */
-  spawn(access: SshAccess, remoteCommand: string, signal?: AbortSignal): Promise<ByteChannel> {
-    return openRoute({ type: "command", argv: [this.binary, ...this.args(access, remoteCommand)] }, signal);
+  /** Runs `remoteCommand` with its stdin and stdout as the channel, over `ssh -T`, and in PowerShell on Windows, as run does. */
+  async spawn(access: SshAccess, remoteCommand: string, signal?: AbortSignal, os?: GuestOs): Promise<ByteChannel> {
+    const command = os === "windows" ? await this.#powershell(access, remoteCommand, { signal }) : remoteCommand;
+    if (typeof command !== "string") throw new SshError(`The command could not start: ${command.stderr.trim() || `exit ${command.exitCode}`}`);
+    return openRoute({ type: "command", argv: [this.binary, ...this.args(access, command)] }, signal);
   }
 
   /** Runs `remoteCommand` in the box user's shell. It returns when that shell exits, even if it left something running. */
@@ -458,7 +460,7 @@ export class SshTransport implements CommandTransport {
   }
 
   spawn(script: string, signal?: AbortSignal): Promise<ByteChannel> {
-    return this.#ssh.spawn(this.#access, script, signal);
+    return this.#ssh.spawn(this.#access, script, signal, this.#os);
   }
 
   /** The box user's login shell over `ssh -tt`, on a PTY here. ssh passes TERM and the size on. */
