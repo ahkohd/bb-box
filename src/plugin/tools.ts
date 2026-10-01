@@ -143,7 +143,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .optional()
         .describe("small, medium or large. Defaults to the kind's default preset; box_list shows each kind's sizes."),
       cores: z.number().int().positive().optional().describe("Cores, for a custom size. Parts you leave out come from the preset."),
-      memory_gib: z.number().int().positive().optional().describe("Memory in GiB, for a custom size."),
+      memory_gib: z.number().int().positive().optional().describe("Memory in GiB, for a custom size: at least 2 for a Linux box."),
       disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, for a custom size. Presets keep the kind's own disk."),
       wait: z.boolean().optional().describe("Wait until the box answers, and up to 20 s more while it becomes a BB machine. Defaults to true."),
       on: z.string().min(1).optional().describe("Where the box goes, from box_list: a provider such as Docker on devpc. Leave it out for the first with room."),

@@ -182,7 +182,8 @@ Working today, on every backend above that says so:
   runs on Windows.
 - Computer use for agents, through the accessibility tree and screenshots.
 - Box sizes: each kind has small, medium and large presets, and an agent or
-  person can ask for a custom size up to the kind's largest.
+  person can ask for a custom size up to the kind's largest. A Linux box has
+  at least 2 GiB memory.
 - Where a box goes: the first provider with room, or the one you name, in the
   panel or with `box_acquire`'s `on`.
 - Warm and spare boxes: a warm box is handed out in about 0.1 s; a spare is

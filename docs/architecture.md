@@ -405,7 +405,8 @@ memory and root disk, where a disk of null is the backend's base.
   and a largest custom size, in bb-box's configuration, the same on every
   offer. The configuration's kinds part changes them per kind.
   `box_acquire` and `bb box acquire` take a preset or a custom size; core
-  refuses one above the largest.
+  refuses one above the largest, or one of a Linux kind with less than
+  2 GiB memory, as BB's daemon uses about 260 MB in a box.
 - The backend gets the size in `BoxIdentity.size`, and `capacity` is asked
   about that size, with the kind and size of each box still being acquired.
   An offer that cannot make it says so in capacity's message, and the
