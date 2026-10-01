@@ -56,9 +56,9 @@ Limits:
   relative box path, or one that starts with `~/`, is under the box user's
   home.
 - `box_status` says whether the box user can use `sudo`, and `box_list`
-  says it for each kind. On Proxmox LXC boxes, Docker boxes and the SSH
-  host pool's `linux-docker` it can, without a password; on the pool's
-  `linux` it cannot.
+  says it for each kind. On Proxmox LXC boxes, Docker boxes and SSH host
+  pool boxes with Docker it can, without a password; on pool boxes without
+  Docker it cannot.
 - Each command reads `~/.config/bb-box/env`, which sets `BB_BOX_ID`,
   `BB_BOX_NAME`, `BB_BOX_KIND` and `BB_THREAD_ID`, and `BB_HOST_ID` once the
   box is a BB machine.

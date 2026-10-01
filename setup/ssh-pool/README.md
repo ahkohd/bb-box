@@ -170,15 +170,15 @@ A line is:
 | --- | --- |
 | `<name>` | Lower-case letters, digits and `-`, unique in the pool |
 | `[user@]host[:port]` | The admin user and how to reach sshd. Put an IPv6 address in brackets |
-| `<kinds>` | `linux`, or `linux,linux-docker` for a machine that gives its boxes Docker, which needs a whole-machine reset. `linux-docker` means linux with Docker |
+| `<kinds>` | `linux`. A line from before may also list `linux-docker`, linux with Docker, which needs `reset=machine` |
 | `via=` | A jump host, reached with the same key |
-| `reset=machine` | The machine has a whole-machine reset. `setup.sh` adds it when you give `--reset-hook` |
+| `reset=machine` | The machine has a whole-machine reset, so its boxes get Docker. `setup.sh` adds it when you give `--reset-hook` |
 | `labels=` | Words for your own use |
 
 bb-box lends the smallest free machine that fits the box's size. The pool's
-boxes have Docker only when every machine's line lists `linux-docker`
+boxes have Docker only when every machine's line has `reset=machine`
 ([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md)).
-When only some lines list it, no box has Docker, each says No Docker, and
+When only some lines have it, no box has Docker, each says No Docker, and
 the doctor warns.
 
 ### Through a jump host
@@ -236,7 +236,10 @@ hold nothing you would not show the box.
 Boxes with Docker have passwordless sudo too, which means root on the
 machine. So bb-box gives Docker only on a machine with a whole-machine reset
 that puts the machine back as it was, and only when every machine in the
-pool has one. List `linux-docker` on each machine's line.
+pool has one. Install Docker Engine on each machine, give `setup.sh` your
+reset with `--reset-hook`, and use the line it prints, which has
+`reset=machine`. If a machine with `reset=machine` lacks Docker, the doctor
+fails for it, and bb-box does not lend it.
 
 The whole-machine reset is a program you write. Give it to `setup.sh` with
 `--reset-hook`, which installs it as `/usr/local/libexec/bb-box/reset-machine`.
