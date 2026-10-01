@@ -4,7 +4,10 @@ Status: accepted, 30 September 2026. Extends
 [006](006-gpu-desktop-on-xorg.md), [008](008-shared-control.md) and
 [011](011-interface-v1.md). Extended by
 [038](038-the-agent-can-take-control-back.md): the agent can take control
-from a viewer.
+from a viewer. Partly superseded by
+[043](043-a-viewer-has-5-s-to-come-back-after-the-box-ends-its-connection.md):
+a box that ends the holder's connection gives its viewer 5 s to connect
+again.
 
 ## Context
 
