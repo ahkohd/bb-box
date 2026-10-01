@@ -779,7 +779,8 @@ real backend's pool of free, reset machines is the same thing
   clone does, so a claim is placed as a clone is. A fill holds a slot and
   its memory for about 30 s, from the clone to the suspend. An acquire that
   finds a fill holding the last slot takes the fill over when its size and
-  kinds suit the box, or stops it and clones. A resume takes about 4.5 s
+  kinds suit the box, or stops it and clones, so capacity counts that slot
+  as free for a box (#145). A resume takes about 4.5 s
   to a named box, against 13 to 17 s for a clone. A warm VM saved under
   another image build, Tart version or macOS build of the Mac is retired,
   as its state may not restore; one that fails to restore anyway gives way
