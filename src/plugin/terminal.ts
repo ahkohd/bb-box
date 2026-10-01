@@ -16,6 +16,8 @@ import type { Terminal, TerminalSize } from "../transports/types.ts";
 
 export const TERMINAL_ROUTE = "/terminal";
 const SESSION_ID = /^[A-Za-z0-9_-]{8,64}$/;
+/** A WebSocket close reason holds at most 123 bytes of UTF-8; the server refuses a longer one. */
+const REASON_BYTES = 123;
 const BACKLOG_BYTES = 256 * 1024;
 const IDLE_MS = 10 * 60_000;
 
@@ -34,6 +36,20 @@ export interface TerminalSessionsDeps {
 
 function words(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+const utf8 = new TextEncoder();
+
+/** `text` within a close reason's 123 bytes, cut at a character and ended with an ellipsis when it is longer. */
+export function closeReason(text: string): string {
+  if (utf8.encode(text).byteLength <= REASON_BYTES) return text;
+  const room = REASON_BYTES - utf8.encode("…").byteLength;
+  let kept = "";
+  for (const character of text) {
+    if (utf8.encode(kept + character).byteLength > room) break;
+    kept += character;
+  }
+  return `${kept.trimEnd()}…`;
 }
 
 /** The last `limit` bytes of output, for a tab that attaches later. */
@@ -224,6 +240,8 @@ export class TerminalSessions {
 export interface Terminals {
   /** Where the panel opens a terminal's WebSocket, on the BB server's origin. */
   readonly path: string;
+  /** Sessions open now. */
+  readonly live: number;
   /** Ends every session on a box, telling its tab why. */
   end(boxId: string, reason: string): Promise<void>;
   dispose(): Promise<void>;
@@ -262,19 +280,34 @@ export function registerTerminals(bb: BbPluginApi, deps: { boxes: Boxes; logErro
       const size = clampSize({ cols: Number(url.searchParams.get("cols")), rows: Number(url.searchParams.get("rows")) });
       let session: TerminalSession | null = null;
       let viewer: TerminalViewer | null = null;
+      /** The socket closed, perhaps while its shell was still opening. */
+      let closed = false;
       /** Bytes typed before the shell was open. */
       const early: Uint8Array[] = [];
       return {
         async onOpen(socket) {
-          viewer = { send: (bytes) => socket.send(bytes), close: (code, reason) => socket.close(code, reason) };
+          viewer = {
+            send: (bytes) => socket.send(bytes),
+            close: (code, reason) => {
+              // The whole reason goes to the log; the socket takes what fits.
+              const short = closeReason(reason);
+              if (short !== reason) deps.logError("close the terminal", new Error(reason));
+              socket.close(code, short);
+            },
+          };
           if (!SESSION_ID.test(sessionId)) {
-            socket.close(1008, "The tab gave no session ID, so its terminal cannot be kept.");
+            viewer.close(1008, "The tab gave no session ID, so its terminal cannot be kept.");
             return;
           }
           try {
             session = await sessions.attach(boxId, sessionId, viewer, size);
           } catch (error) {
-            socket.close(1011, words(error));
+            viewer.close(1011, words(error));
+            return;
+          }
+          // A tab that went while the shell opened leaves it to rest, not to a dead socket.
+          if (closed) {
+            session.detach(viewer);
             return;
           }
           for (const bytes of early.splice(0)) session.input(bytes);
@@ -289,6 +322,7 @@ export function registerTerminals(bb: BbPluginApi, deps: { boxes: Boxes; logErro
           else early.push(data);
         },
         onClose() {
+          closed = true;
           if (session && viewer) session.detach(viewer);
         },
         onError(_socket, error) {
@@ -301,6 +335,9 @@ export function registerTerminals(bb: BbPluginApi, deps: { boxes: Boxes; logErro
 
   return {
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${TERMINAL_ROUTE}`,
+    get live() {
+      return sessions.size;
+    },
     end: (boxId, reason) => sessions.end(boxId, reason),
     dispose: () => sessions.dispose(),
   };

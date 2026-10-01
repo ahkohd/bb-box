@@ -3,9 +3,11 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { TerminalSessions, type TerminalViewer } from "../src/plugin/terminal.ts";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { Boxes } from "../src/core/boxes.ts";
+import { closeReason, registerTerminals, TerminalSessions, type TerminalViewer } from "../src/plugin/terminal.ts";
 import { clampSize, openTerminal } from "../src/transports/terminal.ts";
-import type { Terminal } from "../src/transports/types.ts";
+import type { CommandTransport, Terminal } from "../src/transports/types.ts";
 
 const skip = process.platform === "linux" ? false : "needs util-linux script";
 const decoder = new TextDecoder();
@@ -136,4 +138,92 @@ test("a session ends when its shell exits, and tells its tab", { skip }, async (
   await until(() => session.ended);
   assert.deepEqual(tab.closed, { code: 1000, reason: "The shell exited." });
   assert.match(tab.text(), /bye/);
+});
+
+test("a close reason fits a WebSocket's 123 bytes, cut at a character", () => {
+  assert.equal(closeReason("The shell exited."), "The shell exited.");
+  const long = `ssh: connect to host 10.78.0.85 port 22: No route to host ${"x".repeat(2_000)}`;
+  const cut = closeReason(long);
+  assert.ok(new TextEncoder().encode(cut).byteLength <= 123, "within 123 bytes");
+  assert.ok(cut.endsWith("…"));
+  const accented = `${"é".repeat(60)} ${"ü".repeat(60)}`;
+  const cutAccented = closeReason(accented);
+  assert.ok(new TextEncoder().encode(cutAccented).byteLength <= 123);
+  assert.doesNotMatch(cutAccented, /\uFFFD/, "no broken character");
+});
+
+type Handlers = ReturnType<Parameters<BbPluginApi["http"]["experimental_websocket"]>[1]>;
+
+/** The route's handlers for a box whose transport opens `command`, with the plugin's socket faked. */
+function route(command: Partial<CommandTransport> | null, options: { idleMs?: number; logged?: string[] } = {}) {
+  let handler: Parameters<BbPluginApi["http"]["experimental_websocket"]>[1] | null = null;
+  const bb = { pluginId: "bb-box", http: { experimental_websocket: (_path: string, given: typeof handler) => void (handler = given) } } as unknown as BbPluginApi;
+  const boxes = {
+    find: async (id: string) => ({ id, name: "calm-otter", state: "ready" }),
+    transports: async () => ({ command, displays: [], access: null }),
+  } as unknown as Boxes;
+  const terminals = registerTerminals(bb, { boxes, idleMs: options.idleMs, logError: (operation, error) => options.logged?.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`) });
+  const open = (query: string): Handlers => handler!({ url: new URL(`http://bb.local/api/v1/plugins/bb-box/http/terminal?${query}`), request: new Request("http://bb.local/"), headers: new Headers() });
+  return { terminals, open };
+}
+
+function socket() {
+  const chunks: Uint8Array[] = [];
+  return {
+    readyState: 1,
+    closed: null as { code: number; reason: string } | null,
+    send: (data: string | Uint8Array) => {
+      if (typeof data !== "string") chunks.push(data);
+    },
+    close(code?: number, reason?: string) {
+      this.closed = { code: code ?? 1005, reason: reason ?? "" };
+    },
+    text: () => chunks.map((chunk) => decoder.decode(chunk)).join(""),
+  };
+}
+
+test("the route opens a shell for a tab, takes its input and resizes, and detaches a tab that went while the shell opened", { skip }, async () => {
+  const { terminals, open } = route({ terminal: (size) => openTerminal(["/bin/sh", "-c", "echo hello; cat"], size) }, { idleMs: 300 });
+  const handlers = open("box=box_1&session=sess-0001-aaaa&cols=90&rows=25");
+  const tab = socket();
+  await handlers.onOpen!(tab);
+  await until(() => tab.text().includes("hello"));
+  assert.equal(terminals.live, 1);
+  await handlers.onMessage!(tab, new TextEncoder().encode("ping\r"));
+  await until(() => tab.text().includes("ping\r\nping"));
+  await handlers.onMessage!(tab, JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+  await handlers.onClose!(tab, { code: 1001, reason: "" });
+  await until(() => terminals.live === 0, 2_000);
+  assert.equal(tab.closed, null, "a tab that left is not told");
+
+  // The tab closes while ssh is still connecting: the shell must not be left with a dead socket.
+  const late = open("box=box_1&session=sess-0002-bbbb&cols=80&rows=24");
+  const gone = socket();
+  const opening = late.onOpen!(gone);
+  await late.onClose!(gone, { code: 1001, reason: "" });
+  await opening;
+  assert.equal(terminals.live, 1, "the shell opened");
+  await until(() => terminals.live === 0, 2_000);
+  await terminals.dispose();
+});
+
+test("the route tells a tab why a shell could not open, within a close reason's size, and logs the rest", { skip }, async () => {
+  const logged: string[] = [];
+  const detail = `ssh: connect to host 10.78.0.85 port 22: No route to host\n${"x".repeat(1_500)}`;
+  const { open } = route({ terminal: async () => Promise.reject(new Error(`The terminal ended before it started: ${detail}`)) }, { logged });
+  const tab = socket();
+  await open("box=box_1&session=sess-0003-cccc&cols=80&rows=24").onOpen!(tab);
+  assert.equal(tab.closed?.code, 1011);
+  assert.ok(new TextEncoder().encode(tab.closed!.reason).byteLength <= 123);
+  assert.match(tab.closed!.reason, /^The terminal ended before it started: ssh: connect/);
+  assert.equal(logged.length, 1);
+  assert.match(logged[0]!, /x{1500}/, "the whole message is logged");
+
+  const none = socket();
+  await open("box=box_1&session=bad&cols=80&rows=24").onOpen!(none);
+  assert.equal(none.closed?.code, 1008);
+  const { open: without } = route(null);
+  const noShell = socket();
+  await without("box=box_1&session=sess-0004-dddd&cols=80&rows=24").onOpen!(noShell);
+  assert.deepEqual(noShell.closed, { code: 1011, reason: "Box calm-otter has no terminal: its transport cannot open a shell on a PTY." });
 });
