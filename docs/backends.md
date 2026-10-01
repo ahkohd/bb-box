@@ -112,3 +112,42 @@ node --test test/conformance.test.ts
 - Ownership lives in Proxmox tags (`bb-box`, `install.<id>`, `thread.<id>`,
   `box.<id>`, `kind.<kind>`), and in the description the clone writes, which
   names the install and the box before the tags are set.
+
+## SSH host pool
+
+- Real. Code in [src/backends/ssh-pool/](../src/backends/ssh-pool/). The
+  machine side is `setup/ssh-pool/`: `setup.sh`, and the helper
+  `machine.sh`, the only thing bb-box runs on a machine as root. Its guide
+  lists the settings.
+- bb-box logs in as the admin user, whose key is limited with `restrict`
+  and whose sudo rule allows only the helper. The helper reads `key=value`
+  lines on stdin, prints `key=value` lines, and holds a lock on the machine
+  while it acts.
+- Ownership lives on the machine, in `/var/lib/bb-box`: the reset
+  generation, and an `owner` marker naming the install, box, thread, kind,
+  generation and box user, written before the box user is made. A release
+  first renames it to `resetting`, so `held()` returns a machine being
+  reset with no owner, and the next release finishes it. Plugin storage
+  keeps only what the machine cannot say: that it is out of service and
+  why, the generation last seen, and the box on a machine that does not
+  answer.
+- `Guest.data` keeps the machine's generation and the box user. Every
+  method checks the marker names this install, box and generation before
+  acting, so an old box's release leaves the next box alone.
+- Capacity is one `machines` limit: the machines serving the kind, and how
+  many are not free. There is no warm pool.
+- `restores` is `machine` only when every machine has a whole-machine
+  reset (`reset=machine`); only those machines serve `linux-docker`.
+- `members()` reads each machine now. `returnToService(ref)` resets an
+  out-of-service machine again; an operator can also run the helper's
+  `reset` on the machine, which bb-box sees as a clean machine at a later
+  generation.
+
+`test/ssh-pool.test.ts` runs the suite and the pool's own checks against a
+fake helper. To run them against real machines, start the Docker rig, then:
+
+```sh
+sh setup/ssh-pool/test/rig.sh up /tmp/bbbox-rig
+npm run conformance -- --backend ssh-pool --settings /tmp/bbbox-rig/settings.json
+SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.ts
+```

@@ -24,6 +24,7 @@
     "test": "node --test test/*.test.ts && vitest run",
     "build": "bb plugin build",
     "smoke": "node scripts/smoke.ts",
+    "conformance": "node scripts/conformance.ts",
     "test:app": "vitest run"
   },
   "dependencies": {

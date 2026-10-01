@@ -6,9 +6,10 @@
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
+import { sshPoolDriver } from "./ssh-pool/index.ts";
 import type { Backend, BackendDriver, BackendStorage, BoxKind, DoctorCheck } from "./types.ts";
 
-export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver];
+export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, sshPoolDriver];
 
 /** Every backend setting, in driver order. Setting keys must be unique. */
 export function backendSettings(drivers: readonly BackendDriver<any>[] = DRIVERS): Record<string, PluginSettingDescriptor> {

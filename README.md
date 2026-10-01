@@ -74,7 +74,7 @@ services and builds, so that work runs on a box and not on your own machine.
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
 | Apple Virtualization framework, for example [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS desktop, iOS Simulator | planned |
 | Docker | virtual | Linux, Linux desktop | planned, early |
-| SSH host pool | real | any machine reachable over SSH | planned, early |
+| SSH host pool | real | Linux, Linux with Docker, on Linux machines you own | in development |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
 
@@ -105,6 +105,24 @@ working box.
 - **Limits**: a desktop uses one GPU, and the GPU's free memory limits how many
   desktops get hardware rendering.
 
+### SSH host pool
+
+Lends Linux machines you already have, reached over SSH, directly or
+through a jump host. A box has a whole machine to itself, as a new user
+made for it. When the box is released, the machine is reset and lent again.
+
+- **Setup**: `setup/ssh-pool/setup.sh` adds an admin user that may run only
+  bb-box's helper as root. Each machine keeps its own state, so bb-box
+  carries on after it loses its storage.
+- **Reset**: removes the box's user and everything it left. A machine whose
+  reset fails goes out of service until the operator resets it.
+- **Docker**: only on a machine with a whole-machine reset, a program you
+  provide, since a box with Docker is root on the machine.
+- **Limits**: headless only for now. It is not a security boundary: a box
+  can read what any user on the machine can read.
+
+See [its guide](setup/ssh-pool/README.md).
+
 ## Easy to set up, tested on every backend
 
 bb-box should be easy to set up on whatever you have. Every backend has a
@@ -130,8 +148,12 @@ Working on the Proxmox LXC backend:
 - A warm pool: a warm box is handed out in about 0.1 s; BB's enrolment then
   takes a few seconds (see [what bb-box asks of BB](docs/bb-requests.md)).
 
-Next: Docker and SSH host pool backends, to keep the core backend-agnostic and
-to make bb-box easy to try; then Windows, then macOS.
+The SSH host pool backend lends Linux machines you own, with Docker on
+machines with a whole-machine reset. It passes the conformance suite against
+Docker containers running sshd, with and without systemd.
+
+Next: the Docker backend, to keep the core backend-agnostic and to make
+bb-box easy to try; then Windows, then macOS.
 
 ## Install
 
@@ -173,12 +195,16 @@ npm run typecheck
 npm test
 npm run build
 node scripts/smoke.ts <settings.json>
+npm run conformance -- --backend <type> --settings <settings.json>
 ```
 
 The tests and scripts need Node 22.18 or later, which runs TypeScript
 directly. The tests run against a fake Proxmox API and a fake `ssh`, so they
 need no host. The smoke script runs against a real backend without BB; see
 [section 6 of the Proxmox LXC guide](setup/proxmox-lxc/README.md#6-smoke-test).
+`npm run conformance` runs the conformance suite against a real backend; the
+[SSH host pool guide](setup/ssh-pool/README.md#testing-on-one-computer) runs
+it against Docker containers on one computer.
 
 ## Third-party code
 
@@ -194,3 +220,4 @@ package, in `node_modules/@novnc/novnc` after `npm install`.
 - [Decision records](docs/decisions)
 - [Research](docs/research)
 - [Setting up the Proxmox LXC backend](setup/proxmox-lxc/README.md)
+- [Setting up the SSH host pool backend](setup/ssh-pool/README.md)
