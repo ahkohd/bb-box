@@ -9,6 +9,12 @@
 // socket, a plain file, once $FAKE_SSH_DIR/hold-share/<host> is gone; -O
 // succeeds, and -O exit removes the socket. Their log entries have an empty
 // command and say which they were.
+//
+// A host is Windows while $FAKE_SSH_DIR/windows/<host> exists. It refuses a
+// command line over 32,767 characters, as Windows does, and stands in for
+// PowerShell with bb-box's own commands: it decodes a script, or stages one
+// in tmp/ in the host's home, then runs the script, less its PowerShell exit
+// check, with `sh -c`.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -52,7 +58,26 @@ if (!existsSync(join(run, "display-mode"))) {
   writeFileSync(join(run, "display-mode"), `${mode}\n`);
   writeFileSync(join(run, "display-reason"), `${reason ?? ""}\n`);
 }
-const result = spawnSync("sh", ["-c", command.replaceAll("/run/bb-box/", `${run}/`)], {
+let script = command;
+if (existsSync(join(root, "windows", host))) {
+  if (command.length > 32_767) {
+    process.stderr.write("The command line is too long.\n");
+    process.exit(1);
+  }
+  const tmp = join(home, "tmp");
+  mkdirSync(tmp, { recursive: true });
+  const stage = /GetTempPath\(\)\) '([^']+)';\$f=/.exec(command);
+  const staged = /GetTempPath\(\)\) '([^']+)';\$s=/.exec(command);
+  const encoded = /FromBase64String\('([A-Za-z0-9+/=]*)'\)/.exec(command);
+  if (stage) {
+    writeFileSync(join(tmp, stage[1]), readFileSync(0));
+    process.exit(0);
+  }
+  const text = staged ? readFileSync(join(tmp, staged[1]), "utf8") : encoded ? Buffer.from(encoded[1], "base64").toString("utf8") : command;
+  if (staged) rmSync(join(tmp, staged[1]));
+  script = text.replace(/\nif\(-not \$\?\)\{.*\}$/, "");
+}
+const result = spawnSync("sh", ["-c", script.replaceAll("/run/bb-box/", `${run}/`)], {
   cwd: home,
   env: { PATH: process.env.PATH, HOME: home, USER: target.split("@")[0] },
   stdio: "inherit",

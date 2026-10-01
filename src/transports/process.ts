@@ -76,6 +76,9 @@ type Spawned = Omit<RunResult, "stdout" | "stderr" | "truncated">;
 
 const NOTHING = Buffer.alloc(0);
 
+/** A script that succeeds in sh and PowerShell alike. */
+export const PROBE = "exit 0";
+
 /**
  * Runs `script` in a child of the login shell, then writes `mark` and its
  * exit status to stdout and stderr. Without stdin, the script reads
@@ -237,7 +240,7 @@ export class CommandLine {
 
   /** True when the command line runs a script. */
   async probe(signal?: AbortSignal): Promise<boolean> {
-    const result = await this.run("true", { timeoutMs: 5_000, signal });
+    const result = await this.run(PROBE, { timeoutMs: 5_000, signal });
     return result.exitCode === 0;
   }
 

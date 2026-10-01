@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CommandLine, EndMark } from "../src/transports/process.ts";
@@ -146,6 +146,55 @@ test("the SSH transport reports an unreachable box and refuses Windows file copi
   await assert.rejects(gone.readFile("x", { maxBytes: 10 }), (error: unknown) => error instanceof TransportError && error.code === "unreachable");
   const windows = new SshTransport(ssh, at("192.0.2.9"), "windows");
   await assert.rejects(windows.writeFile("x", new Uint8Array()), (error: unknown) => error instanceof TransportError && error.code === "unsupported");
+});
+
+test("a Windows box runs each script in PowerShell, base64-encoded, so no quote reaches its command line", async () => {
+  const { ssh, log, windows } = fakeSsh();
+  windows("192.0.2.30");
+  const box = new SshTransport(ssh, at("192.0.2.30"), "windows");
+  const script = `echo "it's" \`printf %s ok\`; cat; exit 3`;
+  const result = await box.run(script, { stdin: new TextEncoder().encode("in") });
+  assert.deepEqual([result.exitCode, result.stdout], [3, "it's ok\nin"]);
+  const [entry] = log();
+  assert.doesNotMatch(entry!.command, /["`]/);
+  assert.match(entry!.command, /^\$ProgressPreference='SilentlyContinue';.*;exit 0$/);
+  const encoded = /FromBase64String\('([^']+)'\)/.exec(entry!.command)![1]!;
+  assert.equal(Buffer.from(encoded, "base64").toString("utf8"), `${script}\nif(-not $?){if($LASTEXITCODE){exit $LASTEXITCODE};exit 1}`);
+  assert.equal(await box.probe(), true);
+  assert.equal(log()[1]!.command, "exit 0", "the probe has no end marks, which are sh's");
+});
+
+test("a script too long for Windows' command line goes to a file in the box first", async () => {
+  const { ssh, log, home, windows } = fakeSsh();
+  windows("192.0.2.31");
+  const box = new SshTransport(ssh, at("192.0.2.31"), "windows");
+  const script = `: ${"x".repeat(40_000)}\ncat; exit 4`;
+  const result = await box.run(script, { stdin: new TextEncoder().encode("in") });
+  assert.deepEqual([result.exitCode, result.stdout, result.stderr], [4, "in", ""]);
+  const entries = log();
+  assert.equal(entries.length, 2);
+  assert.ok(entries.every((entry) => entry.command.length < 1_000));
+  const name = /'(bb-box-[0-9a-f]{16}\.ps1)'/.exec(entries[0]!.command)![1];
+  assert.equal(/'(bb-box-[0-9a-f]{16}\.ps1)'/.exec(entries[1]!.command)![1], name);
+  assert.deepEqual(readdirSync(join(home("192.0.2.31"), "tmp")), [], "the staged script is deleted before it runs");
+
+  const output: string[] = [];
+  const streamed = await box.stream(script, { stdin: new TextEncoder().encode("on"), onOutput: (chunk) => output.push(Buffer.from(chunk).toString()) });
+  assert.deepEqual([streamed.exitCode, output.join("")], [4, "on"]);
+});
+
+test("a long script whose staging fails gives the staging's result", async () => {
+  const { ssh, log, down, windows } = fakeSsh();
+  windows("192.0.2.32");
+  down("192.0.2.32");
+  const result = await ssh.run(at("192.0.2.32"), `: ${"x".repeat(40_000)}`, {}, "windows");
+  assert.equal(result.exitCode, 255);
+  assert.match(result.stderr, /Connection refused/);
+  assert.equal(log().length, 1, "the script is not run");
+  const output: string[] = [];
+  const streamed = await ssh.stream(at("192.0.2.32"), `: ${"x".repeat(40_000)}`, { onOutput: (chunk, from) => output.push(`${from}: ${Buffer.from(chunk).toString()}`) }, "windows");
+  assert.equal(streamed.exitCode, 255);
+  assert.match(output.join(""), /^stderr: ssh: connect to host 192\.0\.2\.32 port 22: Connection refused/);
 });
 
 test("commands to one box share a connection that bb-box opens once", async () => {

@@ -292,8 +292,15 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   The command line holds the mark in two halves, so a script that prints
   command lines, as `ps aux` does, never ends its run early. Once both marks
   arrive, the run returns and stops the local command, such as `ssh`.
-  Output written after the mark is dropped. PowerShell scripts are not
-  wrapped yet, so their runs end when the output closes.
+  Output written after the mark is dropped.
+- On a Windows box, whose shell is PowerShell,
+  [src/transports/powershell.ts](../src/transports/powershell.ts) puts the
+  script base64-encoded in a script block, so none of its quotes reach the
+  command line. The run exits as sh would: with the script's own exit, else
+  the last native command's code when its last statement failed, else 1 when
+  that failed, else 0. A script too long for Windows' command line of 32,767
+  characters goes to a file in the box first, over stdin. These runs have no
+  end mark yet, so they end when the output closes.
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the
