@@ -148,6 +148,16 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               return options.json ? json(app.view(box)) : out(boxDetail(box, app.control(box)));
             }),
         }),
+        thread: cliCommand({
+          summary: "Start a child thread of a thread on one of its boxes, as a BB machine, with the thread's project.",
+          positionals: boxPositional,
+          options: { ...threadOption, ...jsonOption, prompt: { type: "string", description: "The child thread's first message.", required: true } },
+          run: ({ positionals, options }, ctx) =>
+            guard("Starting a thread on the box", async () => {
+              const threadId = await app.startThread({ threadId: threadOf(options.thread, ctx), box: positionals.box, prompt: options.prompt, signal: ctx.signal });
+              return options.json ? json({ threadId }) : out(`Started thread ${threadId} on box ${positionals.box}.`);
+            }),
+        }),
         release: cliCommand({
           summary: "Release a box. Its disk is deleted.",
           positionals: boxPositional,
