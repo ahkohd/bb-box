@@ -158,6 +158,13 @@ What the image has:
   LaunchAgent in `admin`'s session, with telemetry and update checks off for
   the daemon and the CLI, and Accessibility and Screen Recording granted.
 - BB's host app, when `--bb-url` is given.
+- Screen capture approved ahead for Cua Driver: see below.
+- No "App Background Activity" notices. The user's Background Task
+  Management agent, which posts them, is off, and the notices kept in
+  Notification Center are removed. Background items still load and run.
+  Without this, BB's daemon, added when a box enrols, leaves a notice on the
+  desktop, and Notification Center shows a notice it keeps again at every
+  login.
 
 Cirrus Labs' image also grants `sshd-keygen-wrapper`, the process SSH logins
 run under, Accessibility, Screen Recording and Apple Events. Commands over
@@ -177,8 +184,16 @@ does not show it, and adds a row per service for Cua Driver's bundle ID,
 signing identity (team YCK386LBJ7), so a Cua update signed by the same team
 keeps them. A denied row that Cua's first launch leaves is replaced. Then the
 script boots the VM and checks that `cua-driver permissions status --json`
-reports both. No person approves anything; macOS 26's window-picker consent
-is not needed for Cua's screenshots.
+reports both. No person approves anything.
+
+macOS 26 and later also ask once, on an app's first capture that bypasses
+the system's window picker, and again after 30 days: "CuaDriver is
+requesting to bypass the system private window picker and directly access
+your screen and audio". replayd records when it last asked, in
+`~/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist`,
+and the dialog's Allow writes nothing else. The image writes Cua's entry
+there dated far ahead, so its first capture, after a boot, a suspend and a
+resume, raises no dialog.
 
 ## 4. Settings
 
@@ -213,7 +228,9 @@ there, and how many VMs, how much memory and how much disk it has free.
   box, its thread, name, kind and creation time; then `tart clone` and `tart
   set` for the cores and memory of the box's size; then `tart run --no-graphics
   --vnc-experimental --suspendable`, detached; then it waits for the VM's
-  address in the Mac's DHCP leases and for SSH through the Mac.
+  address in the Mac's DHCP leases and for SSH through the Mac. Last, it
+  names the VM after the box, its ComputerName, LocalHostName and HostName,
+  with `scutil`.
 - **Stop and start.** Stop suspends the VM, which frees its memory and its
   slot of the two; start resumes it in about 4 s, with its apps still open.
   A box's address is looked up again with `tart ip` when bb-box does not

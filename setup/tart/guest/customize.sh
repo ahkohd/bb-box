@@ -89,6 +89,37 @@ cat >"$home/Library/LaunchAgents/com.trycua.cua-driver.plist" <<PLIST
 </dict></plist>
 PLIST
 
+# Screen capture without a person. On macOS 26 and later, an app's first
+# capture that bypasses the system's window picker raises a consent dialog,
+# and again after 30 days; replayd records when it last alerted. An entry
+# dated far ahead means Cua's first capture, after a boot or a resume too,
+# raises none. The dialog's Allow writes nothing else.
+replayd="$home/Library/Group Containers/group.com.apple.replayd"
+mkdir -p "$replayd" && chmod 700 "$replayd"
+cat >"$replayd/ScreenCaptureApprovals.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>com.trycua.driver</key><dict>
+<key>kScreenCaptureAlertableUsageCount</key><integer>1</integer>
+<key>kScreenCaptureApprovalLastAlerted</key><date>3000-01-01T00:00:00Z</date>
+<key>kScreenCaptureApprovalLastUsed</key><date>3000-01-01T00:00:00Z</date>
+<key>kScreenCapturePrivacyHintDate</key><date>3000-01-01T00:00:00Z</date>
+<key>kScreenCapturePrivacyHintPolicy</key><integer>2592000</integer>
+</dict></dict></plist>
+PLIST
+chmod 600 "$replayd/ScreenCaptureApprovals.plist"
+
+# No "App Background Activity" notices: BB's daemon is added when a box
+# enrols, and Notification Center keeps an unread notice and shows it again
+# at every login. The user's Background Task Management agent posts them;
+# with it off, background items still load and run. Then the notices kept so
+# far, such as the one for Tart's guest agent, go.
+launchctl disable "gui/$(id -u)/com.apple.backgroundtaskmanagement.agent"
+sqlite3 "$home/Library/Group Containers/group.com.apple.usernoted/db2/db" \
+  "delete from app where identifier = 'com.apple.btmnotificationagent';" 2>/dev/null || :
+killall usernoted NotificationCenter 2>/dev/null || :
+
 # BB's host daemon package, where BB's installer looks for it, so enrolment
 # skips its download and npm install. A newer server build downloads as usual.
 if [ -n "${BB_URL:-}" ]; then
