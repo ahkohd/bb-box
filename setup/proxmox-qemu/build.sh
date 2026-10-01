@@ -157,10 +157,12 @@ if [ "$bus" = sata ]; then
 else
   disk=(--scsihw virtio-scsi-single --scsi0 "$BBBOX_STORAGE:64,iothread=1,discard=on,ssd=1") boot_disk=scsi0
 fi
-# A template waits at its kind's default size (028): 4 cores and 8 GiB.
+# A template waits at its kind's default size (028): 4 cores and 8 GiB. Its
+# clock is UTC, as Windows' time zone is: Proxmox would otherwise give a
+# Windows guest the host's local time, and every box would start that far off.
 log "creating build VM $vm ($BBBOX_WINDOWS_EDITION from $(basename "$windows_iso"), disk on $bus)"
 qm create "$vm" --name "bb-box-windows-$vm" --pool "$BBBOX_POOL" --ostype win11 --machine q35 --bios ovmf \
-  --cpu host --cores 4 --memory 8192 --balloon 0 \
+  --cpu host --cores 4 --memory 8192 --balloon 0 --localtime 0 \
   --efidisk0 "$BBBOX_STORAGE:1,efitype=4m,pre-enrolled-keys=1" --tpmstate0 "$BBBOX_STORAGE:1,version=v2.0" \
   "${disk[@]}" --net0 "virtio,bridge=$BBBOX_BRIDGE" --vga virtio --agent enabled=1 \
   --ide2 "$BBBOX_WINDOWS_ISO,media=cdrom" --ide0 "$BBBOX_VIRTIO_ISO,media=cdrom" --ide3 "$iso_store:iso/$answer_name,media=cdrom" \
@@ -240,6 +242,11 @@ ssh_box() { ssh -i "$BBBOX_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o St
 desktop_up() { ssh_box 'if (Get-Process cua-driver -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0) { cua-driver status *> $null; exit $LASTEXITCODE } else { exit 1 }'; }
 qm start "$check_vm"
 wait_for "a clone answers SSH" 300 1 ssh_box exit || { screen "$check_vm"; die "a clone of the template did not answer SSH at $BBBOX_BUILD_ADDRESS"; }
+# The guest clock in seconds against the host's. PowerShell ends its line with a CR.
+clock_offset() { local guest; guest=$(ssh_box '[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()' 2>/dev/null | tr -dc 0-9); echo $((${guest:-0} - $(date -u +%s))); }
+offset=$(clock_offset)
+log "a clone's clock is $offset s off the host's"
+[ "${offset#-}" -le 120 ] || die "a clone's clock is $offset s off the host's"
 wait_for "a clone's desktop has Cua" 300 1 desktop_up || die "Cua did not start in a clone's desktop session"
 scp -q -i "$BBBOX_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
   "$here/check.ps1" "box@$BBBOX_BUILD_ADDRESS:C:/bb-box/check.ps1"
@@ -256,8 +263,7 @@ if [ "$checked" = 0 ]; then
   log "qm start resumed the clone in $((($(date +%s%N) - start) / 1000000)) ms"
   wait_for "the resumed clone answers SSH" 120 1 ssh_box exit &&
     wait_for "the resumed clone's Cua answers" 120 1 desktop_up || checked=1
-  clock=$(ssh_box '[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()' 2>/dev/null || echo 0)
-  log "the resumed clone's clock is $((clock - $(date -u +%s))) s off the host's (the backend sets it)"
+  log "the resumed clone's clock is $(clock_offset) s off the host's (the backend sets it)"
 fi
 qm stop "$check_vm" >/dev/null
 qm destroy "$check_vm" --purge 1 >/dev/null

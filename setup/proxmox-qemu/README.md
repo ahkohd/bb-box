@@ -62,7 +62,8 @@ place. Boxes cloned from the old one keep running on LVM-thin.
 
 - Windows 11, not generalized: every box is a linked clone of the same
   installed Windows. Machine SIDs repeat, which matters only in a domain.
-  Computer name `bb-box-win`, time zone UTC.
+  Computer name `bb-box-win`. Time zone UTC, and the VM's clock is UTC
+  too (`localtime: 0`), so a box starts with the right time.
 - User `box`, an administrator, logged on automatically into the console
   session, with no lock screen, sleep, screen saver or UAC prompt. Its
   password is random per build and kept nowhere else.
