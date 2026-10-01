@@ -295,7 +295,9 @@ export class Configuration {
     if (test === undefined) return { problems, doctor: null };
     const backend = draft.document.backends.find((candidate) => candidate.id === test);
     if (!backend) return { problems: [...problems, { path: `backends.${test}`, message: `There is no backend ${test} in the configuration to check.` }], doctor: null };
-    const driver = drivers.find((candidate) => candidate.type === backend.type)!;
+    // A backend of a type this version lacks cannot be built; checkDocument's problem says why.
+    const driver = drivers.find((candidate) => candidate.type === backend.type);
+    if (!driver) return { problems, doctor: null };
     const parsed = driver.parse(backendPart(backend, driver, secrets));
     if (!parsed.ok) return { problems, doctor: null };
     const doctor = await this.#test(backend.id, driver, parsed.config, signal);

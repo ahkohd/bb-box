@@ -430,8 +430,12 @@ test("a Mac line with a mistake is left out of the move, and the copy says so (r
     true,
   );
   assert.deepEqual(document.backends[0]!.hosts!.map((host) => host.name), ["mac1"]);
-  assert.equal(notes.length, 1);
-  assert.match(notes[0]!, /^Tart: Mac line "mac2 192\.0\.2\.21" must be .* The Mac was left out; add it on the settings page\.$/);
+  assert.deepEqual(notes, ['Tart: Mac line "mac2 192.0.2.21" is not a name, a space and user@address, so the Mac was left out; add it on the settings page.']);
+  // Any other mistake keeps the Mac, and the note says to fix it.
+  const kept = fromSettings({ "tart-enabled": true, "tart-hosts": "mac1 bbbox-admin@192.0.2.20\nmac1 admin@192.0.2.21" }, DRIVERS, true);
+  assert.deepEqual(kept.document.backends[0]!.hosts!.map((host) => host.name), ["mac1", "mac1"]);
+  assert.ok(kept.notes.includes('Tart: Mac name "mac1" is listed twice. Fix it on the settings page.'));
+  assert.ok(!kept.notes.some((note) => note.includes("left out")));
 });
 
 test("a backend of a type this version lacks is a problem, not a failure, and a draft that keeps it saves (review F1)", async () => {
@@ -447,6 +451,9 @@ test("a backend of a type this version lacks is a problem, not a failure, and a 
   assert.equal(state.backends.find((backend) => backend.id === "fake")!.state, "active", "the other backends run");
   const doctor = await rpc<{ ok: boolean }>("doctor", null);
   assert.equal(doctor.ok, false);
+  const tested = await rpc<CheckResult>("config.check", { draft: state.document, test: "nonesuch" });
+  assert.equal(tested.doctor, null, "a test of it says why rather than fail");
+  assert.deepEqual(tested.problems.map((problem) => problem.path), ["backends.nonesuch"]);
 
   const draft = { ...state.document, general: { boxesPerThread: 2 } };
   const applied = await rpc<ApplyResult>("config.apply", { draft, revision: state.revision });
