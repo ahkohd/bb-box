@@ -4,7 +4,7 @@
 #
 # usage: fetch-artifacts.sh <dir> linux|desktop|desktop-cpu [x86_64|arm64]
 # (headless is linux's earlier name). The architecture is the image's, by
-# default x86_64; it picks the tools in pins.json.
+# default x86_64; it picks the tools in pins.json and desktop-pins.tsv.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
@@ -13,6 +13,7 @@ art=$1
 kind=$2
 arch=${3:-x86_64}
 case "$arch" in x86_64 | arm64) ;; *) die "architecture must be x86_64 or arm64" ;; esac
+[ "$kind" != desktop ] || [ "$arch" = x86_64 ] || die "a desktop on $arch is CPU-only: use desktop-cpu"
 mkdir -p "$art"
 
 fetch() { # url sha256 file
@@ -65,8 +66,9 @@ fi
 
 case "$kind" in linux | headless) exit 0 ;; esac
 
-while IFS=$'\t' read -r name file url sha; do
+while IFS=$'\t' read -r name file url sha pin_arch; do
   case "$name" in '' | \#*) continue ;; esac
+  [ "$pin_arch" = "$arch" ] || continue
   [ "$url" = - ] || fetch "$url" "$sha" "$file"
 done <"$here/desktop-pins.tsv"
 [ "$kind" = desktop ] || exit 0

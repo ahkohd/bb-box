@@ -42,7 +42,7 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   "linux-desktop-cpu": { label: "Linux desktop", description: "A Linux desktop drawn by the CPU, for computer use and browsers.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: [] },
   "linux-arm64": {
     label: "Linux on arm64",
-    description: "A Linux box on arm64, on a Mac. amd64 container images and x86_64 binaries do not run there.",
+    description: "A Linux box on arm64. amd64 container images and x86_64 binaries do not run there.",
     gpu: false,
     desktop: false,
     os: "linux",
@@ -51,7 +51,7 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   },
   "linux-arm64-docker": {
     label: "Linux on arm64 with Docker",
-    description: "A Linux box on arm64 with Docker, on a Mac. amd64 container images and x86_64 binaries do not run there.",
+    description: "A Linux box on arm64 with Docker. amd64 container images and x86_64 binaries do not run there.",
     gpu: false,
     desktop: false,
     os: "linux",
@@ -60,7 +60,7 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   },
   "linux-arm64-desktop-cpu": {
     label: "Linux desktop on arm64",
-    description: "A Linux desktop on arm64, drawn by the CPU, on a Mac. amd64 container images and x86_64 binaries do not run there.",
+    description: "A Linux desktop on arm64, drawn by the CPU. amd64 container images and x86_64 binaries do not run there.",
     gpu: false,
     desktop: true,
     os: "linux",

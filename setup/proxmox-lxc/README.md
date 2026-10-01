@@ -213,7 +213,7 @@ Everything a build downloads is checked against a pinned SHA-256 and kept in
   installs the ones for its image's architecture: x86_64 here, arm64 for
   Linux VMs on a Mac (040);
 - `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Google Chrome, Cua
-  Driver and rustup;
+  Driver and rustup, each for x86_64 and arm64 (the last column);
 - the NVIDIA installer for exactly the host's driver version, checked against
   the SHA-256 NVIDIA publishes next to it.
 

@@ -211,6 +211,19 @@ Docker and BB's host app:
 Everything in it is arm64: amd64 container images and x86_64 binaries do not
 run there.
 
+With `--desktop`, it builds the image Linux desktop boxes are cloned from
+(`linux-arm64-desktop-cpu`), named `bb-box-linux-desktop` unless `--name`
+says otherwise: the same, plus what the Proxmox CPU-only desktop template
+has (`guest/customize-desktop.sh` with `DESKTOP_GPU=none`). That is XFCE on
+display `:99` served over VNC on port 5900, drawn by the CPU, Chrome, Cua
+Driver and Rust, all for arm64. It boots the VM once more to check the
+desktop as the box user. It takes about 8 minutes, and the image is about
+7.6 GB.
+
+```sh
+./prepare-linux-image.sh --desktop --key 'ssh-ed25519 AAAA... bb-box' --bb-url https://bb.example.com
+```
+
 ### Permissions for computer use
 
 macOS keeps Accessibility and Screen Recording grants in the system TCC
