@@ -30,6 +30,12 @@ export const CHANGED = "changed";
 const DAEMON_PARENT = "host-daemon/dist/daemon-bundle";
 const SWEEP_EVERY_MS = 3 * 60_000;
 const DOCTOR_TIMEOUT_MS = 30_000;
+/**
+ * What BB's daemon gives its workers besides the machine variables: the
+ * GitHub token and the user's git identity. A user without GitHub in BB
+ * still has the identity, which ends the enrolment's wait for a worker.
+ */
+const DAEMON_NAMES = ["GH_TOKEN", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
 /** How long the names of BB's machine variables are kept before a refresh. */
 const NAMES_FRESH_MS = 60_000;
 /** bb-box's version, which the move from BB's settings records. */
@@ -181,7 +187,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   });
   const names = async (box: BoxRecord): Promise<string[]> => {
     const [system, project] = await Promise.all([variableNames.get(""), box.projectId ? variableNames.get(box.projectId) : []]);
-    return [...new Set(["GH_TOKEN", ...system, ...project])];
+    return [...new Set([...DAEMON_NAMES, ...system, ...project])];
   };
 
   let enrolment: Enrolment;

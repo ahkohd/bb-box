@@ -19,7 +19,8 @@ export function envFile(os: GuestOs): string {
  * Where commands in a Linux or macOS box take the thread's access from: the
  * named variables of a live process whose parent runs a program whose path
  * holds `parent`. In a box that is a BB machine, that parent is BB's daemon,
- * whose workers carry BB's machine variables and GH_TOKEN. Only the
+ * whose workers carry BB's machine variables, GH_TOKEN and the user's git
+ * identity. Only the
  * program's path counts, not the rest of its command line: commands bb-box
  * runs carry the env file, and with it `parent`, on theirs.
  */
@@ -254,8 +255,10 @@ if [ -r "$HOME/${envFile("linux")}" ]; then . "$HOME/${envFile("linux")}"; fi
 
 /**
  * Run once a Linux or macOS box is a BB machine, after the env file is
- * written: the shell's startup file sources the env file first, and git asks
- * gh for GitHub credentials, so both use GH_TOKEN. That file is ~/.bashrc,
+ * written: the shell's startup file sources the env file first, git asks gh
+ * for GitHub credentials, so both use GH_TOKEN, and git fetches GitHub's SSH
+ * URLs over HTTPS, as on the thread's machine. Each rewrite replaces only
+ * its own entry: an empty one would match every URL. That file is ~/.bashrc,
  * or ~/.zshenv on macOS, since an SSH command there runs a zsh that is not a
  * login shell, which reads only ~/.zshenv. Prints how long it took in the
  * box, in milliseconds, for the enrolment's log, when the box's date can
@@ -270,13 +273,17 @@ if ! grep -qsF ${sh(envFile(os))} "$f"; then
   { [ ! -e "$f" ] || cp -p "$f" "$f.bb-box"; } &&
     { printf '%s\n' ${sh(SHELL_HOOK)} && { [ ! -e "$f" ] || cat "$f"; }; } > "$f.bb-box" && mv -f "$f.bb-box" "$f"
 fi
-if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
-  gh auth setup-git >/dev/null 2>&1 || {
-    git config --global --replace-all credential.https://github.com.helper '' &&
-      git config --global --add credential.https://github.com.helper '!gh auth git-credential'
-  }
+code=0
+if command -v git >/dev/null 2>&1; then
+  if command -v gh >/dev/null 2>&1; then
+    gh auth setup-git >/dev/null 2>&1 || {
+      git config --global --replace-all credential.https://github.com.helper '' &&
+        git config --global --add credential.https://github.com.helper '!gh auth git-credential'
+    } || code=$?
+  fi
+  git config --global --replace-all url.https://github.com/.insteadOf git@github.com: '^git@github\.com:$' &&
+    git config --global --replace-all url.https://github.com/.insteadOf ssh://git@github.com/ '^ssh://git@github\.com/$' || code=$?
 fi
-code=$?
 ended=$(date +%s%N)
 case "$started$ended" in *[!0-9]* | "") ;; *) echo $(((ended - started) / 1000000)) ;; esac
 exit "$code"

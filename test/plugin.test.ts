@@ -350,12 +350,14 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   // Commands take the listed variables from BB's daemon, and nothing else.
   const access = await tool("box_run", { box: box.name, command: 'printf "%s|" "${GH_TOKEN:+token}" "$MACHINE_VAR" "$PROJECT_VAR" "${UNLISTED-unset}"' });
   assert.match(text(access), /stdout:\ntoken\|value-machine\|value-project\|unset\|/);
-  // So do SSH commands, through ~/.bashrc, and git asks gh for GitHub credentials.
+  // So do SSH commands, through ~/.bashrc. git asks gh for GitHub credentials, and fetches GitHub's SSH URLs over HTTPS.
   const shells = await tool("box_run", {
     box: box.name,
-    command: 'head -n 1 .bashrc; bash -c \'unset MACHINE_VAR; . ~/.bashrc; printf "%s\\n" "$MACHINE_VAR"\'; git config --global --get-all credential.https://github.com.helper',
+    command:
+      'head -n 1 .bashrc; bash -c \'unset MACHINE_VAR; . ~/.bashrc; printf "%s\\n" "$MACHINE_VAR"\'; git config --global --get-all credential.https://github.com.helper; ' +
+      "git ls-remote --get-url git@github.com:o/r.git",
   });
-  assert.match(text(shells), /stdout:\n# Added by bb-box: .*\nvalue-machine\n(.*\n)*.*gh auth git-credential/);
+  assert.match(text(shells), /stdout:\n# Added by bb-box: .*\nvalue-machine\n(.*\n)*.*gh auth git-credential\nhttps:\/\/github\.com\/o\/r\.git\n/);
   // BB was asked for the names once, as the box started, and not again for each command.
   assert.deepEqual(world.names.sort(), [PROJECT, "system"]);
 
@@ -380,6 +382,23 @@ test("the enrolment waits for BB's daemon to start a worker with the thread's va
   assert.match(text(run), /stdout:\ntoken\|value-machine\n/);
   const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
   assert.match(logged ?? "", /, waiting for a worker with the thread's variables (0\.[5-9]|[1-4]\.\d)\d s, finishing /);
+});
+
+test("a worker with only the user's git identity ends the enrolment's wait, and git uses the identity", async (t) => {
+  const connected = join(tempDir("connected"), "connected");
+  const identity = { GIT_AUTHOR_NAME: "A Person", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A Person", GIT_COMMITTER_EMAIL: "a@example.com" };
+  const daemon = await fakeDaemon([identity], { startOn: { file: connected, seconds: 1 } });
+  t.after(daemon.stop);
+  const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent });
+  t.after(() => harness.lifecycle.dispose());
+  world.installer = `: > '${connected}'`;
+
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  const box = await only(app);
+  const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
+  assert.match(logged ?? "", /, waiting for a worker with the thread's variables (0\.[5-9]|[1-4]\.\d)\d s, finishing /);
+  const run = await tool("box_run", { box: box.name, command: "git var GIT_AUTHOR_IDENT; git var GIT_COMMITTER_IDENT" });
+  assert.match(text(run), /stdout:\nA Person <a@example\.com> \d+ [+-]\d{4}\nA Person <a@example\.com> \d+ [+-]\d{4}\n/);
 });
 
 test("box_start waits for the box's BB daemon to start again with a worker with the thread's variables", async (t) => {
@@ -442,11 +461,11 @@ test("a box whose machine BB removes while bb-box waits for the variables is not
   world.hosts.delete(`host-${box.id}`);
   await app.enrolment.forgetHost(`host-${box.id}`);
   assert.ok(!isError(await acquired));
-  const messages = () => harness.inspection.logEntries.map((entry) => entry.message);
-  await until("the wait to end", async () => messages().some((line) => line.startsWith(`BB's daemon in box ${box.name} had no worker`)));
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  // The wait ends at its next look, well before its 1.5 s are up.
+  await new Promise((resolve) => setTimeout(resolve, 1_400));
+  const messages = harness.inspection.logEntries.map((entry) => entry.message);
   assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "off", hostId: null, error: null });
-  assert.ok(!messages().some((line) => line.startsWith(`Enrolled box ${box.name} `)));
+  assert.ok(!messages.some((line) => line.startsWith(`Enrolled box ${box.name} `) || line.startsWith(`BB's daemon in box ${box.name} had no worker`)), messages.join("\n"));
 });
 
 test("a box whose machine BB removes while its daemon starts again is not enrolled", async (t) => {

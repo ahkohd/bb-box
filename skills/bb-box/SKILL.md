@@ -168,12 +168,14 @@ start again joins BB again, and `box_start` and `box_run` wait for that too.
 `bb plugin logs bb-box` shows how long each step of it took.
 bb-box removes the machine before it releases the box.
 
-In a Linux or macOS box that is a BB machine, each command takes `GH_TOKEN`
-and BB's machine variables, for the system and for the thread's project, from
-BB's daemon in the box as it starts, so a change in BB reaches the next
-command. The values are never written to disk. The box's `~/.bashrc`, or
-`~/.zshenv` on macOS, reads the env file first, so SSH commands from the
-thread's machine get them too, and `git` uses `gh` for GitHub credentials. On
+In a Linux or macOS box that is a BB machine, each command takes `GH_TOKEN`,
+your git identity and BB's machine variables, for the system and for the
+thread's project, from BB's daemon in the box as it starts, so a change in BB
+reaches the next command. The values are never written to disk. The box's
+`~/.bashrc`, or `~/.zshenv` on macOS, reads the env file first, so SSH
+commands from the thread's machine get them too. `git` uses `gh` for GitHub
+credentials, and fetches GitHub's SSH URLs, such as `git@github.com:o/r.git`,
+over HTTPS. On
 macOS, a value holding a space then `NAME=`, or a backslash then three
 digits, can read wrongly.
 

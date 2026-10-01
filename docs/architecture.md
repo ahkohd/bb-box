@@ -835,8 +835,12 @@ A box is a resource of its thread and gets what the thread's own machine has.
     Linux, and from `ps -E` on macOS, which reads a value holding a space
     then `NAME=`, or a backslash then three digits, wrongly
     ([BB requests](bb-requests.md), request 8). A changed value reaches the
-    next command, and the values never reach the disk. `git` asks `gh` for
-    GitHub credentials, so it uses `GH_TOKEN`.
+    next command, and the values never reach the disk. The names are BB's
+    machine variables, `GH_TOKEN` and the user's git identity
+    (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
+    `GIT_COMMITTER_EMAIL`). `git` asks `gh` for GitHub credentials, so it
+    uses `GH_TOKEN`, and fetches `git@github.com:` and
+    `ssh://git@github.com/` URLs over HTTPS, as on the thread's machine.
   - BB's daemon starts the workers that carry the variables a moment after
     BB shows the machine connected, up to about a second later on a Mac. So
     the enrolment ends once a command in the box finds such a worker, or

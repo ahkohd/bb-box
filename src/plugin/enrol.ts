@@ -14,7 +14,8 @@
 // command it runs: the box's identity, and a loader that takes those
 // variables from the daemon's process as the command starts. Once the daemon
 // connects, the box's ~/.bashrc sources the file too, for the thread's own
-// SSH commands, and git takes GitHub credentials from gh.
+// SSH commands, git takes GitHub credentials from gh, and git fetches
+// GitHub's SSH URLs over HTTPS.
 //
 // Setting up that access runs alongside BB's bootstrap, which touches
 // neither ~/.bashrc nor git's settings. bb-box asks BB about the machine
@@ -413,7 +414,8 @@ export class Enrolment {
    * of BB's daemon with the thread's variables, which BB starts a moment
    * later. The wait counts from `connected`, and `since` says what happened
    * then. A box with no names to take, or in which bb-box finds no daemon,
-   * does not wait. A failure leaves the box enrolled.
+   * does not wait, nor one whose machine BB removes. A failure leaves the
+   * box enrolled.
    */
   async #variables(box: BoxRecord, since: string, connected: number, phases?: Phases): Promise<void> {
     const deadline = connected + this.#variablesWaitMs;
@@ -423,7 +425,7 @@ export class Enrolment {
       if (!script) return;
       for (;;) {
         const current = await this.#deps.boxes.find(box.id);
-        if (!current || current.state !== "ready") return;
+        if (!current || current.state !== "ready" || current.enrol.hostId !== box.enrol.hostId) return;
         const { result } = await this.#deps.boxes.run(box.threadId, box.id, script, { timeoutMs: ACCESS_CHECK_TIMEOUT_MS, waitForEnrolment: false });
         if (result.exitCode === ACCESS_CHECK_EXITS.found || result.exitCode === ACCESS_CHECK_EXITS.noDaemon) return;
         if (result.exitCode !== ACCESS_CHECK_EXITS.waiting) {
