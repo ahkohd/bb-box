@@ -128,7 +128,8 @@ thread takes it.
 A person can watch each desktop box live from the panel and take control of
 its keyboard and mouse. While they hold control, their input goes to the box
 and nobody else's does. Control goes back to the agent when they hand it
-back or close the viewer for a minute.
+back, close the viewer for a minute or bb-box reloads, and the desktop gets
+back the size it had before they took control.
 
 `box_run` with `desktop` starts the command in the desktop session, so it
 can open windows, as when you test an app. On a Mac, only such a command
