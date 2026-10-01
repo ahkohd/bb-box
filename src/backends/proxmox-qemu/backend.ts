@@ -17,8 +17,9 @@
 // The desktop is the VM's console, through the API's VNC proxy. Core runs
 // desktop commands as scheduled tasks in the box user's session, and computer
 // use through Cua's daemon, which runs there elevated, as SSH does. The
-// viewer's size sets the desktop's mode, through a desktop command. Stop and
-// start, and the warm pool, are still to come.
+// viewer's size sets the desktop's mode, through a desktop command. A stop
+// hibernates the VM, and a start resumes it and sets Windows' clock, which
+// the resume leaves behind. The warm pool is still to come.
 
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
@@ -73,6 +74,8 @@ const NEXT_VMID = "next-vmid";
 const READY_TIMEOUT_MS = 180_000;
 /** How long setting the desktop's mode may take, in the desktop session. */
 const RESIZE_TIMEOUT_MS = 15_000;
+/** How long setting Windows' clock may take, over SSH. */
+const CLOCK_TIMEOUT_MS = 30_000;
 /** build.sh --replace swaps the template for its new build, which leaves it missing for a moment. A clone waits this long for it. */
 const TEMPLATE_WAIT_MS = 10_000;
 const TEMPLATE_POLL_MS = 250;
@@ -182,6 +185,16 @@ public static class BbDisplay {
 '@
 $bbRefused = [BbDisplay]::Fit(${width}, ${height})
 if ($bbRefused) { [Console]::Error.WriteLine($bbRefused); exit 1 }`;
+}
+
+/**
+ * Sets Windows' clock to `ms` after the epoch, plus the time PowerShell took
+ * to start. A VM resumed from disk keeps the time it stopped at, and Windows
+ * does not correct it for a while (039).
+ */
+export function setClock(ms: number): string {
+  return `$bbNow = [DateTimeOffset]::FromUnixTimeMilliseconds(${ms}).LocalDateTime + ((Get-Date) - [Diagnostics.Process]::GetCurrentProcess().StartTime)
+Set-Date -Date $bbNow -ErrorAction Stop | Out-Null`;
 }
 
 /** A doctor check's stable ID and its name. */
@@ -470,6 +483,30 @@ export class ProxmoxQemuBackend implements Backend {
     if (!(await this.#still(api, guest, signal))) return null;
     const status = await api.status(this.#vmid(guest), signal);
     return status ? powerOf(status.status) : null;
+  }
+
+  /**
+   * Resumes a hibernated VM, or boots a stopped one, and waits for SSH. Then
+   * sets Windows' clock, which a resume leaves at the time it stopped (039).
+   */
+  async start(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const vmid = this.#vmid(guest);
+    const api = await this.client();
+    const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
+    if (!status) throw gone(vmid);
+    if (status.status !== "running") await api.start(vmid, signal);
+    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal);
+    await this.#setClock(vmid, signal);
+  }
+
+  /** Hibernates the VM, so a start resumes Windows' session as it was, with its apps open (039). */
+  async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const vmid = this.#vmid(guest);
+    const api = await this.client();
+    const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
+    if (!status) throw gone(vmid);
+    await this.#forget(vmid);
+    if (status.status === "running") await api.hibernate(vmid, signal);
   }
 
   /** This install's guests, from the pool listing. Only a guest not yet tagged costs a config read. */
@@ -979,6 +1016,15 @@ export class ProxmoxQemuBackend implements Backend {
       await keys?.ssh.forget(this.#access(vmid));
     } catch (error) {
       this.#context.logError("ssh", error);
+    }
+  }
+
+  /** Sets Windows' clock from BB's server's. */
+  async #setClock(vmid: number, signal?: AbortSignal): Promise<void> {
+    const command = await this.#command(vmid);
+    const result = await command.run(setClock(Date.now()), { timeoutMs: CLOCK_TIMEOUT_MS, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) {
+      throw new Error(`Windows could not set its clock: ${result.stderr.trim() || `exit code ${result.exitCode}.`}`);
     }
   }
 

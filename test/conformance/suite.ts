@@ -671,7 +671,14 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             await backend.start!(guest, signal());
             assert.equal(await backend.power(guest, signal()), "running");
             const { command } = await backend.transports(guest, kind.id);
-            if (command) assert.equal(await command.probe(signal()), true);
+            if (command) {
+              assert.equal(await command.probe(signal()), true);
+              // A VM resumed from disk keeps the time it stopped at, unless the backend sets it (039).
+              const before = Date.now();
+              const result = await command.run(posix ? "date +%s000" : "[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()", { timeoutMs: 30_000, signal: signal() });
+              const off = Number(result.stdout.trim()) - before;
+              assert.ok(off > -5_000 && off < Date.now() - before + 5_000, `the box's clock is within 5 s of the host's, not ${off} ms off`);
+            }
             restartedAt = Date.now();
           });
 

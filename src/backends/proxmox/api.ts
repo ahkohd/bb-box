@@ -325,6 +325,16 @@ export class Proxmox {
     await this.waitTask(upid, signal);
   }
 
+  /**
+   * Suspends a VM to disk: its memory goes to a state volume and it stops,
+   * locked as `suspended`, so its config cannot change. `start` resumes it,
+   * and `destroy` removes it with its state. VMs only.
+   */
+  async hibernate(vmid: number, signal?: AbortSignal): Promise<void> {
+    const upid = await this.#request<string>("POST", this.#guest(vmid, "/status/suspend"), { todisk: 1 }, signal);
+    await this.waitTask(upid, signal);
+  }
+
   /** Null when the guest does not exist. */
   async status(vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
     try {

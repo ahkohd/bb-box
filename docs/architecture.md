@@ -1202,9 +1202,9 @@ Push work to Git or copy it out before releasing a box.
 
 How each backend fits the interface. Proxmox LXC, the SSH host pool, Tart
 and Docker are built. Proxmox QEMU makes Windows boxes, runs their
-commands, shows and resizes their desktops and offers computer use; stop
-and start, its warm pool and file copies come next (#46). The rest are
-planned, and the later-backends research fills in the details.
+commands, shows and resizes their desktops, offers computer use, and
+hibernates them on stop; its warm pool and file copies come next (#46). The
+rest are planned, and the later-backends research fills in the details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1316,13 +1316,13 @@ Notes:
   splits the data), enrol, stream a frame, a Mac's desktop command (in the
   `Aqua` session, with stderr apart from stdout; 030), computer use (the
   Chrome and GTK sequences from the research rig, also run when the Cua pin
-  moves), stop and start where supported (connected to BB again within 3 s
-  of being ready), repeated release, and crash recovery (an interrupted
-  acquire is resumed or released, and `held()` finds every guest). Two
-  installs on one backend leave each other's guests alone, and a box whose
-  reference is reused reads as gone and releases nothing (018). Steps a kind
-  does not support are skipped by its declared capabilities, never by
-  backend name.
+  moves), stop and start where supported (the box's clock right after, and
+  connected to BB again within 3 s of being ready), repeated release, and
+  crash recovery (an interrupted acquire is resumed or released, and
+  `held()` finds every guest). Two installs on one backend leave each
+  other's guests alone, and a box whose reference is reused reads as gone
+  and releases nothing (018). Steps a kind does not support are skipped by
+  its declared capabilities, never by backend name.
 - **Fake backend.** An in-memory backend passes the suite and backs the core's
   own tests.
 - **Setup**, per backend: a short guide and the scripts it runs, which
