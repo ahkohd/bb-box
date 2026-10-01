@@ -667,6 +667,7 @@ test("streams the desktop through socat under docker exec, with the box's VNC pa
   const cpu = await backend.acquire(identity("linux-desktop-cpu", size), null, hooks().hooks, signal());
   const [display] = (await backend.transports(cpu, "linux-desktop-cpu")).displays;
   assert.equal(display?.resize, undefined);
+  assert.deepEqual(display?.minSize, { width: 800, height: 600 });
   assert.deepEqual(await display!.open(signal()), {
     route: {
       type: "command",
@@ -681,6 +682,7 @@ test("streams the desktop through socat under docker exec, with the box's VNC pa
   // Only the GPU desktop resizes through the backend, and only while it is on the GPU.
   const gpu = await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal());
   const [gpuDisplay] = (await backend.transports(gpu, "linux-desktop")).displays;
+  assert.deepEqual(gpuDisplay?.minSize, { width: 800, height: 600 });
   writeFileSync(join(fake.root, "containers", gpu.ref, "run", "bb-box", "display-mode"), "cpu\n");
   await gpuDisplay!.resize!({ width: 1280, height: 800 }, signal());
   await assert.rejects(gpuDisplay!.resize!({ width: 0, height: 800 }, signal()), /cannot be 0 by 800 pixels/);

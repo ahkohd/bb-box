@@ -79,7 +79,7 @@ import {
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import type { Display, DisplaySize, SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
 import {
   FLAVOUR_KINDS,
   LXC_FLAVOURS,
@@ -818,6 +818,7 @@ export class ProxmoxLxcBackend implements Backend {
           };
         },
         ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
+        minSize: MIN_DESKTOP,
       }),
     );
     return {

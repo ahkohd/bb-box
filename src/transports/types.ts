@@ -75,12 +75,16 @@ export interface Display {
   resize?(size: DisplaySize, signal?: AbortSignal): Promise<void>;
   /**
    * The smallest size a viewer may set. Core raises a smaller SetDesktopSize
-   * to it, and the viewer scales the desktop down to fit its pane. Only for a
-   * stream server that passes the size on, and does not answer with the size
-   * it set: noVNC asks again while that differs from its pane.
+   * to it, and the viewer scales the desktop down to fit its pane. Xvnc sets
+   * the raised size and says so, and noVNC asks again while that differs
+   * from its pane, so core sends a raised size asked for again with no
+   * screens. Xvnc refuses that, and QEMU reads only the size.
    */
   readonly minSize?: DisplaySize;
 }
+
+/** The smallest size a viewer sets a Linux or Windows desktop to: their apps are hard to use below it. */
+export const MIN_DESKTOP: DisplaySize = { width: 800, height: 600 };
 
 /** How to reach a box over SSH, for bb-box and for the thread's own machine. */
 export interface SshAccess {

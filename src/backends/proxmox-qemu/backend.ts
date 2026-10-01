@@ -74,7 +74,7 @@ import {
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { desktopScript } from "../../transports/powershell.ts";
-import type { Display, DisplaySize, SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
 import type { QemuConfig } from "./config.ts";
 
 const MiB = 2 ** 20;
@@ -86,13 +86,6 @@ const NEXT_VMID = "next-vmid";
 const READY_TIMEOUT_MS = 180_000;
 /** How long setting the desktop's mode may take, in the desktop session. */
 const RESIZE_TIMEOUT_MS = 15_000;
-/**
- * The smallest desktop a viewer sets: Windows is hard to use below it. QEMU
- * passes a viewer's size on to the display driver, which offers it as a mode
- * if it is at least 640x480. QEMU answers that it passed the size on, not
- * that it set it, so noVNC does not ask again.
- */
-const MIN_DESKTOP = { width: 800, height: 600 };
 /** How long setting Windows' clock may take, over SSH. */
 const CLOCK_TIMEOUT_MS = 30_000;
 /** build.sh --replace swaps the template for its new build, which leaves it missing for a moment. A clone waits this long for it. */
@@ -724,6 +717,7 @@ export class ProxmoxQemuBackend implements Backend {
       label: "Desktop",
       open: (signal) => this.#console(vmid, signal),
       resize: (size, signal) => this.#resize(vmid, command, size, signal),
+      // QEMU passes a viewer's size on to the display driver, which offers it as a mode if it is at least 640x480.
       minSize: MIN_DESKTOP,
     };
     return { command, displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };

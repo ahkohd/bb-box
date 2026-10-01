@@ -3,7 +3,8 @@
 // security type None, and then copies bytes both ways. The viewer's messages
 // are parsed so input from a viewer without control never reaches the box
 // (008, 011), and a resize below the display's smallest size is raised to it.
-// Pixels pass through undecoded.
+// A raised size asked for again goes with no screens, so that Xvnc refuses it
+// and noVNC stops asking. Pixels pass through undecoded.
 
 import { openRoute } from "../transports/route.ts";
 import type { ByteChannel, Display, DisplayAuth } from "../transports/types.ts";
@@ -134,6 +135,8 @@ export class RfbRelay {
   /** Keys this viewer holds down in the box, and the message that releases each. */
   readonly #held = new Map<string, Uint8Array>();
   #pointer = { mask: 0, x: 0, y: 0 };
+  /** The size this viewer's last resize was raised to, until it is asked for again. */
+  #raised: Size | null = null;
   #ended = false;
 
   constructor(options: RelayOptions) {
@@ -241,8 +244,17 @@ export class RfbRelay {
         const min = this.#options.minSize?.();
         const size = { width: Math.max(message.width, min?.width ?? 0), height: Math.max(message.height, min?.height ?? 0) };
         this.#options.onResize?.(size, message.screen);
-        if (size.width !== message.width || size.height !== message.height) return resized(message.bytes, size);
-        break;
+        if (size.width === message.width && size.height === message.height) {
+          this.#raised = null;
+          break;
+        }
+        // Xvnc sets the raised size and says so, and noVNC asks again while
+        // that differs from its pane. So asked for again, the size goes with
+        // no screens: Xvnc refuses that layout and noVNC stops asking. QEMU
+        // reads only the size, so it takes it as before.
+        const again = this.#raised?.width === size.width && this.#raised.height === size.height;
+        this.#raised = again ? null : size;
+        return again ? setDesktopSize(size.width, size.height, null) : resized(message.bytes, size);
       }
     }
     return message.bytes;
