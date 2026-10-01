@@ -34,7 +34,7 @@ import {
   type MachineNature,
   type ReleaseHooks,
 } from "../../src/backends/types.ts";
-import { driverCommand } from "../../src/core/in-box.ts";
+import { MAC_DESKTOP_EXITS, command as inBox, driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
 import { desktopSize, displayOpener, restoreSize } from "../../src/core/relay.ts";
 import { PRESETS, defaultSize, describeSize, kindSizes } from "../../src/core/sizes.ts";
@@ -48,6 +48,8 @@ export type ConformanceCheck =
   | "docker"
   | "display"
   | "computer-use"
+  /** Running a command in a Mac's desktop session, through sudo and `launchctl asuser` (030). */
+  | "desktop-session"
   | "enrol"
   | "stop-start"
   | "recovery"
@@ -595,6 +597,23 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
                 await set(before);
               }
               assert.deepEqual(await desktopSize(open), before);
+            });
+          }
+
+          if (capabilities.os === "macos" && capabilities.displays.length && !capabilities.command?.inDesktopSession) {
+            // The desktop session may come up after the box answers.
+            it("runs a desktop command in the Aqua session, with stdin, stderr apart from stdout, and its exit status", { timeout, skip: skip["desktop-session"] ?? scripts }, async () => {
+              const { command } = need();
+              const script = inBox(capabilities.os, "launchctl managername; cat; echo; echo to-stderr >&2; exit 5", { session: "desktop" });
+              const deadline = Date.now() + 20_000;
+              let result = await command.run(script, { stdin: "hello from stdin", timeoutMs: 30_000 });
+              while (result.exitCode === MAC_DESKTOP_EXITS.noSession && Date.now() < deadline) {
+                await new Promise((resolve) => setTimeout(resolve, 1_000));
+                result = await command.run(script, { stdin: "hello from stdin", timeoutMs: 30_000 });
+              }
+              assert.equal(result.exitCode, 5, result.stderr);
+              assert.equal(result.stdout, "Aqua\nhello from stdin\n", "the command runs in the Aqua session and reads stdin");
+              assert.equal(result.stderr, "to-stderr\n", "stderr stays apart from stdout");
             });
           }
 

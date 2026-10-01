@@ -1217,14 +1217,16 @@ Notes:
   from an env file. For each kind: capacity, acquire to ready with the hooks,
   run a command with 1 MiB of stdin, copy 32 MiB each way (so a transport with
   small limits, such as the QEMU guest agent's 64 KiB of stdin, proves it
-  splits the data), enrol, stream a frame, computer use (the Chrome and GTK
-  sequences from the research rig, also run when the Cua pin moves), stop and
-  start where supported (connected to BB again within 3 s of being ready),
-  repeated release, and crash recovery (an interrupted acquire is resumed or
-  released, and `held()` finds every guest). Two installs on one backend
-  leave each other's guests alone, and a box whose reference is reused
-  reads as gone and releases nothing (018). Steps a kind does not support
-  are skipped by its declared capabilities, never by backend name.
+  splits the data), enrol, stream a frame, a Mac's desktop command (in the
+  `Aqua` session, with stderr apart from stdout; 030), computer use (the
+  Chrome and GTK sequences from the research rig, also run when the Cua pin
+  moves), stop and start where supported (connected to BB again within 3 s
+  of being ready), repeated release, and crash recovery (an interrupted
+  acquire is resumed or released, and `held()` finds every guest). Two
+  installs on one backend leave each other's guests alone, and a box whose
+  reference is reused reads as gone and releases nothing (018). Steps a kind
+  does not support are skipped by its declared capabilities, never by
+  backend name.
 - **Fake backend.** An in-memory backend passes the suite and backs the core's
   own tests.
 - **Setup**, per backend: a short guide and the scripts it runs, which

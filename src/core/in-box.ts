@@ -50,12 +50,41 @@ const LINUX_DESKTOP =
   'export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"; ';
 
 /**
+ * What a macOS desktop command exits with when the box user is not logged in
+ * to the desktop, and when sudo does not allow the wrapper: sysexits'
+ * EX_UNAVAILABLE and EX_NOPERM.
+ */
+export const MAC_DESKTOP_EXITS = { noSession: 69, refused: 77 } as const;
+
+/**
+ * Puts a macOS command in the box user's desktop session (030). sudo gives
+ * `launchctl asuser` the root it needs, and runs the command as the box user
+ * again, with a fresh environment, so `script` sources the env file itself.
+ * A no-op goes through the wrapper first, so a Mac whose sudoers lacks the
+ * rule fails with the rule to add. `sudo -l` would not do: it allows a
+ * command that needs a password.
+ */
+function macDesktop(script: string): string {
+  const wrapper = '/bin/launchctl asuser "$bb_uid" /usr/bin/sudo -n -u "$bb_user" --';
+  return (
+    `bb_uid=$(id -u) bb_user=$(id -un) bb_console=$(stat -f %Su /dev/console 2>/dev/null); ` +
+    `if [ "$bb_console" != "$bb_user" ]; then ` +
+    `printf 'bb-box: there is no desktop session to join: %s is not logged in to the desktop (the console belongs to %s).\\n' "$bb_user" "\${bb_console:-nobody}" >&2; ` +
+    `exit ${MAC_DESKTOP_EXITS.noSession}; fi; ` +
+    `if ! sudo -n ${wrapper} /usr/bin/true </dev/null >/dev/null 2>&1; then ` +
+    `printf 'bb-box: sudo does not let %s run commands in the desktop session. Mac setup adds this rule as /etc/sudoers.d/bb-box-desktop:\\n%s ALL=(root) NOPASSWD: /bin/launchctl asuser %s /usr/bin/sudo -n -u %s -- *\\n' "$bb_user" "$bb_user" "$bb_uid" "$bb_user" >&2; ` +
+    `exit ${MAC_DESKTOP_EXITS.refused}; fi; ` +
+    `exec sudo -n ${wrapper} "\${SHELL:-/bin/sh}" -c ${sh(script)}`
+  );
+}
+
+/**
  * Whether bb-box can put a command in the desktop session of a box with this
- * OS, when its transport runs outside it. macOS needs a LaunchAgent and
- * Windows a scheduled task with /IT, which bb-box does not have yet.
+ * OS, when its transport runs outside it. Windows needs a scheduled task with
+ * /IT, which bb-box does not have yet.
  */
 export function canRunInDesktop(os: GuestOs): boolean {
-  return os === "linux";
+  return os === "linux" || os === "macos";
 }
 
 export interface CommandOptions {
@@ -92,8 +121,9 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
       ? ""
       : `(umask 077 && mkdir -p "$HOME/${posix.dirname(envFile(os))}" && printf '%s' ${sh(options.env)} > ${file}.$$ && mv -f ${file}.$$ ${file}) 2>/dev/null; `;
   const env = `if [ -r ${file} ]; then . ${file}; fi; `;
-  const desktop = options.session === "desktop" ? LINUX_DESKTOP : "";
   const cd = options.cwd ? `cd -- ${sh(options.cwd)} || exit 1; ` : "";
+  if (os === "macos" && options.session === "desktop") return `${write}${macDesktop(`${env}${cd}${script}`)}`;
+  const desktop = options.session === "desktop" ? LINUX_DESKTOP : "";
   if (os !== "linux" || options.timeoutMs === undefined) return `${write}${env}${desktop}${cd}${script}`;
   // Killing the local ssh leaves the command running in the box. GNU timeout
   // gives the script its own process group and stops all of it.

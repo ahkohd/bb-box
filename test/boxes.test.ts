@@ -7,11 +7,12 @@ import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
 import { BackendError, type Backend, type BoxSize, type ReleaseHooks } from "../src/backends/types.ts";
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { BoxError, Boxes, extraFeatures, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs, envScript } from "../src/core/in-box.ts";
+import { ACCESS_CHECK_EXITS, MAC_DESKTOP_EXITS, accessCheck, accessSetup, accessSetupMs, canRunInDesktop, command, envScript } from "../src/core/in-box.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
 import { adminText, boxDetail, boxView, kindViews } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
@@ -1195,6 +1196,70 @@ test("a desktop command runs in the desktop session, and a box without a desktop
   assert.equal((await world.boxes.run(THREAD, desktop.name, 'echo "[$DISPLAY]"')).result.stdout, "[]\n");
   const headless = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await assert.rejects(world.boxes.run(THREAD, headless.name, "true", { session: "desktop" }), /has no desktop/);
+});
+
+test("a macOS desktop command runs through sudo and launchctl asuser, with the thread's environment, stdin and its own exit status", () => {
+  const { uid, username } = userInfo();
+  const dir = tempDir("mac-desktop");
+  const fakes = join(dir, "bin");
+  const home = join(dir, "home");
+  const work = join(dir, "work dir");
+  for (const path of [fakes, home, work]) mkdirSync(path);
+  // As on a Mac: the wrapper starts the command in the desktop session, as
+  // the box user, with a fresh environment.
+  writeFileSync(
+    join(fakes, "sudo"),
+    String.raw`#!/bin/sh
+n=$(ls "$FAKE_LOG" | wc -l | tr -d ' ')
+printf '%s\0' "$@" > "$FAKE_LOG/$n"
+[ -z "$FAKE_REFUSES" ] || { echo 'sudo: a password is required' >&2; exit 1; }
+[ "$1 $2 $3 $4 $5 $6 $7 $8 $9" = "-n /bin/launchctl asuser $(id -u) /usr/bin/sudo -n -u $(id -un) --" ] || exit 1
+shift 9
+exec env -i HOME="$HOME" PATH="$PATH" BBX_SESSION=Aqua "$@"
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(join(fakes, "stat"), `#!/bin/sh\n[ "$*" = "-f %Su /dev/console" ] && printf '%s\\n' "$FAKE_CONSOLE"\n`, { mode: 0o755 });
+  const script = command("macos", 'printf \'%s|%s|%s\\n\' "$BBX_SESSION" "$BBX_ONE" "$PWD"; echo to-stderr >&2; cat; exit 5', {
+    session: "desktop",
+    cwd: work,
+    env: envScript("macos", { BBX_ONE: "one" }),
+  });
+  const zsh = spawnSync("zsh", ["-fc", "command -v zsh"], { encoding: "utf8" }).stdout?.trim();
+  const shells = ["/bin/sh", ...(zsh ? [zsh] : [])];
+  for (const shell of shells) {
+    const run = (env: Record<string, string>) => {
+      const log = tempDir("mac-desktop-log");
+      const result = spawnSync(shell, ["-c", script], {
+        input: "hello\n",
+        encoding: "utf8",
+        env: { PATH: `${fakes}:/usr/bin:/bin`, HOME: home, SHELL: shell, FAKE_LOG: log, FAKE_CONSOLE: username, ...env },
+      });
+      const calls = readdirSync(log)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((name) => readFileSync(join(log, name), "utf8").split("\0").slice(0, -1));
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls };
+    };
+    const ran = run({});
+    assert.deepEqual([ran.status, ran.stdout, ran.stderr], [5, `Aqua|one|${work}\nhello\n`, "to-stderr\n"], shell);
+    const wrapper = ["-n", "/bin/launchctl", "asuser", String(uid), "/usr/bin/sudo", "-n", "-u", username, "--"];
+    assert.deepEqual(ran.calls[0], [...wrapper, "/usr/bin/true"], `${shell}: a no-op checks the wrapper first`);
+    assert.deepEqual(ran.calls[1]!.slice(0, -1), [...wrapper, shell, "-c"], `${shell}: the command runs through the wrapper`);
+
+    const away = run({ FAKE_CONSOLE: "root" });
+    assert.equal(away.status, MAC_DESKTOP_EXITS.noSession, shell);
+    assert.equal(away.stderr, `bb-box: there is no desktop session to join: ${username} is not logged in to the desktop (the console belongs to root).\n`);
+    assert.deepEqual([away.stdout, away.calls.length], ["", 0]);
+
+    const refused = run({ FAKE_REFUSES: "1" });
+    assert.equal(refused.status, MAC_DESKTOP_EXITS.refused, shell);
+    assert.match(refused.stderr, /^bb-box: sudo does not let \S+ run commands in the desktop session\. Mac setup adds this rule as \/etc\/sudoers\.d\/bb-box-desktop:\n/);
+    assert.ok(refused.stderr.endsWith(`\n${username} ALL=(root) NOPASSWD: /bin/launchctl asuser ${uid} /usr/bin/sudo -n -u ${username} -- *\n`), refused.stderr);
+    assert.deepEqual([refused.stdout, refused.calls.length], ["", 1]);
+  }
+  assert.ok(canRunInDesktop("macos"));
+  assert.ok(!canRunInDesktop("windows"));
+  assert.throws(() => command("windows", "Get-Process", { session: "desktop" }), /cannot run commands in a windows desktop session/);
 });
 
 test("a real backend's release records the reset, and a failed reset takes the machine out of service", async () => {
