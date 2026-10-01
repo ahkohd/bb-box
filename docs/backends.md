@@ -293,8 +293,9 @@ node --test test/conformance.test.ts
 - Capacity is one `machines` limit: the machines serving the kind, and how
   many are not free at the size. A machine has a size when it has at least
   its cores, 90% of its memory and, for a disk, that much free under
-  `/home`. Its cores are those a process may use: its CPU set, capped by
-  its cgroup's CPU quota, as the conformance suite measures. Acquire
+  `/home`. Its cores and memory are those a process may use, as the
+  conformance suite measures: its CPU set, capped by its cgroup's CPU
+  quota, and its memory, capped by its cgroup's memory limit. Acquire
   claims the smallest such machine, then one without a whole-machine
   reset, then the one free longest, then the first listed. Capacity first
   gives each acquire that has not claimed the machine its claim would
