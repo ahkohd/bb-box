@@ -5,17 +5,18 @@
 // parseTartSettings, and which bb-box moves into the configuration once.
 //
 // The backend runs macOS VMs, and Linux VMs on arm64 (040), with Tart on one
-// or more Macs. bb-box reaches each Mac over SSH as its host user, runs `tart`
-// there, and reaches each VM through the Mac, since the VMs sit on the Mac's
-// own NAT. Each kind is cloned from a Tart VM on every Mac, prepared by the
-// setup guide.
+// or more Macs, and Windows VMs on arm64 with QEMU (046). bb-box reaches each
+// Mac over SSH as its host user, runs `tart` or QEMU there, and reaches each
+// VM through the Mac, since the VMs sit on the Mac's own NAT, or QEMU's. Each
+// kind is cloned from an image on every Mac, prepared by the setup guide: a
+// Tart VM, or for Windows a directory of QEMU's.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { hostKeysFor } from "../ssh-pool/config.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
-export const TART_KINDS = ["macos", "macos-desktop", "linux-arm64", "linux-arm64-desktop-cpu"] as const;
+export const TART_KINDS = ["macos", "macos-desktop", "linux-arm64", "linux-arm64-desktop-cpu", "windows-arm64-desktop"] as const;
 export type TartKind = (typeof TART_KINDS)[number];
 
 /** Apple's macOS licence and the Virtualization framework allow two macOS VMs per Mac. */
@@ -30,7 +31,7 @@ export interface TartHost {
 }
 
 export interface TartKindConfig {
-  /** The Tart VM on each Mac that boxes of the kind are cloned from, or null when the kind is off. */
+  /** The image on each Mac that boxes of the kind are cloned from, or null when the kind is off: a Tart VM, or QEMU's for Windows. */
   readonly image: string | null;
 }
 
@@ -64,6 +65,7 @@ export const TART_KEYS = {
   desktopImage: "tart-macos-desktop-image",
   linuxImage: "tart-linux-image",
   linuxDesktopImage: "tart-linux-desktop-image",
+  windowsImage: "tart-windows-image",
   vmsPerHost: "tart-vms-per-host",
   reserveMemoryMiB: "tart-reserve-memory-mib",
   reserveDiskGiB: "tart-reserve-disk-gib",
@@ -74,13 +76,15 @@ const IMAGE_KEYS: Readonly<Record<TartKind, string>> = {
   "macos-desktop": TART_KEYS.desktopImage,
   "linux-arm64": TART_KEYS.linuxImage,
   "linux-arm64-desktop-cpu": TART_KEYS.linuxDesktopImage,
+  "windows-arm64-desktop": TART_KEYS.windowsImage,
 };
-/** The macOS kinds have an image by default; the Linux ones are off until given one. */
+/** The macOS kinds have an image by default; the Linux and Windows ones are off until given one. */
 const IMAGE_DEFAULTS: Readonly<Record<TartKind, string>> = {
   macos: TART_DEFAULTS.image,
   "macos-desktop": TART_DEFAULTS.image,
   "linux-arm64": "",
   "linux-arm64-desktop-cpu": "",
+  "windows-arm64-desktop": "",
 };
 
 export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
@@ -143,6 +147,13 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     label: "Tart: Linux desktop image",
     description:
       "The Tart VM on each Mac that linux-arm64-desktop-cpu boxes are cloned from, as setup/tart/prepare-linux-image.sh --desktop builds it (bb-box-linux-desktop). Empty turns them off.",
+    default: "",
+  },
+  [TART_KEYS.windowsImage]: {
+    type: "string",
+    label: "Tart: Windows image",
+    description:
+      "The Windows image on each Mac, in ~/.bb-box/qemu/images, that windows-arm64-desktop boxes are made from, run by QEMU. Empty turns them off.",
     default: "",
   },
   [TART_KEYS.vmsPerHost]: {
@@ -249,10 +260,10 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
   const kinds = {} as Record<TartKind, TartKindConfig>;
   for (const kind of TART_KINDS) {
     const image = text(values, IMAGE_KEYS[kind], IMAGE_DEFAULTS[kind]);
-    if (image && !VM_NAME.test(image)) problem(IMAGE_KEYS[kind], `Tart: the ${kind} image "${image}" is not a Tart VM name bb-box can use.`);
+    if (image && !VM_NAME.test(image)) problem(IMAGE_KEYS[kind], `Tart: the ${kind} image "${image}" is not ${kind.startsWith("windows") ? "an image" : "a Tart VM"} name bb-box can use.`);
     kinds[kind] = { image: image || null };
   }
-  if (TART_KINDS.every((kind) => !kinds[kind].image)) problem(TART_KEYS.macosImage, "Tart: give an image for macOS or Linux boxes.");
+  if (TART_KINDS.every((kind) => !kinds[kind].image)) problem(TART_KEYS.macosImage, "Tart: give an image for macOS, Linux or Windows boxes.");
 
   const vmsPerHost = number(values, TART_KEYS.vmsPerHost, MACOS_VMS_PER_MAC);
   if (!Number.isInteger(vmsPerHost) || vmsPerHost < 1 || vmsPerHost > MACOS_VMS_PER_MAC) {
@@ -281,6 +292,7 @@ const IMAGE_LABELS: Readonly<Record<string, string>> = {
   [TART_KEYS.desktopImage]: "macOS desktop image",
   [TART_KEYS.linuxImage]: "Linux image (arm64)",
   [TART_KEYS.linuxDesktopImage]: "Linux desktop image (arm64)",
+  [TART_KEYS.windowsImage]: "Windows image (arm64)",
 };
 
 /** The backend's fields in bb-box's configuration: the settings above without the prefix, but the Macs. */
@@ -291,6 +303,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.desktopImage, "boxes"],
     [TART_KEYS.linuxImage, "boxes"],
     [TART_KEYS.linuxDesktopImage, "boxes"],
+    [TART_KEYS.windowsImage, "boxes"],
     [TART_KEYS.vmUser, "advanced"],
     [TART_KEYS.vmsPerHost, "advanced"],
     [TART_KEYS.reserveMemoryMiB, "advanced"],

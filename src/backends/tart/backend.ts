@@ -20,6 +20,11 @@
 //   Tart VNC server, and no warm pool.
 // - A VM's address can change when it starts again, so bb-box asks the Mac
 //   for it when it does not know it, and forgets it when the VM stops.
+// - Windows boxes (046) are VMs QEMU runs on Apple's Hypervisor framework
+//   (qemu.ts). Each has two ports on the Mac's loopback, for SSH and QEMU's
+//   VNC server, reached through the Mac. Stop saves its memory to a file and
+//   start restores it. A running one counts its memory and QEMU's own, but
+//   not against the two macOS VMs.
 
 import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
@@ -51,6 +56,7 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { ReadyPool } from "../pool.ts";
+import { CUA_PIPE, setClock } from "../windows.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
   claimScript,
@@ -79,6 +85,19 @@ import {
   type HostState,
   type VmConfig,
 } from "./host.ts";
+import {
+  parseQemuState,
+  parseQemuVm,
+  qemuCloneScript,
+  qemuDeleteScript,
+  qemuDiscardScript,
+  qemuPowerScript,
+  qemuStartScript,
+  qemuStateBody,
+  qemuStopScript,
+  type QemuState,
+  type QemuVm,
+} from "./qemu.ts";
 
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
@@ -101,10 +120,28 @@ const DISPLAY_AUTH_FILE = "/run/bb-box/Xauthority";
 /** The Cua Driver the Linux desktop image pins (desktop-pins.tsv), run by the box user's service. */
 const LINUX_CUA: ComputerUse = { driver: "cua", version: "0.28.3", socket: `/home/${LINUX_USER}/.cache/cua-driver/cua-driver.sock` };
 
-/** The guest OS of a Tart kind: linux-arm64 and its kin, or macOS. */
+/** The user Windows boxes work as: an administrator, whose SSH session is elevated (039). */
+const WINDOWS_USER = "box";
+const WINDOWS_READY_TIMEOUT_MS = 3 * 60_000;
+const WINDOWS_COMMAND: CommandCapability = { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true };
+/** Cua Driver in the Windows image, on its named pipe, as on Proxmox (039). */
+const WINDOWS_CUA: ComputerUse = { driver: "cua", version: CUA_VERSION, socket: CUA_PIPE };
+/** What QEMU takes of the Mac's memory beyond a running Windows VM's own (046). */
+const QEMU_OVERHEAD_MIB = 2048;
+
+/** The guest OS of a Tart kind: linux-arm64 and its kin, windows-arm64-desktop, or macOS. */
 export function guestOsOf(kind: string): GuestOs {
+  if (kind.startsWith("windows")) return "windows";
   return kind.startsWith("linux") ? "linux" : "macos";
 }
+
+/** What a box takes of its Mac's memory while it runs: a Windows box's QEMU takes more than the box's memory. */
+function footprint(kind: string, size: BoxSize): number {
+  return size.memoryMiB + (guestOsOf(kind) === "windows" ? QEMU_OVERHEAD_MIB : 0);
+}
+
+/** A Mac's state: Tart's VMs and the Mac's own (host.ts), and QEMU's VMs (qemu.ts). */
+type MacState = HostState & { readonly qemu: QemuState };
 
 type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 
@@ -121,10 +158,11 @@ interface SshKeys {
   readonly generated: boolean;
 }
 
-/** A VM bb-box is starting on a Mac, counted against the Mac until Tart lists it running. Keyed by the VM. */
+/** A VM bb-box is starting on a Mac, counted against the Mac until Tart or QEMU runs it. Keyed by the VM. */
 interface Placing {
   readonly host: string;
   readonly vm: string;
+  /** What it takes of the Mac's memory (footprint). */
   readonly memoryMiB: number;
   /** A macOS VM, which counts against the Mac's two. */
   readonly macos: boolean;
@@ -284,6 +322,25 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         enrol: true,
       },
       readyTimeoutMs: READY_TIMEOUT_MS,
+    },
+    "windows-arm64-desktop": {
+      id: "windows-arm64-desktop",
+      label: "Windows desktop on arm64",
+      description:
+        "A Windows 11 VM on arm64, on a Mac with Apple silicon, for Windows apps, browsers and builds, with its desktop shown in the panel and computer use. x64 apps run under Windows' emulation, more slowly; x64 drivers do not. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running. A desktop command runs unelevated, and what it opens stays open.",
+      requires: [],
+      capabilities: {
+        os: "windows",
+        arch: "arm64",
+        gpu: false,
+        features: [],
+        command: WINDOWS_COMMAND,
+        // QEMU's VNC server, at the mode Windows boots at.
+        displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
+        computerUse: WINDOWS_CUA,
+        enrol: false,
+      },
+      readyTimeoutMs: WINDOWS_READY_TIMEOUT_MS,
     },
   };
   return TART_KINDS.filter((kind) => config.kinds[kind].image).map((kind) => kinds[kind]);
@@ -456,7 +513,7 @@ export class TartBackend implements Backend {
     const placed = [...this.#placing.values()];
     const unplaced: Unplaced = {
       count: Math.max(0, pending.filter((other) => guestOsOf(other.kind) === "macos").length - placed.filter((other) => other.macos).length),
-      memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
+      memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + footprint(other.kind, other.size), 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
     };
     const os = guestOsOf(kind);
     const hosts = this.#on().map((host) => this.#room(host, states.get(host.name)!, size, unplaced, new Set(), os));
@@ -479,7 +536,7 @@ export class TartBackend implements Backend {
   }
 
   /** Each Mac's state, or the error it gave. */
-  async #states(signal?: AbortSignal): Promise<Map<string, HostState | Error>> {
+  async #states(signal?: AbortSignal): Promise<Map<string, MacState | Error>> {
     const entries = await Promise.all(
       this.#config.hosts.map(async (host) => [host.name, await this.#state(host, signal).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))))] as const),
     );
@@ -488,12 +545,13 @@ export class TartBackend implements Backend {
 
   /**
    * Whether a box of `size` fits on the Mac, and if not, why, with what to
-   * do. VMs `yielding` count as gone. A Linux VM (`os`) does not count
-   * against the Mac's two macOS VMs.
+   * do. VMs `yielding` count as gone. A Linux or Windows VM (`os`) does not
+   * count against the Mac's two macOS VMs, and a Windows VM's QEMU takes
+   * memory of its own.
    */
   #room(
     host: TartHost,
-    state: HostState | Error,
+    state: MacState | Error,
     size: BoxSize,
     unplaced: Unplaced = NONE_UNPLACED,
     yielding: ReadonlySet<string> = new Set(),
@@ -503,11 +561,19 @@ export class TartBackend implements Backend {
     // Every running VM takes memory; only macOS VMs count against Apple's two.
     const running = state.vms.filter((vm) => vm.running && !yielding.has(vm.name));
     const macos = running.filter((vm) => (state.configs.get(vm.name)?.os ?? "darwin") === "darwin");
-    const placing = [...this.#placing.values()].filter((other) => other.host === host.name && !yielding.has(other.vm) && !running.some((vm) => vm.name === other.vm));
+    const windows = [...state.qemu.vms].filter(([name, vm]) => vm.power === "running" && !yielding.has(name));
+    const placing = [...this.#placing.values()].filter(
+      (other) => other.host === host.name && !yielding.has(other.vm) && !running.some((vm) => vm.name === other.vm) && !windows.some(([name]) => name === other.vm),
+    );
     const starting = placing.filter((other) => other.macos).length + unplaced.count;
     const memoryUsed =
-      running.reduce((sum, vm) => sum + (state.configs.get(vm.name)?.memoryMiB ?? 0), 0) + placing.reduce((sum, other) => sum + other.memoryMiB, 0) + unplaced.memoryMiB;
+      running.reduce((sum, vm) => sum + (state.configs.get(vm.name)?.memoryMiB ?? 0), 0) +
+      windows.reduce((sum, [, vm]) => sum + vm.memoryMiB + QEMU_OVERHEAD_MIB, 0) +
+      placing.reduce((sum, other) => sum + other.memoryMiB, 0) +
+      unplaced.memoryMiB;
     const memoryFree = state.memoryMiB - memoryUsed;
+    const needed = os === "windows" ? size.memoryMiB + QEMU_OVERHEAD_MIB : size.memoryMiB;
+    const image = this.#config.kinds["windows-arm64-desktop"].image;
     const reserve = this.#config.reserve;
     const diskReserveMiB = reserve.diskGiB * MiB_PER_GiB;
     const limits: Limit[] = [
@@ -521,14 +587,19 @@ export class TartBackend implements Backend {
       why = `a Tart box keeps its image's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk yet. Ask for the base disk`;
     } else if (state.cpus && size.cores > state.cpus) {
       why = `${host.name} has ${state.cpus} cores, fewer than the ${size.cores} asked for. Ask for at most ${state.cpus} cores`;
+    } else if (os === "windows" && !state.qemu.version) {
+      why = `${host.name} has no QEMU on the PATH of ${host.user}'s SSH sessions, which Windows boxes need. Install QEMU there, with Homebrew or Nix`;
+    } else if (os === "windows" && !state.qemu.image) {
+      why = `${host.name} has no Windows image ${image ?? ""} in ~/.bb-box/qemu/images. Prepare it there, or set the Windows image in bb-box's settings`;
     } else if (os === "macos" && macos.length + starting >= this.#config.vmsPerHost) {
       const names = macos.map((vm) => vm.name).join(", ");
       why =
         `${host.name} runs ${macos.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}. ` +
         "Release or stop a macOS box, or stop another VM there";
-    } else if (memoryFree - size.memoryMiB < reserve.memoryMiB) {
+    } else if (memoryFree - needed < reserve.memoryMiB) {
+      const box = os === "windows" ? `${formatMiB(size.memoryMiB)}, and ${formatMiB(QEMU_OVERHEAD_MIB)} for QEMU,` : formatMiB(size.memoryMiB);
       why =
-        `${host.name} has ${formatMiB(Math.max(0, memoryFree))} of memory free, and a box with ${formatMiB(size.memoryMiB)} would leave less than the ${formatMiB(reserve.memoryMiB)} kept free. ` +
+        `${host.name} has ${formatMiB(Math.max(0, memoryFree))} of memory free, and a box with ${box} would leave less than the ${formatMiB(reserve.memoryMiB)} kept free. ` +
         "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings";
     } else if (state.disk.freeMiB < diskReserveMiB) {
       why = `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than the ${formatMiB(diskReserveMiB)} kept free. Release boxes or free some space`;
@@ -567,7 +638,7 @@ export class TartBackend implements Backend {
       const on = this.#on();
       const os = guestOsOf(box.kind);
       const rooms = on.map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size, NONE_UNPLACED, new Set(), os) }));
-      const count = (host: TartHost, vm: string) => this.#placing.set(vm, { host: host.name, vm, memoryMiB: box.size.memoryMiB, macos: os === "macos" });
+      const count = (host: TartHost, vm: string) => this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(box.kind, box.size), macos: os === "macos" });
       for (const room of rooms) {
         const state = states.get(room.host.name)!;
         if (!room.capacity.ok || state instanceof Error) continue;
@@ -620,14 +691,8 @@ export class TartBackend implements Backend {
         hooks.timing(name, Math.round(performance.now() - started));
       }
     };
-    const owner = ownerText({
-      install: this.#context.installId,
-      kind: box.kind,
-      box: box.boxId,
-      thread: box.threadId,
-      name: box.name,
-      created: box.createdAt,
-    });
+    if (os === "windows") return this.#acquireWindows(box, previous, image, deadline, hooks, step, signal);
+    const owner = this.#owner(box);
     let placement: Exclude<Placement, { how: "wait" }> | null = await this.#previous(box, previous, signal);
     if (placement) this.#placing.set(placement.vm, { host: placement.host.name, vm: placement.vm, memoryMiB: box.size.memoryMiB, macos: os === "macos" });
     let started = false;
@@ -657,7 +722,7 @@ export class TartBackend implements Backend {
           owned = true;
           await step("clone", () => this.#run(host, cloneScript(image, vm, box.size.cores, box.size.memoryMiB), { timeoutMs: 10 * 60_000, signal }));
           await starting();
-          await step("start", () => this.#start(host, vm, deadline, signal));
+          await step("start", () => this.#start(host, vm, os, deadline, signal));
           address = await step("network", () => this.#address(host, vm, deadline, signal));
         } else if (placement.how === "adopt") {
           const fill = placement.fill;
@@ -682,10 +747,10 @@ export class TartBackend implements Backend {
           }
           owned = true;
           await starting();
-          await step("start", () => this.#start(host, vm, deadline, signal, false));
+          await step("start", () => this.#start(host, vm, os, deadline, signal, false));
           address = await step("network", () => this.#address(host, vm, deadline, signal));
         }
-        await step("ssh", () => this.#waitReady(host, vm, os, address, deadline, signal));
+        await step("ssh", async () => this.#waitReady(host, vm, this.#vm(await this.#mac(host), address, os), os, deadline, signal));
         if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
         await step("identify", () => this.#identify(host, address, vm, os, signal));
         await step("name", () => this.#rename(host, address, vm, os, box.name, signal));
@@ -706,6 +771,63 @@ export class TartBackend implements Backend {
   }
 
   /**
+   * Acquires a Windows box (046): claims its VM, bb-box-<box ID>, makes its
+   * overlay and ports, starts QEMU, and waits for SSH through the Mac. The
+   * VM keeps the clock its image set, so it is set only after a restore.
+   */
+  async #acquireWindows(
+    box: BoxIdentity,
+    previous: Guest | null,
+    image: string,
+    deadline: number,
+    hooks: AcquireHooks,
+    step: Step,
+    signal: AbortSignal,
+  ): Promise<Guest> {
+    const vm = vmName(box.boxId);
+    // A restarted acquire goes on with the VM it claimed.
+    let host = previous?.ref === vm ? this.#hostNamed(previous.host) : null;
+    if (host) this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(box.kind, box.size), macos: false });
+    else host = (await step("place", () => this.#placeBox(box, signal))).host;
+    const on = host;
+    const guest = (made: QemuVm | null): Guest => ({
+      ref: vm,
+      host: on.name,
+      address: null,
+      size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: null } : null,
+      data: made ? { box: box.boxId, os: "windows", ssh: made.ssh, vnc: made.vnc } : { box: box.boxId, os: "windows" },
+    });
+    let owned = false;
+    let made: QemuVm | null = null;
+    try {
+      await hooks.claim(guest(null));
+      const claimed = (await this.#run(on, claimScript(vm, this.#owner(box)), { signal })).stdout.trim();
+      if (claimed !== "claimed") {
+        const fields = parseFields(claimed);
+        if (fields.install !== this.#context.installId || fields.box !== box.boxId) {
+          throw new Error(`VM ${vm} on ${on.name} belongs to another box, so bb-box left it alone.`);
+        }
+      }
+      owned = true;
+      const clone = await step("clone", () => this.#run(on, qemuCloneScript(image, vm, box.size.cores, box.size.memoryMiB), { timeoutMs: 120_000, signal }));
+      made = parseQemuVm(clone.stdout);
+      if (!made) throw new Error(`QEMU's VM ${vm} on ${on.name} has no whole config: ${clone.stdout.trim() || "nothing"}`);
+      const ports = made;
+      await hooks.starting();
+      await step("start", () => this.#start(on, vm, "windows", deadline, signal));
+      await step("ssh", async () => this.#waitReady(on, vm, this.#windows(await this.#mac(on), ports.ssh), "windows", deadline, signal));
+      // Claimed again, so the box's record has the ports and size as it becomes ready.
+      await hooks.claim(guest(made));
+      return guest(made);
+    } catch (error) {
+      if (owned) await this.#delete(on, vm, "windows", box.boxId, undefined, made?.ssh).catch((cause) => this.#context.logError("release after a failed acquire", cause));
+      throw error;
+    } finally {
+      this.#placing.delete(vm);
+    }
+  }
+
+  /**
    * The VM a restarted acquire made or held: bb-box-<box ID>, or a warm VM
    * whose owner file names the box (it was held before the restart). A warm
    * VM still marked warm was not held, and the acquire starts over.
@@ -722,7 +844,7 @@ export class TartBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const host = this.#hostOf(guest);
     const started = performance.now();
-    await this.#delete(host, guest.ref, this.#osOf(guest), this.#boxOf(guest), signal);
+    await this.#delete(host, guest.ref, this.#osOf(guest), this.#boxOf(guest), signal, this.#sshPort(guest));
     hooks.timing("delete", Math.round(performance.now() - started));
   }
 
@@ -731,7 +853,8 @@ export class TartBackend implements Backend {
     if (!host) return "unknown";
     let result: RunResult;
     try {
-      result = await this.#run(host, powerScript(guest.ref, this.#context.installId, this.#boxOf(guest)), { timeoutMs: 30_000, signal });
+      const script = this.#osOf(guest) === "windows" ? qemuPowerScript : powerScript;
+      result = await this.#run(host, script(guest.ref, this.#context.installId, this.#boxOf(guest)), { timeoutMs: 30_000, signal });
     } catch (error) {
       if (signal?.aborted) throw error;
       return "unknown";
@@ -743,13 +866,21 @@ export class TartBackend implements Backend {
 
   async start(guest: Guest, signal?: AbortSignal): Promise<void> {
     const host = this.#hostOf(guest);
-    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
+    const os = this.#osOf(guest);
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? (os === "windows" ? WINDOWS_READY_TIMEOUT_MS : READY_TIMEOUT_MS));
     if ((await this.power(guest, signal)) === null) throw this.#gone(guest);
     this.#addresses.delete(guest.ref);
-    const os = this.#osOf(guest);
-    await this.#start(host, guest.ref, deadline, signal, true, this.#boxOf(guest));
+    await this.#start(host, guest.ref, os, deadline, signal, true, this.#boxOf(guest));
+    if (os === "windows") {
+      // A restore leaves Windows' clock at the time it stopped (046).
+      const { ssh } = await this.#keys();
+      const access = this.#windows(await this.#mac(host), (await this.#ports(host, guest, signal)).ssh);
+      await this.#waitReady(host, guest.ref, access, os, deadline, signal);
+      await setClock(new SshTransport(ssh, access, os), signal);
+      return;
+    }
     const address = await this.#address(host, guest.ref, deadline, signal);
-    await this.#waitReady(host, guest.ref, os, address, deadline, signal);
+    await this.#waitReady(host, guest.ref, this.#vm(await this.#mac(host), address, os), os, deadline, signal);
     await this.#identify(host, address, guest.ref, os, signal);
     if (os === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
   }
@@ -759,6 +890,14 @@ export class TartBackend implements Backend {
     // A Linux VM shuts itself down, and the Mac waits for it; one that cannot be asked is stopped.
     // Only this install's box is asked, and only when it runs: another install's is "gone" (stopScript).
     const os = this.#osOf(guest);
+    if (os === "windows") {
+      // QEMU saves the VM, and a start restores it (046).
+      const port = this.#sshPort(guest) ?? (await this.#ports(host, guest, signal).catch(() => null))?.ssh ?? null;
+      await this.#forget(host, guest.ref, os, port);
+      const result = await this.#run(host, qemuStopScript(guest.ref, this.#context.installId, this.#boxOf(guest)), { timeoutMs: 240_000, signal });
+      if (result.stdout.trim() === "gone") throw this.#gone(guest);
+      return;
+    }
     let how: "suspend" | "stop" | "shutdown" = "suspend";
     if (os === "linux") {
       const power = await this.power(guest, signal);
@@ -777,8 +916,7 @@ export class TartBackend implements Backend {
    */
   async relabel(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void> {
     const host = this.#hostOf(guest);
-    const owner = ownerText({ install: this.#context.installId, kind: box.kind, box: box.boxId, thread: box.threadId, name: box.name, created: box.createdAt });
-    const result = (await this.#run(host, relabelScript(guest.ref, this.#context.installId, box.boxId, owner), { signal })).stdout.trim();
+    const result = (await this.#run(host, relabelScript(guest.ref, this.#context.installId, box.boxId, this.#owner(box)), { signal })).stdout.trim();
     if (result !== "relabelled") throw new Error(`The owner file of ${guest.ref} on ${host.name} does not name box ${box.boxId}.`);
     if (from !== box.name && guest.address) await this.#name(host, guest.address, guest.ref, this.#osOf(guest), box.name, signal);
   }
@@ -801,6 +939,20 @@ export class TartBackend implements Backend {
         const warm = warmState(fields);
         if (warm === "warm" || (warm === "filling" && this.#filling.has(vm))) continue;
         const owner = ownerOf(fields);
+        if (fields.engine === "qemu") {
+          // A Windows VM not made yet, after an acquire cut short before its clone, counts as stopped.
+          const made = state.qemu.vms.get(vm);
+          held.push({
+            ref: vm,
+            host: host.name,
+            address: null,
+            size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: null } : null,
+            data: owner ? { box: owner.boxId, os: "windows", ...(made ? { ssh: made.ssh, vnc: made.vnc } : {}) } : { os: "windows" },
+            owner,
+            power: made ? powerOf(made.power) : "stopped",
+          });
+          continue;
+        }
         const listed = state.vms.find((candidate) => candidate.name === vm);
         held.push({
           ref: vm,
@@ -902,8 +1054,7 @@ export class TartBackend implements Backend {
   async #hold(member: PoolMember, box: BoxIdentity, signal?: AbortSignal): Promise<void> {
     const host = this.#hostNamed(member.host);
     if (!host) throw new Error(`Mac ${member.host} is not in bb-box's settings.`);
-    const owner = ownerText({ install: this.#context.installId, kind: box.kind, box: box.boxId, thread: box.threadId, name: box.name, created: box.createdAt });
-    const held = (await this.#run(host, holdScript(member.ref, this.#context.installId, "warm", owner), { signal })).stdout.trim();
+    const held = (await this.#run(host, holdScript(member.ref, this.#context.installId, "warm", this.#owner(box)), { signal })).stdout.trim();
     if (held !== "held") throw new Error(`The warm VM ${member.ref} on ${host.name} is no longer free.`);
   }
 
@@ -1006,9 +1157,9 @@ export class TartBackend implements Backend {
       const claimed = (await this.#run(host, claimScript(vm, owner), { signal: fillSignal })).stdout.trim();
       if (claimed !== "claimed") throw new Error(`Warm VM ${vm} on ${host.name} is already there.`);
       await this.#run(host, cloneScript(pool.image, vm, pool.size.cores, pool.size.memoryMiB), { timeoutMs: 10 * 60_000, signal: fillSignal });
-      await this.#start(host, vm, deadline, fillSignal, false);
+      await this.#start(host, vm, "macos", deadline, fillSignal, false);
       const address = await this.#address(host, vm, deadline, fillSignal);
-      await this.#waitReady(host, vm, "macos", address, deadline, fillSignal);
+      await this.#waitReady(host, vm, this.#vm(await this.#mac(host), address), "macos", deadline, fillSignal);
       await this.#identify(host, address, vm, "macos", fillSignal);
       const { ssh } = await this.#keys();
       const desktop = await new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos").run(desktopScript(), {
@@ -1048,6 +1199,20 @@ export class TartBackend implements Backend {
     const host = this.#hostOf(guest);
     const { ssh } = await this.#keys();
     const mac = await this.#mac(host);
+    const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
+    if (guestOsOf(kind) === "windows") {
+      const ports = await this.#ports(host, guest);
+      const access = this.#windows(mac, ports.ssh);
+      const displays = (capabilities?.displays ?? []).map(
+        (display): Display => ({
+          ...display,
+          label: "Desktop",
+          // QEMU's VNC server listens on the Mac's loopback only, so it asks for no password.
+          open: async () => ({ route: ssh.route(mac, ports.vnc), auth: { type: "none" } }),
+        }),
+      );
+      return { command: new SshTransport(ssh, access, "windows"), displays, access: { ssh: access, dockerHost: null } };
+    }
     let address: string | null = this.#addresses.get(guest.ref) ?? null;
     if (!address) {
       address = (await this.#lookup(host, guest.ref).catch(() => null)) ?? guest.address;
@@ -1056,7 +1221,6 @@ export class TartBackend implements Backend {
     const os = guestOsOf(kind);
     const access = this.#vm(mac, address, os);
     const command = new SshTransport(ssh, access, os);
-    const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
     const displays = (capabilities?.displays ?? []).map(
       (display): Display => ({
         ...display,
@@ -1088,7 +1252,7 @@ export class TartBackend implements Backend {
       if (keys.publicKey) {
         push("tart.ssh-key", "SSH key", "ok", keys.generated ? "bb-box made a key; its public key is below." : "From bb-box's settings; its public key is below.");
         notes.push(
-          `Each Mac's user, user ${this.#config.ssh.vmUser} in each macOS image and user ${LINUX_USER} in the Linux image, must accept this SSH key in ~/.ssh/authorized_keys: ${keys.publicKey}`,
+          `Each Mac's user, user ${this.#config.ssh.vmUser} in each macOS image and user ${LINUX_USER} in the Linux and Windows images, must accept this SSH key in ~/.ssh/authorized_keys: ${keys.publicKey}`,
         );
       } else {
         push("tart.ssh-key", "SSH key", "fail", "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole private key, or clear the setting so bb-box makes one.");
@@ -1100,12 +1264,14 @@ export class TartBackend implements Backend {
     if (!this.#config.hosts.length) {
       push("tart.hosts", "Macs", "fail", "There are no Macs yet.", "Add a Mac, with its address, user and host key, as setup/tart/README.md says.");
     }
-    const states = keys ? await this.#states(signal) : new Map<string, HostState | Error>();
+    const states = keys ? await this.#states(signal) : new Map<string, MacState | Error>();
     const others = new Map<string, number>();
+    const tart = this.#tart();
+    const windowsImage = this.#config.kinds["windows-arm64-desktop"].image;
     for (const host of this.#config.hosts) {
       const id = `host.${host.name}`;
       const name = `Mac ${host.name}`;
-      const images = TART_KINDS.filter((kind) => this.#config.kinds[kind].image);
+      const images = TART_KINDS.filter((kind) => guestOsOf(kind) !== "windows" && this.#config.kinds[kind].image);
       const state = states.get(host.name);
       if (!state || state instanceof Error) {
         push(
@@ -1113,16 +1279,22 @@ export class TartBackend implements Backend {
           name,
           state ? "fail" : "skipped",
           state ? state.message : "Skipped until the checks above pass.",
-          state ? `Check that ${host.user}@${host.address} accepts bb-box's key over SSH, that its host key is in bb-box's settings, and that Tart is installed (setup/tart/README.md).` : null,
+          state
+            ? `Check that ${host.user}@${host.address} accepts bb-box's key over SSH${tart ? ", that its host key is in bb-box's settings, and that Tart is installed" : " and that its host key is in bb-box's settings"} (setup/tart/README.md).`
+            : null,
         );
-        for (const kind of images) push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "skipped", "Skipped until the checks above pass.");
+        if (windowsImage) push(`qemu.${host.name}`, `QEMU on ${host.name}`, "skipped", "Skipped until the checks above pass.");
+        for (const kind of [...images, ...(windowsImage ? (["windows-arm64-desktop"] as const) : [])]) {
+          push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "skipped", "Skipped until the checks above pass.");
+        }
         continue;
       }
       if (state.arch !== "arm64") {
         push(id, name, "fail", `${host.name} is ${state.arch || "not Apple silicon"}; Tart runs macOS VMs on Apple silicon only.`, "Use a Mac with Apple silicon.");
       } else {
-        push(id, name, "ok", `macOS ${state.macos} on Apple silicon, Tart ${state.version}.`);
+        push(id, name, "ok", `macOS ${state.macos} on Apple silicon${tart ? `, Tart ${state.version}` : ""}.`);
       }
+      if (windowsImage) this.#doctorQemu(host, state.qemu, windowsImage, push);
       for (const kind of images) {
         const image = this.#config.kinds[kind].image!;
         const listed = state.vms.find((vm) => vm.name === image);
@@ -1158,13 +1330,49 @@ export class TartBackend implements Backend {
     }
     const ok = checks.every((check) => check.status !== "fail");
     const first = checks.find((check) => check.status === "fail");
-    const answering = [...states.values()].find((state): state is HostState => !(state instanceof Error));
+    const answering = [...states.values()].find((state): state is MacState => !(state instanceof Error));
+    const engines = [...(tart ? [`Tart ${answering?.version || "?"}`] : []), ...(windowsImage ? [`QEMU ${answering?.qemu.version || "?"}`] : [])].join(" and ");
     return {
       ok,
-      summary: ok ? `Tart ${answering?.version ?? "?"} on ${this.#config.hosts.map((host) => host.name).join(", ")}` : `${first!.name}: ${first!.detail}`,
+      summary: ok ? `${engines} on ${this.#config.hosts.map((host) => host.name).join(", ")}` : `${first!.name}: ${first!.detail}`,
       checks,
       notes,
     };
+  }
+
+  /** The doctor's checks of QEMU and the Windows image on a Mac that answered (046). */
+  #doctorQemu(
+    host: TartHost,
+    qemu: QemuState,
+    image: string,
+    push: (id: string, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
+  ): void {
+    const id = `qemu.${host.name}`;
+    const name = `QEMU on ${host.name}`;
+    if (!qemu.version) {
+      push(id, name, "fail", `${host.name} has no qemu-system-aarch64 on the PATH of ${host.user}'s SSH sessions.`, "Install QEMU on the Mac, with Homebrew or Nix.");
+    } else if (!qemu.hvf) {
+      push(id, name, "fail", `QEMU ${qemu.version} is there, but ${host.name} has no Hypervisor framework: kern.hv_support is not 1.`, "Use a Mac with Apple silicon, not a VM.");
+    } else if (!qemu.firmware) {
+      push(id, name, "fail", `QEMU ${qemu.version} has no UEFI firmware, edk2-aarch64-code.fd, in its share/qemu.`, "Install a QEMU that has its firmware, as Homebrew's and Nix's do.");
+    } else {
+      push(id, name, "ok", `QEMU ${qemu.version}, with the Hypervisor framework and its UEFI firmware.`);
+    }
+    const imageId = `image.${host.name}.windows-arm64-desktop`;
+    const imageName = `windows-arm64-desktop image on ${host.name}`;
+    if (!qemu.image) {
+      push(imageId, imageName, "fail", `${host.name} has no Windows image ${image} in ~/.bb-box/qemu/images.`, "Prepare it on the Mac, or set the Windows image in bb-box's settings.");
+    } else if (!qemu.image.readOnly) {
+      push(
+        imageId,
+        imageName,
+        "warn",
+        `Build ${qemu.image.build} of ${image} is writable, and every box's disk is an overlay on it, which a change to it breaks.`,
+        `Make it read-only: chmod a-w ~/.bb-box/qemu/images/${image}/${qemu.image.build}/disk.qcow2`,
+      );
+    } else {
+      push(imageId, imageName, "ok", `${image}, build ${qemu.image.build}.`);
+    }
   }
 
   async dispose(): Promise<void> {
@@ -1206,9 +1414,47 @@ export class TartBackend implements Backend {
     return { host: address, port: 22, user: os === "linux" ? LINUX_USER : this.#config.ssh.vmUser, hostKeys: [], jump: mac };
   }
 
-  /** A box's guest OS, from its data: a Linux box's says so (acquire). */
+  /** SSH to a Windows VM through its Mac, at the VM's port on the Mac's loopback. */
+  #windows(mac: SshAccess, port: number): SshAccess {
+    return { host: "127.0.0.1", port, user: WINDOWS_USER, hostKeys: [], jump: mac };
+  }
+
+  /** A box's guest OS, from its data: a Linux or Windows box's says so (acquire). */
   #osOf(guest: Guest): GuestOs {
-    return guest.data?.os === "linux" ? "linux" : "macos";
+    return guest.data?.os === "linux" || guest.data?.os === "windows" ? guest.data.os : "macos";
+  }
+
+  /** A Windows box's SSH port on its Mac, from its data. */
+  #sshPort(guest: Guest): number | null {
+    return typeof guest.data?.ssh === "number" ? guest.data.ssh : null;
+  }
+
+  /** A Windows box's ports on its Mac's loopback: from its data, else from the Mac. */
+  async #ports(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<{ readonly ssh: number; readonly vnc: number }> {
+    const vnc = guest.data?.vnc;
+    const ssh = this.#sshPort(guest);
+    if (ssh !== null && typeof vnc === "number") return { ssh, vnc };
+    const made = (await this.#state(host, signal)).qemu.vms.get(guest.ref);
+    if (!made) throw new TransportError("unreachable", `The VM ${guest.ref} on ${host.name} is not there.`);
+    return made;
+  }
+
+  /** A box's owner file: a Windows box's names its engine, QEMU (046). */
+  #owner(box: BoxIdentity): string {
+    return ownerText({
+      install: this.#context.installId,
+      kind: box.kind,
+      box: box.boxId,
+      thread: box.threadId,
+      name: box.name,
+      created: box.createdAt,
+      ...(guestOsOf(box.kind) === "windows" ? { engine: "qemu" } : {}),
+    });
+  }
+
+  /** Whether a kind Tart runs has an image, so the Macs need Tart (046). */
+  #tart(): boolean {
+    return TART_KINDS.some((kind) => guestOsOf(kind) !== "windows" && this.#config.kinds[kind].image);
   }
 
   /** Runs a script on the Mac. Throws when the Mac does not answer, or the script fails. */
@@ -1223,47 +1469,52 @@ export class TartBackend implements Backend {
     return result;
   }
 
-  async #state(host: TartHost, signal?: AbortSignal): Promise<HostState> {
-    return parseState((await this.#run(host, stateScript(), { timeoutMs: 30_000, signal })).stdout);
+  /** The Mac's state, in one trip: Tart's VMs when a Tart kind has an image, and QEMU's always. */
+  async #state(host: TartHost, signal?: AbortSignal): Promise<MacState> {
+    const windowsImage = this.#config.kinds["windows-arm64-desktop"].image;
+    const text = (await this.#run(host, stateScript(this.#tart(), qemuStateBody(windowsImage)), { timeoutMs: 30_000, signal })).stdout;
+    return { ...parseState(text), qemu: parseQemuState(text) };
   }
 
   /**
-   * Starts the VM, detached from SSH, and fails fast when Tart cannot. A VM
-   * whose saved state does not restore, as after an update of macOS or Tart,
-   * boots afresh from its disk when `discard` is true; a warm VM gives way to
-   * a clone instead.
+   * Starts the VM, detached from SSH, and fails fast when Tart, or QEMU for
+   * a Windows VM, cannot. A VM whose saved state does not restore, as after
+   * an update of macOS, Tart or QEMU, boots afresh from its disk when
+   * `discard` is true; a warm VM gives way to a clone instead.
    */
-  async #start(host: TartHost, vm: string, deadline: number, signal?: AbortSignal, discard = true, box: string | null = null): Promise<void> {
+  async #start(host: TartHost, vm: string, os: GuestOs, deadline: number, signal?: AbortSignal, discard = true, box: string | null = null): Promise<void> {
     try {
-      await this.#launch(host, vm, deadline, signal);
+      await this.#launch(host, vm, os, deadline, signal);
     } catch (error) {
       if (!discard || !failedRestore(error)) throw error;
       this.#context.logError(
         "start",
         new Error(
           `Warning: the saved state of ${box ? `box ${box}'s VM ${vm}` : vm} on ${host.name} did not restore, so it boots afresh from its disk; what ran in it is lost. ` +
-            `After an update of macOS or Tart, every stopped box on the Mac does this once. ${message(error)}`,
+            `After an update of macOS or ${os === "windows" ? "QEMU" : "Tart"}, every stopped box on the Mac does this once. ${message(error)}`,
         ),
       );
-      await this.#run(host, discardStateScript(vm), { timeoutMs: 30_000, signal });
-      await this.#launch(host, vm, deadline, signal);
+      await this.#run(host, os === "windows" ? qemuDiscardScript(vm) : discardStateScript(vm), { timeoutMs: 30_000, signal });
+      await this.#launch(host, vm, os, deadline, signal);
     }
   }
 
-  async #launch(host: TartHost, vm: string, deadline: number, signal?: AbortSignal): Promise<void> {
+  async #launch(host: TartHost, vm: string, os: GuestOs, deadline: number, signal?: AbortSignal): Promise<void> {
     const seconds = Math.max(5, Math.min(180, Math.round((deadline - Date.now()) / 1000)));
     const { ssh } = await this.#keys();
-    const result = await ssh.run(await this.#mac(host), startScript(vm, seconds), { timeoutMs: (seconds + 30) * 1000, signal, maxOutputBytes: 1 << 16 }, "macos");
+    const windows = os === "windows";
+    const script = windows ? qemuStartScript(vm, seconds) : startScript(vm, seconds);
+    const result = await ssh.run(await this.#mac(host), script, { timeoutMs: (seconds + 30) * 1000, signal, maxOutputBytes: 1 << 16 }, "macos");
     if (result.exitCode === 0) return;
     const said = result.stderr.trim();
-    if (result.exitCode === 3 && /exceeds the system limit/i.test(said)) {
+    if (!windows && result.exitCode === 3 && /exceeds the system limit/i.test(said)) {
       throw new BackendError(
         "no_capacity",
         `${host.name} already runs as many VMs as macOS allows, two: ${said.split("\n").pop()}. Release or stop a macOS box, or stop another VM on ${host.name}.`,
       );
     }
     if (result.exitCode === 255) throw new HostError(`${host.name} did not answer over SSH as ${host.user}: ${said || "no reason given"}.`);
-    throw new Error(`Tart could not start ${vm} on ${host.name}: ${said || `exit code ${result.exitCode}`}`);
+    throw new Error(`${windows ? "QEMU" : "Tart"} could not start ${vm} on ${host.name}: ${said || `exit code ${result.exitCode}`}`);
   }
 
   /** Waits for the VM's DHCP lease on the Mac, and keeps the address. */
@@ -1286,16 +1537,15 @@ export class TartBackend implements Backend {
   }
 
   /** Waits until SSH to the VM, through the Mac, answers, on the connection its first commands then share. */
-  async #waitReady(host: TartHost, vm: string, os: GuestOs, address: string, deadline: number, signal?: AbortSignal): Promise<void> {
+  async #waitReady(host: TartHost, vm: string, access: SshAccess, os: GuestOs, deadline: number, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
-    const access = this.#vm(await this.#mac(host), address, os);
     const command = new SshTransport(ssh, access, os);
     const left = Math.max(1_000, deadline - Date.now());
     const answers = { probe: (inner?: AbortSignal) => command.answers(inner) };
     const ready = await waitUntilAnswers(answers, { timeoutMs: left, intervalMs: 500, signal, sleep: this.#options.sleep ?? pause });
     if (!ready) {
       throw new Error(
-        `${vm} on ${host.name} did not answer SSH as ${access.user} at ${address} within ${Math.round(left / 1000)} s. ` +
+        `${vm} on ${host.name} did not answer SSH as ${access.user} at ${access.host}${access.port === 22 ? "" : `:${access.port}`} within ${Math.round(left / 1000)} s. ` +
           `Check that the image's user ${access.user} accepts bb-box's key.`,
       );
     }
@@ -1379,22 +1629,27 @@ export class TartBackend implements Backend {
     }
   }
 
-  /** Closes the shared SSH connections to a VM that is stopping or going, and forgets its address. */
-  async #forget(host: TartHost, vm: string, os: GuestOs): Promise<void> {
+  /**
+   * Closes the shared SSH connections to a VM that is stopping or going, and
+   * forgets its address. A Windows VM's are at its SSH `port` on the Mac.
+   */
+  async #forget(host: TartHost, vm: string, os: GuestOs, port: number | null = null): Promise<void> {
     const address = this.#addresses.get(vm);
     this.#addresses.delete(vm);
-    if (!address) return;
+    if (os === "windows" ? port === null : !address) return;
     try {
       const { ssh } = await this.#keys();
-      await ssh.forget(this.#vm(await this.#mac(host), address, os));
+      const mac = await this.#mac(host);
+      await ssh.forget(os === "windows" ? this.#windows(mac, port!) : this.#vm(mac, address!, os));
     } catch (error) {
       this.#context.logError("ssh", error);
     }
   }
 
-  async #delete(host: TartHost, vm: string, os: GuestOs, boxId: string | null, signal?: AbortSignal): Promise<void> {
-    await this.#forget(host, vm, os);
-    await this.#run(host, deleteScript(vm, this.#context.installId, boxId), { timeoutMs: 120_000, signal });
+  async #delete(host: TartHost, vm: string, os: GuestOs, boxId: string | null, signal?: AbortSignal, port: number | null = null): Promise<void> {
+    await this.#forget(host, vm, os, port);
+    const script = os === "windows" ? qemuDeleteScript : deleteScript;
+    await this.#run(host, script(vm, this.#context.installId, boxId), { timeoutMs: 120_000, signal });
   }
 
   #keys(): Promise<SshKeys> {

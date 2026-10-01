@@ -78,6 +78,8 @@ Docker on devpc"), the words `box_acquire`'s `on` takes (044). The kinds:
 - `macos` and `macos-desktop`: macOS VMs on a Mac
 - `windows-desktop`: a Windows 11 desktop VM on Proxmox; commands run in
   PowerShell; not a BB machine yet
+- `windows-arm64-desktop`: the same on arm64, as a VM on a Mac with Apple
+  silicon (046); x64 apps run under Windows' emulation, more slowly
 
 Both Linux desktops are labelled "Linux desktop" in `box_list`, `bb box
 kinds` and `box_status`, with "(GPU)" after the GPU one; the panel names
@@ -112,7 +114,7 @@ and `bb box kinds` show the ones in use:
 | Kind | small (the default) | medium | large | largest custom size |
 | --- | --- | --- | --- | --- |
 | `linux`, `linux-arm64` | 2 cores, 4 GiB | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB, 256 GiB disk |
-| `linux-desktop`, `linux-desktop-cpu`, `linux-arm64-desktop-cpu`, `windows-desktop` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB | 32 cores, 64 GiB, 256 GiB disk |
+| `linux-desktop`, `linux-desktop-cpu`, `linux-arm64-desktop-cpu`, `windows-desktop`, `windows-arm64-desktop` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB | 32 cores, 64 GiB, 256 GiB disk |
 | `macos`, `macos-desktop` | 4 cores, 8 GiB | 6 cores, 16 GiB | 8 cores, 32 GiB | 16 cores, 64 GiB, 256 GiB disk |
 
 A preset keeps the kind's own disk. For a custom size, give `cores`,

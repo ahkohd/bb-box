@@ -1,13 +1,14 @@
 // A fake Mac for the Tart backend's tests: the fake tart and system tools in a fake ssh host's home, and an image there.
 
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseTartSettings, type TartConfig } from "../src/backends/tart/config.ts";
 
 const GiB = 2 ** 30;
 export const FAKE_MAC = "192.0.2.20";
 export const FAKE_IMAGE = "bb-box-macos";
+export const FAKE_WINDOWS_IMAGE = "bb-box-windows";
 
 /**
  * Puts the fake tart, arp, sysctl, sw_vers and uname in a fake Mac's
@@ -23,6 +24,36 @@ export function fakeMacTools(home: string): void {
     writeFileSync(join(bin, tool), `#!/bin/sh\nexec '${process.execPath}' '${script}' ${tool} "$@"\n`);
     chmodSync(join(bin, tool), 0o755);
   }
+}
+
+/**
+ * Puts the fake qemu-system-aarch64, qemu-img and nc in a fake Mac's
+ * ~/.nix-profile/bin, and QEMU's firmware in its share/qemu, as a Nix
+ * profile has them.
+ */
+export function fakeQemu(home: string): void {
+  const bin = join(home, ".nix-profile", "bin");
+  const share = join(home, ".nix-profile", "share", "qemu");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(share, { recursive: true });
+  writeFileSync(join(share, "edk2-aarch64-code.fd"), "firmware");
+  const script = new URL("./fake-qemu.mjs", import.meta.url).pathname;
+  for (const tool of ["qemu-system-aarch64", "qemu-img", "nc"]) {
+    writeFileSync(join(bin, tool), `#!/bin/sh\nexec '${process.execPath}' '${script}' ${tool} "$@"\n`);
+    chmodSync(join(bin, tool), 0o755);
+  }
+}
+
+/** Puts a build of a Windows image in a fake Mac's home, its disk read-only, and makes it the current one. */
+export function addWindowsImage(home: string, build = "1", name = FAKE_WINDOWS_IMAGE): string {
+  const image = join(home, ".bb-box", "qemu", "images", name);
+  mkdirSync(join(image, build), { recursive: true });
+  writeFileSync(join(image, build, "disk.qcow2"), "base disk");
+  chmodSync(join(image, build, "disk.qcow2"), 0o444);
+  writeFileSync(join(image, build, "vars.fd"), "variables");
+  rmSync(join(image, "current"), { force: true });
+  symlinkSync(build, join(image, "current"));
+  return join(image, build);
 }
 
 /** Puts a Tart VM in a fake Mac's home, as the setup guide leaves an image. */

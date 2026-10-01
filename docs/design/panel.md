@@ -47,6 +47,7 @@ name within its OS group.
 | `linux-arm64`, `linux-arm64-desktop-cpu` | Linux [arm64] [VM], Linux [Desktop] [arm64] [VM] | Terminal, arm64; Desktop, arm64 | server, monitor |
 | `macos`, `macos-desktop` | macOS [VM], macOS [Desktop] [VM] | Terminal; Desktop | server, monitor |
 | `windows-desktop` | Windows [Desktop] [VM] | Desktop | monitor |
+| `windows-arm64-desktop` | Windows [Desktop] [arm64] [VM] | Desktop, arm64 | monitor |
 
 `linux-docker` and `linux-arm64-docker` are aliases an agent may ask for,
 never rows (041: every Linux box has Docker). The panel shows the OS and
