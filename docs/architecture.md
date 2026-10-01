@@ -369,6 +369,11 @@ memory and root disk, where a disk of null is the backend's base.
   status: `ok`, `warn`, `fail`, or `skipped` after an earlier failure.
 - The conformance suite runs `doctor()` first, and skips a backend whose
   checks fail, printing them.
+- A doctor checks each host's room for a box of its kinds' default size. It
+  warns about a host or machine that could not hold a kind's default size
+  even when empty, and says which of the kind's presets it can hold: one
+  that holds none gets no box of that kind. The fix is smaller presets or a
+  larger machine (029).
 - Each driver names its setup guide and scripts. The guide is the entry
   point: the settings page links it first, then the scripts in the order the
   guide runs them ([016](decisions/016-changes-from-building-v1.md)). Drivers
@@ -611,8 +616,8 @@ export interface BackendDriver<C = unknown> {
   readonly hostFields?: Readonly<Record<string, FieldDescriptor>>;
   /** Reads the backend's part of the configuration. */
   parse(part: BackendPart): ParsedSettings<C>;
-  /** `id` is the type for a type's first backend, else `<type>:<name>`. */
-  create(id: string, config: C, context: BackendContext): Backend;
+  /** Built again only when the backend's fields or the install ID change. */
+  create(config: C, context: BackendContext): Backend;
   /** Paths in the repository, linked from the settings page, the guide first. */
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
 }
@@ -626,27 +631,23 @@ export type FieldDescriptor = PluginSettingDescriptor & {
   readonly group: "connection" | "credentials" | "boxes" | "advanced";
 };
 
-/** One backend in the configuration document. */
+/**
+ * A backend's fields and hosts in the configuration document. Switches and
+ * warm counts reach the backend through its context instead.
+ */
 export interface BackendPart {
   readonly id: string;
-  readonly type: string;
-  readonly name: string;
-  /** Off stops new boxes only. */
-  readonly enabled: boolean;
   readonly fields: Readonly<Record<string, unknown>>;
-  /** Warm guests to keep, per kind. */
-  readonly warm: Readonly<Record<string, number>>;
   readonly hosts: readonly HostPart[];
 }
 
 export interface HostPart {
   /** `Guest.host`; cannot change while the host has boxes. */
   readonly name: string;
-  readonly enabled: boolean;
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
-/** The switch moves to BackendPart, and each problem names its field. */
+/** The switch leaves the settings, and each problem names its field. */
 export type ParsedSettings<C> =
   | { readonly ok: true; readonly config: C }
   | { readonly ok: false; readonly problems: readonly FieldProblem[] };
@@ -657,11 +658,33 @@ export interface FieldProblem {
   readonly message: string;
 }
 
+/**
+ * The functions read the configuration as it is at the call, so a change to
+ * a switch, a warm count or a kind's sizes never builds the backend again.
+ * Backends call them when they need them, and keep no copy.
+ */
 export interface BackendContext {
+  /** The type for a type's first backend, else `<type>:<name>`. */
+  readonly id: string;
   readonly storage: BackendStorage;
   /** This install's ID, recorded on every guest it makes (018). */
   readonly installId: string;
+  /** What the configuration says now about one of the backend's kinds. */
+  kind(id: string): KindSettings;
+  /** Warm guests to keep of a kind; 0 while the backend or the kind is off. */
+  warm(kind: string): number;
+  /** Whether new boxes may go on this host. */
+  hostOn(name: string): boolean;
   logError(operation: string, error: unknown): void;
+}
+
+export interface KindSettings {
+  /** The kind and this backend are both on: new boxes of it may come here. */
+  readonly enabled: boolean;
+  /** The size of a box made with no size asked for. Warm guests wait at it. */
+  readonly defaultSize: BoxSize;
+  /** Every preset's size, the default's among them, smallest first. */
+  readonly presets: readonly BoxSize[];
 }
 
 // Unchanged: BoxOwner, HeldGuest, AcquireHooks, DoctorReport,
@@ -721,9 +744,13 @@ real backend's pool of free, reset machines is the same thing
 - Each backend brings a `PoolStore` for membership. Proxmox LXC keeps it in
   guest tags; real backends keep it in the backend's plugin storage.
 - The target size is set per backend and kind in the configuration, 0 by
-  default. `maintain()` tops the pool up after each claim and on every
-  sweep, and never below the backend's memory and disk reserves. An off
-  backend or kind keeps no warm guests.
+  default, and the backend reads it with `context.warm(kind)`. `maintain()`
+  tops the pool up after each claim and on every sweep, and never below the
+  backend's memory and disk reserves. An off backend or kind keeps no warm
+  guests.
+- Warm guests wait at their kind's default size, from `context.kind(kind)`
+  (029). One that cannot serve the default after the operator changes it,
+  such as a Proxmox LXC guest with other cores, is retired and made again.
 - A warm guest counts against capacity and fits when claimed. One made
   larger on claim needs room for the difference
   ([028](decisions/028-a-box-size-is-chosen-when-it-is-made.md)). Proxmox
@@ -1024,6 +1051,9 @@ bb-box's configuration is one checked document in its plugin storage
   first keeps the type as its ID, another is `<type>:<name>`.
 - Switches for a backend, a host or a kind stop new boxes only. An off
   backend stays built, so its boxes keep working.
+- A backend's part holds its fields and its hosts' fields. It reads its
+  switches, warm counts and kinds' sizes through its context, as they are
+  at the call, so changing them does not build it again.
 - Secrets are stored apart from the document and are write-only: the page
   and the CLI say whether each is set.
 - The settings page and `bb box config show | check | apply <file>` use the
