@@ -43,7 +43,7 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
-import { DockerCli, LABELS, NO_SUCH, type ContainerInfo, type DockerInfo } from "./cli.ts";
+import { DockerCli, LABELS, NO_SUCH, abortable, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 
@@ -313,7 +313,7 @@ export class DockerBackend implements Backend {
     this.#kind(kind);
     // A BB machine that is offline takes no box, said at once from BB's view of it, with no call to it (042).
     const machine = this.#config.machine;
-    if (machine && (await this.#context.machines?.connected(machine)) !== true) {
+    if (machine && (await abortable(this.#context.machines?.connected(machine) ?? Promise.resolve(null), signal)) !== true) {
       return { ok: false, message: `${this.#host} is offline in BB.`, warm: null, hosts: [{ host: this.#host, ok: false, limits: [] }] };
     }
     let state: HostState;
