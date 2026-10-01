@@ -114,6 +114,8 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+# Ctrl-C or systemctl stop cleans up too.
+trap 'exit 1' INT TERM
 
 password=$(python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(24)))')
 cp -r "$here/answer" "$work/answer"

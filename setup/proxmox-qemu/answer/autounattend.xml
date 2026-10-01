@@ -5,10 +5,11 @@
   @...@ values. For an English (United States) ISO; Setup stops and asks if
   the ISO's language differs.
 
-  The VirtIO SCSI driver is loaded in Windows PE with drvload, so Setup sees
-  the disk, and listed in DriverPaths, so Setup also puts it in Windows, which
-  otherwise cannot read its disk at boot (INACCESSIBLE_BOOT_DEVICE). The
-  virtio-win disc's drive letter varies, so every likely one is listed.
+  The VirtIO SCSI driver is listed in DriverPaths, so Setup sees the disk and
+  also puts the driver in Windows, which otherwise cannot read its disk at
+  boot (INACCESSIBLE_BOOT_DEVICE). The virtio-win disc's drive letter varies,
+  so every likely one is listed. Loading it with drvload as well makes Setup
+  install it twice and fail (0x80070103).
 -->
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <settings pass="windowsPE">
@@ -30,12 +31,6 @@
       </DriverPaths>
     </component>
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <RunSynchronous>
-        <RunSynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <Path>cmd.exe /c "for %d in (D E F G H I J K) do @if exist %d:\vioscsi\w11\amd64\vioscsi.inf drvload %d:\vioscsi\w11\amd64\vioscsi.inf"</Path>
-        </RunSynchronousCommand>
-      </RunSynchronous>
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
