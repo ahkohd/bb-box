@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Proxmox, ProxmoxError, parseSizeGiB, parseTags } from "../src/backends/proxmox/api.ts";
+import { Proxmox, ProxmoxError, parseSizeGiB, parseTags, type ProxmoxOptions } from "../src/backends/proxmox/api.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 
-function setup() {
+function setup(options: Partial<ProxmoxOptions> = {}) {
   const api = new FakeProxmox();
   api.addTemplate(9000);
   const sleeps: number[] = [];
@@ -15,6 +15,7 @@ function setup() {
     sleep: async (ms) => {
       sleeps.push(ms);
     },
+    ...options,
   });
   return { api, proxmox, sleeps };
 }
@@ -101,6 +102,35 @@ test("task warnings are success, task errors are not", async () => {
   const error = await proxmox.stop(7006).catch((e) => e);
   assert.ok(error instanceof ProxmoxError);
   assert.match(error.message, /lxc-stop/);
+});
+
+test("destroy tries again while another task holds the guest's lock, until lockWaitMs", async () => {
+  const { api, proxmox, sleeps } = setup();
+  const locked = (vmid: number) => `can't lock file '/run/lock/lxc/pve-config-${vmid}.lock' - got timeout`;
+  const stops = () => api.calls.filter((call) => call.path.endsWith("/status/stop")).length;
+  await proxmox.cloneLinked({ template: 9000, vmid: 7009, hostname: "slow-owl" });
+  await proxmox.start(7009);
+  api.nextTaskExit.set("vzstop", locked(7009));
+  await proxmox.destroy(7009);
+  assert.equal(api.guests.has(7009), false);
+  assert.equal(stops(), 2, "the stop is tried again");
+  assert.deepEqual(sleeps.filter((ms) => ms >= 1_000), [1_000]);
+
+  await proxmox.cloneLinked({ template: 9000, vmid: 7010, hostname: "slow-elk" });
+  api.nextTaskExit.set("vzdestroy", locked(7010));
+  await proxmox.destroy(7010);
+  assert.equal(api.guests.has(7010), false, "and so is the delete");
+
+  await proxmox.cloneLinked({ template: 9000, vmid: 7011, hostname: "slow-ant" });
+  api.nextTaskExit.set("vzdestroy", "unable to remove volume");
+  await assert.rejects(proxmox.destroy(7011), /unable to remove volume/, "other errors are not tried again");
+  const { proxmox: impatient } = setup({ fetch: api.fetch, lockWaitMs: 0 });
+  api.nextTaskExit.set("vzdestroy", locked(7011));
+  const error = await impatient.destroy(7011).catch((e) => e);
+  assert.ok(error instanceof ProxmoxError && error.locked, String(error));
+  assert.equal(api.guests.has(7011), true);
+  await impatient.destroy(7011);
+  assert.equal(api.guests.has(7011), false);
 });
 
 test("listPool returns only the pool's guests with their tags", async () => {

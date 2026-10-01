@@ -35,7 +35,12 @@ export interface ProxmoxOptions {
   readonly taskPollMs?: number;
   readonly taskTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  /** How long `destroy` keeps trying while another task holds the guest's lock. */
+  readonly lockWaitMs?: number;
 }
+
+/** Between tries at a guest whose lock another task holds. Proxmox itself waits 10 s for the lock on each. */
+const LOCK_RETRY_MS = 1_000;
 
 export class ProxmoxError extends Error {
   readonly status: number;
@@ -81,6 +86,11 @@ export class ProxmoxError extends Error {
   /** The API could not be reached at all. */
   get unreachable(): boolean {
     return this.status === 0;
+  }
+
+  /** Another task held the guest's lock for the 10 s Proxmox waits for it. */
+  get locked(): boolean {
+    return /can't lock file .* got timeout/i.test(this.message);
   }
 }
 
@@ -204,6 +214,7 @@ export class Proxmox {
   readonly #taskPollMs: number;
   readonly #taskTimeoutMs: number;
   readonly #requestTimeoutMs: number;
+  readonly #lockWaitMs: number;
 
   constructor(options: ProxmoxOptions) {
     this.node = options.node;
@@ -215,6 +226,7 @@ export class Proxmox {
     this.#taskPollMs = options.taskPollMs ?? 50;
     this.#taskTimeoutMs = options.taskTimeoutMs ?? 180_000;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.#lockWaitMs = options.lockWaitMs ?? 120_000;
   }
 
   /** Proxmox version, used as a connection check. */
@@ -356,8 +368,26 @@ export class Proxmox {
     }
   }
 
-  /** Stops the guest if it runs, then deletes it and its disks. A missing guest counts as deleted. */
+  /**
+   * Stops the guest if it runs, then deletes it and its disks. A missing
+   * guest counts as deleted, and a hibernated VM goes with its state. A stop
+   * can hold the guest's lock for over a minute while QEMU quits, longer
+   * than Proxmox waits for it, so while another task holds it this tries
+   * again, for up to `lockWaitMs`.
+   */
   async destroy(vmid: number, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + this.#lockWaitMs;
+    for (;;) {
+      try {
+        return await this.#destroy(vmid, signal);
+      } catch (error) {
+        if (!(error instanceof ProxmoxError && error.locked) || Date.now() >= deadline) throw error;
+      }
+      await this.#sleep(LOCK_RETRY_MS, signal);
+    }
+  }
+
+  async #destroy(vmid: number, signal?: AbortSignal): Promise<void> {
     const current = await this.status(vmid, signal);
     if (!current) return;
     if (current.status === "running") {

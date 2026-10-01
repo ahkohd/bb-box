@@ -44,7 +44,11 @@ export class FakeProxmox {
   readonly consoles: { vmid: number; port: number; ticket: string; password?: string }[] = [];
   readonly #tasks = new Map<string, FakeTask>();
   #taskCounter = 0;
-  /** Exit status for the next task of this type, for example "WARNINGS: 1" or an error. */
+  /**
+   * Exit status for the next task of this type, for example "WARNINGS: 1" or
+   * an error. A start, stop, suspend or delete given one leaves the guest as
+   * it was.
+   */
   readonly nextTaskExit = new Map<string, string>();
   /** Polls before a task stops. */
   taskPolls = 1;
@@ -339,7 +343,7 @@ export class FakeProxmox {
         return ok(this.#task(`${prefix}start`, vmid));
       }
       if (method === "POST" && action === "stop") {
-        guest.status = "stopped";
+        if (!this.nextTaskExit.has(`${prefix}stop`)) guest.status = "stopped";
         return ok(this.#task(`${prefix}stop`, vmid));
       }
       if (method === "POST" && action === "suspend" && type === "qemu") {
@@ -379,8 +383,9 @@ export class FakeProxmox {
       const what = type === "qemu" ? "VM" : "CT";
       if (guest.status === "running") return respond(500, `${what} ${vmid} is running - destroy failed`, { data: null });
       if (guest.config.protection === "1") return respond(500, `can't remove ${what} ${vmid} - protection mode enabled`, { data: null });
-      this.guests.delete(vmid);
-      return ok(this.#task(type === "qemu" ? "qmdestroy" : "vzdestroy", vmid));
+      const task = type === "qemu" ? "qmdestroy" : "vzdestroy";
+      if (!this.nextTaskExit.has(task)) this.guests.delete(vmid);
+      return ok(this.#task(task, vmid));
     }
 
     return respond(501, `fake has no route for ${method} ${path}`, { data: null });
