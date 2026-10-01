@@ -12,12 +12,15 @@ bb-box, as it needs only Docker. It offers three kinds:
 
 All of them enrol in BB as machines, as Proxmox LXC boxes do.
 
-Each box but a GPU desktop has a Docker daemon of its own, in a privileged
-container, which its first `docker` command starts. With `privileged` off,
-or on rootless Docker, boxes are unprivileged and say No Docker, and an
-agent that asks for linux-docker, linux with Docker, gets another backend's
-box ([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md)).
-A GPU desktop is never privileged, since it would see every GPU on the host.
+Both images have Docker installed, as every Linux image does
+([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md)).
+By default each box but a GPU desktop is a privileged container with a
+Docker daemon of its own, which its first `docker` command starts. A GPU
+desktop is never privileged, since it would see every GPU on the host, so
+it says No Docker. With `privileged` off, or on rootless Docker, every box
+here is unprivileged and says No Docker. An agent that must have Docker
+asks for `linux-docker` rather than `linux`: that takes only offers with
+Docker, here or on another backend.
 
 The bb-box plugin, on BB's server, runs the `docker` CLI for every call. It
 runs commands and copies files in a box with `docker exec`, and streams the
