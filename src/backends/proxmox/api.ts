@@ -142,7 +142,7 @@ export interface PoolGuest {
   readonly status: string;
   readonly template: boolean;
   readonly tags: string[];
-  /** From the listing's maxcpu, maxmem and maxdisk, or null when it lacks them. */
+  /** From the listing's maxcpu, maxmem and maxdisk, or null when it lacks them. A running container's maxdisk is its filesystem's size. */
   readonly size: BoxSize | null;
 }
 

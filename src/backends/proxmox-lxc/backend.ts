@@ -752,14 +752,20 @@ export class ProxmoxLxcBackend implements Backend {
       let install = installFromTags(guest.tags);
       let owner = ownerFromTags(guest.tags, guest.name || null);
       const labelled = guest.tags.includes(FILLING) || guest.tags.includes(RETIRED);
+      let config: Record<string, unknown> | null = null;
       if (!guest.tags.includes(TAG) || (!owner && !labelled)) {
-        const config = await api.config(guest.vmid, signal).catch((): Record<string, unknown> => ({}));
+        config = await api.config(guest.vmid, signal).catch((): Record<string, unknown> => ({}));
         install ??= installFromDescription(config.description);
         owner ??= ownerFromDescription(config.description);
       }
       if (install !== this.#context.installId) continue;
+      // A running container's listed disk is its filesystem's, which Proxmox
+      // reads every 10 s or so: less than the disk, and the old size for a
+      // while after a resize. The config gives the disk's, as acquire reads it.
+      config ??= await api.config(guest.vmid, signal).catch((): Record<string, unknown> => ({}));
+      const size = guest.size && { ...guest.size, diskGiB: rootDiskGiB(config) ?? guest.size.diskGiB };
       const template = templateFromTags(guest.tags);
-      const found = this.#guest(guest.node || api.node, guest.vmid, template, owner?.boxId ?? null, null, guest.size);
+      const found = this.#guest(guest.node || api.node, guest.vmid, template, owner?.boxId ?? null, null, size);
       held.push({ ...found, owner, power: powerOf(guest.status) });
     }
     return held;

@@ -15,6 +15,8 @@ export interface FakeGuest {
   status: "running" | "stopped";
   template: boolean;
   config: Record<string, string>;
+  /** A started container's root filesystem size in bytes, as df gave it then. */
+  filesystem?: number;
 }
 
 export interface FakeCall {
@@ -183,7 +185,11 @@ export class FakeProxmox {
           // As Proxmox gives them: unset cores are the node's, and memory and disk are in bytes.
           maxcpu: Number(guest.config.cores) || this.cpus,
           maxmem: Number(guest.config.memory || 512) * 2 ** 20,
-          maxdisk: (rootDiskGiB(guest.config) ?? Number(/size=(\d+)G/.exec(guest.config.scsi0 ?? "")?.[1] ?? 0)) * 2 ** 30,
+          // A running container's is its filesystem's, which Proxmox reads every 10 s or so.
+          maxdisk:
+            guest.status === "running" && guest.filesystem !== undefined
+              ? guest.filesystem
+              : (rootDiskGiB(guest.config) ?? Number(/size=(\d+)G/.exec(guest.config.scsi0 ?? "")?.[1] ?? 0)) * 2 ** 30,
           ...(guest.pool ? { pool: guest.pool } : {}),
           ...(guest.config.tags ? { tags: guest.config.tags } : {}),
         })),
@@ -281,7 +287,11 @@ export class FakeProxmox {
         return ok({ vmid, name: guest.name, status: guest.status, uptime: guest.status === "running" ? 5 : 0 });
       }
       if (method === "POST" && action === "start") {
-        if (!this.nextTaskExit.has(`${prefix}start`)) guest.status = "running";
+        if (!this.nextTaskExit.has(`${prefix}start`)) {
+          guest.status = "running";
+          // ext4 keeps about 2.5% of a disk for itself.
+          if (type === "lxc") guest.filesystem = Math.floor((rootDiskGiB(guest.config) ?? 0) * 0.975 * 2 ** 30);
+        }
         return ok(this.#task(`${prefix}start`, vmid));
       }
       if (method === "POST" && action === "stop") {
