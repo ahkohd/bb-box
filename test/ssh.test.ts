@@ -199,6 +199,29 @@ test("a long script whose staging fails gives the staging's result", async () =>
   assert.match(output.join(""), /^stderr: ssh: connect to host 192\.0\.2\.32 port 22: Connection refused/);
 });
 
+test("a command spawned on a Windows box runs in PowerShell, with its stdin and stdout as the channel", async () => {
+  const { ssh, log, windows, down } = fakeSsh();
+  windows("192.0.2.33");
+  const channel = await new SshTransport(ssh, at("192.0.2.33"), "windows").spawn("cat");
+  const writer = channel.writable.getWriter();
+  await writer.write(new TextEncoder().encode("ping\n"));
+  const reader = channel.readable.getReader();
+  const { value } = await reader.read();
+  assert.equal(Buffer.from(value!).toString(), "ping\n");
+  reader.releaseLock();
+  writer.releaseLock();
+  await channel.close();
+  const [entry] = log();
+  assert.match(entry!.command, /^\$ProgressPreference='SilentlyContinue';/);
+  const encoded = /FromBase64String\('([^']+)'\)/.exec(entry!.command)![1]!;
+  assert.match(Buffer.from(encoded, "base64").toString("utf8"), /^cat\n/);
+
+  // A command too long for the command line is staged first, and a failed staging is an error.
+  windows("192.0.2.34");
+  down("192.0.2.34");
+  await assert.rejects(ssh.spawn(at("192.0.2.34"), `: ${"x".repeat(40_000)}`, undefined, "windows"), (error: unknown) => error instanceof SshError && /could not start: .*Connection refused/.test(error.message));
+});
+
 test("commands to one box share a connection that bb-box opens once", async () => {
   const { ssh, log, dir } = fakeSsh({ share: true });
   const box = at("192.0.2.20");

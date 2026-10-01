@@ -112,7 +112,7 @@ function extending(extend: string): string {
   return `case "$1" in\n  *Resize-Partition*) ${extend};;\n  *) exec sh -c "$1";;\nesac\n`;
 }
 
-test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShell", () => {
+test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShell and offers computer use", () => {
   assert.equal(boxForm("proxmox-qemu:main"), "VM");
   const [kind, ...others] = setup().backend.kinds();
   assert.deepEqual(others, []);
@@ -122,7 +122,7 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   assert.equal(kind!.capabilities.arch, "x86_64");
   assert.equal(kind!.capabilities.enrol, false, "BB cannot enrol a Windows box yet");
   assert.deepEqual(kind!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: false }]);
-  assert.equal(kind!.capabilities.computerUse, null);
+  assert.deepEqual(kind!.capabilities.computerUse, { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" });
 });
 
 test("the settings list Windows templates by VMID", () => {

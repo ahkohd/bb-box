@@ -2023,6 +2023,27 @@ test("a closed popup is forgotten, so later actions on the desktop do not read i
   assert.deepEqual(reads, [], "window 100 holds no popup now");
 });
 
+test("Cua's cursor overlay on Windows is not listed, and an action on the desktop does not read it", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  // It covers the screen, above the desktop and below the apps' windows.
+  editDesktop(file, (desktop) => {
+    desktop.windows.unshift({ id: 1, pid: 4000, app: "cua-driver.exe", title: "Cua.AgentCursorOverlay.default", x: 0, y: 0, width: 1920, height: 1080, onScreen: true });
+  });
+  const windows = text(await tool("computer_windows", { box: box.name }));
+  assert.match(windows, /- window 100: tasks "Tasks"/);
+  assert.doesNotMatch(windows, /Cua|cua-driver|window 1:/);
+  await tool("computer_screenshot", { box: box.name });
+  const before = readDesktop(file).calls.length;
+  // Only the overlay is under (1714, 980) on the screen.
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 1400, y: 800 })), /No window opened, closed or changed\./);
+  const reads = readDesktop(file).calls.slice(before).filter((call) => call.tool === "get_window_state");
+  assert.deepEqual(reads, []);
+  const observed = await tool("computer_observe", { box: box.name, window: 1 });
+  assert.equal(isError(observed), true);
+  assert.match(text(observed), /^Box .* has no window 1\./);
+});
+
 test("pixels of the desktop keep their meaning in a new session, and are refused when the screen changed size", async (t) => {
   const { harness, app, box, file, tool } = await desktopBox({ computer: { idleMs: 100 } });
   t.after(() => harness.lifecycle.dispose());

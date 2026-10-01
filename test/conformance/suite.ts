@@ -450,13 +450,15 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             command = transports.command;
           });
 
-          it("spawns a command whose stdin and stdout are a channel", { timeout, skip: scripts }, async (t) => {
+          it("spawns a command whose stdin and stdout are a channel", { timeout }, async (t) => {
             const { command } = need();
             if (!command.spawn) {
               assert.equal(capabilities.computerUse, null, `${kind.id} offers computer use, so its command transport can spawn the driver`);
               return t.skip("the command transport cannot spawn");
             }
-            const channel = await command.spawn("cat", signal());
+            // PowerShell's cat reads files, not stdin.
+            const echo = posix ? "cat" : 'while ($null -ne ($line = [Console]::In.ReadLine())) { [Console]::Out.Write("$line`n") }';
+            const channel = await command.spawn(echo, signal());
             try {
               const writer = channel.writable.getWriter();
               await writer.write(new TextEncoder().encode("ping\n"));
@@ -634,7 +636,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           const computerUse = capabilities.computerUse;
           if (computerUse) {
             // The driver's daemon starts with the desktop session, which may come up after the box answers.
-            it("offers computer use: the driver answers over MCP and lists the desktop's windows", { timeout, skip: skip["computer-use"] ?? scripts }, async () => {
+            it("offers computer use: the driver answers over MCP and lists the desktop's windows", { timeout, skip: skip["computer-use"] }, async () => {
               const { command } = need();
               assert.ok(command.spawn, "the command transport can spawn the driver");
               const deadline = Date.now() + 20_000;

@@ -15,8 +15,9 @@
 // grows before the start.
 //
 // The desktop is the VM's console, through the API's VNC proxy. Core runs
-// desktop commands as scheduled tasks in the box user's session. Resizing the
-// desktop, computer use, stop and start, and the warm pool are still to come.
+// desktop commands as scheduled tasks in the box user's session, and computer
+// use through Cua's daemon, which runs there elevated, as SSH does. Resizing
+// the desktop, stop and start, and the warm pool are still to come.
 
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
@@ -45,6 +46,7 @@ import {
   type BoxSize,
   type BoxTransports,
   type Capacity,
+  type ComputerUse,
   type DoctorCheck,
   type DoctorReport,
   type Guest,
@@ -68,6 +70,8 @@ const READY_TIMEOUT_MS = 180_000;
 /** build.sh --replace swaps the template for its new build, which leaves it missing for a moment. A clone waits this long for it. */
 const TEMPLATE_WAIT_MS = 10_000;
 const TEMPLATE_POLL_MS = 250;
+/** Cua Driver as build.sh pins it (039). A task at logon starts its daemon, elevated, on this named pipe. */
+const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" };
 /** Where boot.ps1 logs how it set the box's address. */
 const BOOT_LOG = "C:\\bb-box\\boot.log";
 
@@ -75,7 +79,7 @@ const KIND: BoxKind = {
   id: "windows-desktop",
   label: "Windows desktop",
   description:
-    "A Windows 11 VM for Windows apps, browsers and builds, with its desktop shown in the panel. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running. A desktop command runs unelevated, and what it opens stays open.",
+    "A Windows 11 VM for Windows apps, browsers and builds, with its desktop shown in the panel and computer use. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running. A desktop command runs unelevated, and what it opens stays open.",
   requires: [],
   capabilities: {
     os: "windows",
@@ -84,7 +88,7 @@ const KIND: BoxKind = {
     features: [],
     command: { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true },
     displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
-    computerUse: null,
+    computerUse: CUA_DRIVER,
     enrol: false,
   },
   readyTimeoutMs: READY_TIMEOUT_MS,
