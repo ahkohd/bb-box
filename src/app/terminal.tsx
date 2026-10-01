@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import type { Contract, DesktopState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { forThread, message, Notice, StatusDot, useLive, type Tone } from "./common.tsx";
+import { claimKept, dropKept, releaseKept, type Kept } from "./kept.ts";
 import { XTERM_CSS } from "./xterm-css.ts";
 
 export const TERMINAL_ACTION = "terminal";
@@ -135,6 +136,118 @@ function useSessionId(boxId: string): [string, () => void] {
 
 type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "ended"; readonly reason: string };
 
+/**
+ * One shell's terminal: xterm and the socket to the plugin, in an element of
+ * its own that a tab puts inside its screen area. It is kept across tab
+ * switches (037): the element leaves the page and comes back with the shell
+ * still in it, so switching back is instant.
+ */
+export class TerminalClient implements Kept {
+  readonly element = document.createElement("div");
+  hidden = false;
+  onEnded?: () => void;
+  connection: Connection = { state: "connecting" };
+  readonly #view: Terminal;
+  readonly #fit = new FitAddon();
+  readonly #url: (size: { cols: number; rows: number }) => string;
+  readonly #listeners = new Set<() => void>();
+  readonly #observer: ResizeObserver | null;
+  #socket: WebSocket | null = null;
+  #started = false;
+  #disposed = false;
+  #resizeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(url: (size: { cols: number; rows: number }) => string) {
+    this.#url = url;
+    this.element.className = "h-full w-full";
+    ensureStyles();
+    this.#view = new Terminal({
+      cursorBlink: true,
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "monospace",
+      fontSize: 13,
+      scrollback: 5000,
+      allowProposedApi: true,
+      theme: { background: tokenColor("--canvas", "#1a1a1a"), foreground: tokenColor("--foreground", "#d0d0d0"), cursor: tokenColor("--foreground", "#d0d0d0"), selectionBackground: tokenColor("--surface-selected", "#44546a") },
+    });
+    this.#view.loadAddon(this.#fit);
+    this.#view.open(this.element);
+    this.#view.onData((data) => {
+      if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(encoder.encode(data));
+    });
+    let last = { cols: this.#view.cols, rows: this.#view.rows };
+    this.#view.onResize(({ cols, rows }) => {
+      if (cols === last.cols && rows === last.rows) return;
+      last = { cols, rows };
+      clearTimeout(this.#resizeTimer);
+      this.#resizeTimer = setTimeout(() => {
+        if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(JSON.stringify({ type: "resize", cols, rows }));
+      }, RESIZE_MS);
+    });
+    this.#observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this.fit());
+    this.#observer?.observe(this.element);
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  #set(connection: Connection): void {
+    this.connection = connection;
+    for (const listener of this.#listeners) listener();
+  }
+
+  fit(): void {
+    try {
+      this.#fit.fit();
+    } catch {
+      // Not in the page yet; the observer fits it when it shows.
+    }
+  }
+
+  focus(): void {
+    this.#view.focus();
+  }
+
+  /** Opens the socket, once the element is in the page so the size is right. A shell is started once; a new one takes a new client. */
+  start(): void {
+    if (this.#started || this.#disposed) return;
+    this.#started = true;
+    this.fit();
+    const socket = new WebSocket(this.#url({ cols: this.#view.cols || 80, rows: this.#view.rows || 24 }));
+    socket.binaryType = "arraybuffer";
+    socket.onopen = () => this.#set({ state: "connected" });
+    socket.onmessage = (event: MessageEvent) => {
+      if (typeof event.data === "string") return;
+      this.#view.write(new Uint8Array(event.data as ArrayBuffer));
+    };
+    socket.onclose = (event: CloseEvent) => {
+      this.#socket = null;
+      this.#set({ state: "ended", reason: event.reason || "The connection to the terminal closed." });
+      if (this.hidden) this.onEnded?.();
+    };
+    socket.onerror = () => {
+      // The close that follows says what happened.
+    };
+    this.#socket = socket;
+    this.#set({ state: "connecting" });
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    clearTimeout(this.#resizeTimer);
+    this.#observer?.disconnect();
+    if (this.#socket) {
+      this.#socket.onclose = null;
+      this.#socket.close();
+      this.#socket = null;
+    }
+    this.#view.dispose();
+    this.#listeners.clear();
+    this.element.remove();
+  }
+}
+
 /** The thread panel tab for one box's terminal. */
 export function TerminalPanel({ threadId, params }: { threadId: string; params: unknown }) {
   const boxId = parseParams(params);
@@ -149,101 +262,44 @@ function BoxTerminal({ threadId, boxId }: { threadId: string; boxId: string }) {
   const box = state?.box ?? null;
   const path = state?.terminalPath ?? null;
   const can = box !== null && canOpenTerminal(box);
-  const [session, renew] = useSessionId(boxId);
+  const [session, renewSession] = useSessionId(boxId);
+  const key = `terminal:${boxId}:${session}`;
 
   const holder = useRef<HTMLDivElement>(null);
-  const terminal = useRef<Terminal | null>(null);
-  const fit = useRef<FitAddon | null>(null);
   const [connection, setConnection] = useState<Connection>({ state: "connecting" });
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
-  // The terminal view lives as long as the tab; connections come and go in it.
+  // The shell's terminal is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
   useEffect(() => {
-    if (!holder.current) return;
-    ensureStyles();
-    const view = new Terminal({
-      cursorBlink: true,
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "monospace",
-      fontSize: 13,
-      scrollback: 5000,
-      allowProposedApi: true,
-      theme: { background: tokenColor("--canvas", "#1a1a1a"), foreground: tokenColor("--foreground", "#d0d0d0"), cursor: tokenColor("--foreground", "#d0d0d0"), selectionBackground: tokenColor("--surface-selected", "#44546a") },
-    });
-    const fitter = new FitAddon();
-    view.loadAddon(fitter);
-    view.open(holder.current);
-    terminal.current = view;
-    fit.current = fitter;
-    try {
-      fitter.fit();
-    } catch {
-      // A hidden holder has no size yet; the observer fits it when it shows.
-    }
-    return () => {
-      view.dispose();
-      terminal.current = null;
-      fit.current = null;
-    };
-  }, []);
-
-  // One socket per session while the box runs. The plugin keeps the shell between sockets.
-  useEffect(() => {
-    const view = terminal.current;
-    if (!can || !path || !view) return;
-    try {
-      fit.current?.fit();
-    } catch {
-      // Not shown yet; the size goes with the first resize.
-    }
-    view.reset();
+    const screen = holder.current;
+    if (!can || !path || !screen) return;
+    const claimed = claimKept(key, () => new TerminalClient((size) => socketUrl(path, boxId, session, size)));
+    const client = claimed.session;
+    screen.appendChild(client.element);
+    const unsubscribe = client.subscribe(() => setConnection(client.connection));
     setProblem(null);
-    setConnection({ state: "connecting" });
-    const socket = new WebSocket(socketUrl(path, boxId, session, { cols: view.cols || 80, rows: view.rows || 24 }));
-    socket.binaryType = "arraybuffer";
-    socket.onopen = () => setConnection({ state: "connected" });
-    socket.onmessage = (event: MessageEvent) => {
-      if (typeof event.data === "string") return;
-      view.write(new Uint8Array(event.data as ArrayBuffer));
-    };
-    socket.onclose = (event: CloseEvent) => setConnection({ state: "ended", reason: event.reason || "The connection to the terminal closed." });
-    socket.onerror = () => {
-      // The close that follows says what happened.
-    };
-    const input = view.onData((data) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(encoder.encode(data));
-    });
-    let last = { cols: view.cols, rows: view.rows };
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const resized = view.onResize(({ cols, rows }) => {
-      if (cols === last.cols && rows === last.rows) return;
-      last = { cols, rows };
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols, rows }));
-      }, RESIZE_MS);
-    });
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(() => {
-            try {
-              fit.current?.fit();
-            } catch {
-              // Not shown yet.
-            }
-          });
-    if (observer && holder.current) observer.observe(holder.current);
-    view.focus();
+    setConnection(client.connection);
+    client.start();
+    client.fit();
+    client.focus();
     return () => {
-      clearTimeout(timer);
-      input.dispose();
-      resized.dispose();
-      observer?.disconnect();
-      socket.onclose = null;
-      socket.close();
+      unsubscribe();
+      client.element.remove();
+      if (claimed.kept) releaseKept(key);
+      else client.dispose();
     };
-  }, [can, path, boxId, session]);
+  }, [can, path, boxId, session, key]);
+
+  // A box that stops or goes takes its shell with it.
+  useEffect(() => {
+    if (state && !can) dropKept(key);
+  }, [state, can, key]);
+
+  const renew = () => {
+    dropKept(key);
+    renewSession();
+  };
 
   const start = async () => {
     setActing(true);
