@@ -243,7 +243,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     unenrol: (box) => enrolment.unenrol(box),
     reconnect: (box) => enrolment.reconnect(box),
     claimable: async (box) => !box.enrol.hostId || (await bb.sdk.threads.count({ hostId: box.enrol.hostId })).total === 0,
-    claimed: (box) => enrolment.claimed(box),
+    claimed: (box) => {
+      // A claimed spare's commands need the project's variable names, as a new box's do.
+      void names(box).catch(() => {});
+      return enrolment.claimed(box);
+    },
     access: async (box) => ({ names: await names(box), parent: options.daemonParent ?? DAEMON_PARENT }),
     logError,
     log: (message) => bb.log.info(message),

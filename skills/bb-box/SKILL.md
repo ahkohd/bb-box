@@ -207,6 +207,19 @@ Most take `--json`.
 | `bb box sweep` | Runs the clean-up now. |
 | `bb box install-id` | Shows this install's ID, which it records on its guests. `--set <id>` takes back the ID it had before it lost its storage, once no box holds a guest. |
 
+## A thread on its own box
+
+In BB's new-thread screen, "New box" starts a thread on a box of its own: pick
+the kind and size, and BB clones the project onto the box. It serves projects
+with a Git remote. The box is the thread's machine: `box_list` and the panel
+say so, it does not count against the per-thread limit, and it is released
+when the thread is archived or deleted.
+
+From a terminal, `bb thread spawn` can start one too: `bb environment
+providers` lists it as `bb-box-new`, with inputs such as `{"kind": "linux"}`.
+Give `--model` when the project has no remembered model, since the new box
+cannot list models until it exists.
+
 ## The panel
 
 The Box thread panel lists the thread's boxes as rows: name, kind, badges
