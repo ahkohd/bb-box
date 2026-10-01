@@ -7,7 +7,11 @@ Status: accepted, 30 September 2026. Extends
 from a viewer. Partly superseded by
 [043](043-a-viewer-has-5-s-to-come-back-after-the-box-ends-its-connection.md):
 a box that ends the holder's connection gives its viewer 5 s to connect
-again.
+again. Extended by
+[045](045-a-persons-control-lasts-through-a-restart-of-the-plugin.md): the
+viewer that holds control keeps it through a restart of the plugin, and a
+desktop it resized gets its size back if it does not connect again within
+60 s, after a crash too.
 
 ## Context
 

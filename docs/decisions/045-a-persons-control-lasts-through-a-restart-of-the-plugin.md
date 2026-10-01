@@ -25,8 +25,9 @@ viewer's connection closes. The viewer tries again after 1 s, then after
 - Each person's control of a box's desktop is kept in plugin storage: the
   viewer that holds it, the desktop's size while the agent had control,
   and the screen of the holder's last resize. It is stored on every change
-  of control, not as the plugin stops. An instance that has stopped stores
-  nothing, so it never overwrites the next instance's.
+  of control and each resize by the holder, not as the plugin stops. An
+  instance that has stopped stores nothing, so it never overwrites the next
+  instance's.
 - As it stops, the plugin lets go of the keys and buttons each holder holds
   down, and leaves the desktop at the person's size. If the latest store
   failed, it gives control back and sets the size back, as before.
