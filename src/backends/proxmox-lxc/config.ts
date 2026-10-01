@@ -27,7 +27,21 @@
 // bb-box can read saved values once into the box-sizes setting.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
-import { normalisePrivateKey } from "../../transports/ssh.ts";
+import {
+  addressFor,
+  checkConnection,
+  checkNetwork,
+  checkReserve,
+  checkSsh,
+  checkVmids,
+  number,
+  text,
+  wholeInRange,
+  type Problem,
+  type ProxmoxConnection,
+  type ProxmoxNetwork,
+  type VmidRange,
+} from "../proxmox/settings.ts";
 import {
   fieldLabel,
   isSecret,
@@ -69,30 +83,14 @@ export interface LxcFlavourConfig {
 }
 
 export interface LxcConfig {
-  readonly proxmox: {
-    readonly apiUrl: string;
-    readonly tokenId: string;
-    readonly tokenSecret: string;
-    readonly caCertificate: string | null;
-    /** SHA-256 of the API's certificate, as AA:BB:..., pinned instead of checking its CA. */
-    readonly tlsFingerprint: string | null;
-    /** Null means the API's only node. */
-    readonly node: string | null;
-    readonly pool: string;
-  };
+  readonly proxmox: ProxmoxConnection;
   readonly flavours: Readonly<Record<LxcFlavour, LxcFlavourConfig>>;
   readonly desktop: {
     /** The most desktop boxes each GPU runs at once, or null for no limit. */
     readonly perGpu: number | null;
   };
-  readonly vmids: { readonly first: number; readonly last: number };
-  readonly network: {
-    readonly bridge: string;
-    readonly prefix: number;
-    readonly gateway: string;
-    /** Address of the n-th VMID in the range. */
-    readonly addresses: readonly string[];
-  };
+  readonly vmids: VmidRange;
+  readonly network: ProxmoxNetwork;
   /** A null key means bb-box generates one and shows its public key. */
   readonly ssh: { readonly privateKey: string | null; readonly user: string };
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
@@ -455,41 +453,6 @@ export function earlierLxcSizes(input: Readonly<Record<string, unknown>>): Recor
   return sizes;
 }
 
-export function parseIpv4(value: string): number | null {
-  const parts = value.trim().split(".");
-  if (parts.length !== 4) return null;
-  let result = 0;
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null;
-    const octet = Number(part);
-    if (octet > 255) return null;
-    result = result * 256 + octet;
-  }
-  return result;
-}
-
-export function formatIpv4(value: number): string {
-  return [24, 16, 8, 0].map((shift) => Math.floor(value / 2 ** shift) % 256).join(".");
-}
-
-/** A string setting, or `fallback` when the key is absent. An empty string stays empty. */
-function text(values: Readonly<Record<string, unknown>>, key: string, fallback = ""): string {
-  const value = values[key];
-  if (value === undefined || value === null) return fallback;
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function number(values: Readonly<Record<string, unknown>>, key: string, fallback: number): number {
-  const value = values[key];
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
-  return fallback;
-}
-
-function wholeInRange(value: number, min: number, max: number): boolean {
-  return Number.isInteger(value) && value >= min && value <= max;
-}
-
 /**
  * A flavour's template list. Entries are separated by commas or new lines,
  * or by spaces when there are no GPU IDs. A GPU desktop entry is a VMID and a
@@ -527,16 +490,6 @@ function templateList(values: Readonly<Record<string, unknown>>, flavour: LxcFla
 }
 
 
-/** A SHA-256 fingerprint as AA:BB:..., from hex with or without colons, or null. */
-export function normaliseFingerprint(value: string): string | null {
-  const hex = value.trim().replace(/^sha256[:=]?\s*/i, "").replace(/[:\s]/g, "").toUpperCase();
-  if (!/^[0-9A-F]{64}$/.test(hex)) return null;
-  return hex.match(/../g)!.join(":");
-}
-
-/** Adds a problem with the setting at `key`. */
-type Problem = (key: string, message: string) => void;
-
 /** Flat settings, as the tests and the smoke script give them. A problem names no field. */
 export function parseLxcSettings(input: Readonly<Record<string, unknown>>): ParsedSettings<LxcConfig> {
   if (input[LXC_KEYS.enabled] === false) return { enabled: false };
@@ -557,34 +510,7 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
   const problems: FieldProblem[] = [];
   const problem: Problem = (key, message) => problems.push({ path: key.slice(LXC_PREFIX.length), message });
 
-  // The setup guide's token file gives the URL with /api2/json, which the client adds itself.
-  const apiUrl = text(values, LXC_KEYS.url).replace(/\/+$/, "").replace(/\/api2\/json$/, "");
-  if (!apiUrl) problem(LXC_KEYS.url, "Set the Proxmox API URL.");
-  else {
-    try {
-      const url = new URL(apiUrl);
-      if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error();
-      if (url.username || url.password) problem(LXC_KEYS.url, "Remove credentials from the Proxmox API URL.");
-    } catch {
-      problem(LXC_KEYS.url, "Use an https URL for the Proxmox API, for example https://pve.example.com:8006.");
-    }
-  }
-  const tokenId = text(values, LXC_KEYS.tokenId);
-  if (!tokenId) problem(LXC_KEYS.tokenId, "Set the Proxmox API token ID.");
-  else if (!/^[^\s@!=]+@[^\s@!=]+![^\s@!=]+$/.test(tokenId)) problem(LXC_KEYS.tokenId, "Use a token ID like bbbox@pve!plugin.");
-  const tokenSecret = text(values, LXC_KEYS.tokenSecret);
-  if (!tokenSecret) problem(LXC_KEYS.tokenSecret, "Set the Proxmox API token secret.");
-  const fingerprintText = text(values, LXC_KEYS.tlsFingerprint);
-  const tlsFingerprint = fingerprintText ? normaliseFingerprint(fingerprintText) : null;
-  if (fingerprintText && !tlsFingerprint) problem(LXC_KEYS.tlsFingerprint, "Use a SHA-256 fingerprint like AB:CD:..., with 32 pairs of hex digits.");
-  const caCertificate = text(values, LXC_KEYS.caCertificate) || null;
-  if (caCertificate && !caCertificate.includes("-----BEGIN CERTIFICATE-----")) {
-    problem(LXC_KEYS.caCertificate, "Use a PEM certificate for the Proxmox CA, or leave it empty.");
-  }
-  const node = text(values, LXC_KEYS.node) || null;
-  if (node && !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(node)) problem(LXC_KEYS.node, "Use the node's name as Proxmox shows it.");
-  const pool = text(values, LXC_KEYS.pool, LXC_DEFAULTS.pool);
-  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(pool)) problem(LXC_KEYS.pool, "Use a Proxmox pool name such as bbbox.");
+  const proxmox = checkConnection(values, LXC_KEYS, LXC_DEFAULTS, problem);
 
   const flavours = {} as Record<LxcFlavour, LxcFlavourConfig>;
   for (const flavour of LXC_FLAVOURS) {
@@ -597,87 +523,28 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
   }
   if (!listed.length) problem(flavourKey("linux", "templates"), "Set the VMID of at least one CT template: Linux, GPU desktop or CPU desktop.");
 
-  const first = number(values, LXC_KEYS.vmidFirst, LXC_DEFAULTS.vmidFirst);
-  const last = number(values, LXC_KEYS.vmidLast, LXC_DEFAULTS.vmidLast);
-  if (!wholeInRange(first, 100, 999_999_999) || !wholeInRange(last, first, 999_999_999)) {
-    problem(wholeInRange(first, 100, 999_999_999) ? LXC_KEYS.vmidLast : LXC_KEYS.vmidFirst, "Use a VMID range from 100 whose last VMID is not below its first.");
-  }
-  for (const vmid of new Set(listed)) {
-    if (vmid >= first && vmid <= last) problem(LXC_KEYS.vmidFirst, `Move template ${vmid} out of the box VMID range.`);
-  }
-
-  const bridge = text(values, LXC_KEYS.bridge, LXC_DEFAULTS.bridge);
-  if (!bridge) problem(LXC_KEYS.bridge, "Set the network bridge.");
-  else if (!/^[A-Za-z0-9_.-]{1,15}$/.test(bridge)) problem(LXC_KEYS.bridge, "Use a Linux bridge name such as vmbr1.");
-  const [networkText = "", prefixText = ""] = text(values, LXC_KEYS.subnet, LXC_DEFAULTS.subnet).split("/");
-  const network = parseIpv4(networkText);
-  const prefix = Number(prefixText);
-  const gatewayText = text(values, LXC_KEYS.gateway, LXC_DEFAULTS.gateway);
-  const gateway = parseIpv4(gatewayText);
-  const addresses: string[] = [];
-  if (network === null || !wholeInRange(prefix, 8, 30)) {
-    problem(LXC_KEYS.subnet, "Set the subnet in CIDR form, for example 10.10.10.0/24.");
-  } else if (gateway === null) {
-    problem(LXC_KEYS.gateway, "Set the gateway address, for example 10.10.10.1.");
-  } else {
-    const size = 2 ** (32 - prefix);
-    const base = network - (network % size);
-    const broadcast = base + size - 1;
-    if (gateway <= base || gateway >= broadcast) problem(LXC_KEYS.gateway, "Put the gateway inside the subnet.");
-    let low = base + 1;
-    let high = broadcast - 1;
-    const range = text(values, LXC_KEYS.addresses, LXC_DEFAULTS.addresses);
-    if (range) {
-      const [from, to] = range.split("-").map((part) => parseIpv4(part));
-      if (from == null || to == null || from > to) {
-        problem(LXC_KEYS.addresses, "Use a box address range like 10.10.10.100-10.10.10.199.");
-      } else if (from < low || to > high) {
-        problem(LXC_KEYS.addresses, "Keep the box address range inside the subnet.");
-      } else {
-        low = from;
-        high = to;
-      }
-    }
-    const count = Number.isInteger(first) && Number.isInteger(last) ? last - first + 1 : 0;
-    for (let address = low; address <= high && addresses.length < count; address++) {
-      if (address !== gateway) addresses.push(formatIpv4(address));
-    }
-    if (count > 0 && addresses.length < count) {
-      problem(LXC_KEYS.addresses, `The box address range has ${addresses.length} addresses for ${count} VMIDs. Widen it or narrow the VMID range.`);
-    }
-  }
-
-  const keyText = text(values, LXC_KEYS.sshPrivateKey);
-  const privateKey = keyText ? normalisePrivateKey(keyText) : null;
-  if (keyText && !privateKey) problem(LXC_KEYS.sshPrivateKey, "Use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
-  const user = text(values, LXC_KEYS.sshUser) || LXC_DEFAULTS.sshUser;
-  if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user)) problem(LXC_KEYS.sshUser, "Use a Linux user name for SSH.");
+  const vmids = checkVmids(values, LXC_KEYS, LXC_DEFAULTS, listed, problem);
+  const network = checkNetwork(values, LXC_KEYS, LXC_DEFAULTS, vmids, problem);
+  const ssh = checkSsh(values, LXC_KEYS, LXC_DEFAULTS, problem);
 
   const perGpu = number(values, LXC_KEYS.perGpu, 0);
   if (!wholeInRange(perGpu, 0, 1_000)) problem(LXC_KEYS.perGpu, "Use 0 or more for the desktops per GPU.");
 
-  const reserveMemoryMiB = number(values, LXC_KEYS.reserveMemoryMiB, LXC_DEFAULTS.reserveMemoryMiB);
-  const reserveDiskGiB = number(values, LXC_KEYS.reserveDiskGiB, LXC_DEFAULTS.reserveDiskGiB);
-  if (!wholeInRange(reserveMemoryMiB, 0, 16_777_216)) problem(LXC_KEYS.reserveMemoryMiB, "Keep 0 MiB or more of memory free.");
-  if (!wholeInRange(reserveDiskGiB, 0, 1_048_576)) problem(LXC_KEYS.reserveDiskGiB, "Keep 0 GiB or more of disk free.");
+  const reserve = checkReserve(values, LXC_KEYS, LXC_DEFAULTS, problem);
 
   if (problems.length) return { config: null, problems };
   return {
     problems,
     config: {
-      proxmox: { apiUrl, tokenId, tokenSecret, caCertificate, tlsFingerprint, node, pool },
+      proxmox,
       flavours,
       desktop: { perGpu: perGpu > 0 ? perGpu : null },
-      vmids: { first, last },
-      network: { bridge, prefix, gateway: gatewayText, addresses },
-      ssh: { privateKey, user },
-      reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB },
+      vmids,
+      network,
+      ssh,
+      reserve,
     },
   };
-}
-
-export function addressFor(config: LxcConfig, vmid: number): string | null {
-  return config.network.addresses[vmid - config.vmids.first] ?? null;
 }
 
 /** The static net0 line for a VMID. Proxmox gives the interface a new MAC. */

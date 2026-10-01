@@ -115,6 +115,33 @@ test("listPool returns only the pool's guests with their tags", async () => {
   );
 });
 
+test("a VM client clones, names, configures, runs and deletes VMs, and leaves containers alone", async () => {
+  const api = new FakeProxmox();
+  api.addTemplate(9000);
+  api.addVmTemplate(9001);
+  const proxmox = new Proxmox({ apiUrl: "https://pve.example.com:8006", ...FAKE_TOKEN, node: api.node, type: "qemu", fetch: api.fetch, sleep: async () => {} });
+  await proxmox.cloneLinked({ template: 9001, vmid: 7101, hostname: "calm-heron", pool: "bbbox", description: "bb-box calm-heron" });
+  const clone = api.calls.find((call) => call.path.endsWith("/clone"))!;
+  assert.equal(clone.path, "/nodes/pve/qemu/9001/clone");
+  assert.deepEqual(clone.params, { newid: "7101", name: "calm-heron", full: "0", pool: "bbbox", description: "bb-box calm-heron" });
+  await proxmox.configure(7101, { name: "bold-heron", cores: 8, memory: 16384, smbios1: "serial=MTkyLjAuMi41LzI0IDE5Mi4wLjIuMQ==,base64=1", delete: ["protection"] });
+  const put = api.calls.find((call) => call.method === "PUT")!;
+  assert.equal(put.path, "/nodes/pve/qemu/7101/config");
+  assert.deepEqual(put.params, { name: "bold-heron", cores: "8", memory: "16384", smbios1: "serial=MTkyLjAuMi41LzI0IDE5Mi4wLjIuMQ==,base64=1", delete: "protection" });
+  assert.equal((await proxmox.config(7101)).name, "bold-heron");
+  await proxmox.start(7101);
+  assert.equal((await proxmox.status(7101))?.status, "running");
+  const [guest] = await proxmox.listPool("bbbox");
+  assert.deepEqual([guest?.vmid, guest?.type, guest?.name], [7101, "qemu", "bold-heron"]);
+  await proxmox.destroy(7101);
+  assert.equal(api.guests.has(7101), false);
+  assert.ok(
+    api.calls.filter((call) => /^\/nodes\/pve\/(lxc|qemu)\/\d+/.test(call.path)).every((call) => call.path.startsWith("/nodes/pve/qemu/")),
+    "every guest call is a VM's",
+  );
+  assert.equal(await proxmox.status(9000), null, "a container is not a VM");
+});
+
 test("a wrong token and an unreachable API give clear errors without the secret", async () => {
   const api = new FakeProxmox();
   const wrong = new Proxmox({ apiUrl: "https://x", tokenId: "a@pve!b", tokenSecret: "nope-secret", node: "n", fetch: api.fetch });

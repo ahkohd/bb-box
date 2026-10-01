@@ -161,8 +161,11 @@ node --test test/conformance.test.ts
 
 ## Proxmox LXC
 
-- Virtual. Code in [src/backends/proxmox-lxc/](../src/backends/proxmox-lxc/),
-  with the API client in [src/backends/proxmox/](../src/backends/proxmox/).
+- Virtual. Code in [src/backends/proxmox-lxc/](../src/backends/proxmox-lxc/).
+  What any Proxmox backend uses is in
+  [src/backends/proxmox/](../src/backends/proxmox/): the API client, for
+  containers or VMs, the ownership tags and description, the TLS pin, and
+  the connection, VMID range, address and SSH settings.
 - The host side, templates and API token are set up by
   `setup/proxmox-lxc/`, whose guide lists the settings.
 - Ownership lives in Proxmox tags (`bb-box`, `install.<id>`, `thread.<id>`,

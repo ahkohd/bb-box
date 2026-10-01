@@ -3,17 +3,9 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import {
-  ProxmoxLxcBackend,
-  displayReason,
-  installFromDescription,
-  ownerFromDescription,
-  ownerFromTags,
-  warmNameScript,
-  nameScript,
-  type LxcBackendOptions,
-} from "../src/backends/proxmox-lxc/backend.ts";
+import { ProxmoxLxcBackend, displayReason, warmNameScript, nameScript, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
+import { installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { quote } from "../src/transports/process.ts";

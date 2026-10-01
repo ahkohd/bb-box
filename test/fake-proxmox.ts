@@ -1,12 +1,14 @@
-// A small in-memory Proxmox API with the LXC behaviour bb-box relies on:
-// linked clones that reject `storage`, need a template that is not locked and
-// inherit its protection, "already exists" for used VMIDs, asynchronous
-// tasks, tags, pools and /cluster/resources.
+// A small in-memory Proxmox API with the behaviour bb-box relies on, for
+// containers and VMs: linked clones that reject `storage`, need a template
+// that is not locked and inherit its protection, "already exists" for used
+// VMIDs, asynchronous tasks, tags, pools and /cluster/resources.
 
 import { rootDiskGiB, type FetchLike, type FetchResponse } from "../src/backends/proxmox/api.ts";
 
 export interface FakeGuest {
   vmid: number;
+  /** A container unless it says qemu. */
+  type?: "lxc" | "qemu";
   name: string;
   pool?: string;
   status: "running" | "stopped";
@@ -70,6 +72,27 @@ export class FakeProxmox {
     });
   }
 
+  /** A VM template, as setup/proxmox-qemu/build.sh leaves one. */
+  addVmTemplate(vmid: number, config: Record<string, string> = {}): void {
+    this.guests.set(vmid, {
+      vmid,
+      type: "qemu",
+      name: `template-${vmid}`,
+      status: "stopped",
+      template: true,
+      config: {
+        scsi0: `local-lvm:base-${vmid}-disk-1,discard=on,iothread=1,size=64G`,
+        ostype: "win11",
+        agent: "1",
+        cores: "4",
+        memory: "8192",
+        protection: "1",
+        template: "1",
+        ...config,
+      },
+    });
+  }
+
   readonly fetch: FetchLike = async (url, init) => {
     init.signal?.throwIfAborted();
     const parsed = new URL(url);
@@ -94,8 +117,14 @@ export class FakeProxmox {
     return upid;
   }
 
-  #missing(vmid: number): FetchResponse {
-    return respond(500, `Configuration file 'nodes/${this.node}/lxc/${vmid}.conf' does not exist`, { data: null });
+  #missing(vmid: number, type = "lxc"): FetchResponse {
+    return respond(500, `Configuration file 'nodes/${this.node}/${type === "qemu" ? "qemu-server" : "lxc"}/${vmid}.conf' does not exist`, { data: null });
+  }
+
+  /** The guest at `vmid` if it is of `type`, as Proxmox finds a guest only under its own type. */
+  #of(type: string, vmid: number): FakeGuest | undefined {
+    const guest = this.guests.get(vmid);
+    return guest && (guest.type ?? "lxc") === type ? guest : undefined;
   }
 
   #route(call: FakeCall): FetchResponse {
@@ -136,8 +165,8 @@ export class FakeProxmox {
     if (method === "GET" && path === "/cluster/resources") {
       return ok(
         [...this.guests.values()].map((guest) => ({
-          id: `lxc/${guest.vmid}`,
-          type: "lxc",
+          id: `${guest.type ?? "lxc"}/${guest.vmid}`,
+          type: guest.type ?? "lxc",
           vmid: guest.vmid,
           name: guest.name,
           node: this.node,
@@ -146,7 +175,7 @@ export class FakeProxmox {
           // As Proxmox gives them: unset cores are the node's, and memory and disk are in bytes.
           maxcpu: Number(guest.config.cores) || this.cpus,
           maxmem: Number(guest.config.memory || 512) * 2 ** 20,
-          maxdisk: (rootDiskGiB(guest.config) ?? 0) * 2 ** 30,
+          maxdisk: (rootDiskGiB(guest.config) ?? Number(/size=(\d+)G/.exec(guest.config.scsi0 ?? "")?.[1] ?? 0)) * 2 ** 30,
           ...(guest.pool ? { pool: guest.pool } : {}),
           ...(guest.config.tags ? { tags: guest.config.tags } : {}),
         })),
@@ -164,9 +193,10 @@ export class FakeProxmox {
       return ok({ status: "stopped", exitstatus: task.exitstatus, upid });
     }
 
-    if ((match = /^\/nodes\/[^/]+\/lxc\/(\d+)\/clone$/.exec(path)) && method === "POST") {
-      const source = this.guests.get(Number(match[1]));
-      if (!source) return this.#missing(Number(match[1]));
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/clone$/.exec(path)) && method === "POST") {
+      const type = match[1]!;
+      const source = this.#of(type, Number(match[2]));
+      if (!source) return this.#missing(Number(match[2]), type);
       if (params.full === "0" && (params.storage || params.format)) {
         return respond(400, "Parameter verification failed.", {
           data: null,
@@ -175,7 +205,8 @@ export class FakeProxmox {
       }
       const newid = Number(params.newid);
       if (this.guests.has(newid) || this.hidden.has(newid)) {
-        return respond(500, `unable to create CT ${newid} - CT ${newid} already exists on node '${this.node}'`, {
+        const what = type === "qemu" ? "VM" : "CT";
+        return respond(500, `unable to create ${what} ${newid} - ${what} ${newid} already exists on node '${this.node}'`, {
           data: null,
         });
       }
@@ -185,29 +216,37 @@ export class FakeProxmox {
       }
       const config = { ...source.config };
       delete config.template;
-      config.hostname = params.hostname ?? `CT${newid}`;
-      config.rootfs = `local-lvm:base-${source.vmid}-disk-0/vm-${newid}-disk-0,size=${/size=([^,]+)/.exec(source.config.rootfs ?? "")?.[1] ?? "8G"}`;
+      let name: string;
+      if (type === "qemu") {
+        name = config.name = params.name ?? `VM${newid}`;
+        config.scsi0 = config.scsi0!.replace(/^local-lvm:base-(\d+)-disk-(\d+)/, `local-lvm:base-$1-disk-$2/vm-${newid}-disk-$2`);
+      } else {
+        name = config.hostname = params.hostname ?? `CT${newid}`;
+        config.rootfs = `local-lvm:base-${source.vmid}-disk-0/vm-${newid}-disk-0,size=${/size=([^,]+)/.exec(source.config.rootfs ?? "")?.[1] ?? "8G"}`;
+      }
       if (params.description) config.description = params.description;
       this.guests.set(newid, {
         vmid: newid,
-        name: config.hostname,
+        ...(type === "qemu" ? { type: "qemu" as const } : {}),
+        name,
         pool: params.pool,
         status: "stopped",
         template: false,
         config,
       });
-      return ok(this.#task("vzclone", source.vmid));
+      return ok(this.#task(type === "qemu" ? "qmclone" : "vzclone", source.vmid));
     }
 
-    if ((match = /^\/nodes\/[^/]+\/lxc\/(\d+)\/config$/.exec(path))) {
-      const vmid = Number(match[1]);
-      const guest = this.guests.get(vmid);
-      if (!guest) return this.#missing(vmid);
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/config$/.exec(path))) {
+      const vmid = Number(match[2]);
+      const guest = this.#of(match[1]!, vmid);
+      if (!guest) return this.#missing(vmid, match[1]);
       if (method === "GET") return ok({ ...guest.config });
       if (method === "PUT") {
         for (const [key, value] of Object.entries(params)) if (key !== "delete") guest.config[key] = value;
         for (const key of params.delete?.split(",") ?? []) delete guest.config[key];
         if (params.hostname) guest.name = params.hostname;
+        if (params.name) guest.name = params.name;
         return ok(null);
       }
     }
@@ -220,31 +259,35 @@ export class FakeProxmox {
       return ok(this.#task("resize", vmid));
     }
 
-    if ((match = /^\/nodes\/[^/]+\/lxc\/(\d+)\/status\/(start|stop|current)$/.exec(path))) {
-      const vmid = Number(match[1]);
-      const guest = this.guests.get(vmid);
-      if (!guest) return this.#missing(vmid);
-      if (match[2] === "current" && method === "GET") {
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/status\/(start|stop|current)$/.exec(path))) {
+      const [, type = "lxc", id, action] = match;
+      const vmid = Number(id);
+      const guest = this.#of(type, vmid);
+      if (!guest) return this.#missing(vmid, type);
+      const prefix = type === "qemu" ? "qm" : "vz";
+      if (action === "current" && method === "GET") {
         return ok({ vmid, name: guest.name, status: guest.status, uptime: guest.status === "running" ? 5 : 0 });
       }
-      if (method === "POST" && match[2] === "start") {
-        if (!this.nextTaskExit.has("vzstart")) guest.status = "running";
-        return ok(this.#task("vzstart", vmid));
+      if (method === "POST" && action === "start") {
+        if (!this.nextTaskExit.has(`${prefix}start`)) guest.status = "running";
+        return ok(this.#task(`${prefix}start`, vmid));
       }
-      if (method === "POST" && match[2] === "stop") {
+      if (method === "POST" && action === "stop") {
         guest.status = "stopped";
-        return ok(this.#task("vzstop", vmid));
+        return ok(this.#task(`${prefix}stop`, vmid));
       }
     }
 
-    if ((match = /^\/nodes\/[^/]+\/lxc\/(\d+)$/.exec(path)) && method === "DELETE") {
-      const vmid = Number(match[1]);
-      const guest = this.guests.get(vmid);
-      if (!guest) return this.#missing(vmid);
-      if (guest.status === "running") return respond(500, `CT ${vmid} is running - destroy failed`, { data: null });
-      if (guest.config.protection === "1") return respond(500, `can't remove CT ${vmid} - protection mode enabled`, { data: null });
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)$/.exec(path)) && method === "DELETE") {
+      const [, type = "lxc", id] = match;
+      const vmid = Number(id);
+      const guest = this.#of(type, vmid);
+      if (!guest) return this.#missing(vmid, type);
+      const what = type === "qemu" ? "VM" : "CT";
+      if (guest.status === "running") return respond(500, `${what} ${vmid} is running - destroy failed`, { data: null });
+      if (guest.config.protection === "1") return respond(500, `can't remove ${what} ${vmid} - protection mode enabled`, { data: null });
       this.guests.delete(vmid);
-      return ok(this.#task("vzdestroy", vmid));
+      return ok(this.#task(type === "qemu" ? "qmdestroy" : "vzdestroy", vmid));
     }
 
     return respond(501, `fake has no route for ${method} ${path}`, { data: null });
