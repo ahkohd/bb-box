@@ -115,6 +115,32 @@ test("listPool returns only the pool's guests with their tags", async () => {
   );
 });
 
+test("listPool reads a guest's name, status and size from its node, as the cluster's list lags, and from that list when the node does not answer", async () => {
+  const { api, proxmox } = setup();
+  await proxmox.cloneLinked({ template: 9000, vmid: 7007, hostname: "wise-moss", pool: "bbbox" });
+  await proxmox.start(7007);
+  const shown = (guest: { name: string; status: string; size: unknown } | undefined) => [guest?.name, guest?.status, guest?.size];
+  const [fresh] = await proxmox.listPool("bbbox");
+  assert.deepEqual(shown(fresh), ["wise-moss", "running", { cores: 2, memoryMiB: 4096, diskGiB: 7.8 }]);
+
+  api.intercept = (call) =>
+    call.path === `/nodes/${api.node}/lxc`
+      ? { ok: false, status: 595, statusText: "No route to host", text: async () => JSON.stringify({ data: null }) }
+      : undefined;
+  assert.deepEqual(shown((await proxmox.listPool("bbbox"))[0]), ["", "unknown", null], "as Proxmox lists a guest its status daemon has not read");
+  api.statusPass();
+  assert.deepEqual(shown((await proxmox.listPool("bbbox"))[0]), shown(fresh));
+
+  // A node that does not answer because the call was stopped stops the listing too.
+  const stop = new AbortController();
+  api.intercept = (call) => {
+    if (call.path !== `/nodes/${api.node}/lxc`) return undefined;
+    stop.abort();
+    return { ok: false, status: 595, statusText: "No route to host", text: async () => JSON.stringify({ data: null }) };
+  };
+  await assert.rejects(proxmox.listPool("bbbox", stop.signal));
+});
+
 test("a VM client clones, names, configures, runs and deletes VMs, and leaves containers alone", async () => {
   const api = new FakeProxmox();
   api.addTemplate(9000);

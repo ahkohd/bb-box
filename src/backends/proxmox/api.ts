@@ -142,7 +142,7 @@ export interface PoolGuest {
   readonly status: string;
   readonly template: boolean;
   readonly tags: string[];
-  /** From the listing's maxcpu, maxmem and maxdisk, or null when it lacks them. A running container's maxdisk is its filesystem's size. */
+  /** The guest's CPUs, memory and disk as Proxmox lists them, or null when it does not. A running container's disk is its filesystem's size. */
   readonly size: BoxSize | null;
 }
 
@@ -185,7 +185,7 @@ export function rootDiskGiB(config: Record<string, unknown>, disk = "rootfs"): n
   return size ? parseSizeGiB(size) : null;
 }
 
-/** A guest's size from /cluster/resources, which gives memory and disk in bytes. */
+/** A guest's size from Proxmox's maxcpu, maxmem and maxdisk, which give memory and disk in bytes. */
 function listedSize(entry: Record<string, unknown>): BoxSize | null {
   const cores = Number(entry.maxcpu);
   const memory = Number(entry.maxmem);
@@ -418,22 +418,46 @@ export class Proxmox {
     }
   }
 
-  /** Every guest in the pool, with its tags, in one call. */
+  /**
+   * Every guest in the pool, with its tags. /cluster/resources lists a guest
+   * at once, but gives its name, status and size as Proxmox's status daemon
+   * last read them, every 10 s or so: none for a new guest, and the old ones
+   * for a while after a change. So they come from each node's own list,
+   * which reads them as they are, when the node answers.
+   */
   async listPool(pool: string, signal?: AbortSignal): Promise<PoolGuest[]> {
     const data = await this.#request<Record<string, unknown>[]>("GET", "/cluster/resources", { type: "vm" }, signal);
-    return (data ?? [])
-      .filter((entry) => entry.pool === pool && (entry.type === "lxc" || entry.type === "qemu"))
-      .map((entry) => ({
-        vmid: Number(entry.vmid),
-        name: String(entry.name ?? ""),
-        node: String(entry.node ?? ""),
-        type: entry.type as "lxc" | "qemu",
-        status: String(entry.status ?? "unknown"),
-        template: entry.template === 1 || entry.template === true,
-        tags: parseTags(entry.tags),
-        size: listedSize(entry),
-      }))
+    const listed = (data ?? []).filter((entry) => entry.pool === pool && (entry.type === "lxc" || entry.type === "qemu"));
+    const pathOf = (entry: Record<string, unknown>) => `/nodes/${enc(String(entry.node ?? ""))}/${entry.type}`;
+    const paths = [...new Set(listed.map(pathOf))];
+    const lists = new Map(await Promise.all(paths.map(async (path) => [path, await this.#current(path, signal)] as const)));
+    return listed
+      .map((entry) => {
+        const now = lists.get(pathOf(entry))?.get(Number(entry.vmid));
+        const current = now ? { ...entry, name: now.name, status: now.status, template: now.template, maxcpu: now.cpus, maxmem: now.maxmem, maxdisk: now.maxdisk } : entry;
+        return {
+          vmid: Number(entry.vmid),
+          name: String(current.name ?? ""),
+          node: String(entry.node ?? ""),
+          type: entry.type as "lxc" | "qemu",
+          status: String(current.status ?? "unknown"),
+          template: current.template === 1 || current.template === true,
+          tags: parseTags(entry.tags),
+          size: listedSize(current),
+        };
+      })
       .filter((entry) => Number.isInteger(entry.vmid));
+  }
+
+  /** A node's guests of one type by VMID, from `/nodes/<node>/<type>`; none when the node does not answer. */
+  async #current(path: string, signal?: AbortSignal): Promise<Map<number, Record<string, unknown>>> {
+    try {
+      const data = await this.#request<Record<string, unknown>[]>("GET", path, undefined, signal);
+      return new Map((data ?? []).map((entry) => [Number(entry.vmid), entry]));
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return new Map();
+    }
   }
 
   /** Polls a task until it stops. "OK" and "WARNINGS: n" are success. */
