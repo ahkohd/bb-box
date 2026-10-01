@@ -3,7 +3,7 @@
 // reaches at its port on the Mac's loopback.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
@@ -36,7 +36,7 @@ after(async () => {
   }
 });
 
-function setup(values: Record<string, unknown> = {}) {
+function setup(values: Record<string, unknown> = {}, options: TartBackendOptions = {}) {
   const ssh = fakeSsh();
   const mac = ssh.home(MAC);
   macs.push(mac);
@@ -45,10 +45,22 @@ function setup(values: Record<string, unknown> = {}) {
   addImage(mac);
   const build = addWindowsImage(mac);
   ssh.windows(GUEST);
-  // A stand-in for PowerShell that keeps the clock script and runs the rest in sh.
-  ssh.powershell(GUEST, `case "$1" in\n  *Set-Date*) printf "%s" "$1" > "$HOME/clock"; exit 0;;\n  *) exec sh -c "$1";;\nesac\n`);
+  // A stand-in for PowerShell that keeps the clock script, counts the looks at
+  // the desktop, which is up at the third unless ~/no-desktop is there, and
+  // runs the rest in sh.
+  ssh.powershell(
+    GUEST,
+    [
+      `case "$1" in`,
+      `  *Set-Date*) printf "%s" "$1" > "$HOME/clock"; exit 0;;`,
+      `  *"Get-Process explorer"*) n=$(cat "$HOME/desktop" 2>/dev/null || echo 0); echo $((n + 1)) > "$HOME/desktop"; [ ! -f "$HOME/no-desktop" ] && [ "$n" -ge 2 ];;`,
+      `  *) exec sh -c "$1";;`,
+      `esac`,
+      ``,
+    ].join("\n"),
+  );
   const context = testContext(new MemoryStorage());
-  const backend = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": 0, ...values }), context, FAKES);
+  const backend = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": 0, ...values }), context, { ...FAKES, ...options });
   made.push(backend);
   return {
     ssh,
@@ -177,7 +189,7 @@ test("reads QEMU's VMs and its checks from the state script", () => {
   assert.deepEqual(parseQemuState("@owners\n"), { version: "", vms: new Map(), hvf: false, firmware: null, image: null });
 });
 
-test("acquires a Windows box: an owner file, an overlay on the image's build, two ports, QEMU, then SSH through the Mac", async () => {
+test("acquires a Windows box: an owner file, an overlay on the image's build, two ports, QEMU, SSH through the Mac, then the desktop", async () => {
   const { backend, mac, qemu, owners, ssh, build, firmware } = setup();
   const box = identity();
   const vm = `bb-box-${box.boxId}`;
@@ -193,7 +205,7 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
     readFileSync(join(owners, vm), "utf8"),
     `install=test\nkind=${KIND}\nbox=${box.boxId}\nthread=thr_abc123\nname=${box.name}\ncreated=1790000000000\nengine=qemu\n`,
   );
-  assert.deepEqual({ ...made, ssh: "", vnc: "" }, { image: FAKE_WINDOWS_IMAGE, build: "1", ssh: "", vnc: "", cores: "4", memory: "8192" });
+  assert.deepEqual({ ...made, ssh: "", vnc: "" }, { image: FAKE_WINDOWS_IMAGE, build: "1", machine: "virt-11.1", ssh: "", vnc: "", cores: "4", memory: "8192" });
   assert.ok(sshPort >= 42000 && vncPort > sshPort && vncPort <= 42999, `${sshPort} ${vncPort}`);
   assert.equal(readFileSync(join(qemu, "vms", vm, "disk.qcow2"), "utf8"), `overlay on ${join(realpathSync(build), "disk.qcow2")}\n`);
   assert.equal(readFileSync(join(qemu, "vms", vm, "vars.fd"), "utf8"), "variables");
@@ -201,13 +213,14 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   const [run] = runs(mac);
   const line = run!.join(" ");
   assert.deepEqual(run!.slice(0, 2), ["-name", vm]);
-  assert.ok(line.includes("-machine virt -accel hvf -cpu host -smp 4 -m 8192"), line);
+  assert.ok(line.includes("-machine virt-11.1 -accel hvf -cpu host -smp 4 -m 8192"), line);
   assert.ok(line.includes(`-drive if=pflash,format=raw,readonly=on,file=${firmware}`), line);
   assert.ok(line.includes(`hostfwd=tcp:127.0.0.1:${sshPort}-:22`), line);
   assert.ok(line.includes(`-display none -vnc 127.0.0.1:${vncPort - 5900}`), line);
   assert.ok(!line.includes("-daemonize") && !line.includes("-incoming"), line);
   assert.equal(await backend.power(guest, signal()), "running");
   assert.equal(await backend.power({ ...guest, data: { ...guest.data, box: "another" } }, signal()), null, "another box's VM is not this one's");
+  assert.equal(readFileSync(join(ssh.home(GUEST), "desktop"), "utf8"), "3\n", "ready once Windows' desktop is up");
 
   const dials = ssh.log().filter((entry) => entry.target === `box@${GUEST}`);
   assert.ok(dials.length > 0, "SSH to the guest");
@@ -245,6 +258,15 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   assert.equal(await backend.power(guest, signal()), null);
 });
 
+test("a VM whose QEMU does not say what virt stands for runs on virt", async () => {
+  const { backend, mac, qemu } = setup();
+  writeFileSync(join(mac, ".fake-qemu-virt"), "");
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(config(qemu, guest.ref).machine, "virt");
+  assert.ok(runs(mac).at(-1)!.join(" ").includes("-machine virt -accel hvf"));
+  await backend.release(guest, releasing, signal());
+});
+
 test("an acquire that starts again goes on with its VM, at the same ports, though the VM fills the Mac", async () => {
   const { backend, mac } = setup();
   const box = identity(sized(100));
@@ -276,14 +298,35 @@ test("a stop saves a Windows VM to a file and QEMU quits; a start restores it, d
   assert.equal(runs(mac).length, 1, "a stopped VM is left as it is");
 
   rmSync(join(ssh.home(GUEST), "clock"), { force: true });
+  // QEMU was updated while the VM was stopped.
+  writeFileSync(join(mac, ".fake-qemu-virt"), "virt-11.2");
   const restoring = qmp(mac).length;
   await backend.start(guest, signal());
   assert.equal(await backend.power(guest, signal()), "running");
   assert.deepEqual(runs(mac).at(-1)!.slice(-2), ["-incoming", "defer"]);
+  assert.ok(runs(mac).at(-1)!.join(" ").includes("-machine virt-11.1 "), "restored on the machine it was saved on");
   assert.deepEqual(qmp(mac, restoring).map((command) => command.execute).filter((execute) => execute !== "query-status"), ["qmp_capabilities", "migrate-incoming", "cont"]);
   assert.equal(existsSync(join(dir, "state")), false, "a saved state no longer matches the disk once the VM runs on");
   assert.match(readFileSync(join(ssh.home(GUEST), "clock"), "utf8"), /Set-Date/);
   assert.deepEqual(context.errors, []);
+  await backend.release(guest, releasing, signal());
+});
+
+test("a stop whose save is cancelled fails at once, and the VM runs on", async () => {
+  const { backend, mac, qemu } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const dir = join(qemu, "vms", guest.ref);
+  writeFileSync(join(mac, ".fake-qemu-cancel"), "");
+  const sent = qmp(mac).length;
+  await assert.rejects(backend.stop(guest, AbortSignal.timeout(10_000)), { message: new RegExp(`QEMU could not save ${guest.ref}: .*"cancelled"`) });
+  assert.deepEqual(
+    qmp(mac, sent).map((command) => command.execute),
+    ["qmp_capabilities", "stop", "migrate-set-parameters", "migrate", "query-migrate", "cont"],
+  );
+  assert.equal(await backend.power(guest, signal()), "running");
+  assert.equal(existsSync(join(dir, "state.part")), false);
+  assert.equal(existsSync(join(dir, "state")), false);
+  rmSync(join(mac, ".fake-qemu-cancel"));
   await backend.release(guest, releasing, signal());
 });
 
@@ -310,6 +353,19 @@ test("an acquire whose QEMU does not start removes its VM and owner file, and sa
   const vm = `bb-box-${box.boxId}`;
   await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), {
     message: `QEMU could not start ${vm} on mac1: QEMU's firmware ${firmware} is missing.`,
+  });
+  assert.equal(existsSync(join(qemu, "vms", vm)), false);
+  assert.equal(existsSync(join(owners, vm)), false);
+});
+
+test("an acquire whose Windows desktop does not come up removes its VM, and says why", async () => {
+  const { backend, qemu, owners, ssh } = setup({}, { readyTimeoutMs: 3_000 });
+  mkdirSync(ssh.home(GUEST), { recursive: true });
+  writeFileSync(join(ssh.home(GUEST), "no-desktop"), "");
+  const box = identity();
+  const vm = `bb-box-${box.boxId}`;
+  await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), {
+    message: new RegExp(`^Windows' desktop in ${vm} on mac1 was not up within \\d+ s: Explorer did not run in a desktop session, or Cua's daemon did not listen on`),
   });
   assert.equal(existsSync(join(qemu, "vms", vm)), false);
   assert.equal(existsSync(join(owners, vm)), false);

@@ -56,7 +56,7 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { ReadyPool } from "../pool.ts";
-import { CUA_PIPE, setClock } from "../windows.ts";
+import { CUA_PIPE, desktopUp, setClock } from "../windows.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
   claimScript,
@@ -123,6 +123,7 @@ const LINUX_CUA: ComputerUse = { driver: "cua", version: "0.28.3", socket: `/hom
 /** The user Windows boxes work as: an administrator, whose SSH session is elevated (039). */
 const WINDOWS_USER = "box";
 const WINDOWS_READY_TIMEOUT_MS = 3 * 60_000;
+const WINDOWS_DESKTOP_POLL_MS = 1_000;
 const WINDOWS_COMMAND: CommandCapability = { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true };
 /** Cua Driver in the Windows image, on its named pipe, as on Proxmox (039). */
 const WINDOWS_CUA: ComputerUse = { driver: "cua", version: CUA_VERSION, socket: CUA_PIPE };
@@ -772,7 +773,8 @@ export class TartBackend implements Backend {
 
   /**
    * Acquires a Windows box (046): claims its VM, bb-box-<box ID>, makes its
-   * overlay and ports, starts QEMU, and waits for SSH through the Mac. The
+   * overlay and ports, starts QEMU, and waits for SSH through the Mac, then
+   * for Windows' desktop, as a box is ready only once Cua can drive it. The
    * VM keeps the clock its image set, so it is set only after a restore.
    */
   async #acquireWindows(
@@ -815,7 +817,9 @@ export class TartBackend implements Backend {
       const ports = made;
       await hooks.starting();
       await step("start", () => this.#start(on, vm, "windows", deadline, signal));
-      await step("ssh", async () => this.#waitReady(on, vm, this.#windows(await this.#mac(on), ports.ssh), "windows", deadline, signal));
+      const access = this.#windows(await this.#mac(on), ports.ssh);
+      await step("ssh", () => this.#waitReady(on, vm, access, "windows", deadline, signal));
+      await step("desktop", () => this.#windowsDesktop(on, vm, access, deadline, signal));
       // Claimed again, so the box's record has the ports and size as it becomes ready.
       await hooks.claim(guest(made));
       return guest(made);
@@ -1547,6 +1551,20 @@ export class TartBackend implements Backend {
       throw new Error(
         `${vm} on ${host.name} did not answer SSH as ${access.user} at ${access.host}${access.port === 22 ? "" : `:${access.port}`} within ${Math.round(left / 1000)} s. ` +
           `Check that the image's user ${access.user} accepts bb-box's key.`,
+      );
+    }
+  }
+
+  /** Waits until Windows' desktop is up: Explorer runs in a desktop session, and Cua's daemon listens. */
+  async #windowsDesktop(host: TartHost, vm: string, access: SshAccess, deadline: number, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, access, "windows");
+    const left = Math.max(1_000, deadline - Date.now());
+    const up = { probe: (inner?: AbortSignal) => desktopUp(command, inner) };
+    if (!(await waitUntilAnswers(up, { timeoutMs: left, intervalMs: WINDOWS_DESKTOP_POLL_MS, signal, sleep: this.#options.sleep ?? pause }))) {
+      throw new Error(
+        `Windows' desktop in ${vm} on ${host.name} was not up within ${Math.round(left / 1000)} s: Explorer did not run in a desktop session, ` +
+          `or Cua's daemon did not listen on ${CUA_PIPE}. Check that the image signs the box user in.`,
       );
     }
   }
