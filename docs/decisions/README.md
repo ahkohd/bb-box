@@ -45,3 +45,4 @@ that changes gets a new record that supersedes the old one.
 | [038](038-the-agent-can-take-control-back.md) | The agent can take control back when asked |
 | [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md) | Windows desktops are clones of a template that is not generalized |
 | [040](040-linux-on-arm64-has-kinds-of-its-own.md) | Linux on arm64 has kinds of its own |
+| [041](041-every-linux-box-has-docker.md) | Every Linux box has Docker, started on first use |

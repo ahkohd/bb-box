@@ -103,6 +103,11 @@ and `start` and `stop` throw `gone`.
   accepted wherever an ID comes in: tool input, configuration, stored
   records and guests' kind tags. Core maps them to the new IDs where they
   come in, so backends and views see only the new ones.
+- `linux-docker` and `linux-arm64-docker` are aliases of `linux` and
+  `linux-arm64` with the feature `docker`. An acquire through one takes
+  only offers that have it. Every Linux image has Docker, started on first
+  use; an offer or box without it shows "No Docker"
+  ([041](decisions/041-every-linux-box-has-docker.md)).
 - An offer is a backend and a kind. The registry tries the offers of a kind
   in the order the backends are listed in the configuration, and takes the
   first with capacity. The box records both.
@@ -116,11 +121,9 @@ and `start` and `stop` throw `gone`.
 | Kind | Promises | Offered by |
 | --- | --- | --- |
 | `linux` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
-| `linux-docker` | as above, plus the feature `docker` | Proxmox LXC (`nesting=1`), Docker when privileged, an SSH pool machine whose reset restores the whole machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
 | `linux-desktop-cpu` | a Linux desktop without a GPU | Docker, an SSH pool machine, Proxmox LXC from a CPU-only desktop template |
 | `linux-arm64` | Linux on arm64, no GPU | Tart |
-| `linux-arm64-docker` | as above, plus the feature `docker` | Tart |
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
 | `macos` | macOS, no GPU | a physical Mac, Tart |
@@ -150,8 +153,10 @@ and `start` and `stop` throw `gone`.
   `linux-desktop-cpu`, and a `linux-desktop` box back on the CPU, take the
   viewer's resize themselves. Both desktops resize to the viewer while you
   hold control.
-- A box user in the `docker` group is root on the machine, so an SSH pool
-  offers `linux-docker` only if its reset restores the whole machine
+- Docker comes with Proxmox LXC (`nesting=1`) and Tart, and with the
+  Docker backend's boxes when they are privileged, as they are by default.
+  A box user in the `docker` group is root on the machine, so an SSH pool
+  gives Docker only if its reset restores the whole machine
   (`restores: "machine"`). Rootless Docker kept in the box user's home may
   allow it after a home reset; that is untested.
 - Each kind sets `readyTimeoutMs`, the longest an acquire may take: about
@@ -1263,8 +1268,9 @@ Notes:
   GPU desktops use NVIDIA's container toolkit through CDI. Boxes run with
   `--init` and a start script, and no systemd
   ([013](decisions/013-docker-boxes-run-unprivileged.md)). Docker inside a
-  box needs the privileged kind `linux-docker`, which the operator turns on
-  because a privileged container is root on the Docker host. Without
+  box needs a privileged container, which is root on the Docker host. Boxes
+  are privileged unless the operator turns it off
+  ([041](decisions/041-every-linux-box-has-docker.md)). Without
   systemd, BB's installer leaves its host daemon running in the background.
   After a restart, the start script removes BB's daemon lock and PID file,
   and bb-box calls `bootstrap` again, which starts the daemon
@@ -1284,10 +1290,10 @@ Notes:
 - **SSH host pool** needs nothing but SSH access to each machine, directly
   or through a jump host, and an admin user that may run only bb-box's
   helper as root. Each box gets a new user, removed with everything it left
-  on release; `linux-docker` needs a whole-machine reset the operator
-  provides, since a box with Docker is root on the machine. The machine
-  holds the truth: a marker names the install and box, and the reset
-  generation moves on with each reset. Desktops and rootless Docker are not
+  on release; Docker needs a whole-machine reset the operator provides,
+  since a box with Docker is root on the machine. The machine holds the
+  truth: a marker names the install and box, and the reset generation
+  moves on with each reset. Desktops and rootless Docker are not
   built yet. The physical Mac backend may turn out to be the same driver
   with macOS machines and a desktop kind.
 - **Physical Macs** have one console session. The box user must be logged in

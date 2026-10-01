@@ -6,7 +6,9 @@ without a desktop. Partly superseded by
 [029](029-configuration-is-one-checked-document.md): the keys from before
 027 are read once, when BB's settings move into bb-box's configuration.
 Extended by [040](040-linux-on-arm64-has-kinds-of-its-own.md): where an
-architecture goes in a kind's ID.
+architecture goes in a kind's ID. Partly superseded by
+[041](041-every-linux-box-has-docker.md): `linux-docker` is an alias of
+`linux` with the feature `docker`.
 
 ## Context
 
