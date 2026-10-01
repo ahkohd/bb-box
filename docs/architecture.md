@@ -865,6 +865,10 @@ A box is a resource of its thread and gets what the thread's own machine has.
   also start a thread on a new box from BB's new-thread screen, which BB
   removes with the thread
   ([033](decisions/033-a-thread-can-start-on-a-new-box.md)).
+- **Your machines.** You can add boxes in BB Box's settings that belong to
+  you, not to a thread. Each is a BB machine with the name you give it,
+  in BB's list and picker, and lives until you remove it
+  ([036](decisions/036-your-machines-are-boxes-you-own.md)).
 - **Direct access.** The agent can also reach its boxes itself, for example
   with `ssh <box name>` or `DOCKER_HOST`, over the same network the BB server
   uses.
