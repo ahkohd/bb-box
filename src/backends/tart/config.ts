@@ -15,7 +15,7 @@ import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { hostKeysFor } from "../ssh-pool/config.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
-export const TART_KINDS = ["macos", "macos-desktop", "linux-arm64", "linux-arm64-docker"] as const;
+export const TART_KINDS = ["macos", "macos-desktop", "linux-arm64", "linux-arm64-docker", "linux-arm64-desktop-cpu"] as const;
 export type TartKind = (typeof TART_KINDS)[number];
 
 /** Apple's macOS licence and the Virtualization framework allow two macOS VMs per Mac. */
@@ -63,6 +63,7 @@ export const TART_KEYS = {
   macosImage: "tart-macos-image",
   desktopImage: "tart-macos-desktop-image",
   linuxImage: "tart-linux-image",
+  linuxDesktopImage: "tart-linux-desktop-image",
   vmsPerHost: "tart-vms-per-host",
   reserveMemoryMiB: "tart-reserve-memory-mib",
   reserveDiskGiB: "tart-reserve-disk-gib",
@@ -73,6 +74,7 @@ const IMAGE_KEYS: Readonly<Record<TartKind, string>> = {
   "macos-desktop": TART_KEYS.desktopImage,
   "linux-arm64": TART_KEYS.linuxImage,
   "linux-arm64-docker": TART_KEYS.linuxImage,
+  "linux-arm64-desktop-cpu": TART_KEYS.linuxDesktopImage,
 };
 /** The macOS kinds have an image by default; the Linux ones are off until given one. */
 const IMAGE_DEFAULTS: Readonly<Record<TartKind, string>> = {
@@ -80,6 +82,7 @@ const IMAGE_DEFAULTS: Readonly<Record<TartKind, string>> = {
   "macos-desktop": TART_DEFAULTS.image,
   "linux-arm64": "",
   "linux-arm64-docker": "",
+  "linux-arm64-desktop-cpu": "",
 };
 
 export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
@@ -135,6 +138,13 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     label: "Tart: Linux image",
     description:
       "The Tart VM on each Mac that linux-arm64 and linux-arm64-docker boxes are cloned from, as setup/tart/prepare-linux-image.sh builds it (bb-box-linux). Empty turns them off.",
+    default: "",
+  },
+  [TART_KEYS.linuxDesktopImage]: {
+    type: "string",
+    label: "Tart: Linux desktop image",
+    description:
+      "The Tart VM on each Mac that linux-arm64-desktop-cpu boxes are cloned from, as setup/tart/prepare-linux-image.sh --desktop builds it (bb-box-linux-desktop). Empty turns them off.",
     default: "",
   },
   [TART_KEYS.vmsPerHost]: {
@@ -272,6 +282,7 @@ const IMAGE_LABELS: Readonly<Record<string, string>> = {
   [TART_KEYS.macosImage]: "macOS image",
   [TART_KEYS.desktopImage]: "macOS desktop image",
   [TART_KEYS.linuxImage]: "Linux image (arm64)",
+  [TART_KEYS.linuxDesktopImage]: "Linux desktop image (arm64)",
 };
 
 /** The backend's fields in bb-box's configuration: the settings above without the prefix, but the Macs. */
@@ -281,6 +292,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.macosImage, "boxes"],
     [TART_KEYS.desktopImage, "boxes"],
     [TART_KEYS.linuxImage, "boxes"],
+    [TART_KEYS.linuxDesktopImage, "boxes"],
     [TART_KEYS.vmUser, "advanced"],
     [TART_KEYS.vmsPerHost, "advanced"],
     [TART_KEYS.reserveMemoryMiB, "advanced"],

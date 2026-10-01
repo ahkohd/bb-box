@@ -11,13 +11,17 @@ each Mac. It offers these kinds:
 - **linux-arm64** and **linux-arm64-docker**: Ubuntu on arm64 with what a
   Linux box on Proxmox has, Docker included, from a second image (040). Off
   until you give its image.
+- **linux-arm64-desktop-cpu**: the same with an XFCE desktop drawn by the
+  CPU, shown in the thread's panel, and computer use through Cua Driver,
+  from a third image (040). Off until you give its image.
 
 All enrol in BB as machines, as other Linux boxes do.
 
 The bb-box plugin, on the BB server, reaches each Mac over SSH as a host user
 of its own and runs `tart` there. The VMs sit on the Mac's own NAT, which
 only the Mac reaches, so bb-box reaches them through the Mac: commands over
-SSH with the Mac as the jump host, and the desktop through Tart's VNC server.
+SSH with the Mac as the jump host, and a macOS desktop through Tart's VNC
+server. A Linux desktop has its own VNC server in the VM, reached over SSH.
 
 Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
 2.30.0, boxes of the small preset (4 cores, 8 GiB):
@@ -267,6 +271,7 @@ keeps its boxes and takes no new ones. The backend's own fields:
 | `ssh-private-key` | empty | A secret. Empty makes bb-box generate one; its public key is in `bb box doctor` |
 | `macos-image`, `macos-desktop-image` | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
 | `linux-image` | empty | The Tart VM `linux-arm64` and `linux-arm64-docker` boxes are cloned from, such as `bb-box-linux`. Empty, the default, turns them off |
+| `linux-desktop-image` | empty | The Tart VM `linux-arm64-desktop-cpu` boxes are cloned from, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
 | `vm-user` | `admin` | The macOS images' user. Linux boxes work as `box` |
 | `vms-per-host` | 2 | At most 2 |
 | `reserve-memory-mib`, `reserve-disk-gib` | 16384, 50 | A new box is refused when the Mac would have less. With 16 GiB kept free, a 16 GiB Mac takes no box and a 32 GiB Mac takes two 8 GiB boxes, so lower it on a small Mac you do not use yourself |

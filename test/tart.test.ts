@@ -251,6 +251,39 @@ test("a Linux box runs as box, boots with no saved state or VNC, and stop shuts 
   await backend.release(guest, releasing);
 });
 
+test("a Linux desktop box waits for its desktop, and opens it through SSH to the VM's own VNC server (040)", async () => {
+  const off = new TartBackend(tartConfig({ "tart-linux-image": "bb-box-linux" }), testContext()).kinds();
+  assert.ok(!off.some((kind) => kind.id === "linux-arm64-desktop-cpu"), "off until it has an image of its own");
+  const { ssh, mac, backend } = linuxSetup({ "tart-linux-desktop-image": "bb-box-linux-desktop" });
+  addImage(mac, "bb-box-linux-desktop", "linux");
+  const kind = backend.kinds().find((candidate) => candidate.id === "linux-arm64-desktop-cpu")!;
+  assert.deepEqual([kind.capabilities.os, kind.capabilities.arch, kind.capabilities.displays], ["linux", "arm64", [{ id: "desktop", protocol: "rfb", resizable: true }]]);
+  assert.equal(kind.capabilities.computerUse?.socket, "/home/box/.cache/cua-driver/cua-driver.sock");
+
+  const recorded = hooks();
+  const guest = await backend.acquire(identity("linux-arm64-desktop-cpu", "thr_abc123", LINUX_SMALL), null, recorded.hooks, signal());
+  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "desktop", "name"]);
+  assert.ok(tartCalls(mac).some((call) => call[1] === "clone" && call[2] === "bb-box-linux-desktop" && call[3] === guest.ref));
+  const waits = () => ssh.log().filter((entry) => entry.target === `box@${guest.address}` && entry.command.includes("systemctl is-active --quiet bb-box-display.service")).length;
+  assert.equal(waits(), 1);
+
+  const { displays } = await backend.transports(guest, "linux-arm64-desktop-cpu");
+  assert.deepEqual(displays.map((display) => [display.id, display.resizable, Boolean(display.resize)]), [["desktop", true, false]]);
+  const { route, auth } = await displays[0]!.open(signal());
+  assert.equal(route.type, "command");
+  const argv = route.type === "command" ? route.argv : [];
+  assert.deepEqual(argv.slice(-3), ["-W", "127.0.0.1:5900", `box@${guest.address}`], "to the VM's own VNC server, through the Mac");
+  // The test machine has no desktop, so no password file.
+  assert.deepEqual(auth, { type: "none" });
+  assert.ok(ssh.log().some((entry) => entry.target === `box@${guest.address}` && entry.command.includes("/var/lib/bb-box/vnc-password")));
+
+  // It waits for the desktop again when it boots again.
+  await backend.stop(guest);
+  await backend.start(guest);
+  assert.equal(waits(), 2);
+  await backend.release(guest, releasing);
+});
+
 test("Linux boxes take memory on a Mac but none of its two macOS VMs, and have no warm pool (040)", async () => {
   const { make, backend } = linuxSetup();
   const asked = make(testContext(new MemoryStorage(), "test", { warm: { "linux-arm64": 1 } }));
@@ -393,6 +426,8 @@ test("a box's hostname comes from its name, and only a VM is renamed", () => {
   assert.match(off, /^\[ "\$\(systemd-detect-virt --vm 2>\/dev\/null\)" = apple \] \|\| \{ echo "not a VM"; exit 0; \}\n/);
   assert.match(off, /\n\[ "\$\(cat "\$HOME\/\.config\/bb-box\/vm" 2>\/dev\/null\)" = 'bb-box-bx1' \] \|\| \{ echo "not bb-box-bx1"; exit 0; \}\nsync\nsudo -n systemctl poweroff --no-block/);
   assert.match(script, /\ncase "\$\(sysctl -n hw\.model 2>\/dev\/null\)" in VirtualMac\*\) ;; \*\) echo "not a VM"; exit 0 ;; esac\n/);
+  // A Linux desktop's X cookie then answers for any hostname.
+  assert.match(script, /\n {2}xauth -q -f "\$auth" nlist \| sed 's\/\^\.\.\.\.\/ffff\/' \| xauth -q -f "\$auth" nmerge -\n {2}exit 0\nfi\n/);
 });
 
 test("a VM that changes hands gets its new owner in its owner file, and its new name inside (036)", async () => {
