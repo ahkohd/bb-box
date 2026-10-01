@@ -1003,6 +1003,13 @@ test("your machines: removing or stopping one a thread is working on asks first 
   world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
   const listed = (await harness.behavior.callRpc("machines.list", null)) as { machines: { threads: unknown[] }[] };
   assert.deepEqual(listed.machines[0]!.threads, [{ id: "thr_worker", title: "Build", running: true }]);
+  // A thread with no title yet goes by BB's fallback, the start of its prompt.
+  world.onHost.set(box.enrol.hostId!, [
+    { id: "thr_worker", title: "Build", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null },
+    { id: "thr_new", title: null, titleFallback: "Run the tests", status: "idle", hasPendingInteraction: false, archivedAt: null, deletedAt: null } as never,
+  ]);
+  const fallback = (await harness.behavior.callRpc("machines.list", null)) as { machines: { threads: { title: string }[] }[] };
+  assert.deepEqual(fallback.machines[0]!.threads.map((thread) => thread.title), ["Build", "Run the tests"]);
   for (const method of ["machines.remove", "machines.stop"]) {
     const asked = (await harness.behavior.callRpc(method, { box: "busy" })) as { box: { state: string }; threads: unknown[] };
     assert.equal(asked.box.state, "ready", method);

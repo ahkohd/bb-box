@@ -488,7 +488,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const working = new Set(["active", "starting", "pending", "stopping"]);
       return threads
         .filter((thread) => !isSet(thread.archivedAt) && !isSet(thread.deletedAt))
-        .map((thread) => ({ id: thread.id, title: thread.title ?? null, running: working.has(thread.status) || thread.hasPendingInteraction }));
+        .map((thread) => ({ id: thread.id, title: thread.title ?? thread.titleFallback ?? null, running: working.has(thread.status) || thread.hasPendingInteraction }));
     },
     async checkInUse(box, action) {
       const threads = await api.threadsOn(box);
