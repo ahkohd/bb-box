@@ -134,8 +134,8 @@ import { endpointOf, type RelayWebSocket } from "../src/host/relay.ts";
 import { RELAY_ROUTE, RelayHub, type RelaySocket } from "../src/relay/hub.ts";
 import { tempDir } from "./helpers.ts";
 
-/** A WebSocket from the worker to the hub's route, delivered a turn later each way. */
-function joined(hub: () => RelayHub) {
+/** A WebSocket from the worker to the hub's route, delivered a turn later each way, or opening `openAfterMs` after it upgrades. */
+function joined(hub: () => RelayHub, options: { openAfterMs?: number } = {}) {
   const urls: string[] = [];
   const connectTo = (url: string): RelayWebSocket => {
     urls.push(url);
@@ -166,7 +166,8 @@ function joined(hub: () => RelayHub) {
       },
       addEventListener: (type: string, listener: never) => (listeners as Record<string, unknown[]>)[type]!.push(listener),
     };
-    setImmediate(() => handlers.onOpen(server));
+    if (options.openAfterMs === undefined) setImmediate(() => handlers.onOpen(server));
+    else setTimeout(() => handlers.onOpen(server), options.openAfterMs);
     return socket;
   };
   return { urls, connectTo };
@@ -291,6 +292,25 @@ test("a machine the relay cannot reach answers the docker CLI with the reason, a
   for (let i = 0; i < 100 && worker.experimental_getRetainedWorkerLeaseCount(); i++) await new Promise((r) => setTimeout(r, 10));
   assert.equal(worker.experimental_getRetainedWorkerLeaseCount(), 0);
   assert.ok(logs.some((line) => /closed: no box or connection used it for a while/.test(line)), logs.join("\n"));
+});
+
+test("a worker socket that opens after bb-box stopped waiting is closed, so no relay keeps the worker's lease", async (t) => {
+  const dir = tempDir("relay-late");
+  const docker = await fakeDocker(join(dir, "docker.sock"));
+  t.after(() => docker.close());
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  let hub!: RelayHub;
+  // It upgrades at once, which takes its secret, and opens after the accept timer.
+  const { connectTo } = joined(() => hub, { openAfterMs: 150 });
+  const worker = experimental_createHostEntryHarness(hostEntry({ relay: { connect: connectTo, endpoint: async () => ({ path: join(dir, "docker.sock") }) } }));
+  t.after(() => worker.experimental_dispose());
+  hub = new RelayHub({ dir: tempDir("relay-hub"), open: (_hostId, secret) => worker.experimental_call("relay", { secret, path: "/api/v1/plugins/bb-box/http/docker-relay" }), keep: async () => false, logError: () => {}, acceptMs: 50, pingMs: 10 });
+  t.after(() => hub.dispose());
+  const late = await get((await hub.endpoint("host_late_open")).slice("unix://".length), "/_ping");
+  assert.match(late.text, /the machine's worker did not connect to bb-box within 0 s/);
+  assert.equal(worker.experimental_getRetainedWorkerLeaseCount(), 1, "the worker waits for its socket to open");
+  for (let i = 0; i < 100 && worker.experimental_getRetainedWorkerLeaseCount(); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(worker.experimental_getRetainedWorkerLeaseCount(), 0);
 });
 
 test("the worker finds Docker as the docker CLI would", () => {
