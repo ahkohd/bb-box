@@ -1270,7 +1270,7 @@ test("the settings page lists your machines with their threads and actions, and 
   expect(slot.getByText("Working: Fix the login form · 1 more")).toBeTruthy();
   expect(slot.getByText("scratch")).toBeTruthy();
   // Said once for the section, not under each machine.
-  expect(slot.getAllByText("To use one for a project with a repository, pick it in BB's new-thread picker and choose Set up on it once.")).toHaveLength(1);
+  expect(slot.getAllByText("To use one for a project with a repository, pick it in BB's new-thread picker.")).toHaveLength(1);
   expect(slot.getByRole("button", { name: "Open desktop" })).toBeTruthy();
   expect(slot.getByRole("button", { name: "Open terminal" })).toBeTruthy();
   expect(slot.getByRole("button", { name: "Stop" })).toBeTruthy();

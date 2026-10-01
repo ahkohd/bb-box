@@ -17,7 +17,20 @@ import { isSecretField, isSecretState, type FormValue } from "./config.ts";
 
 /** BB's small badge beside a setting's label. */
 /** A block of the page, titled as BB titles a plugin's settings sections, with room for one action beside the title. */
-export function Section({ title, description, action, children }: { title: string; description?: string; action?: ReactNode; children: ReactNode }) {
+export function Section({
+  title,
+  description,
+  action,
+  plain = false,
+  children,
+}: {
+  title: string;
+  description?: string;
+  action?: ReactNode;
+  /** No card around the children: for an empty state, which has a dashed border of its own (the operator's note of 1 October 2026). */
+  plain?: boolean;
+  children: ReactNode;
+}) {
   return (
     <section className="space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -27,9 +40,13 @@ export function Section({ title, description, action, children }: { title: strin
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </div>
-      <div className="rounded-lg border border-border bg-card px-4 py-3.5">
-        <div className="divide-y divide-border">{children}</div>
-      </div>
+      {plain ? (
+        <div className="space-y-2">{children}</div>
+      ) : (
+        <div className="rounded-lg border border-border bg-card px-4 py-3.5">
+          <div className="divide-y divide-border">{children}</div>
+        </div>
+      )}
     </section>
   );
 }
