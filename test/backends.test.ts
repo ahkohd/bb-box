@@ -20,8 +20,8 @@ test("offers of a kind that agree pass, whatever their size and extra features",
   const bigger = { ...HEADLESS, size: "8 cores", capabilities: { ...HEADLESS.capabilities, features: ["docker"] } };
   const [check] = offerChecks([offer("One", HEADLESS), offer("Two", bigger)]);
   assert.deepEqual(check, {
-    id: "offers.linux-headless",
-    name: "Offers of linux-headless",
+    id: "offers.linux",
+    name: "Offers of linux",
     status: "ok",
     detail: "One and Two offer it and agree.",
     fix: null,
@@ -32,10 +32,10 @@ test("offers that disagree on what the kind promises warn, and say how", () => {
   const gpu = { ...HEADLESS, requires: ["docker"], capabilities: { ...HEADLESS.capabilities, gpu: true, features: [] } };
   const [check] = offerChecks([offer("One", HEADLESS), offer("Two", gpu)]);
   assert.equal(check?.status, "warn");
-  assert.match(check!.detail, /Two offers linux-headless without docker, which the kind requires/);
-  assert.match(check!.detail, /One and Two disagree on GPU for linux-headless: false and true/);
-  assert.match(check!.detail, /disagree on required features for linux-headless: none and docker/);
-  assert.match(check!.fix!, /Make the offers of linux-headless match/);
+  assert.match(check!.detail, /Two offers linux without docker, which the kind requires/);
+  assert.match(check!.detail, /One and Two disagree on GPU for linux: false and true/);
+  assert.match(check!.detail, /disagree on required features for linux: none and docker/);
+  assert.match(check!.fix!, /Make the offers of linux match/);
 });
 
 test("an offer with a computer-use driver but no command transport warns, even alone", () => {

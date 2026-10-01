@@ -241,7 +241,7 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   assert.ok(!isError(acquired), text(acquired));
   const box = await only(app);
   assert.equal(box.state, "ready");
-  assert.equal(box.kind, "linux-headless");
+  assert.equal(box.kind, "linux");
   assert.equal(box.projectId, PROJECT);
   assert.match(text(acquired), new RegExp(`Box ${box.name} \\(${box.id}\\)`));
   assert.match(text(acquired), /Next: Run commands with box_run/);
@@ -278,8 +278,8 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   assert.equal(readFileSync(join(world.workspace, "out/result.txt"), "utf8"), "FROM THE WORKSPACE\n");
 
   const listed = await tool("box_list", {});
-  assert.match(text(listed), new RegExp(`- ${box.name}: Linux headless \\(linux-headless\\), ready`));
-  assert.match(text(listed), /Kinds:\n- linux-headless/);
+  assert.match(text(listed), new RegExp(`- ${box.name}: Linux \\(linux\\), ready`));
+  assert.match(text(listed), /Kinds:\n- linux/);
 
   const released = await tool("box_release", { box: box.name });
   assert.match(text(released), new RegExp(`Released box ${box.name}`));
@@ -326,7 +326,7 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
     'for i in $(seq 50); do grep -qs "Added by bb-box" .bashrc && break; sleep 0.1; done; grep -c "Added by bb-box" .bashrc > access-during-install; echo installed > bb-installed';
 
   // box_acquire waits for enrolment, as box_run would, and says how long it took.
-  const acquired = text(await tool("box_acquire", { kind: "linux-headless" }));
+  const acquired = text(await tool("box_acquire", { kind: "linux" }));
   assert.match(acquired, /BB machine: enrolled/);
   assert.match(acquired, /Timings: .*total \d+\.\d s, BB enrolment \d+\.\d s/);
   const box = await only(app);
@@ -642,6 +642,16 @@ test("a box the sweep restores enrols again with its box ID once it answers, tim
   assert.equal(world.events.length, 4);
 });
 
+test("box_acquire takes a kind's ID from before 027, and the tools show the current one", async (t) => {
+  const { harness, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+
+  assert.match(text(await tool("box_acquire", { kind: "linux-headless", wait: false })), /^Acquiring box \S+ \(linux\)\./);
+  const listed = text(await tool("box_list", {}));
+  assert.match(listed, /\(linux\)/);
+  assert.doesNotMatch(listed, /headless/);
+});
+
 test("refusals say what to do next", async (t) => {
   const { harness, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
@@ -651,8 +661,8 @@ test("refusals say what to do next", async (t) => {
   assert.match(text(missing), /This thread has no box "nope". It has no boxes.\n\nNext: Call box_list/);
   const kind = await tool("box_acquire", { kind: "linux-mainframe" });
   assert.ok(isError(kind));
-  assert.match(text(kind), /There is no "linux-mainframe" kind. The kinds are: linux-headless, linux-desktop.\n\nNext: Call box_list/);
-  const desktop = await tool("box_acquire", { kind: "linux-headless" });
+  assert.match(text(kind), /There is no "linux-mainframe" kind. The kinds are: linux, linux-desktop.\n\nNext: Call box_list/);
+  const desktop = await tool("box_acquire", { kind: "linux" });
   const name = /Box (\S+) \(/.exec(text(desktop))![1]!;
   const noDesktop = await tool("box_run", { box: name, command: "true", desktop: true });
   assert.match(text(noDesktop), /has no desktop/);
@@ -689,7 +699,7 @@ test("the panel lists, acquires, stops, starts and releases boxes over RPC", asy
 
   const empty = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { boxes: unknown[]; kinds: { id: string }[]; backends: { type: string; state: string; setup: { guide: string } }[] };
   assert.deepEqual(empty.boxes, []);
-  assert.deepEqual(empty.kinds.map((kind) => kind.id), ["linux-headless", "linux-desktop"]);
+  assert.deepEqual(empty.kinds.map((kind) => kind.id), ["linux", "linux-desktop"]);
   assert.deepEqual(empty.backends.map((backend) => [backend.type, backend.state, backend.setup.guide]), [["fake", "active", "setup/fake/README.md"]]);
 
   const acquired = (await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" })) as { box: { id: string; desktop: boolean }; error: null };
@@ -819,10 +829,10 @@ test("the backend resizes a desktop whose stream server cannot, one resize at a 
   await session.close();
 });
 
-test("a headless box has no desktop to control", async (t) => {
+test("a box without a desktop has no desktop to control", async (t) => {
   const { harness, app } = await start();
   t.after(() => harness.lifecycle.dispose());
-  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-headless" });
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux" });
   await app.boxes.idle();
   const box = await only(app);
   const result = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer: "viewer-one-0001" })) as { error: string };
@@ -835,8 +845,8 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   t.after(() => harness.lifecycle.dispose());
 
   const kinds = await harness.behavior.runCli(["kinds"]);
-  assert.match(kinds.stdout ?? "", /^linux-headless: Linux headless, 1 core, from Fake host/);
-  const acquired = await harness.behavior.runCli(["acquire", "linux-headless", "--thread", THREAD]);
+  assert.match(kinds.stdout ?? "", /^linux: Linux, 1 core, from Fake host/);
+  const acquired = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD]);
   assert.equal(acquired.exitCode, 0, acquired.stderr);
   const box = await only(app);
   assert.match(acquired.stdout ?? "", new RegExp(`Box ${box.name}`));
@@ -864,7 +874,7 @@ test("bb box install-id shows the install's ID, and --set takes an old one back 
   assert.equal(bad.exitCode, 1);
   assert.match(bad.stderr ?? "", /"Not_An_ID" is not an install ID/);
 
-  await harness.behavior.runCli(["acquire", "linux-headless", "--thread", THREAD]);
+  await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD]);
   const box = await only(app);
   const refused = await harness.behavior.runCli(["install-id", "--set", "old-install"]);
   assert.equal(refused.exitCode, 1);
@@ -1455,10 +1465,10 @@ test("a computer-use session closes when idle, opens again when needed, and goes
   await tool("box_release", { box: box.name });
   assert.equal(app.computer.connected(box.id), false);
 
-  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-headless" });
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux" });
   await app.boxes.idle();
   const headless = await only(app);
   const refused = await tool("computer_windows", { box: headless.name });
   assert.equal(isError(refused), true);
-  assert.match(text(refused), /has no computer use: its kind, linux-headless, has no desktop the computer tools can drive\./);
+  assert.match(text(refused), /has no computer use: its kind, linux, has no desktop the computer tools can drive\./);
 });

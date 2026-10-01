@@ -1,12 +1,13 @@
 #!/bin/bash
 # Builds bb-box's CT templates on a Proxmox host, as root.
 #
-#   build.sh headless <vmid>
-#       the headless template: development tools, agent CLIs and Docker
+#   build.sh linux <vmid>
+#       the Linux template: development tools, agent CLIs and Docker.
+#       build.sh headless, its earlier name, does the same
 #   build.sh desktop <vmid> [--gpu <pci-address> | --cpu]
-#       the desktop template: everything in headless, plus XFCE, VNC, Chrome
-#       and Cua Driver, on one NVIDIA GPU (the only one, if --gpu is left
-#       out), or with --cpu on no GPU at all: no device nodes, no NVIDIA
+#       the desktop template: everything in the Linux one, plus XFCE, VNC,
+#       Chrome and Cua Driver, on one NVIDIA GPU (the only one, if --gpu is
+#       left out), or with --cpu on no GPU at all: no device nodes, no NVIDIA
 #       userspace, and the display always on the CPU. A host without an
 #       NVIDIA driver gets a CPU template without --cpu.
 #   build.sh copy-desktop <from-vmid> <vmid> --gpu <pci-address>
@@ -26,10 +27,11 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
 . "$here/../host/common.sh"
 
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 kind=${1:-}
 shift || usage
-case "$kind" in headless | desktop) [ $# -ge 1 ] || usage; from= vmid=$1; shift ;;
+[ "$kind" != headless ] || kind=linux
+case "$kind" in linux | desktop) [ $# -ge 1 ] || usage; from= vmid=$1; shift ;;
   copy-desktop) [ $# -ge 2 ] || usage; from=$1 vmid=$2; shift 2 ;;
   *) usage ;;
 esac
@@ -90,8 +92,11 @@ if in_use "$vmid"; then
   [ -n "$replace" ] || die "VMID $vmid is already in use (--replace replaces a bb-box template)"
   word=$kind
   [ "$kind" != copy-desktop ] || word=desktop
+  # A Linux template built before its rename says headless.
+  pattern=$word
+  [ "$word" != linux ] || pattern='(linux|headless)'
   config=$(pct config "$vmid" 2>/dev/null || true)
-  grep -q '^template: 1' <<<"$config" && grep -q "^description: bb-box $word template" <<<"$config" ||
+  grep -q '^template: 1' <<<"$config" && grep -Eq "^description: bb-box $pattern template" <<<"$config" ||
     die "$vmid is not a bb-box $word template; --replace replaces only those"
   clones=$(linked_clones "$vmid")
   [ -z "$clones" ] || die "boxes are linked clones of template $vmid and need it ($clones); release them first"
@@ -215,7 +220,7 @@ if ! pveam list "${BBBOX_OS_TEMPLATE%%:*}" | grep -q "$os"; then
 fi
 
 size=16
-[ "$kind" = headless ] || size=24
+[ "$kind" = linux ] || size=24
 lines=
 if [ "$kind" = desktop ] && [ -z "$cpu" ]; then lines=$(gpu_lines "$gpu"); fi
 [ -z "$cpu" ] || lines="# cpu only"
@@ -237,13 +242,15 @@ pct exec "$ct" -- getent hosts archive.ubuntu.com >/dev/null || die "the build C
 push() { tar -C "$stage" "$@" -cf - . | pct exec "$ct" -- sh -c "rm -rf $in_ct && mkdir -p $in_ct && tar -xf - -C $in_ct --no-same-owner"; }
 push
 pct exec "$ct" -- bash "$in_ct/guest/customize-base.sh" "$in_ct"
-[ "$kind" = headless ] || pct exec "$ct" -- bash "$in_ct/guest/customize-desktop.sh" "$in_ct"
+[ "$kind" = linux ] || pct exec "$ct" -- bash "$in_ct/guest/customize-desktop.sh" "$in_ct"
 
 # Boot it once as a box would, and check it as the box user.
 pct reboot "$ct"
 sleep 1
 pct exec "$ct" -- timeout 60 systemctl is-system-running --wait >/dev/null || true
+# The Linux template's check keeps its earlier name, which templates have.
 check=bb-box-check-$kind
+[ "$kind" != linux ] || check=bb-box-check-headless
 pct exec "$ct" -- runuser -u box -- env PATH=/home/box/.cargo/bin:/usr/local/bin:/usr/bin:/bin \
   XDG_RUNTIME_DIR=/run/user/1000 "$check" | tee "$stage/check.txt"
 if grep -q '^[^ ].* FAIL ' "$stage/check.txt"; then

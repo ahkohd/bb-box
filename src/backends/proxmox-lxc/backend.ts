@@ -12,18 +12,17 @@
 // tags, starts, grows the disk if asked (quick only while running), waits for
 // port 22 and then for SSH. Proxmox tasks are polled every 50 ms.
 //
-// Three flavours of template serve four kinds: linux-headless and
-// linux-headless-docker are clones of a headless template, linux-desktop of a
-// GPU desktop template and linux-desktop-cpu of a CPU-only one. A new box is
-// cloned from its flavour's least used template; a GPU desktop goes to the
-// GPU with the fewest desktops. Every guest carries a "template.<vmid>" tag,
-// which is how that use is counted. The warm pool keeps started guests of
-// each flavour, tagged "warm". Claiming one retags it for its box, so a new
-// box is ready as soon as the tags change. build.sh tags each template it
-// makes "build.<id>", and a warm guest copies the tag: one whose template now
-// has another, or is away, is retired rather than claimed. Guests of other
-// installs, or with no install, count against capacity but are otherwise left
-// alone.
+// Three flavours of template serve four kinds: linux and linux-docker are
+// clones of a Linux template, linux-desktop of a GPU desktop template and
+// linux-desktop-cpu of a CPU-only one. A new box is cloned from its flavour's
+// least used template; a GPU desktop goes to the GPU with the fewest
+// desktops. Every guest carries a "template.<vmid>" tag, which is how that
+// use is counted. The warm pool keeps started guests of each flavour, tagged
+// "warm". Claiming one retags it for its box, so a new box is ready as soon
+// as the tags change. build.sh tags each template it makes "build.<id>", and
+// a warm guest copies the tag: one whose template now has another, or is
+// away, is retired rather than claimed. Guests of other installs, or with no
+// install, count against capacity but are otherwise left alone.
 
 import type { TLSSocket } from "node:tls";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
@@ -99,18 +98,18 @@ const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: t
 /** The kinds, less their size, which comes from their flavour's settings. */
 const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour })[] = [
   {
-    id: "linux-headless",
-    flavour: "headless",
-    label: "Linux headless",
+    id: "linux",
+    flavour: "linux",
+    label: "Linux",
     description: "A Linux container for builds, backend services and the agent's own work.",
     requires: [],
     capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
     readyTimeoutMs: READY_TIMEOUT_MS,
   },
   {
-    id: "linux-headless-docker",
-    flavour: "headless",
-    label: "Linux headless with Docker",
+    id: "linux-docker",
+    flavour: "linux",
+    label: "Linux with Docker",
     description: "A Linux container with Docker inside, for builds and services that need it.",
     requires: ["docker"],
     capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
@@ -139,7 +138,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
   {
     id: "linux-desktop-cpu",
     flavour: "desktop-cpu",
-    label: "Linux desktop on the CPU",
+    label: "Linux desktop (no GPU)",
     description:
       "A Linux desktop drawn by the CPU, for computer use and browsers when no GPU is needed or free. Graphics are slower; WebGL and Vulkan still work.",
     requires: [],
@@ -173,7 +172,7 @@ export function buildFromTags(tags: readonly string[]): string | null {
 }
 
 /** How the doctor names each flavour's templates. */
-const FLAVOUR_NAMES: Readonly<Record<LxcFlavour, string>> = { headless: "Headless", desktop: "GPU desktop", "desktop-cpu": "CPU desktop" };
+const FLAVOUR_NAMES: Readonly<Record<LxcFlavour, string>> = { linux: "Linux", desktop: "GPU desktop", "desktop-cpu": "CPU desktop" };
 
 /** A doctor check's stable ID and its name. */
 type Check = readonly [id: string, name: string];
@@ -469,7 +468,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (memoryTotal - memoryUsed - offer.config.memoryMiB < reserve.memoryMiB) {
       problems.push(
         `${api.node} has ${formatMiB(memoryTotal - memoryUsed)} of memory free. A ${kind} box needs ${formatMiB(offer.config.memoryMiB)} and ${formatMiB(reserve.memoryMiB)} is kept free. ` +
-          `Release a box, or lower the ${offer.flavour} memory or the memory kept free in bb-box's settings.`,
+          `Release a box, or lower the ${FLAVOUR_NAMES[offer.flavour]} memory or the memory kept free in bb-box's settings.`,
       );
     }
     if (diskTotal - diskUsed < reserve.diskGiB * 1024) {

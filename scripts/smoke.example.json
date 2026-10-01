@@ -6,7 +6,7 @@
   "proxmox-lxc-tls-fingerprint": { "file": "proxmox-token.env", "key": "PROXMOX_TLS_SHA256_FINGERPRINT" },
   "proxmox-lxc-node": { "file": "proxmox-token.env", "key": "PROXMOX_NODE" },
   "proxmox-lxc-pool": "bbbox",
-  "proxmox-lxc-headless-templates": "9100",
+  "proxmox-lxc-linux-templates": "9100",
   "proxmox-lxc-vmid-first": 9900,
   "proxmox-lxc-vmid-last": 9999,
   "proxmox-lxc-bridge": "vmbr200",

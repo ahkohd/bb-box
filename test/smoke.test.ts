@@ -51,7 +51,7 @@ test("the example settings read the setup guide's token file and key, and parse"
   assert.equal(values["proxmox-lxc-ssh-private-key"], `${KEY}\n`);
   const parsed = parseLxcSettings(values);
   assert.ok(parsed.enabled && parsed.ok, JSON.stringify(parsed));
-  assert.deepEqual(parsed.config.flavours.headless.templates.map((template) => template.vmid), [9100]);
+  assert.deepEqual(parsed.config.flavours.linux.templates.map((template) => template.vmid), [9100]);
   assert.equal(parsed.config.proxmox.tlsFingerprint, FINGERPRINT);
 });
 
@@ -64,11 +64,11 @@ test("a settings file naming a missing key says which", () => {
 
 test("the smoke test acquires a box, runs the command, releases the box and times each step", async () => {
   const { proxmox, values, drivers, lines, log } = fakes();
-  const result = await smoke(values, { kind: "linux-headless", command: "echo hello from $(whoami 2>/dev/null || echo box)", drivers, log });
+  const result = await smoke(values, { kind: "linux", command: "echo hello from $(whoami 2>/dev/null || echo box)", drivers, log });
 
   assert.deepEqual(result.problems, []);
   assert.equal(result.ok, true);
-  assert.equal(result.box?.kind, "linux-headless");
+  assert.equal(result.box?.kind, "linux");
   assert.match(result.box?.address ?? "", /^192\.0\.2\./);
   assert.equal(result.output?.exitCode, 0);
   assert.match(result.output?.stdout ?? "", /^hello from /);
@@ -83,7 +83,7 @@ test("the smoke test acquires a box, runs the command, releases the box and time
 
 test("the smoke test releases the box when the command fails", async () => {
   const { proxmox, values, drivers, log } = fakes();
-  const result = await smoke(values, { kind: "linux-headless", command: "exit 3", drivers, log });
+  const result = await smoke(values, { kind: "linux", command: "exit 3", drivers, log });
   assert.equal(result.ok, false);
   assert.deepEqual(result.problems, ["The command exited with 3."]);
   assert.ok("release" in result.timings);
@@ -92,10 +92,10 @@ test("the smoke test releases the box when the command fails", async () => {
 
 test("the smoke test stops before acquiring when the settings are wrong or no backend is on", async () => {
   const { proxmox, values, drivers, log } = fakes();
-  const wrong = await smoke({ ...values, "proxmox-lxc-subnet": "not a subnet" }, { kind: "linux-headless", command: "true", drivers, log });
+  const wrong = await smoke({ ...values, "proxmox-lxc-subnet": "not a subnet" }, { kind: "linux", command: "true", drivers, log });
   assert.equal(wrong.ok, false);
   assert.match(wrong.problems[0] ?? "", /^Proxmox LXC: /);
-  const off = await smoke({ ...values, "proxmox-lxc-enabled": false }, { kind: "linux-headless", command: "true", drivers, log });
+  const off = await smoke({ ...values, "proxmox-lxc-enabled": false }, { kind: "linux", command: "true", drivers, log });
   assert.deepEqual(off.problems, ["No backend is on. Turn one on in the settings file, for example proxmox-lxc-enabled."]);
   assert.equal(proxmox.calls.length, 0);
 });
@@ -113,9 +113,9 @@ test("a smoke run first releases what an earlier smoke run left, and leaves othe
   const { proxmox, values, drivers, lines, log } = fakes();
   const guest = (vmid: number, tags: string) =>
     proxmox.guests.set(vmid, { vmid, name: `left-${vmid}`, pool: "bbbox", status: "running", template: false, config: { tags } });
-  guest(9900, "bb-box;install.smoke;box.box_left;thread.smoke;kind.linux-headless;template.9000");
-  guest(9901, "bb-box;install.other;box.box_theirs;thread.thr_x;kind.linux-headless;template.9000");
-  const result = await smoke(values, { kind: "linux-headless", command: "true", drivers, log });
+  guest(9900, "bb-box;install.smoke;box.box_left;thread.smoke;kind.linux;template.9000");
+  guest(9901, "bb-box;install.other;box.box_theirs;thread.thr_x;kind.linux;template.9000");
+  const result = await smoke(values, { kind: "linux", command: "true", drivers, log });
 
   assert.deepEqual(result.problems, []);
   assert.deepEqual([...proxmox.guests.keys()].sort(), [9000, 9901], "the earlier run's box went, and the other install's stayed");
