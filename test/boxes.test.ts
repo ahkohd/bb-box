@@ -10,7 +10,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BoxError, Boxes, extraFeatures, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { accessSetup, envScript } from "../src/core/in-box.ts";
+import { accessSetup, accessSetupMs, envScript } from "../src/core/in-box.ts";
 import { FAKE_KINDS, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -307,13 +307,22 @@ test("access setup puts the env file above ~/.bashrc's early return, once, and k
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
   await world.boxes.writeFile(THREAD, box.name, ".bashrc", Buffer.from('case $- in *i*) ;; *) return;; esac\nexport MINE=1\n'), { mode: "640" });
-  for (let i = 0; i < 2; i++) assert.equal((await world.boxes.run(THREAD, box.name, accessSetup("linux")!)).result.exitCode, 0);
+  for (let i = 0; i < 2; i++) {
+    const { result } = await world.boxes.run(THREAD, box.name, accessSetup("linux")!);
+    assert.equal(result.exitCode, 0);
+    // It says how long it took in the box, for the enrolment's log.
+    assert.equal(typeof accessSetupMs(result.stdout), "number", result.stdout);
+  }
   const { result } = await world.boxes.run(THREAD, box.name, "stat -c %a .bashrc; cat .bashrc; bash -c '. ~/.bashrc; printf %s \"$BB_BOX_NAME\"'");
   assert.equal(
     result.stdout,
     `640\n# Added by bb-box: the thread's environment and access, for SSH commands too.\nif [ -r "$HOME/.config/bb-box/env" ]; then . "$HOME/.config/bb-box/env"; fi\n\ncase $- in *i*) ;; *) return;; esac\nexport MINE=1\n${box.name}`,
   );
   assert.equal(accessSetup("macos"), null);
+
+  // A date that cannot give nanoseconds leaves the time out, and the script's exit code as it was.
+  const { result: untimed } = await world.boxes.run(THREAD, box.name, `date() { echo 1700000000N; }\n${accessSetup("linux")!}`);
+  assert.deepEqual([untimed.exitCode, untimed.stdout, accessSetupMs(untimed.stdout)], [0, "", null]);
 });
 
 test("a command that times out stops in the box, with everything it started", async () => {

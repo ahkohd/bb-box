@@ -11,6 +11,7 @@ import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get
 import type { BackendDriver } from "../src/backends/types.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
+import { Phases } from "../src/plugin/enrol.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
@@ -330,10 +331,12 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
   assert.ok(logged, "the enrolment is logged");
   const s = String.raw`\d+\.\d\d s`;
-  for (const step of ["asking BB", "BB calling bb-box's create", "reaching the box", "BB preparing the enrolment", "BB's installer in the box", "BB waiting for the daemon", "finishing"]) {
-    assert.match(logged, new RegExp(`[:,] ${step} ${s}[,;]`), step);
+  for (const step of ["BB calling bb-box's create", "reaching the box", "BB preparing the enrolment", "BB's installer in the box", "BB waiting for the daemon"]) {
+    assert.match(logged, new RegExp(`, ${step} ${s},`), step);
   }
-  assert.match(logged, new RegExp(`^Enrolled box ${box.name} ${s} after it was ready: .*; setting up the thread's access took ${s} alongside\\.$`));
+  assert.match(logged, new RegExp(`^Enrolled box ${box.name} ${s} after it was ready: asking BB ${s} alongside, BB calling bb-box's create ${s}, .*, finishing ${s}\\.$`));
+  const parts = ["fetching the variable names", "reaching the box and writing the env file", "running the script"].map((part) => `${part} ${s}`);
+  assert.match(logged, new RegExp(`, setting up the thread's access ${s} alongside \\(${parts.join(", ")}\\), `));
   // Once bootstrap returns, bb-box notices the machine connected at once rather than at its next 500 ms poll.
   assert.match(logged, /, BB showing the machine connected 0\.[0-2]\d s,/);
 
@@ -357,6 +360,29 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   assert.deepEqual(world.events, [`create host-${box.id}`, `delete host-${box.id}`]);
   assert.equal(world.hosts.size, 0);
   assert.deepEqual(world.backend!.calls.filter((call) => call.startsWith("release")).length, 1);
+});
+
+test("the enrolment's log lists its steps in the order they started, with the access setup's parts", () => {
+  const timeline = (marks: Record<string, number>) => {
+    const phases = new Phases(1_000);
+    for (const [step, at] of Object.entries(marks)) phases.mark(step, 1_000 + at);
+    return phases.line("b");
+  };
+  // BB answers the request after it calls create; the access setup runs alongside the installer.
+  const marks = { called: 20, prepared: 20, install: 40, requested: 100, access: 110, names: 500, env: 800, accessed: 3_730, installed: 5_020, bootstrapped: 5_050, connected: 5_150 };
+  assert.equal(
+    timeline({ ...marks, enrolled: 5_150 }),
+    "Enrolled box b 5.15 s after it was ready: asking BB 0.10 s alongside, BB calling bb-box's create 0.02 s, reaching the box 0.00 s, " +
+      "BB preparing the enrolment 0.02 s, BB's installer in the box 4.98 s, setting up the thread's access 3.62 s alongside " +
+      "(fetching the variable names 0.39 s, reaching the box and writing the env file 0.30 s, running the script 2.93 s), " +
+      "BB waiting for the daemon 0.03 s, BB showing the machine connected 0.10 s, finishing 0.00 s.",
+  );
+  // An access setup that ends after the machine connects is waited for; without the script's own time, its parts are left out.
+  const { env: _, ...untimed } = marks;
+  assert.match(
+    timeline({ ...untimed, accessed: 5_650, enrolled: 5_660 }),
+    /^Enrolled box b 5\.66 s after .*, setting up the thread's access 5\.54 s alongside, BB waiting .*, BB showing the machine connected 0\.10 s, waiting for the access setup 0\.50 s, finishing 0\.01 s\.$/,
+  );
 });
 
 test("a stopped box starts again and BB's daemon is started with the same key", async (t) => {

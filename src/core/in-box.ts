@@ -158,11 +158,14 @@ if [ -r "$HOME/${envFile("linux")}" ]; then . "$HOME/${envFile("linux")}"; fi
 /**
  * Run once a Linux box is a BB machine, after the env file is written:
  * ~/.bashrc sources the env file first, and git asks gh for GitHub
- * credentials, so both use GH_TOKEN. Null for other systems.
+ * credentials, so both use GH_TOKEN. Prints how long it took in the box, in
+ * milliseconds, for the enrolment's log, when the box's date can tell.
+ * Null for other systems.
  */
 export function accessSetup(os: GuestOs): string | null {
   if (os !== "linux") return null;
-  return String.raw`f="$HOME/.bashrc"
+  return String.raw`started=$(date +%s%N)
+f="$HOME/.bashrc"
 if ! grep -qsF ${sh(envFile(os))} "$f"; then
   { printf '%s\n' ${sh(BASHRC_HOOK)} && { [ ! -e "$f" ] || cat "$f"; }; } > "$f.bb-box" &&
     { [ ! -e "$f" ] || chmod --reference="$f" "$f.bb-box"; } && mv -f "$f.bb-box" "$f"
@@ -173,7 +176,17 @@ if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
       git config --global --add credential.https://github.com.helper '!gh auth git-credential'
   }
 fi
+code=$?
+ended=$(date +%s%N)
+case "$started$ended" in *[!0-9]* | "") ;; *) echo $(((ended - started) / 1000000)) ;; esac
+exit "$code"
 `;
+}
+
+/** How long the access setup took in the box, from its output: null when it could not tell. */
+export function accessSetupMs(stdout: string): number | null {
+  const ms = /^(\d+)\n?$/.exec(stdout)?.[1];
+  return ms === undefined ? null : Number(ms);
 }
 
 /**

@@ -23,7 +23,7 @@
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { describeError, type BoxRecord, type Boxes } from "../core/boxes.ts";
-import { accessSetup } from "../core/in-box.ts";
+import { accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 
 export const MACHINE_PROVIDER_ID = "bb-box";
@@ -86,24 +86,51 @@ export function executor(transport: CommandTransport, phases?: Phases): MachineE
   };
 }
 
-/** What each step of an enrolment is called in the log, by the moment it ends. */
-const STEPS: Readonly<Record<string, string>> = {
-  requested: "asking BB",
-  called: "BB calling bb-box's create",
-  prepared: "reaching the box",
-  install: "BB preparing the enrolment",
-  installed: "BB's installer in the box",
-  bootstrapped: "BB waiting for the daemon",
-  connected: "BB showing the machine connected",
-  enrolled: "finishing",
-};
+/**
+ * A step of an enrolment in the log. It runs from the latest of the marks in
+ * `after` that were made, or from when the box was ready, to the mark `end`.
+ */
+interface Step {
+  readonly end: string;
+  readonly after: readonly string[];
+  readonly label: string;
+  /** Overlaps the other steps, which add up to the total. */
+  readonly alongside?: boolean;
+  /** Left out when it took no time. */
+  readonly optional?: boolean;
+  /** Shown when all their marks were made. */
+  readonly parts?: readonly Step[];
+}
+
+/** The steps of an enrolment. The log lists them in the order they start. */
+const STEPS: readonly Step[] = [
+  { end: "requested", after: [], label: "asking BB", alongside: true },
+  { end: "called", after: [], label: "BB calling bb-box's create" },
+  { end: "prepared", after: ["called"], label: "reaching the box" },
+  { end: "install", after: ["prepared"], label: "BB preparing the enrolment" },
+  { end: "installed", after: ["install"], label: "BB's installer in the box" },
+  {
+    end: "accessed",
+    after: ["access"],
+    label: "setting up the thread's access",
+    alongside: true,
+    parts: [
+      { end: "names", after: ["access"], label: "fetching the variable names" },
+      { end: "env", after: ["names"], label: "reaching the box and writing the env file" },
+      { end: "accessed", after: ["env"], label: "running the script" },
+    ],
+  },
+  { end: "bootstrapped", after: ["installed"], label: "BB waiting for the daemon" },
+  { end: "connected", after: ["bootstrapped"], label: "BB showing the machine connected" },
+  { end: "accessed", after: ["connected"], label: "waiting for the access setup", optional: true },
+  { end: "enrolled", after: ["connected", "accessed"], label: "finishing" },
+];
 
 /** When each step of one enrolment ended, counted from when the box was ready. */
 export class Phases {
   readonly origin: number;
   readonly #now: () => number;
   readonly marks = new Map<string, number>();
-  access: { readonly started: number; ended: number | null } | null = null;
   #wake: (() => void) | null = null;
 
   constructor(origin: number, now: () => number = Date.now) {
@@ -111,8 +138,8 @@ export class Phases {
     this.#now = now;
   }
 
-  mark(step: string): void {
-    this.marks.set(step, this.#now());
+  mark(step: string, at = this.#now()): void {
+    this.marks.set(step, at);
     if (step === "bootstrapped") this.#wake?.();
   }
 
@@ -129,18 +156,24 @@ export class Phases {
     });
   }
 
-  /** One line for the log: each step in the order it ended, then the access setup that ran alongside. */
+  /** One line for the log: how long each step took, in the order the steps started. */
   line(boxName: string): string {
     const seconds = (ms: number) => `${(ms / 1000).toFixed(2)} s`;
-    const steps = [...this.marks].filter(([step]) => STEPS[step]).sort((a, b) => a[1] - b[1]);
-    let last = this.origin;
-    const parts = steps.map(([step, at]) => {
-      const part = `${STEPS[step]} ${seconds(Math.max(0, at - last))}`;
-      last = Math.max(last, at);
-      return part;
-    });
-    const access = this.access?.ended != null ? `; setting up the thread's access took ${seconds(this.access.ended - this.access.started)} alongside` : "";
-    return `Enrolled box ${boxName} ${seconds(last - this.origin)} after it was ready: ${parts.join(", ")}${access}.`;
+    const describe = (steps: readonly Step[]): string =>
+      steps
+        .flatMap((step) => {
+          const end = this.marks.get(step.end);
+          if (end === undefined) return [];
+          const start = Math.max(this.origin, ...step.after.map((mark) => this.marks.get(mark) ?? this.origin));
+          if (step.optional && end <= start) return [];
+          const parts = step.parts?.every((part) => this.marks.has(part.end)) ? ` (${describe(step.parts)})` : "";
+          return [{ start, text: `${step.label} ${seconds(Math.max(0, end - start))}${step.alongside ? " alongside" : ""}${parts}` }];
+        })
+        .sort((a, b) => a.start - b.start)
+        .map((step) => step.text)
+        .join(", ");
+    const last = Math.max(this.origin, ...this.marks.values());
+    return `Enrolled box ${boxName} ${seconds(last - this.origin)} after it was ready: ${describe(STEPS)}.`;
   }
 }
 
@@ -296,15 +329,25 @@ export class Enrolment {
   async #setUpAccess(box: BoxRecord, phases: Phases): Promise<void> {
     const script = accessSetup(box.capabilities.os);
     if (!script) return;
-    const access = (phases.access = { started: Date.now(), ended: null as number | null });
+    phases.mark("access");
+    let scriptMs: number | null = null;
     try {
-      const { result } = await this.#deps.boxes.run(box.threadId, box.id, script, { timeoutMs: ACCESS_SETUP_TIMEOUT_MS, waitForEnrolment: false });
+      const { result } = await this.#deps.boxes.run(box.threadId, box.id, script, {
+        timeoutMs: ACCESS_SETUP_TIMEOUT_MS,
+        waitForEnrolment: false,
+        onSend: () => phases.mark("names"),
+      });
       if (result.exitCode !== 0) throw new Error(`Setting up the thread's access in box ${box.name} exited with ${result.exitCode ?? "no code"}: ${result.stderr.trim()}`);
+      scriptMs = accessSetupMs(result.stdout);
     } catch (error) {
       this.#deps.logError("enrol access", error);
     } finally {
-      access.ended = Date.now();
+      phases.mark("accessed");
     }
+    // The script timed itself by the box's clock; the rest of the time since
+    // the command was sent went on reaching the box and writing the env file.
+    const sent = phases.marks.get("names");
+    if (scriptMs !== null && sent !== undefined) phases.mark("env", Math.max(sent, phases.marks.get("accessed")! - scriptMs));
   }
 
   /** Removes a box's machine from BB, before its release. */
