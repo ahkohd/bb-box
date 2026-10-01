@@ -15,7 +15,9 @@ t "tools" sh -c 'for c in node npm pnpm yarn uv gh rg fd jj git-lfs claude codex
 # A new box installs packages without `apt-get update` first.
 t "apt package lists" sh -c 'v=$(apt-cache policy cowsay | awk "/Candidate:/ { print \$2 }"); [ -n "$v" ] && [ "$v" != "(none)" ] && echo "cowsay $v installable, lists from $(date -u +%F -r "$(ls -t /var/lib/apt/lists/*_InRelease | head -1)")"'
 t "bb-app pre-installed" sh -c 'ls ~/.bb-machines/*/host-artifact.sha256 2>/dev/null || echo "none (no BB server URL at build)"'
-t "docker active" systemctl is-active containerd docker
+# Docker starts on first use (041): stopped after boot, then quick to start.
+t "docker stopped after boot" sh -c '! pgrep -x dockerd >/dev/null || { echo "dockerd runs"; exit 1; }; ! pgrep -x containerd >/dev/null || { echo "containerd runs"; exit 1; }; echo "docker.socket $(systemctl is-active docker.socket)"'
+t "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Server.Version}}" >/dev/null || exit 1; ms=$(( ($(date +%s%N) - s) / 1000000 )); echo "$ms ms (limit 2000)"; [ "$ms" -le 2000 ]'
 t "docker info" docker info --format '{{.Driver}} {{.CgroupDriver}} {{json .SecurityOptions}} {{.ServerVersion}}'
 t "docker offline probe" sh -c '
   libc=$(ldd /usr/bin/true | awk "/libc.so/ {print \$3}")

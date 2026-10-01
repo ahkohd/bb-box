@@ -27,11 +27,16 @@ install -m 0644 "$build/pins.json" "$out/template-pins.json"
 } >"$out/template-release"
 chmod 0644 "$out"/*
 
-# Docker's state from the build's checks.
-if systemctl is-active --quiet docker; then
+# Docker's state from the build's checks. A template keeps no containers: a
+# box with any starts Docker at boot (041).
+if systemctl is-active --quiet docker || [ -n "$(ls -A /var/lib/docker/containers 2>/dev/null)" ]; then
   docker system prune -af --volumes >/dev/null || true
 fi
 systemctl stop docker.socket docker.service containerd.service 2>/dev/null || true
+if [ -n "$(ls -A /var/lib/docker/containers 2>/dev/null)" ]; then
+  echo "finalize: containers are left in /var/lib/docker/containers" >&2
+  exit 1
+fi
 
 rm -f /etc/apt/apt.conf.d/50bb-box-build-snapshot /etc/apt/sources.list.d/zz-bb-box-build-fallback.sources \
   /etc/apt/preferences.d/bb-box-build-fallback
