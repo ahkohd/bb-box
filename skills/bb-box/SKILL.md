@@ -91,6 +91,7 @@ and `bb box kinds` show the ones in use:
 | --- | --- | --- | --- | --- |
 | `linux`, `linux-docker` | 2 cores, 4 GiB | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB, 256 GiB disk |
 | `linux-desktop`, `linux-desktop-cpu` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB | 32 cores, 64 GiB, 256 GiB disk |
+| `macos`, `macos-desktop` | 4 cores, 8 GiB | 6 cores, 16 GiB | 8 cores, 32 GiB | 16 cores, 64 GiB, 256 GiB disk |
 
 A preset keeps the kind's own disk. For a custom size, give `cores`,
 `memory_gib` or `disk_gib`; the parts you leave out come from `size`, or
@@ -98,7 +99,8 @@ from the default preset. A size above the largest is refused. A backend that
 cannot make a size says so, and bb-box tries the next backend that offers
 the kind. `box_status` shows the size the box has, read from its guest. The
 SSH host pool lends the smallest free machine of at least the size, so its
-box may have more.
+box may have more. A Tart macOS box keeps its image's disk, so Tart refuses
+a `disk_gib` for now.
 
 `bb box acquire <kind>` takes `--size`, `--cores`, `--memory-gib` and
 `--disk-gib`.

@@ -35,8 +35,6 @@ export interface TartConfig {
   /** known_hosts lines for the Macs. Every Mac's key is pinned. */
   readonly hostKeys: readonly string[];
   readonly kinds: Readonly<Record<TartKind, TartKindConfig>>;
-  readonly cpus: number;
-  readonly memoryMiB: number;
   /** The most macOS VMs bb-box lets run on each Mac, counting every VM Tart lists there. */
   readonly vmsPerHost: number;
   /** A null key means bb-box generates one and shows its public key. */
@@ -46,8 +44,6 @@ export interface TartConfig {
 
 export const TART_DEFAULTS = {
   image: "bb-box-macos",
-  cpus: 4,
-  memoryMiB: 8192,
   vmUser: "admin",
   reserveMemoryMiB: 16384,
   reserveDiskGiB: 50,
@@ -62,8 +58,6 @@ export const TART_KEYS = {
   vmUser: "tart-vm-user",
   macosImage: "tart-macos-image",
   desktopImage: "tart-macos-desktop-image",
-  cpus: "tart-cpus",
-  memoryMiB: "tart-memory-mib",
   vmsPerHost: "tart-vms-per-host",
   reserveMemoryMiB: "tart-reserve-memory-mib",
   reserveDiskGiB: "tart-reserve-disk-gib",
@@ -119,8 +113,6 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "The Tart VM on each Mac that macos-desktop boxes are cloned from. Empty turns them off.",
     default: TART_DEFAULTS.image,
   },
-  [TART_KEYS.cpus]: { type: "number", label: "Tart: cores per box", default: TART_DEFAULTS.cpus },
-  [TART_KEYS.memoryMiB]: { type: "number", label: "Tart: memory per box (MiB)", default: TART_DEFAULTS.memoryMiB },
   [TART_KEYS.vmsPerHost]: {
     type: "number",
     label: "Tart: VMs per Mac",
@@ -209,10 +201,6 @@ export function parseTartSettings(values: Readonly<Record<string, unknown>>): Pa
   }
   if (TART_KINDS.every((kind) => !kinds[kind].image)) problems.push("Tart: give an image for macos or macos-desktop boxes.");
 
-  const cpus = number(values, TART_KEYS.cpus, TART_DEFAULTS.cpus);
-  if (!Number.isInteger(cpus) || cpus < 1 || cpus > 64) problems.push("Tart: cores per box must be a whole number from 1 to 64.");
-  const memoryMiB = number(values, TART_KEYS.memoryMiB, TART_DEFAULTS.memoryMiB);
-  if (!Number.isInteger(memoryMiB) || memoryMiB < 2048) problems.push("Tart: memory per box must be a whole number of MiB, at least 2048.");
   const vmsPerHost = number(values, TART_KEYS.vmsPerHost, MACOS_VMS_PER_MAC);
   if (!Number.isInteger(vmsPerHost) || vmsPerHost < 1 || vmsPerHost > MACOS_VMS_PER_MAC) {
     problems.push(`Tart: VMs per Mac must be 1 or ${MACOS_VMS_PER_MAC}.`);
@@ -235,8 +223,6 @@ export function parseTartSettings(values: Readonly<Record<string, unknown>>): Pa
       hosts,
       hostKeys,
       kinds,
-      cpus,
-      memoryMiB,
       vmsPerHost,
       ssh: { privateKey, vmUser },
       reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB },

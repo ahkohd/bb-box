@@ -5,7 +5,7 @@ import { after, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { parseState, parseVnc } from "../src/backends/tart/host.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
@@ -36,10 +36,13 @@ function setup(values: Record<string, unknown> = {}) {
   return { ssh, mac, owners, context, make, backend: make() };
 }
 
+/** The macOS kinds' small preset (028). */
+const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
+
 let counter = 0;
-function identity(kind = "macos-desktop", threadId = "thr_abc123"): BoxIdentity {
+function identity(kind = "macos-desktop", threadId = "thr_abc123", size = SMALL): BoxIdentity {
   counter++;
-  return { boxId: `bx${counter}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000 };
+  return { boxId: `bx${counter}`, threadId, name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size };
 }
 
 function hooks() {
@@ -161,7 +164,7 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
 test("stop suspends the VM and start resumes it; the VM counts against its Mac only while it runs", async () => {
   const { mac, backend } = setup();
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
-  const used = async () => (await backend.capacity("macos", [])).hosts[0]!.limits.find((limit) => limit.resource === "guests")!.used;
+  const used = async () => (await backend.capacity("macos", SMALL, [])).hosts[0]!.limits.find((limit) => limit.resource === "guests")!.used;
   assert.equal(await used(), 1);
   await backend.stop(guest);
   assert.equal(await backend.power(guest), "stopped");
@@ -177,7 +180,7 @@ test("a Mac takes two macOS VMs; the third is refused with what to release", asy
   const { owners, backend } = setup();
   const first = await backend.acquire(identity(), null, hooks().hooks, signal());
   const second = await backend.acquire(identity("macos"), null, hooks().hooks, signal());
-  const capacity = await backend.capacity("macos", []);
+  const capacity = await backend.capacity("macos", SMALL, []);
   assert.equal(capacity.ok, false);
   assert.match(capacity.message!, /mac1 runs 2 of the 2 macOS VMs/);
   assert.match(capacity.message!, new RegExp(first.ref));
@@ -195,7 +198,7 @@ test("a VM the framework refuses to run, as when another app runs VMs, is no_cap
     addImage(mac, name, "linux");
     writeFileSync(join(mac, ".tart", "vms", name, "running"), String(process.pid));
   }
-  const room = (await backend.capacity("macos", [])).hosts[0]!;
+  const room = (await backend.capacity("macos", SMALL, [])).hosts[0]!;
   assert.equal(room.limits.find((limit) => limit.resource === "guests")!.used, 0, "Linux VMs do not count against the two");
   assert.equal(room.limits.find((limit) => limit.resource === "memory")!.used, 16384, "but their memory does");
   const box = identity();
@@ -261,4 +264,26 @@ test("doctor says what is missing on the Mac", async () => {
   const down = await make().doctor();
   assert.equal(down.checks.find((check) => check.id === "host.mac1")!.status, "fail");
   assert.equal(down.checks.find((check) => check.id === "image.mac1.macos")!.status, "skipped");
+});
+
+test("a box has the cores and memory it asks for, read from its config; capacity refuses what a Mac cannot give", async () => {
+  const { backend } = setup();
+  const medium: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
+  const guest = await backend.acquire(identity("macos", "thr_abc123", medium), null, hooks().hooks, signal());
+  assert.deepEqual(guest.size, medium);
+  assert.deepEqual((await backend.held()).find((held) => held.ref === guest.ref)?.size, medium, "held reads it from the VM's config");
+  await backend.release(guest, releasing);
+
+  const refused = async (size: BoxSize, pending: { kind: string; size: BoxSize }[] = []) => {
+    const capacity = await backend.capacity("macos", size, pending);
+    assert.equal(capacity.ok, false, JSON.stringify(size));
+    return capacity.message!;
+  };
+  // The fake Mac has 16 cores and 128 GiB, and 16 GiB is kept free.
+  assert.match(await refused({ ...SMALL, cores: 32 }), /mac1 has 16 cores, fewer than the 32 asked for/);
+  assert.match(await refused({ ...SMALL, memoryMiB: 120 * 1024 }), /a box with 120 GiB would leave less than the 16 GiB kept free/);
+  assert.match(await refused({ ...SMALL, diskGiB: 32 }), /keeps its image's disk/);
+  const big: BoxSize = { cores: 8, memoryMiB: 64 * 1024, diskGiB: null };
+  assert.equal((await backend.capacity("macos", big, [])).ok, true);
+  assert.match(await refused(big, [{ kind: "macos", size: big }]), /memory free/, "a pending box's memory counts");
 });

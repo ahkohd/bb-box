@@ -98,6 +98,7 @@ await conformance({
     arch: "the fake SSH runs commands on the test machine",
     display: "the fake Mac has no VNC server to stream",
     "computer-use": "the fake VM has no computer-use driver",
+    size: "the fake SSH runs commands on the test machine",
   },
   timeoutMs: 20_000,
 });

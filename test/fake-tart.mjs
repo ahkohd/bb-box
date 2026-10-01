@@ -123,7 +123,7 @@ switch (tool) {
     tart();
     break;
   case "sysctl":
-    console.log(String(128 * 1024 * 1024 * 1024));
+    console.log(args.includes("hw.ncpu") ? "16" : String(128 * 1024 * 1024 * 1024));
     break;
   case "sw_vers":
     console.log("27.0");

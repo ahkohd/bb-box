@@ -29,6 +29,7 @@ import {
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
+  type BoxSize,
   type BoxTransports,
   type Capacity,
   type CommandCapability,
@@ -49,6 +50,7 @@ import {
   deleteScript,
   ipScript,
   ownerText,
+  parseConfig,
   parseFields,
   parseState,
   parseVnc,
@@ -59,6 +61,7 @@ import {
   vmName,
   vncScript,
   type HostState,
+  type VmConfig,
 } from "./host.ts";
 
 const SSH_KEY = "ssh-key";
@@ -66,6 +69,9 @@ const READY_TIMEOUT_MS = 5 * 60_000;
 /** Cua Driver as the images pin it (015). The setup guide's image script installs this release. */
 export const CUA_VERSION = "0.30.4";
 const MiB_PER_GiB = 1024;
+
+/** The doctor checks room for a box of the small preset core ships for the macOS kinds (028). */
+const DOCTOR_SIZE: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
 
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
 
@@ -88,7 +94,18 @@ interface SshKeys {
 interface Placing {
   readonly host: string;
   readonly vm: string;
+  readonly memoryMiB: number;
 }
+
+type Pending = { readonly kind: string; readonly size: BoxSize };
+
+/** Boxes the registry is acquiring that have not reached a Mac yet, which count on every Mac. */
+interface Unplaced {
+  readonly count: number;
+  readonly memoryMiB: number;
+}
+
+const NONE_UNPLACED: Unplaced = { count: 0, memoryMiB: 0 };
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -102,6 +119,12 @@ function powerOf(state: string | undefined): PowerState {
   if (state === "running") return "running";
   if (state === "stopped" || state === "suspended") return "stopped";
   return "unknown";
+}
+
+/** The size a VM's config gives it. Tart keeps no disk size there, so the disk is the image's, as null. */
+function sizeOf(config: VmConfig | null | undefined): BoxSize | null {
+  if (!config || !config.cpus || !config.memoryMiB) return null;
+  return { cores: config.cpus, memoryMiB: config.memoryMiB, diskGiB: null };
 }
 
 function ownerOf(fields: Readonly<Record<string, string>>): BoxOwner | null {
@@ -118,14 +141,12 @@ function ownerOf(fields: Readonly<Record<string, string>>): BoxOwner | null {
 
 /** The kinds a config offers: those with an image. */
 export function tartKinds(config: TartConfig): BoxKind[] {
-  const size = `${config.cpus} cores, ${formatMiB(config.memoryMiB)} memory`;
   const cua: ComputerUse = { driver: "cua", version: CUA_VERSION, socket: `/Users/${config.ssh.vmUser}/Library/Caches/cua-driver/cua-driver.sock` };
   const kinds: Record<TartKind, BoxKind> = {
     macos: {
       id: "macos",
       label: "macOS",
       description: "A macOS VM on a Mac with Apple silicon, for builds and commands. Its desktop is not shown.",
-      size,
       requires: [],
       capabilities: { os: "macos", arch: "arm64", gpu: false, features: [], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
       readyTimeoutMs: READY_TIMEOUT_MS,
@@ -134,7 +155,6 @@ export function tartKinds(config: TartConfig): BoxKind[] {
       id: "macos-desktop",
       label: "macOS desktop",
       description: "A macOS VM on a Mac with Apple silicon, with its desktop shown in the panel and computer use.",
-      size,
       requires: [],
       capabilities: {
         os: "macos",
@@ -195,16 +215,19 @@ export class TartBackend implements Backend {
     return kind;
   }
 
-  async capacity(kind: string, pending: readonly string[], signal?: AbortSignal): Promise<Capacity> {
+  async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     this.#kind(kind);
     const states = await this.#states(signal);
-    // Boxes the registry is acquiring that have not reached a Mac yet count on every Mac.
-    const unplaced = Math.max(0, pending.length - this.#placing.size);
-    const hosts = this.#config.hosts.map((host) => this.#room(host, states.get(host.name)!, unplaced));
+    const placed = [...this.#placing.values()];
+    const unplaced: Unplaced = {
+      count: Math.max(0, pending.length - placed.length),
+      memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
+    };
+    const hosts = this.#config.hosts.map((host) => this.#room(host, states.get(host.name)!, size, unplaced));
     const ok = hosts.some((host) => host.capacity.ok);
     return {
       ok,
-      message: ok ? null : this.#full(hosts),
+      message: ok ? null : this.#full(kind, hosts),
       warm: null,
       hosts: hosts.map((host) => host.capacity),
     };
@@ -218,44 +241,58 @@ export class TartBackend implements Backend {
     return new Map(entries);
   }
 
-  #room(host: TartHost, state: HostState | Error, unplaced: number): { capacity: HostCapacity; why: string | null } {
+  /** Whether a box of `size` fits on the Mac, and if not, why, with what to do. */
+  #room(host: TartHost, state: HostState | Error, size: BoxSize, unplaced: Unplaced = NONE_UNPLACED): { capacity: HostCapacity; why: string | null } {
     if (state instanceof Error) return { capacity: { host: host.name, ok: false, limits: [] }, why: `${host.name} did not answer: ${state.message}` };
     // Every running VM takes memory; only macOS VMs count against Apple's two.
     const running = state.vms.filter((vm) => vm.running);
     const macos = running.filter((vm) => (state.configs.get(vm.name)?.os ?? "darwin") === "darwin");
-    const starting = [...this.#placing.values()].filter((placing) => placing.host === host.name && !running.some((vm) => vm.name === placing.vm)).length + unplaced;
-    const memoryUsed = running.reduce((sum, vm) => sum + (state.configs.get(vm.name)?.memoryMiB ?? this.#config.memoryMiB), 0) + starting * this.#config.memoryMiB;
-    const reserveMiB = this.#config.reserve.diskGiB * MiB_PER_GiB;
+    const placing = [...this.#placing.values()].filter((other) => other.host === host.name && !running.some((vm) => vm.name === other.vm));
+    const starting = placing.length + unplaced.count;
+    const memoryUsed =
+      running.reduce((sum, vm) => sum + (state.configs.get(vm.name)?.memoryMiB ?? 0), 0) + placing.reduce((sum, other) => sum + other.memoryMiB, 0) + unplaced.memoryMiB;
+    const memoryFree = state.memoryMiB - memoryUsed;
+    const reserve = this.#config.reserve;
+    const diskReserveMiB = reserve.diskGiB * MiB_PER_GiB;
     const limits: Limit[] = [
       { resource: "guests", used: macos.length + starting, total: this.#config.vmsPerHost, reserve: 0, unit: "count" },
-      { resource: "memory", used: memoryUsed, total: state.memoryMiB, reserve: this.#config.reserve.memoryMiB, unit: "MiB" },
-      { resource: "disk", used: state.disk.totalMiB - state.disk.freeMiB, total: state.disk.totalMiB, reserve: reserveMiB, unit: "MiB" },
+      { resource: "memory", used: memoryUsed, total: state.memoryMiB, reserve: reserve.memoryMiB, unit: "MiB" },
+      { resource: "disk", used: state.disk.totalMiB - state.disk.freeMiB, total: state.disk.totalMiB, reserve: diskReserveMiB, unit: "MiB" },
     ];
     let why: string | null = null;
-    if (macos.length + starting >= this.#config.vmsPerHost) {
+    if (size.diskGiB !== null) {
+      // Growing a macOS VM's disk needs its recovery partition removed and its APFS container grown inside the guest.
+      why = `a Tart box keeps its image's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk yet. Ask for the base disk`;
+    } else if (state.cpus && size.cores > state.cpus) {
+      why = `${host.name} has ${state.cpus} cores, fewer than the ${size.cores} asked for. Ask for at most ${state.cpus} cores`;
+    } else if (macos.length + starting >= this.#config.vmsPerHost) {
       const names = macos.map((vm) => vm.name).join(", ");
-      why = `${host.name} runs ${macos.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}`;
-    } else if (memoryUsed + this.#config.memoryMiB > state.memoryMiB - this.#config.reserve.memoryMiB) {
-      why = `${host.name} would have less than ${formatMiB(this.#config.reserve.memoryMiB)} of memory left for itself`;
-    } else if (state.disk.freeMiB < reserveMiB) {
-      why = `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than the ${formatMiB(reserveMiB)} kept free`;
+      why =
+        `${host.name} runs ${macos.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}. ` +
+        "Release or stop a macOS box, or stop another VM there";
+    } else if (memoryFree - size.memoryMiB < reserve.memoryMiB) {
+      why =
+        `${host.name} has ${formatMiB(Math.max(0, memoryFree))} of memory free, and a box with ${formatMiB(size.memoryMiB)} would leave less than the ${formatMiB(reserve.memoryMiB)} kept free. ` +
+        "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings";
+    } else if (state.disk.freeMiB < diskReserveMiB) {
+      why = `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than the ${formatMiB(diskReserveMiB)} kept free. Release boxes or free some space`;
     }
     return { capacity: { host: host.name, ok: why === null, limits }, why };
   }
 
-  #full(hosts: readonly { why: string | null }[]): string {
-    const reasons = hosts.map((host) => host.why).filter(Boolean);
-    return `No Mac has room for another macOS box: ${reasons.join("; ")}. Release or stop a macOS box, or stop another VM on a Mac.`;
+  #full(kind: string, hosts: readonly { why: string | null }[]): string {
+    const reasons = [...new Set(hosts.map((host) => host.why).filter((why): why is string => why !== null))];
+    return `No Mac can take this ${kind} box: ${reasons.join("; ")}.`;
   }
 
   /** Picks the first Mac with room and counts the box against it, one acquire at a time. */
   #place(box: BoxIdentity, signal: AbortSignal): Promise<TartHost> {
     const placed = this.#placement.then(async () => {
       const states = await this.#states(signal);
-      const rooms = this.#config.hosts.map((host) => ({ host, ...this.#room(host, states.get(host.name)!, 0) }));
+      const rooms = this.#config.hosts.map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size) }));
       const chosen = rooms.find((room) => room.capacity.ok);
-      if (!chosen) throw new BackendError("no_capacity", this.#full(rooms));
-      this.#placing.set(box.boxId, { host: chosen.host.name, vm: vmName(box.boxId) });
+      if (!chosen) throw new BackendError("no_capacity", this.#full(box.kind, rooms));
+      this.#placing.set(box.boxId, { host: chosen.host.name, vm: vmName(box.boxId), memoryMiB: box.size.memoryMiB });
       return chosen.host;
     });
     this.#placement = placed.catch(() => undefined);
@@ -277,8 +314,8 @@ export class TartBackend implements Backend {
     };
     const resumed = previous?.ref === vm ? this.#hostNamed(previous.host) : null;
     const host = resumed ?? (await step("place", () => this.#place(box, signal)));
-    if (resumed) this.#placing.set(box.boxId, { host: resumed.name, vm });
-    const guest = (address: string | null): Guest => ({ ref: vm, host: host.name, address, data: { box: box.boxId } });
+    if (resumed) this.#placing.set(box.boxId, { host: resumed.name, vm, memoryMiB: box.size.memoryMiB });
+    const guest = (address: string | null, size: BoxSize | null = null): Guest => ({ ref: vm, host: host.name, address, size, data: { box: box.boxId } });
     let owned = false;
     try {
       await hooks.claim(guest(null));
@@ -298,14 +335,15 @@ export class TartBackend implements Backend {
         }
       }
       owned = true;
-      await step("clone", () => this.#run(host, cloneScript(image, vm, this.#config.cpus, this.#config.memoryMiB), { timeoutMs: 10 * 60_000, signal }));
+      const cloned = await step("clone", () => this.#run(host, cloneScript(image, vm, box.size.cores, box.size.memoryMiB), { timeoutMs: 10 * 60_000, signal }));
+      const size = sizeOf(parseConfig(cloned.stdout));
       await hooks.starting();
       await step("start", () => this.#start(host, vm, deadline, signal));
       const address = await step("network", () => this.#address(host, vm, deadline, signal));
       await step("ssh", () => this.#waitReady(host, vm, address, deadline, signal));
-      // Claimed again, so the box's record has the address as it becomes ready.
-      await hooks.claim(guest(address));
-      return guest(address);
+      // Claimed again, so the box's record has the address and size as it becomes ready.
+      await hooks.claim(guest(address, size));
+      return guest(address, size);
     } catch (error) {
       if (owned) {
         await this.#delete(host, vm, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
@@ -373,6 +411,7 @@ export class TartBackend implements Backend {
           ref: vm,
           host: host.name,
           address: this.#addresses.get(vm) ?? null,
+          size: sizeOf(state.configs.get(vm)),
           data: owner ? { box: owner.boxId } : {},
           owner,
           // A VM not made yet, after an acquire cut short before its clone, counts as stopped.
@@ -464,7 +503,7 @@ export class TartBackend implements Backend {
           push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "ok", `${image}${config ? `, ${config.cpus} cores and ${formatMiB(config.memoryMiB)} as prepared` : ""}.`);
         }
       }
-      const room = this.#room(host, state, 0);
+      const room = this.#room(host, state, DOCTOR_SIZE);
       push(
         `capacity.${host.name}`,
         `Room on ${host.name}`,

@@ -110,6 +110,7 @@ done
 echo @owners
 for vm in $(ls "$d/owners"); do [ -f "$d/owners/$vm" ] || continue; printf '=%s\\n' "$vm"; cat "$d/owners/$vm"; done
 echo @memory; sysctl -n hw.memsize
+echo @cpus; sysctl -n hw.ncpu
 [ -d "$home" ] || home=$HOME
 echo @disk; df -k "$home" | awk 'NR == 2 { print $2, $4 }'
 echo @arch; uname -m
@@ -136,6 +137,8 @@ export interface HostState {
   readonly configs: ReadonlyMap<string, VmConfig>;
   readonly owners: ReadonlyMap<string, Record<string, string>>;
   readonly memoryMiB: number;
+  /** The Mac's cores, or 0 when it did not say. */
+  readonly cpus: number;
   readonly disk: { readonly totalMiB: number; readonly freeMiB: number };
   readonly arch: string;
   readonly macos: string;
@@ -159,6 +162,21 @@ function named(text: string): Map<string, string> {
   return result;
 }
 
+/** A VM's config.json, or the part after a line `@config`; null when it is not whole. */
+export function parseConfig(text: string): VmConfig | null {
+  const json = text.includes("@config") ? (sections(text).get("config") ?? "") : text;
+  try {
+    const config = JSON.parse(json.trim()) as { os?: unknown; memorySize?: unknown; cpuCount?: unknown };
+    return {
+      os: typeof config.os === "string" ? config.os : null,
+      memoryMiB: typeof config.memorySize === "number" ? Math.round(config.memorySize / 1024 / 1024) : 0,
+      cpus: typeof config.cpuCount === "number" ? config.cpuCount : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function parseState(text: string): HostState {
   const parts = sections(text);
   const list = JSON.parse(parts.get("list")?.trim() || "[]") as { Name?: unknown; State?: unknown; Running?: unknown }[];
@@ -171,16 +189,9 @@ export function parseState(text: string): HostState {
     }));
   const configs = new Map<string, VmConfig>();
   for (const [name, json] of named(parts.get("configs") ?? "")) {
-    try {
-      const config = JSON.parse(json) as { os?: unknown; memorySize?: unknown; cpuCount?: unknown };
-      configs.set(name, {
-        os: typeof config.os === "string" ? config.os : null,
-        memoryMiB: typeof config.memorySize === "number" ? Math.round(config.memorySize / 1024 / 1024) : 0,
-        cpus: typeof config.cpuCount === "number" ? config.cpuCount : 0,
-      });
-    } catch {
-      // A VM being written; it is counted by `tart list` alone.
-    }
+    // A VM being written has no whole config yet; it is counted by `tart list` alone.
+    const config = parseConfig(json);
+    if (config) configs.set(name, config);
   }
   const owners = new Map<string, Record<string, string>>();
   for (const [name, fields] of named(parts.get("owners") ?? "")) owners.set(name, parseFields(fields));
@@ -191,6 +202,7 @@ export function parseState(text: string): HostState {
     configs,
     owners,
     memoryMiB: Math.floor(Number(parts.get("memory")?.trim() || 0) / 1024 / 1024),
+    cpus: Number(parts.get("cpus")?.trim()) || 0,
     disk: { totalMiB: Math.floor(total / 1024), freeMiB: Math.floor(free / 1024) },
     arch: parts.get("arch")?.trim() ?? "",
     macos: parts.get("macos")?.trim() ?? "",
@@ -207,10 +219,13 @@ if (set -C; printf '%s' ${quote(owner)} > "$f") 2>/dev/null; then echo claimed; 
 `);
 }
 
-/** Clones the image unless the VM is there, and sizes it. */
+/** Clones the image unless the VM is there, sizes it, and prints its config after a line `@config`. */
 export function cloneScript(image: string, vm: string, cpus: number, memoryMiB: number): string {
-  return script(String.raw`tart list --source local --quiet | grep -qxF ${quote(vm)} || tart clone ${quote(image)} ${quote(vm)} || exit 1
-tart set ${quote(vm)} --cpu ${cpus} --memory ${memoryMiB}
+  return script(String.raw`vm=${quote(vm)}
+tart list --source local --quiet | grep -qxF "$vm" || tart clone ${quote(image)} "$vm" || exit 1
+tart set "$vm" --cpu ${cpus} --memory ${memoryMiB} || exit 1
+home=$HOME/.tart; [ -z "$TART_HOME" ] || home=$TART_HOME
+echo @config; tr -d '\n' < "$home/vms/$vm/config.json"; echo
 `);
 }
 

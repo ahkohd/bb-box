@@ -171,7 +171,11 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   the clone and removed after the VM is deleted. VM names hold the box ID, so
   references are never reused.
 - Capacity is per Mac: `guests`, the running macOS VMs Tart lists there, at
-  most two; `memory`, less a reserve and the running VMs'; and `disk`.
+  most two; `memory`, less a reserve and every running VM's; and `disk`. A
+  box gets its size's cores and memory with `tart set`, and may not have
+  more cores than the Mac. It keeps its image's disk, so a disk size is
+  refused for now. `Guest.size` comes from the VM's
+  config.json, with `diskGiB` null.
 - The tests run the real host scripts against a fake `tart` on a fake Mac
   ([test/fake-tart.mjs](../test/fake-tart.mjs),
   [test/fake-mac.ts](../test/fake-mac.ts)).

@@ -17,7 +17,7 @@ only the Mac reaches, so bb-box reaches them through the Mac: commands over
 SSH with the Mac as the jump host, and the desktop through Tart's VNC server.
 
 Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
-2.30.0, 8 GiB and 4 cores per VM:
+2.30.0, boxes of the small preset (4 cores, 8 GiB):
 
 | Step | Time |
 | --- | --- |
@@ -66,8 +66,9 @@ Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
   GiB more. A box adds what it writes: about 2.5 GiB after its first boot,
   and about 3 GiB more while it is suspended (its memory, for an 8 GiB VM).
   bb-box keeps the reserve in its settings free.
-- Memory: each box takes the memory in bb-box's settings (8 GiB by default),
-  and bb-box keeps a reserve free for the Mac itself.
+- Memory: each box takes the memory of its size: 8, 16 or 32 GiB for the
+  small, medium and large presets (028). bb-box keeps a reserve free for the
+  Mac itself.
 - The Mac must stay awake: a sleeping Mac pauses its VMs. On a Mac that only
   serves boxes, turn sleep off (`sudo pmset -a sleep 0`); on a Mac you also
   use, keep it on power and awake while boxes run.
@@ -191,7 +192,6 @@ In BB, under bb-box's settings:
 | Tart: SSH private key | empty | Empty makes bb-box generate one; its public key is in `bb box doctor` |
 | Tart: VM user | `admin` | The image's user |
 | Tart: macos image, macos-desktop image | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
-| Tart: cores per box, memory per box | 4, 8192 | |
 | Tart: VMs per Mac | 2 | At most 2 |
 | Tart: memory kept free, disk kept free | 16384 MiB, 50 GiB | A new box is refused when the Mac would have less. With 16 GiB kept free, a 16 GiB Mac takes no box and a 32 GiB Mac takes two 8 GiB boxes, so lower it on a small Mac you do not use yourself |
 
@@ -201,10 +201,17 @@ there, and how many VMs, how much memory and how much disk it has free.
 
 ## How the plugin drives a box
 
+- **Sizes.** A box gets the cores and memory of its size. bb-box refuses a
+  size with more cores than the Mac has, or more memory than the Mac has
+  left after its running VMs and the reserve. A box keeps its image's disk:
+  growing a macOS VM's disk needs its recovery partition removed and its
+  APFS container grown inside the guest, so bb-box refuses a disk size for
+  now. The box's size, as status shows it, comes from the VM's config.
+
 - **Acquire.** The box's VM is named `bb-box-<box ID>`. bb-box writes its
   owner file, `~/.bb-box/tart/owners/<VM>`, first, naming this install, the
   box, its thread, name, kind and creation time; then `tart clone` and `tart
-  set` for its cores and memory; then `tart run --no-graphics
+  set` for the cores and memory of the box's size; then `tart run --no-graphics
   --vnc-experimental --suspendable`, detached; then it waits for the VM's
   address in the Mac's DHCP leases and for SSH through the Mac.
 - **Stop and start.** Stop suspends the VM, which frees its memory and its
