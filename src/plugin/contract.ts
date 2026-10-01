@@ -13,13 +13,16 @@ export interface PanelState {
   readonly backends: readonly BackendView[];
   /** The desktop relay's WebSocket path on the BB server. */
   readonly desktopPath: string;
+  /** The terminal's WebSocket path on the BB server. */
+  readonly terminalPath: string;
 }
 
-/** One box's desktop, for its viewer. */
+/** One box's desktop or terminal, for its tab. */
 export interface DesktopState {
   /** Null when the thread has no such box, for example once it is released. */
   readonly box: BoxView | null;
   readonly desktopPath: string;
+  readonly terminalPath: string;
 }
 
 /** A desktop box in any thread, for the Desktops page. */

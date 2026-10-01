@@ -2,6 +2,7 @@
 
 export const THREAD = "thr_preview";
 const DESKTOP_PATH = "/api/v1/plugins/bb-box/http/desktop";
+const TERMINAL_PATH = "/api/v1/plugins/bb-box/http/terminal";
 const now = Date.now();
 
 function box(overrides = {}) {
@@ -27,6 +28,7 @@ function box(overrides = {}) {
     display: null,
     control: null,
     computerUse: false,
+    terminal: true,
     address: "10.200.0.12",
     facts: [{ label: "Template", value: "9100" }],
     timings: { clone: 750, start: 1000, ssh: 450, total: 2200, enrol: 5300 },
@@ -259,8 +261,8 @@ function configState(options = {}) {
 function rpc(boxes, options = {}) {
   const find = (ref) => boxes.find((candidate) => candidate.id === ref) ?? null;
   return {
-    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH }),
-    desktop: ({ box: ref }) => ({ box: find(ref), desktopPath: DESKTOP_PATH }),
+    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
+    desktop: ({ box: ref }) => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     desktops: () => boxes.filter((candidate) => candidate.desktop).map((candidate) => ({ threadId: THREAD, box: candidate })),
     acquire: () => ({ box: null, error: options.refuse ?? null }),
     release: ({ box: ref }) => ({ box: find(ref), error: null }),
@@ -290,6 +292,7 @@ const openMenu = (root, name) => {
 };
 
 const boxesChrome = `<span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>Box</span><span>+</span>`;
+const terminalChrome = (name) => `<span>Box</span><span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>Terminal: ${name}</span><span>+</span>`;
 const desktopChrome = (name) => `<span>Box</span><span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>${name}</span><span>+</span>`;
 
 export const scenes = {
@@ -364,6 +367,25 @@ export const scenes = {
       await wait(400);
     },
   },
+  terminal: {
+    slot: "terminal",
+    chrome: terminalChrome("calm-otter"),
+    width: 720,
+    height: 420,
+    props: { threadId: THREAD, params: { box: "box_1" } },
+    rpc: rpc([box()]),
+    terminal: { output: "Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.8.0 x86_64)\r\n\r\nbox@calm-otter:~$ ls\r\napp  node_modules  package.json  README.md\r\nbox@calm-otter:~$ " },
+  },
+  "terminal-ended": {
+    slot: "terminal",
+    chrome: terminalChrome("calm-otter"),
+    width: 720,
+    height: 420,
+    props: { threadId: THREAD, params: { box: "box_1" } },
+    rpc: rpc([box()]),
+    terminal: { output: "box@calm-otter:~$ exit\r\nlogout\r\n", end: "The shell exited." },
+  },
+  "terminal-stopped": { slot: "terminal", chrome: terminalChrome("wild-cove"), width: 720, height: 420, props: { threadId: THREAD, params: { box: "box_4" } }, rpc: rpc([stopped]) },
   "desktop-connecting": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([desktop]) },
   "desktop-stopped": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([{ ...desktop, state: "stopped" }]) },
   "desktop-released": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([]) },

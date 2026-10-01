@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CommandLine, quote } from "./process.ts";
 import { openRoute } from "./route.ts";
+import { openTerminal } from "./terminal.ts";
 import {
   TransportError,
   type ByteChannel,
@@ -36,6 +37,8 @@ import {
   type GuestOs,
   type Route,
   type RunOptions,
+  type Terminal,
+  type TerminalSize,
   type RunResult,
   type SshAccess,
   type StreamOptions,
@@ -434,6 +437,11 @@ export class SshTransport implements CommandTransport {
 
   spawn(script: string, signal?: AbortSignal): Promise<ByteChannel> {
     return this.#ssh.spawn(this.#access, script, signal);
+  }
+
+  /** The box user's login shell over `ssh -tt`, on a PTY here. ssh passes TERM and the size on. */
+  terminal(size: TerminalSize, signal?: AbortSignal): Promise<Terminal> {
+    return openTerminal([this.#ssh.binary, ...this.#ssh.options(this.#access), "-tt", `${this.#access.user}@${this.#access.host}`], size, signal);
   }
 }
 

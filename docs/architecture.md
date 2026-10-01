@@ -447,6 +447,8 @@ export interface CommandTransport {
   route?(port: number, signal?: AbortSignal): Promise<Route>;
   /** A long-running command whose stdin and stdout are the channel (015). */
   spawn?(script: string, signal?: AbortSignal): Promise<ByteChannel>;
+  /** The box user's login shell on a PTY on BB's server, for a person's terminal. */
+  terminal?(size: TerminalSize, signal?: AbortSignal): Promise<Terminal>;
 }
 
 // src/backends/types.ts

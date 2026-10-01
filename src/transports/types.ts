@@ -18,6 +18,17 @@ export interface ByteChannel {
   close(): Promise<void>;
 }
 
+export interface TerminalSize {
+  readonly cols: number;
+  readonly rows: number;
+}
+
+/** A shell in a box on a PTY, for a person's terminal. */
+export interface Terminal extends ByteChannel {
+  /** Sets the PTY's size; the shell gets SIGWINCH. The latest wins. */
+  resize(size: TerminalSize): Promise<void>;
+}
+
 /**
  * How to reach one port inside a box. It may hold a secret, such as a
  * single-use console ticket: never log it or send it to the browser.
@@ -117,6 +128,12 @@ export interface CommandTransport {
    * such as the computer-use driver's MCP server. Closing the channel ends it.
    */
   spawn?(script: string, signal?: AbortSignal): Promise<ByteChannel>;
+  /**
+   * The box user's login shell on a PTY, for a person's terminal. The PTY is
+   * on BB's server, so nothing runs in the box (src/transports/terminal.ts).
+   * Closing it hangs the shell up.
+   */
+  terminal?(size: TerminalSize, signal?: AbortSignal): Promise<Terminal>;
 }
 
 export type TransportErrorCode =

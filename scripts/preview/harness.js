@@ -54,9 +54,10 @@ const ICONS = {
   ChevronRight: '<path d="m9 6 6 6-6 6"/>',
   ChevronUp: '<path d="m6 15 6-6 6 6"/>',
   Zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  Terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
 };
 const assets = {};
-for (const name of ["monitor", "server", "icon"]) {
+for (const name of ["monitor", "server", "terminal", "icon"]) {
   const svg = await fetch(`/assets/${name}.svg`).then((response) => response.text());
   assets[name] = svg.replace(/^[\s\S]*?<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
 }
@@ -76,6 +77,43 @@ function Icon({ name, className, fallback = "Zap", ...rest }) {
     dangerouslySetInnerHTML: { __html: body },
   });
 }
+
+// A fake terminal socket for the terminal scenes: it opens, prints what the
+// scene says, echoes what is typed, and ends when the scene says so.
+class FakeTerminalSocket {
+  static OPEN = 1;
+  constructor(url) {
+    this.url = url;
+    this.readyState = 0;
+    this.binaryType = "blob";
+    const terminal = scene?.terminal ?? {};
+    setTimeout(() => {
+      if (terminal.fail) {
+        this.readyState = 3;
+        this.onclose?.({ code: 1011, reason: terminal.fail });
+        return;
+      }
+      this.readyState = 1;
+      this.onopen?.({});
+      const text = terminal.output ?? "";
+      this.onmessage?.({ data: new TextEncoder().encode(text).buffer });
+      if (terminal.end) {
+        setTimeout(() => {
+          this.readyState = 3;
+          this.onclose?.({ code: 1000, reason: terminal.end });
+        }, 150);
+      }
+    }, 100);
+  }
+  send(data) {
+    if (typeof data === "string") return;
+    this.onmessage?.({ data: new Uint8Array(data).buffer });
+  }
+  close() {
+    this.readyState = 3;
+  }
+}
+window.WebSocket = FakeTerminalSocket;
 
 // The fake runtime: the slots the bundle reads, and enough of the SDK.
 let scene = null;

@@ -40,13 +40,86 @@ const novnc = vi.hoisted(() => {
 });
 vi.mock("@novnc/novnc", () => ({ default: novnc.FakeRfb }));
 
+// xterm draws nothing in jsdom: a fake keeps what was written and lets a test type and resize.
+const xterm = vi.hoisted(() => {
+  class FakeTerminal {
+    static made: FakeTerminal[] = [];
+    cols = 80;
+    rows = 24;
+    written: string[] = [];
+    data: ((text: string) => void) | null = null;
+    resized: ((size: { cols: number; rows: number }) => void) | null = null;
+    constructor() {
+      FakeTerminal.made.push(this);
+    }
+    open() {}
+    loadAddon() {}
+    focus() {}
+    reset() {}
+    dispose() {}
+    write(data: string | Uint8Array) {
+      this.written.push(typeof data === "string" ? data : new TextDecoder().decode(data));
+    }
+    onData(handler: (text: string) => void) {
+      this.data = handler;
+      return { dispose: () => {} };
+    }
+    onResize(handler: (size: { cols: number; rows: number }) => void) {
+      this.resized = handler;
+      return { dispose: () => {} };
+    }
+  }
+  return { FakeTerminal };
+});
+vi.mock("@xterm/xterm", () => ({ Terminal: xterm.FakeTerminal }));
+vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() {} } }));
+
+/** A WebSocket a test opens, feeds and closes. */
+class FakeSocket {
+  static OPEN = 1;
+  static made: FakeSocket[] = [];
+  readyState = 0;
+  binaryType = "blob";
+  sent: (string | Uint8Array)[] = [];
+  onopen: ((event: unknown) => void) | null = null;
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+  onclose: ((event: { code: number; reason: string }) => void) | null = null;
+  onerror: ((event: unknown) => void) | null = null;
+  readonly url: string;
+  constructor(url: string) {
+    this.url = url;
+    FakeSocket.made.push(this);
+  }
+  send(data: string | Uint8Array) {
+    this.sent.push(data);
+  }
+  close() {
+    this.readyState = 3;
+  }
+  open() {
+    this.readyState = 1;
+    this.onopen?.({});
+  }
+  receive(text: string) {
+    this.onmessage?.({ data: new TextEncoder().encode(text).buffer });
+  }
+  end(code: number, reason: string) {
+    this.readyState = 3;
+    this.onclose?.({ code, reason });
+  }
+}
+vi.stubGlobal("WebSocket", FakeSocket);
+
 const THREAD = "thr_panel";
 const DESKTOP_PATH = "/api/v1/plugins/bb-box/http/desktop";
+const TERMINAL_PATH = "/api/v1/plugins/bb-box/http/terminal";
 const app = await loadPluginApp(() => import("../app.tsx"));
 afterEach(() => {
   cleanup();
   applied = null;
   novnc.FakeRfb.made = [];
+  xterm.FakeTerminal.made = [];
+  FakeSocket.made = [];
   window.sessionStorage.clear();
   window.localStorage.clear();
 });
@@ -74,6 +147,7 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     display: null,
     control: null,
     computerUse: false,
+    terminal: true,
     address: "192.0.2.10",
     facts: [{ label: "Template", value: "9000" }],
     timings: { clone: 700, total: 2100, enrol: 5300 },
@@ -148,8 +222,8 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
   };
   const find = (ref: string) => boxes.find((candidate) => candidate.id === ref || candidate.name === ref) ?? null;
   const handlers: PluginRpcTestHandlers<Contract> = {
-    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH }),
-    desktop: ({ box: ref }): DesktopState => ({ box: find(ref), desktopPath: DESKTOP_PATH }),
+    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
+    desktop: ({ box: ref }): DesktopState => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktops: () => boxes.filter((candidate) => candidate.desktop).map((found) => ({ threadId: THREAD, box: found })),
@@ -317,6 +391,7 @@ test("the app registers the Boxes panel, a desktop tab, the Desktops page and th
   expect(app.threadPanelActions.map((action) => [action.id, action.title])).toEqual([
     ["boxes", "Box"],
     ["desktop", "Desktop"],
+    ["terminal", "Terminal"],
   ]);
   expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["desktops", "Desktops", "desktop"]]);
   expect(app.settingsSections.map((section) => section.id)).toEqual(["configuration"]);
@@ -370,6 +445,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
     "Open desktop",
     "Open desktop in a browser tab",
+    "Open terminal",
     "Copy address",
     "New thread on this box…",
     "Stop",
@@ -515,7 +591,7 @@ test("the panel stops and starts a box that can, and not one that cannot", async
   await fixed.findByText("real-box");
   expect(fixed.queryByRole("button", { name: "Stop" })).toBeNull();
   const menu = await openMenu(fixed.getByRole("button", { name: "real-box actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy address", "New thread on this box…", "Check now", "Release…"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Copy address", "New thread on this box…", "Check now", "Release…"]);
 });
 
 test("a row starts a child thread on its box, and opens it", async () => {
@@ -837,4 +913,92 @@ test("the Desktops page lists every desktop box with its thread, and shows one f
   expect(await one.findByText("Connecting to the desktop…")).toBeTruthy();
   fireEvent.click(one.getByRole("button", { name: "Back to desktops" }));
   expect(one.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "desktop", options: { subPath: "" } }]);
+});
+
+function terminalTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_1") {
+  const action = app.threadPanelActions.find((candidate) => candidate.id === "terminal");
+  return renderSlot(action!, { threadId: THREAD, params: { box: boxId } }, { rpc: handlers, pluginId: "bb-box" });
+}
+
+test("a row opens a box's terminal tab, named after the box", async () => {
+  const slot = panel(server([box()]).handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "Open terminal" }));
+  expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "terminal", title: "Terminal: calm-otter", params: { box: "box_1" } } }]);
+
+  cleanup();
+  const stopped = panel(server([box({ state: "stopped" })]).handlers);
+  await stopped.findByText("calm-otter");
+  expect(stopped.queryByRole("button", { name: "Open terminal" })).toBeNull();
+});
+
+test("the terminal tab streams the shell over the plugin's socket, sends what is typed and the size, and offers a new shell when it ends", async () => {
+  const { handlers } = server([box()]);
+  const slot = terminalTab(handlers);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  const [socket] = FakeSocket.made;
+  const url = new URL(socket!.url);
+  expect(url.pathname).toBe(TERMINAL_PATH);
+  expect(url.protocol).toBe("ws:");
+  expect(url.searchParams.get("box")).toBe("box_1");
+  expect(url.searchParams.get("cols")).toBe("80");
+  expect(url.searchParams.get("rows")).toBe("24");
+  const session = url.searchParams.get("session")!;
+  expect(session).toMatch(/^[0-9a-f]{24}$/);
+  expect(window.sessionStorage.getItem("bb-box:terminal:box_1")).toBe(session);
+  expect(slot.getByText("Connecting…")).toBeTruthy();
+
+  act(() => socket!.open());
+  expect(slot.getByText("Connected")).toBeTruthy();
+  act(() => socket!.receive("box@calm-otter:~$ "));
+  const [view] = xterm.FakeTerminal.made;
+  expect(view!.written.join("")).toBe("box@calm-otter:~$ ");
+
+  act(() => view!.data!("ls\r"));
+  expect(new TextDecoder().decode(socket!.sent[0] as Uint8Array)).toBe("ls\r");
+
+  vi.useFakeTimers();
+  act(() => view!.resized!({ cols: 100, rows: 30 }));
+  act(() => view!.resized!({ cols: 120, rows: 40 }));
+  act(() => {
+    vi.advanceTimersByTime(150);
+  });
+  vi.useRealTimers();
+  expect(socket!.sent.filter((frame) => typeof frame === "string")).toEqual([JSON.stringify({ type: "resize", cols: 120, rows: 40 })]);
+
+  act(() => socket!.end(1000, "The shell exited."));
+  expect(slot.getByText("The terminal has ended.")).toBeTruthy();
+  expect(slot.getByText("The shell exited.")).toBeTruthy();
+  expect(slot.getByText("Ended")).toBeTruthy();
+
+  fireEvent.click(slot.getAllByRole("button", { name: "Start a new shell" })[0]!);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+  const next = new URL(FakeSocket.made[1]!.url).searchParams.get("session")!;
+  expect(next).not.toBe(session);
+  expect(window.sessionStorage.getItem("bb-box:terminal:box_1")).toBe(next);
+});
+
+test("a remounted terminal tab attaches to the same shell, and a stopped box offers Start", async () => {
+  const { handlers } = server([box()]);
+  const first = terminalTab(handlers);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  const session = new URL(FakeSocket.made[0]!.url).searchParams.get("session");
+  first.unmount();
+  const again = terminalTab(handlers);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+  expect(new URL(FakeSocket.made[1]!.url).searchParams.get("session")).toBe(session);
+  again.unmount();
+
+  // Another box, so the tab does not start from the first box's remembered state.
+  const { handlers: stoppedHandlers, changes } = server([box({ id: "box_3", name: "wild-cove", state: "stopped" })]);
+  const stopped = terminalTab(stoppedHandlers, "box_3");
+  expect(await stopped.findByText("wild-cove is stopped.")).toBeTruthy();
+  expect(FakeSocket.made).toHaveLength(2);
+  fireEvent.click(stopped.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(changes).toEqual(["start box_3"]));
+
+  cleanup();
+  const none = terminalTab(server([box({ id: "box_5", name: "no-shell", terminal: false })]).handlers, "box_5");
+  expect(await none.findByText("no-shell has no terminal.")).toBeTruthy();
+  // Start made wild-cove ready, so its tab connected; no-shell never does.
+  expect(FakeSocket.made.map((made) => new URL(made.url).searchParams.get("box"))).toEqual(["box_1", "box_1", "box_3"]);
 });

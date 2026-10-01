@@ -65,8 +65,8 @@ New box options and the desktop lists:
 
 Nothing else is a badge: "desktop" and "with Docker" are in the label, and
 the backend's name is in the row's details. Calm, not stacked.
-bb-box's own icon is a cube; BB has no cube, monitor or server glyph, so the
-plugin declares its three as SVGs (`bb.branding.experimental_icons`), drawn
+bb-box's own icon is a cube; BB has no cube, monitor, server or terminal glyph, so the
+plugin declares its four as SVGs (`bb.branding.experimental_icons`), drawn
 in the weight of BB's set.
 
 ## The Box panel
@@ -295,6 +295,55 @@ titled after the box.
   is starting…" with a spinner; "This box has been released." with none.
 - Notices are BB's card style, centred on the muted screen area: a line of
   `text-sm`, a muted second line, and at most one button.
+
+## The terminal tab
+
+A thread panel tab per box (`layout: "flush"`), "Terminal: <box>", opened
+from a row's "Open terminal" (a quick action and a menu item) while the
+box runs. Issue [#51](https://github.com/moonstead/bb-box/issues/51).
+
+```
++------------------------------------------------------------------+
+| >_ calm-otter  (green) Connected                                  |
++------------------------------------------------------------------+
+| box@calm-otter:~$ ls                                             |
+| app  node_modules  package.json  README.md                       |
+| box@calm-otter:~$ _                                              |
++------------------------------------------------------------------+
+```
+
+- **What it shows**: xterm.js, with BB's canvas and foreground colours
+  and its monospace font, over the plugin's own WebSocket (`/terminal`)
+  to a shell in the box. The shell's PTY is on BB's server, made by the
+  box's transport (`ssh -tt`, `docker exec -it`) under `script`, so
+  nothing runs in the box and every box with a command transport has a
+  terminal ([src/plugin/terminal.ts](../../src/plugin/terminal.ts),
+  [src/transports/terminal.ts](../../src/transports/terminal.ts)).
+- **Toolbar**: BB's recessed bar: the terminal glyph, the box's name, the
+  state with a status dot: "Connecting…", "Connected", "Ended", or the
+  box's state. Nothing else while it works.
+- **The shell outlives the tab**. BB remounts a panel tab when a person
+  switches tabs. The plugin keeps the shell; the tab keeps a session ID
+  per box for the browser tab, as the desktop keeps its viewer ID, and
+  attaches to the same shell with the last 256 KiB of output, then its
+  size, so full-screen programs redraw. Two tabs on one box never share a
+  shell. A shell with no tab for ten minutes ends.
+- **Size** follows the tab: the fit addon sizes xterm to the tab, and a
+  change in columns or rows goes to the shell once it has settled for
+  100 ms.
+- **When it ends**, by the shell exiting, the box stopping or going, or
+  the plugin restarting, the screen shows "The terminal has ended." with
+  the reason the plugin gave ("The shell exited.", "The box was
+  released.") and one button, "Start a new shell", also in the toolbar.
+  The tab never starts a shell on its own, since that would start one
+  without saying so.
+- **The box is not running**: as the desktop tab: "calm-otter is
+  stopped." with Start; "calm-otter is starting…"; "This box has been
+  released." A box whose transport has no shell says "calm-otter has no
+  terminal."
+- BB's own terminal tab would be better still, with its history and its
+  place in BB's terminal list; that is BB request 9 in
+  [bb-requests.md](../bb-requests.md).
 
 ## The Desktops page
 

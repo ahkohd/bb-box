@@ -215,8 +215,11 @@ and whether the box is a BB machine. A row opens to its details. The plus
 button, "New box", makes a box of any kind; each row's
 actions stop, start, check and release it (release asks first). A desktop
 box opens in a panel tab of its own, or in a browser tab, which shows who
-has control. The Desktops page lists every desktop box. The design is in
-`docs/design/panel.md`.
+has control. "Open terminal" opens a shell in a running box in a tab of its
+own, "Terminal: <box>"; the shell runs over the box's transport with its
+PTY on BB's server, stays while the tab is away, and ends after ten minutes
+with no tab, when it exits, or when the box stops. The Desktops page lists
+every desktop box. The design is in `docs/design/panel.md`.
 
 bb-box's settings page in BB has three parts: Backends, each with a switch,
 its state in words and a setup area with the driver's fields, hosts,

@@ -1,5 +1,5 @@
-// bb-box's panels: a thread's boxes, each desktop box's viewer, the Desktops
-// page, and the backends on the settings page. They read everything through
+// bb-box's panels: a thread's boxes, each desktop box's viewer, each box's
+// terminal, the Desktops page, and the backends on the settings page. They read everything through
 // the RPC contract and refetch when the server says something changed.
 
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
@@ -7,6 +7,7 @@ import { DESKTOP_ACTION, DESKTOP_PAGE, DesktopPanel, DesktopsPage } from "./src/
 import { BoxesPanel } from "./src/app/panel.tsx";
 import { NewBoxInputs } from "./src/app/new-box-inputs.tsx";
 import { SettingsSection } from "./src/app/settings.tsx";
+import { TERMINAL_ACTION, TerminalPanel } from "./src/app/terminal.tsx";
 
 export default definePluginApp((app) => {
   app.slots.threadPanelAction({
@@ -18,6 +19,12 @@ export default definePluginApp((app) => {
     id: DESKTOP_ACTION,
     title: "Desktop",
     component: DesktopPanel,
+    layout: "flush",
+  });
+  app.slots.threadPanelAction({
+    id: TERMINAL_ACTION,
+    title: "Terminal",
+    component: TerminalPanel,
     layout: "flush",
   });
   app.slots.navPanel({

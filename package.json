@@ -14,7 +14,8 @@
       "icon": "./assets/icon.svg",
       "experimental_icons": {
         "monitor": "./assets/monitor.svg",
-        "server": "./assets/server.svg"
+        "server": "./assets/server.svg",
+        "terminal": "./assets/terminal.svg"
       }
     },
     "server": "./server.ts",
