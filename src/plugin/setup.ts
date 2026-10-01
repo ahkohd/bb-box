@@ -238,6 +238,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     access: (hostId, names) => host.call("access", { names: [...names] }, { hostId, timeoutMs: CALL_TIMEOUT_MS }),
     terminals: () => bb.sdk.terminals as unknown as RetiredTerminals,
     logError,
+    log: (message) => bb.log.info(message),
   });
   host.experimental_onWorkerExit(({ hostId }) => holders.forget(hostId));
   let enrolment: Enrolment;

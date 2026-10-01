@@ -16,7 +16,8 @@ function world() {
     ["term_old", { id: "term_old", hostId: "host_a", title: RETIRED_TITLE, status: "running" }],
     ["term_mine", { id: "term_mine", hostId: "host_a", title: "a person's shell", status: "running" }],
   ]);
-  let failing = false;
+  let failing: string | null = null;
+  const logs: string[] = [];
   const terminals: RetiredTerminals = {
     list: async ({ scope }) => ({ sessions: [...sessions.values()].filter((session) => session.hostId === scope.hostId) }),
     close: async ({ terminalId }) => {
@@ -27,13 +28,14 @@ function world() {
   const holders = new Holders({
     access: async (hostId, names) => {
       calls.push({ hostId, names });
-      if (failing) throw new Error("the worker did not answer");
+      if (failing) throw new Error(failing);
     },
     terminals: () => terminals,
     logError: (operation) => errors.push(operation),
+    log: (message) => logs.push(message),
     now: () => clock,
   });
-  return { holders, calls, errors, sessions, advance: (ms: number) => (clock += ms), fail: (value: boolean) => (failing = value) };
+  return { holders, calls, errors, logs, sessions, advance: (ms: number) => (clock += ms), fail: (message: string | null) => (failing = message) };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
@@ -58,20 +60,38 @@ test("a machine's access is held with one call, called again after 30 s or for o
   assert.deepEqual(w.errors, []);
 });
 
-test("a call that fails is logged, commands go on, bb-box calls again after 30 s, and the old terminal stays until a call works", async () => {
+test("a call that fails is logged, commands go on, bb-box calls again after 2 s, and the old terminal stays until a call works", async () => {
   const w = world();
-  w.fail(true);
+  w.fail("the worker did not answer");
   await w.holders.ensure("host_a", ["GH_TOKEN"]);
   await w.holders.ensure("host_a", ["GH_TOKEN"]);
-  assert.deepEqual(w.errors, ["access holder"]);
+  assert.deepEqual(w.errors, ["access holder"], "not before every command");
   await settle();
   assert.equal(w.sessions.get("term_old")?.status, "running", "the box keeps its last source");
-  w.fail(false);
-  w.advance(30_000);
+  w.fail(null);
+  w.advance(2_000);
   await w.holders.ensure("host_a", ["GH_TOKEN"]);
   await settle();
   assert.equal(w.calls.length, 2);
   assert.equal(w.sessions.get("term_old")?.status, "exited");
+});
+
+test("a machine BB does not show connected yet, as a new box's is for its first commands, is no error and is said once", async () => {
+  const w = world();
+  w.fail("Host is not connected");
+  await w.holders.ensure("host_a", ["GH_TOKEN"]);
+  w.advance(2_000);
+  await w.holders.ensure("host_a", ["GH_TOKEN"]);
+  assert.equal(w.calls.length, 2, "called again 2 s later");
+  assert.deepEqual(w.errors, []);
+  assert.equal(w.logs.length, 1);
+  assert.match(w.logs[0]!, /^BB's machine host_a was not connected yet/);
+  w.fail(null);
+  w.advance(2_000);
+  await w.holders.ensure("host_a", ["GH_TOKEN"]);
+  w.advance(2_000);
+  await w.holders.ensure("host_a", ["GH_TOKEN"]);
+  assert.equal(w.calls.length, 3, "once it works, 30 s again");
 });
 
 /** The variables process `pid` started with, by name. */

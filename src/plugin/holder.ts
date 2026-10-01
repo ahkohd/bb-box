@@ -14,6 +14,14 @@
 export const RETIRED_TITLE = "bb-box access";
 /** How long bb-box trusts its last call, before calling again. */
 const CHECK_MS = 30_000;
+/**
+ * How soon a call that failed is made again. A new box's first commands run
+ * as BB shows its machine connected, and a call a moment too early fails;
+ * BB's own workers carry the variables meanwhile.
+ */
+const RETRY_MS = 2_000;
+/** BB's answer for a machine whose daemon has not connected yet, or is away. */
+const NOT_CONNECTED = /not connected/i;
 /** How long a call may take before the command goes on without it. */
 export const CALL_TIMEOUT_MS = 10_000;
 
@@ -28,15 +36,19 @@ export interface HoldersDeps {
   access(hostId: string, names: readonly string[]): Promise<unknown>;
   readonly terminals: () => RetiredTerminals;
   logError(operation: string, error: unknown): void;
+  /** A line for the plugin's log that is not an error. */
+  log?(message: string): void;
   now?(): number;
 }
 
 export class Holders {
   readonly #deps: HoldersDeps;
-  /** When bb-box last called each machine, and with which names. */
-  readonly #called = new Map<string, { at: number; names: string }>();
+  /** Until when bb-box trusts its last call on each machine, and with which names. */
+  readonly #called = new Map<string, { until: number; names: string }>();
   readonly #pending = new Map<string, Promise<void>>();
   readonly #retired = new Set<string>();
+  /** Machines bb-box said were not connected yet, until a call there works. */
+  readonly #unconnected = new Set<string>();
 
   constructor(deps: HoldersDeps) {
     this.#deps = deps;
@@ -50,7 +62,7 @@ export class Holders {
   ensure(hostId: string, names: readonly string[]): Promise<void> {
     const key = [...names].sort().join(" ");
     const called = this.#called.get(hostId);
-    if (called && called.names === key && this.#now() - called.at < CHECK_MS) return Promise.resolve();
+    if (called && called.names === key && this.#now() < called.until) return Promise.resolve();
     let pending = this.#pending.get(hostId);
     if (!pending) {
       pending = this.#call(hostId, names, key).finally(() => this.#pending.delete(hostId));
@@ -69,11 +81,16 @@ export class Holders {
     try {
       await this.#deps.access(hostId, names);
       held = true;
+      this.#unconnected.delete(hostId);
     } catch (error) {
-      this.#deps.logError("access holder", error);
+      if (!(error instanceof Error && NOT_CONNECTED.test(error.message))) this.#deps.logError("access holder", error);
+      else if (!this.#unconnected.has(hostId)) {
+        this.#unconnected.add(hostId);
+        this.#deps.log?.(`BB's machine ${hostId} was not connected yet for bb-box's access holder, which commands call again until it is.`);
+      }
     }
-    // A failure is tried again after the same wait, not before every command.
-    this.#called.set(hostId, { at: this.#now(), names: key });
+    // A failure is tried again soon, not before every command.
+    this.#called.set(hostId, { until: this.#now() + (held ? CHECK_MS : RETRY_MS), names: key });
     // Only once the host entry holds them, so a box never loses its last source.
     if (held && !this.#retired.has(hostId)) {
       this.#retired.add(hostId);
