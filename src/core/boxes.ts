@@ -236,6 +236,15 @@ export class BoxError extends Error {
   }
 }
 
+/** #choose finding no offer for a box, with the backends that had no room: only their spares give room (#282). */
+class Unplaced extends BoxError {
+  readonly full: readonly string[];
+  constructor(code: BoxErrorCode, message: string, full: readonly string[]) {
+    super(code, message);
+    this.full = full;
+  }
+}
+
 /** The storage key of the cold-start history, see `typicalReady`. */
 const READY_HISTORY = "ready-history";
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
@@ -935,6 +944,8 @@ export class Boxes {
   async #choose(offered: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
     const all = await this.all();
     const reasons: string[] = [];
+    const full: string[] = [];
+    let lacking = 0;
     for (const candidate of offered) {
       const acquiring = all.filter((box) => box.backend === candidate.backend.id && isAcquiring(box));
       const pending = await Promise.all(acquiring.map(async (box) => ({ kind: box.kind, size: await this.#size(box) })));
@@ -942,33 +953,39 @@ export class Boxes {
         const capacity = await candidate.backend.capacity(candidate.kind.id, size, pending);
         if (!capacity.ok) {
           reasons.push(capacity.message ?? `${candidate.backend.label} has no room.`);
+          full.push(candidate.backend.id);
           continue;
         }
         // Checking room can show a backend lacks what it offered, as a rootless Docker host lacks Docker (041).
         const kind = candidate.backend.kinds().find((other) => other.id === candidate.kind.id) ?? candidate.kind;
         const missing = features.filter((feature) => !kind.capabilities.features.includes(feature));
         if (!missing.length) return { ...candidate, kind };
+        lacking++;
         reasons.push(`${candidate.kind.id} boxes from ${candidate.backend.label} have no ${missing.map(featureWord).join(" or ")}.`);
       } catch (error) {
         this.#deps.logError("capacity", error);
         reasons.push(describeError(error, `Checking room on ${candidate.backend.label}`));
       }
     }
-    throw new BoxError("no_capacity", reasons.join(" "));
+    // No room makes a box wait; a feature no offer has is no matter of room.
+    if (lacking === offered.length) {
+      throw new Unplaced("unknown_kind", `${reasons.join(" ")} Ask for ${offered[0]!.kind.id} if the box can do without it.`, full);
+    }
+    throw new Unplaced("no_capacity", reasons.join(" "), full);
   }
 
   /**
-   * #choose for a thread's box. When no backend has room, a spare of an
-   * offered backend gives its room back and the choice is made once more:
-   * on a Mac a spare holds one of its two VM slots (#120).
+   * #choose for a thread's box. When no backend has room, a spare of a
+   * backend that had none gives its room back and the choice is made once
+   * more: on a Mac a spare holds one of its two VM slots (#120).
    */
   async #chooseFreeing(offered: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
     try {
       return await this.#choose(offered, size, features);
     } catch (error) {
-      if (!(error instanceof BoxError) || error.code !== "no_capacity") throw error;
+      if (!(error instanceof Unplaced)) throw error;
       const spares = (await this.list(SPARES)).filter((spare) => spare.state !== "releasing" && !this.#holdsNothing(spare));
-      const spare = offered.map((candidate) => spares.find((spare) => spare.backend === candidate.backend.id)).find((spare) => !!spare);
+      const spare = error.full.map((backend) => spares.find((spare) => spare.backend === backend)).find((spare) => !!spare);
       if (!spare) throw error;
       if (await this.#release(spare, `a thread's ${offered[0]!.kind.id} box needs its room`)) throw error;
       return this.#choose(offered, size, features);

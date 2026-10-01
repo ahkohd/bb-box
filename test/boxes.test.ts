@@ -1896,20 +1896,31 @@ test("an acquire through an alias takes only offers with its features, and says 
   await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
 });
 
-test("an offer must still have an alias's features once its room is checked, and a box records what it has then (041)", async () => {
-  const [headless] = FAKE_KINDS;
-  const world = setup({ kinds: [{ ...headless!, capabilities: { ...headless!.capabilities, features: ["docker"] } }] });
+test("an offer must still have an alias's features once its room is checked, a box records what it has then, and no spare is freed for it (041, #282)", async () => {
+  const [headless, desktop] = FAKE_KINDS;
+  const logs: string[] = [];
+  const world = setup({ kinds: [{ ...headless!, capabilities: { ...headless!.capabilities, features: ["docker"] } }, desktop!] }, { log: (line) => logs.push(line) });
+  world.general = { ...world.general, spares: { "linux-desktop": 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  assert.equal(spare?.enrol.state, "enrolled");
   // As a Docker backend learns that its host is rootless Docker when it first asks it for room.
   const capacity = world.backend.capacity.bind(world.backend);
   world.backend.capacity = async (kind, size, pending) => {
-    world.backend.kinds = () => [headless!];
+    world.backend.kinds = () => [headless!, desktop!];
     return capacity(kind, size, pending);
   };
   await assert.rejects(
     world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-docker" }),
-    (error: unknown) => error instanceof BoxError && error.code === "no_capacity" && error.message === `linux boxes from ${world.backend.label} have no Docker.`,
+    (error: unknown) =>
+      error instanceof BoxError &&
+      error.code === "unknown_kind" &&
+      error.message === `linux boxes from ${world.backend.label} have no Docker. Ask for linux if the box can do without it.`,
   );
   assert.deepEqual(await world.boxes.list(THREAD), [], "nothing was made");
+  assert.deepEqual((await world.boxes.list(SPARES)).map((box) => box.id), [spare.id], "the spare gave no room for nothing");
+  assert.ok(!logs.some((line) => line.startsWith("Releasing spare box")));
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   assert.deepEqual(box.capabilities.features, []);
 });
