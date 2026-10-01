@@ -65,7 +65,10 @@ backend offers:
 - `linux`: a Linux box without a desktop
 - `linux-docker`: the same, with Docker
 - `linux-desktop`: a desktop with a GPU
-- `linux-desktop-cpu`: a desktop without a GPU
+- `linux-desktop-cpu`: a desktop drawn by the CPU
+
+Both desktops are labelled "Linux desktop"; the ID, the GPU badge and
+`box_status` tell them apart.
 
 A kind is on offer only when its templates are set. The Docker backend
 offers the same kinds as containers, with the same tools, and
@@ -199,9 +202,10 @@ Most take `--json`.
 
 ## The panel
 
-The Box thread panel lists the thread's boxes as rows: name, kind, state,
-timings, whether the box is a BB machine, and GPU or CPU for a desktop. A
-row opens to its details. "New box" makes a box of any kind; each row's
+The Box thread panel lists the thread's boxes as rows: name, kind, badges
+(GPU, and LXC, Docker, VM or Physical for what the box is), state, timings
+and whether the box is a BB machine. A row opens to its details. The plus
+button, "New box", makes a box of any kind; each row's
 actions stop, start, check and release it (release asks first). A desktop
 box opens in a panel tab of its own, or in a browser tab, which shows who
 has control. The Desktops page lists every desktop box. The design is in

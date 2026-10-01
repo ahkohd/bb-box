@@ -12,6 +12,7 @@ function box(overrides = {}) {
     kindLabel: "Linux",
     backendLabel: "Proxmox LXC on pve",
     nature: "virtual",
+    form: "LXC",
     role: "box",
     state: "ready",
     error: null,
@@ -55,7 +56,7 @@ const desktop = box({
   ],
 });
 const starting = box({ id: "box_3", name: "quiet-fern", state: "acquiring", createdAt: now - 1400, address: null, facts: [], timings: {}, enrol: { state: "off", hostId: null, error: null } });
-const stopped = box({ id: "box_4", name: "wild-cove", kind: "linux-docker", kindLabel: "Linux with Docker", state: "stopped", size: "8 cores, 16 GiB memory, 64 GiB disk" });
+const stopped = box({ id: "box_4", name: "wild-cove", kind: "linux-docker", kindLabel: "Linux with Docker", backendLabel: "SSH host pool", nature: "real", form: "Physical", state: "stopped", size: "8 cores, 16 GiB memory, 64 GiB disk" });
 const failed = box({
   id: "box_5",
   name: "brisk-elm",
@@ -64,7 +65,7 @@ const failed = box({
   desktop: true,
   gpu: true,
   state: "failed",
-  error: "No GPU is left: GPU-0a1b has 3 desktops and GPU-7c2d fell back to the CPU. Try a Linux desktop (no GPU).",
+  error: "No GPU is left: GPU-0a1b has 3 desktops and GPU-7c2d fell back to the CPU. Try a linux-desktop-cpu box.",
   address: null,
   facts: [],
   timings: {},
@@ -93,13 +94,14 @@ function kind(id, label, description, cores, desktop, gpu) {
     gpu,
     desktop,
     backends: ["Proxmox LXC on pve"],
+    forms: ["LXC"],
   };
 }
 
 export const KINDS = [
   kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false),
   kind("linux-desktop", "Linux desktop", "A Linux desktop on the host's GPU, for computer use, browsers and app development.", 4, true, true),
-  kind("linux-desktop-cpu", "Linux desktop (no GPU)", "A Linux desktop drawn by the CPU. Graphics are slower; nothing else changes.", 4, true, false),
+  kind("linux-desktop-cpu", "Linux desktop", "A Linux desktop drawn by the CPU. Graphics are slower; nothing else changes.", 4, true, false),
 ];
 
 const BACKENDS = [
@@ -219,7 +221,7 @@ const KIND_INFO = [
   { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
   { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, drivers: ["proxmox-lxc", "docker"] },
   { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop-cpu", label: "Linux desktop (no GPU)", description: "A Linux desktop without a GPU.", gpu: false, desktop: true, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, drivers: ["proxmox-lxc", "docker"] },
   { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, drivers: ["tart"] },
   { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, drivers: ["tart"] },
 ];
@@ -245,9 +247,9 @@ function configState(options = {}) {
     drivers: DRIVERS,
     backends: [
       tokenSet
-        ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-docker", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 } }
-        : { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC", state: "misconfigured", problems: [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }], boxes: 0, kinds: [], doctor: null },
-      { id: "tart", type: "tart", label: "Tart", state: "off", problems: [], boxes: 0, kinds: [], doctor: null },
+        ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", form: "LXC", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-docker", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 } }
+        : { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC", form: "LXC", state: "misconfigured", problems: [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }], boxes: 0, kinds: [], doctor: null },
+      { id: "tart", type: "tart", label: "Tart", form: "VM", state: "off", problems: [], boxes: 0, kinds: [], doctor: null },
     ],
     problems: tokenSet ? [] : [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }],
     migrated: { at: now - 3 * 3600_000, version: "0.2.0" },
@@ -319,7 +321,7 @@ export const scenes = {
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      click(document.body, "radio", "Linux desktopA Linux desktop on the host's GPU, for computer use, browsers and app development.");
+      click(document.body, "radio", "Linux desktopGPULXC");
       await wait(100);
       click(document.body, "radio", "Custom");
       await wait(300);
@@ -333,7 +335,7 @@ export const scenes = {
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      click(document.body, "radio", "Linux desktopA Linux desktop on the host's GPU, for computer use, browsers and app development.");
+      click(document.body, "radio", "Linux desktopGPULXC");
       click(document.body, "radio", "Large");
       click(document.body, "button", "Create");
       await wait(300);
@@ -365,8 +367,8 @@ export const scenes = {
   "desktop-connecting": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([desktop]) },
   "desktop-stopped": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([{ ...desktop, state: "stopped" }]) },
   "desktop-released": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([]) },
-  "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop (no GPU)", state: "stopped" }]) },
-  "desktops-page": { slot: "desktops", width: 900, props: { subPath: "" }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop (no GPU)", state: "stopped" }]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
+  "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
+  "desktops-page": { slot: "desktops", width: 900, props: { subPath: "" }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([]) },
   "settings-setup": {
     slot: "settings",

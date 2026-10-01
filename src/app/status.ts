@@ -19,12 +19,11 @@ export interface Status {
 /** Words for timings whose names alone do not say what they are. */
 export const STEP_WORDS: Readonly<Record<string, string>> = { template: "waiting for the template", enrol: "BB enrolment", total: "total" };
 
-/** A desktop's display mode from its facts: "GPU", "CPU", or null when it has no desktop. */
-export function displayWord(box: BoxView): string | null {
-  if (!box.desktop) return null;
+/** A warning when a GPU desktop's display runs on the CPU, from its facts; null otherwise, since the row's badge says what the kind has. */
+export function displayWord(box: BoxView): StatusItem | null {
+  if (!box.desktop || !box.gpu) return null;
   const mode = box.facts.find((fact) => fact.label.toLowerCase() === "display mode")?.value.toLowerCase();
-  if (mode) return mode.includes("gpu") ? "GPU" : mode.includes("cpu") ? "CPU" : mode.toUpperCase();
-  return box.gpu ? "GPU" : "CPU";
+  return mode?.includes("cpu") ? { text: "Display on the CPU", tone: "warn" } : null;
 }
 
 /** Who holds the desktop's input, as a status item, or null while the agent does. */
@@ -46,7 +45,7 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
   const rest: StatusItem[] = [];
   if (box.size) rest.push({ text: compactSize(box.size) });
   const display = displayWord(box);
-  if (display) rest.push({ text: display });
+  if (display) rest.push(display);
   const control = controlWord(box, myViewers);
   if (control) rest.push(control);
 

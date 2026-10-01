@@ -582,7 +582,7 @@ test("config.get gives the document with each secret as set or not, the defaults
     drivers: ["fake", "proxmox-lxc"],
   });
   assert.deepEqual(state.drivers[0]!.fields.map((field) => [field.key, field.group]), [["address", "connection"], ["token", "credentials"]]);
-  assert.deepEqual(state.backends, [{ id: "fake", type: "fake", label: "Fake host", state: "active", problems: [], boxes: 0, kinds: ["linux", "linux-desktop"], doctor: null }]);
+  assert.deepEqual(state.backends, [{ id: "fake", type: "fake", label: "Fake host", form: "VM", state: "active", problems: [], boxes: 0, kinds: ["linux", "linux-desktop"], doctor: null }]);
   assert.deepEqual(state.problems, []);
   assert.ok(state.migrated);
 });

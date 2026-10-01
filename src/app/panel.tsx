@@ -76,7 +76,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   if (!state.kinds.length && !boxes.length) {
     return (
       <EmptyPanel title="BB Box is not set up yet">
-        <p className="mt-1">Turn on a backend in its settings to make boxes.</p>
+        <p className="mt-1">Turn on a backend in its settings.</p>
         <Button asChild variant="outline" size="sm" className="mt-3">
           <UrlLink href={SETTINGS_PATH}>
             <Icon name="Settings" aria-hidden />

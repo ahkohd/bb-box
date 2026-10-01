@@ -21,6 +21,9 @@ export type { Arch, GuestOs } from "../transports/types.ts";
 /** Whether a backend's boxes are guests it makes and deletes, or existing machines it lends. */
 export type MachineNature = "virtual" | "real";
 
+/** What a box of a backend is, as a badge: an LXC or Docker container, a VM, or a physical machine. */
+export type BoxForm = "LXC" | "Docker" | "VM" | "Physical";
+
 /** How bb-box runs commands in a box of a kind. */
 export interface CommandCapability {
   /** A name for people: "ssh", "docker", "guest-agent". The core never branches on it. */
@@ -512,6 +515,8 @@ export interface BackendDriver<C = unknown> {
   /** One line on what the backend is for, shown while it is off. */
   readonly description: string;
   readonly nature: MachineNature;
+  /** What its boxes are, as the panel's badge says. */
+  readonly form: BoxForm;
   /** The kinds its backends can make, which take warm counts. */
   readonly kinds: readonly string[];
   /** In the order the settings page shows them. */

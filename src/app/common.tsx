@@ -165,6 +165,24 @@ export function IconButton({
   );
 }
 
+/** BB's chip: one small bordered word, as its machine picker and settings sections show one. */
+export function Badge({ children, tone = "muted", className }: { children: ReactNode; tone?: "muted" | "warn"; className?: string }) {
+  return <span className={cn("shrink-0 rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-2xs leading-none", tone === "warn" ? "text-warning-text" : "text-subtle-foreground", className)}>{children}</span>;
+}
+
+/** What a kind or a box has beyond its label, as badges: GPU, then what its boxes are (LXC, Docker, VM, Physical). */
+export function KindBadges({ gpu, forms, className }: { gpu: boolean; forms: readonly string[]; className?: string }) {
+  if (!gpu && !forms.length) return null;
+  return (
+    <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
+      {gpu ? <Badge>GPU</Badge> : null}
+      {forms.map((form) => (
+        <Badge key={form}>{form}</Badge>
+      ))}
+    </span>
+  );
+}
+
 /** BB's dashed empty panel. */
 export function EmptyPanel({ title, children, className, role }: { title?: string; children?: ReactNode; className?: string; role?: string }) {
   return (
