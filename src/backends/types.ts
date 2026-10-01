@@ -487,6 +487,8 @@ export interface EarlierBackend {
   /** Ready guests per kind. */
   readonly warm: Readonly<Record<string, number>>;
   readonly hosts?: readonly { readonly name: string; readonly enabled: boolean; readonly fields: Readonly<Record<string, FieldValue>> }[];
+  /** What did not move as it was, in words, for the copy. */
+  readonly notes?: readonly string[];
 }
 
 /**

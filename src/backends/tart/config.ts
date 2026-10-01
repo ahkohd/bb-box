@@ -313,8 +313,8 @@ export function readEarlierTart(values: Readonly<Record<string, unknown>>): Earl
     else fields[name] = value as FieldValue;
   }
   if (!any) return null;
-  // The Macs as they were. A line with a mistake was refused before too, so it is left for the copy.
-  const { hosts } = parseHosts(text(values, TART_KEYS.hosts));
+  // The Macs as they were. A line with a mistake made Tart misconfigured before; it is left out, and noted.
+  const { hosts, problems } = parseHosts(text(values, TART_KEYS.hosts));
   const keys = text(values, TART_KEYS.hostKeys)
     .split("\n")
     .map((line) => line.trim())
@@ -327,6 +327,7 @@ export function readEarlierTart(values: Readonly<Record<string, unknown>>): Earl
     fields,
     secrets,
     warm: {},
+    notes: problems.map((problem) => `${problem} The Mac was left out; add it on the settings page.`),
     hosts: hosts.map((host, n) => ({
       name: host.name,
       enabled: true,

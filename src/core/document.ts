@@ -310,10 +310,7 @@ function readBackend(
     return null;
   }
   const driver = drivers.find((candidate) => candidate.type === value.type);
-  if (!driver) {
-    problem(`backends.${index}.type`, `There is no backend type "${String(value.type)}". The types are ${drivers.map((each) => each.type).join(", ")}.`);
-    return null;
-  }
+  if (!driver) return unknownBackend(index, value, drivers, problem);
   const id = typeof value.id === "string" ? value.id : driver.type;
   const match = ID.exec(id);
   if (!match || match[1] !== driver.type) {
@@ -337,9 +334,8 @@ function readBackend(
   if (value.warm !== undefined && value.warm !== null) {
     if (!isRecord(value.warm)) problem(`${path}.warm`, "warm is an object with a count per kind.");
     else for (const [kind, count] of Object.entries(value.warm)) {
-      if (!driver.kinds.includes(kind)) problem(`${path}.warm.${kind}`, `${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
-      else if (!isWhole(count, 0, MAX_WARM)) problem(`${path}.warm.${kind}`, `Keep 0 to ${MAX_WARM} warm ${kind} boxes.`);
-      else if (count > 0) warm[kind] = count;
+      if (typeof count !== "number") problem(`${path}.warm.${kind}`, `Give the warm ${kind} boxes as a number.`);
+      else if (count !== 0) warm[kind] = count;
     }
   }
 
@@ -367,6 +363,36 @@ function readBackend(
     fields,
     ...(Object.keys(warm).length ? { warm } : {}),
     ...(hosts ? { hosts } : {}),
+  };
+}
+
+/**
+ * A backend of a type this bb-box has no driver for, as after going back to
+ * an earlier version: kept as it is, unchecked, so a draft that leaves it
+ * alone can still be saved. checkDocument says it cannot run.
+ */
+function unknownBackend(
+  index: number,
+  value: Record<string, unknown>,
+  drivers: readonly BackendDriver<any>[],
+  problem: (path: string, message: string) => void,
+): BackendConfig | null {
+  const type = value.type;
+  const match = typeof value.id === "string" ? ID.exec(value.id) : null;
+  if (typeof type !== "string" || !match || match[1] !== type) {
+    problem(`backends.${index}.type`, `There is no backend type "${String(type)}". The types are ${drivers.map((each) => each.type).join(", ")}.`);
+    return null;
+  }
+  const fields: Record<string, FieldValue> = {};
+  for (const [key, field] of Object.entries(isRecord(value.fields) ? value.fields : {})) {
+    if (typeof field === "string" || typeof field === "number" || typeof field === "boolean") fields[key] = field;
+  }
+  return {
+    ...(value as unknown as BackendConfig),
+    id: value.id as string,
+    type,
+    enabled: value.enabled === true,
+    fields,
   };
 }
 
@@ -490,12 +516,20 @@ export function checkDocument(
   const types = new Set<string>();
   for (const backend of document.backends) {
     const path = `backends.${backend.id}`;
-    const driver = drivers.find((candidate) => candidate.type === backend.type)!;
+    const driver = drivers.find((candidate) => candidate.type === backend.type);
     if (seen.has(backend.id)) {
       problem(path, `Backend ${backend.id} is listed twice.`);
       continue;
     }
     seen.add(backend.id);
+    if (!driver) {
+      problem(path, `This version of bb-box has no ${backend.type} backend, so ${backend.id} does not run. Its boxes wait for a version that has it.`);
+      continue;
+    }
+    for (const [kind, count] of Object.entries(backend.warm ?? {})) {
+      if (!driver.kinds.includes(kind)) problem(`${path}.warm.${kind}`, `${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
+      else if (!isWhole(count, 0, MAX_WARM)) problem(`${path}.warm.${kind}`, `Keep 0 to ${MAX_WARM} warm ${kind} boxes.`);
+    }
     // Drivers still name their guests by type, so two of one type would share them.
     if (types.has(backend.type)) problem(path, `bb-box runs one ${driver.label} backend for now. Remove ${backend.id}.`);
     types.add(backend.type);
@@ -538,11 +572,13 @@ export function backendOf(problem: Problem, document: ConfigDocument): string | 
  * The problems that stop a write: all but those of a backend that is off and
  * has no boxes, which can be saved part way through its setup (029).
  */
-export function blocking(problems: readonly Problem[], document: ConfigDocument, inUse: InUse): Problem[] {
+export function blocking(problems: readonly Problem[], document: ConfigDocument, inUse: InUse, drivers: readonly BackendDriver<any>[]): Problem[] {
   return problems.filter((problem) => {
     const id = backendOf(problem, document);
     if (id === null) return true;
     const backend = document.backends.find((candidate) => candidate.id === id)!;
+    // A backend of a type this version lacks cannot be fixed here, so it never stops a save.
+    if (!drivers.some((driver) => driver.type === backend.type)) return false;
     return backend.enabled || (inUse.backends.get(id) ?? 0) > 0 || /^backends\.[^.]+$/.test(problem.path);
   });
 }

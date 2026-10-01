@@ -102,7 +102,8 @@ export interface CheckResult {
 }
 
 export type ApplyResult =
-  | { readonly ok: true; readonly state: ConfigState }
+  /** `problems` are those saved anyway, in a backend that is off and has no boxes, for the page to show. */
+  | { readonly ok: true; readonly state: ConfigState; readonly problems: readonly Problem[] }
   | { readonly ok: false; readonly reason: "revision"; readonly state: ConfigState }
   | { readonly ok: false; readonly reason: "problems"; readonly problems: readonly Problem[] };
 
@@ -327,8 +328,9 @@ export class Configuration {
 
   /**
    * Saves a draft as the whole configuration, if `revision` is the current
-   * one or null, and its problems allow it. Then rebuilds what changed and
-   * tells open pages. The draft's own revision is ignored.
+   * one or null, and its problems allow it. Then rebuilds what changed,
+   * answers with the state after it, and tells open pages. The draft's own
+   * revision is ignored.
    */
   apply(input: unknown, revision: number | null): Promise<ApplyResult> {
     const write = this.#queue.catch(() => {}).then(async (): Promise<ApplyResult> => {
@@ -337,21 +339,19 @@ export class Configuration {
       const draft = readDraft(input, drivers);
       const secrets = withSecretChanges(this.#secrets, draft.secrets, draft.document);
       const inUse = await this.inUse();
-      const problems = blocking([...draft.problems, ...checkDocument(draft.document, secrets, drivers, inUse)], draft.document, inUse);
+      const all = [...draft.problems, ...checkDocument(draft.document, secrets, drivers, inUse)];
+      const problems = blocking(all, draft.document, inUse, drivers);
       if (problems.length) return { ok: false, reason: "problems", problems };
       const document: ConfigDocument = { ...withoutSecrets(draft.document, drivers), schema: SCHEMA, revision: this.#document.revision + 1 };
       await this.#deps.kv.set(SECRETS_KEY, secrets);
       await this.#deps.kv.set(DOCUMENT_KEY, document);
       this.#document = document;
       this.#secrets = secrets;
-      return { ok: true, state: await this.#snapshot() };
-    });
-    // Reconfiguring follows the answer, and the next write waits for it.
-    this.#queue = write.then(async (result) => {
-      if (!result.ok) return;
       await this.configure().catch((error) => this.#deps.logError("configure", error));
       this.#deps.changed();
+      return { ok: true, state: await this.#snapshot(), problems: all };
     });
+    this.#queue = write;
     return write;
   }
 }

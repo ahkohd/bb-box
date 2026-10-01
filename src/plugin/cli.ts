@@ -205,18 +205,26 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         }),
         "config apply": cliCommand({
           summary:
-            "Save a configuration file as bb-box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one is applied over what is there.",
+            "Save a configuration file as bb-box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or --replace, saves over what is there, as when setting bb-box up again from an export.",
           positionals: fileArgument,
-          options: jsonOption,
+          options: { ...jsonOption, replace: { type: "boolean", description: "Save over the current configuration whatever revision the file names." } },
           run: ({ positionals, options }, ctx) =>
             guard("Applying the configuration", async () => {
               const draft = await readConfigFile(positionals.file, ctx);
               const revision = (draft as { revision?: unknown })?.revision;
-              const result = await app.configuration.apply(draft, typeof revision === "number" ? revision : null);
+              const result = await app.configuration.apply(draft, typeof revision === "number" && !options.replace ? revision : null);
               if (options.json) return { exitCode: result.ok ? 0 : 1, stdout: `${JSON.stringify(result.ok ? result.state.document : result, null, 2)}\n` };
-              if (result.ok) return out(`Saved revision ${result.state.revision}. bb box config show shows it, and bb box doctor checks the backends.`);
+              if (result.ok) {
+                const saved = `Saved revision ${result.state.revision}. bb box config show shows it, and bb box doctor checks the backends.`;
+                return out(result.problems.length ? `${saved}\nSaved with these problems, in backends that are off:\n${problemsText(result.problems)}` : saved);
+              }
               if (result.reason === "revision") {
-                return { exitCode: 1, stderr: `The configuration changed since revision ${String(revision)}: it is at revision ${result.state.revision}. Run bb box config show --json again and make your change there.\n` };
+                return {
+                  exitCode: 1,
+                  stderr:
+                    `The configuration changed since revision ${String(revision)}: it is at revision ${result.state.revision}. ` +
+                    "Run bb box config show --json again and make your change there, or, to save the file over it, remove its revision or use --replace.\n",
+                };
               }
               return refused(result.problems, "Nothing was saved. Fix these first:");
             }),

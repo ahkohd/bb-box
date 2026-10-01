@@ -15,7 +15,7 @@
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { isSecret, type BackendDriver } from "../backends/types.ts";
 import { GENERAL_SETTINGS } from "./config.ts";
-import { SCHEMA, knownKinds, type BackendConfig, type ConfigDocument, type KindConfig, type Secrets } from "./document.ts";
+import { MAX_WARM, SCHEMA, checkDocument, knownKinds, type BackendConfig, type ConfigDocument, type KindConfig, type Secrets } from "./document.ts";
 import { PRESETS, parseSizeChanges, withEarlierSizes } from "./sizes.ts";
 
 export const DOCUMENT_KEY = "config/document";
@@ -99,17 +99,28 @@ export function fromSettings(
   for (const driver of drivers) {
     const earlier = driver.earlier?.read(values);
     if (!earlier) continue;
+    notes.push(...(earlier.notes ?? []));
+    // A count out of range made the backend misconfigured before; now it is brought into range, and noted.
+    const warm: Record<string, number> = {};
+    for (const [kind, count] of Object.entries(earlier.warm)) {
+      const kept = Number.isFinite(count) ? Math.min(MAX_WARM, Math.max(0, Math.round(count))) : 0;
+      if (kept !== count) notes.push(`${driver.label} kept ${count} warm ${kind} boxes; bb-box keeps 0 to ${MAX_WARM}, so it is ${kept}.`);
+      if (kept > 0) warm[kind] = kept;
+    }
     backends.push({
       id: driver.type,
       type: driver.type,
       enabled: earlier.enabled,
       fields: earlier.fields,
-      ...(Object.keys(earlier.warm).length ? { warm: earlier.warm } : {}),
+      ...(Object.keys(warm).length ? { warm } : {}),
       ...(earlier.hosts ? { hosts: earlier.hosts } : {}),
     });
     if (Object.keys(earlier.secrets).length) secrets[driver.type] = { ...earlier.secrets };
   }
-  return { document: { schema: SCHEMA, revision: 1, backends, kinds, general }, secrets, notes };
+  const document: ConfigDocument = { schema: SCHEMA, revision: 1, backends, kinds, general };
+  // The move copies values as they were; what bb-box would refuse on a save is noted too.
+  for (const problem of checkDocument(document, secrets, drivers)) notes.push(`${problem.path}: ${problem.message}`);
+  return { document, secrets, notes };
 }
 
 /** The settings without their secrets' values: each secret shows only whether it was set. */
@@ -134,14 +145,14 @@ export interface MoveOptions {
 }
 
 /** Steps 1 to 3: the secrets, the copy and the document. Returns the document. */
-export async function moveSettings(options: MoveOptions): Promise<ConfigDocument> {
+export async function moveSettings(options: MoveOptions): Promise<{ document: ConfigDocument; notes: readonly string[] }> {
   const sizesAdopted = (await options.kv.get<unknown>(SIZES_ADOPTED_KEY)) === true;
   const { document, secrets, notes } = fromSettings(options.values, options.drivers, sizesAdopted);
   await options.kv.set(SECRETS_KEY, secrets);
   const copy: MovedCopy = { at: (options.now ?? Date.now)(), version: options.version, values: copyOf(options.values, options.settings), notes };
   await options.kv.set(COPY_KEY, copy);
   await options.kv.set(DOCUMENT_KEY, document);
-  return document;
+  return { document, notes };
 }
 
 /** Steps 4 and 5: clears every old key in BB's settings, then marks them cleared. */

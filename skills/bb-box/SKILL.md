@@ -203,7 +203,7 @@ write. Its settings page in BB edits it, and so does the CLI:
 | `bb box config show` | Shows the configuration. Secrets show only as set or not set. |
 | `bb box config show --json` | Prints it as a file, with no secret in it: keep it to set bb-box up again. |
 | `bb box config check <file> [--test]` | Checks a file without saving it. `--test` also runs the doctor of each backend in it that is on. |
-| `bb box config apply <file>` | Saves the file as the whole configuration. |
+| `bb box config apply <file> [--replace]` | Saves the file as the whole configuration. `--replace` saves over it whatever revision the file names, as when setting bb-box up again from an export. |
 | `bb box config migrated [--remove]` | Shows, or removes, the copy of BB's settings bb-box kept when it moved them into the configuration. |
 
 The file is read on the machine BB's server runs on, and a relative path is

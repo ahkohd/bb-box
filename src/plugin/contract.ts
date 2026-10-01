@@ -67,7 +67,11 @@ export const contract = defineRpcContract({
   "config.get": { input: z.null(), output: z.custom<ConfigState>() },
   /** Problems with a draft, saving nothing. `test`, a backend's ID, also runs its doctor against the draft, within 30 s. */
   "config.check": { input: z.object({ draft, test: z.string().min(1).optional() }), output: z.custom<CheckResult>() },
-  /** Saves a draft whole, if `revision` is the current one. The draft's own revision is ignored. */
+  /**
+   * Saves a draft whole, if `revision` is the current one, and answers once the backends are rebuilt.
+   * The draft's own revision is ignored. A saved answer lists the problems saved anyway, in backends
+   * that are off and have no boxes.
+   */
   "config.apply": { input: z.object({ draft, revision: z.number().int().min(0) }), output: z.custom<ApplyResult>() },
 });
 

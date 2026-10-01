@@ -130,8 +130,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const settings = (await kv.get<unknown>(CLEARED_KEY)) ? null : bb.settings.define(earlier);
   if (!(await kv.get<ConfigDocument>(DOCUMENT_KEY))) {
     if (settings) {
-      await moveSettings({ kv, drivers, values: await settings.get(), settings: earlier, version: VERSION });
+      const { notes } = await moveSettings({ kv, drivers, values: await settings.get(), settings: earlier, version: VERSION });
       bb.log.info("Moved bb-box's settings into its configuration. bb box config migrated shows what they were.");
+      for (const note of notes) bb.log.warn(`Moving bb-box's settings: ${note}`);
     } else {
       // BB's settings were moved and cleared before, so there is nothing to move: start empty, keeping the secrets.
       await kv.set(DOCUMENT_KEY, emptyDocument(1));

@@ -411,6 +411,62 @@ test("a key a backend generated survives the move and the restarts unchanged, fo
   assert.equal(again.configuration.document.revision, 1);
 });
 
+test("a warm count out of range moves into range and is noted, and a moved document saves as it is (review F3)", async () => {
+  const { document, notes } = fromSettings({ ...SAVED, "proxmox-lxc-linux-warm": 25 }, DRIVERS, true);
+  assert.deepEqual(document.backends[0]!.warm, { linux: 20, "linux-desktop": 1 });
+  assert.deepEqual(notes, ["Proxmox LXC kept 25 warm linux boxes; bb-box keeps 0 to 20, so it is 20."]);
+  const moved = fromSettings(SAVED, DRIVERS, false);
+  const again = readDraft(exported(moved.document, moved.secrets, DRIVERS), DRIVERS);
+  assert.deepEqual(again.problems, [], "the export of a moved document reads back with no problem");
+  assert.deepEqual(checkDocument(again.document, withSecretChanges(moved.secrets, again.secrets, again.document), DRIVERS), []);
+  const stored = { ...moved.document, backends: [{ ...moved.document.backends[0]!, warm: { linux: 25 } }] };
+  assert.deepEqual(checkDocument(stored, moved.secrets, DRIVERS).map((problem) => problem.path), ["backends.proxmox-lxc.warm.linux"], "a stored document is held to the same range");
+});
+
+test("a Mac line with a mistake is left out of the move, and the copy says so (review F4)", () => {
+  const { document, notes } = fromSettings(
+    { "tart-enabled": true, "tart-hosts": "mac1 bbbox-admin@192.0.2.20\nmac2 192.0.2.21", "tart-host-keys": "192.0.2.20 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMac" },
+    DRIVERS,
+    true,
+  );
+  assert.deepEqual(document.backends[0]!.hosts!.map((host) => host.name), ["mac1"]);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0]!, /^Tart: Mac line "mac2 192\.0\.2\.21" must be .* The Mac was left out; add it on the settings page\.$/);
+});
+
+test("a backend of a type this version lacks is a problem, not a failure, and a draft that keeps it saves (review F1)", async () => {
+  const { app, world, latest, restart } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  const rpc = <T,>(method: string, input: unknown) => latest().behavior.callRpc(method, input) as Promise<T>;
+  const stored = (await kvOf(world).get<ConfigDocument>(DOCUMENT_KEY))!;
+  const later = { id: "nonesuch", type: "nonesuch", enabled: true, fields: { url: "x" }, warm: { linux: 2 } };
+  await kvOf(world).set(DOCUMENT_KEY, { ...stored, backends: [...stored.backends, later] });
+  await restart();
+  const state = await rpc<ConfigState>("config.get", null);
+  assert.deepEqual(state.problems.map((problem) => problem.path), ["backends.nonesuch"]);
+  assert.equal(state.backends.find((backend) => backend.id === "nonesuch")!.state, "misconfigured");
+  assert.equal(state.backends.find((backend) => backend.id === "fake")!.state, "active", "the other backends run");
+  const doctor = await rpc<{ ok: boolean }>("doctor", null);
+  assert.equal(doctor.ok, false);
+
+  const draft = { ...state.document, general: { boxesPerThread: 2 } };
+  const applied = await rpc<ApplyResult>("config.apply", { draft, revision: state.revision });
+  assert.ok(applied.ok, JSON.stringify(applied));
+  assert.deepEqual(app().configuration.document.backends.at(-1), later, "it is kept as it was");
+});
+
+test("apply answers once the backends are rebuilt, and lists the problems an off backend was saved with (review F5, F6)", async () => {
+  const { rpc, app } = await start({ "fake-enabled": false, "fake-token": "t0ken", "enrol-boxes": false });
+  const base = app().configuration.exported();
+  assert.equal((await rpc<ConfigState>("config.get", null)).backends[0]!.state, "off");
+  const on = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [{ ...base.backends[0], enabled: true }] }, revision: 1 });
+  assert.ok(on.ok);
+  assert.equal(on.state.backends[0]!.state, "active", "the answer has the backend as it is now");
+  assert.deepEqual(on.problems, []);
+  const partway = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [{ ...base.backends[0], enabled: false, fields: { address: 5 } }] }, revision: 2 });
+  assert.ok(partway.ok);
+  assert.deepEqual(partway.problems.map((problem) => problem.path), ["backends.fake.address"], "a field it could not save is named");
+});
+
 // The document and its checks.
 
 test("a draft's problems are at their fields' paths", () => {
@@ -431,8 +487,6 @@ test("a draft's problems are at their fields' paths", () => {
     "general.boxesPerThread",
     "kinds.linux.default",
     "backends.proxmox-lxc.nope",
-    "backends.proxmox-lxc.warm.linux",
-    "backends.proxmox-lxc.warm.macos",
     "backends.1.id",
     "backends.fake.hosts.2.name",
   ]) {
@@ -443,6 +497,8 @@ test("a draft's problems are at their fields' paths", () => {
   assert.ok(checked.includes("general.defaultKind: linux-headless is now called linux. Use that."));
   assert.ok(checked.some((line) => line.startsWith("kinds.linux.presets.small: The small linux preset, 64 cores")));
   assert.ok(checked.includes("backends.proxmox-lxc.url: Set the Proxmox API URL."));
+  assert.ok(checked.includes("backends.proxmox-lxc.warm.linux: Keep 0 to 20 warm linux boxes."));
+  assert.ok(checked.some((line) => line.startsWith("backends.proxmox-lxc.warm.macos: Proxmox LXC makes ")));
   assert.ok(checked.includes("backends.fake.hosts.1.name: Host a is listed twice. Give each host its own name."));
 
   const off = checkDocument(readDraft({ general: { defaultKind: "linux-desktop" }, kinds: { "linux-desktop": { enabled: false } } }, DRIVERS).document, {}, DRIVERS);
@@ -670,11 +726,17 @@ test("bb box config check and apply read a file from where bb runs, and migrated
   assert.equal(refused.exitCode, 1);
   assert.match(refused.stderr ?? "", /^Nothing was saved\. Fix these first:\n {2}backends\.fake\.address/);
   const stale = await harness.behavior.runCli(["config", "apply", join(dir, "stale.json")]);
-  assert.match(stale.stderr ?? "", /it is at revision 1\./);
+  assert.match(stale.stderr ?? "", /it is at revision 1\. .* remove its revision or use --replace\./);
   const applied = await harness.behavior.runCli(["config", "apply", "right.json"], { cwd: dir });
   assert.equal(applied.exitCode, 0, applied.stderr);
   assert.match(applied.stdout ?? "", /^Saved revision 2\./);
   assert.equal(app().configuration.general().perThreadLimit, 4);
+  // An export from another install, or from before a reinstall, names a revision of its own (review F2).
+  writeFileSync(join(dir, "export.json"), JSON.stringify({ ...document, revision: 9, general: { boxesPerThread: 5 } }));
+  const replaced = await harness.behavior.runCli(["config", "apply", "export.json", "--replace"], { cwd: dir });
+  assert.equal(replaced.exitCode, 0, replaced.stderr);
+  assert.match(replaced.stdout ?? "", /^Saved revision 3\./);
+  assert.equal(app().configuration.general().perThreadLimit, 5);
 
   const migrated = await harness.behavior.runCli(["config", "migrated"]);
   assert.match(migrated.stdout ?? "", /^bb-box 0\.2\.0 moved these BB settings into its configuration on /);

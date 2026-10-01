@@ -177,8 +177,10 @@ agents get the `box_` tools, and `skills/bb-box/SKILL.md` describes both.
 
 Do not remove bb-box to upgrade it: `bb plugin remove` deletes its
 configuration, secrets and storage. `bb box config show --json` prints the
-configuration without its secrets; `bb box config apply` sets bb-box up
-again from it, with the secrets given again. `bb plugin source bb-box` shows
+configuration without its secrets; `bb box config apply --replace` sets
+bb-box up again from it. Give the secrets again: as strings in the file in
+place of `{"set": true}`, or apply it with those backends off and give them
+on the settings page. `bb plugin source bb-box` shows
 what it was installed from.
 
 - From a path, as above: pull, run `npm install` and `bb plugin build`, then
