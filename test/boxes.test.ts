@@ -383,6 +383,19 @@ test("concurrent acquires from different threads never share the last room", asy
   await world.boxes.idle();
 });
 
+test("a box that holds its guest counts once while it starts (#122)", async () => {
+  const world = setup({ maxGuests: 2 });
+  const gate = deferred();
+  world.backend.gate = gate.promise;
+  const first = await world.boxes.acquire({ threadId: "a", projectId: null, kind: "linux" });
+  await until(async () => !!(await world.boxes.find(first.id))?.guest && (await world.backend.held()).length === 1);
+  // The starting box's guest is the only one, so there is room for one more.
+  await world.boxes.acquire({ threadId: "b", projectId: null, kind: "linux" });
+  await assert.rejects(world.boxes.acquire({ threadId: "c", projectId: null, kind: "linux" }), (error: unknown) => error instanceof BoxError && error.code === "no_capacity");
+  gate.resolve();
+  await world.boxes.idle();
+});
+
 test("a failed acquire keeps the box as failed with the reason, holding nothing", async () => {
   const world = setup();
   world.backend.faults.acquire = { at: "started", error: new BackendError("no_capacity", "The host ran out of memory.") };

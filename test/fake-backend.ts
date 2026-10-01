@@ -162,6 +162,8 @@ export class FakeBackend implements Backend {
   readonly #storage: BackendStorage;
   readonly #pool: KvPoolStore<Holder>;
   readonly #ready: ReadyPool<Holder>;
+  /** Boxes whose acquire runs here and holds its guest, which capacity counts once. */
+  readonly #holding = new Set<string>();
   /** Every desktop box's VNC server: one server, with a password the viewer never sees. */
   readonly rfb: FakeRfb;
   #vnc: Promise<number> | null = null;
@@ -223,11 +225,12 @@ export class FakeBackend implements Backend {
         hosts: [{ host: HOST, ok: false, limits: [] }],
       };
     }
+    const unplaced = Math.max(0, pending.length - this.#holding.size);
     if (this.nature === "real") {
       const members = (await this.#pool.members()).filter((member) => member.kinds.includes(kind));
       const free = members.filter((member) => member.state === "free").length;
-      const ok = free > pending.length;
-      const machines: Limit = { resource: "machines", used: members.length - free + pending.length, total: members.length, reserve: 0, unit: "count" };
+      const ok = free > unplaced;
+      const machines: Limit = { resource: "machines", used: members.length - free + unplaced, total: members.length, reserve: 0, unit: "count" };
       return {
         ok,
         message: ok ? null : `All ${members.length} machines are in use. Release a box to free one.`,
@@ -235,7 +238,7 @@ export class FakeBackend implements Backend {
         hosts: [{ host: HOST, ok, limits: [machines] }],
       };
     }
-    const used = (await this.#storage.list("guest/")).length + pending.length;
+    const used = (await this.#storage.list("guest/")).length + unplaced;
     const total = this.#options.maxGuests ?? null;
     const ok = total === null || used < total;
     return {
@@ -272,6 +275,7 @@ export class FakeBackend implements Backend {
         signal.throwIfAborted();
         await this.#storage.set(`guest/${guest.ref}`, { install: this.#installId, owner: box, power: "stopped" } satisfies GuestRecord);
       }
+      this.#holding.add(box.boxId);
       await mkdir(this.#home(guest.ref), { recursive: true });
       hooks.timing("make", Math.round(performance.now() - started));
       await this.gate;
@@ -284,8 +288,12 @@ export class FakeBackend implements Backend {
       hooks.timing("start", Math.round(performance.now() - started));
       return guest;
     } catch (error) {
+      // Counted as pending in full again before its guest goes, so never not at all.
+      this.#holding.delete(box.boxId);
       if (guest) await this.#discard(guest, null);
       throw error;
+    } finally {
+      this.#holding.delete(box.boxId);
     }
   }
 
