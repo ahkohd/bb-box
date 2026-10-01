@@ -56,6 +56,8 @@ export interface BackendRowModel {
   readonly config: BackendConfig | null;
   /** The backend of the type the driver inherits empty fields from, if the configuration has one. */
   readonly source?: BackendConfig | null;
+  /** How the page names that backend in its "from" chips. */
+  readonly sourceName?: string | null;
   readonly state: BackendState | null;
   /** Problems with the stored document under this backend. */
   readonly problems: readonly Problem[];
@@ -299,6 +301,7 @@ export function BackendForm({
                     onChange={(value) => setField(field.key, value)}
                     problem={problemAt(problems, `${path}.${field.key}`)}
                     inherited={inherited[field.key]}
+                    from={model.sourceName ?? undefined}
                   />
                 ))}
               </div>
