@@ -64,8 +64,16 @@ boot() {
     sleep 1
   done
 }
+# Shuts the guest down from inside, so it flushes its disk, and waits for Tart
+# to exit; `tart stop` is the fallback.
 shutdown() {
-  tart stop "$build" --timeout 60 >/dev/null
+  tart exec "$build" sudo shutdown -h now >/dev/null 2>&1 || :
+  i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    i=$((i + 1))
+    if [ "$i" -ge 120 ]; then tart stop "$build" --timeout 30 >/dev/null; break; fi
+    sleep 1
+  done
   wait "$pid" 2>/dev/null || :
   pid=
 }
