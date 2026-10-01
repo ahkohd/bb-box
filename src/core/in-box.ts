@@ -17,10 +17,11 @@ export function envFile(os: GuestOs): string {
 
 /**
  * Where commands in a Linux or macOS box take the thread's access from: the
- * named variables of a live process whose parent runs a program whose path
- * holds `parent`. In a box that is a BB machine, that parent is BB's daemon,
- * whose workers carry BB's machine variables, GH_TOKEN and the user's git
- * identity. Only the
+ * named variables of a live process below one that runs a program whose path
+ * holds `parent`. In a box that is a BB machine, that is BB's daemon, whose
+ * workers carry BB's machine variables, GH_TOKEN and the user's git
+ * identity. A project's variables are only in the agent a worker starts for
+ * a thread of the project on the box, a level further down (#109). Only the
  * program's path counts, not the rest of its command line: commands bb-box
  * runs carry the env file, and with it `parent`, on theirs.
  */
@@ -139,7 +140,7 @@ function accessNames(access: Access): string[] {
 }
 
 /**
- * Sets the named variables from the newest of the processes under `parent`
+ * Sets the named variables from the newest of the processes below `parent`
  * that has the most of them, afresh each time the env file is sourced, so a
  * change in BB reaches the next command. BB gives some workers only some of
  * its variables. Values never reach the disk. Needs GNU grep and sed.
@@ -151,7 +152,7 @@ function accessLoader(access: Access): string {
   return String.raw`bb_box_access() (
   ps -u "$(id -u)" -o pid= -o ppid= -o etimes= -o args= 2>/dev/null |
     awk -v parent=${sh(access.parent)} '{ up[$1] = $2; age[$1] = $3; program[$1] = $5 }
-      END { for (pid in up) if (index(program[up[pid]], parent)) print age[pid], pid }' |
+      END { for (pid in up) for (a = up[pid]; a in up; a = up[a]) if (index(program[a], parent)) { print age[pid], pid; break } }' |
     sort -k1,1n -k2,2nr | {
       best= most=0
       while read -r _ pid; do
@@ -200,7 +201,7 @@ function macAccessLoader(access: Access): string {
         line = $0; sub(/^ *[0-9]+ +[0-9]+ +[^ ]+ +/, "", line); args[$1] = line
       }
       END {
-        for (pid in up) if (index(program[up[pid]], parent)) pids = pids (pids == "" ? "" : ",") pid
+        for (pid in up) for (a = up[pid]; a in up; a = up[a]) if (index(program[a], parent)) { pids = pids (pids == "" ? "" : ",") pid; break }
         if (pids == "") exit
         ps = "LC_ALL=en_US.UTF-8 ps -E -ww -o pid= -o command= -p " pids " 2>/dev/null"
         while ((ps | getline line) > 0) {

@@ -275,6 +275,21 @@ fi
 }
 
 /**
+ * Gives a box's VM a new owner and name (036): rewrites its owner file, only
+ * while the file names this install and the box. Prints "relabelled", or
+ * the file that is there.
+ */
+export function relabelScript(vm: string, installId: string, boxId: string, owner: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+if mine "$vm" ${quote(installId)} ${quote(boxId)}; then
+  printf '%s' ${quote(owner)} > "$f.new" && mv -f "$f.new" "$f" && echo relabelled
+else
+  cat "$f" 2>/dev/null
+fi
+`);
+}
+
+/**
  * The MAC address the Mac's ARP table has for a VM's address, after bb-box
  * has just reached it, and the one in the VM's config, in one trip.
  */

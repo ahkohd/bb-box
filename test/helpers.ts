@@ -147,20 +147,24 @@ function quote(value: string): string {
  * in order, so the last is the newest. With `startOn`, they start `seconds`
  * after that file appears, as BB's do a moment after its daemon connects,
  * and this returns without waiting for them. With `parent`, the program is
- * there, so a box can be told of it before the daemon runs. Stop it when the
- * test ends.
+ * there, so a box can be told of it before the daemon runs. With `agent`,
+ * the newest worker starts a process with those variables, as BB's provider
+ * workers start a thread's agent. Stop it when the test ends.
  */
 export async function fakeDaemon(
   workers: readonly Readonly<Record<string, string>>[],
-  options: { startOn?: { file: string; seconds: number }; parent?: string } = {},
+  options: { startOn?: { file: string; seconds: number }; parent?: string; agent?: Readonly<Record<string, string>> } = {},
 ) {
   const parent = options.parent ?? join(tempDir("daemon"), "daemon-bundle");
   const dir = dirname(parent);
-  const lines = workers.map(
-    (variables) =>
-      `env -i ${Object.entries(variables)
-        .map(([name, value]) => quote(`${name}=${value}`))
-        .join(" ")} sleep 300 &`,
+  const assignments = (variables: Readonly<Record<string, string>>) =>
+    Object.entries(variables)
+      .map(([name, value]) => quote(`${name}=${value}`))
+      .join(" ");
+  const lines = workers.map((variables, i) =>
+    options.agent && i === workers.length - 1
+      ? `env -i ${assignments(variables)} sh -c ${quote(`env -i ${assignments(options.agent)} sleep 300 & exec sleep 300`)} &`
+      : `env -i ${assignments(variables)} sleep 300 &`,
   );
   const { startOn } = options;
   const wait = startOn ? `while [ ! -e ${quote(startOn.file)} ]; do sleep 0.05; done\nsleep ${startOn.seconds}\n` : "";

@@ -1296,7 +1296,7 @@ test("with no backend on, the plugin asks for its settings, and a saved configur
   const { harness, app, tool } = await start({});
   t.after(() => harness.lifecycle.dispose());
 
-  assert.deepEqual(harness.inspection.needsConfigurationMessages, ["Turn on a backend in bb-box's settings, then set it up."]);
+  assert.deepEqual(harness.inspection.needsConfigurationMessages, ["Set a backend up in BB Box's settings and turn it on."]);
   assert.match(text(await tool("box_list", {})), /No backend is set up/);
   const refused = await tool("box_acquire", {});
   assert.match(text(refused), /No backend is set up, so there are no boxes to acquire/);

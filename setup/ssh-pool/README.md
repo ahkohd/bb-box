@@ -68,7 +68,7 @@ keeps for its own users. Elsewhere box users take 70000 to 79999.
 
 ## 1. Get bb-box's key
 
-1. In BB, open bb-box's settings and set up **SSH host pool**. Leave it off
+1. In BB, open BB Box's settings and set up **SSH host pool**. Leave it off
    until a machine is ready.
 2. Leave **SSH private key** empty. bb-box makes a key.
 3. Press "Check". A note shows the public key, starting `ssh-ed25519`. The
@@ -346,7 +346,7 @@ the machine when it answers again. Its power shows as unknown meanwhile.
   of the memory or more (the kernel keeps some of it), and, when the size
   names a disk, that much free under `/home`. The doctor shows each
   machine's cores, memory and free disk. If your machines are smaller than
-  the presets, change them in the kinds part of bb-box's settings.
+  the presets, change them in the kinds part of BB Box's settings.
 - **Desktops.** The pool lends headless machines only. Desktops are not
   supported yet.
 

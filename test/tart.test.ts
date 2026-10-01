@@ -300,3 +300,16 @@ test("a box's hostname comes from its name, and only a VM is renamed", () => {
   // The test machine is not a Virtualization framework VM, so this renames nothing.
   assert.match(nameScript("calm-otter-3"), /^case "\$\(sysctl -n hw\.model 2>\/dev\/null\)" in VirtualMac\*\)/);
 });
+
+test("a VM that changes hands gets its new owner in its owner file, and its new name inside (036)", async () => {
+  const { backend, ssh } = setup();
+  const box = identity("macos-desktop", "spare");
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  await backend.relabel(guest, { ...box, threadId: "operator", name: "build-1" }, box.name, signal());
+  const owner = (await backend.held()).find((held) => held.ref === guest.ref)?.owner;
+  assert.deepEqual([owner?.threadId, owner?.name, owner?.boxId], ["operator", "build-1", box.boxId]);
+  assert.ok(ssh.log().some((entry) => entry.target === `admin@${guest.address}` && entry.command.includes("scutil --set") && entry.command.includes("build-1")), "named inside");
+  // Another box's ID is refused: the owner file is left alone.
+  await assert.rejects(backend.relabel(guest, { ...box, boxId: "bxother" }, "build-1", signal()), /does not name box bxother/);
+  await backend.release(guest, releasing);
+});

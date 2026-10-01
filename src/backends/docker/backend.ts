@@ -136,6 +136,16 @@ function sizeOf(container: ContainerInfo): BoxSize | null {
   return { cores: container.cores, memoryMiB: container.memoryMiB, diskGiB: null };
 }
 
+/** A container's owner and name since its box changed hands, which its labels cannot say (036). */
+interface Relabelled {
+  readonly threadId: string;
+  readonly name: string;
+}
+
+function relabelKey(ref: string): string {
+  return `relabel/${ref}`;
+}
+
 function ownerOf(labels: Readonly<Record<string, string>>): BoxOwner | null {
   const boxId = labels[LABELS.box];
   const threadId = labels[LABELS.thread];
@@ -422,7 +432,18 @@ export class DockerBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
     await this.#remove(guest.ref, this.#boxOf(guest), signal);
+    await this.#context.storage.delete(relabelKey(guest.ref));
     hooks.timing("delete", Math.round(performance.now() - started));
+  }
+
+  /**
+   * A box's new owner and name, as when a spare becomes yours or a thread's
+   * (036). A container's labels cannot change, so they are kept in this
+   * backend's storage and given over the labels by held(). The hostname
+   * inside stays: changing it needs a privilege boxes do not have.
+   */
+  async relabel(guest: Guest, box: BoxIdentity): Promise<void> {
+    await this.#context.storage.set(relabelKey(guest.ref), { threadId: box.threadId, name: box.name } satisfies Relabelled);
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
@@ -457,15 +478,21 @@ export class DockerBackend implements Backend {
       this.#cli.list({ [LABELS.backend]: "docker", [LABELS.install]: this.#context.installId }, signal),
     ]);
     this.#info = info;
-    return containers.map((container) => ({
-      ref: container.name,
-      host: info.name || this.#host,
-      address: this.#address(container),
-      size: sizeOf(container),
-      data: dataOf(container),
-      owner: ownerOf(container.labels),
-      power: powerOf(container.status),
-    }));
+    return Promise.all(
+      containers.map(async (container) => {
+        const owner = ownerOf(container.labels);
+        const relabelled = owner ? await this.#context.storage.get<Relabelled>(relabelKey(container.name)) : undefined;
+        return {
+          ref: container.name,
+          host: info.name || this.#host,
+          address: this.#address(container),
+          size: sizeOf(container),
+          data: dataOf(container),
+          owner: owner && relabelled ? { ...owner, threadId: relabelled.threadId, name: relabelled.name } : owner,
+          power: powerOf(container.status),
+        };
+      }),
+    );
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {

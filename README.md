@@ -9,6 +9,8 @@ want their agents to have real machines: a desktop to build, run and profile
 apps in a real browser or native UI, and plain machines for Docker, backend
 services and builds, so that work runs on a box and not on your own machine.
 
+To try it, see [Install](#install): one Docker host is enough.
+
 ## Principles
 
 - **A box belongs to its thread.** It is a resource of the thread that asked
@@ -189,16 +191,21 @@ Next: Windows, then macOS.
 On the machine that runs BB:
 
 ```sh
-git clone <bb-box repository> && cd bb-box
+git clone https://github.com/moonstead/bb-box.git && cd bb-box
 npm install
 bb plugin build
 bb plugin install .
 ```
 
-Then set a backend up with its guide, fill in its fields on bb-box's
-settings page in BB, and check them with `bb box doctor`. `bb box config`
-shows and saves the same configuration from a terminal. Each thread gets a Box panel,
-agents get the `box_` tools, and `skills/bb-box/SKILL.md` describes both.
+Then pick a backend and follow its guide under `setup/`. [Docker](setup/docker/README.md)
+is the quickest: it needs only a Docker host, local or over SSH.
+[Proxmox LXC](setup/proxmox-lxc/README.md) gives the fastest boxes, and
+GPU desktops. On BB Box's settings page in BB (Settings, Plugins, BB Box),
+set the backend up with the values the guide gives, press Check, save, and
+turn it on. `bb box doctor` runs the same checks from a terminal, and
+`bb box config` shows and saves the same configuration. Each thread gets a
+Box panel, agents get the `box_` tools, and `skills/bb-box/SKILL.md`
+describes both.
 
 ## Upgrade
 

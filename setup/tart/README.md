@@ -108,7 +108,7 @@ commands as you there anyway, so this adds no reach BB lacks.
 
 ## 2. bb-box's key
 
-In BB, set up the Tart backend in bb-box's settings, leaving it off for now,
+In BB, set up the Tart backend in BB Box's settings, leaving it off for now,
 and press "Check". Its notes show bb-box's public key; the check fails until
 a Mac is listed, which is expected here. Add the key to the host user's
 `~/.ssh/authorized_keys`:
@@ -199,7 +199,7 @@ resume, raises no dialog.
 
 ## 4. Settings
 
-In BB, under bb-box's settings, add each Mac as a host of the Tart backend.
+In BB, under BB Box's settings, add each Mac as a host of the Tart backend.
 A host has a short name, a switch, and these fields:
 
 | Field | Example | Meaning |
