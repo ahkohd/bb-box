@@ -1,6 +1,7 @@
 // What the panel, the tools and the CLI show about boxes: plain JSON views
 // for the panel, and short text for agents. Nothing here holds a credential.
 
+import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, DoctorReport, GuestOs } from "../backends/types.ts";
@@ -153,6 +154,8 @@ export interface KindView {
 export interface OfferView {
   /** The backend's ID, as boxes record it. */
   readonly backend: string;
+  /** The provider's name for people and for `on` (044): "Proxmox LXC on pve1", "Docker on devpc", "Tart on 2 Macs". */
+  readonly name: string;
   /** The driver's type, for the provider's glyph: "proxmox-lxc", "proxmox-qemu", "docker", "tart", "ssh-pool". */
   readonly type: string;
   /** The driver's label, as settings names the backend: "Proxmox LXC". */
@@ -190,6 +193,8 @@ export function kindViews(
   typical: Readonly<Record<string, number>> = {},
   /** Spares ready now, keyed "<kind>|<backend>" (the registry's `spareReadyByBackend`). */
   readyByBackend: Readonly<Record<string, number>> = {},
+  /** The driver's label for a backend ID, as settings names it; the registry's, which knows the drivers in use. */
+  labelOf: (backendId: string) => string = driverLabel,
 ): KindView[] {
   const views = new Map<string, KindView>();
   for (const { kind, backend } of offered) {
@@ -198,11 +203,15 @@ export function kindViews(
     const docker = kind.capabilities.features.includes("docker");
     const form = boxForm(backend.id);
     const key = `${kind.id}|${backend.id}`;
+    const type = backend.id.split(":")[0]!;
+    const label = labelOf(backend.id);
+    const hosts = backend.hosts ?? [];
     const offer: OfferView = {
       backend: backend.id,
-      type: backend.id.split(":")[0]!,
-      label: driverLabel(backend.id),
-      hosts: backend.hosts ?? [],
+      name: providerName({ label, hosts, type }),
+      type,
+      label,
+      hosts,
       form,
       ready: readyByBackend[key] ?? 0,
       free: backend.free?.(kind.id) ?? null,

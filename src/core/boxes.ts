@@ -16,6 +16,7 @@
 // Storage keys: box/<threadId>/<boxId> holds a BoxRecord, and index/<boxId>
 // holds the thread ID, so a box can be found by its ID alone.
 
+import { foldName, providerKeys, providerName } from "./provider-name.ts";
 import { randomBytes } from "node:crypto";
 import type { OfferedKind } from "../backends/index.ts";
 import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
@@ -134,6 +135,10 @@ export interface BoxesDeps {
     get(id: string): Backend | null;
     active(): Backend[];
     kinds(): OfferedKind[];
+    /** The driver's label for a backend ID, as settings names it ("Proxmox LXC"), for a provider's name (044). */
+    driverLabel?(id: string): string;
+    /** The built backends that are on, so an `on` naming one that is off is told so (044). */
+    on?(): Backend[];
   };
   general(): Promise<GeneralConfig>;
   /** Tells panels and tools that a thread's boxes changed. */
@@ -193,6 +198,7 @@ export interface BoxesDeps {
 
 export type BoxErrorCode =
   | "not_found"
+  | "unknown_provider"
   | "unknown_kind"
   | "invalid_size"
   | "limit_reached"
@@ -465,12 +471,12 @@ export class Boxes {
    * backend has said the box fits; the box is ready when its command
    * transport answers.
    */
-  async acquire(input: { threadId: string; projectId: string | null; kind: string; size?: SizeRequest; role?: BoxRole; name?: string }): Promise<BoxRecord> {
+  async acquire(input: { threadId: string; projectId: string | null; kind: string; size?: SizeRequest; role?: BoxRole; name?: string; on?: string }): Promise<BoxRecord> {
     const requested = this.#now();
     const { kind: wanted, features } = kindRequest(input.kind);
     const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
     // An alias takes only the offers that have its features (041).
-    const offered = ofKind.filter((candidate) => hasFeatures(candidate.kind.capabilities, features));
+    const everywhere = ofKind.filter((candidate) => hasFeatures(candidate.kind.capabilities, features));
     if (!ofKind.length) {
       const kinds = this.kinds().map((kind) => kind.id);
       throw new BoxError(
@@ -480,11 +486,13 @@ export class Boxes {
           : "No backend is set up, so there are no boxes to acquire. Set one up in bb-box's settings.",
       );
     }
-    if (!offered.length) {
+    if (!everywhere.length) {
       const lacking = features.map(featureWord).join(" or ");
       const from = [...new Set(ofKind.map((candidate) => candidate.backend.label))].join(" and ");
       throw new BoxError("unknown_kind", `No backend offers ${input.kind} now: ${wanted} boxes from ${from} have no ${lacking}. Ask for ${wanted} if the box can do without it.`);
     }
+    // A named provider is the only one tried (044).
+    const offered = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : everywhere;
     const role = input.role ?? "box";
     const yours = input.threadId === OPERATOR;
     if (yours) {
@@ -516,7 +524,7 @@ export class Boxes {
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
         const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
-        const chosen = input.threadId === SPARES ? await this.#choose(offered, sized.size) : await this.#chooseFreeing(offered, sized.size);
+        const chosen = await this.#place(input, offered, everywhere, sized.size);
         const box: BoxRecord = {
           id: newBoxId(this.#random),
           threadId: input.threadId,
@@ -843,6 +851,63 @@ export class Boxes {
       },
       (error) => this.#deps.logError("claim", error),
     );
+  }
+
+  /** A provider's name for people and for `on` (044): "Proxmox LXC on pve1", "Docker on devpc", "Tart on 2 Macs". */
+  #providerName(backend: Backend): string {
+    return providerName({ label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! });
+  }
+
+  /**
+   * The one offer `on` names (044), among the active backends: by the
+   * provider's name, its backend ID or its one host, without case. A name
+   * that matches none, or two, or a provider without the kind, is refused
+   * with what would do.
+   */
+  #on(on: string, kind: string, offered: OfferedKind[]): OfferedKind[] {
+    const key = foldName(on);
+    const providers = this.#deps.backends.active();
+    const matched = providers.filter((backend) =>
+      providerKeys(backend.id, { label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! }).includes(key),
+    );
+    const others = offered.map((candidate) => this.#providerName(candidate.backend));
+    if (!matched.length) {
+      throw new BoxError("unknown_provider", `No provider is called "${on}". ${kind} comes from: ${others.join(", ")}. Leave "on" out for the first with room.`);
+    }
+    if (matched.length > 1) {
+      throw new BoxError("unknown_provider", `"${on}" names ${matched.length} providers: ${matched.map((backend) => backend.id).join(", ")}. Give the ID.`);
+    }
+    const [backend] = matched;
+    if (this.#deps.backends.on && !this.#deps.backends.on().some((candidate) => candidate.id === backend!.id)) {
+      throw new BoxError("unknown_provider", `${this.#providerName(backend!)} is off. Turn it on in BB Box's settings, or leave "on" out for the first with room.`);
+    }
+    const offer = offered.find((candidate) => candidate.backend.id === backend!.id);
+    if (!offer) {
+      const has = [...new Set(this.#deps.backends.kinds().filter((candidate) => candidate.backend.id === backend!.id).map((candidate) => candidate.kind.id))];
+      throw new BoxError(
+        "unknown_provider",
+        `${this.#providerName(backend!)} has no ${kind}${has.length ? `; it has: ${has.join(", ")}` : ""}. ${kind} comes from: ${others.join(", ")}.`,
+      );
+    }
+    return [offer];
+  }
+
+  /**
+   * Where the box goes: the first offer with room, freeing a spare's room
+   * when none has it. With `on`, only the named offer is tried, and a
+   * refusal names the kind's other providers (044).
+   */
+  async #place(input: { threadId: string; on?: string }, offered: OfferedKind[], everywhere: OfferedKind[], size: BoxSize): Promise<OfferedKind> {
+    try {
+      return input.threadId === SPARES ? await this.#choose(offered, size) : await this.#chooseFreeing(offered, size);
+    } catch (error) {
+      if (input.on === undefined || !(error instanceof BoxError) || error.code !== "no_capacity") throw error;
+      const others = everywhere.filter((candidate) => candidate.backend.id !== offered[0]!.backend.id).map((candidate) => this.#providerName(candidate.backend));
+      throw new BoxError(
+        "no_capacity",
+        `${error.message}${others.length ? ` ${offered[0]!.kind.id} also comes from ${others.join(", ")}.` : ""} Leave "on" out for the first with room.`,
+      );
+    }
   }
 
   /** The first backend with room for a box of the kind and size, or the reasons none has. */

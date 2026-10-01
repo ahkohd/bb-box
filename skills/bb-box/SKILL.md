@@ -15,7 +15,7 @@ Every result ends with a `Next:` line that says what to do next.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `box_acquire` | `kind?`, `size?`, `cores?`, `memory_gib?`, `disk_gib?`, `wait?` | Makes a box and waits until it answers. `kind` defaults to `linux`, and `size` to the kind's default preset. |
+| `box_acquire` | `kind?`, `size?`, `cores?`, `memory_gib?`, `disk_gib?`, `wait?`, `on?` | Makes a box and waits until it answers. `kind` defaults to `linux`, and `size` to the kind's default preset. `on` names the provider to use, in the words `box_list` gives after "On:" (044): only it is tried, and a refusal names the others. Without it, the first with room. |
 | `box_list` | | Lists the thread's boxes and the kinds on offer. |
 | `box_status` | `box` | Shows one box, checking its power state with the backend. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |

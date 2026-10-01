@@ -88,7 +88,8 @@ const draft = z.unknown();
 
 export const contract = defineRpcContract({
   state: { input: thread, output: z.custom<PanelState>() },
-  acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional() }), output: boxResult },
+  /** `on` names the provider to use (044): its name as the picker gives it, its backend ID or its one host; without it, the first with room. */
+  acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional(), on: z.string().min(1).optional() }), output: boxResult },
   /** Without `force`, a box a thread is working on is left alone, and the answer names the threads. */
   release: { input: forceable, output: boxResult },
   stop: { input: forceable, output: boxResult },
@@ -102,7 +103,7 @@ export const contract = defineRpcContract({
   "machines.list": { input: z.null(), output: z.custom<{ machines: MachineEntry[]; kinds: KindView[] }>() },
   /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */
   "machines.add": {
-    input: z.object({ kind: z.string().min(1), size: size.optional(), name: z.string().min(1).optional() }),
+    input: z.object({ kind: z.string().min(1), size: size.optional(), name: z.string().min(1).optional(), on: z.string().min(1).optional() }),
     output: boxResult,
   },
   /** Without `force`, one a thread is working on is left alone, and the answer names the threads. */

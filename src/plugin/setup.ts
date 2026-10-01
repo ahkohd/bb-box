@@ -558,7 +558,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     control: (box) => control.view(box.id),
     kinds: async () => {
       const config = await general();
-      return kindViews(backends.kinds(), config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend());
+      return kindViews(backends.kinds(), config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id));
     },
     backendViews: () =>
       backends.statuses().map((backend) => ({

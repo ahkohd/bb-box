@@ -273,7 +273,16 @@ still carries the title "New box".
   what that costs), and Sizes. Every option describes itself by the pane
   (`aria-describedby`), so a screen reader hears the details after the
   name on focus; the pane is not a live region, so hovering says nothing.
-  Tab order is unchanged: kinds, Size, Name, Create.
+- **Where the box goes** (044): when the pane shows the chosen kind and
+  the kind has more than one offer, its offers are a choice, a radiogroup
+  named Provider: "First with room · in this order" comes first and is
+  chosen at first, then each offer with its words. The form sends the
+  chosen offer's backend ID as `on`; the first with room sends nothing.
+  Choosing another kind puts the choice back; it is not remembered. A kind
+  under the pointer keeps its offers as plain text. Tab order: kinds, the
+  provider choice when there is one, Size, Name, Create. A refusal shows
+  under the button, as other refusals do. Add machine (036) is the same
+  form, so it has the same choice.
 - **Size** follows decision 028: Small, Medium and Large are the kind's
   presets, and the kind's default preset is chosen at first; being chosen
   says so, so nothing calls it the default. The chosen size's words sit

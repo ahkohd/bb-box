@@ -330,6 +330,11 @@ export class Backends {
     return [...listed, ...missing];
   }
 
+  /** The driver's label for a backend ID, as settings names it, for a provider's name (044). */
+  driverLabel(id: string): string {
+    return driverLabel(id, this.#drivers);
+  }
+
   /** Every built backend, on or off: their boxes work, and the sweep looks after them. */
   active(): Backend[] {
     return [...this.#entries.values()].map((entry) => entry.backend);

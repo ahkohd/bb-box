@@ -59,6 +59,8 @@ export interface FakeBackendOptions {
   readonly storage: BackendStorage;
   readonly id?: string;
   readonly nature?: MachineNature;
+  /** Where its boxes run, by name, for a provider's name (044). None by default. */
+  readonly hosts?: readonly string[];
   /** The kinds it offers. FAKE_KINDS by default. */
   readonly kinds?: readonly BoxKind[];
   /** Real: how many machines the pool has. */
@@ -160,6 +162,7 @@ export const FAKE_WINDOWS_KIND: BoxKind = {
 export class FakeBackend implements Backend {
   readonly id: string;
   readonly label: string;
+  readonly hosts: readonly string[];
   readonly nature: MachineNature;
   readonly restores?: "home" | "machine";
   readonly faults: FakeFaults = {};
@@ -203,6 +206,7 @@ export class FakeBackend implements Backend {
     this.id = options.id ?? "fake";
     this.nature = options.nature ?? "virtual";
     this.label = this.nature === "real" ? "Fake machine pool" : "Fake host";
+    this.hosts = options.hosts ?? [];
     this.#pool = new KvPoolStore(this.#storage, () => this.machines());
     this.#ready = new ReadyPool(this.#pool);
     if (options.stopStart ?? true) {

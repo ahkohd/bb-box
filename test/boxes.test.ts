@@ -31,6 +31,10 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
   const world = {
     kv,
     backend: make() as FakeBackend,
+    /** More backends offering kinds, after the first, for a choice of provider (044). */
+    others: [] as Backend[],
+    /** Backends that are built but off in settings. */
+    off: new Set<string>(),
     /** False when the backend is off in settings. */
     active: true,
     general: { perThreadLimit: null, enrol: true, sizes: {}, spares: {} } as GeneralConfig,
@@ -49,9 +53,14 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
     },
   };
   const backends = {
-    get: (id: string): Backend | null => (world.active && id === world.backend.id ? world.backend : null),
-    active: (): Backend[] => (world.active ? [world.backend] : []),
-    kinds: () => (world.active ? world.backend.kinds().map((kind) => ({ kind, backend: world.backend as Backend })) : []),
+    get: (id: string): Backend | null => (world.active ? ([world.backend, ...world.others] as Backend[]).find((backend) => backend.id === id) ?? null : null),
+    active: (): Backend[] => (world.active ? [world.backend, ...world.others] : []),
+    on: (): Backend[] => (world.active ? [world.backend, ...world.others].filter((backend) => !world.off.has(backend.id)) : []),
+    kinds: () =>
+      world.active
+        ? [world.backend, ...world.others].filter((backend) => !world.off.has(backend.id)).flatMap((backend) => backend.kinds().map((kind) => ({ kind, backend: backend as Backend })))
+        : [],
+    driverLabel: (id: string) => (id.startsWith("fake") ? "Fake host" : id.split(":")[0]!),
   };
   const registry = () =>
     new Boxes({
@@ -1184,6 +1193,41 @@ test("the sweep restores a thread's own box as BB's machine for the thread, whic
   await boxes.settled(own);
   assert.deepEqual(world.reconnected, ["host-thread"]);
   assert.deepEqual(world.enrolled, [`${other.name}, restored`]);
+});
+
+test("an acquire may name its provider, by name, ID or host, without case; only it is tried, and a refusal says what would do (044)", async () => {
+  const world = setup();
+  const root = tempDir("boxes-other");
+  const other = new FakeBackend({ root, storage: scopedStorage(world.kv, "backend/fake:second/"), id: "fake:second", hosts: ["devpc"] }) as unknown as Backend;
+  world.others = [other];
+  const acquire = (on?: string, kind = "linux") => world.boxes.acquire({ threadId: THREAD, projectId: null, kind, ...(on !== undefined ? { on } : {}) });
+
+  // Without on, the first offer; with on, the named one, however it is named.
+  assert.equal((await acquire()).backend, world.backend.id);
+  for (const name of ["Fake host on devpc", "fake host on DEVPC", "fake:second", "devpc"]) assert.equal((await acquire(name)).backend, "fake:second", name);
+  await world.boxes.idle();
+
+  // A name that matches none, or a provider without the kind, or two providers.
+  await assert.rejects(acquire("elsewhere"), /No provider is called "elsewhere"\. linux comes from: Fake host, Fake host on devpc\. Leave "on" out for the first with room\./);
+  await assert.rejects(acquire("devpc", "no-such-kind"), /There is no "no-such-kind" kind/);
+  const second = new FakeBackend({ root: tempDir("boxes-third"), storage: scopedStorage(world.kv, "backend/fake:third/"), id: "fake:third", hosts: ["lab"], kinds: [FAKE_KINDS[1]!] }) as unknown as Backend;
+  world.others = [other, second];
+  await assert.rejects(acquire("lab"), /Fake host on lab has no linux; it has: linux-desktop\. linux comes from: Fake host, Fake host on devpc\./);
+  const twin = new FakeBackend({ root: tempDir("boxes-twin"), storage: scopedStorage(world.kv, "backend/fake:twin/"), id: "fake:twin", hosts: ["devpc"] }) as unknown as Backend;
+  world.others = [other, second, twin];
+  await assert.rejects(acquire("devpc"), /"devpc" names 2 providers: fake:second, fake:twin\. Give the ID\./);
+  assert.equal((await acquire("fake:twin")).backend, "fake:twin", "the ID tells them apart");
+  world.others = [other, second];
+
+  // A provider that is off is said to be off; one that is full refuses with its words and names the others.
+  world.off.add("fake:second");
+  await assert.rejects(acquire("devpc"), /Fake host on devpc is off\. Turn it on in BB Box's settings, or leave "on" out for the first with room\./);
+  world.off.delete("fake:second");
+  const full = new FakeBackend({ root: tempDir("boxes-full"), storage: scopedStorage(world.kv, "backend/fake:full/"), id: "fake:full", hosts: ["lab2"], maxGuests: 0 }) as unknown as Backend;
+  world.others = [other, second, full];
+  await assert.rejects(acquire("lab2"), /^(?!.*Fake host on lab2 has no linux).* linux also comes from Fake host, Fake host on devpc\. Leave "on" out for the first with room\.$/);
+  // Without on, the first with room is still taken.
+  assert.equal((await acquire()).backend, world.backend.id);
 });
 
 test("the registry keeps each kind's last cold starts per backend, not claims from a spare, and counts spares ready per backend", async () => {
