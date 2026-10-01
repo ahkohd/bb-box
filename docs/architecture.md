@@ -658,8 +658,11 @@ A box is a resource of its thread and gets what the thread's own machine has.
     enrols again with the box ID as the key. BB gives back the machine it
     still has, whose daemon bootstrap starts again if it is disconnected, or
     makes a new one ([025](decisions/025-a-restored-box-enrols-again.md)).
-    The enrolment is counted from the restore. A box restored stopped does
-    not enrol.
+    A box restored stopped, or whose guest did not answer, carries
+    `restoredAt` and enrols when bb-box starts it or the sweep finds it
+    answering ([026](decisions/026-a-restored-box-enrols-once-it-answers.md)).
+    Each enrolment is counted from when bb-box found the box answering. A
+    box whose machine was removed in BB has no mark, so it stays off.
   - Every template and image removes BB's daemon lock and PID file at boot,
     so a box that restarts after a hard stop reconnects in about 0.5 s
     ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). Without
@@ -871,7 +874,10 @@ Nothing expires, so a box must never be forgotten.
      Otherwise it restores the box's record from the guest while BB says
      the thread is live, releases the guest once BB says the thread ended,
      and keeps it while BB does not say
-     ([019](decisions/019-lost-records-are-restored-from-guests.md));
+     ([019](decisions/019-lost-records-are-restored-from-guests.md)).
+     The released guest's BB machine stays until BB can find a machine by
+     its key ([026](decisions/026-a-restored-box-enrols-once-it-answers.md)).
+     A restored box waiting to enrol enrols once its guest answers;
   5. calls `maintain()`.
 
   A guest from `held()` belongs to a box record only when it names that
@@ -896,7 +902,7 @@ Nothing expires, so a box must never be forgotten.
 
 | Data | Lives in | Owned by | Survives |
 | --- | --- | --- | --- |
-| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | restored by the sweep from the guests' labels if lost, while their threads are live; a restored box that runs enrols again with the same key |
+| Box records: ID, thread, kind, backend, guest and its data, state, timings | plugin storage | core | restored by the sweep from the guests' labels if lost, while their threads are live; a restored box enrols again with the same key once it runs and answers |
 | Which guest belongs to which box and thread | the provider (tags, names), or a marker on a real machine | backend | the plugin's storage being lost |
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Settings and provider credentials | BB plugin settings | operator | never shown in output, logs or errors |

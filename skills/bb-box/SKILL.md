@@ -184,7 +184,9 @@ reserve, or has no free address or GPU. The refusal says what to do instead.
 - A guest whose record was lost, as when bb-box loses its storage, keeps
   running. The sweep restores its box from the guest's labels while its
   thread is live, and releases it only once BB says the thread ended. When
-  `enrol-boxes` is on, a restored box that runs is a BB machine again.
+  `enrol-boxes` is on, a restored box is a BB machine again once it runs
+  and answers. If the thread ended first, the guest goes, but its BB
+  machine stays until someone removes it in BB.
   `bb plugin logs bb-box` shows each guest the sweep released, restored or
   kept, and why.
 - The sweep also finishes acquires and releases that a restart interrupted.

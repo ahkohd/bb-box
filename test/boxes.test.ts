@@ -511,6 +511,24 @@ test("the sweep releases guests no box owns and adopts guests of live threads", 
   assert.deepEqual(adopted?.guest, lost.guest);
   assert.equal((await world.boxes.run("thr_live", lost.name, "echo adopted")).result.stdout, "adopted\n");
   assert.deepEqual((await world.backend.held()).map((guest) => guest.ref).sort(), [kept.guest!.ref, lost.guest!.ref].sort());
+  // Nor does a later sweep reach into it to see whether it can enrol.
+  let reached = 0;
+  const transports = world.backend.transports.bind(world.backend);
+  world.backend.transports = (...args) => (reached++, transports(...args));
+  await world.boxes.sweep();
+  assert.equal(reached, 0);
+  assert.equal(world.enrolled.length, enrolled);
+});
+
+test("the sweep never enrols a box whose BB machine was removed", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  assert.deepEqual(world.enrolled, [box.name]);
+  // As when someone removes the box's machine in BB.
+  await world.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
+  await world.boxes.sweep();
+  assert.deepEqual(world.enrolled, [box.name]);
+  assert.equal((await world.boxes.find(box.id))?.enrol.state, "off");
 });
 
 test("after its records are wiped, the sweep restores the boxes of live threads, releases only those of ended threads, and keeps the rest", async () => {
@@ -552,6 +570,12 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   const quiet = await boxes.find(silent.id);
   assert.equal(quiet?.state, "ready", "its guest runs");
   assert.match(quiet?.error ?? "", /did not answer when bb-box restored/);
+  assert.ok(quiet?.restoredAt, "it enrols once it answers");
+  assert.equal(quiet?.enrol.state, "off");
+  // A sweep while it is still silent leaves it.
+  await boxes.sweep();
+  assert.equal((await boxes.find(silent.id))?.enrol.state, "off");
+  assert.deepEqual(world.enrolled, [`${running.name}, restored`]);
   delete world.backend.faults.silent;
   assert.equal(await boxes.find(ended.id), null);
   assert.equal(await boxes.find(unsure.id), null, "no record until BB answers");
@@ -563,10 +587,21 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   assert.equal((await boxes.run("thr_live", running.name, "cat file.txt")).result.stdout, "work\n");
 
   // Records restored once are left alone; a thread BB confirms later gets its box back.
+  // The silent box answers now, so it enrols, and its error goes.
   world.threads.set("thr_unsure", "live");
   assert.deepEqual({ ...(await boxes.sweep()) }, { released: 0, leftovers: 0, adopted: 1, kept: 0, resumed: 0 });
   assert.equal((await boxes.find(unsure.id))?.name, unsure.name);
-  assert.deepEqual(world.enrolled, [`${running.name}, restored`, `${unsure.name}, restored`]);
+  assert.deepEqual(world.enrolled, [`${running.name}, restored`, `${unsure.name}, restored`, `${silent.name}, restored`]);
+  const answering = await boxes.find(silent.id);
+  assert.equal(answering?.error, null);
+  assert.equal(answering?.restoredAt, null);
+  assert.equal(answering?.enrol.state, "enrolled");
+  // The box restored stopped enrols when it starts, once.
+  await boxes.start("thr_live", stopped.name);
+  assert.equal(world.enrolled.at(-1), `${stopped.name}, restored`);
+  assert.equal((await boxes.find(stopped.id))?.restoredAt, null);
+  await boxes.sweep();
+  assert.equal(world.enrolled.length, 4);
   assert.equal(await boxes.release("thr_live", running.name), null);
   assert.deepEqual(
     (await world.backend.held()).map((guest) => guest.owner?.boxId).sort(),

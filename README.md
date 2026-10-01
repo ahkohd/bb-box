@@ -153,8 +153,8 @@ and secrets. `bb plugin source bb-box` shows what it was installed from.
 
 If bb-box loses its storage, its boxes keep running: take its install ID
 back with `bb box install-id --set <id>`, and the next sweep restores the
-boxes of live threads from their guests. Those that run become BB machines
-again when `enrol-boxes` is on.
+boxes of live threads from their guests. When `enrol-boxes` is on, each
+becomes a BB machine again once it runs and answers.
 
 ## Develop
 

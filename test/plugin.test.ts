@@ -578,7 +578,7 @@ test("after bb-box loses its storage, the sweep restores a live thread's box fro
   assert.equal((await app.boxes.list("thr_three"))[0]?.id, unsure!.id, "restored once BB answers");
 });
 
-test("a box the sweep restores enrols again with its box ID, timed from the restore, and a stopped one does not", async (t) => {
+test("a box the sweep restores enrols again with its box ID once it answers, timed from then", async (t) => {
   const { harness, bb, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   await tool("box_acquire", {});
@@ -607,7 +607,7 @@ test("a box the sweep restores enrols again with its box ID, timed from the rest
   assert.equal(again.enrol.hostId, hostId);
   assert.deepEqual(world.bootstraps, [box.id, box.id]);
   assert.ok(again.timings.enrol! < 60_000, "timed from the restore, not from when the box was made");
-  assert.match(logged().at(-1) ?? "", /^Enrolled box \S+ \d+\.\d\d s after the sweep restored it: .*BB waiting for the daemon /);
+  assert.match(logged().at(-1) ?? "", /^Enrolled box \S+ \d+\.\d\d s after bb-box found the restored box answering: .*BB waiting for the daemon /);
   assert.deepEqual(world.events, [`create ${hostId}`, `create ${hostId}`], "the same key, and BB's machine is kept");
   assert.equal(world.hosts.get(hostId)?.status, "connected");
 
@@ -618,13 +618,28 @@ test("a box the sweep restores enrols again with its box ID, timed from the rest
   assert.deepEqual(world.bootstraps, [box.id, box.id, box.id]);
   assert.equal(world.events.length, 3);
 
-  // A stopped box is restored stopped, and is not enrolled.
+  // A stopped box is restored stopped, and enrols when it starts.
   await tool("box_stop", { box: box.name });
   await restore();
   const stopped = await app.boxes.find(box.id);
   assert.equal(stopped?.state, "stopped");
   assert.equal(stopped?.enrol.state, "off");
+  assert.ok(stopped?.restoredAt, "marked to enrol later");
   assert.equal(world.events.length, 3);
+  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: not enrolled since bb-box restored its lost record/);
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  const started = await enrolled();
+  assert.equal(started.enrol.hostId, hostId, "BB gives back the machine it still has");
+  assert.equal(started.restoredAt, null);
+  assert.deepEqual(world.events, [`create ${hostId}`, `create ${hostId}`, `create ${hostId}`, `create ${hostId}`]);
+  assert.match(logged().at(-1) ?? "", /^Enrolled box \S+ \d+\.\d\d s after bb-box found the restored box answering: /);
+
+  // Once enrolled, it reconnects when it starts again rather than enrolling.
+  const bootstraps = world.bootstraps.length;
+  await tool("box_stop", { box: box.name });
+  await tool("box_start", { box: box.name });
+  await until("reconnect", async () => world.bootstraps.length === bootstraps + 1);
+  assert.equal(world.events.length, 4);
 });
 
 test("refusals say what to do next", async (t) => {
