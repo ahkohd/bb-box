@@ -18,7 +18,10 @@ snapshot=$(cat "$build/apt-snapshot")
 [[ "$snapshot" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || { echo "baseline: invalid apt snapshot" >&2; exit 1; }
 
 # Every apt command in this build reads the same archive snapshot, so the
-# candidate records exactly which security updates it received.
+# candidate records exactly which security updates it received. Ubuntu keeps
+# snapshots of its main archive only: an arm64 image (ports.ubuntu.com, 040)
+# installs from the live archive instead.
+if [ "$(dpkg --print-architecture)" = amd64 ]; then
 printf 'APT::Snapshot "%s";\nAcquire::Retries "5";\n' "$snapshot" >/etc/apt/apt.conf.d/50bb-box-build-snapshot
 # snapshot.ubuntu.com has outages in which it cannot serve .debs. The archive
 # is a second place to download the same files from: pinned to -1, it never
@@ -39,6 +42,9 @@ Package: *
 Pin: origin "gb.archive.ubuntu.com"
 Pin-Priority: -1
 EOF
+else
+  printf 'Acquire::Retries "5";\n' >/etc/apt/apt.conf.d/50bb-box-build-snapshot
+fi
 rm -rf /var/lib/apt/lists/*
 # snapshot.ubuntu.com also has outages of a few minutes in which it refuses
 # connections, and the archive no longer serves a package's snapshot version

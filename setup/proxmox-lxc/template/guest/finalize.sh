@@ -1,8 +1,8 @@
 #!/bin/bash
-# Last stage of a bb-box template, run as root inside the CT: record what is in
-# it, remove the build's apt pins, fetch fresh package lists from the Ubuntu
-# archive, then remove SSH host keys, logs, caches, Docker state and the build
-# directory.
+# Last stage of a bb-box template, run as root inside the CT or VM: record
+# what is in it, remove the build's apt pins, fetch fresh package lists from
+# the Ubuntu archive, then remove SSH host keys, logs, caches, Docker state and
+# the build directory.
 #
 # usage: finalize.sh <build-dir> <kind>
 set -euo pipefail
@@ -18,8 +18,11 @@ install -m 0644 "$build/pins.json" "$out/template-pins.json"
 {
   echo "kind=$kind"
   echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "apt_snapshot=$(cat "$build/apt-snapshot")"
-  jq -r '.tools[] | "tool=\(.name) \(.version) \(.sha256)"' "$build/pins.json"
+  # As baseline.sh: only the amd64 archive has snapshots.
+  if [ "$(dpkg --print-architecture)" = amd64 ]; then echo "apt_snapshot=$(cat "$build/apt-snapshot")"; else echo "apt_snapshot=none"; fi
+  arch=x86_64
+  [ "$(uname -m)" = x86_64 ] || arch=arm64
+  jq -r --arg arch "$arch" '.tools[] | select(.arch == $arch) | "tool=\(.name) \(.version) \(.sha256)"' "$build/pins.json"
   [ ! -f "$build/extra-release" ] || cat "$build/extra-release"
 } >"$out/template-release"
 chmod 0644 "$out"/*
