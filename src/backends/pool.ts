@@ -24,17 +24,18 @@ export class ReadyPool<Holder> {
 
   /**
    * Holds a free member for `kind`, or returns null when none is free.
-   * `before` runs first, so the caller can record the member before it changes.
+   * `fits` passes over members that cannot serve this holder. `before` runs
+   * first, so the caller can record the member before it changes.
    * Claims are serialised, so two boxes never get the same member.
    */
   claim(
     kind: string,
     holder: Holder,
-    options: { before?(member: PoolMember): Promise<void>; signal?: AbortSignal } = {},
+    options: { fits?(member: PoolMember): boolean; before?(member: PoolMember): Promise<void>; signal?: AbortSignal } = {},
   ): Promise<PoolMember | null> {
     return this.exclusive(async () => {
       for (const member of await this.#store.members(options.signal)) {
-        if (member.state !== "free" || !member.kinds.includes(kind)) continue;
+        if (member.state !== "free" || !member.kinds.includes(kind) || (options.fits && !options.fits(member))) continue;
         await options.before?.(member);
         await this.#store.hold(member, holder, options.signal);
         return { ...member, state: "held" };

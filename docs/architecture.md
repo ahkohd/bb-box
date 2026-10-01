@@ -726,7 +726,9 @@ real backend's pool of free, reset machines is the same thing
   backend or kind keeps no warm guests.
 - A warm guest counts against capacity and fits when claimed. One made
   larger on claim needs room for the difference
-  ([028](decisions/028-a-box-size-is-chosen-when-it-is-made.md)).
+  ([028](decisions/028-a-box-size-is-chosen-when-it-is-made.md)). Proxmox
+  LXC hands a warm guest only to a box with its cores: a running container
+  takes new cores only when Proxmox next rebalances CPUs, up to 10 s later.
 - A warm guest must be a clone of what its template is now. Proxmox LXC's
   `build.sh` tags each template with a build ID of its own, which warm
   guests copy when they are filled. A warm guest whose template has another

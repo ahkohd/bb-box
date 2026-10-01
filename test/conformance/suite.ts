@@ -40,7 +40,7 @@ import { desktopSize, displayOpener, restoreSize } from "../../src/core/relay.ts
 import { PRESETS, defaultSize, describeSize, kindSizes } from "../../src/core/sizes.ts";
 import { quote } from "../../src/transports/process.ts";
 import { openRoute } from "../../src/transports/route.ts";
-import type { ByteChannel, CommandTransport, DisplaySize } from "../../src/transports/types.ts";
+import type { ByteChannel, CommandTransport, DisplaySize, RunResult } from "../../src/transports/types.ts";
 import { MemoryStorage } from "../helpers.ts";
 
 export type ConformanceCheck =
@@ -696,8 +696,13 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
         const disked: BoxSize = { ...base, diskGiB: base.diskGiB ?? 32 };
         let asked = base;
         let guest: Guest | null = null;
+        let measured: RunResult | null = null;
+        const measurable = kind?.capabilities.command && kind.capabilities.os !== "windows" ? false : "the kind runs no sh commands";
 
         it(`makes a ${preset} box, and reads its size from the guest`, { timeout }, async () => {
+          // A warm pool in the run's settings is filled first, so the box can
+          // come from it, at a size other than the one it waited at.
+          await backend.maintain?.(signal());
           const withDisk = await backend.capacity(kind!.id, disked, [], signal());
           checkCapacity(withDisk, backend.nature);
           if (withDisk.ok) asked = disked;
@@ -708,6 +713,9 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             assert.ok(without.ok, `${describeSize(base)}: ${without.message}`);
           }
           guest = await acquire(identity(kind!.id, asked), recordingHooks().hooks);
+          // The box is used as soon as it is ready, so it must have its size
+          // then, not only some seconds later.
+          if (!(skip.size ?? measurable)) measured = await (await backend.transports(guest, kind!.id)).command!.run(MEASURE, { timeoutMs: 30_000 });
           const size = guest.size;
           assert.ok(size, "the backend reads the box's size");
           checkSize(size, "the guest");
@@ -724,12 +732,10 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           assert.deepEqual(held?.size, size, "held reads the same size");
         });
 
-        const measurable = kind?.capabilities.command && kind.capabilities.os !== "windows" ? false : "the kind runs no sh commands";
-        it("has the cores, memory and disk it says", { timeout, skip: skip.size ?? measurable }, async () => {
-          assert.ok(guest?.size, "the box was acquired");
+        it("has the cores, memory and disk it says, as soon as it is ready", { timeout, skip: skip.size ?? measurable }, async () => {
+          assert.ok(guest?.size && measured, "the box was acquired and measured");
           const size = guest.size;
-          const command = (await backend.transports(guest, kind!.id)).command!;
-          const result = await command.run(MEASURE, { timeoutMs: 30_000 });
+          const result = measured;
           assert.equal(result.exitCode, 0, result.stderr);
           const [cores, memoryMiB, diskMiB] = result.stdout.trim().split(/\s+/).map(Number) as [number, number, number];
           console.log(`# ${options.name} ${kind!.id}: says ${describeSize(size)}; the box has ${cores} cores, ${memoryMiB} MiB memory, ${diskMiB} MiB disk`);

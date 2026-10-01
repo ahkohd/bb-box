@@ -37,7 +37,9 @@ function fakes(proxmox: FakeProxmox): LxcBackendOptions {
 function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage(), options: LxcBackendOptions = {}) {
   const ssh = fakeSsh();
   const proxmox = new FakeProxmox();
-  for (const template of [9000, 9001, 9002, 9003, 9004]) proxmox.addTemplate(template);
+  proxmox.addTemplate(9000);
+  // As build.sh leaves a desktop template: at its kinds' default size.
+  for (const template of [9001, 9002, 9003, 9004]) proxmox.addTemplate(template, { cores: "4", memory: "8192" });
   const config = lxcConfig({
     "proxmox-lxc-token-id": FAKE_TOKEN.tokenId,
     "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret,
@@ -900,7 +902,7 @@ test("a warm guest satisfies capacity even when memory is short", async () => {
   assert.equal((await backend.capacity("linux", sized("linux"), waiting("linux"), signal())).ok, false);
 });
 
-test("a warm guest waits at its template's size, and a claim gives it the box's (028)", async () => {
+test("a warm guest waits at its template's size, and serves a box with its cores (028)", async () => {
   const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 });
   await backend.maintain();
   const fill = proxmox.calls.filter((call) => call.method === "PUT" && call.path === "/nodes/pve/lxc/7000/config");
@@ -910,13 +912,23 @@ test("a warm guest waits at its template's size, and a claim gives it the box's 
   );
   assert.equal(proxmox.guests.get(7000)!.config.memory, "4096");
 
-  const guest = await backend.acquire(identity("linux", "thr_abc123", { cores: 8, memoryMiB: 16384, diskGiB: 30 }), null, hooks().value, signal());
+  // New cores reach a running container only when Proxmox next rebalances
+  // its CPUs, so a box with other cores is a new clone.
+  const other = await backend.acquire(identity("linux", "thr_abc123", { cores: 8, memoryMiB: 16384, diskGiB: 30 }), null, hooks().value, signal());
+  assert.notEqual(other.ref, "7000");
+  assert.equal(proxmox.guests.get(Number(other.ref))!.config.cores, "8");
+  assert.equal(proxmox.guests.get(7000)!.config.cores, "2");
+
+  const before = proxmox.calls.length;
+  const guest = await backend.acquire(identity("linux", "thr_abc123", { cores: 2, memoryMiB: 16384, diskGiB: 30 }), null, hooks().value, signal());
   assert.equal(guest.ref, "7000");
   const claimed = proxmox.guests.get(7000)!;
-  assert.equal(claimed.config.cores, "8");
+  assert.equal(claimed.config.cores, "2");
   assert.equal(claimed.config.memory, "16384");
   assert.match(claimed.config.rootfs!, /size=30G/);
-  assert.deepEqual(guest.size, { cores: 8, memoryMiB: 16384, diskGiB: 30 });
+  assert.deepEqual(guest.size, { cores: 2, memoryMiB: 16384, diskGiB: 30 });
+  const claim = proxmox.calls.slice(before).filter((call) => call.method === "PUT" && call.path === "/nodes/pve/lxc/7000/config");
+  assert.equal(claim.some((call) => "cores" in call.params), false);
 });
 
 test("a warm guest needs only the memory a claim adds (028)", async () => {
@@ -924,10 +936,14 @@ test("a warm guest needs only the memory a claim adds (028)", async () => {
   await backend.maintain();
   // The warm guest has the template's 4 GiB, and 4 GiB is kept free.
   proxmox.memory = { total: 64 * GiB, available: 9 * GiB };
-  const medium = await backend.capacity("linux", { cores: 4, memoryMiB: 8192, diskGiB: null }, waiting(), signal());
+  const medium = await backend.capacity("linux", { cores: 2, memoryMiB: 8192, diskGiB: null }, waiting(), signal());
   assert.equal(medium.ok, true, "4 GiB more leaves 5 GiB free");
   assert.equal(medium.hosts[0]!.ok, false, "a new guest with 8 GiB would not fit");
-  const more = await backend.capacity("linux", { cores: 4, memoryMiB: 10 * 1024, diskGiB: null }, waiting(), signal());
+  // A box with other cores is a new guest, as the warm one cannot serve it.
+  const four = await backend.capacity("linux", { cores: 4, memoryMiB: 8192, diskGiB: null }, waiting(), signal());
+  assert.equal(four.ok, false);
+  assert.match(four.message!, /^pve has 9 GiB of memory free\. A linux box with 8 GiB memory needs it all, and 4 GiB is kept free\./);
+  const more = await backend.capacity("linux", { cores: 2, memoryMiB: 10 * 1024, diskGiB: null }, waiting(), signal());
   assert.equal(more.ok, false);
   assert.match(more.message!, /^pve has 9 GiB of memory free\. A warm linux box given 10 GiB needs 6 GiB more, and 4 GiB is kept free\./);
 
