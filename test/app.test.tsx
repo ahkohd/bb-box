@@ -103,6 +103,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     largest: size(cores * 8, cores * 16, 256),
     gpu: desktop,
     desktop,
+    enrol: true,
     admin: true,
     backends: ["Fake host"],
     forms: ["LXC"],
@@ -152,6 +153,7 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktops: () => boxes.filter((candidate) => candidate.desktop).map((found) => ({ threadId: THREAD, box: found })),
+    kinds: () => options.kinds ?? KINDS,
     thread: ({ box: ref, prompt }) => {
       changes.push(`thread ${ref} ${prompt}`);
       return { threadId: "thr_child", error: null };

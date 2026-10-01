@@ -79,6 +79,8 @@ export const contract = defineRpcContract({
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },
   desktops: { input: z.null(), output: z.custom<DesktopEntry[]>() },
+  /** The kinds on offer now, for "New box" in BB's new-thread screen. */
+  kinds: { input: z.null(), output: z.custom<KindView[]>() },
   /** Starts a child thread on a box's BB machine. */
   thread: { input: oneBox.extend({ prompt: z.string().min(1) }), output: z.custom<ThreadResult>() },
   backends: { input: z.null(), output: z.custom<BackendView[]>() },

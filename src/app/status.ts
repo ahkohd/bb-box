@@ -70,7 +70,7 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
           items.push({ text: "Joining BB…" });
           break;
         case "enrolled":
-          items.push({ text: box.timings.enrol !== undefined ? `BB machine in ${seconds(box.timings.enrol)}` : "BB machine" });
+          items.push({ text: box.role === "machine" ? "This thread's machine" : box.timings.enrol !== undefined ? `BB machine in ${seconds(box.timings.enrol)}` : "BB machine" });
           break;
         case "failed":
           items.push({ text: "Could not join BB", tone: "warn" });

@@ -735,8 +735,9 @@ export class Boxes {
   }
 
   /** Whether a box can enrol as a BB machine: its kind can and bb-box enrols boxes. */
+  /** A thread's own box (role "machine") is enrolled by the machine provider that made it, with the thread's key. */
   async #enrols(box: BoxRecord): Promise<boolean> {
-    return box.capabilities.enrol && !!this.#deps.enrol && (await this.#deps.general()).enrol;
+    return box.role !== "machine" && box.capabilities.enrol && !!this.#deps.enrol && (await this.#deps.general()).enrol;
   }
 
   #backendOff(box: BoxRecord): string {
