@@ -127,7 +127,7 @@ function lxcLike(root: string, built: FakeBackend[]): BackendDriver<any> {
  * Starts the plugin with the fake backend, a Proxmox LXC driver whose
  * backends are fake ones, and the SSH host pool, as the plugin's drivers.
  */
-async function start(settings: Record<string, PluginSettingValue>, options: { faults?: Faults } = {}) {
+async function start(settings: Record<string, PluginSettingValue>, options: { faults?: Faults; seed?: Record<string, unknown> } = {}) {
   const root = tempDir("config");
   const threads = new Map([[THREAD, makeThreadResponse({ id: THREAD, projectId: "prj_config", environmentId: "env_config" })]]);
   const { bb, harness } = createFakePluginHost({
@@ -145,8 +145,24 @@ async function start(settings: Record<string, PluginSettingValue>, options: { fa
       projects: { machineEnvironment: async () => ({ builtInGit: { status: "logged in", statusMessage: "" }, inheritedVariables: [], variables: [] }) },
     } as never,
   });
-  const world = { backend: null as FakeBackend | null, contexts: [] as BackendContext[], built: [] as FakeBackend[], handles: [] as Handle[], kv: bb.storage.kv };
-  const drivers = [fakeDriver(root, world), lxcLike(root, world.built), sshPoolDriver];
+  const world = {
+    backend: null as FakeBackend | null,
+    contexts: [] as BackendContext[],
+    built: [] as FakeBackend[],
+    /** The context each backend of the other drivers was built with, by backend ID. */
+    real: new Map<string, BackendContext>(),
+    handles: [] as Handle[],
+    kv: bb.storage.kv,
+  };
+  for (const [key, value] of Object.entries(options.seed ?? {})) await bb.storage.kv.set(key, value);
+  const recorded = (driver: BackendDriver<any>): BackendDriver<any> => ({
+    ...driver,
+    create: (config, context) => {
+      world.real.set(context.id, context);
+      return driver.create(config, context);
+    },
+  });
+  const drivers = [fakeDriver(root, world), recorded(lxcLike(root, world.built)), recorded(sshPoolDriver), recorded(tartDriver)];
   const options_ = { drivers, daemonParent: join(root, "no-daemon") };
   const begin = (on: BbPluginApi, faults: Faults = {}) => setup(withFaults(on, faults, world.handles), options_);
   let app: BbBox | null = null;
@@ -356,6 +372,43 @@ test("a document lost after the move starts empty, and keeps the secrets", async
   const app = await restart();
   assert.deepEqual(app.configuration.document, { schema: 1, revision: 1, backends: [], kinds: {}, general: {} });
   assert.equal(app.configuration.secrets["proxmox-lxc"]!["token-secret"], TOKEN);
+});
+
+test("a key a backend generated survives the move and the restarts unchanged, for Tart and the SSH host pool", async () => {
+  // bb-box made these keys, so BB's settings have none; each is in its backend's own storage.
+  const tartKey = { privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nTART\n-----END OPENSSH PRIVATE KEY-----\n", publicKey: "ssh-ed25519 AAAATART bb-box" };
+  const poolKey = { privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nPOOL\n-----END OPENSSH PRIVATE KEY-----\n", publicKey: "ssh-ed25519 AAAAPOOL bb-box" };
+  const seed = { "backend/tart/ssh-key": tartKey, "backend/ssh-pool/ssh-key": poolKey, "backend/ssh-pool/machine/build-1": { generation: 3 } };
+  const settings = {
+    ...SAVED,
+    "tart-enabled": true,
+    "tart-hosts": "mac1 bbbox-admin@192.0.2.20",
+    "tart-host-keys": "192.0.2.20 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMac",
+    "tart-reserve-disk-gib": 80,
+    "ssh-pool-enabled": true,
+    "ssh-pool-machines": "build-1 192.0.2.21 linux",
+    "ssh-pool-known-hosts": "192.0.2.21 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPool",
+  };
+  const { app, world, restart } = await start(settings, { seed });
+  const document = app().configuration.document;
+  assert.deepEqual(document.backends.map((backend) => [backend.id, backend.enabled]), [["proxmox-lxc", true], ["ssh-pool", true], ["tart", true]]);
+  assert.deepEqual(Object.keys(app().configuration.secrets), ["proxmox-lxc"], "a generated key is no secret setting, so nothing replaces it");
+  for (const id of ["tart", "ssh-pool"]) {
+    assert.equal(app().backends.get(id)?.id, id, `${id} keeps its backend ID`);
+    assert.deepEqual(await world.real.get(id)!.storage.get("ssh-key"), seed[`backend/${id}/ssh-key` as keyof typeof seed], `${id} reads the key it made`);
+  }
+  for (const [key, value] of Object.entries(seed)) assert.deepEqual(await kvOf(world).get(key), value, key);
+  // Proxmox LXC keeps the warm guests it kept: one per flavour that had one.
+  const lxc = world.real.get("proxmox-lxc")!;
+  assert.deepEqual(["linux", "linux-docker", "linux-desktop", "linux-desktop-cpu"].map((kind) => lxc.warm(kind)), [1, 0, 1, 0]);
+
+  world.real.clear();
+  const again = await restart();
+  for (const id of ["tart", "ssh-pool"]) {
+    assert.deepEqual(await world.real.get(id)!.storage.get("ssh-key"), seed[`backend/${id}/ssh-key` as keyof typeof seed], `${id} still reads its key after a restart`);
+  }
+  for (const [key, value] of Object.entries(seed)) assert.deepEqual(await kvOf(world).get(key), value, key);
+  assert.equal(again.configuration.document.revision, 1);
 });
 
 // The document and its checks.
