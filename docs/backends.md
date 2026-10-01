@@ -201,8 +201,13 @@ node --test test/conformance.test.ts
   API, with a password of its own, and reaches it through the API's
   `vncwebsocket` with the token, trusting the API's certificate as the API
   calls do. The token needs VM.Console.
-- Still to come: resizing the desktop, desktop commands in the user's
-  session, computer use, stop and start, and a hibernated warm pool. The
+- A desktop command, `box_run` with `desktop`, runs as a one-off scheduled
+  task with the box user's interactive logon, in a headless console, so no
+  window shows. It runs unelevated, as an app the user opens does, and
+  takes about 1 s more than a command over SSH. Its output comes back when
+  it exits. What it opens stays open, unless its timeout ends it.
+- Still to come: resizing the desktop, computer use, stop and start, and a
+  hibernated warm pool. The
   conformance suite does not run against it yet, as Windows boxes have no
   file copies.
 - The tests run against the fake API, and the fake ssh as a Windows host,

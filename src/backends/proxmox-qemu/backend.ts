@@ -14,8 +14,9 @@
 // over the space the disk grew by. A stopped VM's disk grows at once, so it
 // grows before the start.
 //
-// The desktop is the VM's console, through the API's VNC proxy. Resizing it,
-// desktop commands, stop and start, and the warm pool are still to come.
+// The desktop is the VM's console, through the API's VNC proxy. Core runs
+// desktop commands as scheduled tasks in the box user's session. Resizing the
+// desktop, computer use, stop and start, and the warm pool are still to come.
 
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
@@ -74,7 +75,7 @@ const KIND: BoxKind = {
   id: "windows-desktop",
   label: "Windows desktop",
   description:
-    "A Windows 11 VM for Windows apps, browsers and builds, with its desktop shown in the panel. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running.",
+    "A Windows 11 VM for Windows apps, browsers and builds, with its desktop shown in the panel. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running. A desktop command runs unelevated, and what it opens stays open.",
   requires: [],
   capabilities: {
     os: "windows",

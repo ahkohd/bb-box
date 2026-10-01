@@ -143,7 +143,8 @@ control", and they can take it again at any time.
 `box_run` with `desktop` starts the command in the desktop session, so it
 can open windows, as when you test an app. On a Mac, only such a command
 reaches the login keychain, which git's keychain helper and Xcode's signing
-use.
+use. On Windows, it runs unelevated, as an app you open does, and returns
+its output when it exits. What it opens with `Start-Process` stays open.
 
 ## Computer use
 

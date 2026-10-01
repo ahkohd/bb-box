@@ -34,7 +34,7 @@ import {
   type MachineNature,
   type ReleaseHooks,
 } from "../../src/backends/types.ts";
-import { MAC_DESKTOP_EXITS, command as inBox, driverCommand } from "../../src/core/in-box.ts";
+import { DESKTOP_EXITS, command as inBox, driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
 import { desktopSize, displayOpener, restoreSize } from "../../src/core/relay.ts";
 import { PRESETS, defaultSize, describeSize, kindSizes } from "../../src/core/sizes.ts";
@@ -607,13 +607,27 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               const script = inBox(capabilities.os, "launchctl managername; cat; echo; echo to-stderr >&2; exit 5", { session: "desktop" });
               const deadline = Date.now() + 20_000;
               let result = await command.run(script, { stdin: "hello from stdin", timeoutMs: 30_000 });
-              while (result.exitCode === MAC_DESKTOP_EXITS.noSession && Date.now() < deadline) {
+              while (result.exitCode === DESKTOP_EXITS.noSession && Date.now() < deadline) {
                 await new Promise((resolve) => setTimeout(resolve, 1_000));
                 result = await command.run(script, { stdin: "hello from stdin", timeoutMs: 30_000 });
               }
               assert.equal(result.exitCode, 5, result.stderr);
               assert.equal(result.stdout, "Aqua\nhello from stdin\n", "the command runs in the Aqua session and reads stdin");
               assert.equal(result.stderr, "to-stderr\n", "stderr stays apart from stdout");
+            });
+          }
+
+          if (capabilities.os === "windows" && capabilities.displays.length && !capabilities.command?.inDesktopSession) {
+            it("runs a desktop command in the user's session, unelevated, with stdin, stderr apart from stdout, and its exit status", { timeout, skip: skip["desktop-session"] }, async () => {
+              const { command } = need();
+              // S-1-16-8192 is the medium integrity level, an unelevated process's.
+              const source = "(Get-Process -Id $PID).SessionId; [bool](whoami /groups | Select-String 'S-1-16-8192'); [Console]::In.ReadToEnd(); [Console]::Error.WriteLine('to-stderr'); exit 5";
+              const result = await command.run(inBox(capabilities.os, source, { session: "desktop" }), { stdin: "hello from stdin", timeoutMs: 30_000 });
+              assert.equal(result.exitCode, 5, result.stderr);
+              const [session, medium, stdin] = result.stdout.split(/\r?\n/);
+              assert.match(session ?? "", /^[1-9]\d*$/, "the command runs in a desktop's session, not in services' session 0");
+              assert.deepEqual([medium, stdin], ["True", "hello from stdin"], "it runs unelevated and reads stdin");
+              assert.equal(result.stderr.replaceAll("\r\n", "\n"), "to-stderr\n", "stderr stays apart from stdout");
             });
           }
 

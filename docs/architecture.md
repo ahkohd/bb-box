@@ -313,8 +313,8 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   helper for the OS unless the transport already runs there: `DISPLAY` and the
   session bus on Linux, `launchctl asuser` on macOS
   ([030](decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md)),
-  a one-off scheduled task with an interactive logon on Windows, whose
-  output comes back at exit
+  an unelevated one-off scheduled task with an interactive logon on
+  Windows, whose output comes back at exit
   ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)).
 
 ### Guests
