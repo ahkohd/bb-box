@@ -285,8 +285,9 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the
-  session bus on Linux, a LaunchAgent on macOS, a scheduled task with `/IT` on
-  Windows.
+  session bus on Linux, `launchctl asuser` on macOS
+  ([030](decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md)),
+  a scheduled task with `/IT` on Windows.
 
 ### Guests
 

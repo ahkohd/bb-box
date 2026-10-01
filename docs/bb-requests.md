@@ -308,8 +308,10 @@ no plugin's server side sees them.
 
 - On Linux, bb-box's scan of `/proc/<pid>/environ` for the daemon's
   workers, which picks the newest worker with the most variables.
-- On macOS, parsing `ps -E`, which core plans next. It cannot read exactly
-  a value that holds a newline, or a space followed by a name and `=`.
+- On macOS, parsing `ps -E`, which core plans next. It prints a newline
+  as `\012` but leaves a backslash as it is, so it cannot read exactly a
+  value that holds a backslash and three digits, or a space followed by a
+  name and `=`.
 - On Windows, which has neither `/proc` nor `ps -E`, the gap: once
   request 1 lets a Windows box enrol, it would get the variables the same
   way.
