@@ -65,11 +65,17 @@ export function providerGlyph(offer: OfferView): string {
   }
 }
 
+/** The driver's name without its aside: "Tart (VMs on a Mac)" reads "Tart" before "on mac-mini". */
+function shortLabel(offer: OfferView): string {
+  return offer.label.replace(/\s*\([^)]*\)\s*$/, "");
+}
+
 /** "Proxmox LXC on pve1", "Tart on 2 Macs", "SSH host pool". */
 export function offerWhere(offer: OfferView): string {
-  if (offer.hosts.length === 1) return `${offer.label} on ${offer.hosts[0]}`;
-  if (offer.hosts.length > 1) return `${offer.label} on ${offer.hosts.length} ${offer.type === "tart" ? "Macs" : "hosts"}`;
-  return offer.label;
+  const label = shortLabel(offer);
+  if (offer.hosts.length === 1) return `${label} on ${offer.hosts[0]}`;
+  if (offer.hosts.length > 1) return `${label} on ${offer.hosts.length} ${offer.type === "tart" ? "Macs" : "hosts"}`;
+  return label;
 }
 
 /** The host's short name for a row's mark: one host's name, or a count. */

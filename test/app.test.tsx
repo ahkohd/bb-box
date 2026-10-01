@@ -1537,6 +1537,7 @@ test("the kind picker's words: titles, names, groups, where an offer runs and it
   const offer = linux.offers[0]!;
   expect(offerWhere(offer)).toBe("Fake host on pve");
   expect(offerWhere({ ...offer, type: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
+  expect(offerWhere({ ...offer, type: "tart", label: "Tart (VMs on a Mac)", hosts: ["mac-mini"] })).toBe("Tart on mac-mini");
   expect(offerWhere({ ...offer, type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
   expect(["proxmox-lxc", "proxmox-qemu", "docker", "tart", "ssh-pool", "fake"].map((type) => providerGlyph({ ...offer, type }))).toEqual(["proxmox", "proxmox", "docker", "laptop", "plug", "server"]);
   expect(kindFacts({ ...linux, offers: [{ ...offer, docker: false }] }).map((fact) => fact.label)).toEqual(["System", "Has", "Lacks", "BB machine", "Sizes"]);
