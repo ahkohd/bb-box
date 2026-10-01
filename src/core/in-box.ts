@@ -81,17 +81,45 @@ export interface CommandOptions {
   readonly session?: Session;
   /** The env file's new contents, written before the command runs. */
   readonly env?: string;
-  /** Stops the command and everything it started, in the box, after this long. Linux and Windows boxes only. */
+  /** Stops the command and everything it started, in the box, after this long. */
   readonly timeoutMs?: number;
 }
 
 /**
  * What a command stopped in the box at its timeout exits with: GNU
- * timeout's TERM, then KILL 5 s later, on Linux, and taskkill's on Windows.
- * Undefined where only bb-box's own timeout stops a command.
+ * timeout's TERM, then KILL 5 s later, on Linux, the same from MAC_TIMEOUT
+ * on macOS, and taskkill's on Windows.
  */
-export function timedOutExits(os: GuestOs): readonly number[] | undefined {
-  return os === "linux" ? [124, 137] : os === "windows" ? [1] : undefined;
+export function timedOutExits(os: GuestOs): readonly number[] {
+  return os === "windows" ? [1] : [124, 137];
+}
+
+/**
+ * GNU timeout -k 5, in the Perl every Mac has, since macOS has no timeout:
+ * runs its arguments in a process group of their own, and after the given
+ * seconds sends the group TERM, then KILL 5 s later if the command is still
+ * there. Once a timed-out command ends, what is left of the group is
+ * killed, so nothing it started runs on. Exits as GNU timeout does: 124 when
+ * it timed out, 128 and the signal when the command died of one.
+ */
+const MAC_TIMEOUT = String.raw`my $t = shift;
+my $pid = fork;
+die "bb-box: fork: $!\n" unless defined $pid;
+if (!$pid) { setpgrp(0, 0); exec @ARGV or exit 127 }
+my $timed = 0;
+$SIG{ALRM} = sub { $timed = 1; kill "TERM", -$pid; $SIG{ALRM} = sub { kill "KILL", -$pid }; alarm 5 };
+alarm $t;
+my $r;
+do { $r = waitpid($pid, 0) } until $r == $pid || ($r == -1 && !$!{EINTR});
+my $s = $?;
+alarm 0;
+if ($timed) { kill "KILL", -$pid; exit(($s & 127) == 9 ? 137 : 124) }
+exit(($s & 127) ? 128 + ($s & 127) : $s >> 8);`;
+
+/** Runs `script` under MAC_TIMEOUT, or as it is on a Mac without Perl. */
+function macTimeout(script: string, timeoutMs: number): string {
+  const shell = `"\${SHELL:-/bin/sh}" -c ${sh(script)}`;
+  return `if [ -x /usr/bin/perl ]; then exec /usr/bin/perl -e ${sh(MAC_TIMEOUT)} ${Math.ceil(timeoutMs / 1000)} ${shell}; else exec ${shell}; fi`;
 }
 
 /**
@@ -117,9 +145,13 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
       : `(umask 077 && mkdir -p "$HOME/${posix.dirname(envFile(os))}" && printf '%s' ${sh(options.env)} > ${file}.$$ && mv -f ${file}.$$ ${file}) 2>/dev/null; `;
   const env = `if [ -r ${file} ]; then . ${file}; fi; `;
   const cd = options.cwd ? `cd -- ${sh(options.cwd)} || exit 1; ` : "";
-  if (os === "macos" && options.session === "desktop") return `${write}${macDesktop(`${env}${cd}${script}`)}`;
+  if (os === "macos") {
+    // Killing the local ssh leaves the command running in the box, as on Linux.
+    const run = options.timeoutMs === undefined ? script : macTimeout(script, options.timeoutMs);
+    return options.session === "desktop" ? `${write}${macDesktop(`${env}${cd}${run}`)}` : `${write}${env}${cd}${run}`;
+  }
   const desktop = options.session === "desktop" ? LINUX_DESKTOP : "";
-  if (os !== "linux" || options.timeoutMs === undefined) return `${write}${env}${desktop}${cd}${script}`;
+  if (options.timeoutMs === undefined) return `${write}${env}${desktop}${cd}${script}`;
   // Killing the local ssh leaves the command running in the box. GNU timeout
   // gives the script its own process group and stops all of it.
   const shell = `"\${SHELL:-/bin/sh}" -c ${sh(script)}`;

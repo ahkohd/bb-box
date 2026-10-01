@@ -1206,8 +1206,8 @@ export class Boxes {
     const session = options.session === "desktop" && !capabilities.command?.inDesktopSession ? "desktop" : "default";
     const env = await this.#envFile(box);
     options.onSend?.();
-    const stops = timedOutExits(capabilities.os);
-    const inBox = stops ? options.timeoutMs : undefined;
+    // Every box stops a command at its timeout itself; bb-box's own comes a moment later.
+    const inBox = options.timeoutMs;
     const result = await this.#reach(
       box,
       (transport) =>
@@ -1219,7 +1219,7 @@ export class Boxes {
         }),
       options.signal,
     );
-    const stopped = stops !== undefined && inBox !== undefined && stops.includes(result.exitCode ?? -1) && result.durationMs >= inBox;
+    const stopped = inBox !== undefined && timedOutExits(capabilities.os).includes(result.exitCode ?? -1) && result.durationMs >= inBox;
     return { box, result: stopped ? { ...result, timedOut: true } : result };
   }
 

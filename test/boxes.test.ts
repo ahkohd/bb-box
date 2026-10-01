@@ -735,6 +735,33 @@ test("a command that times out stops in the box, with everything it started", as
   assert.equal(own.result.exitCode, 124);
 });
 
+test("a macOS command that times out stops in the box, with everything it started, as on Linux (#203)", async () => {
+  const mac: BoxKind = { ...FAKE_KINDS[0]!, id: "macos", label: "macOS", capabilities: { ...FAKE_KINDS[0]!.capabilities, os: "macos", enrol: false } };
+  const world = setup({ kinds: [mac] });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "macos" }));
+  const { result } = await world.boxes.run(THREAD, box.name, "sleep 60 & echo $! > child.pid; sleep 60", { timeoutMs: 1_000 });
+  assert.deepEqual([result.exitCode, result.timedOut], [124, true]);
+  assert.ok(result.durationMs < 4_000, `stopped in the box, not by the local backstop: ${result.durationMs} ms`);
+  const alive = async () => (await world.boxes.run(THREAD, box.name, 'kill -0 "$(cat child.pid)" 2>/dev/null && echo alive')).result.stdout;
+  assert.equal(await alive(), "", "what it started is gone too");
+  const own = await world.boxes.run(THREAD, box.name, "exit 124", { timeoutMs: 10_000 });
+  assert.deepEqual([own.result.exitCode, own.result.timedOut], [124, false]);
+});
+
+test("the macOS timeout passes a command's exit on, and kills one that ignores TERM 5 s later (#203)", () => {
+  const run = (script: string, timeoutMs: number) => {
+    const started = Date.now();
+    const { status } = spawnSync("sh", ["-c", command("macos", script, { timeoutMs })], { stdio: "ignore", timeout: 20_000 });
+    return { status, seconds: (Date.now() - started) / 1000 };
+  };
+  assert.equal(run("exit 3", 10_000).status, 3);
+  assert.equal(run("kill -TERM $$", 10_000).status, 143, "as GNU timeout reports a command a signal ended");
+  const stubborn = run("trap '' TERM; sleep 60", 1_000);
+  assert.equal(stubborn.status, 137);
+  assert.ok(stubborn.seconds >= 5.5 && stubborn.seconds < 9, `TERM at 1 s, KILL 5 s later: ${stubborn.seconds} s`);
+  assert.ok(!command("macos", "true").includes("perl"), "no timeout, no wrapper");
+});
+
 test("a Windows command starts a watchdog that stops it in the box at its timeout", async () => {
   assert.ok(
     command("windows", "Get-Process", { timeoutMs: 1_500 }).startsWith(
