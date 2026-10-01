@@ -97,7 +97,7 @@ body { padding: 24px; }
 .popover { width: 352px; border: 1px solid var(--border); border-radius: 6px; background: var(--popover); padding: 16px; box-shadow: var(--shadow-md); }
 .popover h4 { margin:0 0 10px; font-size:13px; font-weight:500; }
 .label { font-size: 12px; color: var(--muted-foreground); margin: 10px 0 6px; }
-.option { display:grid; grid-template-columns: 20px minmax(0,1fr) 16px; gap: 8px; align-items:start; padding: 6px 8px; border-radius: 4px; cursor:pointer; }
+.option { display:grid; grid-template-columns: 20px minmax(0,1fr) 16px; gap: 8px; align-items:center; padding: 6px 8px; border-radius: 4px; cursor:pointer; }
 .option:hover { background: var(--state-hover); }
 .option.selected { background: var(--state-active); }
 .option .o-title { font-size: 12px; color: var(--foreground); }
@@ -212,7 +212,7 @@ table.kinds tr:last-child td { border-bottom: 0; }
   <div class="pad">
     <div class="empty">
       <div class="h">BB Box is not set up yet</div>
-      <p>Turn on a backend in its settings to make boxes.</p>
+      <p>Turn on a backend in its settings.</p>
       <p style="margin-top:12px"><button class="btn outline"><svg class="icon"><use href="#i-settings"/></svg>Open BB Box settings</button></p>
     </div>
   </div>
@@ -230,9 +230,9 @@ table.kinds tr:last-child td { border-bottom: 0; }
   </div>
   <div class="popover" style="position:absolute; right: 16px; top: 88px;">
     <div class="label" style="margin-top:0">Kind:</div>
-    <div class="option selected"><svg class="icon"><use href="#i-server"/></svg><div><div class="o-title">Linux</div><div class="o-desc">For builds, servers, Docker and the agent's own work.</div></div><svg class="icon s"><use href="#i-check"/></svg></div>
-    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div><div class="o-title">Linux desktop</div><div class="o-desc">A desktop on the GPU, for browsers, apps and computer use.</div></div><span></span></div>
-    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div><div class="o-title">Linux desktop (no GPU)</div><div class="o-desc">A desktop drawn by the CPU. Slower graphics; nothing else changes.</div></div><span></span></div>
+    <div class="option selected"><svg class="icon"><use href="#i-server"/></svg><div class="o-title">Linux</div><svg class="icon s"><use href="#i-check"/></svg></div>
+    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div class="o-title">Linux desktop</div><span></span></div>
+    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div class="o-title">Linux desktop</div><span></span></div>
     <div class="label">Size:</div>
     <div class="seg"><button>Small</button><button class="on">Medium</button><button>Large</button><button>Custom</button></div>
     <div class="sizes">2 cores · 4 GiB memory · 16 GiB disk</div>
@@ -247,9 +247,9 @@ table.kinds tr:last-child td { border-bottom: 0; }
 <div class="frame" style="width: 400px; padding: 24px;">
   <div class="popover">
     <div class="label" style="margin-top:0">Kind:</div>
-    <div class="option"><svg class="icon"><use href="#i-server"/></svg><div><div class="o-title">Linux</div><div class="o-desc">For builds, servers, Docker and the agent's own work.</div></div><span></span></div>
-    <div class="option selected"><svg class="icon"><use href="#i-monitor"/></svg><div><div class="o-title">Linux desktop</div><div class="o-desc">A desktop on the GPU, for browsers, apps and computer use.</div></div><svg class="icon s"><use href="#i-check"/></svg></div>
-    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div><div class="o-title">Linux desktop (no GPU)</div><div class="o-desc">A desktop drawn by the CPU. Slower graphics; nothing else changes.</div></div><span></span></div>
+    <div class="option"><svg class="icon"><use href="#i-server"/></svg><div class="o-title">Linux</div><span></span></div>
+    <div class="option selected"><svg class="icon"><use href="#i-monitor"/></svg><div class="o-title">Linux desktop</div><svg class="icon s"><use href="#i-check"/></svg></div>
+    <div class="option"><svg class="icon"><use href="#i-monitor"/></svg><div class="o-title">Linux desktop</div><span></span></div>
     <div class="label">Size:</div>
     <div class="seg"><button>Small</button><button>Medium</button><button>Large</button><button class="on">Custom</button></div>
     <div class="fields">
@@ -323,7 +323,7 @@ table.kinds tr:last-child td { border-bottom: 0; }
         <div class="lead"><svg class="icon"><use href="#i-monitor"/></svg></div>
         <div class="grow">
           <div class="title"><span class="name">brisk-elm</span><span class="kind">Linux desktop</span></div>
-          <div class="status"><span class="dot bad"></span><span class="danger">Failed</span><span class="sep"></span><span class="danger truncate">No GPU is left: GPU-0a1b has 3 desktops and GPU-7c2d fell back to the CPU. Try a Linux desktop (no GPU).</span></div>
+          <div class="status"><span class="dot bad"></span><span class="danger">Failed</span><span class="sep"></span><span class="danger truncate">No GPU is left: GPU-0a1b has 3 desktops and GPU-7c2d fell back to the CPU. Try a linux-desktop-cpu box.</span></div>
         </div>
         <div class="actions"><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
       </div>
@@ -449,7 +449,7 @@ table.kinds tr:last-child td { border-bottom: 0; }
       </div>
       <div class="item">
         <div class="lead"><svg class="icon"><use href="#i-monitor"/></svg></div>
-        <div class="grow"><div class="title"><span class="name">wild-cove</span><span class="kind">Linux desktop (no GPU)</span></div><div class="status"><span class="dot off"></span><span>Stopped</span><span class="sep"></span><span>claude/opus/dev</span></div></div>
+        <div class="grow"><div class="title"><span class="name">wild-cove</span><span class="kind">Linux desktop</span></div><div class="status"><span class="dot off"></span><span>Stopped</span><span class="sep"></span><span>claude/opus/dev</span></div></div>
         <div class="actions"><button class="btn outline sm7">Open</button><button class="btn ghost icon-btn"><svg class="icon"><use href="#i-more"/></svg></button></div>
       </div>
     </div>
@@ -569,7 +569,7 @@ table.kinds tr:last-child td { border-bottom: 0; }
             <label class="field">Largest disk, GiB <input class="input sm" value="128"></label>
           </div>
         </td></tr>
-        <tr><td><span class="switch"></span></td><td><span class="muted">Linux desktop (no GPU)</span></td><td class="muted">Proxmox LXC</td><td class="muted">4 cores · 8 GiB · 32 GiB</td><td class="muted">16 · 32 GiB · 128 GiB</td><td class="muted">0</td><td class="muted"><svg class="icon s"><use href="#i-chevron-r"/></svg></td></tr>
+        <tr><td><span class="switch"></span></td><td><span class="muted">Linux desktop</span></td><td class="muted">Proxmox LXC</td><td class="muted">4 cores · 8 GiB · 32 GiB</td><td class="muted">16 · 32 GiB · 128 GiB</td><td class="muted">0</td><td class="muted"><svg class="icon s"><use href="#i-chevron-r"/></svg></td></tr>
       </table>
     </div>
   </div>

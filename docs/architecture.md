@@ -728,7 +728,9 @@ any state -> releasing -> released     (release, or the thread is archived or de
 6. **Released.** You or the agent release the box, or its thread is archived
    or deleted ([003](decisions/003-boxes-live-until-released.md)). bb-box
    removes the machine from BB, then the backend releases the guest. A missing
-   guest counts as released.
+   guest counts as released. A box a thread is working on is released or
+   stopped only when forced
+   ([034](decisions/034-a-working-thread-holds-its-box.md)).
 
 | | Virtual | Real |
 | --- | --- | --- |
@@ -857,7 +859,10 @@ A box is a resource of its thread and gets what the thread's own machine has.
     and keeps them for a minute. After that, a command gets the names it
     has while bb-box asks again in the background, so a variable added in
     BB reaches commands a minute or so later.
-- **Child threads.** A child thread can run on an enrolled box.
+- **Child threads.** A child thread can run on an enrolled box. You can
+  also start a thread on a new box from BB's new-thread screen, which BB
+  removes with the thread
+  ([033](decisions/033-a-thread-can-start-on-a-new-box.md)).
 - **Direct access.** The agent can also reach its boxes itself, for example
   with `ssh <box name>` or `DOCKER_HOST`, over the same network the BB server
   uses.

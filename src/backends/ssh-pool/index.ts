@@ -7,6 +7,7 @@ export const sshPoolDriver: BackendDriver<SshPoolConfig> = {
   label: "SSH host pool",
   description: "Your own machines, reached over SSH and reset between boxes.",
   nature: "real",
+  form: "Physical",
   kinds: SSH_POOL_KINDS,
   fields: SSH_POOL_FIELDS,
   setup: {

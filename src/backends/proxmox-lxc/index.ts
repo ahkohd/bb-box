@@ -7,6 +7,7 @@ export const proxmoxLxcDriver: BackendDriver<LxcConfig> = {
   label: "Proxmox LXC",
   description: "Linux boxes, with or without a desktop, as containers on a Proxmox VE host.",
   nature: "virtual",
+  form: "LXC",
   kinds: LXC_FLAVOURS.flatMap((flavour) => FLAVOUR_KINDS[flavour]),
   fields: LXC_FIELDS,
   setup: {

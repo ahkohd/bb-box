@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
-import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
 import { statusOf } from "../src/app/status.ts";
@@ -59,6 +59,7 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     kindLabel: "Linux",
     backendLabel: "Fake host",
     nature: "virtual",
+    form: "LXC",
     role: "box",
     state: "ready",
     error: null,
@@ -104,6 +105,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     desktop,
     admin: true,
     backends: ["Fake host"],
+    forms: ["LXC"],
   };
 }
 
@@ -130,7 +132,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
+function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
   let boxes = [...initial];
   const changes: string[] = [];
   const result = (found: BoxView | null): BoxResult => (options.failWith ? { box: null, error: options.failWith } : { box: found, error: null });
@@ -161,8 +163,10 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
       boxes = [...boxes, made];
       return result(made);
     },
-    release: ({ box: ref }) => change("release", ref, () => null),
-    stop: ({ box: ref }) => change("stop", ref, (found) => ({ ...found, state: "stopped" })),
+    release: ({ box: ref, force }) =>
+      options.inUse && !force ? { box: find(ref), error: null, threads: options.inUse } : change(force ? "release (forced)" : "release", ref, () => null),
+    stop: ({ box: ref, force }) =>
+      options.inUse && !force ? { box: find(ref), error: null, threads: options.inUse } : change(force ? "stop (forced)" : "stop", ref, (found) => ({ ...found, state: "stopped" })),
     start: ({ box: ref }) => change("start", ref, (found) => ({ ...found, state: "ready" })),
     refresh: ({ box: ref }) => change("refresh", ref, (found) => found),
     backends: () => BACKENDS,
@@ -260,6 +264,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
       id: backend.id,
       type: backend.type,
       label: "Fake host",
+      form: backend.type === "fake" ? "LXC" : "Physical",
       state: backend.enabled && (backend.fields.token as { set: boolean } | undefined)?.set === false ? "misconfigured" : backend.enabled ? "active" : "off",
       problems: backend.enabled && (backend.fields.token as { set: boolean } | undefined)?.set === false ? [{ path: "backends.fake.token", message: "Set the API token." }] : [],
       boxes: 2,
@@ -325,8 +330,8 @@ test("the status line says the state, the timings, BB enrolment and the display"
   expect(statusOf(box({ state: "stopped", size: "8 cores, 16 GiB memory, 64 GiB disk" }), now)).toEqual({ tone: "off", items: [{ text: "Stopped" }, { text: "8 cores · 16 GiB · 64 GiB" }] });
   expect(statusOf(box({ state: "failed", error: "No GPU is left." }), now).items).toEqual([{ text: "Failed", tone: "danger" }]);
   expect(statusOf(box({ state: "gone" }), now).items.map((item) => item.text)).toEqual(["Gone", "deleted outside bb-box"]);
-  expect(statusOf(desktopBox(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB", "GPU"]);
-  expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items.at(-1)).toEqual({ text: "CPU" });
+  expect(statusOf(desktopBox(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
+  expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items.at(-1)).toEqual({ text: "Display on the CPU", tone: "warn" });
   const held = desktopBox({ control: { owner: "human", holder: "viewer-1" } });
   expect(statusOf(held, now, new Set(["viewer-1"])).items.at(-1)).toEqual({ text: "You have control", tone: "fg" });
   expect(statusOf(held, now, new Set()).items.at(-1)).toEqual({ text: "Another viewer has control", tone: "fg" });
@@ -342,6 +347,8 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.getAllByText("Ready in 2.1 s")).toHaveLength(2);
   expect(slot.getAllByText("BB machine in 5.3 s")).toHaveLength(2);
   expect(slot.getByText("GPU")).toBeTruthy();
+  expect(slot.getAllByText("LXC")).toHaveLength(2);
+  expect(slot.getByRole("button", { name: "New box" }).textContent).toBe("");
   expect(slot.queryByText("192.0.2.10")).toBeNull();
 
   fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
@@ -379,8 +386,11 @@ test("the panel makes a box of the chosen kind, and remembers the kind", async (
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   const form = await screen.findByRole("radiogroup", { name: "Kind:" });
   expect(within(form).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+  expect(within(form).getByText("GPU")).toBeTruthy();
+  expect(within(form).getAllByText("LXC")).toHaveLength(2);
   fireEvent.click(within(form).getByRole("radio", { name: /Linux desktop/ }));
-  expect(screen.getByText("4 cores · 8 GiB memory · base disk · the default")).toBeTruthy();
+  expect(screen.getByText("4 cores · 8 GiB memory · base disk")).toBeTruthy();
+  expect(screen.queryByText(/A desktop on the GPU/)).toBeNull();
   const sizes = screen.getByRole("radiogroup", { name: "Size:" });
   expect(within(sizes).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["Small:true", "Medium:false", "Large:false", "Custom:false"]);
   fireEvent.click(within(sizes).getByRole("radio", { name: "Large" }));
@@ -463,6 +473,29 @@ test("releasing a box asks first", async () => {
   fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
   expect(await slot.findByText("No boxes yet")).toBeTruthy();
   expect(changes).toEqual(["release box_1"]);
+});
+
+test("a box a thread runs on is released or stopped only once the user says so", async () => {
+  const { handlers, changes } = server([box()], { inUse: [{ id: "thr_worker", title: "Build the app", running: true }] });
+  const slot = panel(handlers);
+  await slot.findByText("calm-otter");
+
+  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
+  let dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("Stop calm-otter anyway?")).toBeTruthy();
+  expect(within(dialog).getByText("Build the app is working on it, and would lose its machine.")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(changes).toEqual([]);
+
+  const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Release…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
+  dialog = await screen.findByRole("alertdialog", {}, { timeout: 2000 });
+  await within(dialog).findByText("Release calm-otter anyway?");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Release anyway" }));
+  expect(await slot.findByText("No boxes yet")).toBeTruthy();
+  expect(changes).toEqual(["release (forced) box_1"]);
 });
 
 test("the panel stops and starts a box that can, and not one that cannot", async () => {
@@ -560,6 +593,7 @@ test("the settings page lists each backend's state, the kinds and the general se
 
   expect(slot.getByText("Linux desktop")).toBeTruthy();
   expect(slot.getByText("GPU")).toBeTruthy();
+  expect(slot.getAllByText("LXC")).toHaveLength(2);
   expect(slot.getAllByText("From Fake host")).toHaveLength(2);
   expect(slot.getByText("1 warm on Fake host")).toBeTruthy();
   expect(slot.getByText("Small 2 cores · 4 GiB · base disk (default) · Medium 4 cores · 8 GiB · base disk · Large 8 cores · 16 GiB · base disk · up to 16 cores · 32 GiB · 256 GiB")).toBeTruthy();
@@ -567,7 +601,7 @@ test("the settings page lists each backend's state, the kinds and the general se
   expect(slot.getByRole("combobox", { name: "Default kind" }).textContent).toBe("Linux");
   expect((slot.getByRole("textbox", { name: "Boxes per thread" }) as HTMLInputElement).value).toBe("0");
   expect(slot.getByRole("switch", { name: "Enrol boxes as BB machines" }).getAttribute("aria-checked")).toBe("true");
-  expect(slot.getByText(/BB Box moved its settings from BB/)).toBeTruthy();
+  expect(slot.queryByText(/moved its settings/)).toBeNull();
 });
 
 test("a backend's switch saves the document with the switch changed, and a problem shows", async () => {

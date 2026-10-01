@@ -9,7 +9,7 @@ import type { DoctorReport } from "../backends/types.ts";
 import type { Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, boxLine, configText, doctorText, movedText, problemsText } from "./views.ts";
+import { adminText, boxDetail, boxLine, configText, doctorText, idleWords, movedText, problemsText } from "./views.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -107,7 +107,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               kinds
                 .map((kind) => {
                   const presets = kind.presets.map((preset) => `  ${preset.name}${preset.name === kind.defaultPreset ? " (default)" : ""}: ${preset.words}`);
-                  return [`${kind.id}: ${kind.label}, from ${kind.backends.join(", ")}. ${kind.description} ${adminText(kind.admin)}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
+                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, from ${kind.backends.join(", ")}. ${kind.description} ${adminText(kind.admin)}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
                 })
                 .join("\n"),
             );
@@ -159,14 +159,17 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         release: cliCommand({
-          summary: "Release a box. Its disk is deleted.",
+          summary: "Release a box. Its disk is deleted. A box a thread is working on is refused unless --force.",
           positionals: boxPositional,
-          options: threadOption,
+          options: { ...threadOption, force: { type: "boolean", description: "Release it even while threads are working on it, which ends their work." } },
           run: ({ positionals, options }, ctx) =>
             guard("Releasing the box", async () => {
-              const left = await boxes.release(threadOf(options.thread, ctx), positionals.box);
+              const threadId = threadOf(options.thread, ctx);
+              const box = await boxes.get(threadId, positionals.box);
+              const idle = options.force ? await app.threadsOn(box) : await app.checkInUse(box, "Releasing");
+              const left = await boxes.release(threadId, positionals.box);
               if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
-              return out(`Released box ${positionals.box}.`);
+              return out(`Released box ${positionals.box}.${idleWords(idle, false)}`);
             }),
         }),
         "install-id": cliCommand({

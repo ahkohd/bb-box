@@ -7,19 +7,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { BoxSize } from "../backends/types.ts";
+import type { BoxForm, BoxSize } from "../backends/types.ts";
 import type { Problem } from "../core/document.ts";
 import type { Preset } from "../core/sizes.ts";
 import type { BackendState, ConfigState, KindInfoView } from "../plugin/configuration.ts";
-import { Meta, StatusDot } from "./common.tsx";
+import { KindBadges, Meta, StatusDot } from "./common.tsx";
 import { PRESET_LABELS, PRESET_NAMES, gib, mib, problemAt, problemsLeft, sizeWords, type KindSizes } from "./config.ts";
-import { Chip, FieldShell, FormHeading } from "./settings-fields.tsx";
+import { FieldShell, FormHeading } from "./settings-fields.tsx";
 
 export interface KindRowModel {
   readonly info: KindInfoView;
   readonly sizes: KindSizes;
-  /** The backends in the document that can make it, with whether each offers it now and its warm count. */
-  readonly backends: readonly { readonly id: string; readonly label: string; readonly offers: boolean; readonly warm: number }[];
+  /** The backends in the document that can make it, with what its boxes are there, whether each offers it now and its warm count. */
+  readonly backends: readonly { readonly id: string; readonly label: string; readonly form: BoxForm | null; readonly offers: boolean; readonly warm: number }[];
   readonly problems: readonly Problem[];
 }
 
@@ -28,7 +28,7 @@ export function kindRowModel(state: ConfigState, info: KindInfoView, sizes: Kind
     .filter((backend) => info.drivers.includes(backend.type))
     .map((backend) => {
       const live: BackendState | undefined = state.backends.find((candidate) => candidate.id === backend.id);
-      return { id: backend.id, label: live?.label ?? backend.label ?? backend.type, offers: live?.kinds.includes(info.id) ?? false, warm: backend.warm?.[info.id] ?? 0 };
+      return { id: backend.id, label: live?.label ?? backend.label ?? backend.type, form: live?.form ?? null, offers: live?.kinds.includes(info.id) ?? false, warm: backend.warm?.[info.id] ?? 0 };
     });
   return { info, sizes, backends, problems: state.problems.filter((problem) => problem.path === `kinds.${info.id}` || problem.path.startsWith(`kinds.${info.id}.`)) };
 }
@@ -39,6 +39,7 @@ export function KindRow({ model, open, onToggle, onSwitch, switching, children }
   const warm = backends.filter((backend) => backend.warm > 0).map((backend) => `${backend.warm} warm on ${backend.label}`);
   const spares = sizes.spares > 0 ? [`${sizes.spares} ${sizes.spares === 1 ? "spare" : "spares"}`] : [];
   const presets = PRESET_NAMES.map((preset) => `${PRESET_LABELS[preset]} ${sizeWords(sizes.presets[preset])}${preset === sizes.default ? " (default)" : ""}`);
+  const forms = [...new Set(backends.map((backend) => backend.form).filter((form): form is BoxForm => form !== null))];
   return (
     <div className="py-3 first:pt-0 last:pb-0">
       <div className="flex items-start gap-3">
@@ -46,7 +47,7 @@ export function KindRow({ model, open, onToggle, onSwitch, switching, children }
         <div className="min-w-0 flex-1">
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
             <span className="truncate">{info.label}</span>
-            {info.gpu ? <Chip>GPU</Chip> : null}
+            <KindBadges gpu={info.gpu} forms={forms} />
           </p>
           <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
             <StatusDot tone={!sizes.enabled ? "off" : offering.length ? "ok" : "warn"} className="mt-[0.3rem]" />
@@ -181,7 +182,7 @@ export function KindForm({ model, onSave, onClose }: { model: KindRowModel; onSa
     >
       <div className="space-y-2">
         <FormHeading>Presets</FormHeading>
-        <p className="text-2xs leading-snug text-subtle-foreground/75">A preset leaves the disk at the base unless it has one. The default is what a box gets when none is asked for.</p>
+        <p className="text-2xs leading-snug text-subtle-foreground/75">An empty disk is the base disk.</p>
         <div role="radiogroup" aria-label="Default preset" className="space-y-2">
           {PRESET_NAMES.map((preset) =>
             sizeRow(
@@ -204,7 +205,7 @@ export function KindForm({ model, onSave, onClose }: { model: KindRowModel; onSa
       {model.backends.length ? (
         <div className="space-y-2">
           <FormHeading>Warm boxes</FormHeading>
-          <p className="text-2xs leading-snug text-subtle-foreground/75">Ready boxes kept waiting on each backend, so a new box is ready at once. 0 keeps none.</p>
+          <p className="text-2xs leading-snug text-subtle-foreground/75">Ready boxes kept waiting, so a new one is ready at once.</p>
           <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
             {model.backends.map((backend) => (
               <FieldShell key={backend.id} label={backend.label} problem={problemAt(problems, `backends.${backend.id}.warm.${info.id}`)}>

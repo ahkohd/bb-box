@@ -7,6 +7,7 @@ export const dockerDriver: BackendDriver<DockerConfig> = {
   label: "Docker",
   description: "Linux boxes, with or without a desktop, as containers on a Docker host. It needs only Docker.",
   nature: "virtual",
+  form: "Docker",
   kinds: DOCKER_KINDS,
   fields: DOCKER_FIELDS,
   setup: {

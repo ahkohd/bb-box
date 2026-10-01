@@ -347,7 +347,7 @@ test("box details and kind lists say whether the box user can become root", asyn
 
   // Offers of a kind may differ: an SSH host pool's linux machines give no root.
   const rooted = FAKE_KINDS.map((kind) => ({ ...kind, capabilities: { ...kind.capabilities, command: { ...kind.capabilities.command!, admin: true } } }));
-  const other = { label: "Rooted host" } as Backend;
+  const other = { id: "ssh-pool:rooted", label: "Rooted host" } as Backend;
   const views = kindViews([{ kind: FAKE_KINDS[0]!, backend: world.backend }, ...rooted.map((kind) => ({ kind, backend: other }))], {});
   assert.deepEqual(
     views.map((view) => [view.id, view.admin, adminText(view.admin)]),

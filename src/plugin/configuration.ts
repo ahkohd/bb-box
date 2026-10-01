@@ -5,7 +5,7 @@
 
 import { layeredStorage, scopedStorage, type Backends } from "../backends/index.ts";
 import { kindInfo } from "../backends/kinds.ts";
-import type { BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature } from "../backends/types.ts";
+import type { BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm } from "../backends/types.ts";
 import type { BoxRecord } from "../core/boxes.ts";
 import {
   GENERAL_DEFAULTS,
@@ -68,6 +68,8 @@ export interface BackendState {
   readonly id: string;
   readonly type: string;
   readonly label: string;
+  /** What its boxes are, as a badge; null for a driver bb-box no longer has. */
+  readonly form: BoxForm | null;
   readonly state: "active" | "off" | "misconfigured";
   readonly problems: readonly Problem[];
   /** Boxes it holds, in any state but gone. */
@@ -266,6 +268,7 @@ export class Configuration {
           id: backend.id,
           type: backend.type,
           label: status?.label ?? backend.label ?? backend.type,
+          form: drivers.find((driver) => driver.type === backend.type)?.form ?? null,
           state: status?.state ?? "misconfigured",
           problems: status?.fieldProblems ?? [],
           boxes: inUse.backends.get(backend.id) ?? 0,

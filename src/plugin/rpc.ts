@@ -18,6 +18,20 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     }
   };
 
+  /** Leaves a box a thread runs on alone unless forced, and names the threads, so the panel can ask. */
+  const guarded = async (threadId: string, ref: string, force: boolean | undefined, task: () => Promise<BoxResult>): Promise<BoxResult> => {
+    if (!force) {
+      try {
+        const box = await boxes.get(threadId, ref);
+        const threads = (await app.threadsOn(box)).filter((thread) => thread.running);
+        if (threads.length) return { box: app.view(box), error: null, threads };
+      } catch (error) {
+        return { box: null, error: describeError(error, "Checking the box") };
+      }
+    }
+    return task();
+  };
+
   const desktopBox = async (threadId: string, ref: string): Promise<BoxRecord> => {
     const box = await boxes.get(threadId, ref);
     if (!box.capabilities.displays.length) throw new ControlError(`Box ${box.name} has no desktop.`);
@@ -31,8 +45,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     },
     acquire: ({ threadId, kind, size }) =>
       change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size })),
-    release: ({ threadId, box }) => change("Releasing the box", () => boxes.release(threadId, box)),
-    stop: ({ threadId, box }) => change("Stopping the box", () => boxes.stop(threadId, box)),
+    release: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Releasing the box", () => boxes.release(threadId, box))),
+    stop: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Stopping the box", () => boxes.stop(threadId, box))),
     start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box)),
     refresh: ({ threadId, box }) => change("Checking the box", () => boxes.refresh(threadId, box)),
     async desktop({ threadId, box: ref }) {

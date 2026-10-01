@@ -1,5 +1,5 @@
-// "New box": a popover with one small form, the kind and the size, and one
-// button. The size is a preset, or a custom one within the kind's largest
+// "New box": a plus that opens a popover with one small form, the kind (its
+// glyph, name and badges) and the size, and one button. The size is a preset, or a custom one within the kind's largest
 // (028). It remembers the last kind and size in the browser, keyed by
 // plugin ID.
 
@@ -8,8 +8,10 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
+import { KindBadges } from "./common.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -176,12 +178,18 @@ export function NewBox({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm" disabled={!kinds.length}>
-          <Icon name="Plus" aria-hidden />
-          New box
-        </Button>
-      </PopoverTrigger>
+      <TooltipProvider delayDuration={250}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label="New box" disabled={!kinds.length}>
+                <Icon name="Plus" className="size-4" aria-hidden />
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent>New box</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <PopoverContent align="end" className="w-80 p-4" mobileTitle="New box">
         <form
           className="space-y-3"
@@ -191,7 +199,7 @@ export function NewBox({
           }}
         >
           <div>
-            <p id="new-box-kind" className="mb-1.5 text-xs text-muted-foreground">
+            <p id="new-box-kind" className="mb-1.5 text-xs font-medium text-foreground">
               Kind:
             </p>
             <div role="radiogroup" aria-labelledby="new-box-kind" className="space-y-0.5" onKeyDown={(event) => arrows(event, kinds.length, kindIndex, (position) => chooseKind(kinds[position]!, true))}>
@@ -209,16 +217,16 @@ export function NewBox({
                     tabIndex={selected ? 0 : -1}
                     onClick={() => chooseKind(candidate)}
                     className={cn(
-                      "grid w-full grid-cols-[1rem_minmax(0,1fr)_1rem] items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
+                      "grid w-full grid-cols-[1rem_minmax(0,1fr)_1rem] items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
                       selected && "bg-state-active",
                     )}
                   >
-                    <Icon name={`${pluginId}/${candidate.desktop ? "monitor" : "server"}`} className="mt-0.5 size-4 text-muted-foreground" aria-hidden />
-                    <span className="min-w-0">
-                      <span className="block text-xs text-foreground">{candidate.label}</span>
-                      <span className="block text-2xs leading-snug text-muted-foreground">{candidate.description}</span>
+                    <Icon name={`${pluginId}/${candidate.desktop ? "monitor" : "server"}`} className="size-4 text-muted-foreground" aria-hidden />
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-xs text-foreground">{candidate.label}</span>
+                      <KindBadges gpu={candidate.gpu} forms={candidate.forms} />
                     </span>
-                    {selected ? <Icon name="Check" className="mt-0.5 size-4 text-foreground" aria-hidden /> : <span />}
+                    {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
                   </button>
                 );
               })}
@@ -226,7 +234,7 @@ export function NewBox({
           </div>
           {kind ? (
             <div>
-              <p id="new-box-size" className="mb-1.5 text-xs text-muted-foreground">
+              <p id="new-box-size" className="mb-1.5 text-xs font-medium text-foreground">
                 Size:
               </p>
               <div role="radiogroup" aria-labelledby="new-box-size" className="flex gap-1" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
@@ -254,10 +262,7 @@ export function NewBox({
                 })}
               </div>
               {preset ? (
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  {sizeLine(preset)}
-                  {preset.name === kind.defaultPreset ? " · the default" : ""}
-                </p>
+                <p className="mt-1.5 text-xs text-muted-foreground">{sizeLine(preset)}</p>
               ) : (
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {field("cores", "Cores", largest?.cores ?? null)}

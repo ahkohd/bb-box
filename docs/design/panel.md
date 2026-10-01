@@ -43,10 +43,28 @@ qualifier and only desktops say so.
 | `linux` | Linux | server |
 | `linux-docker` | Linux with Docker | server |
 | `linux-desktop` | Linux desktop | monitor |
-| `linux-desktop-cpu` | Linux desktop (no GPU) | monitor |
+| `linux-desktop-cpu` | Linux desktop | monitor |
 | later `macos`, `macos-desktop`, `windows-desktop` | macOS, macOS desktop, Windows desktop | server, monitor |
 
-The panel shows `kindLabel` from the backend; the IDs appear nowhere.
+The panel shows `kindLabel` from the backend; the IDs appear nowhere. Two
+kinds may share a label: the GPU desktop and the CPU desktop are both
+"Linux desktop", and badges tell them apart (the operator's annotation of
+1 October 2026, which removed "(no GPU)" from the label).
+
+### Badges
+
+BB's chip (its machine picker's and settings sections' small bordered word)
+sits after a kind's or a box's label, in the Kinds rows, the box rows, the
+New box options and the desktop lists:
+
+- **GPU** where the kind takes one. A box of a GPU kind whose display fell
+  back to the CPU says "Display on the CPU" in its status line, in warning
+  text; otherwise the status line does not repeat the badge.
+- **What the box is**, one word from its backend's driver: LXC, Docker, VM
+  or Physical. A kind on offer from several backends shows each once.
+
+Nothing else is a badge: "desktop" and "with Docker" are in the label, and
+the backend's name is in the row's details. Calm, not stacked.
 bb-box's own icon is a cube; BB has no cube, monitor or server glyph, so the
 plugin declares its three as SVGs (`bb.branding.experimental_icons`), drawn
 in the weight of BB's set.
@@ -61,32 +79,33 @@ tab (1 October 2026): one tab, one place for the thread's boxes.
 
 ```
 +------------------------------------------------------------+
-| 3 boxes                                        [+ New box] |   toolbar
+| 3 boxes                                                [+] |   toolbar
 +------------------------------------------------------------+
-| [=] quiet-fern  Linux                                  ...  |   row
+| [=] quiet-fern  Linux [LXC]                            ...  |   row
 |     (spinner) Starting · 1.4 s · 2 cores · 4 GiB · 16 GiB   |
 |------------------------------------------------------------|
-| [#] bold-heron  Linux desktop                    [#] [>_] ... |
+| [#] bold-heron  Linux desktop [GPU] [LXC]        [#] [>_] ... |
 |     (green) Ready in 2.2 s · BB machine in 5.3 s ·          |
-|     4 cores · 8 GiB · 32 GiB · GPU · You have control       |
+|     4 cores · 8 GiB · 32 GiB · You have control             |
 |     Address     10.200.0.14                                 |   details, when open
 |     Backend     Proxmox LXC on pve                          |
 |     ...                                                     |
 |------------------------------------------------------------|
-| [=] calm-otter  Linux with Docker               [>] ...     |
+| [=] calm-otter  Linux with Docker [Physical]    [>] ...     |
 |     (ring) Stopped · 8 cores · 16 GiB · 64 GiB              |
 +------------------------------------------------------------+
 ```
 
 - **Toolbar**: a count on the left in muted text ("3 boxes"; nothing when
-  there are none) and "New box" on the right, BB's outline button with a
-  plus.
+  there are none) and a plus on the right: BB's ghost icon button, with
+  the tooltip and accessible name "New box" (the operator asked for the
+  button without a label or border, 1 October 2026).
 - **List**: BB's list panel (`rounded-lg border bg-card px-4`), one row per
   box, divided by hairlines, newest last so a new box appears where the eye
   is after pressing the button.
 - **Row**: BB's resource row. A leading glyph (server or monitor), the name
-  in `text-sm font-medium`, the kind label beside it in muted `text-xs`, and
-  a status line below in muted `text-xs`. Trailing: the row's quick actions
+  in `text-sm font-medium`, the kind label beside it in muted `text-xs`, its
+  badges, and a status line below in muted `text-xs`. Trailing: the row's quick actions
   and its menu, always visible, since the panel is narrow and touch is
   common.
 - **Click** on the row (not on a button) opens its details under the status
@@ -169,34 +188,37 @@ Anything in the box user's home will be deleted."
 
 ### New box
 
-"New box" opens a popover (a bottom sheet on compact viewports) with one
+The plus opens a popover (a bottom sheet on compact viewports) with one
 small form:
 
 ```
 Kind:
-  (o) [=] Linux                    For builds, servers, Docker and the agent's own work.
-  ( ) [#] Linux desktop            A desktop on the GPU, for browsers, apps and computer use.
-  ( ) [#] Linux desktop (no GPU)   A desktop drawn by the CPU. Slower graphics; nothing else changes.
+  (o) [=] Linux [LXC]
+  ( ) [#] Linux desktop [GPU] [LXC]
+  ( ) [#] Linux desktop [LXC]
 Size:
   [ Small ] [ Medium ] [ Large ] [ Custom ]
   2 cores · 4 GiB memory · base disk
 [ Create ]
 ```
 
-The popover has no heading of its own: the button that opens it already
-says "New box", so its first line is "Kind:" (the operator's annotation of
-1 October 2026). On a compact viewport the bottom sheet still carries the
-title "New box".
+The popover has no heading of its own: the button that opens it is named
+"New box", so its first line is "Kind:" (the operator's annotation of
+1 October 2026). "Kind:" and "Size:" are the section labels, in
+`text-xs font-medium text-foreground`, so they stand above their options
+(a second annotation the same day). On a compact viewport the bottom sheet
+still carries the title "New box".
 
-- **Kind** is a list of options with a glyph, the label and one line of
-  description, chosen with a click or the arrow keys; the chosen one is
-  highlighted with a check. The list comes from the kinds on offer. The
-  descriptions are the backends' `description`, so a new backend's kinds
-  need no panel change.
+- **Kind** is a list of options, each its glyph, label and badges and
+  nothing more (the operator found the descriptions noise, 1 October 2026;
+  they stay where agents read them, in `box_list` and the skill), chosen
+  with a click or the arrow keys; the chosen one is
+  highlighted with a check. The list comes from the kinds on offer, so a
+  new backend's kinds need no panel change.
 - **Size** follows decision 028: Small, Medium and Large are the kind's
-  presets, and the kind's default preset is chosen at first, marked "the
-  default". The chosen size's words sit under the control ("2 cores · 4 GiB
-  memory · base disk"). Custom shows three fields, cores, memory in GiB and
+  presets, and the kind's default preset is chosen at first; being chosen
+  says so, so nothing calls it the default. The chosen size's words sit
+  under the control ("2 cores · 4 GiB memory · base disk"). Custom shows three fields, cores, memory in GiB and
   disk in GiB, each with "up to" the kind's largest, starting from the
   preset the person was looking at; a field left empty takes the default
   preset's value, and an empty disk keeps the base disk. The form sends a
@@ -213,10 +235,10 @@ title "New box".
 
 - **No boxes**: BB's dashed empty panel: "No boxes yet", then "A computer
   for this thread." The operator asked for that line to stay this simple
-  (1 October 2026). The toolbar's "New box" is the action; the panel does
-  not repeat it.
+  (1 October 2026). The toolbar's plus is the action; the panel does not
+  repeat it.
 - **No backend on**: "BB Box is not set up yet. Turn on a backend in its
-  settings to make boxes." with an "Open BB Box settings" button that goes
+  settings." with an "Open BB Box settings" button that goes
   to the plugin's settings page. No "New box" button.
 - **Loading**: BB's skeleton rows, shown only after 200 ms so a fast load
   does not flash.
@@ -291,7 +313,7 @@ from a thread's Box panel."
 | toolbar | New box |
 | chooser | Kind: · Size: · Small · Medium · Large · Custom · Create |
 | empty | No boxes yet · A computer for this thread. |
-| not set up | BB Box is not set up yet. Turn on a backend in its settings to make boxes. · Open BB Box settings |
+| not set up | BB Box is not set up yet. Turn on a backend in its settings. · Open BB Box settings |
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |
 | actions | Open desktop · Open desktop in a browser tab · Open terminal · Copy address · Start · Stop · Check now · Release… |
 | release | Release bold-heron? · Its disk and everything on it will be deleted. Copy out anything you want to keep first. · Cancel · Release |

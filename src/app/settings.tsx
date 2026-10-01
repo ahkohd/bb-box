@@ -124,7 +124,7 @@ export function SettingsSection() {
           {notice}
         </p>
       ) : null}
-      <Section title="Backends" description="Where boxes come from. Turn one on and set it up; the check says what is still missing.">
+      <Section title="Backends" description="Where boxes come from.">
         {backends.map((model) => {
           const id = backendId(model);
           return (
@@ -163,7 +163,7 @@ export function SettingsSection() {
           );
         })}
       </Section>
-      <Section title="Kinds" description="What a thread can ask for. A kind is offered when it is on and a backend that is on has it.">
+      <Section title="Kinds" description="A kind is offered when it is on and a backend that is on has it.">
         {state.kinds.map((info) => {
           const sizes = effectiveKind(state, info.id);
           const model = kindRowModel(state, info, sizes);
@@ -212,7 +212,7 @@ export function SettingsSection() {
             </SelectContent>
           </Select>
         </GeneralRow>
-        <GeneralRow label="Boxes per thread" description="The most one thread may hold. 0 means no limit; a backend still refuses a box it has no room for." problem={state.problems.find((problem) => problem.path === "general.boxesPerThread")?.message}>
+        <GeneralRow label="Boxes per thread" description="0 means no limit." problem={state.problems.find((problem) => problem.path === "general.boxesPerThread")?.message}>
           <Input
             className="h-8 w-20 text-xs"
             inputMode="numeric"
@@ -228,15 +228,10 @@ export function SettingsSection() {
             }}
           />
         </GeneralRow>
-        <GeneralRow label="Enrol boxes as BB machines" description="A ready box joins BB, so threads and terminals can use it and it gets the thread's credentials.">
+        <GeneralRow label="Enrol boxes as BB machines" description="Threads and terminals can then use a box, with the thread's credentials.">
           <Switch aria-label="Enrol boxes as BB machines" checked={general.enrol} disabled={busy === "general"} onCheckedChange={(enrol) => void applyNow("general", withGeneral(document, { enrol: enrol === state.defaults.general.enrol ? undefined : enrol }))} />
         </GeneralRow>
       </Section>
-      {state.migrated ? (
-        <p className="text-xs leading-snug text-subtle-foreground/75">
-          BB Box moved its settings from BB into this configuration {relativeTime(state.migrated.at, Date.now())}, and kept a copy; <code className="font-mono">bb box config migrated</code> shows it.
-        </p>
-      ) : null}
     </div>
   );
 }

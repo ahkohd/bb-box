@@ -589,6 +589,7 @@ export function fakeDriver(
     label: "Fake host",
     description: "Guests in directories on this machine.",
     nature: options.nature ?? "virtual",
+    form: options.nature === "real" ? "Physical" : "VM",
     kinds: (options.kinds ?? FAKE_KINDS).map((kind) => kind.id),
     fields: {
       address: { type: "string", label: "Address", description: "Where the fake host is.", group: "connection", default: "here" },

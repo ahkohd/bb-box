@@ -78,8 +78,14 @@ async function start(
     names: [] as string[],
     /** Threads bb-box asked BB to start. */
     spawned: [] as unknown[],
+    /** Changes bb-box made to threads. */
+    updated: [] as unknown[],
+    /** Threads that run on each BB machine, by host ID. */
+    onHost: new Map<string, { id: string; title: string | null; status: string; hasPendingInteraction: boolean; archivedAt: number | null; deletedAt: number | null }[]>(),
     /** The project's sources, by machine, as BB keeps them. */
     sources: [] as { hostId: string; type: string }[],
+    /** The thread's project's kind: BB's personal project has no repository. */
+    projectKind: "standard" as "standard" | "personal",
     /** How long after bootstrap returns BB shows a machine it has connected again, or null for never. */
     connectAfterMs: 0 as number | null,
     /** How many threads run on each machine, by host ID. */
@@ -98,6 +104,11 @@ async function start(
           return thread;
         },
         count: async ({ hostId }: { hostId: string }) => ({ total: world.hostThreads.get(hostId) ?? 0 }),
+        update: async (args: unknown) => {
+          world.updated.push(args);
+          return makeThreadResponse({ id: (args as { threadId: string }).threadId, projectId: PROJECT });
+        },
+        list: async ({ hostId }: { hostId?: string }) => (hostId ? (world.onHost.get(hostId) ?? []) : []) as never,
         spawn: async (args: unknown) => {
           world.spawned.push(args);
           return makeThreadResponse({ id: `thr_child${world.spawned.length}`, projectId: PROJECT });
@@ -113,7 +124,7 @@ async function start(
         },
       },
       projects: {
-        get: async ({ projectId }: { projectId: string }) => ({ id: projectId, sources: world.sources }) as never,
+        list: async () => [{ id: PROJECT, kind: world.projectKind, sources: world.projectKind === "personal" ? [] : world.sources }] as never,
         sources: {
           add: async ({ hostId, type }: { hostId: string; type: string }) => {
             world.sources.push({ hostId, type });
@@ -677,7 +688,6 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
   const [args] = world.spawned as Record<string, unknown>[];
   assert.deepEqual(args, {
     projectId: PROJECT,
-    parentThreadId: THREAD,
     lifecycleOwnerThreadId: THREAD,
     environment: { type: "host", hostId: box.boxes[0]!.enrol.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
     prompt: "Run uname -a",
@@ -695,6 +705,76 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
   assert.equal(world.sources.length, 1, "later threads use the same clone");
 });
 
+test("in BB's personal project, a thread on a box takes a personal workspace there, with no clone (#55)", async (t) => {
+  const { harness, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.projectKind = "personal";
+  await tool("box_acquire", {});
+  const { boxes } = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { boxes: { name: string; enrol: { hostId: string } }[] };
+  const started = text(await tool("box_thread", { box: boxes[0]!.name, prompt: "Run uname -a" }));
+  assert.match(started, /^Started thread thr_child1 on box /);
+  const [args] = world.spawned as { environment: { hostId: string }; parentThreadId?: string }[];
+  assert.equal(args!.environment.hostId, boxes[0]!.enrol.hostId, "the child's machine is the box's");
+  assert.deepEqual(args!.environment, { type: "host", hostId: boxes[0]!.enrol.hostId, workspace: { type: "personal" } });
+  // Spawned with a parent, BB would give it the parent's environment; it is linked afterwards.
+  assert.equal(args!.parentThreadId, undefined);
+  assert.deepEqual(world.updated, [{ threadId: "thr_child1", parentThreadId: THREAD }]);
+  assert.deepEqual(world.sources, [], "nothing is cloned");
+});
+
+test("a box a thread is working on is not released or stopped unless forced, and an idle thread does not stop it", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  const thread = (id: string, title: string, status: string, others: { archivedAt?: number; hasPendingInteraction?: boolean } = {}) => ({
+    id,
+    title,
+    status,
+    hasPendingInteraction: false,
+    archivedAt: null,
+    deletedAt: null,
+    ...others,
+  });
+  world.onHost.set(box.enrol.hostId!, [thread("thr_worker", "Build the app", "active"), thread("thr_done", "Tests", "idle"), thread("thr_old", "Old", "idle", { archivedAt: 1 })]);
+
+  for (const [name, action] of [["box_release", "Releasing"], ["box_stop", "Stopping"]] as const) {
+    const refused = await tool(name, { box: box.name });
+    assert.ok(isError(refused), name);
+    assert.match(text(refused), new RegExp(`^${action} box ${box.name} would end the work of thread "Build the app" \\(thr_worker\\), which is working on it\\. Wait until it is done\\.`));
+  }
+  const panel = (await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name })) as { box: { state: string }; threads: unknown[] };
+  assert.equal(panel.box.state, "ready", "the panel's release leaves it for the user to confirm");
+  assert.deepEqual(panel.threads, [{ id: "thr_worker", title: "Build the app", running: true }]);
+  const cli = await harness.behavior.runCli(["release", box.name, "--thread", THREAD]);
+  assert.equal(cli.exitCode, 1);
+
+  // A thread waiting on a question to the user is working too.
+  world.onHost.set(box.enrol.hostId!, [thread("thr_asking", "Asks", "idle", { hasPendingInteraction: true }), thread("thr_done", "Tests", "idle")]);
+  assert.ok(isError(await tool("box_stop", { box: box.name })));
+
+  // Once it has finished, the box goes, and the answer says which threads lost their machine.
+  world.onHost.set(box.enrol.hostId!, [thread("thr_done", "Tests", "idle")]);
+  const released = text(await tool("box_release", { box: box.name }));
+  assert.match(released, new RegExp(`^Released box ${box.name}\\. Thread "Tests" \\(thr_done\\), idle on it, lost its machine\\. Archive it if it is done\\.`));
+  assert.deepEqual(await app.boxes.list(THREAD), []);
+});
+
+test("the panel and the CLI release a box with only idle threads at once, and force a working one", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  await tool("box_acquire", {});
+  const [first, second] = await Promise.all((await app.boxes.list(THREAD)).map((box) => app.boxes.enrolled(box)));
+  const idle = { id: "thr_done", title: "Tests", status: "idle", hasPendingInteraction: false, archivedAt: null, deletedAt: null };
+  world.onHost.set(first!.enrol.hostId!, [idle]);
+  world.onHost.set(second!.enrol.hostId!, [{ ...idle, id: "thr_worker", status: "active" }]);
+
+  assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: first!.name }), { box: null, error: null });
+  const cli = await harness.behavior.runCli(["release", second!.name, "--thread", THREAD, "--force"]);
+  assert.equal(cli.exitCode, 0, cli.stderr);
+  assert.deepEqual(await app.boxes.list(THREAD), []);
+});
 test("a box that is not a BB machine cannot run a thread, and says why (#55)", async (t) => {
   const { harness, tool, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
   t.after(() => harness.lifecycle.dispose());
