@@ -48,7 +48,7 @@ const run = join(home, "run", "bb-box");
 mkdirSync(run, { recursive: true });
 if (!existsSync(join(run, "display-mode"))) {
   const forced = join(root, "display", host);
-  const [mode, reason] = existsSync(forced) ? readFileSync(forced, "utf8").split("\n") : ["gpu", "fake GPU"];
+  const [mode, reason] = existsSync(forced) ? readFileSync(forced, "utf8").split("\n") : ["gpu", "GPU has 7800 MiB free"];
   writeFileSync(join(run, "display-mode"), `${mode}\n`);
   writeFileSync(join(run, "display-reason"), `${reason ?? ""}\n`);
 }

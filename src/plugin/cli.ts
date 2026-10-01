@@ -5,7 +5,7 @@ import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCli
 import { BoxError, describeError } from "../core/boxes.ts";
 import { PRESETS } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
-import { boxDetail, boxLine, doctorText } from "./views.ts";
+import { adminText, boxDetail, boxLine, doctorText } from "./views.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -72,7 +72,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               kinds
                 .map((kind) => {
                   const presets = kind.presets.map((preset) => `  ${preset.name}${preset.name === kind.defaultPreset ? " (default)" : ""}: ${preset.words}`);
-                  return [`${kind.id}: ${kind.label}, from ${kind.backends.join(", ")}. ${kind.description}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
+                  return [`${kind.id}: ${kind.label}, from ${kind.backends.join(", ")}. ${kind.description} ${adminText(kind.admin)}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
                 })
                 .join("\n"),
             );

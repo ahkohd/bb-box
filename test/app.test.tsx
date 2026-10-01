@@ -100,6 +100,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     largest: size(cores * 8, cores * 16, 256),
     gpu: desktop,
     desktop,
+    admin: true,
     backends: ["Fake host"],
   };
 }

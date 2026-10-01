@@ -48,7 +48,10 @@ Limits:
   relative workspace path is under the thread's workspace directory. A
   relative box path, or one that starts with `~/`, is under the box user's
   home.
-- The box user can use `sudo` without a password.
+- `box_status` says whether the box user can use `sudo`, and `box_list`
+  says it for each kind. On Proxmox LXC boxes and the SSH host pool's
+  `linux-docker` it can, without a password; on the pool's `linux` it
+  cannot.
 - Each command reads `~/.config/bb-box/env`, which sets `BB_BOX_ID`,
   `BB_BOX_NAME`, `BB_BOX_KIND` and `BB_THREAD_ID`, and `BB_HOST_ID` once the
   box is a BB machine.

@@ -13,7 +13,7 @@ import { BoxError, Boxes, extraFeatures, type BoxRecord, type BoxesDeps, type Th
 import type { GeneralConfig } from "../src/core/config.ts";
 import { accessSetup, accessSetupMs, envScript } from "../src/core/in-box.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
-import { boxView } from "../src/plugin/views.ts";
+import { adminText, boxDetail, boxView, kindViews } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -317,6 +317,34 @@ test("a box's view shows the size its guest says, else the size asked for (028)"
   assert.equal(boxView({ ...box, guest: { ...box.guest!, size: null } }, true, control).size, "2 cores, 4 GiB memory");
   const { size: _, ...before } = box;
   assert.equal(boxView({ ...before, guest: null }, true, control).size, null, "a box from before sizes, with no guest yet");
+});
+
+test("box details and kind lists say whether the box user can become root", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const admin = (value: boolean, os = box.capabilities.os): BoxRecord => ({
+    ...box,
+    capabilities: { ...box.capabilities, os, command: { ...box.capabilities.command!, admin: value } },
+  });
+  assert.match(boxDetail(box), /\nRoot: no, the box user cannot use sudo\. box_list shows the kinds that give root\n/);
+  assert.match(boxDetail(admin(true)), /\nRoot: yes, through sudo without a password\n/);
+  assert.match(boxDetail(admin(true, "windows")), /\nAdministrator: yes\n/);
+  assert.doesNotMatch(boxDetail({ ...box, capabilities: { ...box.capabilities, command: null } }), /Root|Administrator/, "a box without commands");
+
+  // Offers of a kind may differ: an SSH host pool's linux machines give no root.
+  const rooted = FAKE_KINDS.map((kind) => ({ ...kind, capabilities: { ...kind.capabilities, command: { ...kind.capabilities.command!, admin: true } } }));
+  const other = { label: "Rooted host" } as Backend;
+  const views = kindViews([{ kind: FAKE_KINDS[0]!, backend: world.backend }, ...rooted.map((kind) => ({ kind, backend: other }))], {});
+  assert.deepEqual(
+    views.map((view) => [view.id, view.admin, adminText(view.admin)]),
+    [
+      ["linux", null, "Root: on some of its backends, through sudo; box_status says for each box."],
+      ["linux-desktop", true, "Root: yes, through sudo without a password."],
+    ],
+  );
+  assert.equal(adminText(false), "Root: no, the box user cannot use sudo.");
+  const commandless = { ...FAKE_KINDS[0]!, capabilities: { ...FAKE_KINDS[0]!.capabilities, command: null } };
+  assert.equal(kindViews([{ kind: commandless, backend: other }], {})[0]!.admin, false, "a kind without commands gives no root");
 });
 
 test("concurrent acquires from different threads never share the last room", async () => {
