@@ -5,12 +5,16 @@
 // machine is used until a person turns it on.
 
 import { experimental_Icon as Icon, experimental_usePluginId, useRpc } from "@get-bb/plugin-sdk/app";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { DockerHostView } from "../plugin/docker-hosts.ts";
 import { EmptyPanel, message, Meta, StatusDot, useLive, type Tone } from "./common.tsx";
 import { Section } from "./settings-fields.tsx";
+
+/** How often the list looks again while a machine builds its images. */
+const BUILD_POLL_MS = 3_000;
 
 /** "Docker 29.8.1", then the machine's cores and memory, as one line. */
 export function dockerFacts(host: DockerHostView): string[] {
@@ -29,6 +33,16 @@ export function hostState(host: DockerHostView): { tone: Tone; text: string } {
   return { tone: host.docker ? "off" : "bad", text: host.docker ? "Can host boxes" : "Cannot host boxes" };
 }
 
+/** The machine's image build, as the row says it, or null when there is nothing to say. */
+export function buildWords(host: DockerHostView): { tone: Tone; text: string } | null {
+  const build = host.images;
+  if (!build) return null;
+  if (build.state === "checking") return { tone: "busy", text: "Checking its images" };
+  if (build.state === "building") return { tone: "busy", text: `Building ${build.targets.join(" and ")} images${build.detail ? `: ${build.detail}` : ""}` };
+  if (build.state === "failed") return { tone: "bad", text: `Building its images failed: ${build.detail ?? "no reason given"}` };
+  return build.detail ? { tone: "warn", text: build.detail } : null;
+}
+
 export function DockerHostsSection() {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
@@ -36,6 +50,13 @@ export function DockerHostsSection() {
   const { value: hosts, error, refresh } = useLive<DockerHostView[]>("docker-hosts", async () => (await rpc.call("docker.hosts")).hosts, () => false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // A build takes minutes: look again every few seconds while one runs.
+  const building = hosts?.some((host) => host.images?.state === "checking" || host.images?.state === "building") ?? false;
+  useEffect(() => {
+    if (!building) return;
+    const timer = setInterval(() => void refresh(), BUILD_POLL_MS);
+    return () => clearInterval(timer);
+  }, [building, refresh]);
 
   const set = async (host: DockerHostView, enabled: boolean) => {
     setBusy(host.hostId);
@@ -76,6 +97,7 @@ export function DockerHostsSection() {
       ) : null}
       {hosts.map((host) => {
         const state = hostState(host);
+        const build = buildWords(host);
         const on = host.backend?.enabled ?? false;
         return (
           <div key={host.hostId} data-resource-row className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3 first:pt-0 last:pb-0">
@@ -89,6 +111,12 @@ export function DockerHostsSection() {
                 <Meta items={[state.text, ...dockerFacts(host)]} />
               </div>
               {host.problem && host.connected ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{host.problem}</p> : null}
+              {build ? (
+                <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
+                  <StatusDot tone={build.tone} className="mt-[0.3rem]" />
+                  <span className={cn("min-w-0 break-words", build.tone === "bad" && "text-destructive-text")}>{build.text}</span>
+                </div>
+              ) : null}
             </div>
             <Switch
               aria-label={`Host boxes on ${host.name}`}

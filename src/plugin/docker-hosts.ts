@@ -14,6 +14,7 @@
 
 import type { BackendConfig, ConfigDocument } from "../core/document.ts";
 import type { DockerInfo } from "../backends/docker/cli.ts";
+import type { ImageBuild } from "./docker-images.ts";
 
 /** BB's machines as the settings list reads them. */
 export interface MachineRecord {
@@ -35,6 +36,8 @@ export interface DockerHostView {
   readonly problem: string | null;
   /** The Docker backend the configuration has for this machine. */
   readonly backend: { readonly id: string; readonly enabled: boolean; readonly boxes: number } | null;
+  /** Its last image build, or the one running (src/plugin/docker-images.ts). */
+  readonly images: ImageBuild | null;
 }
 
 /** The host field of a Docker backend on BB machine `hostId`. */
@@ -72,6 +75,8 @@ export interface DockerHostsDeps {
   docker(hostId: string, signal: AbortSignal): Promise<DockerInfo>;
   /** Boxes bb-box holds on each backend, by backend ID. */
   boxes(): Promise<ReadonlyMap<string, number>>;
+  /** The machine's last image build, or the one running. */
+  images?(hostId: string): ImageBuild | null;
   readonly timeoutMs?: number;
   /** How long Docker's facts on a machine are kept, so the page does not open every relay each time. */
   readonly freshMs?: number;
@@ -110,6 +115,7 @@ export class DockerHosts {
           docker: checked.docker,
           problem: checked.problem,
           backend: backend ? { id: backend.id, enabled: backend.enabled, boxes: boxes.get(backend.id) ?? 0 } : null,
+          images: this.#deps.images?.(machine.id) ?? null,
         };
       }),
     );

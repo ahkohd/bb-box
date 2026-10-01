@@ -20,9 +20,15 @@ import { registerDesktop, type Desktops } from "./desktop.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, type RetiredTerminals } from "./holder.ts";
-import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
+import { DockerCli, LABELS, type DockerInfo } from "../backends/docker/cli.ts";
+import { IMAGE_VERSION } from "../backends/docker/config.ts";
+import { dockerDriver } from "../backends/docker/index.ts";
+import { backendPart } from "../core/document.ts";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
-import { DockerHosts, withDockerHost, type MachineRecord } from "./docker-hosts.ts";
+import { DockerHosts, backendOn, withDockerHost, type MachineRecord } from "./docker-hosts.ts";
+import { DockerImages } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { ThreadOnBox } from "./contract.ts";
@@ -69,6 +75,8 @@ export interface BbBox {
   readonly relay: RelayHub;
   /** BB machines that can host Docker boxes (042). */
   readonly dockerHosts: DockerHosts;
+  /** Builds bb-box's images on BB machines that host Docker boxes (042). */
+  readonly dockerImages: DockerImages;
   /** Turns a BB machine on or off as a Docker host (042), through the configuration. */
   setDockerHost(hostId: string, enabled: boolean): Promise<ApplyResult>;
   /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
@@ -167,6 +175,8 @@ export interface SetupOptions {
   readonly terminalIdleMs?: number;
   /** How long an enrolment waits for a worker of BB's daemon with the thread's variables. */
   readonly variablesWaitMs?: number;
+  /** setup/docker/build.sh, which builds images on a BB machine (042). By default the one beside the plugin's bundle. */
+  readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
   readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree">;
 }
@@ -454,7 +464,36 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   /** Each thread's machine, once it has an environment. */
   const threadHosts = new Map<string, string>();
+  const buildScript =
+    options.dockerBuildScript !== undefined ? options.dockerBuildScript : (() => {
+      // The bundle is dist/server.js, so the plugin's files are one up.
+      const script = fileURLToPath(new URL("../setup/docker/build.sh", import.meta.url));
+      return existsSync(script) ? script : null;
+    })();
+  const dockerImages = new DockerImages({
+    script: buildScript,
+    images(hostId) {
+      const config = backendOn(configuration.document, hostId);
+      if (!config) return [];
+      const parsed = dockerDriver.parse(backendPart(config, dockerDriver, {}, configuration.document.backends));
+      return parsed.ok ? [...new Set(Object.values(parsed.config.images).filter((image): image is string => image !== null))] : [];
+    },
+    async host(hostId) {
+      await machines.ready(hostId);
+      return relay.address(hostId);
+    },
+    async stale(hostId, image) {
+      const result = await new DockerCli(relay.address(hostId)).run(["image", "inspect", "--format", "{{json .Config.Labels}}", image], { timeoutMs: 30_000 });
+      if (result.exitCode !== 0) return true;
+      const labels = (JSON.parse(result.stdout || "null") as Record<string, unknown> | null) ?? {};
+      return labels[LABELS.imageVersion] !== IMAGE_VERSION;
+    },
+    changed: () => notify(null),
+    logError,
+    log: (message) => bb.log.info(message),
+  });
   const dockerHosts = new DockerHosts({
+    images: (hostId) => dockerImages.state(hostId),
     machines: async () => (await bb.sdk.hosts.list({ includeCreating: false } as never)) as unknown as readonly MachineRecord[],
     document: () => configuration.document,
     providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],
@@ -478,13 +517,17 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     enrolment,
     relay,
     dockerHosts,
+    dockerImages,
     async setDockerHost(hostId, enabled) {
       const machine = (await dockerHosts.list()).find((candidate) => candidate.hostId === hostId);
       if (!machine) throw new BoxError("not_found", `BB machine ${hostId} cannot host boxes: it is not a connected, persistent machine of BB's that bb-box did not make.`);
       if (enabled && !machine.docker) throw new BoxError("unsupported", `${machine.name} cannot host boxes yet. ${machine.problem ?? ""}`.trim());
       const document = configuration.document;
       dockerHosts.forget(hostId);
-      return configuration.apply(withDockerHost(document, { id: hostId, name: machine.name }, enabled, machine.backend?.boxes ?? 0), document.revision);
+      const result = await configuration.apply(withDockerHost(document, { id: hostId, name: machine.name }, enabled, machine.backend?.boxes ?? 0), document.revision);
+      // Turned on, it builds the images it lacks there; the row shows the build until it ends.
+      if (result.ok && enabled) void dockerImages.ensure(hostId);
+      return result;
     },
     async dockerCheck(machine, signal) {
       const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];

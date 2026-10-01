@@ -1586,6 +1586,7 @@ test("Docker on BB machines lists each machine with Docker's facts, and its swit
     docker: { version: "29.8.1", os: "Arch Linux", arch: "x86_64", cpus: 16, memoryMiB: 100 * 1024 },
     problem: null,
     backend: null,
+    images: null,
     ...more,
   });
   const { handlers, changes } = server([], {
@@ -1593,6 +1594,8 @@ test("Docker on BB machines lists each machine with Docker's facts, and its swit
       machine("host_b", "behemoth"),
       machine("host_n", "no-docker", { docker: null, problem: "Docker did not answer: connect: no such file or directory" }),
       machine("host_o", "sleepy", { connected: false, docker: null, problem: "The machine is offline in BB.", backend: { id: "docker:sleepy", enabled: true, boxes: 1 } }),
+      machine("host_g", "builder", { backend: { id: "docker:builder", enabled: true, boxes: 0 }, images: { state: "building", targets: ["linux", "desktop"], detail: "#5 [linux 2/9] RUN apt-get install", startedAt: 0, endedAt: null } }),
+      machine("host_f", "broken", { backend: { id: "docker:broken", enabled: true, boxes: 0 }, images: { state: "failed", targets: ["linux"], detail: "build.sh exited with 1: ERROR: failed to solve", startedAt: 0, endedAt: 1 } }),
     ],
   });
   const slot = settings(handlers);
@@ -1606,6 +1609,9 @@ test("Docker on BB machines lists each machine with Docker's facts, and its swit
   expect(within(row("no-docker")).getByText(/Docker did not answer/)).toBeTruthy();
   expect((within(row("no-docker")).getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
   expect(within(row("sleepy")).getByText("Offline in BB, 1 box on it")).toBeTruthy();
+  // A machine turned on builds the images it lacks, and the row says so until the build ends.
+  expect(within(row("builder")).getByText("Building linux and desktop images: #5 [linux 2/9] RUN apt-get install")).toBeTruthy();
+  expect(within(row("broken")).getByText("Building its images failed: build.sh exited with 1: ERROR: failed to solve")).toBeTruthy();
 
   fireEvent.click(within(row("behemoth")).getByRole("switch", { name: "Host boxes on behemoth" }));
   await waitFor(() => expect(changes).toContain("docker.host.set host_b true"));
