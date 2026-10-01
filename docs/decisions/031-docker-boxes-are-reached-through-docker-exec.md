@@ -63,8 +63,11 @@ the stream 0.6 s and the copy 2.2 to 3 s.
 
 ## Consequences
 
-- A Docker host over SSH, Docker Desktop and rootless Docker work as a local
-  rootful host does, with only the `docker` CLI on BB's server.
+- A Docker host over SSH works as a local rootful host does, with only the
+  `docker` CLI on BB's server. Docker Desktop and rootless Docker should
+  work the same way, but have not been tested. Rootless Docker cannot run
+  privileged containers, so it has no linux-docker boxes: the doctor fails
+  them there.
 - Every command pays for one `docker exec`, and over `ssh://` for an SSH
   session too.
 - linux-docker boxes are root on the Docker host, so they stay off unless

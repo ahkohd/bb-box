@@ -360,6 +360,19 @@ test("box details and kind lists say whether the box user can become root", asyn
   assert.equal(kindViews([{ kind: commandless, backend: other }], {})[0]!.admin, false, "a kind without commands gives no root");
 });
 
+test("box details promise a restored box enrols again only when its kind can enrol", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const restored = (enrol: boolean): BoxRecord => ({
+    ...box,
+    restoredAt: Date.now(),
+    enrol: { state: "off", hostId: null, error: null },
+    capabilities: { ...box.capabilities, enrol },
+  });
+  assert.match(boxDetail(restored(true)), /\nBB machine: not enrolled since bb-box restored its lost record\. It enrols again once it runs and answers/);
+  assert.match(boxDetail(restored(false)), /\nBB machine: not enrolled(\n|$)/, "a kind that never enrols, such as linux-docker");
+});
+
 test("concurrent acquires from different threads never share the last room", async () => {
   const world = setup({ maxGuests: 2 });
   const results = await Promise.allSettled(

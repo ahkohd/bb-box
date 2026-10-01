@@ -1010,9 +1010,8 @@ Nothing expires, so a box must never be forgotten.
 
 - **Ownership is recorded at the provider** where it can be: tags on a Proxmox
   guest, labels set as the container is made for Docker, an owner file per
-  VM for Tart, a marker file on
-  a real machine. `held()` reads it back, so the sweep works even if bb-box's
-  storage is lost.
+  VM for Tart, a marker file on a real machine. `held()` reads it back, so
+  the sweep works even if bb-box's storage is lost.
 - **Each install records its ID** on every guest it makes, and `held()`
   returns only that install's guests. Two BB servers, or a smoke run, can
   share a pool and never touch each other's guests. An install that lost

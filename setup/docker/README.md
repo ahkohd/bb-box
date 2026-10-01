@@ -52,13 +52,16 @@ stream 0.6 s.
 - **Enrolment.** A box enrols in BB by reaching BB's server URL from inside
   its container. If BB listens only on the Docker host's localhost, a box
   cannot reach it, and enrolment fails. Then either make BB listen on an
-  address the containers reach, or turn off **Enrol boxes as BB machines** in bb-box's
-  settings: commands, file copies, desktops and computer use work without it.
+  address the containers reach, or turn off **Enrol boxes as BB machines**
+  in bb-box's settings: commands, file copies, desktops and computer use work
+  without it.
 
 ## Requirements
 
 - Docker Engine with BuildKit, on Linux, or Docker Desktop. bb-box was tested
-  with Docker 29.8.
+  with Docker 29.8, rootful, on Linux. Docker Desktop and rootless Docker
+  have not yet been tested. Rootless Docker cannot run linux-docker boxes,
+  which need privileged containers, and the doctor says so.
 - The `docker` CLI on BB's server, on the PATH of the user BB runs as, and
   that user allowed to use Docker. On Linux, add it to the `docker` group.
   For a Docker host over SSH, that user must log in to it with a key and no
@@ -89,9 +92,9 @@ each other download against its pinned SHA-256. When the snapshot service
 has an outage, the build retries for a few minutes, then fails; run it again
 later.
 
-Building both takes about 10 minutes, mostly downloads. The images are `bbbox/linux:1` and
-`bbbox/linux-desktop:1`, and the `1` is the images' layout version, which
-`bb box doctor` checks.
+Building both takes about 10 minutes, mostly downloads. The images are
+`bbbox/linux:1` and `bbbox/linux-desktop:1`, and the `1` is the images'
+layout version, which `bb box doctor` checks.
 
 ## 2. Settings
 

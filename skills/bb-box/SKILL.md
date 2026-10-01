@@ -69,9 +69,9 @@ backend offers:
 A kind is on offer only when its templates are set. The Docker backend
 offers the same kinds as containers, with the same tools, and
 `linux-docker` and `linux-desktop` only when the operator turns them on. A
-Docker box runs no systemd, so `systemctl` does not work in it. The earlier IDs
-`linux-headless` and `linux-headless-docker` still work in `box_acquire`, as
-`linux` and `linux-docker`.
+Docker box runs no systemd, so `systemctl` does not work in it. The earlier
+IDs `linux-headless` and `linux-headless-docker` still work in
+`box_acquire`, as `linux` and `linux-docker`.
 
 Its boxes run Ubuntu 24.04 with build tools, Git, Python with `uv`, Node.js
 with pnpm and Yarn, Docker, `gh`, `rg`, `fd`, `jj` and the Claude Code, Codex

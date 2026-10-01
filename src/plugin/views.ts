@@ -223,9 +223,10 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   for (const fact of box.guest?.facts ?? []) lines.push(`${fact.label}: ${fact.value}`);
   if (control && capabilities.displays.length) lines.push(`Desktop control: ${CONTROL_WORDS[control.owner]}`);
   const enrol: Record<EnrolState, string> = {
-    off: box.restoredAt
-      ? "not enrolled since bb-box restored its lost record. It enrols again once it runs and answers, if bb-box enrols boxes"
-      : "not enrolled",
+    off:
+      box.restoredAt && capabilities.enrol
+        ? "not enrolled since bb-box restored its lost record. It enrols again once it runs and answers, if bb-box enrols boxes"
+        : "not enrolled",
     enrolling: "being added, which takes a few seconds. box_run waits for it, so commands have the thread's access",
     enrolled: "enrolled",
     failed: `enrolment failed${box.enrol.error ? `: ${box.enrol.error}` : ""}`,
