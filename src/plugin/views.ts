@@ -240,8 +240,12 @@ const CONTROL_WORDS: Record<ControlView["owner"], string> = {
   none: "changing hands",
 };
 
-/** Whether a kind's box user can become root, for kind lists. */
-export function adminText(admin: boolean | null): string {
+/** Whether a kind's box user can become root, or Administrator on Windows, for kind lists. */
+export function adminText({ admin, os }: Pick<KindView, "admin" | "os">): string {
+  if (os === "windows") {
+    if (admin === null) return "Administrator: on some of its backends; box_status says for each box.";
+    return admin ? "Administrator: yes, and commands run elevated." : "Administrator: no, the box user is a standard user.";
+  }
   if (admin === null) return "Root: on some of its backends, through sudo; box_status says for each box.";
   return admin ? "Root: yes, through sudo without a password." : "Root: no, the box user cannot use sudo.";
 }
