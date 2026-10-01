@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BoxError, Boxes, extraFeatures, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { accessSetup, accessSetupMs, envScript } from "../src/core/in-box.ts";
+import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs, envScript } from "../src/core/in-box.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
 import { adminText, boxDetail, boxView, kindViews } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
@@ -537,6 +537,20 @@ esac
         .map((call) => call.split(" ").at(-1)!.split(",").map(Number).sort((a, b) => a - b)),
   };
 }
+
+test("the access check says whether the env file set any of the names, or else whether BB's daemon runs", async (t) => {
+  const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
+  t.after(daemon.stop);
+  // The environment stands for what the env file set.
+  const check = (parent: string, env: Record<string, string> = {}) =>
+    spawnSync("sh", ["-c", accessCheck("linux", { names: ["GH_TOKEN", "MACHINE_VAR"], parent })!], { env: { PATH: process.env.PATH, ...env } }).status;
+  assert.equal(check(daemon.parent, { MACHINE_VAR: "value-machine" }), ACCESS_CHECK_EXITS.found);
+  assert.equal(check(daemon.parent), ACCESS_CHECK_EXITS.waiting, "the daemon runs, with no worker that has the names");
+  assert.equal(check(daemon.parent, { MACHINE_VAR: "" }), ACCESS_CHECK_EXITS.waiting, "an empty value does not count");
+  assert.equal(check(join(tempDir("access-check"), "no-daemon")), ACCESS_CHECK_EXITS.noDaemon);
+  assert.equal(accessCheck("windows", { names: ["GH_TOKEN"], parent: daemon.parent }), null);
+  assert.equal(accessCheck("linux", { names: ["not a name"], parent: daemon.parent }), null);
+});
 
 test("in a macOS box, the env file takes the thread's access from the daemon's newest worker with the most names, as on Linux", () => {
   const parent = "host-daemon/dist/daemon-bundle";

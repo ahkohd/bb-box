@@ -856,6 +856,11 @@ export class Boxes {
     return { box, result: stopped ? { ...result, timedOut: true } : result };
   }
 
+  /** Where commands in an enrolled box take the thread's access from, if from anywhere. */
+  async access(box: BoxRecord): Promise<Access | undefined> {
+    return (await this.#deps.access?.(box)) ?? undefined;
+  }
+
   /** Waits a few seconds for a box that is enrolling to finish, and returns it as it is then. */
   async enrolled(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
     const deadline = this.#now() + (this.#deps.enrolWaitMs ?? 10_000);
@@ -882,8 +887,7 @@ export class Boxes {
     if (!hostId) return envScript(box.capabilities.os, variables);
     variables.BB_HOST_ID = hostId;
     try {
-      const access = (await this.#deps.access?.(box)) ?? undefined;
-      return envScript(box.capabilities.os, variables, access);
+      return envScript(box.capabilities.os, variables, await this.access(box));
     } catch (error) {
       this.#deps.logError("access", error);
       return undefined;
