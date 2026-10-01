@@ -53,6 +53,9 @@ What the backends can do:
     still being acquired.
   - A virtual backend makes the size asked for. A pool claims its smallest
     free machine that is at least that size, which may be larger.
+  - A machine has a size's memory when its OS reports at least 90% of it.
+    The firmware and kernel keep some, so an 8 GiB machine reports about
+    7.7 GiB, and a VM's total is below what it was given.
   - `Guest.size` is the size the box has, read from the guest, or null when
     the backend cannot tell. `held()` reads it too, so a restored record has
     it ([019](019-lost-records-are-restored-from-guests.md)) without a label
@@ -71,7 +74,9 @@ What the backends can do:
   the difference, which capacity counts.
 - Proxmox LXC's cores, memory and disk settings per flavour go. Their saved
   values become the default preset's size for the flavour's kinds, once.
-  The `warm` setting stays.
+  The `warm` setting stays. Until
+  [029](029-configuration-is-one-checked-document.md)'s document, the
+  presets are kept in the general setting `box-sizes`.
 
 ## Consequences
 
@@ -84,7 +89,8 @@ What the backends can do:
 - The conformance suite makes a box at a preset other than the default and
   checks what the box sees: cores (`nproc`), memory (its cgroup's
   `memory.max`, or the VM's total) and disk (`df /`), or at least those for
-  a pool. Capacity must refuse a size larger than any host.
+  a pool. Memory counts by the 90% rule. Capacity must refuse a size larger
+  than any host.
 - Tool output, `box_status` and the panel show each box's size, such as
   "4 cores, 8 GiB memory, 32 GiB disk".
 - Changing a running box's size is a later step: Proxmox LXC and Docker can
