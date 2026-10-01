@@ -20,6 +20,8 @@ import { registerDesktop, type Desktops } from "./desktop.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, type RetiredTerminals } from "./holder.ts";
+import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
+import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { ThreadOnBox } from "./contract.ts";
@@ -43,6 +45,8 @@ const DOCTOR_TIMEOUT_MS = 30_000;
 const DAEMON_NAMES = ["GH_TOKEN", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
 /** How long the names of BB's machine variables are kept before a refresh. */
 const NAMES_FRESH_MS = 60_000;
+/** How long the host call that opens a Docker relay may take, the worker's start included. */
+const RELAY_CALL_TIMEOUT_MS = 15_000;
 /** bb-box's version, which the move from BB's settings records. */
 export const VERSION: string = packageJson.version;
 
@@ -58,6 +62,10 @@ export interface BbBox {
   readonly computer: Computer;
   /** The configuration document (029). */
   readonly configuration: Configuration;
+  /** The Docker API relay to BB machines that are Docker hosts (042). */
+  readonly relay: RelayHub;
+  /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
+  dockerCheck(machine: string, signal?: AbortSignal): Promise<{ hostId: string; name: string; endpoint: string; info: DockerInfo; firstMs: number; againMs: number }>;
   general(): Promise<GeneralConfig>;
   view(box: BoxRecord): BoxView;
   /** Who controls a box's desktop. */
@@ -241,6 +249,19 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     log: (message) => bb.log.info(message),
   });
   host.experimental_onWorkerExit(({ hostId }) => holders.forget(hostId));
+
+  // The Docker API relay (042): a socket per BB machine for the docker CLI, each
+  // connection a channel on one WebSocket the machine's worker opens out to this route.
+  const relay = new RelayHub({
+    open: (hostId, secret, signal) =>
+      host.call("relay", { secret, path: `/api/v1/plugins/${bb.pluginId}/http${RELAY_ROUTE}` }, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS }),
+    // No box uses the relay yet, so an idle one closes.
+    keep: async () => false,
+    logError,
+    log: (message) => bb.log.info(message),
+  });
+  bb.http.experimental_websocket(RELAY_ROUTE, ({ url }) => relay.route(url), { auth: "none" });
+  bb.onDispose(() => relay.dispose());
   let enrolment: Enrolment;
   let desktops: Desktops | undefined;
   let terminals: Terminals | undefined;
@@ -380,6 +401,20 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     boxes,
     backends,
     enrolment,
+    relay,
+    async dockerCheck(machine, signal) {
+      const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];
+      const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);
+      if (!found) throw new BoxError("not_found", `BB has no machine ${machine}. bb machine list lists them.`);
+      const endpoint = await relay.endpoint(found.id);
+      const cli = new DockerCli(endpoint);
+      let started = performance.now();
+      const info = await cli.info(signal);
+      const firstMs = Math.round(performance.now() - started);
+      started = performance.now();
+      await cli.ok(["version", "--format", "{{.Server.Version}}"], { timeoutMs: 30_000, signal });
+      return { hostId: found.id, name: found.name, endpoint, info, firstMs, againMs: Math.round(performance.now() - started) };
+    },
     desktops: desktop,
     terminals: terminal,
     computer: computing,
