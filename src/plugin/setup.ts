@@ -83,6 +83,17 @@ export interface BbBox {
    * parent, which is also when the box goes. Returns its ID.
    */
   startThread(input: { threadId: string; box: string; prompt: string; title?: string; signal?: AbortSignal }): Promise<string>;
+  /**
+   * The box whose BB machine a thread runs on, whoever owns it (036): one
+   * of your machines, a "New box", or another thread's box. Null when the
+   * thread runs on no box.
+   */
+  runsOn(threadId: string, signal?: AbortSignal): Promise<BoxRecord | null>;
+  /**
+   * A box a thread may use: one of its own, or else the box it runs on,
+   * with the thread that owns it for the calls that take one.
+   */
+  resolve(threadId: string, ref: string, signal?: AbortSignal): Promise<{ owner: string; box: BoxRecord; runsOn: boolean }>;
   /** The threads, not archived or deleted, that run on a box's BB machine. */
   threadsOn(box: BoxRecord): Promise<ThreadOnBox[]>;
   /**
@@ -438,6 +449,26 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return { hostId: environment.hostId, path: environment.path ?? null };
     },
     projectOf,
+    async runsOn(threadId, signal) {
+      let hostId: string;
+      try {
+        hostId = (await api.workspace(threadId, signal)).hostId;
+      } catch {
+        return null;
+      }
+      return (await boxes.all()).find((box) => box.enrol.hostId === hostId && box.state !== "gone" && box.state !== "releasing") ?? null;
+    },
+    async resolve(threadId, ref, signal) {
+      try {
+        const box = await boxes.get(threadId, ref);
+        return { owner: threadId, box, runsOn: false };
+      } catch (error) {
+        if (!(error instanceof BoxError) || error.code !== "not_found") throw error;
+        const machine = await api.runsOn(threadId, signal);
+        if (machine && (machine.id === ref || machine.name === ref)) return { owner: machine.threadId, box: machine, runsOn: true };
+        throw error;
+      }
+    },
     async threadsOn(box) {
       const hostId = box.enrol.hostId;
       if (!hostId) return [];

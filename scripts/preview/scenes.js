@@ -264,7 +264,7 @@ function configState(options = {}) {
 function rpc(boxes, options = {}) {
   const find = (ref) => boxes.find((candidate) => candidate.id === ref) ?? null;
   return {
-    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
+    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: null }),
     desktop: ({ box: ref }) => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     desktops: () => boxes.filter((candidate) => candidate.desktop).map((candidate) => ({ threadId: THREAD, box: candidate })),
     acquire: () => ({ box: null, error: options.refuse ?? null }),

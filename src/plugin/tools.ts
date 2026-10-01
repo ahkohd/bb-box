@@ -4,7 +4,7 @@
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
 import { z } from "zod";
-import { BoxError, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, OPERATOR, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
 import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import type { BbBox } from "./setup.ts";
@@ -29,6 +29,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   released: "Acquire a new box with box_acquire.",
   unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
   invalid_name: "Pick another name: a lower-case letter first, then letters, digits and \"-\".",
+  not_owner: "Keep using it with box_run, box_copy and the other box tools; its owner releases or stops it.",
   in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
 };
 
@@ -102,6 +103,12 @@ function kindSizesText(kind: KindView): string {
   return `${presets.join(", ")}; custom up to ${kind.largest.words}`;
 }
 
+/** Why the box this thread runs on, but does not own, is not released or stopped from here (036). */
+function runsOnRefusal(box: BoxRecord, action: "release" | "stop"): BoxError {
+  if (box.threadId === OPERATOR) return new BoxError("not_owner", `Box ${box.name} is your machine, which this thread runs on. Remove or stop it in BB Box's settings.`);
+  return new BoxError("not_owner", `Box ${box.name} is thread ${box.threadId}'s, and this thread runs on it. ${action === "release" ? "Release" : "Stop"} it from that thread.`);
+}
+
 export const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
 
 export function registerTools(bb: BbPluginApi, app: BbBox): void {
@@ -168,9 +175,14 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     parameters: z.object({}),
     async execute(_params, { threadId }) {
       try {
-        const list = await boxes.list(thread(threadId));
-        const kinds = await app.kinds();
-        const lines = [list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes."];
+        const id = thread(threadId);
+        const [list, kinds, machine] = await Promise.all([boxes.list(id), app.kinds(), app.runsOn(id)]);
+        const lines: string[] = [];
+        // The box this thread runs on comes first, unless it is the thread's own and listed below (036).
+        if (machine && !list.some((box) => box.id === machine.id)) {
+          lines.push(`The machine this thread runs on:\n${boxLine(machine)}; ${machine.threadId === OPERATOR ? "yours" : `thread ${machine.threadId}'s`}`);
+        }
+        lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
             ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${adminText(kind.admin)}`).join("\n")}`
@@ -193,9 +205,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     parameters: z.object({ box: boxParam }),
     async execute({ box: ref }, { threadId, signal }) {
       try {
-        const id = thread(threadId);
-        const box = await boxes.refresh(id, ref, signal).catch(async (error) => {
-          if (error instanceof BoxError && error.code === "backend_off") return boxes.get(id, ref);
+        const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
+        const box = await boxes.refresh(owner, found.id, signal).catch(async (error) => {
+          if (error instanceof BoxError && error.code === "backend_off") return boxes.get(owner, found.id);
           throw error;
         });
         const hints: Record<string, string[]> = {
@@ -236,7 +248,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     }),
     async execute({ box: ref, command, cwd, timeout_seconds, stdin, desktop }, { threadId, signal }) {
       try {
-        const { box, result } = await boxes.run(thread(threadId), ref, command, {
+        const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
+        const { box, result } = await boxes.run(owner, found.id, command, {
           cwd,
           stdin,
           timeoutMs: (timeout_seconds ?? RUN_TIMEOUT_S) * 1000,
@@ -271,6 +284,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     async execute({ box: ref, direction, from, to }, { threadId, signal }) {
       try {
         const id = thread(threadId);
+        const { owner, box: found } = await app.resolve(id, ref, signal);
         const workspace = await app.workspace(id, signal);
         const rootPath = workspace.path ?? undefined;
         if (direction === "to_box") {
@@ -279,11 +293,11 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
           const file = await bb.sdk.files.read({ hostId: workspace.hostId, path: source, rootPath, signal });
           if (!("content" in file)) throw new Error(`BB did not return the contents of ${source}.`);
           if (file.sizeBytes > COPY_MAX_BYTES) throw new Error(`${source} is ${file.sizeBytes} bytes; box_copy moves files up to ${COPY_MAX_BYTES / 1024 / 1024} MiB. Split or compress it first.`);
-          const box = await boxes.writeFile(id, ref, target, bytes(file.content, file.contentEncoding), { signal });
+          const box = await boxes.writeFile(owner, found.id, target, bytes(file.content, file.contentEncoding), { signal });
           return `Copied ${source} (${file.sizeBytes} bytes) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
         }
         const target = workspacePath(workspace.path, to ?? posix.basename(from));
-        const { box, data } = await boxes.readFile(id, ref, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal });
+        const { box, data } = await boxes.readFile(owner, found.id, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal });
         await bb.sdk.files.write({
           hostId: workspace.hostId,
           path: target,
@@ -307,8 +321,10 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     async execute({ box: ref }, { threadId, signal }) {
       try {
         const id = thread(threadId);
-        const idle = await app.checkInUse(await boxes.get(id, ref), "Stopping");
-        const box = await boxes.stop(id, ref, signal);
+        const { box: found, runsOn } = await app.resolve(id, ref, signal);
+        if (runsOn) throw runsOnRefusal(found, "stop");
+        const idle = await app.checkInUse(found, "Stopping");
+        const box = await boxes.stop(id, found.id, signal);
         return `Box ${box.name} is stopped.${idleWords(idle, true)}${next(`Call box_start with box "${box.name}" when you need it again, or box_release if you do not.`)}`;
       } catch (error) {
         return failure(error, "Stopping the box");
@@ -324,7 +340,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     async execute({ box: ref }, { threadId, signal }) {
       try {
         // Its BB machine reconnects after the start; box_run would wait for that anyway.
-        const box = await boxes.enrolled(await boxes.start(thread(threadId), ref, signal), signal);
+        const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
+        const box = await boxes.enrolled(await boxes.start(owner, found.id, signal), signal);
         return `${boxDetail(box, app.control(box))}${next(...using(box))}`;
       } catch (error) {
         return failure(error, "Starting the box");
@@ -362,7 +379,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     async execute({ box: ref }, { threadId }) {
       try {
         const id = thread(threadId);
-        const box = await boxes.get(id, ref);
+        const { box, runsOn } = await app.resolve(id, ref);
+        if (runsOn) throw runsOnRefusal(box, "release");
         const idle = await app.checkInUse(box, "Releasing");
         const left = await boxes.release(id, box.id);
         if (left) {
