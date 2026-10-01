@@ -54,6 +54,31 @@ desktop through bb-box's own transports. They do not get the thread's Git
 credentials and machine variables from BB, and child threads cannot run on
 them. The panel says so on each Windows box.
 
+We tried BB's Linux host app in WSL2 inside a Windows box as a stopgap
+(#174), and chose not to build it. A Windows command could read GH_TOKEN,
+the git identity and machine variables from a BB daemon in WSL, through
+`wsl.exe`, in 0.1 s. A stop and start, which hibernates the box, kept WSL
+running. But on a windows-desktop box (4 cores, 8 GiB), measured on
+1 October 2026, each box would pay:
+
+- about 1.1 GB of memory while WSL runs, before BB's daemon: free memory
+  was 4.6 GB, against 5.6 to 5.7 GB without WSL
+- about 3 s on each boot: SSH answered 6.0 s after the kernel started,
+  against 3.1 to 3.6 s without WSL
+- about 3 GB more in the template: 1.2 GB for WSL and 1.4 to 1.9 GB for
+  the Linux distribution
+- a startup task and `.wslconfig` with both idle timeouts off, because WSL
+  otherwise stops the distribution, and BB's daemon with it, within 10 s of
+  the last `wsl.exe`
+
+A thread started on such a box would also run in Linux, not Windows:
+
+- BB would list a Linux machine beside each Windows box
+- processes BB's daemon starts could run Windows programs only by full path,
+  because their PATH has no Windows folders
+- files across the boundary are slow: `git status` on 5,000 files took 28 to
+  58 s on the other side's files, against under 1 s on each side's own
+
 ## 2. Send backlog on plugin WebSockets
 
 **What bb-box needs.** The desktop relay copies a box's stream to each viewer
