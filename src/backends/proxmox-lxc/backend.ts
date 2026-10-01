@@ -399,6 +399,32 @@ interface DisplayMode {
 
 const NO_GPUS: ReadonlySet<string> = new Set();
 
+const DISPLAY_MODE_WORDS: Readonly<Record<string, string>> = { gpu: "GPU", cpu: "CPU" };
+
+/**
+ * The display service's reason for its path, as a sentence for people. The
+ * service writes terse reasons, and templates already built keep them.
+ */
+export function displayReason(reason: string): string {
+  const driver = /^host NVIDIA driver '(.*)' does not match the template's '(.*)'$/.exec(reason);
+  if (driver) {
+    const [, host, template] = driver;
+    if (host === "none") return "The host has no NVIDIA driver loaded.";
+    if (template === "none") return "The template has no NVIDIA driver.";
+    return `The template was built for NVIDIA driver ${template}, but the host has ${host}.`;
+  }
+  const low = /^GPU has (\d+) MiB free, below MIN_FREE_VRAM_MIB=(\d+)$/.exec(reason);
+  if (low) return `The GPU had ${low[1]} MiB of memory free, less than the ${low[2]} MiB a desktop needs.`;
+  const free = /^GPU has (\d+) MiB free$/.exec(reason);
+  if (free) return `The GPU had ${free[1]} MiB of memory free.`;
+  const fixed = /^DISPLAY_MODE=(\S+)$/.exec(reason);
+  if (fixed) return fixed[1] === "cpu" ? "The template has no GPU." : `The template sets the display mode to ${fixed[1]}.`;
+  if (reason === "no NVIDIA device nodes") return "The box has no GPU device.";
+  if (reason === "nvidia-smi cannot read the GPU") return "The GPU did not answer nvidia-smi.";
+  const sentence = reason.charAt(0).toUpperCase() + reason.slice(1);
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
 export class ProxmoxLxcBackend implements Backend {
   readonly id = "proxmox-lxc";
   readonly nature = "virtual" as const;
@@ -1183,8 +1209,8 @@ export class ProxmoxLxcBackend implements Backend {
     const gpu = this.#gpuOf(template);
     const facts = [
       ...(gpu ? [{ label: "GPU", value: gpu }] : []),
-      ...(display ? [{ label: "Display mode", value: display.mode }] : []),
-      ...(display?.reason ? [{ label: "Display reason", value: display.reason }] : []),
+      ...(display ? [{ label: "Display mode", value: DISPLAY_MODE_WORDS[display.mode] ?? display.mode }] : []),
+      ...(display?.reason ? [{ label: "Display reason", value: displayReason(display.reason) }] : []),
     ];
     return { ...guest, data, ...(facts.length ? { facts } : {}) };
   }

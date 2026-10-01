@@ -108,6 +108,8 @@ export interface KindView {
   readonly largest: SizeView;
   readonly gpu: boolean;
   readonly desktop: boolean;
+  /** The box user can become root on every backend that offers the kind, on none, or, when null, on some. */
+  readonly admin: boolean | null;
   /** The backends that offer it, in the order acquire tries them. */
   readonly backends: readonly string[];
 }
@@ -116,8 +118,9 @@ export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges)
   const views = new Map<string, KindView>();
   for (const { kind, backend } of offered) {
     const existing = views.get(kind.id);
+    const admin = kind.capabilities.command?.admin ?? false;
     if (existing) {
-      views.set(kind.id, { ...existing, backends: [...existing.backends, backend.label] });
+      views.set(kind.id, { ...existing, admin: existing.admin === admin ? admin : null, backends: [...existing.backends, backend.label] });
       continue;
     }
     const sizes = kindSizes(kind.id, changes);
@@ -131,6 +134,7 @@ export function kindViews(offered: readonly OfferedKind[], changes: SizeChanges)
       largest: sizeView(sizes.largest),
       gpu: kind.capabilities.gpu,
       desktop: kind.capabilities.displays.length > 0,
+      admin,
       backends: [backend.label],
     });
   }
@@ -183,6 +187,20 @@ const CONTROL_WORDS: Record<ControlView["owner"], string> = {
   none: "changing hands",
 };
 
+/** Whether a kind's box user can become root, for kind lists. */
+export function adminText(admin: boolean | null): string {
+  if (admin === null) return "Root: on some of its backends, through sudo; box_status says for each box.";
+  return admin ? "Root: yes, through sudo without a password." : "Root: no, the box user cannot use sudo.";
+}
+
+/** Whether this box's user can become root, or Administrator on Windows. */
+function adminLine(capabilities: BoxRecord["capabilities"]): string | null {
+  const command = capabilities.command;
+  if (!command) return null;
+  if (capabilities.os === "windows") return `Administrator: ${command.admin ? "yes" : "no"}`;
+  return command.admin ? "Root: yes, through sudo without a password" : "Root: no, the box user cannot use sudo. box_list shows the kinds that give root";
+}
+
 /** Everything an agent may want to know about one box. */
 export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const capabilities = box.capabilities;
@@ -193,6 +211,8 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     ...(sizeWords(box) ? [`Size: ${sizeWords(box)}`] : []),
     `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${capabilities.displays.length ? ", with a desktop" : ""}`,
   ];
+  const admin = adminLine(capabilities);
+  if (admin) lines.push(admin);
   if (box.requires.length) lines.push(`Features: ${box.requires.join(", ")}`);
   const extras = extraFeatures(box);
   if (extras.length) lines.push(`Also has: ${extras.join(", ")}`);

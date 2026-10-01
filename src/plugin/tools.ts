@@ -8,7 +8,7 @@ import { BoxError, describeError, type BoxErrorCode, type BoxRecord } from "../c
 import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import type { BbBox } from "./setup.ts";
-import { boxDetail, boxLine, boxSize, next, type KindView } from "./views.ts";
+import { adminText, boxDetail, boxLine, boxSize, next, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -111,7 +111,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     description:
       "Get a fresh Linux box (a small computer) for this thread, to run commands, builds, tests, servers or Docker away from the thread's own machine. Boxes start in seconds and are yours until you release them or the thread ends.",
     instructions:
-      "bb-box: use box_acquire when you need a clean Linux machine, root-level installs, Docker, or to run something you would not run on the thread's machine. Release boxes you no longer need with box_release; the thread's boxes go when it is archived or deleted.",
+      "bb-box: use box_acquire when you need a clean Linux machine, root-level installs (box_list shows which kinds give root), Docker, or to run something you would not run on the thread's machine. Release boxes you no longer need with box_release; the thread's boxes go when it is archived or deleted.",
     presentation: { label: { pending: "Acquiring a box", completed: "Acquired a box" } },
     parameters: z.object({
       kind: z
@@ -172,7 +172,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         const lines = [list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes."];
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}. ${kind.description} Sizes: ${kindSizesText(kind)}.`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${adminText(kind.admin)}`).join("\n")}`
             : "No backend is set up, so there are no kinds to acquire. Ask the user to set one up in bb-box's settings.",
         );
         const hints = list.length
@@ -215,7 +215,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
   bb.agents.registerTool({
     name: "box_run",
     description:
-      "Run a shell script in a box, as its user, and wait for it. You get the exit code, stdout and stderr. The box user can use sudo without a password.",
+      "Run a shell script in a box, as its user, and wait for it. You get the exit code, stdout and stderr. box_status says whether the box user can use sudo.",
     presentation: { label: { pending: "Running in a box", completed: "Ran in a box" } },
     parameters: z.object({
       box: boxParam,

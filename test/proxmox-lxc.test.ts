@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import {
   ProxmoxLxcBackend,
+  displayReason,
   installFromDescription,
   ownerFromDescription,
   ownerFromTags,
@@ -220,7 +221,7 @@ test("desktops spread across GPUs, and a full set of GPUs points to CPU desktops
   });
   const first = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
   const second = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
-  const display = [{ label: "Display mode", value: "gpu" }, { label: "Display reason", value: "fake GPU" }];
+  const display = [{ label: "Display mode", value: "GPU" }, { label: "Display reason", value: "The GPU had 7800 MiB of memory free." }];
   assert.deepEqual([first.data?.template, first.facts], [9001, [{ label: "GPU", value: "gpu-a" }, ...display]]);
   assert.deepEqual([second.data?.template, second.facts], [9002, [{ label: "GPU", value: "gpu-b" }, ...display]]);
   assert.ok(parseTags(proxmox.guests.get(Number(second.ref))!.config.tags).includes("template.9002"));
@@ -259,8 +260,8 @@ test("a desktop that starts without its GPU is released and tried on another GPU
   assert.equal(guest.data?.template, 9002);
   assert.deepEqual(guest.facts, [
     { label: "GPU", value: "gpu-b" },
-    { label: "Display mode", value: "gpu" },
-    { label: "Display reason", value: "fake GPU" },
+    { label: "Display mode", value: "GPU" },
+    { label: "Display reason", value: "The GPU had 7800 MiB of memory free." },
   ]);
   assert.equal(proxmox.guests.has(7000), false, "the box without its GPU is deleted");
   assert.deepEqual(hook.events, ["claim 7000", "starting", "claim 7001", "claim 7001"]);
@@ -302,13 +303,30 @@ test("a desktop that fails on every GPU names each GPU and its reason", async ()
 
 test("a CPU desktop shows its display mode and is never retried", async () => {
   const { backend, ssh } = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" });
-  displayAt(ssh.dir, "192.0.2.100", "cpu", "software rendering");
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "DISPLAY_MODE=cpu");
   const guest = await backend.acquire(identity("linux-desktop-cpu"), null, hooks().value, signal());
   assert.equal(guest.ref, "7000");
   assert.deepEqual(guest.facts, [
-    { label: "Display mode", value: "cpu" },
-    { label: "Display reason", value: "software rendering" },
+    { label: "Display mode", value: "CPU" },
+    { label: "Display reason", value: "The template has no GPU." },
   ]);
+});
+
+test("the display service's reasons read as sentences", () => {
+  // As setup/proxmox-lxc/template/guest/files/display writes them.
+  const reasons: [string, string][] = [
+    ["DISPLAY_MODE=cpu", "The template has no GPU."],
+    ["DISPLAY_MODE=gpu", "The template sets the display mode to gpu."],
+    ["no NVIDIA device nodes", "The box has no GPU device."],
+    ["host NVIDIA driver '560.20.02' does not match the template's '550.10.01'", "The template was built for NVIDIA driver 550.10.01, but the host has 560.20.02."],
+    ["host NVIDIA driver 'none' does not match the template's '550.10.01'", "The host has no NVIDIA driver loaded."],
+    ["host NVIDIA driver '560.20.02' does not match the template's 'none'", "The template has no NVIDIA driver."],
+    ["nvidia-smi cannot read the GPU", "The GPU did not answer nvidia-smi."],
+    ["GPU has 120 MiB free, below MIN_FREE_VRAM_MIB=384", "The GPU had 120 MiB of memory free, less than the 384 MiB a desktop needs."],
+    ["GPU has 7800 MiB free", "The GPU had 7800 MiB of memory free."],
+    ["something new", "Something new."],
+  ];
+  for (const [reason, sentence] of reasons) assert.equal(displayReason(reason), sentence, reason);
 });
 
 test("a desktop whose display never records its mode is deleted with a clear reason", async () => {
