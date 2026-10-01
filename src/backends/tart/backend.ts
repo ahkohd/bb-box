@@ -2,8 +2,9 @@
 // Macs with Apple silicon, made by Tart on Apple's Virtualization framework. bb-box reaches each Mac over SSH
 // as its host user and runs `tart` there (see host.ts). VMs sit on the Mac's
 // own NAT, so bb-box reaches them through the Mac: commands over SSH with the
-// Mac as the jump host, and the desktop through Tart's VNC server, which
-// listens on the Mac's loopback.
+// Mac as the jump host, and a macOS desktop through Tart's VNC server, which
+// listens on the Mac's loopback. A Linux desktop (linux-arm64-desktop-cpu)
+// has its own VNC server in the VM, reached over SSH like its commands.
 //
 // - Acquire: the box's VM is named bb-box-<box ID>, so it is claimed before
 //   anything is made. Its owner file goes first, then the clone (copy on
@@ -16,7 +17,7 @@
 // - Stop suspends a macOS VM, which frees its memory and its slot, and start
 //   resumes it with a new VNC port and password. A Linux VM is shut down and
 //   boots again, since Tart cannot resume one; it runs as user box, with no
-//   VNC server, and no warm pool.
+//   Tart VNC server, and no warm pool.
 // - A VM's address can change when it starts again, so bb-box asks the Mac
 //   for it when it does not know it, and forgets it when the VM stops.
 
@@ -92,6 +93,13 @@ const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: t
 
 /** The user Linux boxes work as, as in every Linux image bb-box builds. */
 const LINUX_USER = "box";
+/** The Linux desktop's VNC server, inside the VM, and the password it makes at first boot, readable by the box user. */
+const LINUX_VNC_PORT = 5900;
+const LINUX_VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
+/** The cookie the Linux desktop's display :99 writes at each start. */
+const DISPLAY_AUTH_FILE = "/run/bb-box/Xauthority";
+/** The Cua Driver the Linux desktop image pins (desktop-pins.tsv), run by the box user's service. */
+const LINUX_CUA: ComputerUse = { driver: "cua", version: "0.28.3", socket: `/home/${LINUX_USER}/.cache/cua-driver/cua-driver.sock` };
 
 /** The guest OS of a Tart kind: linux-arm64 and its kin, or macOS. */
 export function guestOsOf(kind: string): GuestOs {
@@ -266,6 +274,25 @@ export function tartKinds(config: TartConfig): BoxKind[] {
       capabilities: { os: "linux", arch: "arm64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
+    "linux-arm64-desktop-cpu": {
+      id: "linux-arm64-desktop-cpu",
+      label: "Linux desktop on arm64",
+      description:
+        "A Linux desktop VM on arm64, drawn by the CPU, on a Mac with Apple silicon, for computer use and browsers. amd64 container images and x86_64 binaries do not run there.",
+      requires: [],
+      capabilities: {
+        os: "linux",
+        arch: "arm64",
+        gpu: false,
+        features: ["docker"],
+        command: SSH_COMMAND,
+        // Xtigervnc takes a viewer's SetDesktopSize itself, as on the Proxmox CPU desktop.
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        computerUse: LINUX_CUA,
+        enrol: true,
+      },
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    },
   };
   return TART_KINDS.filter((kind) => config.kinds[kind].image).map((kind) => kinds[kind]);
 }
@@ -315,10 +342,28 @@ done`;
 }
 
 /**
+ * Waits in a Linux VM until its desktop's display and session run, so the
+ * box's desktop opens at once. Nothing to wait for in a VM with no desktop.
+ */
+export function linuxDesktopScript(): string {
+  return String.raw`systemctl cat bb-box-display.service >/dev/null 2>&1 || exit 0
+i=0
+until systemctl is-active --quiet bb-box-display.service && systemctl is-active --quiet bb-box-session.service; do
+  i=$((i + 1)); [ "$i" -lt 600 ] || { echo "The desktop did not start within 2 minutes: display $(systemctl is-active bb-box-display.service), session $(systemctl is-active bb-box-session.service)." >&2; exit 1; }
+  sleep 0.2
+done`;
+}
+
+/**
  * Names a VM after its box: its ComputerName, LocalHostName and HostName,
- * which its prompt, its Bonjour name and its BB machine show. Only in a
- * Virtualization framework VM, never on a Mac a command reaches by mistake,
- * such as a test machine.
+ * which its prompt, its Bonjour name and its BB machine show; in a Linux VM,
+ * its hostname and the 127.0.1.1 line in /etc/hosts. Only in a
+ * Virtualization framework VM, never on a machine a command reaches by
+ * mistake, such as a test machine.
+ *
+ * A Linux desktop's display wrote its X cookie for the old hostname, and X
+ * clients look it up by the hostname, so the script also gives the cookie an
+ * entry for any hostname, as the Proxmox LXC backend does.
  */
 export function nameScript(name: string): string {
   const host = quote(hostnameOf(name));
@@ -326,6 +371,9 @@ export function nameScript(name: string): string {
   [ "$(systemd-detect-virt --vm 2>/dev/null)" = apple ] || { echo "not a VM"; exit 0; }
   sudo -n hostnamectl set-hostname ${host} || exit 1
   if grep -q '^127[.]0[.]1[.]1[[:space:]]' /etc/hosts; then sudo -n sed -i "s/^127[.]0[.]1[.]1[[:space:]].*/127.0.1.1 "${host}"/" /etc/hosts; else echo "127.0.1.1 "${host} | sudo -n tee -a /etc/hosts >/dev/null; fi
+  auth=${DISPLAY_AUTH_FILE}
+  [ -s "$auth" ] || exit 0
+  xauth -q -f "$auth" nlist | sed 's/^..../ffff/' | xauth -q -f "$auth" nmerge -
   exit 0
 fi
 case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) echo "not a VM"; exit 0 ;; esac
@@ -639,6 +687,7 @@ export class TartBackend implements Backend {
           address = await step("network", () => this.#address(host, vm, deadline, signal));
         }
         await step("ssh", () => this.#waitReady(host, vm, address, deadline, signal));
+        if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
         await step("name", () => this.#name(host, address, vm, box.name, signal));
         const size = sizeOf((await this.#state(host, signal)).configs.get(vm));
         // Claimed again, so the box's record has the address and size as it becomes ready.
@@ -702,6 +751,7 @@ export class TartBackend implements Backend {
     const address = await this.#address(host, guest.ref, deadline, signal);
     await this.#waitReady(host, guest.ref, address, deadline, signal);
     await this.#identify(host, address, guest.ref, signal);
+    if (this.#osOf(guest) === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -1013,6 +1063,11 @@ export class TartBackend implements Backend {
         ...display,
         label: "Desktop",
         open: async (signal) => {
+          // A Linux desktop's own VNC server, through SSH to the VM; a macOS desktop's is Tart's, on the Mac.
+          if (os === "linux") {
+            const password = await this.#linuxVncPassword(command, signal);
+            return { route: ssh.route(access, LINUX_VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
+          }
           const vnc = await this.#vnc(host, guest.ref, signal);
           return { route: ssh.route(mac, vnc.port), auth: { type: "vnc-password", password: vnc.password } };
         },
@@ -1073,7 +1128,7 @@ export class TartBackend implements Backend {
         const listed = state.vms.find((vm) => vm.name === image);
         const config = state.configs.get(image);
         if (!listed) {
-          const script = guestOsOf(kind) === "linux" ? "prepare-linux-image.sh" : "prepare-image.sh";
+          const script = guestOsOf(kind) === "linux" ? `prepare-linux-image.sh${kind === "linux-arm64-desktop-cpu" ? " --desktop" : ""}` : "prepare-image.sh";
           push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${host.name} has no Tart VM ${image}.`, `Prepare it with setup/tart/${script}, or set the image in bb-box's settings.`);
         } else if (config?.os && config.os !== (guestOsOf(kind) === "linux" ? "linux" : "darwin")) {
           const wanted = guestOsOf(kind) === "linux" ? "Linux" : "macOS";
@@ -1290,6 +1345,21 @@ export class TartBackend implements Backend {
       const why = result instanceof Error ? result.message : (result as RunResult).stderr.trim() || `exit code ${(result as RunResult).exitCode}`;
       this.#context.logError("name the box", new Error(`Could not name the VM ${vm} on ${host.name} ${hostnameOf(name)}: ${why}`));
     }
+  }
+
+  /** Waits for a Linux VM's desktop, when it has one (linuxDesktopScript). */
+  async #linuxDesktop(host: TartHost, vm: string, address: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "linux"), "linux");
+    const result = await command.run(linuxDesktopScript(), { timeoutMs: 150_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) throw new Error(`${vm} on ${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+  }
+
+  /** The password a Linux desktop made at its first boot, or null when it asks for none. */
+  async #linuxVncPassword(command: SshTransport, signal?: AbortSignal): Promise<string | null> {
+    const result = await command.run(`cat ${LINUX_VNC_PASSWORD_FILE} 2>/dev/null || :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
+    if (result.exitCode !== 0) throw new Error(`Cannot read the desktop's VNC password over SSH: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    return result.stdout.trim() || null;
   }
 
   /** Asks a Linux box's VM to shut down (powerOffScript); false when it could not be asked. */
