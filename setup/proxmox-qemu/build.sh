@@ -101,20 +101,27 @@ check_vm=
 done_ok=
 created=
 cleanup() {
+  local status=$?
   rm -rf "$work"
   rm -f "$answer_iso"
   if [ -n "$check_vm" ] && in_use "$check_vm"; then qm stop "$check_vm" >/dev/null 2>&1 || true; qm destroy "$check_vm" --purge 1 >/dev/null 2>&1 || true; fi
-  [ -z "$done_ok" ] && [ -n "$created" ] || return 0
-  if [ -n "$keep" ]; then
-    echo "build VM $vm kept (--keep); remove it with: qm stop $vm; qm destroy $vm --purge 1"
-  else
-    echo "removing build VM $vm"
-    qm stop "$vm" >/dev/null 2>&1 || true
-    qm destroy "$vm" --purge 1 >/dev/null 2>&1 || true
+  if [ -z "$done_ok" ] && [ -n "$created" ]; then
+    if [ -n "$keep" ]; then
+      echo "build VM $vm kept (--keep); remove it with: qm stop $vm; qm destroy $vm --purge 1"
+    else
+      echo "removing build VM $vm"
+      qm stop "$vm" >/dev/null 2>&1 || true
+      qm destroy "$vm" --purge 1 >/dev/null 2>&1 || true
+    fi
   fi
+  # The last line, for anything watching the log.
+  echo "exit $status"
 }
 trap cleanup EXIT
-# Ctrl-C or systemctl stop cleans up too.
+# Ctrl-C or a stop cleans up too. Run as a unit, build.sh must be its main
+# process, so that a stop reaches this before the unit's processes go:
+#   systemd-run --unit bbbox-build-<vmid> --collect -p KillMode=mixed \
+#     -p StandardOutput=truncate:<log> ./build.sh windows <vmid>
 trap 'exit 1' INT TERM
 
 password=$(python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(24)))')
