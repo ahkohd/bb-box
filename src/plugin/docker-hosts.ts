@@ -1,7 +1,14 @@
 // BB machines that can host Docker boxes (042), for BB Box's settings: each
 // connected, persistent machine bb-box did not make, with Docker as it
 // answers through bb-box's relay, and the Docker backend the configuration
-// has for it. The operator turns each on: that adds a Docker backend whose
+// has for it.
+//
+// Looking leaves the machine as it was. A machine BB shows offline is not
+// called. Otherwise one host call asks whether Docker is there, holding no
+// lease and starting nothing; only where it is does the list open the relay,
+// and then it only reads: docker info, nothing pulled or started. That relay
+// closes on its idle timer unless a box uses it, and with it the worker's
+// lease. The operator turns each on: that adds a Docker backend whose
 // host is bb:<machine ID>, last in acquire order; off removes it, or, while
 // it still has boxes, turns it off so it takes no new ones.
 
@@ -59,7 +66,9 @@ export interface DockerHostsDeps {
   document(): ConfigDocument;
   /** bb-box's machine providers, whose machines are its own boxes. */
   readonly providers: readonly string[];
-  /** Docker's facts on the machine, through the relay. */
+  /** Whether Docker is on the machine, from the host entry with no lease and no relay; the reason when it is not. */
+  found(hostId: string, signal: AbortSignal): Promise<string | null>;
+  /** Docker's facts on the machine, through the relay: docker info, which only reads. */
   docker(hostId: string, signal: AbortSignal): Promise<DockerInfo>;
   /** Boxes bb-box holds on each backend, by backend ID. */
   boxes(): Promise<ReadonlyMap<string, number>>;
@@ -117,7 +126,10 @@ export class DockerHosts {
     if (known && now - known.at < (this.#deps.freshMs ?? FRESH_MS)) return known;
     let result: { docker: DockerHostView["docker"]; problem: string | null };
     try {
-      const info = await this.#deps.docker(hostId, AbortSignal.timeout(this.#deps.timeoutMs ?? CHECK_MS));
+      const signal = AbortSignal.timeout(this.#deps.timeoutMs ?? CHECK_MS);
+      const missing = await this.#deps.found(hostId, signal);
+      if (missing !== null) throw new Error(missing);
+      const info = await this.#deps.docker(hostId, signal);
       result =
         info.osType && info.osType !== "linux"
           ? { docker: null, problem: `Docker there runs ${info.osType} containers. Switch it to Linux containers.` }

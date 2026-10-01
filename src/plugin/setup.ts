@@ -458,6 +458,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     machines: async () => (await bb.sdk.hosts.list({ includeCreating: false } as never)) as unknown as readonly MachineRecord[],
     document: () => configuration.document,
     providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],
+    async found(hostId, signal) {
+      const answer = await host.call("docker", {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+      return answer.found ? null : `there is no Docker to reach: ${answer.reason ?? "it did not answer"}`;
+    },
     async docker(hostId, signal) {
       await machines.ready(hostId);
       return new DockerCli(relay.address(hostId)).info(signal);
