@@ -5,7 +5,7 @@ import { TART_FIELDS, TART_HOST_FIELDS, TART_KINDS, TART_SETTINGS, parseTartPart
 export const tartDriver: BackendDriver<TartConfig> = {
   type: "tart",
   label: "Tart",
-  description: "macOS boxes, and Linux boxes on arm64, as VMs on your Macs with Apple silicon.",
+  description: "macOS boxes, and Linux and Windows boxes on arm64, as VMs on your Macs with Apple silicon.",
   nature: "virtual",
   form: "VM",
   kinds: TART_KINDS,

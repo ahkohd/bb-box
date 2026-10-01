@@ -130,7 +130,7 @@ and `start` and `stop` throw `gone`.
 | `linux-arm64` | Linux on arm64, no GPU | Tart |
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
-| `windows-arm64-desktop` | a Windows desktop on arm64, no GPU | Tart's Macs, in QEMU (planned, 046) |
+| `windows-arm64-desktop` | a Windows desktop on arm64, no GPU | Tart's Macs, in QEMU (046) |
 | `macos` | macOS, no GPU | Tart; a physical Mac later (#47) |
 | `macos-desktop` | a macOS desktop, no GPU | Tart; a physical Mac later (#47) |
 

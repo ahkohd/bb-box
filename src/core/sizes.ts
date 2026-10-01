@@ -64,6 +64,8 @@ const SHIPPED: Readonly<Record<string, KindSizes>> = {
   macos: MACOS,
   "macos-desktop": MACOS,
   "windows-desktop": DESKTOP,
+  // Windows on a Mac takes the presets of Windows on Proxmox (046).
+  "windows-arm64-desktop": DESKTOP,
 };
 
 /** Part of a size in the box-sizes setting. A disk of null is the base. */

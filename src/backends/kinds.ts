@@ -89,6 +89,15 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   macos: { label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, os: "macos", arch: "arm64", features: [] },
   "macos-desktop": { label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, os: "macos", arch: "arm64", features: [] },
   "windows-desktop": { label: "Windows desktop", description: "A Windows desktop for computer use, browsers and Windows apps.", gpu: false, desktop: true, os: "windows", arch: "x86_64", features: [] },
+  "windows-arm64-desktop": {
+    label: "Windows desktop on arm64",
+    description: "A Windows desktop on arm64, for computer use, browsers and Windows apps. x64 apps run under Windows' emulation, more slowly; x64 drivers do not.",
+    gpu: false,
+    desktop: true,
+    os: "windows",
+    arch: "arm64",
+    features: [],
+  },
 };
 
 export function kindInfo(id: string): KindInfo {

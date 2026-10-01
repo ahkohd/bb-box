@@ -15,8 +15,13 @@ each Mac. It offers these kinds:
 - **linux-arm64-desktop-cpu**: the same with an XFCE desktop drawn by the
   CPU, shown in the thread's panel, and computer use through Cua Driver,
   from a third image (040). Off until you give its image.
+- **windows-arm64-desktop**: Windows 11 on arm64, its desktop shown in the
+  thread's panel, and computer use through Cua Driver (046). QEMU runs its
+  VM, with Apple's Hypervisor framework, not Tart. Off until you give its
+  image; the script that prepares the image is to come (#207).
 
-All enrol in BB as machines, as other Linux boxes do.
+The macOS and Linux boxes enrol in BB as machines, as other Linux boxes do.
+A Windows box does not, as on Proxmox.
 
 The bb-box plugin, on the BB server, reaches each Mac over SSH as a host user
 of its own and runs `tart` there. The VMs sit on the Mac's own NAT, which
@@ -78,6 +83,11 @@ Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
 - Memory: each box takes the memory of its size: 8, 16 or 32 GiB for the
   small, medium and large presets (028). bb-box keeps a reserve free for the
   Mac itself.
+- For Windows boxes, QEMU on the host user's `PATH` in SSH sessions
+  (`qemu-system-aarch64`, `qemu-img` and QEMU's UEFI firmware), from
+  Homebrew or Nix. Each Windows box takes its memory and 2 GiB more for
+  QEMU, and does not count against the two macOS VMs. Tart is needed only
+  for macOS and Linux boxes.
 - The Mac must stay awake: a sleeping Mac pauses its VMs. On a Mac that only
   serves boxes, turn sleep off (`sudo pmset -a sleep 0`); on a Mac you also
   use, keep it on power and awake while boxes run.

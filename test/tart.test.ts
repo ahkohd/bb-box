@@ -209,7 +209,7 @@ test("offers linux-arm64 only with a Linux image, as arm64, with Docker (040, 04
   const alone = tartConfig({ "tart-linux-image": "bb-box-linux", "tart-macos-image": "", "tart-macos-desktop-image": "" });
   assert.deepEqual(new TartBackend(alone, testContext()).kinds().map((kind) => kind.id), ["linux-arm64"]);
   const none = parseTartSettings({ "tart-enabled": true, "tart-hosts": "mac1 a@b", "tart-host-keys": "b ssh-ed25519 AAAA", "tart-macos-image": "", "tart-macos-desktop-image": "" });
-  assert.ok(none.enabled && !none.ok && none.problems.some((problem) => /an image for macOS or Linux boxes/.test(problem)));
+  assert.ok(none.enabled && !none.ok && none.problems.some((problem) => /an image for macOS, Linux or Windows boxes/.test(problem)));
 });
 
 test("a Linux box runs as box, boots with no saved state or VNC, and stop shuts it down (040)", async () => {

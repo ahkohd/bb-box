@@ -1,7 +1,8 @@
 // What the Tart backend runs on a Mac host, as POSIX sh scripts sent over
 // SSH, and the parsers for what they print. Nothing is installed on the Mac
 // but Tart: the scripts keep their state under ~/.bb-box/tart, readable by
-// the host user only.
+// the host user only. Windows boxes' VMs are QEMU's, which qemu.ts drives
+// (046); their owner files are here too.
 //
 // - owners/<vm>: the owner file of each VM bb-box made. It names the install
 //   and, from the claim on, the box, its thread, name, kind and creation time
@@ -58,7 +59,7 @@ settled() {
 `;
 
 /** Runs in /bin/sh, not the host user's login shell: on a Mac that is zsh, where a glob that matches nothing is an error. */
-function script(body: string): string {
+export function script(body: string): string {
   return `exec /bin/sh -c ${quote(`${PRELUDE}${body}`)}`;
 }
 
@@ -100,10 +101,11 @@ export function sections(text: string): Map<string, string> {
 /**
  * Everything bb-box needs to know about a Mac at once: Tart's VMs, the owner
  * files, the configuration of each running VM, the host's memory and the free
- * space where Tart keeps its VMs.
+ * space where Tart keeps its VMs. Tart's part only when `tart`, as a Mac
+ * that runs only Windows boxes needs no Tart; `extra` adds QEMU's (qemu.ts).
  */
-export function stateScript(): string {
-  return script(`command -v tart >/dev/null 2>&1 || { echo "tart is not installed, or not on the PATH of $(id -un)'s SSH sessions." >&2; exit 3; }
+export function stateScript(tart = true, extra = ""): string {
+  const tartPart = `command -v tart >/dev/null 2>&1 || { echo "tart is not installed, or not on the PATH of $(id -un)'s SSH sessions." >&2; exit 3; }
 echo @version; tart --version
 echo @list; tart list --source local --format json || exit 1
 home="\${TART_HOME:-$HOME/.tart}"
@@ -118,9 +120,10 @@ for vm in $(ls "$home/vms" 2>/dev/null); do
   # macOS's stat takes -f for a format; GNU's, which answers --version, takes -c.
   [ -f "$f" ] && printf '%s %s\\n' "$vm" "$(if stat --version >/dev/null 2>&1; then stat -c '%i.%Y' "$f"; else stat -f '%i.%m' "$f"; fi)"
 done
-echo @owners
+`;
+  return script(`${tart ? tartPart : 'home="${TART_HOME:-$HOME/.tart}"\n'}echo @owners
 for vm in $(ls "$d/owners"); do [ -f "$d/owners/$vm" ] || continue; printf '=%s\\n' "$vm"; cat "$d/owners/$vm"; done
-echo @memory; sysctl -n hw.memsize
+${extra}echo @memory; sysctl -n hw.memsize
 echo @cpus; sysctl -n hw.ncpu
 [ -d "$home" ] || home=$HOME
 echo @disk; df -k "$home" | awk 'NR == 2 { print $2, $4 }'
@@ -167,7 +170,7 @@ export interface HostState {
 }
 
 /** Entries of a section made of `=name` lines, each followed by its text. */
-function named(text: string): Map<string, string> {
+export function named(text: string): Map<string, string> {
   const result = new Map<string, string>();
   let name: string | null = null;
   let lines: string[] = [];
