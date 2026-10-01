@@ -33,6 +33,14 @@ export interface BoxResult {
   /** Null when the box is gone, for example once released. */
   readonly box: BoxView | null;
   readonly error: string | null;
+  /** Threads that run on the box's BB machine, when a release or stop left it alone for them. Ask, then send `force`. */
+  readonly threads?: readonly ThreadOnBox[];
+}
+
+/** A thread that runs on a box's BB machine. */
+export interface ThreadOnBox {
+  readonly id: string;
+  readonly title: string | null;
 }
 
 /** What starting a thread on a box returns: the new thread, or why it did not start. */
@@ -46,6 +54,7 @@ const oneBox = thread.extend({ box: z.string().min(1) });
 /** The viewer ID names one viewer, such as a panel tab, of a box's desktop. */
 const viewer = oneBox.extend({ viewer: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) });
 const boxResult = z.custom<BoxResult>();
+const forceable = oneBox.extend({ force: z.boolean().optional() });
 const whole = z.number().int().positive().optional();
 /**
  * A preset, and any parts of a custom size (028). Leave the key out for the
@@ -59,8 +68,9 @@ const draft = z.unknown();
 export const contract = defineRpcContract({
   state: { input: thread, output: z.custom<PanelState>() },
   acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional() }), output: boxResult },
-  release: { input: oneBox, output: boxResult },
-  stop: { input: oneBox, output: boxResult },
+  /** Without `force`, a box a thread runs on is left alone, and the answer names the threads. */
+  release: { input: forceable, output: boxResult },
+  stop: { input: forceable, output: boxResult },
   start: { input: oneBox, output: boxResult },
   refresh: { input: oneBox, output: boxResult },
   desktop: { input: oneBox, output: z.custom<DesktopState>() },

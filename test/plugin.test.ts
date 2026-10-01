@@ -80,6 +80,8 @@ async function start(
     spawned: [] as unknown[],
     /** Changes bb-box made to threads. */
     updated: [] as unknown[],
+    /** Threads that run on each BB machine, by host ID. */
+    onHost: new Map<string, { id: string; title: string | null; archivedAt: number | null; deletedAt: number | null }[]>(),
     /** The project's sources, by machine, as BB keeps them. */
     sources: [] as { hostId: string; type: string }[],
     /** The thread's project's kind: BB's personal project has no repository. */
@@ -103,6 +105,7 @@ async function start(
           world.updated.push(args);
           return makeThreadResponse({ id: (args as { threadId: string }).threadId, projectId: PROJECT });
         },
+        list: async ({ hostId }: { hostId?: string }) => (hostId ? (world.onHost.get(hostId) ?? []) : []) as never,
         spawn: async (args: unknown) => {
           world.spawned.push(args);
           return makeThreadResponse({ id: `thr_child${world.spawned.length}`, projectId: PROJECT });
@@ -669,6 +672,35 @@ test("in BB's personal project, a thread on a box takes a personal workspace the
   assert.equal(args!.parentThreadId, undefined);
   assert.deepEqual(world.updated, [{ threadId: "thr_child1", parentThreadId: THREAD }]);
   assert.deepEqual(world.sources, [], "nothing is cloned");
+});
+
+test("a box a thread runs on is not released or stopped unless forced, and the refusal names the thread", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.onHost.set(box.enrol.hostId!, [
+    { id: "thr_worker", title: "Build the app", archivedAt: null, deletedAt: null },
+    { id: "thr_old", title: "Done", archivedAt: 1, deletedAt: null },
+  ]);
+
+  for (const [name, action] of [["box_release", "Releasing"], ["box_stop", "Stopping"]] as const) {
+    const refused = await tool(name, { box: box.name });
+    assert.ok(isError(refused), name);
+    assert.match(text(refused), new RegExp(`^${action} box ${box.name} would end the work of thread "Build the app" \\(thr_worker\\), which runs on it\\. Archive that thread first\\.`));
+    assert.match(text(refused), /Leave the box while that thread works\./);
+  }
+  const panel = (await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name })) as { box: { state: string }; threads: unknown[] };
+  assert.equal(panel.box.state, "ready", "the panel's release leaves it for the user to confirm");
+  assert.deepEqual(panel.threads, [{ id: "thr_worker", title: "Build the app" }]);
+  const cli = await harness.behavior.runCli(["release", box.name, "--thread", THREAD]);
+  assert.equal(cli.exitCode, 1);
+  assert.match(cli.stderr ?? "", /would end the work of thread "Build the app"/);
+  assert.equal((await only(app)).state, "ready");
+
+  const forced = (await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name, force: true })) as { box: null; error: null };
+  assert.deepEqual(forced, { box: null, error: null });
+  assert.deepEqual(await app.boxes.list(THREAD), []);
 });
 
 test("a box that is not a BB machine cannot run a thread, and says why (#55)", async (t) => {

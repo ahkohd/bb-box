@@ -159,12 +159,14 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         release: cliCommand({
-          summary: "Release a box. Its disk is deleted.",
+          summary: "Release a box. Its disk is deleted. A box a thread runs on is refused unless --force.",
           positionals: boxPositional,
-          options: threadOption,
+          options: { ...threadOption, force: { type: "boolean", description: "Release it even while threads run on it, which ends their work." } },
           run: ({ positionals, options }, ctx) =>
             guard("Releasing the box", async () => {
-              const left = await boxes.release(threadOf(options.thread, ctx), positionals.box);
+              const threadId = threadOf(options.thread, ctx);
+              if (!options.force) await app.refuseInUse(await boxes.get(threadId, positionals.box), "Releasing");
+              const left = await boxes.release(threadId, positionals.box);
               if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
               return out(`Released box ${positionals.box}.`);
             }),

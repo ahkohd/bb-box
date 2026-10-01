@@ -28,6 +28,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   backend_off: "Ask the user to fix its backend's settings in bb-box's settings, or release the box.",
   released: "Acquire a new box with box_acquire.",
   unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
+  in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
 };
 
 export function failure(error: unknown, action: string): PluginAgentToolResult {
@@ -304,7 +305,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     parameters: z.object({ box: boxParam }),
     async execute({ box: ref }, { threadId, signal }) {
       try {
-        const box = await boxes.stop(thread(threadId), ref, signal);
+        const id = thread(threadId);
+        await app.refuseInUse(await boxes.get(id, ref), "Stopping");
+        const box = await boxes.stop(id, ref, signal);
         return `Box ${box.name} is stopped.${next(`Call box_start with box "${box.name}" when you need it again, or box_release if you do not.`)}`;
       } catch (error) {
         return failure(error, "Stopping the box");
@@ -359,6 +362,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
       try {
         const id = thread(threadId);
         const box = await boxes.get(id, ref);
+        await app.refuseInUse(box, "Releasing");
         const left = await boxes.release(id, box.id);
         if (left) {
           return `Box ${box.name} is still being released: ${left.error ?? "the backend has not finished"}. bb-box keeps trying in the background.${next("Carry on; nothing else is needed.")}`;

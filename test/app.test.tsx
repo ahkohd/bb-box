@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
-import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
 import { statusOf } from "../src/app/status.ts";
@@ -130,7 +130,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
+function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[] } = {}) {
   let boxes = [...initial];
   const changes: string[] = [];
   const result = (found: BoxView | null): BoxResult => (options.failWith ? { box: null, error: options.failWith } : { box: found, error: null });
@@ -161,8 +161,10 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
       boxes = [...boxes, made];
       return result(made);
     },
-    release: ({ box: ref }) => change("release", ref, () => null),
-    stop: ({ box: ref }) => change("stop", ref, (found) => ({ ...found, state: "stopped" })),
+    release: ({ box: ref, force }) =>
+      options.inUse && !force ? { box: find(ref), error: null, threads: options.inUse } : change(force ? "release (forced)" : "release", ref, () => null),
+    stop: ({ box: ref, force }) =>
+      options.inUse && !force ? { box: find(ref), error: null, threads: options.inUse } : change(force ? "stop (forced)" : "stop", ref, (found) => ({ ...found, state: "stopped" })),
     start: ({ box: ref }) => change("start", ref, (found) => ({ ...found, state: "ready" })),
     refresh: ({ box: ref }) => change("refresh", ref, (found) => found),
     backends: () => BACKENDS,
@@ -463,6 +465,29 @@ test("releasing a box asks first", async () => {
   fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
   expect(await slot.findByText("No boxes yet")).toBeTruthy();
   expect(changes).toEqual(["release box_1"]);
+});
+
+test("a box a thread runs on is released or stopped only once the user says so", async () => {
+  const { handlers, changes } = server([box()], { inUse: [{ id: "thr_worker", title: "Build the app" }] });
+  const slot = panel(handlers);
+  await slot.findByText("calm-otter");
+
+  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
+  let dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("Stop calm-otter anyway?")).toBeTruthy();
+  expect(within(dialog).getByText("Build the app runs on it, and would lose its machine.")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(changes).toEqual([]);
+
+  const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Release…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
+  dialog = await screen.findByRole("alertdialog", {}, { timeout: 2000 });
+  await within(dialog).findByText("Release calm-otter anyway?");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Release anyway" }));
+  expect(await slot.findByText("No boxes yet")).toBeTruthy();
+  expect(changes).toEqual(["release (forced) box_1"]);
 });
 
 test("the panel stops and starts a box that can, and not one that cannot", async () => {
