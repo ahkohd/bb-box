@@ -1,8 +1,8 @@
 // A small in-memory Proxmox API with the behaviour bb-box relies on, for
 // containers and VMs: linked clones that reject `storage`, need a template
 // that is not locked and inherit its protection, "already exists" for used
-// VMIDs, asynchronous tasks, tags, pools, /cluster/resources and a VM
-// console's VNC proxy.
+// VMIDs, asynchronous tasks, tags, pools, /cluster/resources with the status
+// daemon's lag, each node's own guest lists and a VM console's VNC proxy.
 
 import { rootDiskGiB, type FetchLike, type FetchResponse } from "../src/backends/proxmox/api.ts";
 
@@ -57,6 +57,37 @@ export class FakeProxmox {
   readonly bridges = new Set<string>(["vmbr0", "vmbr1"]);
   /** Optional hook to fail a request: return a response to short-circuit. */
   intercept?: (call: FakeCall) => FetchResponse | undefined;
+  /**
+   * What Proxmox's status daemon read of each guest on its last pass, by
+   * VMID, which /cluster/resources gives. It reads every 10 s or so, so a new
+   * guest has none until `statusPass()`.
+   */
+  readonly #listed = new Map<number, Record<string, unknown>>();
+
+  /** A pass of the status daemon over every guest. */
+  statusPass(): void {
+    for (const guest of this.guests.values()) this.#listed.set(guest.vmid, this.#current(guest));
+  }
+
+  /** A guest as its node reads it now, for /nodes/{node}/lxc and /nodes/{node}/qemu. */
+  #current(guest: FakeGuest): Record<string, unknown> {
+    return {
+      vmid: guest.vmid,
+      type: guest.type ?? "lxc",
+      name: guest.name,
+      status: guest.status,
+      ...(guest.template ? { template: 1 } : {}),
+      // As Proxmox gives them: unset cores are the node's, and memory and disk are in bytes.
+      cpus: Number(guest.config.cores) || this.cpus,
+      maxmem: Number(guest.config.memory || 512) * 2 ** 20,
+      // A running container's is its filesystem's.
+      maxdisk:
+        guest.status === "running" && guest.filesystem !== undefined
+          ? guest.filesystem
+          : (rootDiskGiB(guest.config) ?? Number(/size=(\d+)G/.exec(guest.config.scsi0 ?? "")?.[1] ?? 0)) * 2 ** 30,
+      ...(guest.config.tags ? { tags: guest.config.tags } : {}),
+    };
+  }
 
   addTemplate(vmid: number, config: Record<string, string> = {}): void {
     this.guests.set(vmid, {
@@ -75,6 +106,7 @@ export class FakeProxmox {
         ...config,
       },
     });
+    this.#listed.set(vmid, this.#current(this.guests.get(vmid)!));
   }
 
   /** A VM template, as setup/proxmox-qemu/build.sh leaves one. */
@@ -99,6 +131,7 @@ export class FakeProxmox {
         ...config,
       },
     });
+    this.#listed.set(vmid, this.#current(this.guests.get(vmid)!));
   }
 
   readonly fetch: FetchLike = async (url, init) => {
@@ -174,26 +207,28 @@ export class FakeProxmox {
 
     if (method === "GET" && path === "/cluster/resources") {
       return ok(
-        [...this.guests.values()].map((guest) => ({
-          id: `${guest.type ?? "lxc"}/${guest.vmid}`,
-          type: guest.type ?? "lxc",
-          vmid: guest.vmid,
-          name: guest.name,
-          node: this.node,
-          status: guest.status,
-          template: guest.template ? 1 : 0,
-          // As Proxmox gives them: unset cores are the node's, and memory and disk are in bytes.
-          maxcpu: Number(guest.config.cores) || this.cpus,
-          maxmem: Number(guest.config.memory || 512) * 2 ** 20,
-          // A running container's is its filesystem's, which Proxmox reads every 10 s or so.
-          maxdisk:
-            guest.status === "running" && guest.filesystem !== undefined
-              ? guest.filesystem
-              : (rootDiskGiB(guest.config) ?? Number(/size=(\d+)G/.exec(guest.config.scsi0 ?? "")?.[1] ?? 0)) * 2 ** 30,
-          ...(guest.pool ? { pool: guest.pool } : {}),
-          ...(guest.config.tags ? { tags: guest.config.tags } : {}),
-        })),
+        [...this.guests.values()].map((guest) => {
+          // The guest, its pool and its tags are current; the rest is as the status daemon last read it.
+          const listed = this.#listed.get(guest.vmid);
+          return {
+            id: `${guest.type ?? "lxc"}/${guest.vmid}`,
+            type: guest.type ?? "lxc",
+            vmid: guest.vmid,
+            node: this.node,
+            status: "unknown",
+            ...(listed
+              ? { name: listed.name, status: listed.status, template: listed.template ?? 0, maxcpu: listed.cpus, maxmem: listed.maxmem, maxdisk: listed.maxdisk }
+              : {}),
+            ...(guest.pool ? { pool: guest.pool } : {}),
+            ...(guest.config.tags ? { tags: guest.config.tags } : {}),
+          };
+        }),
       );
+    }
+
+    if (method === "GET" && (match = /^\/nodes\/([^/]+)\/(lxc|qemu)$/.exec(path))) {
+      if (match[1] !== this.node) return respond(500, `hostname lookup '${match[1]}' failed`, { data: null });
+      return ok([...this.guests.values()].filter((guest) => (guest.type ?? "lxc") === match![2]).map((guest) => this.#current(guest)));
     }
 
     if ((match = /^\/nodes\/([^/]+)\/tasks\/([^/]+)\/status$/.exec(path)) && method === "GET") {
