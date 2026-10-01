@@ -32,8 +32,10 @@ export interface DockerHostView {
   readonly connected: boolean;
   /** Docker on the machine, through the relay, or null when it did not answer. */
   readonly docker: { readonly version: string; readonly os: string; readonly arch: string; readonly cpus: number; readonly memoryMiB: number } | null;
-  /** Why Docker did not answer, or why the machine cannot host boxes. */
+  /** Why Docker did not answer, or why the machine cannot host boxes. Null when it has none (`absent`), which is normal, not a fault. */
   readonly problem: string | null;
+  /** The machine has no Docker to reach, so it is not a host: nothing to fix, nothing to say in red. */
+  readonly absent: boolean;
   /** The Docker backend the configuration has for this machine. */
   readonly backend: { readonly id: string; readonly enabled: boolean; readonly boxes: number } | null;
   /** Its last image build, or the one running (src/plugin/docker-images.ts). */
@@ -93,7 +95,7 @@ function message(error: unknown): string {
 
 export class DockerHosts {
   readonly #deps: DockerHostsDeps;
-  readonly #checked = new Map<string, { at: number; docker: DockerHostView["docker"]; problem: string | null }>();
+  readonly #checked = new Map<string, { at: number; docker: DockerHostView["docker"]; problem: string | null; absent: boolean }>();
 
   constructor(deps: DockerHostsDeps) {
     this.#deps = deps;
@@ -107,13 +109,14 @@ export class DockerHosts {
       listed.map(async (machine): Promise<DockerHostView> => {
         const connected = machine.status === "connected";
         const backend = backendOn(document, machine.id);
-        const checked = connected ? await this.#check(machine.id) : { docker: null, problem: "The machine is offline in BB." };
+        const checked = connected ? await this.#check(machine.id) : { docker: null, problem: "The machine is offline in BB.", absent: false };
         return {
           hostId: machine.id,
           name: machine.name,
           connected,
           docker: checked.docker,
           problem: checked.problem,
+          absent: checked.absent,
           backend: backend ? { id: backend.id, enabled: backend.enabled, boxes: boxes.get(backend.id) ?? 0 } : null,
           images: this.#deps.images?.(machine.id) ?? null,
         };
@@ -126,22 +129,26 @@ export class DockerHosts {
     this.#checked.delete(hostId);
   }
 
-  async #check(hostId: string): Promise<{ docker: DockerHostView["docker"]; problem: string | null }> {
+  async #check(hostId: string): Promise<{ docker: DockerHostView["docker"]; problem: string | null; absent: boolean }> {
     const now = this.#deps.now?.() ?? Date.now();
     const known = this.#checked.get(hostId);
     if (known && now - known.at < (this.#deps.freshMs ?? FRESH_MS)) return known;
-    let result: { docker: DockerHostView["docker"]; problem: string | null };
+    let result: { docker: DockerHostView["docker"]; problem: string | null; absent: boolean };
     try {
       const signal = AbortSignal.timeout(this.#deps.timeoutMs ?? CHECK_MS);
       const missing = await this.#deps.found(hostId, signal);
-      if (missing !== null) throw new Error(missing);
-      const info = await this.#deps.docker(hostId, signal);
-      result =
-        info.osType && info.osType !== "linux"
-          ? { docker: null, problem: `Docker there runs ${info.osType} containers. Switch it to Linux containers.` }
-          : { docker: { version: info.version, os: info.operatingSystem, arch: info.arch, cpus: info.cpus, memoryMiB: info.memoryMiB }, problem: null };
+      if (missing !== null) {
+        // No Docker on the machine: normal for most machines, so no problem to show.
+        result = { docker: null, problem: null, absent: true };
+      } else {
+        const info = await this.#deps.docker(hostId, signal);
+        result =
+          info.osType && info.osType !== "linux"
+            ? { docker: null, problem: `Docker there runs ${info.osType} containers. Switch it to Linux containers.`, absent: false }
+            : { docker: { version: info.version, os: info.operatingSystem, arch: info.arch, cpus: info.cpus, memoryMiB: info.memoryMiB }, problem: null, absent: false };
+      }
     } catch (error) {
-      result = { docker: null, problem: `Docker did not answer: ${message(error)}` };
+      result = { docker: null, problem: `Docker did not answer: ${message(error)}`, absent: false };
     }
     this.#checked.set(hostId, { at: now, ...result });
     return result;

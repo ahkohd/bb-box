@@ -87,9 +87,10 @@ Boxes of your own, kept as BB machines.
   shows "Starting" with its time until the machine is ready and in BB.
 - Empty: "Add a box as a BB machine of your own. It shows in BB's machine
   list and new-thread picker, and stays until you remove it here.", in
-  BB's dashed empty panel on its own, with no card around it: one border,
-  a narrow centred measure, and the subtle foreground (the operator's note
-  of 1 October 2026). The hint above the rows reads "To use one for a
+  BB's dashed empty panel on its own, with no card around it: one border
+  spanning the section like the other cards, its text on a narrow centred
+  measure, in the subtle foreground (the operator's notes of 1 October
+  2026). The hint above the rows reads "To use one for a
   project with a repository, pick it in BB's new-thread picker."
 - The section reads `machines.list` and refetches on the "operator"
   signal; `machines.add`, `machines.remove`, `machines.stop` and

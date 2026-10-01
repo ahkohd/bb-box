@@ -3,7 +3,7 @@
 // prints it, and `on` takes it, so one function makes it.
 
 export interface ProviderWords {
-  /** The driver's label, as settings names the backend: "Proxmox LXC", "Tart (VMs on a Mac)". */
+  /** The driver's label, as settings names the backend: "Proxmox LXC", "Tart". */
   readonly label: string;
   /** Where its boxes run, by name; empty for a pool and a local Docker daemon. */
   readonly hosts: readonly string[];
