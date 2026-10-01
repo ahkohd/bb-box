@@ -100,10 +100,10 @@ test("kinds lists only kinds with a template", () => {
   const kinds = backend.kinds();
   assert.deepEqual(
     kinds.map((kind) => kind.id),
-    ["linux", "linux-docker"],
+    ["linux"],
+    "linux-docker is an alias of linux, not an offer (041)",
   );
   assert.deepEqual(kinds[0]!.requires, []);
-  assert.deepEqual(kinds[1]!.requires, ["docker"]);
   assert.deepEqual(kinds[0]!.capabilities.features, ["docker"]);
   assert.deepEqual(kinds[0]!.capabilities.command, { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true });
   assert.deepEqual(kinds[0]!.capabilities.displays, []);
@@ -890,12 +890,6 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
   const capacity = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
-
-  // linux and linux-docker are clones of one template, so the warm guest serves either.
-  const docker = identity("linux-docker");
-  const second = await backend.acquire(docker, null, hooks().value, signal());
-  assert.equal(second.ref, "7001");
-  assert.equal(ownerFromTags(parseTags(proxmox.guests.get(7001)!.config.tags))?.kind, "linux-docker");
 });
 
 /** A stage for warmNameScript: stand-ins that keep the kernel's hostname in a file, and run as this user. */
@@ -1097,8 +1091,7 @@ test("warm guests beyond the target are removed, and a count changes without the
   warm.linux = 1;
   await backend.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 1);
-  // linux-docker's count adds to linux's: their guests are the same.
-  warm["linux-docker"] = 1;
+  warm.linux = 2;
   await backend.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 2);
   assert.deepEqual(context.errors, []);

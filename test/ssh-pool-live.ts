@@ -150,18 +150,21 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
     assert.equal(after.generation, generation + 1);
   });
 
-  it("turns linger on for a box on systemd, gives linux-docker Docker, and a whole-machine reset removes both", async () => {
-    const pool = backend("settings.json");
-    const guest = await acquire(pool, "linux-docker");
+  it("turns linger on for a box on systemd, gives it Docker, and a whole-machine reset removes both", async () => {
+    // Only systemd gives Docker, so only a pool of it alone does (041).
+    assert.ok(!backend("settings.json").kinds()[0]!.capabilities.features.includes("docker"), "a mixed pool has no Docker");
+    const pool = backend("docker.json");
+    assert.deepEqual(pool.kinds()[0]!.capabilities.features, ["docker"]);
+    const guest = await acquire(pool, "linux");
     assert.equal(guest.ref, "systemd");
     const user = String(guest.data?.user);
-    const uid = await inBox(pool, guest, "linux-docker", "docker volume create left >/dev/null && tar cf - -T /dev/null | docker import - left:latest >/dev/null && id -u");
+    const uid = await inBox(pool, guest, "linux", "docker volume create left >/dev/null && tar cf - -T /dev/null | docker import - left:latest >/dev/null && id -u");
     const held = await onMachine(
       "systemd",
       `ls /var/lib/systemd/linger; systemctl is-active user@${uid}.service; docker volume ls -q; docker images -q | wc -l`,
     );
     assert.deepEqual(held.split("\n"), [user, "active", "left", "1"]);
-    assert.equal((await pool.transports(guest, "linux-docker")).access?.dockerHost, `ssh://${user}@127.0.0.1:2222`);
+    assert.equal((await pool.transports(guest, "linux")).access?.dockerHost, `ssh://${user}@127.0.0.1:2222`);
     await pool.release(guest, releaseHooks().hooks);
     assert.deepEqual(await leftovers("systemd", user, uid), NOTHING);
     const after = await onMachine("systemd", `systemctl is-active user@${uid}.service; docker volume ls -q | wc -l; docker images -q | wc -l`);
@@ -170,19 +173,19 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
 
   it("puts a machine whose reset failed out of service, and returns it to service with a reset", async () => {
     const errors: string[] = [];
-    const pool = backend("settings.json", errors);
+    const pool = backend("docker.json", errors);
     await onMachine("systemd", `cp ${HOOK} ${HOOK}.saved && printf '#!/bin/sh\\necho the disk is full >&2\\nexit 1\\n' >${HOOK}`);
     try {
-      const guest = await acquire(pool, "linux-docker");
+      const guest = await acquire(pool, "linux");
       const user = String(guest.data?.user);
-      const uid = await inBox(pool, guest, "linux-docker", "id -u");
+      const uid = await inBox(pool, guest, "linux", "id -u");
       const generation = (await member(pool, "systemd")).generation;
       await pool.release(guest, releaseHooks().hooks);
       const broken = await member(pool, "systemd");
       assert.equal(broken.state, "out-of-service");
       assert.match(broken.reason ?? "", /the disk is full/);
       assert.ok(errors.some((error) => /the disk is full/.test(error)), errors.join("\n"));
-      assert.equal((await pool.capacity("linux-docker", sizeOf("linux-docker"), [])).ok, false);
+      assert.equal((await pool.capacity("linux", sizeOf("linux"), [])).ok, false);
       const report = await pool.doctor();
       const state = report.checks.find((check) => check.id === "machine.systemd.state");
       assert.equal(state?.status, "warn");
@@ -201,13 +204,13 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
   });
 
   it("finishes a whole-machine reset after the machine restarts during it", async () => {
-    const pool = backend("settings.json");
+    const pool = backend("docker.json");
     // A hook that says it restarts the machine to finish.
     await onMachine("systemd", `cp ${HOOK} ${HOOK}.saved && printf '#!/bin/sh\\ntouch "$BB_BOX_RESTARTING"\\nsleep 600\\n' >${HOOK}`);
     try {
-      const guest = await acquire(pool, "linux-docker");
+      const guest = await acquire(pool, "linux");
       const user = String(guest.data?.user);
-      const uid = await inBox(pool, guest, "linux-docker", "id -u");
+      const uid = await inBox(pool, guest, "linux", "id -u");
       const generation = (await member(pool, "systemd")).generation;
       const released = pool.release(guest, releaseHooks().hooks);
       await onMachine("systemd", "until [ -e /var/lib/bb-box/restore/restarting ]; do sleep 0.2; done");
@@ -225,13 +228,13 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
 
   it("puts a machine out of service when it restarts before its whole-machine reset finishes", async () => {
     const errors: string[] = [];
-    const pool = backend("settings.json", errors);
+    const pool = backend("docker.json", errors);
     // A hook that does not say it restarts the machine, so a restart cuts it short.
     await onMachine("systemd", `cp ${HOOK} ${HOOK}.saved && printf '#!/bin/sh\\nsleep 600\\n' >${HOOK}`);
     try {
-      const guest = await acquire(pool, "linux-docker");
+      const guest = await acquire(pool, "linux");
       const user = String(guest.data?.user);
-      const uid = await inBox(pool, guest, "linux-docker", "id -u");
+      const uid = await inBox(pool, guest, "linux", "id -u");
       const generation = (await member(pool, "systemd")).generation;
       const released = pool.release(guest, releaseHooks().hooks);
       await onMachine("systemd", "until [ -e /var/lib/bb-box/restore/boot ]; do sleep 0.2; done; sleep 1");

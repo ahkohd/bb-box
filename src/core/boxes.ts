@@ -18,7 +18,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { OfferedKind } from "../backends/index.ts";
-import { currentKindId, isEarlierKindId } from "../backends/kinds.ts";
+import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -68,7 +68,7 @@ export interface BoxRecord {
   readonly name: string;
   readonly kind: string;
   readonly kindLabel: string;
-  /** The features every offer of the kind has. */
+  /** The features every offer of the kind has, and those an alias asked for (041). */
   readonly requires: readonly string[];
   /** The offer's capabilities when the box was acquired. Its features may add to `requires`. */
   readonly capabilities: KindCapabilities;
@@ -302,6 +302,11 @@ const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 /** The error of a box restored running whose guest did not answer. The sweep clears it once the guest answers. */
 const SILENT = "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.";
 
+/** Whether a box or offer with `capabilities` has every one of `features`. */
+export function hasFeatures(capabilities: Pick<KindCapabilities, "features">, features: readonly string[]): boolean {
+  return features.every((feature) => capabilities.features.includes(feature));
+}
+
 /** The features a box has beyond what its kind promises. */
 export function extraFeatures(box: Pick<BoxRecord, "requires" | "capabilities">): string[] {
   return box.capabilities.features.filter((feature) => !box.requires.includes(feature));
@@ -462,9 +467,11 @@ export class Boxes {
    */
   async acquire(input: { threadId: string; projectId: string | null; kind: string; size?: SizeRequest; role?: BoxRole; name?: string }): Promise<BoxRecord> {
     const requested = this.#now();
-    const wanted = currentKindId(input.kind);
-    const offered = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
-    if (!offered.length) {
+    const { kind: wanted, features } = kindRequest(input.kind);
+    const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
+    // An alias takes only the offers that have its features (041).
+    const offered = ofKind.filter((candidate) => hasFeatures(candidate.kind.capabilities, features));
+    if (!ofKind.length) {
       const kinds = this.kinds().map((kind) => kind.id);
       throw new BoxError(
         "unknown_kind",
@@ -472,6 +479,11 @@ export class Boxes {
           ? `There is no "${input.kind}" kind. The kinds are: ${kinds.join(", ")}.`
           : "No backend is set up, so there are no boxes to acquire. Set one up in bb-box's settings.",
       );
+    }
+    if (!offered.length) {
+      const lacking = features.map(featureWord).join(" or ");
+      const from = [...new Set(ofKind.map((candidate) => candidate.backend.label))].join(" and ");
+      throw new BoxError("unknown_kind", `No backend offers ${input.kind} now: ${wanted} boxes from ${from} have no ${lacking}. Ask for ${wanted} if the box can do without it.`);
     }
     const role = input.role ?? "box";
     const yours = input.threadId === OPERATOR;
@@ -502,7 +514,7 @@ export class Boxes {
         }
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
-        const spare = claims ? await this.#claim(input, offered, sized.size, taken, requested) : null;
+        const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
         const chosen = input.threadId === SPARES ? await this.#choose(offered, sized.size) : await this.#chooseFreeing(offered, sized.size);
         const box: BoxRecord = {
@@ -512,7 +524,7 @@ export class Boxes {
           name: input.name ?? generateName(taken, this.#random),
           kind: chosen.kind.id,
           kindLabel: chosen.kind.label,
-          requires: chosen.kind.requires,
+          requires: [...new Set([...chosen.kind.requires, ...features])],
           capabilities: chosen.kind.capabilities,
           backend: chosen.backend.id,
           backendLabel: chosen.backend.label,
@@ -546,6 +558,7 @@ export class Boxes {
   async #claim(
     input: { threadId: string; projectId: string | null; name?: string },
     offered: OfferedKind[],
+    features: readonly string[],
     size: BoxSize,
     taken: Set<string>,
     requested: number,
@@ -553,6 +566,8 @@ export class Boxes {
     return this.#locked(SPARES, async () => {
       for (const spare of await this.list(SPARES)) {
         if (!offered.some((candidate) => candidate.backend.id === spare.backend && candidate.kind.id === spare.kind)) continue;
+        // A spare made before its backend's offer gained a feature lacks it.
+        if (!hasFeatures(spare.capabilities, features)) continue;
         if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), size)) continue;
         try {
           if (this.#deps.spareThread && (await this.#deps.spareThread(spare)) !== null) {
@@ -569,6 +584,7 @@ export class Boxes {
           threadId: input.threadId,
           projectId: input.projectId,
           name: input.name ?? (taken.has(spare.name) ? generateName(taken, this.#random) : spare.name),
+          requires: [...new Set([...spare.requires, ...features])],
           timings: { spare: ms, total: ms },
         };
         await this.#deps.kv.set(indexKey(box.id), box.threadId);
@@ -670,9 +686,12 @@ export class Boxes {
       const backend = this.#deps.backends.get(box.backend);
       const kind = backend?.kinds().find((candidate) => candidate.id === box.kind);
       if (!backend || !kind) continue;
-      if (JSON.stringify(box.capabilities) === JSON.stringify(kind.capabilities) && JSON.stringify(box.requires) === JSON.stringify(kind.requires)) continue;
+      // A box asked for by an alias keeps what it was made with when the offer now lacks the alias's features (041).
+      if (!hasFeatures(kind.capabilities, box.requires)) continue;
+      const requires = [...new Set([...kind.requires, ...box.requires])];
+      if (JSON.stringify(box.capabilities) === JSON.stringify(kind.capabilities) && JSON.stringify(box.requires) === JSON.stringify(requires)) continue;
       if (backend.asOffered && !(await backend.asOffered(box.guest, kind.id, box.createdAt).catch((error) => (this.#deps.logError("capabilities", error), false)))) continue;
-      const updated = await this.update(box, () => ({ capabilities: kind.capabilities, requires: kind.requires, kindLabel: kind.label })).catch((error) => {
+      const updated = await this.update(box, () => ({ capabilities: kind.capabilities, requires, kindLabel: kind.label })).catch((error) => {
         this.#deps.logError("capabilities", error);
         return null;
       });
@@ -1512,7 +1531,8 @@ export class Boxes {
   async #restore(backend: Backend, held: HeldGuest, signal?: AbortSignal): Promise<boolean> {
     const { owner: found, power, ...guest } = held;
     const owner = found!;
-    const kindId = owner.kind ? currentKindId(owner.kind) : "unknown";
+    const asked = kindRequest(owner.kind ?? "unknown");
+    const kindId = asked.kind;
     const kind = backend.kinds().find((candidate) => candidate.id === kindId);
     const answers = power === "stopped" ? false : await this.#answers(backend, guest, kindId, signal);
     const yours = owner.threadId === OPERATOR;
@@ -1533,7 +1553,7 @@ export class Boxes {
         name,
         kind: kindId,
         kindLabel: kind?.label ?? (owner.kind ? kindId : "Unknown kind"),
-        requires: kind?.requires ?? [],
+        requires: [...new Set([...(kind?.requires ?? []), ...asked.features])],
         capabilities: kind?.capabilities ?? UNKNOWN_KIND,
         backend: backend.id,
         backendLabel: backend.label,

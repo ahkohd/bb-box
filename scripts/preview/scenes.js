@@ -24,6 +24,7 @@ function box(overrides = {}) {
     gpu: false,
     requires: [],
     extras: ["docker"],
+    docker: true,
     desktop: false,
     display: null,
     control: null,
@@ -59,7 +60,7 @@ const desktop = box({
   ],
 });
 const starting = box({ id: "box_3", name: "quiet-fern", state: "acquiring", createdAt: now - 1400, address: null, facts: [], timings: {}, enrol: { state: "off", hostId: null, error: null } });
-const stopped = box({ id: "box_4", name: "wild-cove", kind: "linux-docker", kindLabel: "Linux with Docker", backendLabel: "SSH host pool", nature: "real", form: "Physical", state: "stopped", size: "8 cores, 16 GiB memory, 64 GiB disk" });
+const stopped = box({ id: "box_4", name: "wild-cove", kind: "linux", kindLabel: "Linux", backendLabel: "SSH host pool", nature: "real", form: "Physical", extras: [], docker: false, state: "stopped", size: "8 cores, 16 GiB memory, 64 GiB disk" });
 const failed = box({
   id: "box_5",
   name: "brisk-elm",
@@ -98,12 +99,13 @@ function kind(id, label, description, cores, desktop, gpu, spares = { target: 0,
     desktop,
     os: id.startsWith("macos") ? "macos" : "linux",
     arch: id.startsWith("macos") || id.includes("arm64") ? "arm64" : "x86_64",
-    features: id === "linux-docker" ? ["docker"] : [],
+    features: [],
+    docker: !id.startsWith("macos"),
     enrol: true,
     spares,
     backends: ["Proxmox LXC on pve"],
     forms: ["LXC"],
-    offers: [offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { ready: spares.ready, typicalReadyMs: desktop ? 3100 : 2200, resizable: desktop ? true : null })],
+    offers: [offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { ready: spares.ready, typicalReadyMs: desktop ? 3100 : 2200, resizable: desktop ? true : null, docker: !id.startsWith("macos") })],
     computerUse: desktop,
   };
 }
@@ -114,14 +116,15 @@ function offer(type, label, hosts, form, extra = {}) {
 }
 
 export const KINDS = [
-  // Linux keeps a spare, ready, so the chooser shows "Ready now"; three backends offer it.
+  // Linux keeps a spare, ready, so the chooser shows "Ready now"; three backends offer it, one without Docker (041).
   {
     ...kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false, { target: 1, ready: 1, making: 0 }),
     forms: ["LXC", "Physical", "Docker"],
     admin: null,
+    docker: null,
     offers: [
       offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { ready: 1, typicalReadyMs: 2200 }),
-      offer("ssh-pool", "SSH host pool", [], "Physical", { free: 1, admin: false }),
+      offer("ssh-pool", "SSH host pool", [], "Physical", { free: 1, admin: false, docker: false }),
       offer("docker", "Docker", ["docker-host"], "Docker", { typicalReadyMs: 1800 }),
     ],
   },
@@ -134,13 +137,14 @@ export const KINDS = [
   {
     ...kind("macos-desktop", "macOS desktop", "A macOS desktop on a Mac.", 4, true, false),
     forms: ["VM"],
-    offers: [offer("tart", "Tart", ["mac-mini", "studio"], "VM", { typicalReadyMs: 26000, resizable: false })],
+    offers: [offer("tart", "Tart", ["mac-mini", "studio"], "VM", { typicalReadyMs: 26000, resizable: false, docker: false })],
   },
   {
     ...kind("windows-desktop", "Windows desktop", "A Windows desktop in a VM.", 4, true, false),
     os: "windows",
     arch: "x86_64",
     enrol: false,
+    docker: false,
     forms: ["VM"],
     offers: [offer("proxmox-qemu", "Proxmox QEMU", ["pve"], "VM", { typicalReadyMs: 29000, resizable: true, docker: false })],
   },
@@ -194,7 +198,7 @@ const DRIVERS = [
     label: "Proxmox LXC",
     description: "Linux containers on a Proxmox VE host, with or without a desktop on its GPU.",
     nature: "virtual",
-    kinds: ["linux", "linux-docker", "linux-desktop", "linux-desktop-cpu"],
+    kinds: ["linux", "linux-desktop", "linux-desktop-cpu"],
     fields: [
       field("url", "API URL", "connection", { description: "For example https://192.0.2.10:8006, as the setup guide's token file gives it." }),
       field("node", "Node", "connection", { description: "The node boxes run on. Leave empty on a single-node host." }),
@@ -246,12 +250,12 @@ const DRIVERS = [
     label: "Docker",
     description: "Linux boxes, with or without a desktop, as containers on a Docker host. It needs only Docker.",
     nature: "virtual",
-    kinds: ["linux", "linux-docker", "linux-desktop-cpu", "linux-desktop"],
+    kinds: ["linux", "linux-desktop-cpu", "linux-desktop"],
     fields: [
       field("host", "Host", "connection", { description: "unix:///path/to/docker.sock or ssh://user@host. Empty uses the docker CLI's own default." }),
       field("linux-image", "Linux image", "boxes", { default: "bbbox/linux:1" }),
       field("desktop-image", "Desktop image", "boxes", { default: "bbbox/linux-desktop:1" }),
-      { key: "privileged", type: "boolean", label: "Privileged linux-docker boxes", group: "boxes", default: false },
+      { key: "privileged", type: "boolean", label: "Docker in linux boxes", group: "boxes", default: false },
       { key: "gpu-desktops", type: "boolean", label: "GPU desktops", group: "boxes", default: false },
       { key: "boxes", type: "number", label: "Most boxes", group: "advanced", default: 10 },
     ],
@@ -260,12 +264,11 @@ const DRIVERS = [
   },
 ];
 const KIND_INFO = [
-  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
-  { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
-  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: ["docker"], spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
-  { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, os: "macos", arch: "arm64", features: [], spares: { ready: 0, making: 0 }, drivers: ["tart"] },
-  { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, os: "macos", arch: "arm64", features: [], spares: { ready: 0, making: 0 }, drivers: ["tart"] },
+  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], docker: null, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
+  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], docker: true, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "linux-desktop-cpu", label: "Linux desktop", description: "A Linux desktop drawn by the CPU.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: [], docker: true, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
+  { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, os: "macos", arch: "arm64", features: [], docker: false, spares: { ready: 0, making: 0 }, drivers: ["tart"] },
+  { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, os: "macos", arch: "arm64", features: [], docker: false, spares: { ready: 0, making: 0 }, drivers: ["tart"] },
 ];
 const LINUX_SIZES = { enabled: true, presets: { small: sizeOf(2, 4), medium: sizeOf(4, 8), large: sizeOf(8, 16) }, default: "small", largest: sizeOf(16, 32, 256) };
 const DESKTOP_SIZES = { enabled: true, presets: { small: sizeOf(4, 8), medium: sizeOf(8, 16), large: sizeOf(16, 32) }, default: "small", largest: sizeOf(32, 64, 256) };
@@ -284,12 +287,12 @@ function configState(options = {}) {
   return {
     document,
     revision: document.revision,
-    defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux" }, kinds: { linux: LINUX_SIZES, "linux-docker": LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
+    defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux" }, kinds: { linux: LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
     kinds: KIND_INFO,
     drivers: DRIVERS,
     backends: [
       tokenSet
-        ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", form: "LXC", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-docker", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 } }
+        ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", form: "LXC", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 } }
         : { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC", form: "LXC", state: "misconfigured", problems: [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }], boxes: 0, kinds: [], doctor: null },
       { id: "tart", type: "tart", label: "Tart", form: "VM", state: "off", problems: [], boxes: 0, kinds: [], doctor: null },
     ],
@@ -396,7 +399,7 @@ export const scenes = {
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      click(document.body, "radio", "DesktopNo DockerVMpve");
+      click(document.body, "radio", "DesktopVMpve");
       await wait(200);
     },
   },

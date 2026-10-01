@@ -13,9 +13,9 @@
 // asks for more than the template's (quick only while running), waits for
 // port 22 and then for SSH. Proxmox tasks are polled every 50 ms.
 //
-// Three flavours of template serve four kinds: linux and linux-docker are
-// clones of a Linux template, linux-desktop of a GPU desktop template and
-// linux-desktop-cpu of a CPU-only one. A new box is cloned from its flavour's
+// Three flavours of template serve three kinds, each with Docker (041): linux
+// boxes are clones of a Linux template, linux-desktop of a GPU desktop
+// template and linux-desktop-cpu of a CPU-only one. A new box is cloned from its flavour's
 // least used template; a GPU desktop goes to the GPU with the fewest
 // desktops. Every guest carries a "template.<vmid>" tag, which is how that
 // use is counted. The warm pool keeps started guests of each flavour, tagged
@@ -131,15 +131,6 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
     label: "Linux",
     description: "A Linux container for builds, backend services and the agent's own work.",
     requires: [],
-    capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
-    readyTimeoutMs: READY_TIMEOUT_MS,
-  },
-  {
-    id: "linux-docker",
-    flavour: "linux",
-    label: "Linux with Docker",
-    description: "A Linux container with Docker inside, for builds and services that need it.",
-    requires: ["docker"],
     capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
     readyTimeoutMs: READY_TIMEOUT_MS,
   },

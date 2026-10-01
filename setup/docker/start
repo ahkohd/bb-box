@@ -6,7 +6,7 @@
 # - Clears what a hard stop leaves behind: BB's daemon lock and PID file, and
 #   X's lock for :99. bb-box runs BB's bootstrap again after each start, which
 #   starts BB's daemon (017).
-# - In a linux-docker box (BBBOX_DOCKERD=1), starts Docker's daemon.
+# - In a linux box with Docker (BBBOX_DOCKERD=1), starts Docker's daemon.
 # - In a desktop box, starts the display, the XFCE session and Cua Driver as
 #   the box user, and starts each again when it exits, as their units do.
 # - Then writes /run/bb-box/ready, which bb-box waits for. /run is a tmpfs, so

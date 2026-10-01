@@ -184,23 +184,32 @@ export function Badge({ children, tone = "muted", className }: { children: React
   return <span className={cn("shrink-0 rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-2xs leading-none", tone === "warn" ? "text-warning-text" : "text-subtle-foreground", className)}>{children}</span>;
 }
 
-/** What a kind or a box has beyond its label, as badges: GPU, then what its boxes are (LXC, Docker, VM, Physical). In a wrapping line they go under the name rather than squeeze it. */
 /** The name the panel gives a kind or a box: its OS. Badges say the rest (the operator, 1 October 2026). */
 export function osName(os: string): string {
   return os === "macos" ? "macOS" : os === "windows" ? "Windows" : os === "linux" ? "Linux" : os;
 }
 
-/**
- * What a kind or a box is beyond its OS, as badges: Desktop, GPU, Docker
- * inside (the feature), arm64 (040; macOS is always arm64, so it has none),
- * then what its boxes are (LXC, Docker, VM, Physical), then Ready now for
- * a kind with a spare (032). In a wrapping line they go under the name
- * rather than squeeze it.
- */
+/** An arm64 kind or box has a badge, except on macOS, which is always arm64 (040). */
 export function isArm64Badge(os: string, arch: string): boolean {
   return arch === "arm64" && os !== "macos";
 }
 
+/**
+ * A Linux kind or box without Docker says "No Docker" (041). Every other
+ * Linux box has it, other systems never did, and a kind whose offers differ
+ * (docker null) has no badge.
+ */
+export function lacksDocker({ os, docker }: { readonly os: string; readonly docker: boolean | null }): boolean {
+  return os === "linux" && docker === false;
+}
+
+/**
+ * What a kind or a box is beyond its OS, as badges: Desktop, GPU, No Docker
+ * (041), arm64 (040; macOS is always arm64, so it has none), then what its
+ * boxes are (LXC, Container, VM, Physical), then Ready now for a kind with a
+ * spare (032). In a wrapping line they go under the name rather than
+ * squeeze it.
+ */
 export function KindBadges({
   desktop = false,
   gpu,

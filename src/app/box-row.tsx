@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { Badge, IconButton, isArm64Badge, KindBadges, Meta, osName, relativeTime, SETTINGS_PATH, StatusDot } from "./common.tsx";
+import { Badge, IconButton, isArm64Badge, KindBadges, lacksDocker, Meta, osName, relativeTime, SETTINGS_PATH, StatusDot } from "./common.tsx";
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
@@ -142,7 +142,7 @@ export function BoxRow({
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
             <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{osName(box.os)}</span>
-            <KindBadges desktop={box.desktop} gpu={box.gpu} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
+            <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
             {held?.owner === "yours" ? <Badge>Yours</Badge> : null}
           </span>
         </button>

@@ -70,14 +70,15 @@ test("parses the fields, with the setup guide's defaults", () => {
   const config = dockerConfig();
   assert.deepEqual(config, {
     host: null,
-    images: { linux: "bbbox/linux:1", "linux-docker": null, "linux-desktop-cpu": "bbbox/linux-desktop:1", "linux-desktop": null },
+    images: { linux: "bbbox/linux:1", "linux-desktop-cpu": "bbbox/linux-desktop:1", "linux-desktop": null },
+    docker: false,
     network: "bbbox",
     boxes: 10,
     desktopsPerGpu: 4,
     reserveMemoryMiB: 4096,
   });
   const all = dockerConfig({ privileged: true, "gpu-desktops": true, host: "ssh://builder@docker.example:2222", boxes: 3 });
-  assert.equal(all.images["linux-docker"], "bbbox/linux:1");
+  assert.equal(all.docker, true);
   assert.equal(all.images["linux-desktop"], "bbbox/linux-desktop:1");
   assert.equal(all.host, "ssh://builder@docker.example:2222");
   assert.equal(all.boxes, 3);
@@ -85,7 +86,6 @@ test("parses the fields, with the setup guide's defaults", () => {
   // An empty image turns its kinds off.
   assert.deepEqual(dockerConfig({ "desktop-image": "", "gpu-desktops": true }).images, {
     linux: "bbbox/linux:1",
-    "linux-docker": null,
     "linux-desktop-cpu": null,
     "linux-desktop": null,
   });
@@ -125,7 +125,7 @@ test("reads its part of bb-box's configuration", () => {
   assert.deepEqual(configuration.problems, []);
   const parsed = dockerDriver.parse(backendPart(configuration.document.backends[0]!, dockerDriver, configuration.secrets));
   assert.ok(parsed.ok);
-  assert.equal(parsed.config.images["linux-docker"], "bbbox/linux:1");
+  assert.equal(parsed.config.docker, true);
   assert.equal(parsed.config.boxes, 3);
   // A field Docker does not have is a problem at its path, naming the key it has now when it is its old name in BB's settings.
   const wrong = toConfiguration({ backends: [{ id: "docker", type: "docker", enabled: true, fields: { "docker-privileged": true, colour: "blue" } }] });
@@ -138,7 +138,12 @@ test("reads its part of bb-box's configuration", () => {
 test("offers kinds by image, and its offers agree with Proxmox LXC's", async () => {
   assert.deepEqual(dockerKinds(dockerConfig()).map((kind) => kind.id), ["linux", "linux-desktop-cpu"]);
   const kinds = dockerKinds(dockerConfig({ privileged: true, "gpu-desktops": true }));
-  assert.deepEqual(kinds.map((kind) => kind.id), ["linux", "linux-docker", "linux-desktop-cpu", "linux-desktop"]);
+  assert.deepEqual(kinds.map((kind) => kind.id), ["linux", "linux-desktop-cpu", "linux-desktop"]);
+  // A linux box has Docker only in a privileged container (041).
+  assert.deepEqual(kinds.map((kind) => kind.capabilities.features), [["docker"], [], []]);
+  assert.deepEqual(dockerKinds(dockerConfig())[0]!.capabilities.features, []);
+  // Without a linux image, the setting gives Docker to nothing.
+  assert.equal(dockerConfig({ privileged: true, "linux-image": "" }).docker, false);
   for (const kind of kinds) {
     assert.equal(kind.capabilities.arch, "x86_64");
     assert.equal(kind.capabilities.command?.transport, "docker");
@@ -275,9 +280,13 @@ test("acquires a box as a container labelled from its first write, claimed befor
   assert.equal(fake.calls().filter((args) => args[0] === "network" && args[1] === "create").length, 1);
 });
 
-test("gives a linux-docker box its own Docker daemon, privileged, and a GPU desktop one GPU", async () => {
+test("gives a linux box its own Docker daemon, privileged, when the setting is on, and a GPU desktop one GPU", async () => {
+  const plain = setup({});
+  const unprivileged = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(plain.fake.inspect(unprivileged.ref).HostConfig.Privileged, false);
+  assert.ok(!plain.fake.inspect(unprivileged.ref).Config.Env.includes("BBBOX_DOCKERD=1"));
   const { fake, backend } = setup({ privileged: true, "gpu-desktops": true }, { gpus: [GPU_A, GPU_B] });
-  const docker = await backend.acquire(identity("linux-docker"), null, hooks().hooks, signal());
+  const docker = await backend.acquire(identity("linux"), null, hooks().hooks, signal());
   const made = fake.inspect(docker.ref);
   assert.equal(made.HostConfig.Privileged, true);
   assert.ok(made.Config.Env.includes("BBBOX_DOCKERD=1"));
@@ -516,7 +525,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
     ],
   );
   assert.match(report.checks[1]!.detail, /Docker 29\.0\.0 on fake-docker \(Ubuntu 24\.04 LTS, x86_64, 16 cores, 64 GiB\)/);
-  assert.match(report.checks.find((check) => check.id === "image.bbbox/linux:1")!.detail, /For linux, linux-docker boxes/);
+  assert.match(report.checks.find((check) => check.id === "image.bbbox/linux:1")!.detail, /For linux boxes/);
   assert.deepEqual(report.notes, ["This install's ID is test. Its containers carry the label bbbox.install=test."]);
 
   await make("other").acquire(identity(), null, hooks().hooks, signal());

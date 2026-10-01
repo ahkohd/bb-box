@@ -1750,15 +1750,40 @@ test("a power the provider cannot tell leaves the box as it was", async () => {
   assert.equal((await world.boxes.get(THREAD, box.name)).state, "ready");
 });
 
-test("a box records its offer's features, and the ones beyond what its kind requires", async () => {
+test("a box records its offer's features, and the ones beyond what its kind and alias require (041)", async () => {
   const [headless] = FAKE_KINDS;
-  const world = setup({
-    kinds: [{ ...headless!, id: "linux-docker", requires: ["docker"], capabilities: { ...headless!.capabilities, features: ["docker", "systemd"] } }],
-  });
+  const world = setup({ kinds: [{ ...headless!, capabilities: { ...headless!.capabilities, features: ["docker", "systemd"] } }] });
+  const plain = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  assert.deepEqual(plain.requires, []);
+  assert.deepEqual(extraFeatures(plain), ["docker", "systemd"]);
+  // linux-docker is linux that must have Docker.
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-docker" }));
+  assert.deepEqual([box.kind, box.kindLabel], ["linux", "Linux"]);
   assert.deepEqual(box.requires, ["docker"]);
   assert.deepEqual(box.capabilities.features, ["docker", "systemd"]);
   assert.deepEqual(extraFeatures(box), ["systemd"]);
+  assert.ok(!world.boxes.kinds().some((kind) => kind.id === "linux-docker"), "an alias is never offered");
+
+  // A record stored when linux-docker was a kind reads as linux that must have Docker.
+  let key = "";
+  for (const each of await world.kv.list(`box/${THREAD}/`)) if ((await world.kv.get<BoxRecord>(each))?.id === plain.id) key = each;
+  const stored = (await world.kv.get<BoxRecord>(key))!;
+  await world.kv.set(key, { ...stored, kind: "linux-docker", kindLabel: "Linux with Docker", requires: ["docker"] });
+  const read = await world.boxes.find(stored.id);
+  assert.deepEqual([read?.kind, read?.kindLabel, read?.requires], ["linux", "Linux", ["docker"]]);
+});
+
+test("an acquire through an alias takes only offers with its features, and says what to ask for instead (041)", async () => {
+  const world = setup();
+  await assert.rejects(
+    world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-docker" }),
+    (error: unknown) =>
+      error instanceof BoxError &&
+      error.code === "unknown_kind" &&
+      error.message === `No backend offers linux-docker now: linux boxes from ${world.backend.label} have no Docker. Ask for linux if the box can do without it.`,
+  );
+  assert.deepEqual(await world.boxes.list(THREAD), [], "nothing was made");
+  await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
 });
 
 test("a desktop command runs in the desktop session, and a box without a desktop has none", async () => {

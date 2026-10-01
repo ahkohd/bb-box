@@ -1,8 +1,8 @@
 #!/bin/bash
 # Builds bb-box's images for the Docker backend on the Docker host the docker
-# CLI uses (DOCKER_HOST or its current context): bbbox/linux:1 for linux and
-# linux-docker boxes, and bbbox/linux-desktop:1 for linux-desktop-cpu and
-# linux-desktop boxes. See README.md.
+# CLI uses (DOCKER_HOST or its current context): bbbox/linux:1 for linux
+# boxes, and bbbox/linux-desktop:1 for linux-desktop-cpu and linux-desktop
+# boxes. See README.md.
 #
 # usage: build.sh [--bb-url <url>] [linux|desktop]...
 set -euo pipefail

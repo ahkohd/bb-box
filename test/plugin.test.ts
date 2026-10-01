@@ -351,8 +351,8 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   const listed = await tool("box_list", {});
   assert.match(text(listed), new RegExp(`- ${box.name}: Linux \\(linux, 2 cores, 4 GiB memory\\), ready`));
   assert.match(text(listed), /Kinds:\n- linux/);
-  assert.match(text(listed), /- linux: .* Root: no, the box user cannot use sudo\./);
-  assert.match(text(await tool("box_status", { box: box.name })), /\nRoot: no, the box user cannot use sudo\. box_list shows the kinds that give root\n/);
+  assert.match(text(listed), /- linux: .* Root: no, the box user cannot use sudo\. Docker: no\./);
+  assert.match(text(await tool("box_status", { box: box.name })), /\nRoot: no, the box user cannot use sudo\. box_list shows the kinds that give root\nDocker: no\. box_list says which kinds have it\n/);
 
   const released = await tool("box_release", { box: box.name });
   assert.match(text(released), new RegExp(`Released box ${box.name}`));
@@ -1689,7 +1689,7 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   const kinds = await harness.behavior.runCli(["kinds"]);
   assert.match(
     kinds.stdout ?? "",
-    /^linux: Linux, from Fake host\. .* Root: no, the box user cannot use sudo\.\n  small \(default\): 2 cores, 4 GiB memory\n  medium: 4 cores, 8 GiB memory\n  large: 8 cores, 16 GiB memory\n  largest: 16 cores, 32 GiB memory, 256 GiB disk\n/,
+    /^linux: Linux, from Fake host\. .* Root: no, the box user cannot use sudo\. Docker: no\.\n  small \(default\): 2 cores, 4 GiB memory\n  medium: 4 cores, 8 GiB memory\n  large: 8 cores, 16 GiB memory\n  largest: 16 cores, 32 GiB memory, 256 GiB disk\n/,
   );
   const acquired = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD, "--size", "medium", "--disk-gib", "20"]);
   assert.equal(acquired.exitCode, 0, acquired.stderr);

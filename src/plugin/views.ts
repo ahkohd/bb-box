@@ -2,6 +2,7 @@
 // for the panel, and short text for agents. Nothing here holds a credential.
 
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
+import { kindAliases } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, DoctorReport, GuestOs } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
@@ -34,6 +35,8 @@ export interface BoxView {
   readonly requires: readonly string[];
   /** Features beyond what the kind promises. */
   readonly extras: readonly string[];
+  /** The box has Docker (041), whichever ID it was asked for by. A Linux box without it says "No Docker". */
+  readonly docker: boolean;
   readonly desktop: boolean;
   /** The desktop the viewer shows, when the box has one. */
   readonly display: { readonly protocol: DisplayProtocol; readonly resizable: boolean } | null;
@@ -82,6 +85,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     gpu: box.capabilities.gpu,
     requires: box.requires,
     extras: extraFeatures(box),
+    docker: box.capabilities.features.includes("docker"),
     desktop: box.capabilities.displays.length > 0,
     display: display ? { protocol: display.protocol, resizable: display.resizable } : null,
     control: display ? control : null,
@@ -133,6 +137,8 @@ export interface KindView {
   readonly spares: SparesView;
   /** The box user can become root on every backend that offers the kind, on none, or, when null, on some. */
   readonly admin: boolean | null;
+  /** Its boxes have Docker on every backend that offers the kind, on none, or, when null, on some (041). */
+  readonly docker: boolean | null;
   /** The backends that offer it, in the order acquire tries them. */
   readonly backends: readonly string[];
   /** What its boxes are on those backends, as badges, each once. */
@@ -189,6 +195,7 @@ export function kindViews(
   for (const { kind, backend } of offered) {
     const existing = views.get(kind.id);
     const admin = kind.capabilities.command?.admin ?? false;
+    const docker = kind.capabilities.features.includes("docker");
     const form = boxForm(backend.id);
     const key = `${kind.id}|${backend.id}`;
     const offer: OfferView = {
@@ -202,13 +209,14 @@ export function kindViews(
       admin,
       resizable: kind.capabilities.displays.length ? (kind.capabilities.displays[0]!.resizable ?? false) : null,
       typicalReadyMs: typical[key] ?? null,
-      docker: kind.capabilities.features.includes("docker"),
+      docker,
     };
     const computerUse = kind.capabilities.computerUse !== null;
     if (existing) {
       views.set(kind.id, {
         ...existing,
         admin: existing.admin === admin ? admin : null,
+        docker: existing.docker === docker ? docker : null,
         backends: [...existing.backends, backend.label],
         forms: form && !existing.forms.includes(form) ? [...existing.forms, form] : existing.forms,
         offers: [...existing.offers, offer],
@@ -233,6 +241,7 @@ export function kindViews(
       enrol: kind.capabilities.enrol,
       spares: { target: targets[kind.id] ?? 0, ready: spares[kind.id]?.ready ?? 0, making: spares[kind.id]?.making ?? 0 },
       admin,
+      docker,
       backends: [backend.label],
       forms: form ? [form] : [],
       offers: [offer],
@@ -309,6 +318,14 @@ export function adminText({ admin, os }: Pick<KindView, "admin" | "os">): string
   return admin ? "Root: yes, through sudo without a password." : "Root: no, the box user cannot use sudo.";
 }
 
+/** Whether a Linux kind's boxes have Docker (041), for kind lists, naming the alias that makes sure of it. Empty for another OS. */
+export function dockerText({ id, docker, os }: Pick<KindView, "id" | "docker" | "os">): string {
+  if (os !== "linux") return "";
+  if (docker !== null) return docker ? "Docker: yes." : "Docker: no.";
+  const alias = kindAliases().find((each) => each.kind === id && each.features.includes("docker"));
+  return alias ? `Docker: on some of its backends. Ask for ${alias.id} to be sure of it.` : "Docker: on some of its backends; box_status says for each box.";
+}
+
 /** Whether this box's user can become root, or Administrator on Windows. */
 function adminLine(capabilities: BoxRecord["capabilities"]): string | null {
   const command = capabilities.command;
@@ -329,8 +346,13 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   ];
   const admin = adminLine(capabilities);
   if (admin) lines.push(admin);
-  if (box.requires.length) lines.push(`Features: ${box.requires.join(", ")}`);
-  const extras = extraFeatures(box);
+  // The Docker line says what a "docker" feature would.
+  const linux = capabilities.os === "linux";
+  if (linux) lines.push(capabilities.features.includes("docker") ? "Docker: yes" : "Docker: no. box_list says which kinds have it");
+  const other = (features: readonly string[]) => (linux ? features.filter((feature) => feature !== "docker") : features);
+  const requires = other(box.requires);
+  if (requires.length) lines.push(`Features: ${requires.join(", ")}`);
+  const extras = other(extraFeatures(box));
   if (extras.length) lines.push(`Also has: ${extras.join(", ")}`);
   if (box.guest?.address) lines.push(`Address: ${box.guest.address}`);
   for (const fact of box.guest?.facts ?? []) lines.push(`${fact.label}: ${fact.value}`);

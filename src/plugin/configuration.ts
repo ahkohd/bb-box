@@ -19,6 +19,7 @@ import {
   kindDefaults,
   knownKinds,
   readDraft,
+  upgradeDocument,
   withSecretChanges,
   withoutSecrets,
   type ConfigDocument,
@@ -63,6 +64,8 @@ export interface KindInfoView {
   readonly os: GuestOs;
   readonly arch: Arch;
   readonly features: readonly string[];
+  /** Its boxes have Docker on every backend that offers it now, on none, or, when null, on some or while none offers it (041). */
+  readonly docker: boolean | null;
   /** Driver types that can make it. */
   readonly drivers: readonly string[];
   /** Its spare boxes now (032): ready to claim, and being made. */
@@ -187,7 +190,11 @@ export class Configuration {
 
   /** The stored document and secrets, and each backend's last doctor run. */
   static async load(deps: ConfigurationDeps): Promise<Configuration> {
-    const document = (await deps.kv.get<ConfigDocument>(DOCUMENT_KEY)) ?? emptyDocument();
+    const stored = (await deps.kv.get<ConfigDocument>(DOCUMENT_KEY)) ?? emptyDocument();
+    // Earlier kind IDs move to their kinds once (041), as a write would.
+    const upgraded = upgradeDocument(stored);
+    const document = upgraded ? { ...upgraded, revision: stored.revision + 1 } : stored;
+    if (upgraded) await deps.kv.set(DOCUMENT_KEY, document).catch((error) => deps.logError("move earlier kind IDs in the configuration", error));
     const secrets = (await deps.kv.get<Secrets>(SECRETS_KEY)) ?? {};
     const configuration = new Configuration(deps, document, secrets);
     for (const key of await deps.kv.list(DOCTOR_PREFIX)) {
@@ -269,6 +276,11 @@ export class Configuration {
     const statuses = this.#deps.backends.statuses();
     const copy = await this.migrated();
     const spares = (await this.#deps.spareCounts?.()) ?? {};
+    const offered = this.#deps.backends.kinds();
+    const docker = (id: string): boolean | null => {
+      const has = new Set(offered.filter((each) => each.kind.id === id).map((each) => each.kind.capabilities.features.includes("docker")));
+      return has.size === 1 ? has.has(true) : null;
+    };
     return {
       document: this.exported(),
       revision: this.#document.revision,
@@ -276,6 +288,7 @@ export class Configuration {
       kinds: knownKinds(drivers).map((id) => ({
         id,
         ...kindInfo(id),
+        docker: docker(id),
         drivers: drivers.filter((driver) => driver.kinds.includes(id)).map((driver) => driver.type),
         spares: spares[id] ?? { ready: 0, making: 0 },
       })),

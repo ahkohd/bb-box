@@ -105,6 +105,7 @@ describe("SSH host pool settings", () => {
       admin: { host: "192.0.2.21", port: 22, user: "bbbox-admin" },
       jump: null,
       kinds: ["linux"],
+      docker: false,
       reset: "home",
       labels: [],
     });
@@ -112,15 +113,19 @@ describe("SSH host pool settings", () => {
       name: "build-2",
       admin: { host: "192.0.2.22", port: 2222, user: "ops" },
       jump: { host: "192.0.2.9", port: 22, user: "jump" },
-      kinds: ["linux", "linux-docker"],
+      kinds: ["linux"],
+      docker: true,
       reset: "machine",
       labels: ["fast", "big"],
     });
     assert.equal(parsed.privateKey, null, "bb-box makes a key when none is given");
   });
 
-  it("accept the kind IDs from before 027", () => {
-    assert.deepEqual(config("old 192.0.2.23 linux-headless,linux-headless-docker reset=machine").machines[0]!.kinds, ["linux", "linux-docker"]);
+  it("accept the kind IDs from before 027, and linux-docker as linux with Docker (041)", () => {
+    const old = config("old 192.0.2.23 linux-headless,linux-headless-docker reset=machine").machines[0]!;
+    assert.deepEqual([old.kinds, old.docker], [["linux"], true]);
+    const alone = config("d 192.0.2.24 linux-docker reset=machine").machines[0]!;
+    assert.deepEqual([alone.kinds, alone.docker], [["linux"], true]);
   });
 
   it("take IPv6 addresses in brackets and known_hosts names off port 22", () => {
@@ -144,6 +149,7 @@ describe("SSH host pool settings", () => {
     assert.match(problems(settings("Build 192.0.2.21 linux")), /lower-case letters/);
     assert.match(problems(settings("a 192.0.2.21 linux-desktop")), /cannot serve kind "linux-desktop"/);
     assert.match(problems(settings("a 192.0.2.21 linux-docker")), /needs reset=machine/);
+    assert.match(problems(settings("a 192.0.2.21 linux-arm64-docker reset=machine")), /cannot serve kind "linux-arm64-docker"/);
     assert.match(problems(settings("a 192.0.2.21 linux reset=sometimes")), /reset=home or reset=machine/);
     assert.match(problems(settings("a 192.0.2.21 linux colour=blue")), /unknown option "colour=blue"/);
     assert.match(problems(settings("a 192.0.2.21 linux\na 192.0.2.22 linux")), /listed twice/);
@@ -157,7 +163,7 @@ describe("SSH host pool settings", () => {
   });
 });
 
-// Two machines serve linux, so two installs can each hold one; the second also serves linux-docker.
+// Two machines serve linux, so two installs can each hold one. Only the second lists linux-docker, so neither gives Docker.
 machine("192.0.2.31");
 machine("192.0.2.32", { docker: "", hook: "", "restore-steps": "2" });
 const conformanceLines = "c1 192.0.2.31 linux\nc2 192.0.2.32 linux,linux-docker reset=machine";
@@ -174,36 +180,57 @@ await conformance({
 });
 
 describe("SSH host pool", () => {
-  it("offers only the kinds its machines serve, and restores the machine only when every machine does", () => {
+  it("offers linux, with Docker and root only when every machine gives Docker, and restores the machine only when every machine does", () => {
     const home = pool("h1 192.0.2.41 linux").backend;
     assert.deepEqual(home.kinds().map((kind) => kind.id), ["linux"]);
     assert.equal(home.restores, "home");
+    assert.deepEqual(home.kinds()[0]!.capabilities.features, []);
     assert.equal(home.kinds()[0]!.capabilities.command?.admin, false, "a linux box cannot become root");
     const whole = pool("w1 192.0.2.42 linux,linux-docker reset=machine").backend;
-    assert.deepEqual(whole.kinds().map((kind) => kind.id), ["linux", "linux-docker"]);
+    assert.deepEqual(whole.kinds().map((kind) => kind.id), ["linux"], "linux-docker is an alias, not an offer (041)");
     assert.equal(whole.restores, "machine");
-    assert.equal(whole.kinds()[1]!.capabilities.command?.admin, true, "Docker gives root, so the box says so");
+    assert.deepEqual(whole.kinds()[0]!.capabilities.features, ["docker"]);
+    assert.equal(whole.kinds()[0]!.capabilities.command?.admin, true, "Docker gives root, so the box says so");
+    const mixed = pool("w1 192.0.2.42 linux-docker reset=machine\nh1 192.0.2.41 linux reset=machine").backend;
+    assert.deepEqual(mixed.kinds()[0]!.capabilities.features, [], "each box of a backend's offer has Docker, or none does");
+    assert.equal(mixed.kinds()[0]!.capabilities.command?.admin, false);
   });
 
-  it("claims the machine with the fewest other kinds, and gives Docker access over SSH", async () => {
+  it("gives Docker access over SSH when every machine gives Docker, and claims machines in turn", async () => {
     machine("192.0.2.43", { docker: "", hook: "" });
-    machine("192.0.2.44");
-    const { backend } = pool("both 192.0.2.43 linux,linux-docker reset=machine\nplain 192.0.2.44 linux");
+    machine("192.0.2.44", { docker: "", hook: "" });
+    const { backend } = pool("d1 192.0.2.43 linux-docker reset=machine\nd2 192.0.2.44 linux,linux-docker reset=machine");
     const { guest } = await acquire(backend);
-    assert.equal(guest.ref, "plain");
+    assert.equal(guest.ref, "d1");
     assert.deepEqual(guest.data, { box: guest.data!.box, generation: 0, user: "bbx-0" });
-    const docker = await acquire(backend, "linux-docker");
-    assert.equal(docker.guest.ref, "both");
-    const transports = await backend.transports(docker.guest, "linux-docker");
+    const transports = await backend.transports(guest, "linux");
     assert.equal(transports.access?.dockerHost, "ssh://bbx-0@192.0.2.43");
     assert.equal(transports.access?.ssh?.user, "bbx-0");
-    assert.equal((await backend.transports(guest, "linux")).access?.dockerHost, null);
+    const second = await acquire(backend);
+    assert.equal(second.guest.ref, "d2");
+    await assert.rejects(backend.capacity("linux-docker", sizeOf("linux"), []), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
     const full = await backend.capacity("linux", sizeOf("linux"), []);
     assert.equal(full.ok, false);
     assert.match(full.message!, /Of the 2 machines that serve linux, 2 are held by this install's boxes/);
     await assert.rejects(acquire(backend), (error: unknown) => error instanceof BackendError && error.code === "no_capacity");
     await backend.release(guest, releaseHooks().hooks);
-    await backend.release(docker.guest, releaseHooks().hooks);
+    await backend.release(second.guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
+  it("gives no Docker in a pool where some machines do not, and its doctor says so", async () => {
+    machine("192.0.2.67", { docker: "", hook: "" });
+    machine("192.0.2.68");
+    const { backend } = pool("both 192.0.2.67 linux,linux-docker reset=machine\nplain 192.0.2.68 linux");
+    const { guest } = await acquire(backend);
+    assert.equal((await backend.transports(guest, "linux")).access?.dockerHost, null);
+    const doctor = await backend.doctor();
+    const docker = doctor.checks.find((check) => check.id === "docker");
+    assert.equal(docker?.status, "warn");
+    assert.match(docker!.detail, /^plain does not list linux-docker, so none of the pool's linux boxes have Docker, and each says No Docker\.$/);
+    assert.match(docker!.fix!, /^To give them Docker, set up a whole-machine reset on plain and add linux-docker and reset=machine to its line, /);
+    assert.equal(doctor.checks.find((check) => check.id === "machine.both.docker")?.status, "ok", "both is still checked for Docker");
+    await backend.release(guest, releaseHooks().hooks);
     await backend.dispose();
   });
 
@@ -237,15 +264,15 @@ describe("SSH host pool", () => {
     const pending = await backend.capacity("linux", sizeOf("linux"), [{ kind: "linux", size: sizeOf("linux") }]);
     assert.equal(pending.ok, false, "the one free machine is spoken for");
     assert.equal(pending.hosts[0]!.limits[0]!.used, 1);
-    await assert.rejects(backend.capacity("linux-docker", sizeOf("linux-docker"), []), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
+    await assert.rejects(backend.capacity("linux-desktop", sizeOf("linux-desktop"), []), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
     await backend.dispose();
   });
 
-  it("gives each acquire that has not claimed the machine its claim would take, whatever its size and kind", async () => {
+  it("gives each acquire that has not claimed the machine its claim would take, whatever its size", async () => {
     machine("192.0.2.64", { cores: "2", memory: "3900" });
-    machine("192.0.2.65", { cores: "2", memory: "3900", docker: "", hook: "" });
+    machine("192.0.2.65", { cores: "2", memory: "3900" });
     machine("192.0.2.66", { cores: "8", memory: "15900" });
-    const { backend } = pool("s 192.0.2.64 linux\nd 192.0.2.65 linux,linux-docker reset=machine\nl 192.0.2.66 linux");
+    const { backend } = pool("s 192.0.2.64 linux\nd 192.0.2.65 linux\nl 192.0.2.66 linux");
     const small = sizeOf("linux");
     const large: BoxSize = { cores: 8, memoryMiB: 16384, diskGiB: null };
     const used = (capacity: Capacity) => capacity.hosts[0]!.limits[0]!.used;
@@ -253,11 +280,11 @@ describe("SSH host pool", () => {
     const before = await backend.capacity("linux", large, [{ kind: "linux", size: small }]);
     assert.equal(before.ok, true, "the small box will claim s, which leaves l");
     assert.equal(used(before), 2, "s is spoken for, and d is too small");
-    const docker = await backend.capacity("linux-docker", small, [{ kind: "linux", size: small }]);
-    assert.equal(docker.ok, true, "the linux box will claim s, which leaves d");
-    const both = await backend.capacity("linux-docker", small, [{ kind: "linux", size: small }, { kind: "linux", size: small }]);
-    assert.equal(both.ok, false, "the second linux box will claim d");
-    assert.match(both.message!, /Of the 1 machine that serves linux-docker, 1 about to be claimed by other boxes\. Release a box to free one\./);
+    const another = await backend.capacity("linux", small, [{ kind: "linux", size: small }]);
+    assert.equal(another.ok, true, "the small box will claim s, which leaves d and l");
+    const all = await backend.capacity("linux", small, [{ kind: "linux", size: small }, { kind: "linux", size: small }, { kind: "linux", size: small }]);
+    assert.equal(all.ok, false, "the small boxes will claim s, d and then l");
+    assert.match(all.message!, /Of the 3 machines that serve linux, 3 about to be claimed by other boxes\. Release a box to free one\./);
     const refused = await backend.capacity("linux", large, [{ kind: "linux", size: large }]);
     assert.equal(refused.ok, false);
     assert.equal(used(refused), 3);
@@ -280,7 +307,7 @@ describe("SSH host pool", () => {
     const during = await backend.capacity("linux", large, [{ kind: "linux", size: small }]);
     assert.equal(during.ok, true, "the small box holds s");
     assert.equal(used(during), 2);
-    assert.equal((await backend.capacity("linux-docker", small, [{ kind: "linux", size: small }])).ok, true, "the small box does not also take d");
+    assert.equal(used(await backend.capacity("linux", small, [{ kind: "linux", size: small }])), 1, "the small box does not also take d");
     go();
     const guest = await acquiring;
     assert.equal(guest.ref, "s");

@@ -7,7 +7,7 @@
 // Every problem has a path, such as "backends.proxmox-lxc.url" or
 // "kinds.linux.presets.small", so the settings page can show it by its field.
 
-import { currentKindId, isEarlierKindId } from "../backends/kinds.ts";
+import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
 import { isSecret, type BackendDriver, type BackendPart, type BoxSize, type FieldDescriptor, type FieldValue } from "../backends/types.ts";
 import { PRESETS, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
 
@@ -127,6 +127,48 @@ export function kindOn(document: ConfigDocument, kind: string): boolean {
 /** Every kind a driver can make, in driver order. */
 export function knownKinds(drivers: readonly BackendDriver<any>[]): string[] {
   return [...new Set(drivers.flatMap((driver) => driver.kinds))];
+}
+
+/**
+ * The document with each earlier kind ID moved to its kind, or null when it
+ * has none. An alias's entry, such as linux-docker's, moves to its kind once,
+ * unless the kind has an entry of its own (041). It does not take its
+ * "enabled": turning linux-docker off never meant turning linux off. A warm
+ * count adds to the kind's, as both were the same guests.
+ */
+export function upgradeDocument(document: ConfigDocument): ConfigDocument | null {
+  const earlier = (id: string) => isEarlierKindId(id);
+  const warmed = document.backends.some((backend) => Object.keys(backend.warm ?? {}).some(earlier));
+  const defaultKind = document.general.defaultKind;
+  if (!Object.keys(document.kinds).some(earlier) && !warmed && !(defaultKind !== undefined && earlier(defaultKind))) return null;
+
+  const kinds: Record<string, KindConfig> = {};
+  for (const [id, kind] of Object.entries(document.kinds)) if (!earlier(id)) kinds[id] = kind;
+  for (const [id, kind] of Object.entries(document.kinds)) {
+    if (!earlier(id)) continue;
+    const to = currentKindId(id);
+    if (to in kinds) continue;
+    const { enabled, ...rest } = kind;
+    const moved = kindRequest(id).features.length ? rest : kind;
+    if (Object.keys(moved).length) kinds[to] = moved;
+  }
+  const backends = document.backends.map((backend) => {
+    if (!Object.keys(backend.warm ?? {}).some(earlier)) return backend;
+    const warm: Record<string, number> = {};
+    for (const [id, count] of Object.entries(backend.warm!)) {
+      const to = currentKindId(id);
+      warm[to] = Math.min(MAX_WARM, (warm[to] ?? 0) + count);
+    }
+    return { ...backend, warm };
+  });
+  const general = defaultKind !== undefined && earlier(defaultKind) ? { ...document.general, defaultKind: currentKindId(defaultKind) } : document.general;
+  return { ...document, backends, kinds, general };
+}
+
+/** Why an earlier kind ID is not a kind of its own, for a problem. */
+function earlierWords(id: string): string {
+  const { kind, features } = kindRequest(id);
+  return features.length ? `${id} is now ${kind} with ${features.map(featureWord).join(", ")}, not a kind of its own. Use ${kind}.` : `${id} is now called ${kind}. Use that.`;
 }
 
 /** The ID of the first backend of a type is the type; another is "<type>:<name>". */
@@ -546,7 +588,7 @@ export function checkDocument(
   for (const [id, kind] of Object.entries(document.kinds)) {
     const path = `kinds.${id}`;
     if (isEarlierKindId(id)) {
-      problem(path, `${id} is now called ${currentKindId(id)}. Use that.`);
+      problem(path, earlierWords(id));
       continue;
     }
     if (!kinds.includes(id)) {
@@ -564,7 +606,7 @@ export function checkDocument(
 
   const defaultKind = document.general.defaultKind;
   if (defaultKind !== undefined) {
-    if (isEarlierKindId(defaultKind)) problem("general.defaultKind", `${defaultKind} is now called ${currentKindId(defaultKind)}. Use that.`);
+    if (isEarlierKindId(defaultKind)) problem("general.defaultKind", earlierWords(defaultKind));
     else if (!kinds.includes(defaultKind)) problem("general.defaultKind", `There is no kind "${defaultKind}". The kinds are ${kinds.join(", ")}.`);
     else if (!kindOn(document, defaultKind)) problem("general.defaultKind", `The default kind, ${defaultKind}, is off. Turn it on, or pick another.`);
   }
@@ -584,7 +626,8 @@ export function checkDocument(
       continue;
     }
     for (const [kind, count] of Object.entries(backend.warm ?? {})) {
-      if (!driver.kinds.includes(kind)) problem(`${path}.warm.${kind}`, `${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
+      if (isEarlierKindId(kind)) problem(`${path}.warm.${kind}`, earlierWords(kind));
+      else if (!driver.kinds.includes(kind)) problem(`${path}.warm.${kind}`, `${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
       else if (!isWhole(count, 0, MAX_WARM)) problem(`${path}.warm.${kind}`, `Keep 0 to ${MAX_WARM} warm ${kind} boxes.`);
     }
     // Drivers still name their guests by type, so two of one type would share them.
