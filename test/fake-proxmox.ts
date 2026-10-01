@@ -1,7 +1,7 @@
 // A small in-memory Proxmox API with the LXC behaviour bb-box relies on:
-// linked clones that reject `storage` and inherit the template's protection,
-// "already exists" for used VMIDs, asynchronous tasks, tags, pools and
-// /cluster/resources.
+// linked clones that reject `storage`, need a template that is not locked and
+// inherit its protection, "already exists" for used VMIDs, asynchronous
+// tasks, tags, pools and /cluster/resources.
 
 import type { FetchLike, FetchResponse } from "../src/backends/proxmox/api.ts";
 
@@ -84,9 +84,9 @@ export class FakeProxmox {
     return this.#route(call);
   };
 
-  #task(type: string, id: number | string): string {
+  #task(type: string, id: number | string, exit?: string): string {
     const upid = `UPID:${this.node}:0000${++this.#taskCounter}:00:00:${type}:${id}:bb-box@pve!plugin:`;
-    this.#tasks.set(upid, { exitstatus: this.nextTaskExit.get(type) ?? "OK", pollsLeft: this.taskPolls });
+    this.#tasks.set(upid, { exitstatus: exit ?? this.nextTaskExit.get(type) ?? "OK", pollsLeft: this.taskPolls });
     this.nextTaskExit.delete(type);
     return upid;
   }
@@ -167,6 +167,10 @@ export class FakeProxmox {
         return respond(500, `unable to create CT ${newid} - CT ${newid} already exists on node '${this.node}'`, {
           data: null,
         });
+      }
+      if (source.config.lock) return respond(500, `CT is locked (${source.config.lock})`, { data: null });
+      if (params.full === "0" && !source.template) {
+        return ok(this.#task("vzclone", source.vmid, `Linked clone feature for 'local-lvm:vm-${source.vmid}-disk-0' is not available`));
       }
       const config = { ...source.config };
       delete config.template;
