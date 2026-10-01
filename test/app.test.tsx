@@ -10,6 +10,7 @@ import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, Deskto
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
 import { forgetLive, isArm64Badge } from "../src/app/common.tsx";
+import { SETTLE_MS } from "../src/app/desktop.tsx";
 type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
@@ -25,7 +26,9 @@ const novnc = vi.hoisted(() => {
     static made: FakeRfb[] = [];
     viewOnly = false;
     scaleViewport = false;
-    resizeSession = false;
+    #resizeSession = false;
+    /** How often the viewer turned resizeSession on, each of which makes noVNC check the desktop's size. */
+    resizeChecks = 0;
     focused = 0;
     disconnected = false;
     readonly url: string;
@@ -37,6 +40,13 @@ const novnc = vi.hoisted(() => {
       this.url = url;
       this.options = options;
       FakeRfb.made.push(this);
+    }
+    get resizeSession() {
+      return this.#resizeSession;
+    }
+    set resizeSession(value: boolean) {
+      this.#resizeSession = value;
+      if (value) this.resizeChecks++;
     }
     disconnect() {
       this.disconnected = true;
@@ -123,6 +133,35 @@ class FakeSocket {
 }
 vi.stubGlobal("WebSocket", FakeSocket);
 
+/** ResizeObserver, which jsdom lacks: a test gives each observer its elements' new size. */
+class FakeObserver {
+  static made: FakeObserver[] = [];
+  readonly targets: Element[] = [];
+  disconnected = false;
+  readonly #callback: ResizeObserverCallback;
+  constructor(callback: ResizeObserverCallback) {
+    this.#callback = callback;
+    FakeObserver.made.push(this);
+  }
+  observe(target: Element) {
+    this.targets.push(target);
+  }
+  unobserve() {}
+  disconnect() {
+    this.disconnected = true;
+  }
+  resize(width: number, height: number) {
+    const entries = this.targets.map((target) => ({ target, contentRect: { width, height } }) as unknown as ResizeObserverEntry);
+    this.#callback(entries, this as unknown as ResizeObserver);
+  }
+}
+vi.stubGlobal("ResizeObserver", FakeObserver);
+
+/** The observer of the element noVNC draws in. */
+function observerOf(client: { target: HTMLElement }): FakeObserver {
+  return FakeObserver.made.find((observer) => observer.targets.includes(client.target))!;
+}
+
 const THREAD = "thr_panel";
 const DESKTOP_PATH = "/api/v1/plugins/bb-box/http/desktop";
 const TERMINAL_PATH = "/api/v1/plugins/bb-box/http/terminal";
@@ -136,6 +175,7 @@ afterEach(() => {
   novnc.FakeRfb.made = [];
   xterm.FakeTerminal.made = [];
   FakeSocket.made = [];
+  FakeObserver.made = [];
   window.sessionStorage.clear();
   window.localStorage.clear();
 });
@@ -956,6 +996,46 @@ test("a desktop that cannot be resized says only that you have control, and noVN
   expect(await slot.findByText("You have control.")).toBeTruthy();
   expect(slot.queryByText(/follows this tab's size/)).toBeNull();
   expect([client!.viewOnly, client!.resizeSession]).toEqual([false, false]);
+  vi.useFakeTimers();
+  act(() => observerOf(client!).resize(1037, 746));
+  act(() => void vi.advanceTimersByTime(SETTLE_MS));
+  expect(client!.resizeChecks).toBe(0);
+});
+
+test("once the tab's size holds, a desktop in your control asks for it again, as noVNC drops a size that comes while a resize is out", async () => {
+  const { handlers } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const [client] = novnc.FakeRfb.made;
+  const observer = observerOf(client!);
+  act(() => void client!.dispatchEvent(new Event("connect")));
+  vi.useFakeTimers();
+  act(() => observer.resize(1037, 746));
+  act(() => void vi.advanceTimersByTime(SETTLE_MS));
+  expect(client!.resizeChecks).toBe(0);
+  vi.useRealTimers();
+
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  expect(await slot.findByText("You have control. The desktop follows this tab's size.")).toBeTruthy();
+  const taken = client!.resizeChecks;
+  vi.useFakeTimers();
+  // A pane opening: each frame puts the wait back.
+  act(() => observer.resize(1006, 746));
+  act(() => void vi.advanceTimersByTime(SETTLE_MS - 50));
+  act(() => observer.resize(1037, 746));
+  act(() => void vi.advanceTimersByTime(SETTLE_MS - 50));
+  expect(client!.resizeChecks).toBe(taken);
+  act(() => void vi.advanceTimersByTime(50));
+  expect(client!.resizeChecks).toBe(taken + 1);
+  // Out of the page the element has no size, which is not asked for.
+  act(() => observer.resize(0, 0));
+  act(() => void vi.advanceTimersByTime(SETTLE_MS));
+  expect(client!.resizeChecks).toBe(taken + 1);
+
+  act(() => observer.resize(518, 722));
+  dropAllKept();
+  act(() => void vi.advanceTimersByTime(SETTLE_MS));
+  expect([client!.resizeChecks, observer.disconnected]).toEqual([taken + 1, true]);
 });
 
 test("a desktop tab shows the box through the relay, and takes and hands back control", async () => {

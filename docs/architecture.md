@@ -252,7 +252,10 @@ may set `minSize`, the smallest size a viewer may set: the relay raises a
 smaller SetDesktopSize to it, and the viewer scales the desktop down. It is
 only for a stream server that passes the size on and does not answer with
 the size it set, as QEMU does. noVNC asks again while the size Xvnc answers
-with differs from its pane.
+with differs from its pane. noVNC asks for one size at a time and does not
+ask again when QEMU answers that it passed a request on, so the viewer has
+noVNC check its pane once the pane's size has held for 250 ms: the last
+frame of a pane opening is not lost.
 
 - For RFB the relay does the security handshake with the box itself: it
   answers VNC authentication (security type 2) with the password, then offers

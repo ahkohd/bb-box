@@ -20,6 +20,8 @@ export const DESKTOP_PAGE = "desktop";
 
 /** The longest wait between attempts to reconnect to a desktop. */
 const MAX_RETRY_MS = 15_000;
+/** How long the viewer's size must hold before the desktop is asked for it again. */
+export const SETTLE_MS = 250;
 
 /** Where the Desktops page shows one box, for a new browser tab. */
 export function pageHref(pluginId: string, threadId: string, boxId: string): string {
@@ -98,10 +100,26 @@ export class DesktopSession implements Kept {
   #mine = false;
   #resizable = false;
   #disposed = false;
+  readonly #observer: ResizeObserver | null;
+  #settle: ReturnType<typeof setTimeout> | undefined;
 
   constructor(url: string) {
     this.#url = url;
     this.element.className = "absolute inset-0";
+    // noVNC asks the box for one size at a time and does not ask again when
+    // the box answers that it passed the request on, as QEMU does. A size
+    // the viewer reaches while a request is out, such as the last frame of a
+    // pane opening, is never asked for. Once the size holds, setting
+    // resizeSession again makes noVNC ask for it if the desktop differs.
+    this.#observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver((entries) => {
+            const size = entries.at(-1)?.contentRect;
+            clearTimeout(this.#settle);
+            if (size && size.width > 0 && size.height > 0) this.#settle = setTimeout(() => this.#nudge(), SETTLE_MS);
+          });
+    this.#observer?.observe(this.element);
     this.connect();
   }
 
@@ -172,9 +190,17 @@ export class DesktopSession implements Kept {
     if (this.#mine) client.focus({ preventScroll: true });
   }
 
+  /** The viewer's size held: noVNC asks for it, if the desktop differs and this viewer may resize it. */
+  #nudge(): void {
+    const client = this.#client;
+    if (client && this.connection.state === "connected" && this.#mine && this.#resizable) client.resizeSession = true;
+  }
+
   dispose(): void {
     this.#disposed = true;
     clearTimeout(this.#retry);
+    clearTimeout(this.#settle);
+    this.#observer?.disconnect();
     const client = this.#client;
     this.#client = null;
     client?.disconnect();
