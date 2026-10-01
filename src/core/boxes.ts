@@ -761,6 +761,8 @@ export class Boxes {
       maxOutputBytes?: number;
       /** False runs at once in a box that is enrolling. */
       waitForEnrolment?: boolean;
+      /** Called once the env file's contents are worked out, as the command goes to the box. */
+      onSend?: () => void;
     } = {},
   ): Promise<{ box: BoxRecord; result: RunResult }> {
     const found = await this.get(threadId, ref);
@@ -775,6 +777,7 @@ export class Boxes {
       throw new BoxError("unsupported", `bb-box cannot run commands in box ${box.name}'s desktop session yet: its OS is ${capabilities.os}.`);
     }
     const env = await this.#envFile(box);
+    options.onSend?.();
     const inBox = capabilities.os === "linux" ? options.timeoutMs : undefined;
     const result = await this.#reach(
       box,
