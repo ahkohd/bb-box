@@ -1,0 +1,9 @@
+#!/bin/sh
+# A fake Windows box's PowerShell, as the $SHELL that runs its scripts with
+# -c. It cannot run PowerShell. A script with bb-box's watchdog runs for 1.5 s
+# and exits 1, as PowerShell does when the watchdog ends it; any other exits
+# 1 at once.
+case "$2" in
+*"taskkill /F /PID"*) sleep 1.5 ;;
+esac
+exit 1

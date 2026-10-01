@@ -303,7 +303,10 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   end mark yet, so they end when the output closes. sshd runs each command
   in a job that ends everything in it when the command exits, so each
   script can call `Start-Detached`, Windows' `nohup`, which starts a
-  command through WMI, outside the job.
+  command through WMI, outside the job. A run with a timeout stops in the
+  box at it too, as one in Linux does under GNU `timeout`: a watchdog in the
+  job ends the run's PowerShell, and the job ends the rest. The run then
+  exits 1, which counts as timed out once the timeout has passed.
 - The agent's `run` tool takes `session: "desktop"` to start something in the
   desktop session, such as an app to test. The core wraps the script in its
   helper for the OS unless the transport already runs there: `DISPLAY` and the

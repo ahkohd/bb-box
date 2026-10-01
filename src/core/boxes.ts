@@ -37,7 +37,7 @@ import {
 } from "../backends/types.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
-import { TIMED_OUT_EXITS, canRunInDesktop, command, envScript, type Access, type Session } from "./in-box.ts";
+import { canRunInDesktop, command, envScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
 import { chooseSize, defaultSize, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
 
@@ -1146,8 +1146,8 @@ export class Boxes {
   /**
    * Runs a script in the box's shell, with the thread's environment. A box
    * still enrolling gets a few seconds to finish, so the command has the
-   * thread's access. In a Linux box the timeout stops the script and
-   * everything it started, and the local one is a backstop.
+   * thread's access. In a Linux or Windows box the timeout stops the script
+   * and everything it started, and the local one is a backstop.
    */
   async run(
     threadId: string,
@@ -1180,7 +1180,8 @@ export class Boxes {
     }
     const env = await this.#envFile(box);
     options.onSend?.();
-    const inBox = capabilities.os === "linux" ? options.timeoutMs : undefined;
+    const stops = timedOutExits(capabilities.os);
+    const inBox = stops ? options.timeoutMs : undefined;
     const result = await this.#reach(
       box,
       (transport) =>
@@ -1192,7 +1193,7 @@ export class Boxes {
         }),
       options.signal,
     );
-    const stopped = inBox !== undefined && TIMED_OUT_EXITS.includes(result.exitCode ?? -1) && result.durationMs >= inBox;
+    const stopped = stops !== undefined && inBox !== undefined && stops.includes(result.exitCode ?? -1) && result.durationMs >= inBox;
     return { box, result: stopped ? { ...result, timedOut: true } : result };
   }
 

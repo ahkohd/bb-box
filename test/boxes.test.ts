@@ -15,7 +15,7 @@ import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, MAC_DESKTOP_EXITS, accessCheck, accessSetup, accessSetupMs, canRunInDesktop, command, envScript } from "../src/core/in-box.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
 import { adminText, boxDetail, boxView, kindViews } from "../src/plugin/views.ts";
-import { FAKE_KINDS, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
+import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_one";
@@ -729,6 +729,24 @@ test("a command that times out stops in the box, with everything it started", as
   const own = await world.boxes.run(THREAD, box.name, "exit 124", { timeoutMs: 10_000 });
   assert.equal(own.result.timedOut, false);
   assert.equal(own.result.exitCode, 124);
+});
+
+test("a Windows command starts a watchdog that stops it in the box at its timeout", async () => {
+  assert.ok(
+    command("windows", "Get-Process", { timeoutMs: 1_500 }).startsWith(
+      "Start-Process -WindowStyle Hidden cmd -ArgumentList '/d', '/c', ('ping -n 3 127.0.0.1 >nul & taskkill /F /PID ' + $PID + ' >nul') -ErrorAction Ignore; $bbBoxEnv = ",
+    ),
+  );
+  assert.ok(!command("windows", "Get-Process").includes("taskkill"));
+
+  const world = setup({ kinds: [FAKE_WINDOWS_KIND], shell: FAKE_PWSH });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "windows" }));
+  // The fake PowerShell exits 1 after 1.5 s, as the watchdog's taskkill leaves it.
+  const stopped = await world.boxes.run(THREAD, box.name, "Start-Sleep 60", { timeoutMs: 1_000 });
+  assert.deepEqual([stopped.result.exitCode, stopped.result.timedOut], [1, true]);
+  // A command that fails before its timeout did not time out.
+  const failed = await world.boxes.run(THREAD, box.name, "Start-Sleep 1; exit 1", { timeoutMs: 10_000 });
+  assert.deepEqual([failed.result.exitCode, failed.result.timedOut], [1, false]);
 });
 
 test("a command waits a few seconds for its box to finish enrolling", async () => {

@@ -94,12 +94,18 @@ export interface CommandOptions {
   readonly session?: Session;
   /** The env file's new contents, written before the command runs. */
   readonly env?: string;
-  /** Stops the command and everything it started, in the box, after this long. Linux boxes only. */
+  /** Stops the command and everything it started, in the box, after this long. Linux and Windows boxes only. */
   readonly timeoutMs?: number;
 }
 
-/** What GNU timeout exits with when it stops a command: TERM first, then KILL 5 s later. */
-export const TIMED_OUT_EXITS: readonly number[] = [124, 137];
+/**
+ * What a command stopped in the box at its timeout exits with: GNU
+ * timeout's TERM, then KILL 5 s later, on Linux, and taskkill's on Windows.
+ * Undefined where only bb-box's own timeout stops a command.
+ */
+export function timedOutExits(os: GuestOs): readonly number[] | undefined {
+  return os === "linux" ? [124, 137] : os === "windows" ? [1] : undefined;
+}
 
 /**
  * Wraps `script` so it runs with the thread's environment, in `cwd` when
@@ -115,7 +121,7 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
         : `New-Item -ItemType Directory -Force -Path (Split-Path $bbBoxEnv) | Out-Null; Set-Content -LiteralPath $bbBoxEnv -NoNewline -Value ${ps(options.env)}; `;
     const env = "if (Test-Path -LiteralPath $bbBoxEnv) { . $bbBoxEnv }; ";
     const cd = options.cwd ? `Set-Location -LiteralPath ${ps(options.cwd)} -ErrorAction Stop; ` : "";
-    return `${file}${write}${env}${cd}${script}`;
+    return `${windowsTimeout(options.timeoutMs)}${file}${write}${env}${cd}${script}`;
   }
   const file = `"$HOME/${envFile(os)}"`;
   const write =
@@ -132,6 +138,21 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
   const shell = `"\${SHELL:-/bin/sh}" -c ${sh(script)}`;
   const timeout = `timeout -k 5 ${options.timeoutMs / 1000} ${shell}`;
   return `${write}${env}${desktop}${cd}if command -v timeout >/dev/null 2>&1; then exec ${timeout}; else exec ${shell}; fi`;
+}
+
+/**
+ * As on Linux, killing the local ssh leaves the command running in the box.
+ * sshd runs it in a job that ends all its processes when its PowerShell
+ * exits, so a watchdog in the job ends that PowerShell after `timeoutMs`,
+ * rounded up to a second, and the job ends the rest. A command that finishes
+ * first ends the watchdog with it. The watchdog has a console of its own, so
+ * it does not hold the command's output open, and ping waits a second
+ * between pings.
+ */
+function windowsTimeout(timeoutMs: number | undefined): string {
+  if (timeoutMs === undefined) return "";
+  const pings = Math.ceil(timeoutMs / 1000) + 1;
+  return `Start-Process -WindowStyle Hidden cmd -ArgumentList '/d', '/c', ('ping -n ${pings} 127.0.0.1 >nul & taskkill /F /PID ' + $PID + ' >nul') -ErrorAction Ignore; `;
 }
 
 /** The names to take, valid and once each. */
