@@ -350,15 +350,20 @@ refusal says what to do instead.
 
 ## Clean-up
 
-- When a thread is archived or deleted, bb-box releases its boxes.
+- When a thread is archived or deleted, bb-box releases its boxes, unless
+  BB says when asked that the thread is live.
 - Every 3 minutes a sweep releases the boxes of threads that BB says were
-  archived or deleted. It removes guests that bb-box made that name no box,
-  or whose box now has another guest.
+  archived or deleted at that sweep and the one before. One answer is not
+  enough, so a box goes at the second sweep. It removes guests that bb-box
+  made that name no box, or whose box now has another guest.
+- Every release logs one line in `bb plugin logs bb-box` saying why: the
+  tool, the panel, the CLI, the thread ending, trimming spares or making
+  room for another box.
 - A guest whose record was lost, as when bb-box loses its storage, keeps
   running. The sweep restores its box from the guest's labels while its
-  thread is live, and releases it only once BB says the thread ended. When
-  enrolment is on, a restored box is a BB machine again once it runs
-  and answers. A thread's own box from "New box" is that thread's BB
+  thread is live, and releases it only once BB says at two sweeps that the
+  thread ended. When enrolment is on, a restored box is a BB machine again
+  once it runs and answers. A thread's own box from "New box" is that thread's BB
   machine again, as BB still has it. If the thread ended first, the guest
   goes, but its BB machine stays until someone removes it in BB.
   `bb plugin logs bb-box` shows each guest the sweep released, restored or

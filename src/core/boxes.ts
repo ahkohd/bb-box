@@ -246,6 +246,11 @@ export function isActive(box: BoxRecord): boolean {
   return box.state !== "failed" && box.state !== "gone" && box.state !== "releasing";
 }
 
+/** A box as the log names it. */
+function describeBox(box: Pick<BoxRecord, "name" | "threadId">): string {
+  return box.threadId === SPARES ? `spare box ${box.name}` : `box ${box.name} of thread ${box.threadId}`;
+}
+
 function isAcquiring(box: BoxRecord): boolean {
   return box.state === "acquiring" || box.state === "starting";
 }
@@ -349,6 +354,8 @@ export interface SweepReport {
   readonly adopted: number;
   /** Guests with no record whose thread BB did not confirm, kept for the next sweep. */
   readonly kept: number;
+  /** Boxes and guests whose thread BB said ended at this sweep but not the last, kept for the next. */
+  readonly ending: number;
   /** Acquires and releases a restart interrupted, carried on. */
   readonly resumed: number;
 }
@@ -369,6 +376,8 @@ export class Boxes {
   /** The run of keepSpares in progress, and whether a call asked for another after it. */
   #keeping: Promise<void> | null = null;
   #keepAgain = false;
+  /** The threads BB said had ended at the last sweep. */
+  #ending = new Set<string>();
   #disposed = false;
 
   constructor(deps: BoxesDeps) {
@@ -774,8 +783,7 @@ export class Boxes {
       const unwanted = count >= (general.spares[spare.kind] ?? 0);
       const resized = !sameSize(await this.#size(spare), defaultSize(kindSizes(spare.kind, general.sizes)));
       if (failed || unwanted || resized) {
-        this.#deps.log?.(`Releasing spare box ${spare.name}: ${failed ? `no claim can take it, as it is ${spare.state} and its enrolment ${spare.enrol.state}` : unwanted ? `bb-box keeps ${count} spare ${spare.kind} boxes` : "its kind's default size changed"}.`);
-        await this.#release(spare);
+        await this.#release(spare, failed ? `no claim can take it, as it is ${spare.state} and its enrolment ${spare.enrol.state}` : unwanted ? `bb-box keeps ${count} spare ${spare.kind} boxes` : "its kind's default size changed");
         continue;
       }
       kept.set(spare.kind, count + 1);
@@ -967,8 +975,7 @@ export class Boxes {
       const spares = (await this.list(SPARES)).filter((spare) => spare.state !== "releasing" && !this.#holdsNothing(spare));
       const spare = error.full.map((backend) => spares.find((spare) => spare.backend === backend)).find((spare) => !!spare);
       if (!spare) throw error;
-      this.#deps.log?.(`Releasing spare box ${spare.name}: a thread's ${offered[0]!.kind.id} box needs its room.`);
-      if (await this.#release(spare)) throw error;
+      if (await this.#release(spare, `a thread's ${offered[0]!.kind.id} box needs its room`)) throw error;
       return this.#choose(offered, size, features);
     }
   }
@@ -1089,21 +1096,23 @@ export class Boxes {
    * guest or resets and returns the machine. Resolves when that is done, with
    * null, or with the box still releasing and the error when it failed; the
    * sweep then tries again. A spare released this way is replaced then, not
-   * at the next sweep (#129).
+   * at the next sweep (#129). `why` says who asked, for the log.
    */
-  async release(threadId: string, ref: string): Promise<BoxRecord | null> {
+  async release(threadId: string, ref: string, why: string): Promise<BoxRecord | null> {
     const box = await this.get(threadId, ref);
-    const left = await this.#release(box);
+    const left = await this.#release(box, why);
     if (box.threadId === SPARES) void this.keepSpares();
     return left;
   }
 
-  async #release(box: BoxRecord): Promise<BoxRecord | null> {
+  /** Every release starts here, and logs why: who asked, or what bb-box needed. */
+  async #release(box: BoxRecord, why: string): Promise<BoxRecord | null> {
     const marked = await this.update(box, (current) => ({
       state: "releasing",
       releaseRequestedAt: current.releaseRequestedAt ?? this.#now(),
     }));
     if (!marked) return null;
+    this.#deps.log?.(`Releasing ${describeBox(box)}: ${why}.`);
     this.#acquiring.get(box.id)?.abort(new BoxError("released", `Box ${box.name} was released.`));
     return this.#chain(box.id, () => this.#finishRelease(marked));
   }
@@ -1148,13 +1157,23 @@ export class Boxes {
     return null;
   }
 
-  /** Releases every box of a thread that ended. Resolves with how many it released. */
-  async releaseThread(threadId: string): Promise<number> {
+  /**
+   * Releases every box of a thread that BB said was archived or deleted.
+   * Resolves with how many it released. BB is asked again first, and while
+   * it says the thread is live, its boxes stay.
+   */
+  async releaseThread(threadId: string, ended: "archived" | "deleted"): Promise<number> {
+    const boxes = await this.list(threadId);
+    if (!boxes.length) return 0;
+    if ((await this.#deps.thread(threadId).catch(() => "unknown" as const)) === "live") {
+      this.#deps.log?.(`Kept the boxes of thread ${threadId}: BB said it was ${ended}, but says now that it is live.`);
+      return 0;
+    }
     let count = 0;
-    for (const box of await this.list(threadId)) {
+    for (const box of boxes) {
       try {
         if (this.#holdsNothing(box)) await this.#forget(box);
-        else if ((await this.#release(box)) === null) count++;
+        else if ((await this.#release(box, `its thread was ${ended}`)) === null) count++;
       } catch (error) {
         this.#deps.logError("release", error);
       }
@@ -1464,7 +1483,9 @@ export class Boxes {
    * guests no box can own, checks power, keeps the spares, and lets each
    * backend do its upkeep. Nothing is released for age or idleness, and no
    * guest because its record is missing: only when BB says its thread was
-   * archived or deleted. Spares belong to no thread, so their thread lives.
+   * archived or deleted, at this sweep and the last. One answer is not
+   * enough to take a live thread's boxes. Spares belong to no thread, so
+   * their thread lives.
    */
   async sweep(signal?: AbortSignal): Promise<SweepReport> {
     const liveness = new Map<string, Promise<ThreadLiveness>>([
@@ -1479,10 +1500,20 @@ export class Boxes {
       }
       return state;
     };
+    // "ended" once BB has said so at two sweeps running, "ending" at the first.
+    const before = this.#ending;
+    const ending = (this.#ending = new Set<string>());
+    const verdict = async (threadId: string): Promise<ThreadLiveness | "ending"> => {
+      const state = await thread(threadId);
+      if (state !== "ended") return state;
+      ending.add(threadId);
+      return before.has(threadId) ? "ended" : "ending";
+    };
     let released = 0;
     let leftovers = 0;
     let adopted = 0;
     let kept = 0;
+    let waiting = 0;
     let resumed = 0;
 
     // First, as at the first start after an upgrade: this install's ID goes on
@@ -1500,11 +1531,21 @@ export class Boxes {
       try {
         if (box.state === "releasing") {
           resumed++;
+          this.#deps.log?.(`Releasing ${describeBox(box)} again: its release had not finished.`);
           await this.#chain(box.id, () => this.#finishRelease(box));
-        } else if ((await thread(box.threadId)) === "ended") {
+          continue;
+        }
+        const state = await verdict(box.threadId);
+        if (state === "ended") {
           if (this.#holdsNothing(box)) await this.#forget(box);
-          else if ((await this.#release(box)) === null) released++;
-        } else if (isAcquiring(box) && box.readyAt === null) {
+          else if ((await this.#release(box, "BB says its thread was archived or deleted, at this sweep and the last")) === null) released++;
+          continue;
+        }
+        if (state === "ending") {
+          waiting++;
+          this.#deps.log?.(`Kept ${describeBox(box)}: BB says its thread was archived or deleted, and the next sweep releases it if BB says so again.`);
+        }
+        if (isAcquiring(box) && box.readyAt === null) {
           resumed++;
           this.#startAcquire(box);
         }
@@ -1555,12 +1596,15 @@ export class Boxes {
           }
           // Its record was lost, as when bb-box lost its storage. The guest
           // names its box and thread, so it goes only when the thread ended.
-          const state = await thread(owner.threadId);
+          const state = await verdict(owner.threadId);
           if (state === "live") {
             if (await this.#restore(backend, guest, signal)) adopted++;
           } else if (state === "ended") {
-            await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} was archived or deleted`, signal);
+            await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} was archived or deleted, as BB says at this sweep and the last`, signal);
             leftovers++;
+          } else if (state === "ending") {
+            this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB says thread ${owner.threadId} was archived or deleted, and the next sweep releases the guest if BB says so again.`);
+            waiting++;
           } else {
             this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB did not say whether thread ${owner.threadId} still exists.`);
             kept++;
@@ -1588,7 +1632,7 @@ export class Boxes {
       signal?.throwIfAborted();
       await backend.maintain?.(signal).catch((error) => this.#deps.logError(`maintain ${backend.id}`, error));
     }
-    return { released, leftovers, adopted, kept, resumed };
+    return { released, leftovers, adopted, kept, ending: waiting, resumed };
   }
 
   /** Enrols a restored box whose guest did not answer at the restore, once it runs and answers (026). */

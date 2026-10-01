@@ -9,6 +9,7 @@ import {
   kindSizes,
   LINUX_LEAST_MEMORY_GIB,
   parseSizeChanges,
+  presetMemoryChecks,
   presetSizes,
   withEarlierSizes,
 } from "../src/core/sizes.ts";
@@ -133,6 +134,28 @@ test("a custom size of a Linux kind has at least 2 GiB memory, and every preset 
   for (const kind of linuxKinds) {
     for (const preset of presetSizes(kindSizes(kind))) assert.ok(preset.memoryMiB >= LINUX_LEAST_MEMORY_GIB * GiB, `${kind}: ${describeSize(preset)}`);
   }
+});
+
+test("the doctor warns about a preset of a Linux kind that the box-sizes setting makes smaller than 2 GiB memory", () => {
+  assert.deepEqual(presetMemoryChecks({}), []);
+  assert.deepEqual(presetMemoryChecks({ linux: { small: { memoryMiB: 2 * GiB } }, macos: { small: { memoryMiB: GiB } } }), [], "2 GiB is enough, and the floor is for Linux kinds");
+  assert.deepEqual(presetMemoryChecks({ linux: { small: { cores: 1, memoryMiB: GiB } } }), [
+    {
+      id: "sizes.linux.small",
+      name: "Box sizes",
+      status: "warn",
+      detail: "The small linux preset, 1 core, 1 GiB memory, has less than 2 GiB memory, so its boxes can run out of memory as they become BB machines.",
+      fix: "Give it at least 2 GiB memory in bb-box's settings, under Kinds.",
+    },
+  ]);
+  const checks = presetMemoryChecks({ "linux-desktop-cpu": { small: { memoryMiB: 1536 }, medium: { memoryMiB: GiB } }, "windows-desktop": { small: { memoryMiB: GiB } } });
+  assert.deepEqual(
+    checks.map((check) => [check.id, check.detail.split(", has")[0]]),
+    [
+      ["sizes.linux-desktop-cpu.small", "The small linux-desktop-cpu preset, 4 cores, 1.5 GiB memory"],
+      ["sizes.linux-desktop-cpu.medium", "The medium linux-desktop-cpu preset, 8 cores, 1 GiB memory"],
+    ],
+  );
 });
 
 test("sizes are described in words, leaving out the base disk", () => {

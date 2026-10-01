@@ -395,7 +395,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         const { box, runsOn } = await app.resolve(id, ref);
         if (runsOn) throw runsOnRefusal(box, "release");
         const idle = await app.checkInUse(box, "Releasing");
-        const left = await boxes.release(id, box.id);
+        const left = await boxes.release(id, box.id, "its thread released it with box_release");
         if (left) {
           return `Box ${box.name} is still being released: ${left.error ?? "the backend has not finished"}. bb-box keeps trying in the background.${next("Carry on; nothing else is needed.")}`;
         }

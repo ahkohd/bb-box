@@ -5,7 +5,7 @@
 // comes from the preset, or else the default preset.
 
 import { currentKindId, isEarlierKindId, kindInfo } from "../backends/kinds.ts";
-import type { BoxSize } from "../backends/types.ts";
+import type { BoxSize, DoctorCheck } from "../backends/types.ts";
 
 export const PRESETS = ["small", "medium", "large"] as const;
 export type Preset = (typeof PRESETS)[number];
@@ -48,7 +48,8 @@ const MACOS: KindSizes = {
 /**
  * The least memory of a custom size of a Linux kind. BB's daemon uses about
  * 260 MB in a box, and a 1 GiB box ran out of memory as it became a BB
- * machine. Every preset bb-box ships has more.
+ * machine. Every preset bb-box ships has more, and the doctor warns about a
+ * preset the box-sizes setting makes smaller.
  */
 export const LINUX_LEAST_MEMORY_GIB = 2;
 
@@ -196,6 +197,27 @@ export function parseSizeChanges(raw: unknown): { changes: SizeChanges; problems
     if (change) changes[kind] = change;
   }
   return { changes, problems };
+}
+
+/**
+ * A doctor warning for each preset of a Linux kind that the box-sizes
+ * setting makes smaller than a custom size may be. The setting may still
+ * do so, as the operator's choice, so the doctor warns and does not fail.
+ */
+export function presetMemoryChecks(changes: SizeChanges): DoctorCheck[] {
+  const kinds = [...new Set(Object.keys(changes).map(currentKindId))].filter((kind) => kindInfo(kind).os === "linux");
+  return kinds.flatMap((kind) => {
+    const sizes = kindSizes(kind, changes);
+    return PRESETS.filter((preset) => sizes.presets[preset].memoryMiB < LINUX_LEAST_MEMORY_GIB * 1024).map((preset) => ({
+      id: `sizes.${kind}.${preset}`,
+      name: "Box sizes",
+      status: "warn" as const,
+      detail:
+        `The ${preset} ${kind} preset, ${describeSize(sizes.presets[preset])}, has less than ${LINUX_LEAST_MEMORY_GIB} GiB memory, ` +
+        "so its boxes can run out of memory as they become BB machines.",
+      fix: `Give it at least ${LINUX_LEAST_MEMORY_GIB} GiB memory in bb-box's settings, under Kinds.`,
+    }));
+  });
 }
 
 /**

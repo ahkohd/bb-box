@@ -406,7 +406,8 @@ memory and root disk, where a disk of null is the backend's base.
   offer. The configuration's kinds part changes them per kind.
   `box_acquire` and `bb box acquire` take a preset or a custom size; core
   refuses one above the largest, or one of a Linux kind with less than
-  2 GiB memory, as BB's daemon uses about 260 MB in a box.
+  2 GiB memory, as BB's daemon uses about 260 MB in a box. The kinds part
+  may still make a Linux preset smaller, and the doctor then warns.
 - The backend gets the size in `BoxIdentity.size`, and `capacity` is asked
   about that size, with the kind and size of each box still being acquired.
   An offer that cannot make it says so in capacity's message, and the
@@ -852,7 +853,9 @@ any state -> releasing -> released     (release, or the thread is archived or de
    removes the machine from BB, then the backend releases the guest. A missing
    guest counts as released. A box a thread is working on is released or
    stopped only when forced
-   ([034](decisions/034-a-working-thread-holds-its-box.md)).
+   ([034](decisions/034-a-working-thread-holds-its-box.md)). Every release
+   logs one line saying why: who released it, that its thread ended, or
+   what bb-box needed, as trimming spares or making room.
 
 | | Virtual | Real |
 | --- | --- | --- |
@@ -1211,16 +1214,21 @@ Nothing expires, so a box must never be forgotten.
   1. records this install on the guests of its boxes from before install
      IDs, through `stamp()`, once per box. A guest with no install ID that
      no box records is left to the doctor's note;
-  2. releases the boxes of threads that BB says were archived or deleted.
-     A thread has ended only when BB returns it archived or deleted, or
-     answers `thread_not_found`; any other error keeps its boxes;
+  2. releases the boxes of threads that BB says were archived or deleted,
+     at this sweep and the last. A thread has ended only when BB returns it
+     archived or deleted, or answers `thread_not_found`; any other error
+     keeps its boxes. One answer is not enough: a wrong one, as after a
+     restart, would take a live thread's boxes. So the first sweep keeps
+     them and the next releases them. The answers are kept in memory, so a
+     restart starts again. A thread event releases a thread's boxes at
+     once, unless BB says when asked that the thread is live;
   3. finishes interrupted releases;
   4. for each of this install's guests from `held()` that no record names:
      releases it when it names no box (an acquire interrupted before the
      claim was labelled) or when its box now holds another guest or none.
      Otherwise it restores the box's record from the guest while BB says
      the thread is live, releases the guest once BB says the thread ended,
-     and keeps it while BB does not say
+     at this sweep and the last, and keeps it while BB does not say
      ([019](decisions/019-lost-records-are-restored-from-guests.md)).
      The released guest's BB machine stays until BB can find a machine by
      its key ([026](decisions/026-a-restored-box-enrols-once-it-answers.md)).
