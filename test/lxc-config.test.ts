@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LXC_SETTINGS, addressFor, net0For, normalisePrivateKey, parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
+import { LXC_SETTINGS, addressFor, earlierLxcSizes, net0For, normalisePrivateKey, parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
 import { parseGeneral } from "../src/core/config.ts";
 import { VALID, lxcConfig, tempDir } from "./helpers.ts";
 
@@ -15,12 +15,9 @@ test("valid settings parse with defaults", () => {
   assert.equal(config.proxmox.tlsFingerprint, null);
   assert.equal(config.ssh.user, "box");
   assert.deepEqual(config.vmids, { first: 9900, last: 9999 });
-  assert.deepEqual(config.flavours.linux.templates, [{ vmid: 9000, gpu: null }]);
-  assert.equal(config.flavours.linux.diskGiB, null, "the template's disk is kept");
+  assert.deepEqual(config.flavours.linux, { templates: [{ vmid: 9000, gpu: null }], warm: 0 });
   assert.deepEqual(config.flavours.desktop.templates, []);
   assert.deepEqual(config.flavours["desktop-cpu"].templates, []);
-  assert.equal(config.flavours.linux.memoryMiB, 4096);
-  assert.equal(config.flavours.linux.warm, 0);
   assert.deepEqual(config.desktop, { perGpu: null });
   assert.deepEqual(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 3 }).desktop, { perGpu: 3 });
   assert.deepEqual(config.reserve, { memoryMiB: 4096, diskGiB: 50 });
@@ -73,7 +70,6 @@ test("each flavour takes a list of templates, and GPU desktop templates name the
     { vmid: 9005, gpu: "GPU-0a1b2c3d" },
   ]);
   assert.deepEqual(config.flavours["desktop-cpu"].templates, [{ vmid: 9003, gpu: null }]);
-  assert.equal(config.flavours["desktop-cpu"].memoryMiB, 8192);
   assert.deepEqual(lxcConfig({ "proxmox-lxc-linux-templates": 9000 }).flavours.linux.templates, [{ vmid: 9000, gpu: null }]);
   const desktopsOnly = lxcConfig({ "proxmox-lxc-linux-templates": "", "proxmox-lxc-desktop-cpu-templates": "9003" });
   assert.deepEqual(desktopsOnly.flavours.linux.templates, []);
@@ -93,30 +89,30 @@ test("an unset Linux setting reads its key from before 027, and a set one wins",
     "proxmox-lxc-headless-disk-gib": 20,
     "proxmox-lxc-headless-warm": 2,
   };
-  assert.deepEqual(linux(earlier), {
-    templates: [{ vmid: 9010, gpu: null }, { vmid: 9011, gpu: null }],
-    cores: 6,
-    memoryMiB: 6144,
-    diskGiB: 20,
-    warm: 2,
-  });
-  const both = linux({ ...earlier, "proxmox-lxc-linux-templates": "9020", "proxmox-lxc-linux-cores": 3, "proxmox-lxc-linux-warm": 0 });
+  assert.deepEqual(linux(earlier), { templates: [{ vmid: 9010, gpu: null }, { vmid: 9011, gpu: null }], warm: 2 });
+  const both = linux({ ...earlier, "proxmox-lxc-linux-templates": "9020", "proxmox-lxc-linux-warm": 0 });
   assert.deepEqual(both.templates, [{ vmid: 9020, gpu: null }]);
-  assert.equal(both.cores, 3);
   assert.equal(both.warm, 0, "a new key set to 0 is set");
-  assert.equal(both.memoryMiB, 6144, "each key falls back on its own");
-  assert.equal(linux({ ...earlier, "proxmox-lxc-linux-cores": null }).cores, 6, "a cleared key is unset");
+  assert.equal(linux({ ...earlier, "proxmox-lxc-linux-warm": null }).warm, 2, "a cleared key is unset");
+  assert.equal(linux({ ...earlier, "proxmox-lxc-linux-templates": "9020" }).warm, 2, "each key falls back on its own");
   assert.deepEqual(linux({ ...earlier, "proxmox-lxc-linux-templates": "" }).templates, [], "an empty list is set, and turns the kinds off");
-  assert.deepEqual(linux({}), { templates: [{ vmid: 9100, gpu: null }], cores: 2, memoryMiB: 4096, diskGiB: null, warm: 0 });
+  assert.deepEqual(linux({}), { templates: [{ vmid: 9100, gpu: null }], warm: 0 });
 
   // BB gives a declared default in place of an unset value, so the new keys declare none, and the old keys stay declared.
-  for (const field of ["templates", "cores", "memory-mib", "disk-gib", "warm"]) {
+  for (const field of ["templates", "warm"]) {
     const current = LXC_SETTINGS[`proxmox-lxc-linux-${field}`]!;
     const replaced = LXC_SETTINGS[`proxmox-lxc-headless-${field}`]!;
     assert.ok(!("default" in current), field);
     assert.ok(!("default" in replaced), field);
     assert.match(replaced.label, /\(replaced\)$/);
     assert.match(replaced.description ?? "", new RegExp(`Replaced by proxmox-lxc-linux-${field}`));
+  }
+  // The size keys, current and earlier, were replaced by box sizes (028).
+  for (const key of ["proxmox-lxc-linux-cores", "proxmox-lxc-headless-memory-mib", "proxmox-lxc-desktop-disk-gib", "proxmox-lxc-desktop-cpu-cores"]) {
+    const replaced = LXC_SETTINGS[key]!;
+    assert.ok(!("default" in replaced), key);
+    assert.match(replaced.label, /\(replaced\)$/, key);
+    assert.match(replaced.description ?? "", /^Replaced by Box sizes, which took a saved value once as the default size of (linux and linux-docker|linux-desktop|linux-desktop-cpu) boxes\. Changing it does nothing\.$/, key);
   }
 });
 
@@ -187,7 +183,35 @@ test("the SSH key is optional and survives a one-line paste or base64", () => {
 });
 
 test("general settings: no per-thread limit unless set", () => {
-  assert.deepEqual(parseGeneral({}), { ok: true, config: { perThreadLimit: null, enrol: true } });
-  assert.deepEqual(parseGeneral({ "boxes-per-thread": 3, "enrol-boxes": false }), { ok: true, config: { perThreadLimit: 3, enrol: false } });
-  assert.equal(parseGeneral({ "boxes-per-thread": -1 }).ok, false);
+  assert.deepEqual(parseGeneral({}), { config: { perThreadLimit: null, enrol: true, sizes: {} }, problems: [] });
+  assert.deepEqual(parseGeneral({ "boxes-per-thread": 3, "enrol-boxes": false }), { config: { perThreadLimit: 3, enrol: false, sizes: {} }, problems: [] });
+  assert.deepEqual(parseGeneral({ "boxes-per-thread": -1 }), {
+    config: { perThreadLimit: null, enrol: true, sizes: {} },
+    problems: ["Use a whole number of boxes per thread, or 0 for no limit."],
+  });
+});
+
+test("general settings: box sizes, where a mistake keeps the shipped sizes and is a problem", () => {
+  const sizes = parseGeneral({ "box-sizes": '{"linux":{"default":"medium"}}' });
+  assert.deepEqual(sizes, { config: { perThreadLimit: null, enrol: true, sizes: { linux: { default: "medium" } } }, problems: [] });
+  const wrong = parseGeneral({ "boxes-per-thread": 2, "box-sizes": '{"linux":{"default":"huge"}}' });
+  assert.deepEqual(wrong.config, { perThreadLimit: 2, enrol: true, sizes: {} });
+  assert.deepEqual(wrong.problems, ["linux.default must be small, medium or large."]);
+});
+
+test("the size keys saved before 028 give each kind's earlier size", () => {
+  assert.deepEqual(earlierLxcSizes({}), {}, "nothing saved, nothing to carry over");
+  assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-linux-templates": "9000", "proxmox-lxc-linux-warm": 2 }), {}, "only the size keys count");
+  const six = { cores: 6, memoryMiB: 4096, diskGiB: 20 };
+  assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-linux-cores": 6, "proxmox-lxc-linux-disk-gib": 20 }), { linux: six, "linux-docker": six });
+  assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-headless-cores": 6, "proxmox-lxc-headless-disk-gib": 20 }), { linux: six, "linux-docker": six }, "under the keys from before 027 too");
+  assert.deepEqual(
+    earlierLxcSizes({ "proxmox-lxc-desktop-memory-mib": 16384, "proxmox-lxc-desktop-cpu-disk-gib": 0 }),
+    {
+      "linux-desktop": { cores: 4, memoryMiB: 16384, diskGiB: null },
+      "linux-desktop-cpu": { cores: 4, memoryMiB: 8192, diskGiB: null },
+    },
+    "a disk of 0 is the template's",
+  );
+  assert.deepEqual(earlierLxcSizes({ "proxmox-lxc-linux-cores": 0 }), {}, "a size out of range is not carried over");
 });

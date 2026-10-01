@@ -3,6 +3,7 @@
 
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { BoxError, describeError } from "../core/boxes.ts";
+import { PRESETS } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
 import { boxDetail, boxLine, doctorText } from "./views.ts";
 
@@ -10,6 +11,13 @@ const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
 } as const;
 const jsonOption = { json: { type: "boolean", description: "Print JSON." } } as const;
+/** A preset and any parts of a custom size (028). bb-box refuses a size above the kind's largest. */
+const sizeOptions = {
+  size: { type: "enum", values: PRESETS, description: "A preset. Defaults to the kind's default preset; bb box kinds shows each kind's sizes." },
+  cores: { type: "integer", min: 1, max: 1024, description: "Cores, for a custom size. Parts left out come from the preset." },
+  "memory-gib": { type: "integer", min: 1, max: 65536, description: "Memory in GiB, for a custom size." },
+  "disk-gib": { type: "integer", min: 1, max: 65536, description: "Root disk in GiB, for a custom size. Presets keep the kind's own disk." },
+} as const;
 const boxPositional = [{ name: "box", description: "The box's name or ID.", required: true }] as const;
 
 function out(text: string): PluginCliResult {
@@ -57,10 +65,17 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           summary: "List the kinds of box the active backends offer.",
           options: jsonOption,
           async run({ options }) {
-            const kinds = app.kinds();
+            const kinds = await app.kinds();
             if (options.json) return json(kinds);
             if (!kinds.length) return out("No backend is on, so there are no kinds. Turn one on in bb-box's settings.");
-            return out(kinds.map((kind) => `${kind.id}: ${kind.label}, ${kind.size}, from ${kind.backends.join(", ")}. ${kind.description}`).join("\n"));
+            return out(
+              kinds
+                .map((kind) => {
+                  const presets = kind.presets.map((preset) => `  ${preset.name}${preset.name === kind.defaultPreset ? " (default)" : ""}: ${preset.words}`);
+                  return [`${kind.id}: ${kind.label}, from ${kind.backends.join(", ")}. ${kind.description}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
+                })
+                .join("\n"),
+            );
           },
         }),
         list: cliCommand({
@@ -76,12 +91,13 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         acquire: cliCommand({
           summary: "Acquire a box for a thread and wait until it answers.",
           positionals: [{ name: "kind", description: "The kind of box, from bb box kinds.", required: true }],
-          options: { ...threadOption, ...jsonOption, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
+          options: { ...threadOption, ...jsonOption, ...sizeOptions, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
           run: ({ positionals, options }, ctx) =>
             guard("Acquiring a box", async () => {
               const threadId = threadOf(options.thread, ctx);
               const projectId = ctx.projectId ?? (await app.projectOf(threadId));
-              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind });
+              const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
+              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
               return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };

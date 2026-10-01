@@ -11,6 +11,9 @@ import type { Backend, BackendDriver, BackendStorage, BoxKind, DoctorCheck } fro
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, sshPoolDriver];
 
+/** Sizes the Proxmox LXC settings gave boxes before 028, read once into the box-sizes setting. */
+export { earlierLxcSizes } from "./proxmox-lxc/config.ts";
+
 /** Every backend setting, in driver order. Setting keys must be unique. */
 export function backendSettings(drivers: readonly BackendDriver<any>[] = DRIVERS): Record<string, PluginSettingDescriptor> {
   const settings: Record<string, PluginSettingDescriptor> = {};

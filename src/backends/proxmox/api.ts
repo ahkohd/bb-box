@@ -2,6 +2,8 @@
 // an API token. Every call goes through one `fetch`, so tests pass a fake API.
 // The token secret appears only in the Authorization header, never in errors.
 
+import type { BoxSize } from "../types.ts";
+
 export interface FetchResponse {
   readonly ok: boolean;
   readonly status: number;
@@ -95,6 +97,8 @@ export interface NodeStatus {
   readonly memoryTotal: number;
   /** Bytes the node can still give out: MemAvailable where Proxmox reports it, else free. */
   readonly memoryAvailable: number;
+  /** The node's CPU threads, or null when Proxmox does not say. */
+  readonly cpus: number | null;
 }
 
 export interface StorageStatus {
@@ -111,6 +115,8 @@ export interface PoolGuest {
   readonly status: string;
   readonly template: boolean;
   readonly tags: string[];
+  /** From the listing's maxcpu, maxmem and maxdisk, or null when it lacks them. */
+  readonly size: BoxSize | null;
 }
 
 type Params = Record<string, string | number | boolean | undefined>;
@@ -152,6 +158,15 @@ export function rootDiskGiB(config: Record<string, unknown>): number | null {
   return size ? parseSizeGiB(size) : null;
 }
 
+/** A guest's size from /cluster/resources, which gives memory and disk in bytes. */
+function listedSize(entry: Record<string, unknown>): BoxSize | null {
+  const cores = Number(entry.maxcpu);
+  const memory = Number(entry.maxmem);
+  const disk = Number(entry.maxdisk);
+  if (!(cores > 0 && memory > 0)) return null;
+  return { cores, memoryMiB: Math.round(memory / 2 ** 20), diskGiB: disk > 0 ? Math.round((disk / 2 ** 30) * 10) / 10 : null };
+}
+
 export class Proxmox {
   readonly node: string;
   readonly #base: string;
@@ -186,11 +201,17 @@ export class Proxmox {
   }
 
   async nodeStatus(signal?: AbortSignal): Promise<NodeStatus> {
-    const data = await this.#request<{ memory?: Record<string, unknown> }>("GET", `/nodes/${enc(this.node)}/status`, undefined, signal);
+    const data = await this.#request<{ memory?: Record<string, unknown>; cpuinfo?: Record<string, unknown> }>(
+      "GET",
+      `/nodes/${enc(this.node)}/status`,
+      undefined,
+      signal,
+    );
     const memory = data?.memory ?? {};
     const total = Number(memory.total ?? 0);
     const available = Number(memory.available ?? memory.free ?? Math.max(0, total - Number(memory.used ?? total)));
-    return { memoryTotal: total, memoryAvailable: available };
+    const cpus = Number(data?.cpuinfo?.cpus);
+    return { memoryTotal: total, memoryAvailable: available, cpus: Number.isInteger(cpus) && cpus > 0 ? cpus : null };
   }
 
   async storageStatus(storage: string, signal?: AbortSignal): Promise<StorageStatus> {
@@ -359,6 +380,7 @@ export class Proxmox {
         status: String(entry.status ?? "unknown"),
         template: entry.template === 1 || entry.template === true,
         tags: parseTags(entry.tags),
+        size: listedSize(entry),
       }))
       .filter((entry) => Number.isInteger(entry.vmid));
   }

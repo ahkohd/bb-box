@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { DRIVERS } from "../src/backends/index.ts";
 import type { BackendDriver } from "../src/backends/types.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
@@ -74,7 +75,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"] } & Pick<FakeBackendOptions, "resize"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[] } & Pick<FakeBackendOptions, "resize"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -200,13 +201,14 @@ async function start(
       },
     },
   });
-  const app = await setup(bb, {
-    drivers: [fakeDriver(root, world, { resize: options.resize })],
+  const setupOptions: SetupOptions = {
+    drivers: [fakeDriver(root, world, { resize: options.resize }), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
-  });
+  };
+  const app = await setup(bb, setupOptions);
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
-  return { bb, harness, app, world, tool };
+  return { bb, harness, app, world, tool, setupOptions };
 }
 
 function text(result: PluginAgentToolResult): string {
@@ -278,7 +280,7 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   assert.equal(readFileSync(join(world.workspace, "out/result.txt"), "utf8"), "FROM THE WORKSPACE\n");
 
   const listed = await tool("box_list", {});
-  assert.match(text(listed), new RegExp(`- ${box.name}: Linux \\(linux\\), ready`));
+  assert.match(text(listed), new RegExp(`- ${box.name}: Linux \\(linux, 2 cores, 4 GiB memory\\), ready`));
   assert.match(text(listed), /Kinds:\n- linux/);
 
   const released = await tool("box_release", { box: box.name });
@@ -646,9 +648,9 @@ test("box_acquire takes a kind's ID from before 027, and the tools show the curr
   const { harness, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
 
-  assert.match(text(await tool("box_acquire", { kind: "linux-headless", wait: false })), /^Acquiring box \S+ \(linux\)\./);
+  assert.match(text(await tool("box_acquire", { kind: "linux-headless", wait: false })), /^Acquiring box \S+ \(linux, 2 cores, 4 GiB memory\)\./);
   const listed = text(await tool("box_list", {}));
-  assert.match(listed, /\(linux\)/);
+  assert.match(listed, /\(linux, /);
   assert.doesNotMatch(listed, /headless/);
 });
 
@@ -678,9 +680,74 @@ test("with no backend on, the plugin asks for its settings, and a change takes e
   assert.match(text(refused), /No backend is set up, so there are no boxes to acquire/);
 
   await harness.behavior.setSettings({ "fake-enabled": true });
-  await until("the backend", async () => app.kinds().length > 0);
+  await until("the backend", async () => (await app.kinds()).length > 0);
   assert.ok(harness.inspection.realtimeSignals.some((signal) => signal.channel === "changed"));
   assert.ok(!isError(await tool("box_acquire", {})));
+});
+
+test("box_acquire takes a preset or a custom size, and box_list shows each kind's sizes (028)", async (t) => {
+  const { harness, app, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+
+  assert.match(
+    text(await tool("box_list", {})),
+    /- linux: .* Sizes: small \(2 cores, 4 GiB memory, the default\), medium \(4 cores, 8 GiB memory\), large \(8 cores, 16 GiB memory\); custom up to 16 cores, 32 GiB memory, 256 GiB disk\./,
+  );
+  assert.match(text(await tool("box_acquire", { size: "medium" })), /4 cores, 8 GiB memory/);
+  const custom = text(await tool("box_acquire", { size: "large", memory_gib: 12, disk_gib: 40, wait: false }));
+  assert.match(custom, /^Acquiring box \S+ \(linux, 8 cores, 12 GiB memory, 40 GiB disk\)\./);
+  const sizes = (await app.boxes.list(THREAD)).map((box) => box.size);
+  assert.deepEqual(
+    sizes.sort((a, b) => a!.cores - b!.cores),
+    [
+      { cores: 4, memoryMiB: 8192, diskGiB: null },
+      { cores: 8, memoryMiB: 12288, diskGiB: 40 },
+    ],
+  );
+  assert.match(text(await tool("box_list", {})), /4 cores, 8 GiB memory/);
+
+  const refused = await tool("box_acquire", { cores: 64 });
+  assert.ok(isError(refused));
+  assert.match(text(refused), /^A linux box can be at most 16 cores, 32 GiB memory, 256 GiB disk, not 64 cores, 4 GiB memory\./);
+  assert.match(text(refused), /Pick a preset, or a custom size within the largest\. box_list shows each kind's sizes\./);
+  assert.equal((await app.boxes.list(THREAD)).length, 2, "a refused size makes no box");
+});
+
+test("sizes saved in the Proxmox LXC settings before 028 become the kinds' default sizes, once (028)", async (t) => {
+  const { harness, app, tool, setupOptions } = await start(
+    { "fake-enabled": true, "proxmox-lxc-linux-cores": 6, "proxmox-lxc-linux-memory-mib": 6144 },
+    { drivers: DRIVERS },
+  );
+  t.after(() => harness.lifecycle.dispose());
+
+  const linux = (await app.kinds()).find((kind) => kind.id === "linux")!;
+  assert.equal(linux.defaultPreset, "small");
+  assert.deepEqual(linux.presets.map((preset) => preset.words), ["6 cores, 6 GiB memory", "6 cores, 8 GiB memory", "8 cores, 16 GiB memory"]);
+  assert.match(text(await tool("box_acquire", {})), /6 cores, 6 GiB memory/);
+  assert.deepEqual((await only(app)).size, { cores: 6, memoryMiB: 6144, diskGiB: null });
+  const desktop = (await app.kinds()).find((kind) => kind.id === "linux-desktop")!;
+  assert.equal(desktop.presets[0]!.words, "4 cores, 8 GiB memory", "a kind with nothing saved keeps the shipped sizes");
+
+  // The operator takes the entry out. A restart does not put it back.
+  await harness.behavior.setSettings({ "box-sizes": null });
+  let restarted: Awaited<ReturnType<typeof setup>> | null = null;
+  await harness.lifecycle.reload(async (bb) => {
+    restarted = await setup(bb, setupOptions);
+  });
+  const again = (await restarted!.kinds()).find((kind) => kind.id === "linux")!;
+  assert.equal(again.presets[0]!.words, "2 cores, 4 GiB memory");
+});
+
+test("a box-sizes entry with a mistake is a warning in the doctor, and its kind keeps bb-box's sizes (028)", async (t) => {
+  const { harness, app } = await start({ "fake-enabled": true, "box-sizes": '{"linux":{"default":"huge"},"linux-desktop":{"default":"large"}}' });
+  t.after(() => harness.lifecycle.dispose());
+
+  const doctor = await harness.behavior.runCli(["doctor"]);
+  assert.equal(doctor.exitCode, 0, doctor.stderr);
+  assert.match(doctor.stdout ?? "", /bb-box: Some settings need fixing\. Until then bb-box uses their defaults\.\n {2}\[warn\] Settings: linux\.default must be small, medium or large\./);
+  const kinds = await app.kinds();
+  assert.equal(kinds.find((kind) => kind.id === "linux")!.defaultPreset, "small");
+  assert.equal(kinds.find((kind) => kind.id === "linux-desktop")!.defaultPreset, "large", "a good entry still counts");
 });
 
 test("wrong settings are named in the status and the doctor", async (t) => {
@@ -845,11 +912,18 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   t.after(() => harness.lifecycle.dispose());
 
   const kinds = await harness.behavior.runCli(["kinds"]);
-  assert.match(kinds.stdout ?? "", /^linux: Linux, 1 core, from Fake host/);
-  const acquired = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD]);
+  assert.match(
+    kinds.stdout ?? "",
+    /^linux: Linux, from Fake host\. .*\n  small \(default\): 2 cores, 4 GiB memory\n  medium: 4 cores, 8 GiB memory\n  large: 8 cores, 16 GiB memory\n  largest: 16 cores, 32 GiB memory, 256 GiB disk\n/,
+  );
+  const acquired = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD, "--size", "medium", "--disk-gib", "20"]);
   assert.equal(acquired.exitCode, 0, acquired.stderr);
   const box = await only(app);
   assert.match(acquired.stdout ?? "", new RegExp(`Box ${box.name}`));
+  assert.deepEqual(box.size, { cores: 4, memoryMiB: 8192, diskGiB: 20 });
+  const tooBig = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD, "--memory-gib", "64"]);
+  assert.equal(tooBig.exitCode, 1);
+  assert.match(tooBig.stderr ?? "", /at most 16 cores, 32 GiB memory, 256 GiB disk, not 2 cores, 64 GiB memory.*\(invalid_size\)/s);
   const all = await harness.behavior.runCli(["list", "--all"]);
   assert.match(all.stdout ?? "", new RegExp(`- ${box.name}: .*\\[thread ${THREAD}\\]`));
   const json = JSON.parse((await harness.behavior.runCli(["list", "--thread", THREAD, "--json"])).stdout ?? "") as { name: string }[];

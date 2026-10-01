@@ -17,7 +17,7 @@ import { promisify } from "node:util";
 import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
 import type { Backend, Guest } from "../src/backends/types.ts";
 import { readSettings } from "../scripts/smoke.ts";
-import { identity, recordingHooks, releaseHooks } from "./conformance/suite.ts";
+import { identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
 import { MemoryStorage } from "./helpers.ts";
 
 const rig = process.env.SSH_POOL_RIG;
@@ -154,7 +154,7 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
       assert.equal(broken.state, "out-of-service");
       assert.match(broken.reason ?? "", /the disk is full/);
       assert.ok(errors.some((error) => /the disk is full/.test(error)), errors.join("\n"));
-      assert.equal((await pool.capacity("linux-docker", [])).ok, false);
+      assert.equal((await pool.capacity("linux-docker", sizeOf("linux-docker"), [])).ok, false);
       const report = await pool.doctor();
       const state = report.checks.find((check) => check.id === "machine.systemd.state");
       assert.equal(state?.status, "warn");

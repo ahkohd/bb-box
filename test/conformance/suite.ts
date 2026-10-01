@@ -12,6 +12,9 @@
 // The suite is an install of its own, with the ID "conformance". Its last
 // checks add a second install on the same backend, and reuse a reference
 // where the backend can (018).
+//
+// Boxes are made at their kind's default size, and one box at another
+// preset, which the suite measures in the box (028).
 
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
@@ -23,6 +26,7 @@ import {
   type BackendStorage,
   type BoxIdentity,
   type BoxKind,
+  type BoxSize,
   type Capacity,
   type DoctorReport,
   type Guest,
@@ -33,12 +37,24 @@ import {
 import { driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
 import { desktopSize, displayOpener, restoreSize } from "../../src/core/relay.ts";
+import { PRESETS, defaultSize, describeSize, kindSizes } from "../../src/core/sizes.ts";
 import { quote } from "../../src/transports/process.ts";
 import { openRoute } from "../../src/transports/route.ts";
 import type { ByteChannel, CommandTransport, DisplaySize } from "../../src/transports/types.ts";
 import { MemoryStorage } from "../helpers.ts";
 
-export type ConformanceCheck = "arch" | "docker" | "display" | "computer-use" | "enrol" | "stop-start" | "recovery" | "interrupted" | "installs";
+export type ConformanceCheck =
+  | "arch"
+  | "docker"
+  | "display"
+  | "computer-use"
+  | "enrol"
+  | "stop-start"
+  | "recovery"
+  | "interrupted"
+  | "installs"
+  /** Measuring a box's cores, memory and disk in the box. */
+  | "size";
 
 /** Enrolment in a live BB server. */
 export interface ConformanceBb {
@@ -87,10 +103,37 @@ const SHA256 = "if command -v sha256sum >/dev/null 2>&1; then sha256sum; else sh
 const MIB_UNITS: readonly Limit["resource"][] = ["memory", "disk", "gpu-memory"];
 const RESOURCES: readonly Limit["resource"][] = ["memory", "disk", "cpu", "guests", "gpu-desktops", "gpu-memory", "machines"];
 
-export function identity(kind: string): BoxIdentity {
-  const suffix = randomBytes(3).toString("hex");
-  return { boxId: `box_conformance_${suffix}`, threadId: THREAD, name: `conformance-${suffix}`, kind, createdAt: Date.now() };
+/** The size a box of the kind gets when none is asked for. */
+export function sizeOf(kind: string): BoxSize {
+  return defaultSize(kindSizes(kind));
 }
+
+export function identity(kind: string, size = sizeOf(kind)): BoxIdentity {
+  const suffix = randomBytes(3).toString("hex");
+  return { boxId: `box_conformance_${suffix}`, threadId: THREAD, name: `conformance-${suffix}`, kind, createdAt: Date.now(), size };
+}
+
+/** Checks a size a guest reports, which may be null when the backend cannot read it. */
+export function checkSize(size: BoxSize | null, what: string): void {
+  if (size === null) return;
+  assert.ok(Number.isInteger(size.cores) && size.cores > 0, `${what} has whole cores`);
+  assert.ok(Number.isInteger(size.memoryMiB) && size.memoryMiB > 0, `${what} has whole MiB of memory`);
+  assert.ok(size.diskGiB === null || (Number.isFinite(size.diskGiB) && size.diskGiB > 0), `${what} has a disk size or null`);
+}
+
+/**
+ * Prints the box's cores, memory in MiB and the disk under its home in MiB:
+ * the least of what the OS shows and its cgroup limits, which Docker sets
+ * without the OS showing them. On Linux and macOS.
+ */
+const MEASURE = [
+  "cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)",
+  'if [ -r /sys/fs/cgroup/cpu.max ]; then read quota period < /sys/fs/cgroup/cpu.max; if [ "$quota" != max ]; then q=$(( (quota + period - 1) / period )); [ "$q" -ge "$cores" ] || cores=$q; fi; fi',
+  "if [ -r /proc/meminfo ]; then memory=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo); else memory=$(( $(sysctl -n hw.memsize) / 1048576 )); fi",
+  'if [ -r /sys/fs/cgroup/memory.max ]; then limit=$(cat /sys/fs/cgroup/memory.max); if [ "$limit" != max ]; then m=$(( limit / 1048576 )); [ "$m" -ge "$memory" ] || memory=$m; fi; fi',
+  "disk=$(df -Pk \"$HOME\" | awk 'NR == 2 { print int($2 / 1024) }')",
+  'echo "$cores $memory $disk"',
+].join("\n");
 
 export function recordingHooks() {
   const events: string[] = [];
@@ -163,7 +206,6 @@ export function checkKind(kind: BoxKind): void {
   assert.match(kind.id, ID, "kind IDs are lowercase words joined by hyphens");
   assert.ok(kind.label.trim(), `${kind.id} has a label`);
   assert.ok(kind.description.trim(), `${kind.id} has a description`);
-  assert.ok(kind.size.trim(), `${kind.id} says its size`);
   assert.ok(Number.isFinite(kind.readyTimeoutMs) && kind.readyTimeoutMs > 0, `${kind.id} has a ready timeout`);
   const capabilities = kind.capabilities;
   assert.ok(["linux", "windows", "macos"].includes(capabilities.os), `${kind.id} has a known OS`);
@@ -313,7 +355,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
 
       it("reports capacity for each kind", { timeout }, async () => {
         for (const kind of kinds) {
-          const capacity = await backend.capacity(kind.id, [], signal());
+          const capacity = await backend.capacity(kind.id, sizeOf(kind.id), [], signal());
           checkCapacity(capacity, backend.nature);
           assert.ok(capacity.ok, `${kind.id}: ${capacity.message}`);
         }
@@ -360,8 +402,10 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             assert.ok(recorded.claimed.length >= 1, "claim ran");
             assert.equal(recorded.events[0], "claim", "claim ran first");
             assert.equal(recorded.events.filter((event) => event === "starting").length, 1, "starting ran once");
-            assert.deepEqual(recorded.claimed.at(-1), guest, "the guest is the last one claimed");
+            // Its size may be read only once it is made.
+            assert.deepEqual({ ...recorded.claimed.at(-1), size: null }, { ...guest, size: null }, "the guest is the last one claimed");
             assert.ok(guest.host === null || guest.host.trim(), "the guest's host is a name or null");
+            checkSize(guest.size, "the guest");
             for (const fact of guest.facts ?? []) assert.ok(fact.label.trim() && typeof fact.value === "string", "a fact has a label and a value");
             for (const value of Object.values(guest.data ?? {})) assert.ok(["string", "number", "boolean"].includes(typeof value), "guest data is plain values");
             checkTimings(recorded.timings);
@@ -370,6 +414,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             assert.equal(held.owner?.boxId, box.boxId, "held names the box that owns it");
             assert.equal(held.owner?.threadId, box.threadId);
             assert.equal(held.host, guest.host);
+            checkSize(held.size, "the held guest");
             assert.equal(await backend.power(guest, signal()), "running");
             const member = (await backend.members?.(signal()))?.find((other) => other.ref === guest!.ref);
             if (backend.members) assert.equal(member?.state, "held", "the pool shows the machine held");
@@ -642,6 +687,69 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
         });
       }
 
+      describe("sizes", { skip: kinds.length ? false : "no kinds to check" }, () => {
+        const kind = kinds[0];
+        const sizes = kindSizes(kind?.id ?? "");
+        const preset = PRESETS.find((name) => name !== sizes.default)!;
+        const base = sizes.presets[preset];
+        /** With a disk larger than a base disk is likely to be, for the backends that set one. */
+        const disked: BoxSize = { ...base, diskGiB: base.diskGiB ?? 32 };
+        let asked = base;
+        let guest: Guest | null = null;
+
+        it(`makes a ${preset} box, and reads its size from the guest`, { timeout }, async () => {
+          const withDisk = await backend.capacity(kind!.id, disked, [], signal());
+          checkCapacity(withDisk, backend.nature);
+          if (withDisk.ok) asked = disked;
+          else {
+            // A backend that cannot set a disk refuses one through capacity (028).
+            console.log(`# ${options.name} ${kind!.id}: ${describeSize(disked)} refused: ${withDisk.message}`);
+            const without = await backend.capacity(kind!.id, base, [], signal());
+            assert.ok(without.ok, `${describeSize(base)}: ${without.message}`);
+          }
+          guest = await acquire(identity(kind!.id, asked), recordingHooks().hooks);
+          const size = guest.size;
+          assert.ok(size, "the backend reads the box's size");
+          checkSize(size, "the guest");
+          if (backend.nature === "virtual") {
+            assert.deepEqual([size.cores, size.memoryMiB], [asked.cores, asked.memoryMiB], "a virtual box has the cores and memory asked for");
+          } else {
+            // A machine has memory M when it shows 90% of it, as the box's own check allows.
+            assert.ok(size.cores >= asked.cores && size.memoryMiB >= asked.memoryMiB * 0.9, "a pool claims a machine of at least the size");
+          }
+          // A machine's disk is its own, so a pool may give null; the box's check measures it.
+          const disk = size.diskGiB ?? (backend.nature === "real" ? asked.diskGiB : null);
+          if (asked.diskGiB !== null) assert.ok(disk !== null && disk >= asked.diskGiB, "the disk is at least the size asked for");
+          const held = (await backend.held(signal())).find((other) => other.ref === guest!.ref);
+          assert.deepEqual(held?.size, size, "held reads the same size");
+        });
+
+        const measurable = kind?.capabilities.command && kind.capabilities.os !== "windows" ? false : "the kind runs no sh commands";
+        it("has the cores, memory and disk it says", { timeout, skip: skip.size ?? measurable }, async () => {
+          assert.ok(guest?.size, "the box was acquired");
+          const size = guest.size;
+          const command = (await backend.transports(guest, kind!.id)).command!;
+          const result = await command.run(MEASURE, { timeoutMs: 30_000 });
+          assert.equal(result.exitCode, 0, result.stderr);
+          const [cores, memoryMiB, diskMiB] = result.stdout.trim().split(/\s+/).map(Number) as [number, number, number];
+          console.log(`# ${options.name} ${kind!.id}: says ${describeSize(size)}; the box has ${cores} cores, ${memoryMiB} MiB memory, ${diskMiB} MiB disk`);
+          if (backend.nature === "virtual") assert.equal(cores, size.cores, "the cores the box can use");
+          else assert.ok(cores >= size.cores, "the cores the box can use");
+          // A VM's kernel keeps some of its memory.
+          assert.ok(memoryMiB >= size.memoryMiB * 0.9, `${memoryMiB} MiB of memory is about ${size.memoryMiB}`);
+          if (backend.nature === "virtual") assert.ok(memoryMiB <= size.memoryMiB, `${memoryMiB} MiB of memory is no more than ${size.memoryMiB}`);
+          // A file system keeps some of its disk.
+          const disk = size.diskGiB ?? (backend.nature === "real" ? asked.diskGiB : null);
+          if (disk !== null) assert.ok(diskMiB >= disk * 1024 * 0.9, `${diskMiB} MiB of disk is about ${disk} GiB`);
+        });
+
+        it("releases the box", { timeout }, async () => {
+          if (!guest) return;
+          await release(backend, guest);
+          await assertReleased(backend, guest);
+        });
+      });
+
       describe("interrupted acquires", { skip: skip.interrupted ?? (kinds.length ? false : "no kinds to check") }, () => {
         const kind = kinds[0]?.id ?? "";
         for (const at of ["claim", "starting"] as const) {
@@ -673,9 +781,9 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
         it("two installs on one backend leave each other's guests alone", { timeout }, async () => {
           const other = await options.create(new MemoryStorage(), `${CONFORMANCE_INSTALL}-other`);
           others.push(other);
-          const before = await other.capacity(kind, [], signal());
+          const before = await other.capacity(kind, sizeOf(kind), [], signal());
           const mine = await acquire(identity(kind), recordingHooks().hooks);
-          const after = await other.capacity(kind, [], signal());
+          const after = await other.capacity(kind, sizeOf(kind), [], signal());
           assert.ok(
             after.hosts.some((host) => host.limits.some((limit) => limit.used > (limitOf(before, host.host, limit.resource)?.used ?? Infinity))),
             "this install's guest counts against the other's capacity",

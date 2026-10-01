@@ -390,7 +390,8 @@ The example reads the API URL, node, token and fingerprint from the token
 file, and the key from `ssh/id_ed25519`, both next to the settings file.
 Change the other values to match your settings. It acquires a
 `linux` box, runs `uname -a`, releases the box and prints each
-step's time. `--kind` and `--command` pick another kind or command. For a
+step's time. `--kind`, `--size` and `--command` pick another kind, preset
+or command. The smoke run prints the size the box has. For a
 desktop kind it also prints the box's GPU, display mode and the reason, and
 opens the desktop as the viewer's relay does, answering its VNC password,
 and prints the desktop's size:
@@ -435,15 +436,27 @@ token file, the SSH key and the templates you built.
 | `proxmox-lxc-reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |
 | `proxmox-lxc-reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
 
-Each flavour of template has its own box size and warm pool. Replace
-`<flavour>` with `linux`, `desktop` or `desktop-cpu`:
+Each flavour of template has its own warm pool. Replace `<flavour>` with
+`linux`, `desktop` or `desktop-cpu`:
 
-| Setting | Linux | GPU desktop | CPU desktop | Notes |
-| --- | --- | --- | --- | --- |
-| `proxmox-lxc-<flavour>-cores` | `2` | `4` | `4` | |
-| `proxmox-lxc-<flavour>-memory-mib` | `4096` | `8192` | `8192` | |
-| `proxmox-lxc-<flavour>-disk-gib` | `0` | `0` | `0` | 0 keeps the template's disk, which is quickest |
-| `proxmox-lxc-<flavour>-warm` | `0` | `0` | `0` | started boxes kept waiting, so a new box is ready at once |
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `proxmox-lxc-<flavour>-warm` | `0` | started boxes kept waiting, so a new box is ready at once |
+
+A box is made at the size asked for: its kind's preset or a custom size
+([028](../../docs/decisions/028-a-box-size-is-chosen-when-it-is-made.md)).
+bb-box's general `box-sizes` setting changes the presets, and
+`skills/bb-box/SKILL.md` lists them. A disk size grows the template's disk;
+one smaller than the template's keeps the template's, which is quickest.
+A warm box waits at its template's size (`build.sh` leaves 2 cores and
+4 GiB) and is given the size asked for when it is handed out. Capacity
+checks the size against the node's CPU threads, its memory less the
+reserve, and, for a larger disk, the storage less the reserve.
+
+The `proxmox-lxc-<flavour>-cores`, `-memory-mib` and `-disk-gib` settings
+were replaced by `box-sizes`. Once, on the first start after the update,
+bb-box writes the values they had into `box-sizes` as the default size of
+their kinds, and lists them as replaced. Changing them does nothing.
 
 Leave a flavour's templates empty to offer none of its kinds. Linux
 templates serve `linux` and `linux-docker`, GPU desktop templates
@@ -473,7 +486,8 @@ goes to the GPU with the fewest desktops, and is refused when every GPU runs
    `pool` and `full=0`. A linked clone takes no `storage` parameter.
 2. `PUT /nodes/{node}/lxc/{vmid}/config` with
    `net0=name=eth0,bridge={bridge},ip={address}/{prefix},gw={gateway},type=veth`,
-   `cores`, `memory`, `onboot=1` and `delete=protection`.
+   `cores` and `memory` from the size asked for, `onboot=1` and
+   `delete=protection`.
 3. `PUT` the same path with `tags`, now that the box is in the pool (Proxmox
    checks tags against `/vms/{vmid}` alone): `bb-box`, `thread.<id>`,
    `box.<id>`, `kind.<kind>`, `created.<seconds>` and `template.<vmid>`.

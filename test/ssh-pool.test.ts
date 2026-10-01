@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SshPoolBackend } from "../src/backends/ssh-pool/backend.ts";
 import { hostKeysFor, parseSshPoolSettings, parseTarget, type SshPoolConfig } from "../src/backends/ssh-pool/config.ts";
-import { BackendError, type Backend, type BackendStorage, type BoxIdentity, type Guest } from "../src/backends/types.ts";
-import { conformance, identity, recordingHooks, releaseHooks } from "./conformance/suite.ts";
+import { BackendError, type Backend, type BackendStorage, type BoxIdentity, type BoxSize, type Guest } from "../src/backends/types.ts";
+import { conformance, identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
 import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const HELPER = `node ${new URL("./fake-machine.mjs", import.meta.url).pathname}`;
@@ -75,8 +75,8 @@ function pool(lines: string, storage: BackendStorage = new MemoryStorage(), inst
   return { backend, context, storage };
 }
 
-async function acquire(backend: Backend, kind = "linux"): Promise<{ box: BoxIdentity; guest: Guest }> {
-  const box = identity(kind);
+async function acquire(backend: Backend, kind = "linux", size = sizeOf(kind)): Promise<{ box: BoxIdentity; guest: Guest }> {
+  const box = identity(kind, size);
   return { box, guest: await backend.acquire(box, null, recordingHooks().hooks, AbortSignal.timeout(20_000)) };
 }
 
@@ -156,6 +156,7 @@ await conformance({
   skip: {
     arch: "the fake SSH runs commands on the test machine",
     docker: "the fake SSH runs commands on the test machine",
+    size: "the fake SSH runs commands on the test machine",
   },
   timeoutMs: 20_000,
 });
@@ -185,7 +186,7 @@ describe("SSH host pool", () => {
     assert.equal(transports.access?.dockerHost, "ssh://bbx-0@192.0.2.43");
     assert.equal(transports.access?.ssh?.user, "bbx-0");
     assert.equal((await backend.transports(guest, "linux")).access?.dockerHost, null);
-    const full = await backend.capacity("linux", []);
+    const full = await backend.capacity("linux", sizeOf("linux"), []);
     assert.equal(full.ok, false);
     assert.match(full.message!, /Of the 2 machines that serve linux, 2 are held by this install's boxes/);
     await assert.rejects(acquire(backend), (error: unknown) => error instanceof BackendError && error.code === "no_capacity");
@@ -194,14 +195,37 @@ describe("SSH host pool", () => {
     await backend.dispose();
   });
 
+  it("claims the smallest free machine of at least the size, counting 90% of the memory as all of it (028)", async () => {
+    // MemTotal leaves out what the kernel keeps: 7861 MiB is an 8 GiB machine, 3500 MiB is less than 4 GiB.
+    machine("192.0.2.46", { cores: "16", memory: "64000", disk: "500" });
+    machine("192.0.2.47", { cores: "4", memory: "7861", disk: "40" });
+    machine("192.0.2.48", { cores: "2", memory: "3500", disk: "40" });
+    const { backend } = pool("large 192.0.2.46 linux\nmedium 192.0.2.47 linux\ntiny 192.0.2.48 linux");
+    const size = (cores: number, memoryGiB: number, diskGiB: number | null = null): BoxSize => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB });
+    const small = await acquire(backend, "linux", size(2, 4));
+    assert.equal(small.guest.ref, "medium", "tiny has less than 90% of 4 GiB");
+    assert.deepEqual(small.guest.size, { cores: 4, memoryMiB: 7861, diskGiB: null }, "the machine's own cores and memory");
+    assert.deepEqual((await backend.held()).find((guest) => guest.ref === "medium")?.size, small.guest.size, "held reads the size");
+    await backend.release(small.guest, releaseHooks().hooks);
+    const disked = await acquire(backend, "linux", size(2, 4, 100));
+    assert.equal(disked.guest.ref, "large", "only large has 100 GiB free");
+    const refused = await backend.capacity("linux", size(8, 16), []);
+    assert.equal(refused.ok, false);
+    assert.match(refused.message!, /free for linux at 8 cores, 16 GiB memory\. .*2 smaller than 8 cores, 16 GiB memory \(medium: 4 cores, 7\.7 GiB memory, 40 GiB free disk; tiny: .*\)\. Release a box to free one, or ask for a smaller size\./);
+    assert.equal((await backend.capacity("linux", size(8, 4), [])).ok, false, "no free machine has 8 cores");
+    assert.equal((await backend.capacity("linux", size(1, 3), [])).ok, true, "tiny serves a box of 3 GiB");
+    await backend.release(disked.guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
   it("counts acquires that have not claimed a machine yet", async () => {
     machine("192.0.2.45");
     const { backend } = pool("p 192.0.2.45 linux");
-    assert.equal((await backend.capacity("linux", [])).ok, true);
-    const pending = await backend.capacity("linux", ["linux"]);
+    assert.equal((await backend.capacity("linux", sizeOf("linux"), [])).ok, true);
+    const pending = await backend.capacity("linux", sizeOf("linux"), [{ kind: "linux", size: sizeOf("linux") }]);
     assert.equal(pending.ok, false, "the one free machine is spoken for");
     assert.equal(pending.hosts[0]!.limits[0]!.used, 1);
-    await assert.rejects(backend.capacity("linux-docker", []), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
+    await assert.rejects(backend.capacity("linux-docker", sizeOf("linux-docker"), []), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
     await backend.dispose();
   });
 
@@ -220,7 +244,7 @@ describe("SSH host pool", () => {
     assert.equal(out.generation, 0);
     assert.equal(await backend.power(guest), null, "the box is gone");
     assert.deepEqual(await backend.held(), [], "the sweep leaves a machine out of service alone");
-    const capacity = await backend.capacity("linux", []);
+    const capacity = await backend.capacity("linux", sizeOf("linux"), []);
     assert.equal(capacity.ok, false);
     assert.match(capacity.message!, /1 out of service \(f: Its reset failed/);
     const doctor = await backend.doctor();

@@ -135,7 +135,10 @@ node --test test/conformance.test.ts
   method checks the marker names this install, box and generation before
   acting, so an old box's release leaves the next box alone.
 - Capacity is one `machines` limit: the machines serving the kind, and how
-  many are not free. There is no warm pool.
+  many are not free at the size. A machine has a size when it has at least
+  its cores, 90% of its memory and, for a disk, that much free under
+  `/home`. Acquire claims the smallest such machine. `Guest.size` is the
+  machine's cores and memory, with `diskGiB` null. There is no warm pool.
 - `restores` is `machine` only when every machine has a whole-machine
   reset (`reset=machine`); only those machines serve `linux-docker`.
 - `members()` reads each machine now, and shows a machine whose marker

@@ -4,7 +4,7 @@
 // answering its VNC password, shows the box's display facts, and asks the
 // computer-use driver for the desktop's windows as the computer tools do.
 //
-//   node scripts/smoke.ts <settings.json> [--kind <kind>] [--command <script>] [--doctor] [--json]
+//   node scripts/smoke.ts <settings.json> [--kind <kind>] [--size <preset>] [--command <script>] [--doctor] [--json]
 //
 // The settings file is one JSON object with bb-box's settings, under the
 // same keys as in BB. A value can come from a file instead, with a path
@@ -28,9 +28,11 @@ import { parseArgs } from "node:util";
 import { Backends } from "../src/backends/index.ts";
 import type { BackendDriver, BackendStorage } from "../src/backends/types.ts";
 import { Boxes, describeError, type BoxRecord } from "../src/core/boxes.ts";
+import { parseGeneral } from "../src/core/config.ts";
 import { driverCommand } from "../src/core/in-box.ts";
 import { McpSession } from "../src/core/mcp.ts";
 import { desktopSize, displayOpener } from "../src/core/relay.ts";
+import { describeSize } from "../src/core/sizes.ts";
 import { doctorText } from "../src/plugin/views.ts";
 
 export const SMOKE_THREAD = "thr_smoke";
@@ -38,6 +40,8 @@ export const SMOKE_INSTALL = "smoke";
 
 export interface SmokeOptions {
   readonly kind: string;
+  /** A preset, such as medium. The kind's default when absent. */
+  readonly size?: string;
   readonly command: string;
   /** Run each active backend's doctor first, and stop if a check fails. */
   readonly doctor?: boolean;
@@ -118,7 +122,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
   const boxes = new Boxes({
     kv: storage,
     backends,
-    general: async () => ({ perThreadLimit: null, enrol: false }),
+    general: async () => ({ perThreadLimit: null, enrol: false, sizes: parseGeneral(values).config.sizes }),
     notify: () => {},
     thread: async () => "live",
     logError,
@@ -164,10 +168,10 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
       }
     }
 
-    log(`Acquiring a ${options.kind} box...`);
+    log(`Acquiring a ${options.kind} box${options.size ? ` of size ${options.size}` : ""}...`);
     let started = performance.now();
     try {
-      box = await boxes.acquire({ threadId: SMOKE_THREAD, projectId: null, kind: options.kind });
+      box = await boxes.acquire({ threadId: SMOKE_THREAD, projectId: null, kind: options.kind, size: options.size ? { preset: options.size } : undefined });
       box = (await boxes.settled(box)) ?? box;
     } catch (error) {
       problems.push(describeError(error, "Acquiring the box"));
@@ -179,6 +183,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
       problems.push(`Box ${box.name} is ${box.state}: ${box.error ?? "no reason given"}`);
     } else {
       log(`Box ${box.name} from ${box.backendLabel} is ready${box.guest?.address ? ` at ${box.guest.address}` : ""}.`);
+      if (box.guest?.size) log(`  Size: ${describeSize(box.guest.size)}`);
       for (const fact of box.guest?.facts ?? []) log(`  ${fact.label}: ${fact.value}`);
       if (options.signal?.aborted) {
         problems.push("Interrupted before the command ran.");
@@ -265,6 +270,7 @@ async function main(): Promise<number> {
       allowPositionals: true,
       options: {
         kind: { type: "string", default: "linux" },
+        size: { type: "string" },
         command: { type: "string", default: "uname -a" },
         doctor: { type: "boolean", default: false },
         json: { type: "boolean", default: false },
@@ -276,7 +282,7 @@ async function main(): Promise<number> {
   }
   const [path] = parsed.positionals;
   if (!path || parsed.positionals.length > 1) {
-    process.stderr.write("Usage: node scripts/smoke.ts <settings.json> [--kind <kind>] [--command <script>] [--doctor] [--json]\n");
+    process.stderr.write("Usage: node scripts/smoke.ts <settings.json> [--kind <kind>] [--size <preset>] [--command <script>] [--doctor] [--json]\n");
     return 2;
   }
   let values: Record<string, unknown>;
@@ -296,6 +302,7 @@ async function main(): Promise<number> {
   const log = (line: string) => process.stderr.write(`${line}\n`);
   const result = await smoke(values, {
     kind: parsed.values.kind,
+    size: parsed.values.size,
     command: parsed.values.command,
     doctor: parsed.values.doctor,
     signal: interrupt.signal,

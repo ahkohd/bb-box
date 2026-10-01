@@ -3,12 +3,13 @@
 // them. server.ts calls setup with the built-in drivers; tests pass fakes.
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { Backends, DRIVERS, backendSettings, offerChecks } from "../backends/index.ts";
+import { Backends, DRIVERS, backendSettings, earlierLxcSizes, offerChecks } from "../backends/index.ts";
 import type { BackendDriver, DoctorReport } from "../backends/types.ts";
 import { BoxError, Boxes, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import { GENERAL_SETTINGS, parseGeneral, type GeneralConfig } from "../core/config.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
+import { withEarlierSizes } from "../core/sizes.ts";
 import type { ControlView } from "../core/control.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
@@ -28,6 +29,8 @@ const SWEEP_EVERY_MS = 3 * 60_000;
 const DOCTOR_TIMEOUT_MS = 30_000;
 /** How long the names of BB's machine variables are kept before a refresh. */
 const NAMES_FRESH_MS = 60_000;
+/** Set once the sizes saved in the Proxmox LXC settings before 028 are in the box-sizes setting. */
+const SIZES_ADOPTED = "sizes-adopted";
 
 /** What the tools, RPC and CLI work with. */
 export interface BbBox {
@@ -42,7 +45,8 @@ export interface BbBox {
   view(box: BoxRecord): BoxView;
   /** Who controls a box's desktop. */
   control(box: BoxRecord): ControlView;
-  kinds(): KindView[];
+  /** With each kind's sizes from bb-box's settings. */
+  kinds(): Promise<KindView[]>;
   backendViews(): BackendView[];
   doctor(signal?: AbortSignal): Promise<DoctorView>;
   /**
@@ -93,6 +97,27 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Once: the sizes the Proxmox LXC settings gave boxes before 028 become the
+ * default sizes of their kinds in the box-sizes setting. The replaced
+ * settings keep their values, so the move can be checked.
+ */
+async function adoptEarlierSizes(
+  kv: BbPluginApi["storage"]["kv"],
+  settings: { experimental_set(values: { "box-sizes": string }): Promise<unknown> },
+  values: Readonly<Record<string, unknown>>,
+  logError: (operation: string, error: unknown) => void,
+): Promise<void> {
+  try {
+    if (await kv.get<unknown>(SIZES_ADOPTED)) return;
+    const adopted = withEarlierSizes(values["box-sizes"], earlierLxcSizes(values));
+    if (adopted !== null) await settings.experimental_set({ "box-sizes": adopted });
+    await kv.set(SIZES_ADOPTED, true);
+  } catch (error) {
+    logError("box sizes", error);
+  }
+}
+
 export interface SetupOptions {
   readonly drivers?: readonly BackendDriver<any>[];
   /** Where commands in a box take BB's variables from. Tests give a process of their own. */
@@ -119,11 +144,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   const backends = new Backends({ storage: bb.storage.kv, installId: await loadInstallId(bb.storage.kv), logError, drivers });
   const initial = await settings.get();
+  await adoptEarlierSizes(bb.storage.kv, settings, initial, logError);
   await backends.configure(initial);
-  const general = async () => {
-    const parsed = parseGeneral(await settings.get());
-    return parsed.ok ? parsed.config : { perThreadLimit: null, enrol: true };
-  };
+  const general = async () => parseGeneral(await settings.get()).config;
 
   const projectOf = async (threadId: string): Promise<string | null> => {
     try {
@@ -263,7 +286,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     general,
     view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id)),
     control: (box) => control.view(box.id),
-    kinds: () => kindViews(backends.kinds()),
+    kinds: async () => kindViews(backends.kinds(), (await general()).sizes),
     backendViews: () =>
       backends.statuses().map((backend) => ({
         ...backend,
@@ -271,6 +294,25 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       })),
     async doctor(signal) {
       const sections: { title: string; report: DoctorReport }[] = [];
+      // A general setting with a problem takes its default, so it warns.
+      const { problems: unsettled } = parseGeneral(await settings.get());
+      if (unsettled.length) {
+        sections.push({
+          title: "bb-box",
+          report: {
+            ok: true,
+            summary: "Some settings need fixing. Until then bb-box uses their defaults.",
+            checks: unsettled.map((problem, index) => ({
+              id: `settings.general.${index}`,
+              name: "Settings",
+              status: "warn" as const,
+              detail: problem,
+              fix: "Fix it in bb-box's settings.",
+            })),
+            notes: [],
+          },
+        });
+      }
       for (const backend of backends.statuses()) {
         if (backend.state !== "misconfigured") continue;
         sections.push({

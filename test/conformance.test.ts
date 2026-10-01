@@ -9,6 +9,7 @@ import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
 const root = tempDir("fake-backend");
+const machineSize = "the fake box is a directory on the test machine, so it has the machine's cores and memory";
 
 /** Stands in for BB: a box is connected while it answers, once bootstrap has run in it. */
 function fakeBb(): ConformanceBb {
@@ -33,6 +34,7 @@ await conformance({
   // The fake numbers its guests g1, g2 and so on from a counter.
   reuse: async (_storage, ref) => virtualHost.set("counter", Number(ref.slice(1)) - 1),
   bb: fakeBb(),
+  skip: { size: machineSize },
   timeoutMs: 20_000,
 });
 
@@ -42,6 +44,7 @@ await conformance({
   storage: new MemoryStorage(),
   create: (storage, installId) => new FakeBackend({ root, storage, host: realHost, installId, id: "fake-real", nature: "real", machines: 2 }),
   bb: fakeBb(),
+  skip: { size: machineSize },
   timeoutMs: 20_000,
 });
 
@@ -74,6 +77,7 @@ await conformance({
     docker: "the fake SSH runs commands on the test machine",
     display: "the fake Proxmox has no desktop to stream",
     "computer-use": "the fake SSH host has no computer-use driver",
+    size: "the fake SSH runs commands on the test machine",
   },
   timeoutMs: 20_000,
 });

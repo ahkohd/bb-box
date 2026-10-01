@@ -37,10 +37,16 @@ const oneBox = thread.extend({ box: z.string().min(1) });
 /** The viewer ID names one viewer, such as a panel tab, of a box's desktop. */
 const viewer = oneBox.extend({ viewer: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) });
 const boxResult = z.custom<BoxResult>();
+const whole = z.number().int().positive().optional();
+/**
+ * A preset, and any parts of a custom size (028). Leave the key out for the
+ * kind's default: RPC input must be JSON, so `size: undefined` is refused.
+ */
+const size = z.object({ preset: z.string().min(1).optional(), cores: whole, memoryGiB: whole, diskGiB: whole });
 
 export const contract = defineRpcContract({
   state: { input: thread, output: z.custom<PanelState>() },
-  acquire: { input: thread.extend({ kind: z.string().min(1) }), output: boxResult },
+  acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional() }), output: boxResult },
   release: { input: oneBox, output: boxResult },
   stop: { input: oneBox, output: boxResult },
   start: { input: oneBox, output: boxResult },

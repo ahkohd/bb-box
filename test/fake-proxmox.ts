@@ -3,7 +3,7 @@
 // inherit its protection, "already exists" for used VMIDs, asynchronous
 // tasks, tags, pools and /cluster/resources.
 
-import type { FetchLike, FetchResponse } from "../src/backends/proxmox/api.ts";
+import { rootDiskGiB, type FetchLike, type FetchResponse } from "../src/backends/proxmox/api.ts";
 
 export interface FakeGuest {
   vmid: number;
@@ -42,6 +42,8 @@ export class FakeProxmox {
   taskPolls = 1;
   /** Node memory in bytes, as /nodes/{node}/status reports it. */
   memory = { total: 64 * 2 ** 30, available: 48 * 2 ** 30 };
+  /** CPU threads, as /nodes/{node}/status reports them. */
+  cpus = 16;
   /** Storage in bytes by storage ID. */
   readonly storage = new Map<string, { total: number; avail: number }>([["local-lvm", { total: 900 * 2 ** 30, avail: 600 * 2 ** 30 }]]);
   readonly pools = new Set<string>(["bbbox"]);
@@ -58,8 +60,9 @@ export class FakeProxmox {
       config: {
         rootfs: `local-lvm:base-${vmid}-disk-0,size=8G`,
         features: "nesting=1",
-        cores: "1",
-        memory: "512",
+        // As build.sh leaves a template.
+        cores: "2",
+        memory: "4096",
         protection: "1",
         template: "1",
         ...config,
@@ -104,7 +107,11 @@ export class FakeProxmox {
     if (method === "GET" && (match = /^\/nodes\/([^/]+)\/status$/.exec(path))) {
       if (match[1] !== this.node) return respond(500, `hostname lookup '${match[1]}' failed`, { data: null });
       const used = this.memory.total - this.memory.available;
-      return ok({ memory: { total: this.memory.total, used, free: this.memory.available / 2, available: this.memory.available }, uptime: 100 });
+      return ok({
+        memory: { total: this.memory.total, used, free: this.memory.available / 2, available: this.memory.available },
+        cpuinfo: { cpus: this.cpus, cores: this.cpus / 2, sockets: 1 },
+        uptime: 100,
+      });
     }
 
     if (method === "GET" && (match = /^\/nodes\/[^/]+\/storage\/([^/]+)\/status$/.exec(path))) {
@@ -136,6 +143,10 @@ export class FakeProxmox {
           node: this.node,
           status: guest.status,
           template: guest.template ? 1 : 0,
+          // As Proxmox gives them: unset cores are the node's, and memory and disk are in bytes.
+          maxcpu: Number(guest.config.cores) || this.cpus,
+          maxmem: Number(guest.config.memory || 512) * 2 ** 20,
+          maxdisk: (rootDiskGiB(guest.config) ?? 0) * 2 ** 30,
           ...(guest.pool ? { pool: guest.pool } : {}),
           ...(guest.config.tags ? { tags: guest.config.tags } : {}),
         })),

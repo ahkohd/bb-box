@@ -5,9 +5,10 @@ import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
 import { z } from "zod";
 import { BoxError, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import type { BbBox } from "./setup.ts";
-import { boxDetail, boxLine, next } from "./views.ts";
+import { boxDetail, boxLine, boxSize, next, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -20,6 +21,7 @@ const DEFAULT_KIND = "linux";
 const HINTS: Record<BoxErrorCode, string> = {
   not_found: "Call box_list to see this thread's boxes.",
   unknown_kind: "Call box_list to see the kinds you can acquire.",
+  invalid_size: "Pick a preset, or a custom size within the largest. box_list shows each kind's sizes.",
   limit_reached: "Release a box you no longer need with box_release, then try again.",
   no_capacity: "Try again later, release a box you no longer need, or pick another kind.",
   not_ready: "Call box_status to see its state. box_start starts a stopped box.",
@@ -93,6 +95,12 @@ async function ready(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<B
   }
 }
 
+/** A kind's presets and largest size in words, for box_list. */
+function kindSizesText(kind: KindView): string {
+  const presets = kind.presets.map((preset) => `${preset.name} (${preset.words}${preset.name === kind.defaultPreset ? ", the default" : ""})`);
+  return `${presets.join(", ")}; custom up to ${kind.largest.words}`;
+}
+
 export const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
 
 export function registerTools(bb: BbPluginApi, app: BbBox): void {
@@ -111,13 +119,27 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .min(1)
         .optional()
         .describe(`The kind of box, for example linux, linux-docker or linux-desktop. Defaults to ${DEFAULT_KIND}. box_list shows every kind.`),
+      size: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("A preset: small, medium or large. Defaults to the kind's default preset, small unless the user changed it. box_list shows each kind's sizes."),
+      cores: z.number().int().positive().optional().describe("Cores, for a custom size. Parts you leave out come from the preset."),
+      memory_gib: z.number().int().positive().optional().describe("Memory in GiB, for a custom size."),
+      disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, for a custom size. Presets keep the kind's own disk."),
       wait: z.boolean().optional().describe("Wait until the box answers, and up to 10 s more while it becomes a BB machine. Defaults to true."),
     }),
-    async execute({ kind, wait }, { threadId, projectId, signal }) {
+    async execute({ kind, size, cores, memory_gib, disk_gib, wait }, { threadId, projectId, signal }) {
       try {
-        const box = await boxes.acquire({ threadId: thread(threadId), projectId: projectId ?? null, kind: kind ?? DEFAULT_KIND });
+        const box = await boxes.acquire({
+          threadId: thread(threadId),
+          projectId: projectId ?? null,
+          kind: kind ?? DEFAULT_KIND,
+          size: { preset: size, cores, memoryGiB: memory_gib, diskGiB: disk_gib },
+        });
         if (wait === false) {
-          return `Acquiring box ${box.name} (${box.kind}).${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
+          const asked = boxSize(box);
+          return `Acquiring box ${box.name} (${box.kind}${asked ? `, ${describeSize(asked)}` : ""}).${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
         }
         const settled = await ready(app, box, signal);
         if (!settled) {
@@ -146,14 +168,16 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
     async execute(_params, { threadId }) {
       try {
         const list = await boxes.list(thread(threadId));
-        const kinds = app.kinds();
+        const kinds = await app.kinds();
         const lines = [list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes."];
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}, ${kind.size}. ${kind.description}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}. ${kind.description} Sizes: ${kindSizesText(kind)}.`).join("\n")}`
             : "No backend is set up, so there are no kinds to acquire. Ask the user to set one up in bb-box's settings.",
         );
-        const hints = list.length ? ["Call box_status for a box's details.", "box_acquire gets another box."] : ["Call box_acquire to get a box."];
+        const hints = list.length
+          ? ["Call box_status for a box's details.", "box_acquire gets another box, at a preset or a custom size."]
+          : ["Call box_acquire to get a box, at a preset or a custom size."];
         return `${lines.join("\n\n")}${next(...hints)}`;
       } catch (error) {
         return failure(error, "Listing boxes");
