@@ -41,7 +41,7 @@ export type Route =
       readonly type: "websocket";
       readonly url: string;
       readonly headers?: Readonly<Record<string, string>>;
-      /** Subprotocols to ask for, such as "binary", which Proxmox requires. */
+      /** Subprotocols to ask for, such as "binary". */
       readonly protocols?: readonly string[];
       /** SHA-256 of a self-signed certificate to pin, in hex with or without colons. */
       readonly fingerprint?: string;
@@ -73,6 +73,13 @@ export interface Display {
    * box refuses the size.
    */
   resize?(size: DisplaySize, signal?: AbortSignal): Promise<void>;
+  /**
+   * The smallest size a viewer may set. Core raises a smaller SetDesktopSize
+   * to it, and the viewer scales the desktop down to fit its pane. Only for a
+   * stream server that passes the size on, and does not answer with the size
+   * it set: noVNC asks again while that differs from its pane.
+   */
+  readonly minSize?: DisplaySize;
 }
 
 /** How to reach a box over SSH, for bb-box and for the thread's own machine. */

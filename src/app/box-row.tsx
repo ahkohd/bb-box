@@ -21,7 +21,7 @@ import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { Badge, IconButton, isArm64Badge, KindBadges, Meta, osName, relativeTime, SETTINGS_PATH, StatusDot } from "./common.tsx";
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
-import { enrolWords, statusOf, timingWords } from "./status.ts";
+import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh";
@@ -197,7 +197,8 @@ export function BoxRow({
               </Detail>
             ))}
             <Detail label="BB machine">{enrolWords(box)}</Detail>
-            {Object.keys(box.timings).length ? <Detail label="Timings">{timingWords(box)}</Detail> : null}
+            {timingWords(box) ? <Detail label="Timings">{timingWords(box)}</Detail> : null}
+            {startWords(box) ? <Detail label="Last start">{startWords(box)}</Detail> : null}
             <Detail label="Made">{relativeTime(box.createdAt, now)}</Detail>
           </dl>
         ) : null}

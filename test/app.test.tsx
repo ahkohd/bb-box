@@ -465,7 +465,7 @@ test("the status line says the state, the timings, BB enrolment and the display"
 });
 
 test("the panel lists the thread's boxes as rows, opens a row's details, and opens a desktop", async () => {
-  const { handlers } = server([box(), desktopBox()]);
+  const { handlers } = server([box({ timings: { clone: 700, total: 2100, enrol: 5300, "start.resume": 4100, "start.ssh": 1200, "start.clock": 600, "start.total": 6000 } }), desktopBox()]);
   const slot = panel(handlers);
 
   expect(await slot.findByText("calm-otter")).toBeTruthy();
@@ -484,6 +484,8 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.getByText("Fake host")).toBeTruthy();
   expect(slot.getByText("Linux x86_64, with docker")).toBeTruthy();
   expect(slot.getByText("clone 0.7 s · total 2.1 s · BB enrolment 5.3 s")).toBeTruthy();
+  expect(slot.getByText("resume 4.1 s · ssh 1.2 s · setting the clock 0.6 s · total 6.0 s")).toBeTruthy();
+  expect(slot.getByText("Last start")).toBeTruthy();
   expect(slot.getByText("12 minutes ago")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
   expect(slot.queryByText("192.0.2.10")).toBeNull();

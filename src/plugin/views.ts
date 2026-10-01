@@ -219,7 +219,11 @@ const STEP_WORDS: Readonly<Record<string, string>> = {
   enrol: "BB enrolment",
   spare: "claiming a spare",
   relabel: "naming it for its owner",
+  clock: "setting the clock",
 };
+
+/** Where a box's timings name the steps of its last start. */
+const START = "start.";
 
 /** Under 0.1 s in milliseconds, which a claim of a spare takes (#186). */
 function seconds(ms: number): string {
@@ -289,8 +293,12 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     failed: `enrolment failed${box.enrol.error ? `: ${box.enrol.error}` : ""}`,
   };
   lines.push(`BB machine: ${enrol[box.enrol.state]}`);
+  const words = (timings: [string, number][]) => timings.map(([step, ms]) => `${STEP_WORDS[step] ?? step} ${seconds(ms)}`).join(", ");
   const timings = Object.entries(box.timings);
-  if (timings.length) lines.push(`Timings: ${timings.map(([step, ms]) => `${STEP_WORDS[step] ?? step} ${seconds(ms)}`).join(", ")}`);
+  const acquire = timings.filter(([step]) => !step.startsWith(START));
+  if (acquire.length) lines.push(`Timings: ${words(acquire)}`);
+  const start = timings.flatMap(([step, ms]): [string, number][] => (step.startsWith(START) ? [[step.slice(START.length), ms]] : []));
+  if (start.length) lines.push(`Last start: ${words(start)}`);
   return lines.join("\n");
 }
 

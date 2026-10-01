@@ -2,7 +2,8 @@
 // security with the password from the box's backend, offers the viewer
 // security type None, and then copies bytes both ways. The viewer's messages
 // are parsed so input from a viewer without control never reaches the box
-// (008, 011). Pixels pass through undecoded.
+// (008, 011), and a resize below the display's smallest size is raised to it.
+// Pixels pass through undecoded.
 
 import { openRoute } from "../transports/route.ts";
 import type { ByteChannel, Display, DisplayAuth } from "../transports/types.ts";
@@ -56,7 +57,9 @@ export interface RelayOptions {
   mayInput(): boolean;
   /** The desktop's size when the viewer joined. */
   onServerInit?(size: Size): void;
-  /** A resize the relay passed to the box. */
+  /** The smallest size the viewer may set the desktop to, if the display has one. */
+  minSize?(): Size | null;
+  /** A resize the relay passed to the box, raised to the smallest size. */
   onResize?(size: Size, screen: Screen | null): void;
   /** Called once when the relay ends: by the viewer, or by the box or an error. */
   onEnd?(by: "viewer" | "box", error: Error | null): void;
@@ -95,6 +98,19 @@ function withTimeout<T>(task: Promise<T>, ms: number): Promise<T | undefined> {
   return Promise.race([task, new Promise<undefined>((resolve) => {
     timer = setTimeout(() => resolve(undefined), ms);
   })]).finally(() => clearTimeout(timer));
+}
+
+/** The viewer's SetDesktopSize for `size`, with its first screen's size too. */
+function resized(bytes: Uint8Array, size: Size): Uint8Array {
+  const copy = bytes.slice();
+  const view = new DataView(copy.buffer);
+  view.setUint16(2, size.width);
+  view.setUint16(4, size.height);
+  if (view.getUint8(6) > 0) {
+    view.setUint16(16, size.width);
+    view.setUint16(18, size.height);
+  }
+  return copy;
 }
 
 function reason(error: unknown): string {
@@ -201,14 +217,14 @@ export class RfbRelay {
     if (!connection || this.#ended) return;
     // One write, awaited: a write left unawaited to a box that has gone
     // rejects with nobody to catch it, which ends the plugin's process.
-    const passing = messages.filter((message) => this.#passes(message));
-    if (passing.length) await connection.writer.write(passing.map((message) => message.bytes).reduce(concat));
+    const passing = messages.flatMap((message) => this.#passing(message) ?? []);
+    if (passing.length) await connection.writer.write(passing.reduce(concat));
   }
 
-  /** Whether a message goes to the box, tracking what the viewer holds down. */
-  #passes(message: ClientMessage): boolean {
-    if (message.type === "other" && message.class === "pass") return true;
-    if (!this.#options.mayInput()) return false;
+  /** What of a message goes to the box, if any, tracking what the viewer holds down. */
+  #passing(message: ClientMessage): Uint8Array | null {
+    if (message.type === "other" && message.class === "pass") return message.bytes;
+    if (!this.#options.mayInput()) return null;
     switch (message.type) {
       case "key":
         if (message.down) this.#held.set(`k${message.keysym}`, keyEvent(false, message.keysym));
@@ -221,11 +237,15 @@ export class RfbRelay {
       case "pointer":
         this.#pointer = { mask: message.mask, x: message.x, y: message.y };
         break;
-      case "resize":
-        this.#options.onResize?.({ width: message.width, height: message.height }, message.screen);
+      case "resize": {
+        const min = this.#options.minSize?.();
+        const size = { width: Math.max(message.width, min?.width ?? 0), height: Math.max(message.height, min?.height ?? 0) };
+        this.#options.onResize?.(size, message.screen);
+        if (size.width !== message.width || size.height !== message.height) return resized(message.bytes, size);
         break;
+      }
     }
-    return true;
+    return message.bytes;
   }
 
   /** Releases the keys and buttons this viewer holds down in the box. */

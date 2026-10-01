@@ -298,7 +298,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.deepEqual(transports.access!.ssh, { host: "192.0.2.150", port: 22, user: "box", hostKeys: [] });
   assert.deepEqual(
     transports.displays.map(({ open: _, resize: __, ...display }) => display),
-    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true }],
+    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, minSize: { width: 800, height: 600 } }],
   );
 });
 
@@ -306,18 +306,28 @@ test("the desktop resizes to the viewer's size, else to the listed mode that bes
   const { backend, ssh } = setup();
   const home = ssh.home("192.0.2.150");
   // A stand-in for PowerShell that keeps each desktop command, and exits as $HOME/exit says.
-  ssh.powershell("192.0.2.150", `case "$1" in\n  *Schedule.Service*) printf "%s" "$1" > "$HOME/desktop"; [ -f "$HOME/exit" ] && . "$HOME/exit"; exit 0;;\n  *) exec sh -c "$1";;\nesac\n`);
+  // It compiles the display helper slowly, and a desktop command fails if that has not finished.
+  ssh.powershell(
+    "192.0.2.150",
+    `case "$1" in\n  *Schedule.Service*) [ -f "$HOME/compiled" ] || exit 9; printf "%s" "$1" > "$HOME/desktop"; [ -f "$HOME/exit" ] && . "$HOME/exit"; exit 0;;\n  *Add-Type*) sleep 0.5; printf "%s" "$1" > "$HOME/compiled";;\n  *) exec sh -c "$1";;\nesac\n`,
+  );
   const guest = await backend.acquire(identity(), null, hooks().value, signal());
   const [desktop] = (await backend.transports(guest)).displays;
 
+  // The acquire compiles the helper into a file, and the first resize waits for it.
   await desktop!.resize!({ width: 1500, height: 900 });
+  const compiled = readFileSync(join(home, "compiled"), "utf8");
+  const dll = /'bb-box', '(display-[0-9a-f]{12}\.dll)'\)\n/.exec(compiled)?.[1];
+  assert.ok(dll, "named for its source, in the box user's local app data");
+  assert.match(compiled, /\n    Add-Type -OutputAssembly \$bbTemp -TypeDefinition @'\n/);
   const task = readFileSync(join(home, "desktop"), "utf8");
   assert.match(task, /\$bbTask\.Principal\.LogonType = 3\n/, "a task in the box user's session");
   assert.match(task, /\$bbClock\.ElapsedMilliseconds -ge 15000\)/, "that ends if it hangs");
   const run = Buffer.from(/FromBase64String\(''([A-Za-z0-9+\/=]+)''\)/.exec(task)![1]!, "base64").toString("utf8");
   assert.match(run, /ChangeDisplaySettingsEx\(null, ref mode, IntPtr\.Zero, 1, IntPtr\.Zero\)/, "keeps the mode for the next logon");
   assert.match(run, /DateTime\.UtcNow\.AddSeconds\(2\)/, "waits a moment for the driver to take the size");
-  assert.match(run, /\n\$bbRefused = \[BbDisplay\]::Fit\(1500, 900\)\n/);
+  assert.ok(run.startsWith(compiled), "loads the same file, compiling it if it is missing");
+  assert.match(run, /\n\$bbRefused = \$bbDisplay::Fit\(1500, 900\)\n/);
 
   writeFileSync(join(home, "exit"), `echo "Windows refused 1500x900 and the modes it lists, with -2." >&2; exit 1\n`);
   await assert.rejects(desktop!.resize!({ width: 1500, height: 900 }), { message: "Windows could not set the desktop to 1500x900: Windows refused 1500x900 and the modes it lists, with -2." });
@@ -349,13 +359,21 @@ test("a stop hibernates the VM, and a start resumes it and sets Windows' clock, 
   assert.equal(suspends().length, 1, "a stopped VM is left as it is");
 
   const before = Date.now();
-  await backend.start(guest, signal());
+  const steps: string[] = [];
+  await backend.start(guest, signal(), (step, ms) => steps.push(`${step} ${Number.isInteger(ms) && ms >= 0}`));
   const after = Date.now();
   assert.deepEqual([vm.status, vm.config.lock, vm.config.vmstate], ["running", undefined, undefined], "resumed");
+  assert.deepEqual(steps, ["resume true", "network true", "ssh true", "clock true"], "with the time each step took");
   const clock = readFileSync(join(home, "clock"), "utf8");
   const ms = Number(/FromUnixTimeMilliseconds\((\d+)\)/.exec(clock)?.[1]);
   assert.ok(ms >= before && ms <= after, "set to BB's server's time");
   assert.match(clock, /\[Diagnostics\.Process\]::GetCurrentProcess\(\)\.StartTime\)/, "plus the time PowerShell took to start");
+
+  // A VM shut down from Windows boots.
+  vm.status = "stopped";
+  steps.length = 0;
+  await backend.start(guest, signal(), (step) => steps.push(step));
+  assert.deepEqual(steps, ["boot", "network", "ssh", "clock"]);
 
   writeFileSync(join(home, "exit"), `echo "Set-Date: A required privilege is not held by the client." >&2; exit 1\n`);
   await backend.stop(guest, signal());
