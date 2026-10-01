@@ -36,7 +36,7 @@ rm -rf /etc/cloud /var/lib/cloud /snap /var/snap /var/lib/snapd
 
 # Baseline, Docker and everyday tools, from the pinned apt snapshot.
 docker_packages="docker.io docker-compose-v2 docker-buildx pigz postgresql-client redis-tools sqlite3"
-extra_packages="openssh-server sudo systemd-resolved less nano vim-tiny iputils-ping iputils-arping dnsutils netcat-openbsd htop tmux file lsof strace"
+extra_packages="openssh-server sudo systemd-resolved less nano vim neovim iputils-ping iputils-arping dnsutils netcat-openbsd htop tmux file lsof strace"
 # Ubuntu's container image has no systemd. A Docker box does not run it, but
 # systemctl sets up the same units as in an LXC box, and the box's start script
 # makes the machine ID with it.
@@ -268,7 +268,7 @@ box_path=$(sed -n 's/^PATH="\([^"]*\)"$/\1/p' /etc/environment)
 # shellcheck disable=SC2016
 for command in git git-lfs gh node npm npx pnpm yarn python3 pip3 uv uvx rg fd jj claude codex pi curl wget jq \
   zip unzip zstd rsync tree bc socat netstat make gcc pkg-config sudo sshd runuser docker psql redis-cli sqlite3 \
-  tmux; do
+  tmux vim nvim; do
   runuser -u "$user" -- env PATH="$box_path" sh -c 'command -v "$1" >/dev/null' sh "$command" ||
     die "$command is not on $user's PATH"
 done
