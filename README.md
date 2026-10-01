@@ -61,22 +61,27 @@ To try it, see [Install](#install): one Docker host is enough.
 
 ## Using it
 
-- **You**: the thread's panel lists every box, starts either kind, shows each
-  desktop live, lets you take and return control, and releases boxes.
+- **You**: the thread's panel lists every box, starts a box of any kind on
+  offer, on the provider you pick or the first with room, shows each desktop
+  live, lets you take and return control, and releases boxes.
 - **The agent**: bb-box's tools acquire a box of a kind, list and check boxes,
   run commands, copy files, drive a desktop with computer use, and release
   boxes. It can also start a child thread on a box.
 
 ## Backends
 
+Every Linux box has Docker. A kind is a terminal box or a desktop box of an
+OS; the picker groups them by OS and tells the rest apart with badges, and
+a desktop box has a terminal too.
+
 | Backend | Virtual or real | Kinds | Status |
 | --- | --- | --- | --- |
-| Proxmox LXC | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |
-| Proxmox QEMU | virtual | Windows desktop | in development |
+| Proxmox LXC | virtual | Linux terminal; Linux desktop on a GPU or the CPU | working |
+| Docker, on BB's server, another host over SSH, or a BB machine | virtual | Linux terminal; Linux desktop on the CPU or an NVIDIA GPU | working |
+| SSH host pool | real | Linux terminal, on Linux machines you own | working |
+| [Tart](https://tart.run), on your Macs with Apple silicon | virtual | macOS terminal and desktop; Linux terminal and desktop on arm64 | working |
+| Proxmox QEMU | virtual | Windows desktop | working, not yet a BB machine |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
-| Apple Virtualization framework, with [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS, macOS desktop | in development |
-| Docker | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |
-| SSH host pool | real | Linux, Linux with Docker, on Linux machines you own | in development |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
 
@@ -120,17 +125,19 @@ made for it. When the box is released, the machine is reset and lent again.
   reset fails goes out of service until the operator resets it.
 - **Docker**: only on a machine with a whole-machine reset, a program you
   provide, since a box with Docker is root on the machine.
-- **Limits**: headless only for now. It is not a security boundary: a box
-  can read what any user on the machine can read.
+- **Limits**: terminal boxes only, no desktops. It is not a security
+  boundary: a box can read what any user on the machine can read.
 
 See [its guide](setup/ssh-pool/README.md).
 
 ### Docker
 
-Runs boxes as containers on one Docker host: the Docker on BB's server, or
-another machine's over SSH. It needs only Docker, so it is the quickest way
-to try bb-box. A linux box is ready in about a third of a second, and a
-desktop in under a second.
+Runs boxes as containers on one Docker host: the Docker on BB's server,
+another machine's over SSH, or a BB machine's, reached through BB with no
+SSH at all (turn the machine on under "Docker on BB machines" in bb-box's
+settings, and bb-box builds its images there). It needs only Docker, so it
+is the quickest way to try bb-box. A Linux box is ready in about a third
+of a second, and a desktop in under a second.
 
 - **Images**: built on the Docker host by `setup/docker/build.sh`, from the
   same guest scripts as the Proxmox LXC templates, so a box has the same
@@ -164,28 +171,26 @@ and because anyone can try them.
 Private and in daily use; it will be open-sourced once it has been used daily
 for months.
 
-Working on the Proxmox LXC backend:
+Working today, on every backend above that says so:
 
-- Linux boxes with Docker, enrolled in BB with the thread's access.
-- Linux desktop boxes on the GPU or the CPU, shown live in the thread's panel,
-  with shared control and resizing.
+- Linux boxes with Docker, enrolled in BB with the thread's access; Linux
+  desktops on a GPU or the CPU, shown live in the thread's panel, with
+  shared control and a desktop that follows the panel's size.
+- macOS boxes, and Linux boxes on arm64, as VMs on Macs with Apple silicon.
+- Windows desktops as VMs on Proxmox: commands in PowerShell, file copies,
+  the desktop shown live, computer use. Not a BB machine until BB's host app
+  runs on Windows.
 - Computer use for agents, through the accessibility tree and screenshots.
 - Box sizes: each kind has small, medium and large presets, and an agent or
   person can ask for a custom size up to the kind's largest.
-- A warm pool: a warm box is handed out in about 0.1 s; BB's enrolment then
-  takes a few seconds (see [what bb-box asks of BB](docs/bb-requests.md)).
+- Where a box goes: the first provider with room, or the one you name, in the
+  panel or with `box_acquire`'s `on`.
+- Warm and spare boxes: a warm box is handed out in about 0.1 s; a spare is
+  a BB machine already, so a thread gets one with its access at once.
+- A terminal in every box from the panel, and a BB machine can host Docker
+  boxes with nothing installed but Docker.
 
-The SSH host pool backend lends Linux machines you own, with Docker on
-machines with a whole-machine reset. It passes the conformance suite against
-Docker containers running sshd, with and without systemd.
-
-The Docker backend runs Linux boxes, desktops among them, as containers on
-one Docker host, local or over SSH, and needs only Docker to try bb-box.
-It passes the conformance suite on a local Docker host and on one over SSH,
-for every kind but linux-desktop, which has not yet been tested on a host
-with an NVIDIA GPU.
-
-Next: Windows, then macOS.
+Next: Windows boxes as BB machines (a BB request), and a physical Mac backend.
 
 ## Install
 

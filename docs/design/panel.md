@@ -35,22 +35,22 @@ size ([#58](https://github.com/moonstead/bb-box/issues/58), decision 028).
 
 ## Names
 
-Kinds follow the operator's decision of 1 October 2026: the plain box has no
-qualifier and only desktops say so.
+Kinds follow the operator's decisions of 1 October 2026: a kind is named by
+its OS, and what it has reads as badges or, in the picker, as the row's
+name within its OS group.
 
-| Kind ID | Shown as | Icon |
-| --- | --- | --- |
-| `linux` | Linux | server |
-| `linux-desktop` | Linux desktop | monitor |
-| `linux-desktop-cpu` | Linux desktop | monitor |
-| later `macos`, `macos-desktop`, `windows-desktop` | macOS, macOS desktop, Windows desktop | server, monitor |
+| Kind ID | Box row | Picker row, under its OS | Icon |
+| --- | --- | --- | --- |
+| `linux` | Linux [LXC] | Terminal | server |
+| `linux-desktop` | Linux [Desktop] [GPU] [LXC] | Desktop, GPU | monitor |
+| `linux-desktop-cpu` | Linux [Desktop] [LXC] | Desktop | monitor |
+| `linux-arm64`, `linux-arm64-desktop-cpu` | Linux [arm64] [VM], Linux [Desktop] [arm64] [VM] | Terminal, arm64; Desktop, arm64 | server, monitor |
+| `macos`, `macos-desktop` | macOS [VM], macOS [Desktop] [VM] | Terminal; Desktop | server, monitor |
+| `windows-desktop` | Windows [Desktop] [VM] | Desktop | monitor |
 
-`linux-docker` is `linux` with Docker, an alias an agent may ask for, and
-never a row (041). The panel shows `kindLabel` from the backend; the IDs
-appear nowhere. Two
-kinds may share a label: the GPU desktop and the CPU desktop are both
-"Linux desktop", and badges tell them apart (the operator's annotation of
-1 October 2026, which removed "(no GPU)" from the label).
+`linux-docker` and `linux-arm64-docker` are aliases an agent may ask for,
+never rows (041: every Linux box has Docker). The panel shows the OS and
+the badges; the IDs appear nowhere.
 
 ### Badges
 
@@ -109,7 +109,7 @@ tab (1 October 2026): one tab, one place for the thread's boxes.
 |     Backend     Proxmox LXC on pve                          |
 |     ...                                                     |
 |------------------------------------------------------------|
-| [=] calm-otter  Linux with Docker [Physical]    [>] ...     |
+| [=] calm-otter  Linux [Physical]                [>] ...     |
 |     (ring) Stopped · 8 cores · 16 GiB · 64 GiB              |
 +------------------------------------------------------------+
 ```

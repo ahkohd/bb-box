@@ -357,7 +357,7 @@ the machine when it answers again. Its power shows as unknown meanwhile.
   memory limit, it counts the limit, not the host's. The doctor shows each
   machine's cores, memory and free disk. If your machines are smaller than
   the presets, change them in the kinds part of BB Box's settings.
-- **Desktops.** The pool lends headless machines only. Desktops are not
+- **Desktops.** The pool lends terminal boxes only. Desktops are not
   supported yet.
 
 ## Testing on one computer
