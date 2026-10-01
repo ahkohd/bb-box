@@ -101,8 +101,8 @@ const ARCH = process.arch === "arm64" ? "arm64" : "x86_64";
 
 export const FAKE_KINDS: readonly BoxKind[] = [
   {
-    id: "linux-headless",
-    label: "Linux headless",
+    id: "linux",
+    label: "Linux",
     description: "A fake box: a directory on the test machine.",
     size: "1 core",
     requires: [],

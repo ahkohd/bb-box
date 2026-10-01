@@ -15,7 +15,7 @@ export const RUN_OUTPUT_BYTES = 32 * 1024;
 export const COPY_MAX_BYTES = 16 * 1024 * 1024;
 const RUN_TIMEOUT_S = 10 * 60;
 const RUN_TIMEOUT_MAX_S = 60 * 60;
-const DEFAULT_KIND = "linux-headless";
+const DEFAULT_KIND = "linux";
 
 const HINTS: Record<BoxErrorCode, string> = {
   not_found: "Call box_list to see this thread's boxes.",
@@ -110,7 +110,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
         .string()
         .min(1)
         .optional()
-        .describe(`The kind of box, for example linux-headless or linux-headless-docker. Defaults to ${DEFAULT_KIND}. box_list shows every kind.`),
+        .describe(`The kind of box, for example linux, linux-docker or linux-desktop. Defaults to ${DEFAULT_KIND}. box_list shows every kind.`),
       wait: z.boolean().optional().describe("Wait until the box answers, and up to 10 s more while it becomes a BB machine. Defaults to true."),
     }),
     async execute({ kind, wait }, { threadId, projectId, signal }) {

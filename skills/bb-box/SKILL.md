@@ -15,7 +15,7 @@ Every result ends with a `Next:` line that says what to do next.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `box_acquire` | `kind?`, `wait?` | Makes a box and waits until it answers. `kind` defaults to `linux-headless`. |
+| `box_acquire` | `kind?`, `wait?` | Makes a box and waits until it answers. `kind` defaults to `linux`. |
 | `box_list` | | Lists the thread's boxes and the kinds on offer. |
 | `box_status` | `box` | Shows one box, checking its power state with the backend. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
@@ -58,12 +58,14 @@ Limits:
 `bb box kinds` and `box_list` show what the backends offer. The Proxmox LXC
 backend offers:
 
-- `linux-headless`: a Linux box without a desktop
-- `linux-headless-docker`: the same, with Docker
+- `linux`: a Linux box without a desktop
+- `linux-docker`: the same, with Docker
 - `linux-desktop`: a desktop with a GPU
 - `linux-desktop-cpu`: a desktop without a GPU
 
-A kind is on offer only when its templates are set.
+A kind is on offer only when its templates are set. The earlier IDs
+`linux-headless` and `linux-headless-docker` still work in `box_acquire`, as
+`linux` and `linux-docker`.
 
 Its boxes run Ubuntu 24.04 with build tools, Git, Python with `uv`, Node.js
 with pnpm and Yarn, Docker, `gh`, `rg`, `fd`, `jj` and the Claude Code, Codex

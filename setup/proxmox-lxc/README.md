@@ -4,7 +4,7 @@ This backend runs boxes as unprivileged LXC containers on a Proxmox VE host.
 A box is a linked clone of a CT template that you build once. Templates
 come in three flavours:
 
-- **headless**: Ubuntu 24.04 with development tools, agent CLIs and Docker;
+- **Linux**: Ubuntu 24.04 with development tools, agent CLIs and Docker;
 - **desktop**: the same, plus an XFCE desktop on a real Xorg server driven by
   an NVIDIA GPU, streamed over VNC, with Chrome and Cua Driver for computer
   use. Each desktop template carries one GPU;
@@ -24,7 +24,7 @@ This directory holds everything needed on the Proxmox side:
 | `host/setup-host.sh` | Kernel modules for Docker in boxes, NVIDIA device nodes at boot |
 | `host/setup-network.sh` | The box bridge, NAT and a unit that keeps them up |
 | `host/setup-token.sh` | Pool, user, role, API token and ACLs for the plugin |
-| `template/build.sh` | Builds the headless and desktop templates |
+| `template/build.sh` | Builds the Linux and desktop templates |
 | `test/smoke.sh` | Clones, starts, checks and deletes a box with the plugin's token |
 
 ## Requirements
@@ -145,11 +145,11 @@ BBBOX_DNAT="198.51.100.1:443=192.0.2.20"   # the host's VPN address -> the real 
 
 ## 4. Templates
 
-Build the headless template, then a desktop template for each GPU you want
+Build the Linux template, then a desktop template for each GPU you want
 desktops on. Each build takes about 5 to 10 minutes, mostly downloads.
 
 ```sh
-template/build.sh headless 9100
+template/build.sh linux 9100
 template/build.sh desktop 9101 --gpu 0000:01:00.0
 template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
 template/build.sh desktop 9103 --cpu                          # no GPU
@@ -165,12 +165,13 @@ GPU's device nodes; use it to spread desktops across GPUs. `desktop --cpu`
 makes a desktop template with no device nodes and no NVIDIA userspace,
 whose display always takes the CPU path; it is what a host without an
 NVIDIA driver gets, and a GPU host can offer CPU desktops with it without
-using GPU memory.
+using GPU memory. `build.sh headless`, the Linux template's earlier name,
+still works.
 
 To rebuild a template in place, for example with new pins, add `--replace`:
 
 ```sh
-template/build.sh headless 9100 --replace
+template/build.sh linux 9100 --replace
 template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0 --replace
 ```
 
@@ -388,7 +389,7 @@ node scripts/smoke.ts /root/bb-box/smoke.json --doctor
 The example reads the API URL, node, token and fingerprint from the token
 file, and the key from `ssh/id_ed25519`, both next to the settings file.
 Change the other values to match your settings. It acquires a
-`linux-headless` box, runs `uname -a`, releases the box and prints each
+`linux` box, runs `uname -a`, releases the box and prints each
 step's time. `--kind` and `--command` pick another kind or command. For a
 desktop kind it also prints the box's GPU, display mode and the reason, and
 opens the desktop as the viewer's relay does, answering its VNC password,
@@ -419,7 +420,7 @@ token file, the SSH key and the templates you built.
 | `proxmox-lxc-ca-certificate` | | only without a fingerprint, when a private CA signed the host's certificate |
 | `proxmox-lxc-node` | `pve` | from the token file; can be empty on a single-node host |
 | `proxmox-lxc-pool` | `bbbox` | `BBBOX_POOL` |
-| `proxmox-lxc-headless-templates` | `9100` | VMIDs of headless templates, separated by spaces or commas |
+| `proxmox-lxc-linux-templates` | `9100` | VMIDs of Linux templates, separated by spaces or commas |
 | `proxmox-lxc-desktop-templates` | `9101 GPU-<uuid>`, then `9102 GPU-<uuid>` on the next line | one line per GPU desktop template: its VMID and its GPU's ID |
 | `proxmox-lxc-desktop-cpu-templates` | `9103` | VMIDs of CPU-only desktop templates |
 | `proxmox-lxc-desktops-per-gpu` | `0` | the most desktops on one GPU at once; 0 means no limit |
@@ -435,19 +436,23 @@ token file, the SSH key and the templates you built.
 | `proxmox-lxc-reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
 
 Each flavour of template has its own box size and warm pool. Replace
-`<flavour>` with `headless`, `desktop` or `desktop-cpu`:
+`<flavour>` with `linux`, `desktop` or `desktop-cpu`:
 
-| Setting | Headless | GPU desktop | CPU desktop | Notes |
+| Setting | Linux | GPU desktop | CPU desktop | Notes |
 | --- | --- | --- | --- | --- |
 | `proxmox-lxc-<flavour>-cores` | `2` | `4` | `4` | |
 | `proxmox-lxc-<flavour>-memory-mib` | `4096` | `8192` | `8192` | |
 | `proxmox-lxc-<flavour>-disk-gib` | `0` | `0` | `0` | 0 keeps the template's disk, which is quickest |
 | `proxmox-lxc-<flavour>-warm` | `0` | `0` | `0` | started boxes kept waiting, so a new box is ready at once |
 
-Leave a flavour's templates empty to offer none of its kinds. Headless
-templates serve `linux-headless` and `linux-headless-docker`, GPU desktop
-templates `linux-desktop`, and CPU-only desktop templates
-`linux-desktop-cpu`.
+Leave a flavour's templates empty to offer none of its kinds. Linux
+templates serve `linux` and `linux-docker`, GPU desktop templates
+`linux-desktop`, and CPU-only desktop templates `linux-desktop-cpu`.
+
+The Linux settings were `proxmox-lxc-headless-*` before the kinds were
+renamed ([027](../../docs/decisions/027-a-kind-says-when-it-has-a-desktop.md)).
+bb-box reads an old key while its `proxmox-lxc-linux-*` key is unset, and
+lists the old keys as replaced. Move their values to the new keys.
 
 The GPU's ID can be any name without spaces; templates with the same ID
 share a GPU. Use its UUID, which this command lists next to the PCI address

@@ -264,7 +264,7 @@ async function main(): Promise<number> {
     parsed = parseArgs({
       allowPositionals: true,
       options: {
-        kind: { type: "string", default: "linux-headless" },
+        kind: { type: "string", default: "linux" },
         command: { type: "string", default: "uname -a" },
         doctor: { type: "boolean", default: false },
         json: { type: "boolean", default: false },

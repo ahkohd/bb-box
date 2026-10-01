@@ -76,7 +76,7 @@ export interface KindCapabilities {
   readonly enrol: boolean;
 }
 
-/** A kind of box a backend offers, such as linux-headless. */
+/** A kind of box a backend offers, such as linux. */
 export interface BoxKind {
   /**
    * A shared word that names what the kind promises, never what it lacks.

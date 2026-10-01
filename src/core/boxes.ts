@@ -13,6 +13,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { OfferedKind } from "../backends/index.ts";
+import { currentKindId, isEarlierKindId } from "../backends/kinds.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -294,7 +295,15 @@ export class Boxes {
   }
 
   async #read(threadId: string, boxId: string): Promise<BoxRecord | null> {
-    return (await this.#deps.kv.get<BoxRecord>(recordKey(threadId, boxId))) ?? null;
+    const box = await this.#deps.kv.get<BoxRecord>(recordKey(threadId, boxId));
+    return box ? this.#current(box) : null;
+  }
+
+  /** A stored record with its kind's current ID and label, when the kind was renamed (027). */
+  #current(box: BoxRecord): BoxRecord {
+    if (!isEarlierKindId(box.kind)) return box;
+    const kind = currentKindId(box.kind);
+    return { ...box, kind, kindLabel: this.kinds().find((candidate) => candidate.id === kind)?.label ?? box.kindLabel };
   }
 
   async #write(box: BoxRecord): Promise<BoxRecord> {
@@ -330,7 +339,10 @@ export class Boxes {
 
   async #load(keys: string[]): Promise<BoxRecord[]> {
     const boxes = await Promise.all(keys.map((key) => this.#deps.kv.get<BoxRecord>(key)));
-    return boxes.filter((box): box is BoxRecord => !!box).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    return boxes
+      .filter((box): box is BoxRecord => !!box)
+      .map((box) => this.#current(box))
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
   }
 
   /** A box by ID alone. */
@@ -365,7 +377,8 @@ export class Boxes {
    * transport answers.
    */
   async acquire(input: { threadId: string; projectId: string | null; kind: string; role?: BoxRole }): Promise<BoxRecord> {
-    const offered = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === input.kind);
+    const wanted = currentKindId(input.kind);
+    const offered = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
     if (!offered.length) {
       const kinds = this.kinds().map((kind) => kind.id);
       throw new BoxError(
@@ -1038,8 +1051,8 @@ export class Boxes {
   async #restore(backend: Backend, held: HeldGuest, signal?: AbortSignal): Promise<boolean> {
     const { owner: found, power, ...guest } = held;
     const owner = found!;
-    const kind = backend.kinds().find((candidate) => candidate.id === owner.kind);
-    const kindId = owner.kind ?? "unknown";
+    const kindId = owner.kind ? currentKindId(owner.kind) : "unknown";
+    const kind = backend.kinds().find((candidate) => candidate.id === kindId);
     const answers = power === "stopped" ? false : await this.#answers(backend, guest, kindId, signal);
     const projectId = (await this.#deps.projectOf?.(owner.threadId).catch(() => null)) ?? null;
     const restored = await this.#locked(owner.threadId, async () => {
@@ -1053,7 +1066,7 @@ export class Boxes {
         projectId,
         name,
         kind: kindId,
-        kindLabel: kind?.label ?? owner.kind ?? "Unknown kind",
+        kindLabel: kind?.label ?? (owner.kind ? kindId : "Unknown kind"),
         requires: kind?.requires ?? [],
         capabilities: kind?.capabilities ?? UNKNOWN_KIND,
         backend: backend.id,

@@ -2,8 +2,8 @@
 // starts with "proxmox-lxc-". The plugin's settings page, the smoke script's
 // settings file and the tests all go through parseLxcSettings.
 //
-// Templates come in three flavours, each a list of CT templates: headless
-// ones serve both headless kinds, GPU desktop ones (each carrying one GPU,
+// Templates come in three flavours, each a list of CT templates: Linux ones
+// serve linux and linux-docker, GPU desktop ones (each carrying one GPU,
 // named by an ID) serve linux-desktop, and CPU-only desktop ones serve
 // linux-desktop-cpu. A new box is cloned from the flavour's least used
 // template; a GPU desktop goes to the GPU with the fewest desktops.
@@ -17,16 +17,20 @@
 // The defaults match the generic ones in setup/proxmox-lxc/, so a host set up
 // with that guide's defaults needs only the API URL, token, fingerprint and
 // SSH key.
+//
+// The Linux flavour was called headless before 027. Its keys declare no
+// default, so an unset one can be told apart and its proxmox-lxc-headless-
+// key read instead: saved values carry over.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { ParsedSettings } from "../types.ts";
 
-export const LXC_FLAVOURS = ["headless", "desktop", "desktop-cpu"] as const;
+export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu"] as const;
 export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
 
 /** The kinds each flavour's clones serve. */
 export const FLAVOUR_KINDS: Readonly<Record<LxcFlavour, readonly string[]>> = {
-  headless: ["linux-headless", "linux-headless-docker"],
+  linux: ["linux", "linux-docker"],
   desktop: ["linux-desktop"],
   "desktop-cpu": ["linux-desktop-cpu"],
 };
@@ -85,10 +89,10 @@ export interface LxcConfig {
 
 export const LXC_DEFAULTS = {
   pool: "bbbox",
-  headlessTemplate: 9100,
+  linuxTemplate: 9100,
   vmidFirst: 9900,
   vmidLast: 9999,
-  headless: { cores: 2, memoryMiB: 4096 },
+  linux: { cores: 2, memoryMiB: 4096 },
   desktop: { cores: 4, memoryMiB: 8192 },
   "desktop-cpu": { cores: 4, memoryMiB: 8192 },
   bridge: "vmbr200",
@@ -123,14 +127,32 @@ export const LXC_KEYS = {
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
 } as const;
 
-export function flavourKey(flavour: LxcFlavour, field: "templates" | "cores" | "memory-mib" | "disk-gib" | "warm"): string {
+type FlavourField = "templates" | "cores" | "memory-mib" | "disk-gib" | "warm";
+const FLAVOUR_FIELDS: readonly FlavourField[] = ["templates", "cores", "memory-mib", "disk-gib", "warm"];
+
+export function flavourKey(flavour: LxcFlavour, field: FlavourField): string {
   return `proxmox-lxc-${flavour}-${field}`;
 }
 
+/** The Linux flavour's key before 027, read while the new one is unset. */
+export function earlierFlavourKey(field: FlavourField): string {
+  return `proxmox-lxc-headless-${field}`;
+}
+
+/** The settings, with each unset Linux key taken from its key before 027. */
+function withEarlierKeys(values: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const merged = { ...values };
+  for (const field of FLAVOUR_FIELDS) {
+    const key = flavourKey("linux", field);
+    if (merged[key] === undefined || merged[key] === null) merged[key] = values[earlierFlavourKey(field)];
+  }
+  return merged;
+}
+
 const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readonly templates: string }>> = {
-  headless: {
-    name: "headless",
-    templates: "VMIDs of the CT templates linux-headless and linux-headless-docker boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+  linux: {
+    name: "Linux",
+    templates: "VMIDs of the CT templates linux and linux-docker boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
   },
   desktop: {
     name: "GPU desktop",
@@ -146,29 +168,59 @@ const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readon
 function flavourSettings(flavour: LxcFlavour): Record<string, PluginSettingDescriptor> {
   const defaults = LXC_DEFAULTS[flavour];
   const { name, templates } = FLAVOUR_WORDS[flavour];
+  const linux = flavour === "linux";
+  // The Linux keys declare no default (see the top of this file), so their descriptions give it.
+  const otherwise = <T,>(fallback: T) => (linux ? {} : { default: fallback });
+  const unset = (fallback: string | number) => (linux ? ` Unset means the replaced headless setting's value, or else ${fallback}.` : "");
   return {
     [flavourKey(flavour, "templates")]: {
       type: "string",
       label: `Proxmox LXC: ${name} templates`,
-      description: templates,
+      description: `${templates}${unset(LXC_DEFAULTS.linuxTemplate)}`,
       ...(flavour === "desktop" ? { experimental_multiline: true } : {}),
-      default: flavour === "headless" ? String(LXC_DEFAULTS.headlessTemplate) : "",
+      ...otherwise(""),
     },
-    [flavourKey(flavour, "cores")]: { type: "number", label: `Proxmox LXC: ${name} cores`, default: defaults.cores },
-    [flavourKey(flavour, "memory-mib")]: { type: "number", label: `Proxmox LXC: ${name} memory (MiB)`, default: defaults.memoryMiB },
+    [flavourKey(flavour, "cores")]: {
+      type: "number",
+      label: `Proxmox LXC: ${name} cores`,
+      ...(linux ? { description: unset(defaults.cores).trim() } : {}),
+      ...otherwise(defaults.cores),
+    },
+    [flavourKey(flavour, "memory-mib")]: {
+      type: "number",
+      label: `Proxmox LXC: ${name} memory (MiB)`,
+      ...(linux ? { description: unset(defaults.memoryMiB).trim() } : {}),
+      ...otherwise(defaults.memoryMiB),
+    },
     [flavourKey(flavour, "disk-gib")]: {
       type: "number",
       label: `Proxmox LXC: ${name} disk (GiB)`,
-      description: "0 keeps the template's size, which is quickest. A larger size is applied after the box starts, in about a second.",
-      default: 0,
+      description: `0 keeps the template's size, which is quickest. A larger size is applied after the box starts, in about a second.${unset(0)}`,
+      ...otherwise(0),
     },
     [flavourKey(flavour, "warm")]: {
       type: "number",
       label: `Proxmox LXC: warm ${name} boxes`,
-      description: "Ready boxes kept started and waiting, so a new box is ready at once. 0 turns the warm pool off.",
-      default: 0,
+      description: `Ready boxes kept started and waiting, so a new box is ready at once. 0 turns the warm pool off.${unset(0)}`,
+      ...otherwise(0),
     },
   };
+}
+
+/** The Linux flavour's keys before 027, declared so their saved values can still be read. */
+function earlierFlavourSettings(): Record<string, PluginSettingDescriptor> {
+  const current = flavourSettings("linux");
+  return Object.fromEntries(
+    FLAVOUR_FIELDS.map((field) => {
+      const { type, label } = current[flavourKey("linux", field)]!;
+      const earlier = {
+        type,
+        label: `${label.replace("Linux", "headless")} (replaced)`,
+        description: `Replaced by ${flavourKey("linux", field)}, and read only while that is unset. Move the value there.`,
+      } as PluginSettingDescriptor;
+      return [earlierFlavourKey(field), earlier];
+    }),
+  );
 }
 
 export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
@@ -217,7 +269,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "Boxes are made in this pool. The token needs rights on it.",
     default: LXC_DEFAULTS.pool,
   },
-  ...flavourSettings("headless"),
+  ...flavourSettings("linux"),
   ...flavourSettings("desktop"),
   ...flavourSettings("desktop-cpu"),
   [LXC_KEYS.perGpu]: {
@@ -283,6 +335,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "A new box is refused if the template's storage has less free space than this.",
     default: LXC_DEFAULTS.reserveDiskGiB,
   },
+  ...earlierFlavourSettings(),
 };
 
 export function parseIpv4(value: string): number | null {
@@ -332,7 +385,7 @@ function templateList(
 ): LxcTemplate[] {
   const key = flavourKey(flavour, "templates");
   const raw = values[key];
-  const fallback = flavour === "headless" ? String(LXC_DEFAULTS.headlessTemplate) : "";
+  const fallback = flavour === "linux" ? String(LXC_DEFAULTS.linuxTemplate) : "";
   // A settings file may give a lone VMID as a number.
   const listed = typeof raw === "number" ? (raw > 0 ? String(raw) : "") : text(values, key, fallback);
   const gpu = flavour === "desktop";
@@ -390,8 +443,9 @@ export function normaliseFingerprint(value: string): string | null {
   return hex.match(/../g)!.join(":");
 }
 
-export function parseLxcSettings(values: Readonly<Record<string, unknown>>): ParsedSettings<LxcConfig> {
-  if (values[LXC_KEYS.enabled] === false) return { enabled: false };
+export function parseLxcSettings(input: Readonly<Record<string, unknown>>): ParsedSettings<LxcConfig> {
+  if (input[LXC_KEYS.enabled] === false) return { enabled: false };
+  const values = withEarlierKeys(input);
   const problems: string[] = [];
 
   // The setup guide's token file gives the URL with /api2/json, which the client adds itself.
@@ -444,7 +498,7 @@ export function parseLxcSettings(values: Readonly<Record<string, unknown>>): Par
   for (const vmid of new Set(listed.filter((vmid, index) => listed.indexOf(vmid) !== index))) {
     problems.push(`Template ${vmid} is listed more than once. List each template once, under one flavour.`);
   }
-  if (!listed.length) problems.push("Set the VMID of at least one CT template: headless, GPU desktop or CPU desktop.");
+  if (!listed.length) problems.push("Set the VMID of at least one CT template: Linux, GPU desktop or CPU desktop.");
 
   const first = number(values, LXC_KEYS.vmidFirst, LXC_DEFAULTS.vmidFirst);
   const last = number(values, LXC_KEYS.vmidLast, LXC_DEFAULTS.vmidLast);

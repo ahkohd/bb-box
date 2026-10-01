@@ -50,8 +50,8 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
   return {
     id: "box_1",
     name: "calm-otter",
-    kind: "linux-headless",
-    kindLabel: "Linux headless",
+    kind: "linux",
+    kindLabel: "Linux",
     backendLabel: "Fake host",
     nature: "virtual",
     role: "box",
@@ -78,7 +78,7 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
 }
 
 const KINDS: KindView[] = [
-  { id: "linux-headless", label: "Linux headless", description: "A Linux box without a desktop.", size: "2 cores, 4 GiB", gpu: false, desktop: false, backends: ["Fake host"] },
+  { id: "linux", label: "Linux", description: "A Linux box without a desktop.", size: "2 cores, 4 GiB", gpu: false, desktop: false, backends: ["Fake host"] },
   { id: "linux-desktop", label: "Linux desktop", description: "A desktop with a GPU.", size: "4 cores, 8 GiB", gpu: true, desktop: true, backends: ["Fake host"] },
 ];
 

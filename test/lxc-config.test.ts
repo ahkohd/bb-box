@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { addressFor, net0For, normalisePrivateKey, parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
+import { LXC_SETTINGS, addressFor, net0For, normalisePrivateKey, parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
 import { parseGeneral } from "../src/core/config.ts";
 import { VALID, lxcConfig, tempDir } from "./helpers.ts";
 
@@ -15,12 +15,12 @@ test("valid settings parse with defaults", () => {
   assert.equal(config.proxmox.tlsFingerprint, null);
   assert.equal(config.ssh.user, "box");
   assert.deepEqual(config.vmids, { first: 9900, last: 9999 });
-  assert.deepEqual(config.flavours.headless.templates, [{ vmid: 9000, gpu: null }]);
-  assert.equal(config.flavours.headless.diskGiB, null, "the template's disk is kept");
+  assert.deepEqual(config.flavours.linux.templates, [{ vmid: 9000, gpu: null }]);
+  assert.equal(config.flavours.linux.diskGiB, null, "the template's disk is kept");
   assert.deepEqual(config.flavours.desktop.templates, []);
   assert.deepEqual(config.flavours["desktop-cpu"].templates, []);
-  assert.equal(config.flavours.headless.memoryMiB, 4096);
-  assert.equal(config.flavours.headless.warm, 0);
+  assert.equal(config.flavours.linux.memoryMiB, 4096);
+  assert.equal(config.flavours.linux.warm, 0);
   assert.deepEqual(config.desktop, { perGpu: null });
   assert.deepEqual(lxcConfig({ "proxmox-lxc-desktops-per-gpu": 3 }).desktop, { perGpu: 3 });
   assert.deepEqual(config.reserve, { memoryMiB: 4096, diskGiB: 50 });
@@ -48,7 +48,7 @@ test("the network and template defaults match the setup guide's", () => {
   });
   assert.ok(result.enabled && result.ok, JSON.stringify(result));
   const { config } = result;
-  assert.deepEqual(config.flavours.headless.templates, [{ vmid: 9100, gpu: null }]);
+  assert.deepEqual(config.flavours.linux.templates, [{ vmid: 9100, gpu: null }]);
   assert.deepEqual(config.flavours.desktop.templates, []);
   assert.equal(config.network.bridge, "vmbr200");
   assert.equal(config.network.gateway, "10.200.0.1");
@@ -59,11 +59,11 @@ test("the network and template defaults match the setup guide's", () => {
 
 test("each flavour takes a list of templates, and GPU desktop templates name their GPU", () => {
   const config = lxcConfig({
-    "proxmox-lxc-headless-templates": "9000, 9004",
+    "proxmox-lxc-linux-templates": "9000, 9004",
     "proxmox-lxc-desktop-templates": "9001 GPU-0a1b2c3d\n9002=GPU-4e5f6a7b\n9005 GPU-0a1b2c3d",
     "proxmox-lxc-desktop-cpu-templates": "9003",
   });
-  assert.deepEqual(config.flavours.headless.templates, [
+  assert.deepEqual(config.flavours.linux.templates, [
     { vmid: 9000, gpu: null },
     { vmid: 9004, gpu: null },
   ]);
@@ -74,9 +74,50 @@ test("each flavour takes a list of templates, and GPU desktop templates name the
   ]);
   assert.deepEqual(config.flavours["desktop-cpu"].templates, [{ vmid: 9003, gpu: null }]);
   assert.equal(config.flavours["desktop-cpu"].memoryMiB, 8192);
-  assert.deepEqual(lxcConfig({ "proxmox-lxc-headless-templates": 9000 }).flavours.headless.templates, [{ vmid: 9000, gpu: null }]);
-  const desktopsOnly = lxcConfig({ "proxmox-lxc-headless-templates": "", "proxmox-lxc-desktop-cpu-templates": "9003" });
-  assert.deepEqual(desktopsOnly.flavours.headless.templates, []);
+  assert.deepEqual(lxcConfig({ "proxmox-lxc-linux-templates": 9000 }).flavours.linux.templates, [{ vmid: 9000, gpu: null }]);
+  const desktopsOnly = lxcConfig({ "proxmox-lxc-linux-templates": "", "proxmox-lxc-desktop-cpu-templates": "9003" });
+  assert.deepEqual(desktopsOnly.flavours.linux.templates, []);
+});
+
+test("an unset Linux setting reads its key from before 027, and a set one wins", () => {
+  const { "proxmox-lxc-linux-templates": _, ...unset } = VALID;
+  const linux = (values: Record<string, unknown>) => {
+    const result = parseLxcSettings({ ...unset, "proxmox-lxc-desktop-cpu-templates": "9003", ...values });
+    assert.ok(result.enabled && result.ok, JSON.stringify(values));
+    return result.config.flavours.linux;
+  };
+  const earlier = {
+    "proxmox-lxc-headless-templates": "9010 9011",
+    "proxmox-lxc-headless-cores": 6,
+    "proxmox-lxc-headless-memory-mib": 6144,
+    "proxmox-lxc-headless-disk-gib": 20,
+    "proxmox-lxc-headless-warm": 2,
+  };
+  assert.deepEqual(linux(earlier), {
+    templates: [{ vmid: 9010, gpu: null }, { vmid: 9011, gpu: null }],
+    cores: 6,
+    memoryMiB: 6144,
+    diskGiB: 20,
+    warm: 2,
+  });
+  const both = linux({ ...earlier, "proxmox-lxc-linux-templates": "9020", "proxmox-lxc-linux-cores": 3, "proxmox-lxc-linux-warm": 0 });
+  assert.deepEqual(both.templates, [{ vmid: 9020, gpu: null }]);
+  assert.equal(both.cores, 3);
+  assert.equal(both.warm, 0, "a new key set to 0 is set");
+  assert.equal(both.memoryMiB, 6144, "each key falls back on its own");
+  assert.equal(linux({ ...earlier, "proxmox-lxc-linux-cores": null }).cores, 6, "a cleared key is unset");
+  assert.deepEqual(linux({ ...earlier, "proxmox-lxc-linux-templates": "" }).templates, [], "an empty list is set, and turns the kinds off");
+  assert.deepEqual(linux({}), { templates: [{ vmid: 9100, gpu: null }], cores: 2, memoryMiB: 4096, diskGiB: null, warm: 0 });
+
+  // BB gives a declared default in place of an unset value, so the new keys declare none, and the old keys stay declared.
+  for (const field of ["templates", "cores", "memory-mib", "disk-gib", "warm"]) {
+    const current = LXC_SETTINGS[`proxmox-lxc-linux-${field}`]!;
+    const replaced = LXC_SETTINGS[`proxmox-lxc-headless-${field}`]!;
+    assert.ok(!("default" in current), field);
+    assert.ok(!("default" in replaced), field);
+    assert.match(replaced.label, /\(replaced\)$/);
+    assert.match(replaced.description ?? "", new RegExp(`Replaced by proxmox-lxc-linux-${field}`));
+  }
 });
 
 test("template lists with mistakes are refused", () => {
@@ -89,8 +130,8 @@ test("template lists with mistakes are refused", () => {
   assert.match(problems({ "proxmox-lxc-desktop-templates": "9001 GPU-a extra" }), /one line per GPU desktop template/);
   assert.match(problems({ "proxmox-lxc-desktop-cpu-templates": "9001 9001" }), /Template 9001 is listed more than once/);
   assert.match(problems({ "proxmox-lxc-desktop-cpu-templates": "9000" }), /Template 9000 is listed more than once/);
-  assert.match(problems({ "proxmox-lxc-headless-templates": "ninety" }), /VMIDs from 100 for the headless templates/);
-  assert.match(problems({ "proxmox-lxc-headless-templates": "" }), /at least one CT template/);
+  assert.match(problems({ "proxmox-lxc-linux-templates": "ninety" }), /VMIDs from 100 for the Linux templates/);
+  assert.match(problems({ "proxmox-lxc-linux-templates": "" }), /at least one CT template/);
 });
 
 test("the backend can be switched off", () => {
@@ -118,7 +159,7 @@ test("too few addresses for the VMID range is a problem", () => {
 });
 
 test("missing settings are listed without echoing the secret", () => {
-  const result = parseLxcSettings({ "proxmox-lxc-token-secret": "do-not-show", "proxmox-lxc-headless-templates": "", "proxmox-lxc-bridge": "" });
+  const result = parseLxcSettings({ "proxmox-lxc-token-secret": "do-not-show", "proxmox-lxc-linux-templates": "", "proxmox-lxc-bridge": "" });
   assert.ok(result.enabled && !result.ok);
   const problems = result.problems.join(" ");
   assert.match(problems, /Proxmox API URL/);

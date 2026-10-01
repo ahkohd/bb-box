@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
+import { isEarlierKindId } from "../src/backends/kinds.ts";
 import { BackendError, type Backend, type ReleaseHooks } from "../src/backends/types.ts";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -94,7 +95,7 @@ async function until(check: () => Promise<boolean>): Promise<void> {
 
 test("acquire records the box at once and it becomes ready in the background", async () => {
   const world = setup();
-  const box = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux-headless" });
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
   assert.equal(box.state, "acquiring");
   assert.match(box.name, /^[a-z]+-[a-z]+$/);
   assert.match(box.id, /^bx[a-z2-7]{12}$/);
@@ -115,9 +116,36 @@ test("acquire records the box at once and it becomes ready in the background", a
   assert.deepEqual(world.errors, []);
 });
 
+test("a kind's ID from before 027 is taken in an acquire, a stored record and a guest's owner, and only current IDs are shown", async () => {
+  const world = setup();
+  assert.ok(!world.boxes.kinds().some((kind) => isEarlierKindId(kind.id)), "an earlier ID is never offered");
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  assert.deepEqual([box.kind, box.kindLabel], ["linux", "Linux"]);
+
+  // A record stored before the rename.
+  const [key] = await world.kv.list(`box/${THREAD}/`);
+  await world.kv.set(key!, { ...(await world.kv.get<BoxRecord>(key!))!, kind: "linux-headless", kindLabel: "Linux headless" });
+  for (const read of [await world.boxes.find(box.id), await world.boxes.get(THREAD, box.name), ...(await world.boxes.list(THREAD)), ...(await world.boxes.all())]) {
+    assert.deepEqual([read?.kind, read?.kindLabel], ["linux", "Linux"]);
+  }
+  assert.equal((await world.boxes.run(THREAD, box.name, "echo still")).result.stdout, "still\n");
+
+  // A guest whose owner names the earlier ID, after bb-box lost the record.
+  const guestKey = `backend/fake/guest/${box.guest!.ref}`;
+  const guest = (await world.kv.get<{ owner: Record<string, unknown> }>(guestKey))!;
+  await world.kv.set(guestKey, { ...guest, owner: { ...guest.owner, kind: "linux-headless" } });
+  for (const lost of [...(await world.kv.list("box/")), ...(await world.kv.list("index/"))]) await world.kv.delete(lost);
+  world.enrolled.length = 0;
+  const boxes = world.restart();
+  assert.equal((await boxes.sweep()).adopted, 1);
+  const restored = await boxes.find(box.id);
+  assert.deepEqual([restored?.kind, restored?.kindLabel, restored?.capabilities.enrol], ["linux", "Linux", true]);
+  assert.deepEqual(world.enrolled, [`${box.name}, restored`], "it is the kind it was, so it enrols again");
+});
+
 test("names are unique within a thread and unknown boxes are named in the error", async () => {
   const world = setup();
-  const a = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  const a = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   const b = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" });
   assert.notEqual(a.name, b.name);
   await world.boxes.idle();
@@ -130,23 +158,23 @@ test("names are unique within a thread and unknown boxes are named in the error"
 
 test("an unknown kind lists the kinds, and no backend says to set one up", async () => {
   const world = setup();
-  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "windows" }), /The kinds are: linux-headless, linux-desktop/);
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "windows" }), /The kinds are: linux, linux-desktop/);
   world.active = false;
-  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }), /No backend is set up/);
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }), /No backend is set up/);
 });
 
 test("there is no per-thread limit by default, and a set limit names the boxes", async () => {
   const world = setup();
-  for (let i = 0; i < 3; i++) await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  for (let i = 0; i < 3; i++) await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await world.boxes.idle();
   world.general = { ...world.general, perThreadLimit: 3 };
-  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }), (error: BoxError) => {
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }), (error: BoxError) => {
     assert.equal(error.code, "limit_reached");
     assert.match(error.message, /already has 3 boxes/);
     return true;
   });
   // Other threads have their own limit.
-  await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux-headless" });
+  await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" });
   await world.boxes.idle();
 });
 
@@ -154,9 +182,9 @@ test("capacity counts boxes still being acquired, and the backend's message reac
   const world = setup({ maxGuests: 1 });
   const gate = deferred();
   world.backend.gate = gate.promise;
-  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   // The first box has no guest record yet at the fake, but it is pending.
-  await assert.rejects(world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux-headless" }), (error: BoxError) => {
+  await assert.rejects(world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" }), (error: BoxError) => {
     assert.equal(error.code, "no_capacity");
     assert.match(error.message, /holds 1 guests at most/);
     return true;
@@ -169,7 +197,7 @@ test("capacity counts boxes still being acquired, and the backend's message reac
 test("concurrent acquires from different threads never share the last room", async () => {
   const world = setup({ maxGuests: 2 });
   const results = await Promise.allSettled(
-    ["a", "b", "c", "d"].map((thread) => world.boxes.acquire({ threadId: thread, projectId: null, kind: "linux-headless" })),
+    ["a", "b", "c", "d"].map((thread) => world.boxes.acquire({ threadId: thread, projectId: null, kind: "linux" })),
   );
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 2);
   await world.boxes.idle();
@@ -178,7 +206,7 @@ test("concurrent acquires from different threads never share the last room", asy
 test("a failed acquire keeps the box as failed with the reason, holding nothing", async () => {
   const world = setup();
   world.backend.faults.acquire = { at: "started", error: new BackendError("no_capacity", "The host ran out of memory.") };
-  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   const done = await ready(world.boxes, box);
   assert.equal(done.state, "failed");
   assert.equal(done.error, "The host ran out of memory.");
@@ -187,7 +215,7 @@ test("a failed acquire keeps the box as failed with the reason, holding nothing"
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /failed: The host ran out of memory/);
   // A failed box does not count against the limit.
   world.general = { ...world.general, perThreadLimit: 1 };
-  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await world.boxes.idle();
 });
 
@@ -195,7 +223,7 @@ test("releasing a box while it is acquired cancels the acquire and leaves nothin
   const world = setup();
   const gate = deferred();
   world.backend.gate = gate.promise;
-  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await until(async () => !!(await world.boxes.find(box.id))?.guest);
   const release = world.boxes.release(THREAD, box.name);
   gate.resolve();
@@ -207,7 +235,7 @@ test("releasing a box while it is acquired cancels the acquire and leaves nothin
 
 test("commands run in the box's shell with the box's identity, in a directory", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.boxes.writeFile(THREAD, box.name, "work/dir/file.txt", Buffer.from("content"), { mode: "600" });
   const { result } = await world.boxes.run(THREAD, box.name, 'printf "%s|%s|" "$BB_BOX_NAME" "$BB_HOST_ID" && cat file.txt && cat >&2', {
     cwd: "work/dir",
@@ -227,7 +255,7 @@ test("commands run in the box's shell with the box's identity, in a directory", 
 
 test("a script given a directory that does not exist runs none of its lines", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   const { result } = await world.boxes.run(THREAD, box.name, "echo first\necho second", { cwd: "missing" });
   assert.equal(result.exitCode, 1);
   assert.equal(result.stdout, "");
@@ -262,7 +290,7 @@ test("commands in an enrolled box take the thread's access from BB's daemon as t
       },
     },
   );
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   const show = 'printf "%s|" "$FOO" "$BAR" "$QUOTE" "${OTHER-unset}" "${GH_TOKEN-unset}"';
   const first = await world.boxes.run(THREAD, box.name, show);
   assert.equal(first.result.stdout, `value-new|value-bar|${multiline}|unset|unset|`, "the newest worker with the most names");
@@ -295,7 +323,7 @@ test("when bb-box cannot tell which variables to take, commands keep the env fil
       },
     },
   );
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   assert.equal((await world.boxes.run(THREAD, box.name, 'printf %s "$BB_BOX_NAME"')).result.stdout, box.name);
   fail = true;
   const { result } = await world.boxes.run(THREAD, box.name, 'printf %s "$BB_BOX_NAME"');
@@ -305,7 +333,7 @@ test("when bb-box cannot tell which variables to take, commands keep the env fil
 
 test("access setup puts the env file above ~/.bashrc's early return, once, and keeps the file's mode", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.boxes.writeFile(THREAD, box.name, ".bashrc", Buffer.from('case $- in *i*) ;; *) return;; esac\nexport MINE=1\n'), { mode: "640" });
   for (let i = 0; i < 2; i++) {
     const { result } = await world.boxes.run(THREAD, box.name, accessSetup("linux")!);
@@ -327,7 +355,7 @@ test("access setup puts the env file above ~/.bashrc's early return, once, and k
 
 test("a command that times out stops in the box, with everything it started", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   const { result } = await world.boxes.run(THREAD, box.name, "sleep 60 & echo $! > child.pid; sleep 60", { timeoutMs: 300 });
   assert.equal(result.timedOut, true);
   assert.ok(result.durationMs < 5_000, `stopped in the box, not by the local backstop: ${result.durationMs} ms`);
@@ -341,7 +369,7 @@ test("a command that times out stops in the box, with everything it started", as
 
 test("a command waits a few seconds for its box to finish enrolling", async () => {
   const world = setup({}, { enrolWaitMs: 5_000 });
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: "host-late", error: null } }));
   setTimeout(() => void world.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId: "host-late", error: null } })), 300);
   const started = Date.now();
@@ -358,7 +386,7 @@ test("a command waits a few seconds for its box to finish enrolling", async () =
 
 test("a command runs anyway when enrolment takes longer than the wait", async () => {
   const world = setup({}, { enrolWaitMs: 100 });
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: "host-slow", error: null } }));
   const { box: after, result } = await world.boxes.run(THREAD, box.name, "echo ran");
   assert.equal(after.enrol.state, "enrolling");
@@ -368,7 +396,7 @@ test("a command runs anyway when enrolment takes longer than the wait", async ()
 test("a stop or start that ends during a release leaves the box releasing", async () => {
   for (const action of ["stop", "start"] as const) {
     const world = setup();
-    const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+    const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
     if (action === "start") await world.boxes.stop(THREAD, box.name);
     const gate = deferred();
     world.backend.powerGate = gate.promise;
@@ -386,7 +414,7 @@ test("a stop or start that ends during a release leaves the box releasing", asyn
 
 test("stop and start, and a stopped box says so instead of timing out", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   const stopped = await world.boxes.stop(THREAD, box.name);
   assert.equal(stopped.state, "stopped");
   assert.equal((await world.boxes.stop(THREAD, box.name)).state, "stopped");
@@ -402,7 +430,7 @@ test("stop and start, and a stopped box says so instead of timing out", async ()
 test("a box that is not enrolled is not reconnected after a start", async () => {
   const world = setup();
   world.general = { ...world.general, enrol: false };
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   assert.equal(box.enrol.state, "off");
   await world.boxes.stop(THREAD, box.name);
   await world.boxes.start(THREAD, box.name);
@@ -411,7 +439,7 @@ test("a box that is not enrolled is not reconnected after a start", async () => 
 
 test("a box stopped behind bb-box's back is found when a command cannot reach it", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.backend.stop!(box.guest!);
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /is stopped/);
   assert.equal((await world.boxes.get(THREAD, box.name)).state, "stopped");
@@ -419,7 +447,7 @@ test("a box stopped behind bb-box's back is found when a command cannot reach it
 
 test("a guest deleted outside bb-box marks the box gone, and release still works", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.backend.release(box.guest!, QUIET);
   const refreshed = await world.boxes.refresh(THREAD, box.name);
   assert.equal(refreshed.state, "gone");
@@ -431,7 +459,7 @@ test("a guest deleted outside bb-box marks the box gone, and release still works
 
 test("release removes the BB machine first, then the guest", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   assert.equal(await world.boxes.release(THREAD, box.name), null);
   assert.deepEqual(world.unenrolled, [`host-${box.id}`]);
   assert.deepEqual(await world.backend.held(), []);
@@ -441,7 +469,7 @@ test("release removes the BB machine first, then the guest", async () => {
 
 test("a failed release keeps the box releasing with the reason, and the sweep finishes it", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   world.backend.faults.release = new Error("the provider is busy");
   const kept = await world.boxes.release(THREAD, box.name);
   assert.equal(kept?.state, "releasing");
@@ -455,12 +483,12 @@ test("a failed release keeps the box releasing with the reason, and the sweep fi
 
 test("releasing a thread releases all its boxes and forgets failed ones", async () => {
   const world = setup();
-  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" });
   await world.boxes.idle();
   world.backend.faults.acquire = { at: "claimed", error: new Error("boom") };
-  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
-  const other = await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux-headless" });
+  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  const other = await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" });
   await world.boxes.idle();
   assert.equal(await world.boxes.releaseThread(THREAD), 2);
   assert.deepEqual(await world.boxes.list(THREAD), []);
@@ -472,9 +500,9 @@ test("releasing a thread releases all its boxes and forgets failed ones", async 
 
 test("the sweep releases the boxes of ended threads and keeps live and unknown ones", async () => {
   const world = setup();
-  const ended = await world.boxes.acquire({ threadId: "thr_ended", projectId: null, kind: "linux-headless" });
-  const live = await world.boxes.acquire({ threadId: "thr_live", projectId: null, kind: "linux-headless" });
-  const unknown = await world.boxes.acquire({ threadId: "thr_unknown", projectId: null, kind: "linux-headless" });
+  const ended = await world.boxes.acquire({ threadId: "thr_ended", projectId: null, kind: "linux" });
+  const live = await world.boxes.acquire({ threadId: "thr_live", projectId: null, kind: "linux" });
+  const unknown = await world.boxes.acquire({ threadId: "thr_unknown", projectId: null, kind: "linux" });
   await world.boxes.idle();
   world.threads.set("thr_ended", "ended");
   world.threads.set("thr_unknown", "unknown");
@@ -489,8 +517,8 @@ test("the sweep releases the boxes of ended threads and keeps live and unknown o
 test("the sweep releases guests no box owns and adopts guests of live threads", async () => {
   const world = setup();
   const kept = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_live", projectId: null, kind: "linux-desktop" }));
-  const lost = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_live", projectId: null, kind: "linux-headless" }));
-  const orphan = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_gone", projectId: null, kind: "linux-headless" }));
+  const lost = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_live", projectId: null, kind: "linux" }));
+  const orphan = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_gone", projectId: null, kind: "linux" }));
   // Storage loses two records; the provider still has the guests.
   for (const box of [lost, orphan]) {
     await world.kv.delete(`box/${box.threadId}/${box.id}`);
@@ -507,7 +535,7 @@ test("the sweep releases guests no box owns and adopts guests of live threads", 
   const adopted = await world.boxes.find(lost.id);
   assert.equal(adopted?.name, lost.name);
   assert.equal(adopted?.state, "ready");
-  assert.equal(adopted?.kind, "linux-headless");
+  assert.equal(adopted?.kind, "linux");
   assert.deepEqual(adopted?.guest, lost.guest);
   assert.equal((await world.boxes.run("thr_live", lost.name, "echo adopted")).result.stdout, "adopted\n");
   assert.deepEqual((await world.backend.held()).map((guest) => guest.ref).sort(), [kept.guest!.ref, lost.guest!.ref].sort());
@@ -522,7 +550,7 @@ test("the sweep releases guests no box owns and adopts guests of live threads", 
 
 test("the sweep never enrols a box whose BB machine was removed", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   assert.deepEqual(world.enrolled, [box.name]);
   // As when someone removes the box's machine in BB.
   await world.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
@@ -533,7 +561,7 @@ test("the sweep never enrols a box whose BB machine was removed", async () => {
 
 test("after its records are wiped, the sweep restores the boxes of live threads, releases only those of ended threads, and keeps the rest", async () => {
   const world = setup();
-  const acquire = async (threadId: string, kind = "linux-headless") => ready(world.boxes, await world.boxes.acquire({ threadId, projectId: null, kind }));
+  const acquire = async (threadId: string, kind = "linux") => ready(world.boxes, await world.boxes.acquire({ threadId, projectId: null, kind }));
   const running = await acquire("thr_live", "linux-desktop");
   const stopped = await acquire("thr_live");
   const silent = await acquire("thr_quiet");
@@ -611,7 +639,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
 
 test("the sweep never releases a guest whose record is missing while its thread is live or unknown", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.kv.delete(`box/${THREAD}/${box.id}`);
   await world.kv.delete(`index/${box.id}`);
   for (const liveness of ["unknown", "unknown", "live", "live"] as const) {
@@ -626,7 +654,7 @@ test("the sweep never releases a guest whose record is missing while its thread 
 
 test("the sweep releases a guest whose box moved on or failed", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   // The record says the box holds nothing, but the provider still has its guest.
   await world.boxes.update(box, () => ({ state: "failed", guest: null, error: "boom" }));
   const report = await world.boxes.sweep();
@@ -637,8 +665,8 @@ test("the sweep releases a guest whose box moved on or failed", async () => {
 
 test("the sweep notices power changes and deleted guests", async () => {
   const world = setup();
-  const a = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
-  const b = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const a = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const b = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.backend.stop!(a.guest!);
   await world.backend.release(b.guest!, QUIET);
   await world.boxes.sweep();
@@ -650,7 +678,7 @@ test("the sweep acts on a guest's power only once the guest confirms it, so a bo
   /** What the box was recorded as, other than ready, as computer use forgets the box then. */
   const states: string[] = [];
   const world = setup({}, { recorded: (box, deleted) => (deleted || box.state !== "ready") && states.push(deleted ? "deleted" : box.state) });
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.boxes.stop(THREAD, box.name);
   const held = world.backend.held.bind(world.backend);
   // The listing says stopped, and the box starts before the sweep reads the records.
@@ -673,11 +701,11 @@ test("the sweep acts on a guest's power only once the guest confirms it, so a bo
 
 test("a reused reference is the new box's: the old box goes, and its release leaves the new box alone", async () => {
   const world = setup();
-  const old = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const old = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   // Deleted outside bb-box, then the provider gives the reference to the next box.
   await world.backend.release(old.guest!, QUIET);
   await world.kv.set("backend/fake/counter", 0);
-  const next = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const next = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   assert.equal(next.guest!.ref, old.guest!.ref);
   await world.boxes.sweep();
   assert.equal((await world.boxes.find(old.id))?.state, "gone");
@@ -702,16 +730,16 @@ async function fromBeforeInstallIds(world: ReturnType<typeof setup>, box: BoxRec
 
 test("the first sweep records this install on its boxes' guests from before install IDs, and leaves other guests alone", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   const key = await fromBeforeInstallIds(world, box);
   // An acquire the last process left after its claim.
   world.backend.gate = new Promise(() => {});
-  const interrupted = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  const interrupted = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await until(async () => !!(await world.boxes.find(interrupted.id))?.guest);
   const claimed = (await world.boxes.find(interrupted.id))!;
   await fromBeforeInstallIds(world, claimed);
   // A guest with no install ID that no box of this install records.
-  const stranger = { boxId: "bx_stranger", threadId: "thr_else", name: "stranger", kind: "linux-headless", createdAt: 0 };
+  const stranger = { boxId: "bx_stranger", threadId: "thr_else", name: "stranger", kind: "linux", createdAt: 0 };
   await world.kv.set("backend/fake/guest/g9", { owner: stranger, power: "running" });
   assert.deepEqual(await world.backend.held(), [], "no guest names this install yet");
 
@@ -739,12 +767,12 @@ test("the first sweep records this install on its boxes' guests from before inst
 
 test("stopping or releasing a box from before install IDs records the install first", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await fromBeforeInstallIds(world, box);
   const stopped = await world.boxes.stop(THREAD, box.id);
   assert.equal(stopped.state, "stopped");
   assert.equal(stopped.guest?.data?.box, box.id);
-  const other = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const other = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await fromBeforeInstallIds(world, other);
   assert.equal(await world.boxes.release(THREAD, other.id), null);
   assert.deepEqual(world.backend.calls.slice(-2), [`stamp ${other.guest!.ref}`, `release ${other.guest!.ref}`]);
@@ -757,7 +785,7 @@ test("stopping or releasing a box from before install IDs records the install fi
 test("after a restart the sweep resumes an interrupted acquire with its claimed guest", async () => {
   const world = setup();
   world.backend.gate = new Promise(() => {});
-  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await until(async () => !!(await world.boxes.find(box.id))?.guest);
   const claimed = (await world.boxes.find(box.id))!.guest!;
   // The old process stops here without cleaning up.
@@ -774,7 +802,7 @@ test("dispose cancels acquires in progress, and the next start acquires them aga
   const world = setup();
   const gate = deferred();
   world.backend.gate = gate.promise;
-  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" });
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await until(async () => !!(await world.boxes.find(box.id))?.guest);
   const disposed = world.boxes.dispose();
   gate.resolve();
@@ -790,19 +818,19 @@ test("dispose cancels acquires in progress, and the next start acquires them aga
 
 test("a real backend's release resets the machine and returns it for the next box", async () => {
   const world = setup({ nature: "real", machines: 1 });
-  const first = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const first = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   assert.equal(first.nature, "real");
   await world.boxes.writeFile(THREAD, first.name, "left-behind", Buffer.from("x"));
-  await assert.rejects(world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux-headless" }), /All 1 machines are in use/);
+  await assert.rejects(world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" }), /All 1 machines are in use/);
   assert.equal(await world.boxes.release(THREAD, first.name), null);
-  const second = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux-headless" }));
+  const second = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" }));
   assert.equal(second.guest?.ref, first.guest?.ref);
   assert.equal((await world.boxes.run("thr_two", second.name, "ls")).result.stdout, "");
 });
 
 test("a box whose backend is off can be seen but says what to fix, and is kept", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   world.active = false;
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /backend that holds box .* is off or its settings need fixing/);
   const kept = await world.boxes.release(THREAD, box.name);
@@ -818,14 +846,14 @@ test("a box whose backend is off can be seen but says what to fix, and is kept",
 
 test("errors from a backend keep their message and never leak into other threads", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await assert.rejects(world.boxes.get("thr_two", box.name), /This thread has no box .* It has no boxes/);
   await assert.rejects(world.boxes.run("thr_two", box.id, "true"), /This thread has no box/);
 });
 
 test("a box whose backend cannot stop and start says so, and keeps running", async () => {
   const world = setup({ stopStart: false });
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   assert.equal(world.boxes.canStopStart(box), false);
   await assert.rejects(world.boxes.stop(THREAD, box.name), (error: BoxError) => {
     assert.equal(error.code, "unsupported");
@@ -838,7 +866,7 @@ test("a box whose backend cannot stop and start says so, and keeps running", asy
 
 test("a power the provider cannot tell leaves the box as it was", async () => {
   const world = setup();
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   world.backend.power = async () => "unknown";
   assert.equal((await world.boxes.refresh(THREAD, box.name)).state, "ready");
   await world.boxes.sweep();
@@ -848,27 +876,27 @@ test("a power the provider cannot tell leaves the box as it was", async () => {
 test("a box records its offer's features, and the ones beyond what its kind requires", async () => {
   const [headless] = FAKE_KINDS;
   const world = setup({
-    kinds: [{ ...headless!, id: "linux-headless-docker", requires: ["docker"], capabilities: { ...headless!.capabilities, features: ["docker", "systemd"] } }],
+    kinds: [{ ...headless!, id: "linux-docker", requires: ["docker"], capabilities: { ...headless!.capabilities, features: ["docker", "systemd"] } }],
   });
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless-docker" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-docker" }));
   assert.deepEqual(box.requires, ["docker"]);
   assert.deepEqual(box.capabilities.features, ["docker", "systemd"]);
   assert.deepEqual(extraFeatures(box), ["systemd"]);
 });
 
-test("a desktop command runs in the desktop session, and a headless box has none", async () => {
+test("a desktop command runs in the desktop session, and a box without a desktop has none", async () => {
   const world = setup();
   const desktop = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" }));
   const inSession = await world.boxes.run(THREAD, desktop.name, 'echo "$DISPLAY $DBUS_SESSION_BUS_ADDRESS"', { session: "desktop" });
   assert.match(inSession.result.stdout, /^:0 unix:path=\/run\/user\/\d+\/bus\n$/);
   assert.equal((await world.boxes.run(THREAD, desktop.name, 'echo "[$DISPLAY]"')).result.stdout, "[]\n");
-  const headless = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const headless = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await assert.rejects(world.boxes.run(THREAD, headless.name, "true", { session: "desktop" }), /has no desktop/);
 });
 
 test("a real backend's release records the reset, and a failed reset takes the machine out of service", async () => {
   const world = setup({ nature: "real", machines: 1 });
-  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   const release = world.backend.release.bind(world.backend);
   let seen: BoxRecord | null = null;
   world.backend.release = (guest, hooks) =>
@@ -886,16 +914,16 @@ test("a real backend's release records the reset, and a failed reset takes the m
   const [member] = await world.backend.members!();
   assert.equal(member?.state, "out-of-service");
   assert.equal(member?.reason, "the box user's processes would not stop");
-  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }), /All 1 machines are in use/);
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }), /All 1 machines are in use/);
   await world.backend.returnToService!(member!.ref);
-  assert.equal((await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }))).state, "ready");
+  assert.equal((await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }))).state, "ready");
 });
 
 test("a stale release of a real machine does not reset the next box's machine", async () => {
   const world = setup({ nature: "real", machines: 1 });
-  const first = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-headless" }));
+  const first = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.boxes.release(THREAD, first.name);
-  const second = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux-headless" }));
+  const second = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" }));
   assert.equal(second.guest?.ref, first.guest?.ref);
   await world.backend.release(first.guest!, QUIET);
   assert.deepEqual(

@@ -1,12 +1,12 @@
 # bb-box
 
 Computers for [BB](https://getbb.app) threads. A thread gets its own boxes
-(Linux, Windows or macOS, virtual or physical, with a desktop or headless),
+(Linux, Windows or macOS, virtual or physical, with or without a desktop),
 and both you and the thread's agent control them from BB.
 
 bb-box is a BB plugin. It is built for people who run BB for themselves and
 want their agents to have real machines: a desktop to build, run and profile
-apps in a real browser or native UI, and headless machines for Docker, backend
+apps in a real browser or native UI, and plain machines for Docker, backend
 services and builds, so that work runs on a box and not on your own machine.
 
 ## Principles
@@ -40,7 +40,7 @@ services and builds, so that work runs on a box and not on your own machine.
   backend interface and never names a provider, hypervisor, container
   technology or transport.
 - **Kind**: what a backend offers, with declared capabilities: guest OS,
-  desktop or headless, GPU, Docker, how commands and file copies run, the
+  whether it has a desktop, GPU, Docker, how commands and file copies run, the
   desktop stream, and whether the box enrols in BB. The agent tools and the
   panel follow these declarations.
 - **Virtual or real**: a virtual box is created on demand and deleted on
@@ -69,11 +69,11 @@ services and builds, so that work runs on a box and not on your own machine.
 
 | Backend | Virtual or real | Kinds | Status |
 | --- | --- | --- | --- |
-| Proxmox LXC | virtual | Linux desktop with GPU, Linux headless with Docker | in development |
+| Proxmox LXC | virtual | Linux, Linux with Docker, Linux desktop with or without a GPU | in development |
 | Proxmox QEMU | virtual | Windows desktop | planned |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
 | Apple Virtualization framework, for example [Tart](https://tart.run) | virtual (macOS VMs on a Mac host) | macOS desktop, iOS Simulator | planned |
-| Docker | virtual | Linux desktop, Linux headless | planned, early |
+| Docker | virtual | Linux, Linux desktop | planned, early |
 | SSH host pool | real | any machine reachable over SSH | planned, early |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
@@ -86,12 +86,12 @@ machine variables from BB, and child threads cannot run on them.
 ### Proxmox LXC
 
 The first backend creates unprivileged LXC containers on a Proxmox VE host by
-linked clone from CT templates, one headless and one desktop per GPU. Measured
+linked clone from CT templates, one Linux and one desktop per GPU. Measured
 on a Proxmox VE 9.2 host through the plugin's API token: clone 0.75 s, start
 1.0 s, SSH ready about 0.45 s after start, so about 2.2 s from request to a
 working box.
 
-- **Headless**: Ubuntu 24.04 with common development tools and agent CLIs, and
+- **Linux**: Ubuntu 24.04 with common development tools and agent CLIs, and
   Docker with compose and buildx (the container has `nesting=1`).
 - **Desktop**: XFCE and Chrome on a real Xorg server driven by the host's
   NVIDIA GPU, streamed to BB. OpenGL and Vulkan run on the GPU, so browser
@@ -123,7 +123,7 @@ for months.
 
 Working on the Proxmox LXC backend:
 
-- Linux headless boxes with Docker, enrolled in BB with the thread's access.
+- Linux boxes with Docker, enrolled in BB with the thread's access.
 - Linux desktop boxes on the GPU or the CPU, shown live in the thread's panel,
   with shared control and resizing.
 - Computer use for agents, through the accessibility tree and screenshots.

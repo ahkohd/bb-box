@@ -2,7 +2,8 @@
 # Downloads every artifact a template build needs into <dir> and checks each
 # against its pinned SHA-256. Files already there and correct are kept.
 #
-# usage: fetch-artifacts.sh <dir> headless|desktop|desktop-cpu
+# usage: fetch-artifacts.sh <dir> linux|desktop|desktop-cpu
+# (headless is linux's earlier name)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
@@ -43,7 +44,7 @@ if [ -n "$BBBOX_BB_URL" ]; then
   echo "bb-app $digest"
 fi
 
-[ "$kind" != headless ] || exit 0
+case "$kind" in linux | headless) exit 0 ;; esac
 
 while IFS=$'\t' read -r name file url sha; do
   case "$name" in '' | \#*) continue ;; esac
