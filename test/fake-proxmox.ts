@@ -1,7 +1,8 @@
 // A small in-memory Proxmox API with the behaviour bb-box relies on, for
 // containers and VMs: linked clones that reject `storage`, need a template
 // that is not locked and inherit its protection, "already exists" for used
-// VMIDs, asynchronous tasks, tags, pools and /cluster/resources.
+// VMIDs, asynchronous tasks, tags, pools, /cluster/resources and a VM
+// console's VNC proxy.
 
 import { rootDiskGiB, type FetchLike, type FetchResponse } from "../src/backends/proxmox/api.ts";
 
@@ -36,6 +37,8 @@ export class FakeProxmox {
   /** VMIDs another pool claims: invisible to the token, but clone says "already exists". */
   readonly hidden = new Set<number>();
   readonly calls: FakeCall[] = [];
+  /** The VNC proxies opened, oldest first. */
+  readonly consoles: { vmid: number; port: number; ticket: string; password?: string }[] = [];
   readonly #tasks = new Map<string, FakeTask>();
   #taskCounter = 0;
   /** Exit status for the next task of this type, for example "WARNINGS: 1" or an error. */
@@ -283,6 +286,23 @@ export class FakeProxmox {
         guest.status = "stopped";
         return ok(this.#task(`${prefix}stop`, vmid));
       }
+    }
+
+    if ((match = /^\/nodes\/[^/]+\/qemu\/(\d+)\/vncproxy$/.exec(path)) && method === "POST") {
+      const vmid = Number(match[1]);
+      const guest = this.#of("qemu", vmid);
+      if (!guest) return this.#missing(vmid, "qemu");
+      if (guest.status !== "running") return respond(500, `VM ${vmid} not running`, { data: null });
+      const n = this.consoles.length;
+      // A ticket has characters a URL must encode.
+      const answer = { port: 5900 + n, ticket: `PVEVNC:68F1A2B${n}::c2ln+bmF/0dXJl=`, ...(params["generate-password"] === "1" ? { password: `p4ss~!${n}` } : {}) };
+      this.consoles.push({ vmid, ...answer });
+      return ok({
+        ...answer,
+        cert: "-----BEGIN CERTIFICATE-----\nnot the API's\n-----END CERTIFICATE-----\n",
+        upid: this.#task("vncproxy", vmid),
+        user: FAKE_TOKEN.tokenId,
+      });
     }
 
     if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)$/.exec(path)) && method === "DELETE") {

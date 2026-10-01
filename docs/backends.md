@@ -197,10 +197,14 @@ node --test test/conformance.test.ts
   over it. Capacity is `memory`, `disk` on the template's storage, and
   `guests` in the VMID range. A box cannot enrol yet
   ([BB request 1](bb-requests.md#1-bbs-host-app-on-windows)).
-- Still to come: the display through the API's VNC proxy, desktop commands
-  in the user's session, computer use, stop and start, and a hibernated warm
-  pool. The conformance suite does not run against it yet, as Windows boxes
-  have no file copies.
+- The desktop is the VM's console. Each viewer gets a VNC proxy from the
+  API, with a password of its own, and reaches it through the API's
+  `vncwebsocket` with the token, trusting the API's certificate as the API
+  calls do. The token needs VM.Console.
+- Still to come: resizing the desktop, desktop commands in the user's
+  session, computer use, stop and start, and a hibernated warm pool. The
+  conformance suite does not run against it yet, as Windows boxes have no
+  file copies.
 - The tests run against the fake API, and the fake ssh as a Windows host,
   with a sh stand-in for PowerShell where a test needs one
   ([test/proxmox-qemu.test.ts](../test/proxmox-qemu.test.ts)).

@@ -111,6 +111,15 @@ export interface NodeStatus {
   readonly cpus: number | null;
 }
 
+/** A VNC proxy to a VM's console, for one WebSocket within about 10 s. */
+export interface VncProxy {
+  readonly port: number;
+  /** Authorises the WebSocket. */
+  readonly ticket: string;
+  /** The console's VNC password, which works for about 30 s after the WebSocket opens. */
+  readonly password: string;
+}
+
 export interface StorageStatus {
   /** Bytes. */
   readonly total: number;
@@ -359,6 +368,24 @@ export class Proxmox {
       await this.configure(vmid, { delete: ["protection"] }, signal);
       await remove();
     }
+  }
+
+  /** Opens a VNC proxy to a running VM's console, with a password of its own. */
+  async vncProxy(vmid: number, signal?: AbortSignal): Promise<VncProxy> {
+    const path = this.#guest(vmid, "/vncproxy");
+    const data = await this.#request<Record<string, unknown>>("POST", path, { websocket: true, "generate-password": true }, signal);
+    const port = Number(data?.port);
+    const { ticket, password } = data ?? {};
+    if (!Number.isInteger(port) || typeof ticket !== "string" || typeof password !== "string") {
+      throw new ProxmoxError("POST", path, 502, "the answer lacks a port, ticket or password");
+    }
+    return { port, ticket, password };
+  }
+
+  /** Where a WebSocket reaches a VNC proxy, and the headers that authenticate it as this client's token. */
+  vncWebSocket(vmid: number, proxy: VncProxy): { url: string; headers: Record<string, string> } {
+    const query = new URLSearchParams({ port: String(proxy.port), vncticket: proxy.ticket });
+    return { url: `${this.#base.replace(/^http/, "ws")}${this.#guest(vmid, "/vncwebsocket")}?${query}`, headers: { Authorization: this.#auth } };
   }
 
   /** False when the resource pool does not exist. */

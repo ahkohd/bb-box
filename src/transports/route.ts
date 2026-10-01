@@ -180,8 +180,8 @@ function pinnedAgent(fingerprint: string): Agent {
 
 async function openWebSocket(route: Extract<Route, { type: "websocket" }>, signal?: AbortSignal): Promise<ByteChannel> {
   const where = new URL(route.url).host;
-  const dispatcher = route.fingerprint ? pinnedAgent(route.fingerprint) : undefined;
-  const socket = new WebSocket(route.url, { headers: route.headers, dispatcher });
+  const dispatcher = route.fingerprint ? pinnedAgent(route.fingerprint) : route.ca ? new Agent({ connect: { ca: route.ca } }) : undefined;
+  const socket = new WebSocket(route.url, { headers: route.headers, protocols: route.protocols ? [...route.protocols] : undefined, dispatcher });
   socket.binaryType = "arraybuffer";
   const closeAgent = () => dispatcher?.close().catch(() => undefined);
   await new Promise<void>((resolve, reject) => {

@@ -85,14 +85,18 @@ function frame(opcode: number, payload: Buffer): Buffer {
   return Buffer.concat([header, payload]);
 }
 
-/** Echoes binary messages back, and records the handshake's headers. */
+/** Echoes binary messages back, and records the handshake's headers. It takes the first subprotocol asked for. */
 function echoWebSocket(server: HttpServer, seen: { headers?: IncomingHttpHeaders }): void {
   server.on("upgrade", (request, socket: Duplex) => {
     seen.headers = request.headers;
     const accept = createHash("sha1")
       .update(`${request.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
       .digest("base64");
-    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+    const protocol = request.headers["sec-websocket-protocol"]?.split(",")[0]?.trim();
+    socket.write(
+      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n` +
+        `${protocol ? `Sec-WebSocket-Protocol: ${protocol}\r\n` : ""}\r\n`,
+    );
     let buffer = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
@@ -122,16 +126,19 @@ function echoWebSocket(server: HttpServer, seen: { headers?: IncomingHttpHeaders
   });
 }
 
-test("a websocket route sends its headers and carries bytes both ways", async () => {
+test("a websocket route sends its headers and subprotocols, and carries bytes both ways", async () => {
   const seen: { headers?: IncomingHttpHeaders } = {};
   const server = createHttpServer();
   echoWebSocket(server, seen);
   const port = await listen(server);
-  const channel = await openRoute({ type: "websocket", url: `ws://127.0.0.1:${port}/console`, headers: { Cookie: "ticket=abc" } });
-  assert.equal(seen.headers?.cookie, "ticket=abc");
+  const url = `ws://127.0.0.1:${port}/console`;
+  const channel = await openRoute({ type: "websocket", url, headers: { Cookie: "ticket=abc" }, protocols: ["binary"] });
   await write(channel, "hello over a websocket");
-  assert.equal(await read(channel, 22), "hello over a websocket");
+  const echoed = await read(channel, 22);
   await channel.close();
+  assert.equal(echoed, "hello over a websocket");
+  assert.equal(seen.headers?.cookie, "ticket=abc");
+  assert.equal(seen.headers?.["sec-websocket-protocol"], "binary");
 });
 
 const openssl = (() => {
@@ -165,4 +172,30 @@ test("a websocket route pins a self-signed certificate by fingerprint", { skip: 
   const other = fingerprint.replaceAll(":", "").toLowerCase().replace(/^./, (c) => (c === "0" ? "1" : "0"));
   await assert.rejects(openRoute({ type: "websocket", url, fingerprint: other }), /Cannot open the WebSocket to 127.0.0.1/);
   await assert.rejects(openRoute({ type: "websocket", url }), /Cannot open the WebSocket/);
+});
+
+test("a websocket route trusts a CA in place of the system roots", { skip: openssl ? false : "needs openssl" }, async () => {
+  const dir = tempDir("ca");
+  const certificate = (name: string) => {
+    execFileSync(
+      "openssl",
+      [
+        "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-days", "1", "-subj", "/CN=pve",
+        "-addext", "subjectAltName=IP:127.0.0.1", "-keyout", join(dir, `${name}.key`), "-out", join(dir, `${name}.pem`),
+      ],
+      { stdio: "ignore" },
+    );
+    return { key: readFileSync(join(dir, `${name}.key`)), cert: readFileSync(join(dir, `${name}.pem`), "utf8") };
+  };
+  const served = certificate("served");
+  const server = createHttpsServer(served);
+  echoWebSocket(server, {});
+  const url = `wss://127.0.0.1:${await listen(server)}/console`;
+
+  const channel = await openRoute({ type: "websocket", url, ca: served.cert });
+  await write(channel, "trusted");
+  assert.equal(await read(channel, 7), "trusted");
+  await channel.close();
+
+  await assert.rejects(openRoute({ type: "websocket", url, ca: certificate("other").cert }), /Cannot open the WebSocket to 127.0.0.1/);
 });
