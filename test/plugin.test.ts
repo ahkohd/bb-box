@@ -97,6 +97,8 @@ async function start(
     threadsError: null as Error | null,
     /** Makes threads.get fail for one thread. */
     threadErrors: new Map<string, Error>(),
+    /** Calls for the names of BB's machine variables: "system", or the project's ID. */
+    names: [] as string[],
   };
   const { bb, harness } = createFakePluginHost({
     pluginId: "bb-box",
@@ -115,14 +117,20 @@ async function start(
         get: async () => ({ id: "env_one", hostId: "host-workspace", path: workspace }) as never,
       },
       system: {
-        machineEnvironment: async () => ({ builtInGit: { status: "logged in", statusMessage: "" }, variables: variables(["MACHINE_VAR"]) }),
+        machineEnvironment: async () => {
+          world.names.push("system");
+          return { builtInGit: { status: "logged in", statusMessage: "" }, variables: variables(["MACHINE_VAR"]) };
+        },
       },
       projects: {
-        machineEnvironment: async ({ projectId }: { projectId: string }) => ({
-          builtInGit: { status: "logged in", statusMessage: "" },
-          inheritedVariables: variables(["MACHINE_VAR"]),
-          variables: variables(projectId === PROJECT ? ["PROJECT_VAR"] : []),
-        }),
+        machineEnvironment: async ({ projectId }: { projectId: string }) => {
+          world.names.push(projectId);
+          return {
+            builtInGit: { status: "logged in", statusMessage: "" },
+            inheritedVariables: variables(["MACHINE_VAR"]),
+            variables: variables(projectId === PROJECT ? ["PROJECT_VAR"] : []),
+          };
+        },
       },
       hosts: {
         // Like BB: records the machine, then calls the provider's create in the background.
@@ -355,6 +363,8 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
     command: 'head -n 1 .bashrc; bash -c \'unset MACHINE_VAR; . ~/.bashrc; printf "%s\\n" "$MACHINE_VAR"\'; git config --global --get-all credential.https://github.com.helper',
   });
   assert.match(text(shells), /stdout:\n# Added by bb-box: .*\nvalue-machine\n(.*\n)*.*gh auth git-credential/);
+  // BB was asked for the names once, as the box started, and not again for each command.
+  assert.deepEqual(world.names.sort(), [PROJECT, "system"]);
 
   await tool("box_release", { box: box.name });
   assert.deepEqual(world.events, [`create host-${box.id}`, `delete host-${box.id}`]);
@@ -383,6 +393,26 @@ test("the enrolment's log lists its steps in the order they started, with the ac
     timeline({ ...untimed, accessed: 5_650, enrolled: 5_660 }),
     /^Enrolled box b 5\.66 s after .*, setting up the thread's access 5\.54 s alongside, BB waiting .*, BB showing the machine connected 0\.10 s, waiting for the access setup 0\.50 s, finishing 0\.01 s\.$/,
   );
+});
+
+test("an enrolment followed again after a restart is timed from then, not from when the box was ready", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  // As if bb-box restarted while BB installed its daemon, an hour after the box was ready.
+  const hostId = `host-${box.id}`;
+  const host = makeHostResponse({ id: hostId, status: "connected", machineProviderId: "bb-box" });
+  world.hosts.set(hostId, { ...host, lifecycle: { ...host.lifecycle, phase: "active" } });
+  await app.boxes.update(box, () => ({ readyAt: box.readyAt! - 3_600_000, enrol: { state: "enrolling", hostId, error: null } }));
+  await app.enrolment.resume();
+  const enrolled = await until("enrolment", async () => {
+    const current = await app.boxes.find(box.id);
+    return current?.enrol.state === "enrolled" ? current : null;
+  });
+  assert.equal(enrolled.timings.enrol, undefined, "the box shows no enrolment time");
+  const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
+  assert.match(logged ?? "", new RegExp(`^Enrolled box ${box.name} [0-4]\\.\\d\\d s after bb-box resumed following it: `));
 });
 
 test("a stopped box starts again and BB's daemon is started with the same key", async (t) => {

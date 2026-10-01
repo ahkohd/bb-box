@@ -242,10 +242,17 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   and ssh keeps it until it has been idle for two minutes. bb-box stops
   using it 10 s before then, puts at most 8 commands on it at once, since
   sshd allows 10, and dials alone beyond that. A command that exits with
-  255 retires the connection; after a connection cannot be made, commands
-  dial alone for 5 s. A probe always dials afresh, so it says whether the
-  box answers. The backend closes a box's connection before it stops or
-  releases the box, as another box may take its address.
+  255, or that the transport stops at its timeout, retires the connection;
+  after a connection cannot be made, commands dial alone for 5 s. ssh
+  removes the socket when the connection ends, as when the box restarts,
+  and a connection whose socket has gone is retired too. Keepalives every
+  5 s end a connection to a box that died without closing it within about
+  15 s. A probe always dials afresh, so it says whether the box answers.
+  The ready check opens the shared connection instead, so the box's first
+  commands, such as its enrolment's, skip the handshake. The backend closes
+  a box's connections, retired ones too, before it stops or releases the
+  box, as another box may take its address, and all of them when it is
+  disposed.
 
 **Output and the desktop session.**
 
@@ -636,7 +643,8 @@ A box is a resource of its thread and gets what the thread's own machine has.
     runs while BB's installer does. bb-box asks BB whether the machine is
     connected every 500 ms, and every 100 ms once bootstrap has returned.
     Each enrolment logs how long each step took, from ready to enrolled, in
-    `bb plugin logs bb-box`.
+    `bb plugin logs bb-box`. One that bb-box follows again after a restart
+    is counted from then, and the box shows no enrolment time.
   - Every template and image removes BB's daemon lock and PID file at boot,
     so a box that restarts after a hard stop reconnects in about 0.5 s
     ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). Without
@@ -645,9 +653,14 @@ A box is a resource of its thread and gets what the thread's own machine has.
     BB, which gives them to its daemon in the box. Plugins can read their
     names but not their values, so each command bb-box runs, and each SSH
     session through the box's `~/.bashrc`, takes the listed names from a
-    worker of that daemon as it starts. A change in BB reaches the next
+    worker of that daemon as it starts. A changed value reaches the next
     command, and the values never reach the disk. `git` asks `gh` for GitHub
     credentials, so it uses `GH_TOKEN`.
+  - BB can take seconds to answer while it is busy, so bb-box asks for the
+    machine's and the project's names together, first as the box starts,
+    and keeps them for a minute. After that, a command gets the names it
+    has while bb-box asks again in the background, so a variable added in
+    BB reaches commands a minute or so later.
 - **Child threads.** A child thread can run on an enrolled box.
 - **Direct access.** The agent can also reach its boxes itself, for example
   with `ssh <box name>` or `DOCKER_HOST`, over the same network the BB server

@@ -1315,7 +1315,9 @@ export class ProxmoxLxcBackend implements Backend {
     }
     const left = Math.max(1_000, deadline - Date.now());
     const command = await this.#command(vmid);
-    const ready = await step("ssh", () => waitUntilAnswers(command, { timeoutMs: left, intervalMs: 100, signal, sleep }));
+    // Through the shared connection, which the box's first commands then use.
+    const answers = { probe: (signal?: AbortSignal) => command.answers(signal) };
+    const ready = await step("ssh", () => waitUntilAnswers(answers, { timeoutMs: left, intervalMs: 100, signal, sleep }));
     if (!ready) {
       throw new Error(
         `Port ${port} of ${host} is open, but SSH as ${user} did not answer within ${seconds(left)}. ` +
