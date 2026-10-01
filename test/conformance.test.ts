@@ -102,3 +102,21 @@ await conformance({
   },
   timeoutMs: 20_000,
 });
+
+// Again with a warm pool: suspended clones that boxes at the default size take.
+const warmMac = fakeSsh().home(FAKE_MAC);
+fakeMacTools(warmMac);
+addImage(warmMac);
+await conformance({
+  name: "Tart on a fake Mac with a warm pool",
+  storage: new MemoryStorage(),
+  create: (storage, installId) =>
+    new TartBackend(tart, testContext(storage, installId, { warm: { macos: 1, "macos-desktop": 1 } }), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }),
+  skip: {
+    arch: "the fake SSH runs commands on the test machine",
+    display: "the fake Mac has no VNC server to stream",
+    "computer-use": "the fake VM has no computer-use driver",
+    size: "the fake SSH runs commands on the test machine",
+  },
+  timeoutMs: 20_000,
+});

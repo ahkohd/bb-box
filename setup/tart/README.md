@@ -228,6 +228,24 @@ Then `bb box doctor` checks each Mac: that SSH as the host user works with
 its pinned key, that it is Apple silicon with Tart, that each kind's image is
 there, and how many VMs, how much memory and how much disk it has free.
 
+### A warm pool
+
+The backend's warm count for a kind keeps that many suspended VMs ready, so
+a box of the kind's default size is ready in about 4.5 s instead of 13 to
+17 s. It is 0 by default. `macos` and `macos-desktop` share warm VMs while
+they have the same image and default size; their counts add up. Set 1 on a
+Mac given over to bb-box. On a Mac you also use, know what a warm VM costs:
+
+- about 5.5 GiB of disk each, at the small preset: what its first boot
+  writes, and its saved memory;
+- while it is made, a VM slot and the default preset's memory for about
+  30 s, after each box that takes one and after each change of the image,
+  Tart or the Mac's macOS, which retire warm VMs;
+- while it is made, a VM you start yourself can be refused, as the limit of
+  two counts every macOS VM on the Mac.
+
+A suspended VM takes no slot and no memory.
+
 ## How the plugin drives a box
 
 - **Sizes.** A box gets the cores and memory of its size. bb-box refuses a
@@ -245,10 +263,23 @@ there, and how many VMs, how much memory and how much disk it has free.
   address in the Mac's DHCP leases and for SSH through the Mac. Last, it
   names the VM after the box, its ComputerName, LocalHostName and HostName,
   with `scutil`.
+- **A warm VM** is a clone named `bb-box-warm-<random>`, booted to the
+  logged-in desktop and suspended. Its owner file says `filling`, then
+  `warm`, and names the image and its build (the image disk's file), Tart's
+  version and the Mac's macOS build; a change of any of them, or of the
+  kind's default size, retires it. A box at that size takes it: bb-box
+  rewrites the owner file with the box's fields, resumes the VM, and names
+  it after the box. A VM whose saved state does not restore is deleted, and
+  the box gets a clone. An acquire that finds a warm VM being made in the
+  last slot takes it over when it suits, or stops it.
 - **Stop and start.** Stop suspends the VM, which frees its memory and its
   slot of the two; start resumes it in about 4 s, with its apps still open.
   A box's address is looked up again with `tart ip` when bb-box does not
-  know it.
+  know it. The Mac's DHCP leases last an hour, so after a long suspend the
+  address may have gone to another VM: each VM keeps its own name in
+  `~/.config/bb-box/vm`, and bb-box refuses a VM that answers with another.
+  A saved state that does not restore, as after an update of macOS or Tart,
+  is dropped, and the VM boots afresh from its disk.
 - **Release.** `tart stop` and `tart delete`, then the owner file last, so a
   release cut short leaves a VM its install still finds.
 - **Ownership.** The owner files are the record at the provider: bb-box finds

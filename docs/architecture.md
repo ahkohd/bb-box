@@ -768,6 +768,20 @@ real backend's pool of free, reset machines is the same thing
   guests copy when they are filled. A warm guest whose template has another
   ID, or is away while it is replaced, is not ready: capacity does not count
   it, no claim takes it, and `maintain()` retires it.
+- Tart's warm VMs are suspended, so two VMs per Mac are never spent on idle
+  ones. A suspended VM counts only in `disk` (about 5.5 GiB at the small
+  preset) until a box takes it; then it needs a VM slot and its memory, as a
+  clone does, so a claim is placed as a clone is. A fill holds a slot and
+  its memory for about 30 s, from the clone to the suspend. An acquire that
+  finds a fill holding the last slot takes the fill over when its size and
+  kinds suit the box, or stops it and clones. A resume takes about 4.5 s
+  to a named box, against 13 to 17 s for a clone. A warm VM saved under
+  another image build, Tart version or macOS build of the Mac is retired,
+  as its state may not restore; one that fails to restore anyway gives way
+  to a clone. Its owner file says `filling`, then `warm`, and a claim
+  rewrites it with the box's fields; `held()` leaves out warm VMs and the
+  ones the instance is filling, and lists a fill left by a restart with no
+  owner, for the sweep to release.
 - Warm guests are not enrolled. Nothing thread-specific is fixed at
   enrolment, but BB has no way to hide a machine, so an enrolled warm guest
   would show in BB's machine list for anyone to start a thread on
@@ -1103,7 +1117,7 @@ details.
 | Release | delete | delete | remove the container | remove the box user and what it left, or restore the whole machine | reset the box user | `tart delete` |
 | Command | SSH | OpenSSH for Windows with PowerShell, or the QEMU guest agent | `docker exec`, or SSH if the image runs it | SSH | SSH | SSH through the Mac host |
 | Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | none yet; RFB through SSH later | RFB (Screen Sharing) through SSH | RFB through the Mac host |
-| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file on the machine, with a reset generation | marker file and plugin storage | an owner file per VM on the Mac, written before the clone with noclobber and removed last; warm VMs, later, are claimed in it rather than renamed, since `tart rename` does not check whether a VM is running |
+| Ownership record | tags | tags | labels set at creation, and the container name, changed on claim | marker file on the machine, with a reset generation | marker file and plugin storage | an owner file per VM on the Mac, written before the clone with noclobber and removed last. A warm VM's says `filling`, then `warm`, and a claim rewrites it with the box's fields, so warm VMs are claimed in it rather than renamed, since `tart rename` does not check whether a VM is running |
 | Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk, GPU | memory, guests (a container budget), GPU | machines | machines | guests (two VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
 | Enrol | yes | not until BB's host app runs on Windows | yes, without systemd | yes | yes | yes |

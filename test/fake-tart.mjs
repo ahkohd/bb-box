@@ -9,6 +9,8 @@
 //   writes state.vzvmsave. A run refuses when $FAKE_TART_LIMIT (2) VMs of the
 //   host run already, as the Virtualization framework does.
 // - `tart ip` gives each VM an address of its own, 192.168.64.<n>.
+// - A saved state that holds "corrupt" fails to restore, as Tart reports it.
+// - `sw_vers -buildVersion` says 27A1, or what the Mac's ~/.fake-macos-build holds.
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -72,6 +74,11 @@ function tart() {
       const limit = Number(process.env.FAKE_TART_LIMIT ?? 2);
       const others = names().filter(running);
       if (others.length >= limit) fail(`The number of VMs exceeds the system limit (other running VMs: ${others.join(", ")})`);
+      const saved = join(dir(name), "state.vzvmsave");
+      if (existsSync(saved) && readFileSync(saved, "utf8") === "corrupt") {
+        console.log("restoring VM state from a snapshot...");
+        fail('Error Domain=VZErrorDomain Code=12 "The virtual machine failed to restore with error \u201cinvalid argument\u201d."');
+      }
       writeFileSync(join(dir(name), "running"), String(process.pid));
       rmSync(join(dir(name), "state.vzvmsave"), { force: true });
       const port = 5900 + (names().indexOf(name) % 100);
@@ -126,7 +133,7 @@ switch (tool) {
     console.log(args.includes("hw.ncpu") ? "16" : String(128 * 1024 * 1024 * 1024));
     break;
   case "sw_vers":
-    console.log("27.0");
+    console.log(args.includes("-buildVersion") ? (existsSync(join(home, ".fake-macos-build")) ? readFileSync(join(home, ".fake-macos-build"), "utf8").trim() : "27A1") : "27.0");
     break;
   case "uname":
     console.log(args.includes("-m") ? "arm64" : "Darwin");
