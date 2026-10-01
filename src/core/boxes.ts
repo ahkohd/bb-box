@@ -162,6 +162,18 @@ function isAcquiring(box: BoxRecord): boolean {
   return box.state === "acquiring" || box.state === "starting";
 }
 
+/** What a guest's power says about a box that is settled, or moving when `moving`: the change, empty for none. */
+function observed(current: BoxRecord, power: PowerState | null, moving = false): Partial<BoxRecord> {
+  const settled = current.state === "ready" || current.state === "stopped" || current.state === "gone";
+  const started = (current.state === "stopping" || current.state === "starting") && current.readyAt !== null;
+  if (!settled && !(moving && started)) return {};
+  if (power === null) return { state: "gone", error: "The guest was deleted outside bb-box." };
+  // The provider cannot tell, for example a machine that does not answer: keep what we know.
+  if (power === "unknown") return {};
+  const state = power === "running" ? "ready" : "stopped";
+  return current.state === state ? {} : { state, error: null };
+}
+
 export function identity(box: BoxRecord): BoxIdentity {
   return { boxId: box.id, threadId: box.threadId, name: box.name, kind: box.kind, createdAt: box.createdAt };
 }
@@ -678,18 +690,16 @@ export class Boxes {
     if (!box.guest) return box;
     const backend = this.#deps.backends.get(box.backend);
     if (!backend) return box;
-    const power =
-      options.power !== undefined ? options.power : await backend.power((await this.#stamped(box, options.signal)).guest!, options.signal);
-    return this.update(box, (current) => {
-      const settled = current.state === "ready" || current.state === "stopped" || current.state === "gone";
-      const moving = (current.state === "stopping" || current.state === "starting") && current.readyAt !== null;
-      if (!settled && !(options.moving && moving)) return {};
-      if (power === null) return { state: "gone", error: "The guest was deleted outside bb-box." };
-      // The provider cannot tell, for example a machine that does not answer: keep what we know.
-      if (power === "unknown") return {};
-      const state = power === "running" ? "ready" : "stopped";
-      return current.state === state ? {} : { state, error: null };
-    });
+    const read = async () => backend.power((await this.#stamped(box, options.signal)).guest!, options.signal);
+    let power = options.power !== undefined ? options.power : await read();
+    // A listing's power can be older than the box, which may have started or
+    // stopped since, and a provider's listing can lag (Proxmox's by about
+    // 10 s). Before such a reading changes the box, ask about the guest itself.
+    if (options.power !== undefined) {
+      const current = await this.#read(box.threadId, box.id);
+      if (current && Object.keys(observed(current, power, options.moving)).length) power = await read();
+    }
+    return this.update(box, (current) => observed(current, power, options.moving));
   }
 
   /**
