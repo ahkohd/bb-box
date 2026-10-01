@@ -16,8 +16,8 @@ of its own and runs `tart` there. The VMs sit on the Mac's own NAT, which
 only the Mac reaches, so bb-box reaches them through the Mac: commands over
 SSH with the Mac as the jump host, and the desktop through Tart's VNC server.
 
-Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, 8 GiB
-and 4 cores per VM:
+Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
+2.30.0, 8 GiB and 4 cores per VM:
 
 | Step | Time |
 | --- | --- |
@@ -58,6 +58,10 @@ and 4 cores per VM:
 
 - A Mac with Apple silicon on macOS 14 or later (suspend needs 14). The VM's
   macOS must be no newer than the Mac's.
+- Tart 2.30.0 is the version tested. bb-box reads `tart list` and the
+  output of `tart run`, so check a newer release with the conformance suite
+  (`npm run conformance -- --backend tart --settings <file>`) before relying
+  on it.
 - Disk: the base image takes about 37 GiB and the prepared image about 1.5
   GiB more. A box adds what it writes: about 2.5 GiB after its first boot,
   and about 3 GiB more while it is suspended (its memory, for an 8 GiB VM).
@@ -189,7 +193,7 @@ In BB, under bb-box's settings:
 | Tart: macos image, macos-desktop image | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
 | Tart: cores per box, memory per box | 4, 8192 | |
 | Tart: VMs per Mac | 2 | At most 2 |
-| Tart: memory kept free, disk kept free | 16384 MiB, 50 GiB | A new box is refused when the Mac would have less |
+| Tart: memory kept free, disk kept free | 16384 MiB, 50 GiB | A new box is refused when the Mac would have less. With 16 GiB kept free, a 16 GiB Mac takes no box and a 32 GiB Mac takes two 8 GiB boxes, so lower it on a small Mac you do not use yourself |
 
 Then `bb box doctor` checks each Mac: that SSH as the host user works with
 its pinned key, that it is Apple silicon with Tart, that each kind's image is

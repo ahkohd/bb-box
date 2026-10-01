@@ -195,6 +195,9 @@ test("a VM the framework refuses to run, as when another app runs VMs, is no_cap
     addImage(mac, name, "linux");
     writeFileSync(join(mac, ".tart", "vms", name, "running"), String(process.pid));
   }
+  const room = (await backend.capacity("macos", [])).hosts[0]!;
+  assert.equal(room.limits.find((limit) => limit.resource === "guests")!.used, 0, "Linux VMs do not count against the two");
+  assert.equal(room.limits.find((limit) => limit.resource === "memory")!.used, 16384, "but their memory does");
   const box = identity();
   await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError && error.code === "no_capacity", String(error));

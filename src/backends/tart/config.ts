@@ -8,7 +8,7 @@
 // cloned from a Tart VM on every Mac, prepared by the setup guide.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
-import { normalisePrivateKey } from "../proxmox-lxc/config.ts";
+import { normalisePrivateKey } from "../../transports/ssh.ts";
 import type { ParsedSettings } from "../types.ts";
 
 export const TART_KINDS = ["macos", "macos-desktop"] as const;

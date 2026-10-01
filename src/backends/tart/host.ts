@@ -284,9 +284,9 @@ echo stopped
 }
 
 /**
- * Deletes the VM when its owner file names this install and box, then the
- * job and, last, the owner file. Prints "gone" when the file names another
- * box, which leaves everything alone.
+ * Deletes the VM when its owner file names this install and box, then its
+ * run's output and, last, the owner file. Prints "gone" when the file names
+ * another box, which leaves everything alone.
  */
 export function deleteScript(vm: string, installId: string, boxId: string | null): string {
   return script(String.raw`vm=${quote(vm)}

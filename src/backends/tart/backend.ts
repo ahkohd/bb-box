@@ -220,19 +220,21 @@ export class TartBackend implements Backend {
 
   #room(host: TartHost, state: HostState | Error, unplaced: number): { capacity: HostCapacity; why: string | null } {
     if (state instanceof Error) return { capacity: { host: host.name, ok: false, limits: [] }, why: `${host.name} did not answer: ${state.message}` };
-    const running = state.vms.filter((vm) => vm.running && (state.configs.get(vm.name)?.os ?? "darwin") === "darwin");
+    // Every running VM takes memory; only macOS VMs count against Apple's two.
+    const running = state.vms.filter((vm) => vm.running);
+    const macos = running.filter((vm) => (state.configs.get(vm.name)?.os ?? "darwin") === "darwin");
     const starting = [...this.#placing.values()].filter((placing) => placing.host === host.name && !running.some((vm) => vm.name === placing.vm)).length + unplaced;
     const memoryUsed = running.reduce((sum, vm) => sum + (state.configs.get(vm.name)?.memoryMiB ?? this.#config.memoryMiB), 0) + starting * this.#config.memoryMiB;
     const reserveMiB = this.#config.reserve.diskGiB * MiB_PER_GiB;
     const limits: Limit[] = [
-      { resource: "guests", used: running.length + starting, total: this.#config.vmsPerHost, reserve: 0, unit: "count" },
+      { resource: "guests", used: macos.length + starting, total: this.#config.vmsPerHost, reserve: 0, unit: "count" },
       { resource: "memory", used: memoryUsed, total: state.memoryMiB, reserve: this.#config.reserve.memoryMiB, unit: "MiB" },
       { resource: "disk", used: state.disk.totalMiB - state.disk.freeMiB, total: state.disk.totalMiB, reserve: reserveMiB, unit: "MiB" },
     ];
     let why: string | null = null;
-    if (running.length + starting >= this.#config.vmsPerHost) {
-      const names = running.map((vm) => vm.name).join(", ");
-      why = `${host.name} runs ${running.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}`;
+    if (macos.length + starting >= this.#config.vmsPerHost) {
+      const names = macos.map((vm) => vm.name).join(", ");
+      why = `${host.name} runs ${macos.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}`;
     } else if (memoryUsed + this.#config.memoryMiB > state.memoryMiB - this.#config.reserve.memoryMiB) {
       why = `${host.name} would have less than ${formatMiB(this.#config.reserve.memoryMiB)} of memory left for itself`;
     } else if (state.disk.freeMiB < reserveMiB) {
@@ -544,7 +546,7 @@ export class TartBackend implements Backend {
     return parseState((await this.#run(host, stateScript(), { timeoutMs: 30_000, signal })).stdout);
   }
 
-  /** Starts the VM under its launchd job, and fails fast when Tart cannot. */
+  /** Starts the VM, detached from SSH, and fails fast when Tart cannot. */
   async #start(host: TartHost, vm: string, deadline: number, signal?: AbortSignal): Promise<void> {
     const seconds = Math.max(5, Math.min(180, Math.round((deadline - Date.now()) / 1000)));
     const { ssh } = await this.#keys();

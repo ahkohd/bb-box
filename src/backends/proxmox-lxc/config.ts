@@ -27,6 +27,7 @@
 // bb-box can read saved values once into the box-sizes setting.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
+import { normalisePrivateKey } from "../../transports/ssh.ts";
 import type { BoxSize, ParsedSettings } from "../types.ts";
 
 export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu"] as const;
@@ -436,29 +437,6 @@ function templateList(
   return templates;
 }
 
-/**
- * An OpenSSH private key in its usual form. Accepts a key pasted into a
- * one-line field, whose line breaks became spaces, and a base64-encoded key file.
- */
-export function normalisePrivateKey(value: string): string | null {
-  let key = value.trim();
-  if (!key) return null;
-  if (!key.includes("-----BEGIN")) {
-    try {
-      const decoded = Buffer.from(key, "base64").toString("utf8").trim();
-      if (!decoded.startsWith("-----BEGIN")) return null;
-      key = decoded;
-    } catch {
-      return null;
-    }
-  }
-  const match = /^-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----$/.exec(key);
-  if (!match) return null;
-  const body = match[2]!.replace(/\s+/g, "");
-  if (!/^[A-Za-z0-9+/=]+$/.test(body)) return null;
-  const lines = body.match(/.{1,70}/g) ?? [];
-  return `-----BEGIN ${match[1]}-----\n${lines.join("\n")}\n-----END ${match[1]}-----\n`;
-}
 
 /** A SHA-256 fingerprint as AA:BB:..., from hex with or without colons, or null. */
 export function normaliseFingerprint(value: string): string | null {
