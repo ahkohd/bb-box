@@ -463,7 +463,7 @@ export class Boxes {
         const taken = new Set(existing.map((box) => box.name));
         const spare = claims ? await this.#claim(input, offered, sized.size, taken, requested) : null;
         if (spare) return { box: spare, claimed: true };
-        const chosen = await this.#choose(offered, sized.size);
+        const chosen = input.threadId === SPARES ? await this.#choose(offered, sized.size) : await this.#chooseFreeing(offered, sized.size);
         const box: BoxRecord = {
           id: newBoxId(this.#random),
           threadId: input.threadId,
@@ -672,6 +672,25 @@ export class Boxes {
       }
     }
     throw new BoxError("no_capacity", reasons.join(" "));
+  }
+
+  /**
+   * #choose for a thread's box. When no backend has room, a spare of an
+   * offered backend gives its room back and the choice is made once more:
+   * on a Mac a spare holds one of its two VM slots (#120).
+   */
+  async #chooseFreeing(offered: OfferedKind[], size: BoxSize): Promise<OfferedKind> {
+    try {
+      return await this.#choose(offered, size);
+    } catch (error) {
+      if (!(error instanceof BoxError) || error.code !== "no_capacity") throw error;
+      const spares = (await this.list(SPARES)).filter((spare) => spare.state !== "releasing" && !this.#holdsNothing(spare));
+      const spare = offered.map((candidate) => spares.find((spare) => spare.backend === candidate.backend.id)).find((spare) => !!spare);
+      if (!spare) throw error;
+      this.#deps.log?.(`Releasing spare box ${spare.name}: a thread's ${offered[0]!.kind.id} box needs its room.`);
+      if (await this.#release(spare)) throw error;
+      return this.#choose(offered, size);
+    }
   }
 
   /** The size a box was asked to be. One recorded before sizes was made at the default preset. */
