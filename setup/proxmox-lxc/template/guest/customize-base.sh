@@ -2,11 +2,12 @@
 # bb-box base template, run as root inside a Proxmox Ubuntu 24.04 CT: the
 # development baseline, pinned tools, Docker, the box user, SSH with the
 # plugin's key, DNS and PATH. The desktop template runs this first too, and so
-# does setup/docker/Dockerfile for the Docker backend's images.
+# does setup/docker/Dockerfile for the Docker backend's images, and
+# setup/tart for Linux VMs on a Mac (040).
 #
 # usage: customize-base.sh <build-dir>
 # <build-dir>/build.env sets BOX_USER, BOX_DNS and BB_URL (see build.sh), and
-# BOX_RUNTIME: lxc (the default) or docker.
+# BOX_RUNTIME: lxc (the default), docker, or vm (a Tart Linux VM).
 set -Eeuo pipefail
 trap 'echo "customize-base: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 umask 022
@@ -18,7 +19,7 @@ user=${BOX_USER:-box}
 runtime=${BOX_RUNTIME:-lxc}
 export DEBIAN_FRONTEND=noninteractive
 die() { echo "customize-base: $*" >&2; exit 1; }
-case $runtime in lxc | docker) ;; *) die "BOX_RUNTIME must be lxc or docker" ;; esac
+case $runtime in lxc | docker | vm) ;; *) die "BOX_RUNTIME must be lxc, docker or vm" ;; esac
 installed() { [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ]; }
 
 # The base image may lack CA certificates, which the https snapshot needs.
@@ -40,7 +41,7 @@ extra_packages="openssh-server sudo systemd-resolved less nano vim neovim iputil
 # Ubuntu's container image has no systemd. A Docker box does not run it, but
 # systemctl sets up the same units as in an LXC box, and the box's start script
 # makes the machine ID with it.
-[ "$runtime" = lxc ] || extra_packages=${extra_packages/systemd-resolved/systemd}
+[ "$runtime" != docker ] || extra_packages=${extra_packages/systemd-resolved/systemd}
 # shellcheck disable=SC2086
 bash "$build/guest/baseline.sh" "$build" $docker_packages $extra_packages
 # npm installs global packages where they land on PATH (`sudo npm i -g x`).
@@ -60,8 +61,8 @@ printf 'COREPACK_ENABLE_DOWNLOAD_PROMPT=0\n' >/etc/environment.d/50-bb-box-corep
 # Git LFS for every user and repository, as `git lfs install` does for one user.
 git lfs install --system --skip-repo >/dev/null
 
-# The container shares the host's kernel.
-if dpkg-query -W -f='${Package} ${Status}\n' | awk '$4 == "installed" { print $1 }' |
+# A container shares the host's kernel; a VM keeps its own.
+if [ "$runtime" != vm ] && dpkg-query -W -f='${Package} ${Status}\n' | awk '$4 == "installed" { print $1 }' |
   grep -Eq '^(linux-image-|linux-modules-|grub-)'; then
   die "the image contains a kernel or boot loader package"
 fi
@@ -75,8 +76,8 @@ for unit in apt-daily.timer apt-daily-upgrade.timer motd-news.timer man-db.timer
 done
 systemctl mask apt-daily.service apt-daily-upgrade.service >/dev/null
 # With nesting, the CT has its own AppArmor namespace, and loading every
-# profile at each boot is slow.
-systemctl mask apparmor.service >/dev/null
+# profile at each boot is slow. A VM keeps AppArmor.
+[ "$runtime" = vm ] || systemctl mask apparmor.service >/dev/null
 
 # Docker: nesting=1 on the CT is all it needs. Keep its networks off
 # 192.168.0.0/16, which is in Docker's default pools and often a home LAN.
@@ -115,11 +116,19 @@ for t in ed25519 ecdsa; do
 done
 sshd -t
 
-# The box user: uid 1000, passwordless sudo, Docker without sudo.
+# The box user: uid 1000, passwordless sudo, Docker without sudo. In a Tart
+# VM uid 1000 is the image's own user, which Tart's guest agent runs as, so
+# there the box user takes the next free uid and that user's password is
+# locked.
 if ! id -u "$user" >/dev/null 2>&1; then
-  useradd --create-home --shell /bin/bash --uid 1000 --user-group "$user"
+  if [ "$runtime" = vm ] && getent passwd 1000 >/dev/null; then
+    passwd -l "$(getent passwd 1000 | cut -d: -f1)" >/dev/null
+    useradd --create-home --shell /bin/bash --user-group "$user"
+  else
+    useradd --create-home --shell /bin/bash --uid 1000 --user-group "$user"
+  fi
 fi
-[ "$(id -u "$user")" = 1000 ] || die "$user must have uid 1000"
+[ "$runtime" = vm ] || [ "$(id -u "$user")" = 1000 ] || die "$user must have uid 1000"
 # In the sudo group too, so tools such as command-not-found say "sudo apt
 # install". Its rule asks for a password, but sudoers reads sudoers.d last, so
 # the user's own NOPASSWD rule below wins.
@@ -144,11 +153,10 @@ R /home/$user/.bb-machines/*/daemon.lock.lock
 r /home/$user/.bb-machines/*/install-daemon.pid
 EOF
 
-# Only in a Proxmox LXC box. A Docker box has no SSH server running and no
-# key: bb-box reaches it through `docker exec`. Docker sets up its DNS and
-# network.
-if [ "$runtime" = lxc ]; then
-  # The plugin's key, for the box user and root.
+# The plugin's key, for the box user and root: in a Proxmox LXC box and a
+# Tart VM. A Docker box has no SSH server running and no key: bb-box reaches it
+# through `docker exec`.
+if [ "$runtime" != docker ]; then
   key=$(cat "$build/plugin-key.pub")
   [[ "$key" == ssh-ed25519\ * ]] || die "plugin-key.pub is not an ed25519 public key"
   for home in /root "/home/$user"; do
@@ -159,7 +167,11 @@ if [ "$runtime" = lxc ]; then
     chown "$owner:$owner" "$home/.ssh/authorized_keys"
     chmod 0600 "$home/.ssh/authorized_keys"
   done
+fi
 
+# The network, only in a Proxmox LXC box. Docker sets up a Docker box's DNS
+# and network, and a Tart VM keeps its own, with DNS from the Mac's DHCP.
+if [ "$runtime" = lxc ]; then
   # DNS: systemd-resolved with fixed resolvers. Proxmox rewrites
   # /etc/resolv.conf at every start unless the marker exists, and its networkd
   # file for eth0 carries no DNS.
