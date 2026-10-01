@@ -844,3 +844,26 @@ test("bb box config check and apply read a file from where bb runs, and migrated
   assert.match((await harness.behavior.runCli(["config", "migrated"])).stdout ?? "", /There is no copy/);
   assert.doesNotMatch((await harness.behavior.runCli(["config", "show"])).stdout ?? "", /keeps a copy/);
 });
+
+test("a field a backend does not have names the backend, and the key it has now when it is its old name in BB's settings", () => {
+  const { problems } = readDraft(
+    {
+      schema: 1,
+      backends: [
+        { id: "tart", type: "tart", enabled: true, fields: { "tart-linux-image": "ghcr.io/example/linux:1" }, hosts: [{ name: "mac1", fields: { address: "192.0.2.20", "tart-user": "admin" } }] },
+        { id: "proxmox-lxc", type: "proxmox-lxc", enabled: false, fields: { "proxmox-lxc-vmid-first": 3000 } },
+      ],
+      kinds: {},
+      general: {},
+    },
+    DRIVERS,
+  );
+  assert.deepEqual(
+    problems.map((problem) => `${problem.path}: ${problem.message}`),
+    [
+      `backends.tart.tart-linux-image: Backend tart has no field "tart-linux-image". That was its name in BB's settings; here it is "linux-image".`,
+      `backends.tart.hosts.0.tart-user: Host mac1 of backend tart has no field "tart-user". The fields are address, user, host-keys.`,
+      `backends.proxmox-lxc.proxmox-lxc-vmid-first: Backend proxmox-lxc has no field "proxmox-lxc-vmid-first". That was its name in BB's settings; here it is "vmid-first".`,
+    ],
+  );
+});

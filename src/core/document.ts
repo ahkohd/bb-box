@@ -265,10 +265,35 @@ function readKind(path: string, value: unknown, problem: (path: string, message:
   return kind;
 }
 
+/**
+ * Whose fields `readFields` reads, for its messages: "Backend tart" or a
+ * host of it, and the prefix the backend's keys had in BB's settings, if any.
+ */
+interface FieldOwner {
+  readonly name: string;
+  readonly settingsPrefix: string | null;
+}
+
+/**
+ * Why `key` is not a field of `owner`'s, naming the key it has now when it
+ * is the name BB's settings gave it before the document (029), such as
+ * "tart-linux-image" for "linux-image".
+ */
+function unknownField(owner: FieldOwner, key: string, descriptors: Readonly<Record<string, FieldDescriptor>>): string {
+  const prefix = owner.settingsPrefix;
+  const current = prefix && key.startsWith(prefix) ? key.slice(prefix.length) : null;
+  const hint =
+    current && Object.hasOwn(descriptors, current)
+      ? `That was its name in BB's settings; here it is "${current}".`
+      : `The fields are ${Object.keys(descriptors).join(", ") || "none"}.`;
+  return `${owner.name} has no field "${key}". ${hint}`;
+}
+
 function readFields(
   path: string,
   value: unknown,
   descriptors: Readonly<Record<string, FieldDescriptor>>,
+  owner: FieldOwner,
   problem: (path: string, message: string) => void,
   secrets: Record<string, string | null> | null,
 ): Record<string, FieldValue> {
@@ -282,7 +307,7 @@ function readFields(
     const descriptor = descriptors[key];
     const at = `${path}.${key}`;
     if (!descriptor) {
-      problem(at, `There is no field "${key}". The fields are ${Object.keys(descriptors).join(", ") || "none"}.`);
+      problem(at, unknownField(owner, key, descriptors));
       continue;
     }
     if (isSecret(descriptor) && secrets) {
@@ -338,7 +363,8 @@ function readBackend(
   }
   if (value.enabled !== undefined && typeof value.enabled !== "boolean") problem(`${path}.enabled`, "enabled is true or false.");
   const backendSecrets: Record<string, string | null> = {};
-  const fields = readFields(`${path}`, value.fields, driver.fields, problem, backendSecrets);
+  const owner = `Backend ${id}`;
+  const fields = readFields(`${path}`, value.fields, driver.fields, { name: owner, settingsPrefix: `${driver.type}-` }, problem, backendSecrets);
   if (Object.keys(backendSecrets).length) secrets[id] = backendSecrets;
 
   const warm: Record<string, number> = {};
@@ -362,7 +388,7 @@ function readBackend(
         for (const key of Object.keys(host)) if (!["name", "enabled", "fields"].includes(key)) problem(`${at}.${key}`, `A host has name, enabled and fields, not "${key}".`);
         if (typeof host.name !== "string" || !HOST_NAME.test(host.name)) return problem(`${at}.name`, 'Name the host with lower-case letters, digits and "-".');
         if (host.enabled !== undefined && typeof host.enabled !== "boolean") problem(`${at}.enabled`, "enabled is true or false.");
-        hosts!.push({ name: host.name, enabled: host.enabled !== false, fields: readFields(`${at}`, host.fields, driver.hostFields!, problem, null) });
+        hosts!.push({ name: host.name, enabled: host.enabled !== false, fields: readFields(`${at}`, host.fields, driver.hostFields!, { name: `Host ${host.name} of backend ${id}`, settingsPrefix: null }, problem, null) });
       });
     }
   }
