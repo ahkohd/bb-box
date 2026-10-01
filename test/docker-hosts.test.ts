@@ -23,7 +23,7 @@ const machine = (id: string, name: string, more: Partial<MachineRecord> = {}): M
 });
 
 const info = (more: Partial<DockerInfo> = {}): DockerInfo => ({
-  name: "behemoth",
+  name: "devpc",
   version: "29.8.1",
   operatingSystem: "Arch Linux",
   osType: "linux",
@@ -39,8 +39,8 @@ test("the list holds persistent machines bb-box did not make, and any the config
   const document: ConfigDocument = { ...emptyDocument(1), backends: [{ id: "docker:gone", type: "docker", enabled: true, fields: { host: "bb:host_gone" } }] };
   const listed = machineHosts(
     [
-      machine("host_b", "behemoth"),
-      machine("host_box", "calm-tundra", { machineProviderId: "bb-box" }),
+      machine("host_b", "devpc"),
+      machine("host_box", "calm-otter", { machineProviderId: "bb-box" }),
       machine("host_new", "thread-box", { machineProviderId: "bb-box-new" }),
       machine("host_eph", "ephemeral", { type: "ephemeral" }),
       machine("host_rm", "leaving", { lifecycle: { phase: "destroying" } }),
@@ -49,7 +49,7 @@ test("the list holds persistent machines bb-box did not make, and any the config
     document,
     ["bb-box", "bb-box-new"],
   );
-  assert.deepEqual(listed.map((each) => each.name), ["behemoth", "used"]);
+  assert.deepEqual(listed.map((each) => each.name), ["devpc", "used"]);
 });
 
 test("each machine shows Docker as it answers through the relay, kept a while, and one that is offline or not Linux says why; looking opens a relay only where Docker is", async () => {
@@ -57,8 +57,8 @@ test("each machine shows Docker as it answers through the relay, kept a while, a
   let asked: string[] = [];
   let clock = 0;
   const hosts = new DockerHosts({
-    machines: async () => [machine("host_b", "behemoth"), machine("host_w", "windows-pc"), machine("host_n", "no-docker"), machine("host_o", "sleepy", { status: "disconnected" })],
-    document: () => ({ ...emptyDocument(1), backends: [{ id: "docker:behemoth", type: "docker", enabled: true, fields: { host: "bb:host_b" } }] }),
+    machines: async () => [machine("host_b", "devpc"), machine("host_w", "windows-pc"), machine("host_n", "no-docker"), machine("host_o", "sleepy", { status: "disconnected" })],
+    document: () => ({ ...emptyDocument(1), backends: [{ id: "docker:devpc", type: "docker", enabled: true, fields: { host: "bb:host_b" } }] }),
     providers: ["bb-box"],
     // The host entry's check, with no lease and no relay.
     found: async (hostId) => {
@@ -71,18 +71,18 @@ test("each machine shows Docker as it answers through the relay, kept a while, a
       assert.notEqual(hostId, "host_n", "no relay where there is no Docker");
       return hostId === "host_w" ? info({ osType: "windows" }) : info();
     },
-    boxes: async () => new Map([["docker:behemoth", 2]]),
+    boxes: async () => new Map([["docker:devpc", 2]]),
     now: () => clock,
   });
   const listed = await hosts.list();
-  assert.deepEqual(listed.find((each) => each.name === "behemoth"), {
+  assert.deepEqual(listed.find((each) => each.name === "devpc"), {
     hostId: "host_b",
-    name: "behemoth",
+    name: "devpc",
     connected: true,
     docker: { version: "29.8.1", os: "Arch Linux", arch: "x86_64", cpus: 16, memoryMiB: 102400 },
     problem: null,
     absent: false,
-    backend: { id: "docker:behemoth", enabled: true, boxes: 2 },
+    backend: { id: "docker:devpc", enabled: true, boxes: 2 },
     images: null,
   });
   assert.equal(listed.find((each) => each.name === "windows-pc")?.problem, "Docker there runs windows containers. Switch it to Linux containers.");
@@ -105,20 +105,20 @@ test("each machine shows Docker as it answers through the relay, kept a while, a
 });
 
 test("turning a machine on adds a Docker backend on it, last, named after it; off removes it, or turns it off while it has boxes", () => {
-  const start: ConfigDocument = { ...emptyDocument(3), backends: [{ id: "docker", type: "docker", enabled: true, fields: {} }, { id: "docker:behemoth", type: "docker", enabled: true, fields: { host: "ssh://me@other" } }] };
-  const on = withDockerHost(start, { id: "host_b", name: "Behemoth PC" }, true, 0);
+  const start: ConfigDocument = { ...emptyDocument(3), backends: [{ id: "docker", type: "docker", enabled: true, fields: {} }, { id: "docker:devpc", type: "docker", enabled: true, fields: { host: "ssh://me@other" } }] };
+  const on = withDockerHost(start, { id: "host_b", name: "Dev PC" }, true, 0);
   const added = on.backends.at(-1)!;
-  assert.deepEqual(added, { id: "docker:behemoth-pc", type: "docker", label: "Docker on Behemoth PC", enabled: true, fields: { host: "bb:host_b", privileged: true } });
+  assert.deepEqual(added, { id: "docker:dev-pc", type: "docker", label: "Docker on Dev PC", enabled: true, fields: { host: "bb:host_b", privileged: true } });
   assert.deepEqual(checkDocument(on, {}, DRIVERS), [], "a document the configuration takes");
-  const clash = withDockerHost(start, { id: "host_x", name: "behemoth" }, true, 0);
-  assert.equal(clash.backends.at(-1)!.id, "docker:behemoth-2", "a name another backend has gets a number");
-  assert.deepEqual(withDockerHost(on, { id: "host_b", name: "Behemoth PC" }, true, 0), on, "on again changes nothing");
+  const clash = withDockerHost(start, { id: "host_x", name: "devpc" }, true, 0);
+  assert.equal(clash.backends.at(-1)!.id, "docker:devpc-2", "a name another backend has gets a number");
+  assert.deepEqual(withDockerHost(on, { id: "host_b", name: "Dev PC" }, true, 0), on, "on again changes nothing");
 
-  const off = withDockerHost(on, { id: "host_b", name: "Behemoth PC" }, false, 0);
+  const off = withDockerHost(on, { id: "host_b", name: "Dev PC" }, false, 0);
   assert.deepEqual(off.backends, start.backends);
-  const held = withDockerHost(on, { id: "host_b", name: "Behemoth PC" }, false, 2);
+  const held = withDockerHost(on, { id: "host_b", name: "Dev PC" }, false, 2);
   assert.deepEqual(held.backends.at(-1), { ...added, enabled: false }, "with boxes it stays, off, so it takes no new ones");
-  assert.deepEqual(withDockerHost(held, { id: "host_b", name: "Behemoth PC" }, true, 2).backends.at(-1), added, "and on again is the same backend");
+  assert.deepEqual(withDockerHost(held, { id: "host_b", name: "Dev PC" }, true, 2).backends.at(-1), added, "and on again is the same backend");
 });
 
 test("the host entry's docker check finds Docker or says why, with no lease, and starts nothing (042)", async (t) => {

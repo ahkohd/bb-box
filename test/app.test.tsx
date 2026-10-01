@@ -1637,7 +1637,7 @@ test("Docker on BB machines lists each machine with Docker's facts, and its swit
   });
   const { handlers, changes } = server([], {
     dockerHosts: [
-      machine("host_b", "behemoth"),
+      machine("host_b", "devpc"),
       machine("host_p", "plain", { docker: null, problem: null, absent: true }),
       machine("host_n", "no-docker", { docker: null, problem: "Docker did not answer: connect: no such file or directory" }),
       machine("host_o", "sleepy", { connected: false, docker: null, problem: "The machine is offline in BB.", backend: { id: "docker:sleepy", enabled: true, boxes: 1 } }),
@@ -1648,10 +1648,10 @@ test("Docker on BB machines lists each machine with Docker's facts, and its swit
   const slot = settings(handlers);
   expect(await slot.findByText("Docker on BB machines")).toBeTruthy();
   const row = (name: string) => slot.getByText(name).closest("[data-resource-row]") as HTMLElement;
-  expect(within(row("behemoth")).getByText("Can host boxes")).toBeTruthy();
-  expect(within(row("behemoth")).getByText("Docker 29.8.1")).toBeTruthy();
-  expect(within(row("behemoth")).getByText("16 cores")).toBeTruthy();
-  expect(within(row("behemoth")).getByText("100 GiB memory")).toBeTruthy();
+  expect(within(row("devpc")).getByText("Can host boxes")).toBeTruthy();
+  expect(within(row("devpc")).getByText("Docker 29.8.1")).toBeTruthy();
+  expect(within(row("devpc")).getByText("16 cores")).toBeTruthy();
+  expect(within(row("devpc")).getByText("100 GiB memory")).toBeTruthy();
   // Docker that is there but fails is red with its words; a machine with no Docker reads "No Docker", muted, and sits last.
   expect(within(row("no-docker")).getByText("Cannot host boxes")).toBeTruthy();
   expect(within(row("no-docker")).getByText(/Docker did not answer/)).toBeTruthy();
@@ -1659,14 +1659,14 @@ test("Docker on BB machines lists each machine with Docker's facts, and its swit
   expect(within(row("plain")).getByText("No Docker")).toBeTruthy();
   expect(within(row("plain")).queryByText(/did not answer/)).toBeNull();
   expect((within(row("plain")).getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
-  const names = slot.getAllByText(/^(behemoth|plain|no-docker|sleepy|builder|broken)$/).map((node) => node.textContent);
+  const names = slot.getAllByText(/^(devpc|plain|no-docker|sleepy|builder|broken)$/).map((node) => node.textContent);
   expect(names.indexOf("plain")).toBe(names.length - 1);
   expect(within(row("sleepy")).getByText("Offline in BB, 1 box on it")).toBeTruthy();
   // A machine turned on builds the images it lacks, and the row says so until the build ends.
   expect(within(row("builder")).getByText("Building linux and desktop images: #5 [linux 2/9] RUN apt-get install")).toBeTruthy();
   expect(within(row("broken")).getByText("Building its images failed: build.sh exited with 1: ERROR: failed to solve")).toBeTruthy();
 
-  fireEvent.click(within(row("behemoth")).getByRole("switch", { name: "Host boxes on behemoth" }));
+  fireEvent.click(within(row("devpc")).getByRole("switch", { name: "Host boxes on devpc" }));
   await waitFor(() => expect(changes).toContain("docker.host.set host_b true"));
-  expect(await within(row("behemoth")).findByText("Hosts boxes")).toBeTruthy();
+  expect(await within(row("devpc")).findByText("Hosts boxes")).toBeTruthy();
 });
