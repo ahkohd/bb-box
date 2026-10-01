@@ -111,6 +111,10 @@ and `start` and `stop` throw `gone`.
 - An offer is a backend and a kind. The registry tries the offers of a kind
   in the order the backends are listed in the configuration, and takes the
   first with capacity. The box records both.
+- An acquire may name its provider with `on`: the provider's name as
+  `box_list` gives it, its backend ID, or its one host's name. Then the
+  registry tries that offer only, and refuses rather than place the box
+  elsewhere ([044](decisions/044-a-box-can-be-asked-for-on-one-provider.md)).
 - Offers of one kind must agree on what the agent relies on: `os`, `arch`,
   `gpu`, the computer-use driver, `enrol`, whether there is a desktop display,
   and the features the kind requires (`requires`). Each offer's `features`
@@ -793,7 +797,8 @@ any state -> releasing -> released     (release, or the thread is archived or de
 
 1. **Requested.** The registry asks each backend that offers the kind for
    `capacity` for the box's size, in the configuration's order, and uses the
-   first one with room.
+   first one with room. An acquire that names a provider asks that one
+   only (044).
    If none has room you see the backend's message, which says what is full
    and what to release. The registry records the box and returns at once.
 2. **Acquiring.** In the background, the backend claims a guest with
@@ -1203,6 +1208,9 @@ bb-box's configuration is one checked document in its plugin storage
 - Hosts set up alike are a list inside one backend, tried in order. Separate
   backends of one type are for configurations that differ in kind; the
   first keeps the type as its ID, another is `<type>:<name>`.
+- Docker may have several backends, one per Docker host, as each BB
+  machine with Docker is one (042); two on one host are refused. Each
+  other type has one backend for now.
 - Switches for a backend, a host or a kind stop new boxes only. An off
   backend stays built, so its boxes keep working.
 - A backend's part holds its fields and its hosts' fields. It reads its

@@ -48,3 +48,4 @@ that changes gets a new record that supersedes the old one.
 | [041](041-every-linux-box-has-docker.md) | Every Linux box has Docker, started on first use |
 | [042](042-a-docker-host-can-be-a-bb-machine.md) | A Docker host can be a BB machine, reached through BB |
 | [043](043-a-viewer-has-5-s-to-come-back-after-the-box-ends-its-connection.md) | A viewer has 5 s to come back after the box ends its connection |
+| [044](044-a-box-can-be-asked-for-on-one-provider.md) | A box can be asked for on one provider |
