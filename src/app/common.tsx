@@ -45,25 +45,34 @@ export function useNow(active: boolean, everyMs = 100): number {
  * State from the server for `key`, refetched on each change signal that
  * `relevant` accepts and after a reconnect. Only the newest answer is kept.
  */
+/** The last value loaded for each key, so a tab that remounts starts from what it showed and does not go blank while it refetches (037). */
+const remembered = new Map<string, unknown>();
+
+/** Forgets every remembered value, for tests. */
+export function forgetLive(): void {
+  remembered.clear();
+}
+
 export function useLive<T>(key: string, load: () => Promise<T>, relevant: (payload: unknown) => boolean) {
   const latest = useRef({ load, relevant });
   latest.current = { load, relevant };
   const sequence = useRef(0);
-  const [value, setValue] = useState<T | null>(null);
+  const [value, setValue] = useState<T | null>(() => (remembered.has(key) ? (remembered.get(key) as T) : null));
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
     const mine = ++sequence.current;
     try {
       const next = await latest.current.load();
       if (mine !== sequence.current) return;
+      remembered.set(key, next);
       setValue(next);
       setError(null);
     } catch (caught) {
       if (mine === sequence.current) setError(message(caught));
     }
-  }, []);
+  }, [key]);
   useEffect(() => {
-    setValue(null);
+    setValue(remembered.has(key) ? (remembered.get(key) as T) : null);
     setError(null);
     void refresh();
   }, [key, refresh]);
