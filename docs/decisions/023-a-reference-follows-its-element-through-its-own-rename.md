@@ -2,7 +2,9 @@
 
 Status: accepted, 1 October 2026. Partly supersedes
 [022](022-references-follow-renames-not-rows.md): what makes up an element's
-place.
+place. Partly superseded by
+[024](024-an-element-renamed-out-of-sight-is-refused-once.md): what an action
+on a reference does when its element was renamed.
 
 ## Context
 

@@ -91,7 +91,9 @@ with `computer_observe` first, and act on its references. Take an image with
 
 - A reference stays valid while its element is on screen, including after
   you type into it and its name changes. When the element has gone, the tool
-  says so; observe the window again.
+  says so; observe the window again. When its name changed where you did not
+  see it, the first action on it is refused with the new name: act again if
+  it is still the one you want.
 - `limit` counts lines of the tree. A web page can be long: pass `query` to
   see only the lines you need.
 - Pixels count only in your latest image of that window, or of the desktop.

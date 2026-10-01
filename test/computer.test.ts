@@ -43,6 +43,12 @@ test("explain says why the desktop refused in bb-box's words, without Cua's code
   );
   assert.equal(explain(refused("Cua Driver could not do that.")), "The desktop gave no reason.");
   assert.equal(explain(refused("The app is not responding \u2014 call get_window_state to check it.")), "The app is not responding.");
+  // Underscores in paths and file names are not Cua's words.
+  assert.equal(
+    explain(refused("failed to launch: /opt/my_app/bin/run: No such file or directory")),
+    "Failed to launch: /opt/my_app/bin/run: No such file or directory.",
+  );
+  assert.equal(explain(refused("Could not open my_notes.txt (see app_name)")), "Could not open my_notes.txt.");
 });
 
 /** A channel whose other end is this test: `send` writes lines to the client, `sent` holds what the client wrote. */

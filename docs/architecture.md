@@ -750,15 +750,26 @@ A box is a resource of its thread and gets what the thread's own machine has.
   [023](decisions/023-a-reference-follows-its-element-through-its-own-rename.md)).
   Cua's tokens for a window go stale each time it is read, even for one
   element, so the next action on a reference reads the window again first.
+- **A rename out of sight.** The plugin records, per reference, the role
+  and name it last showed the agent, in a tree, a list of changes, a popup
+  or an action's result. An action on a reference whose element has since
+  been renamed, as a lone button in one spot can be after its page changes,
+  is refused once with the new name and the old
+  ([024](decisions/024-an-element-renamed-out-of-sight-is-refused-once.md)).
+  Mousepad's text view, named after its text, has no value in Cua's tree,
+  so a rule on values could not tell content from a new control.
 - **Pixels.** The agent sees only pixels of images the plugin returned, at or
   under 1568 pixels on the long edge. A pixel action is accepted only against
   the latest image of that window. Each image and pixel action states the
   image's size, the window's or screen's size and the scale between them.
   The plugin passes the agent's pixels to Cua as they are. Cua maps a
   window's pixels by its latest image of the window, and the desktop's by
-  its latest image of the desktop in the session; the plugin takes no image
-  of the desktop but the agent's. Cua's `capture_id`, which binds pixels to
-  one image, serves one action only, so the plugin does not pass it.
+  its latest image of the desktop in the session. A new session, after an
+  idle close or a reconnect, has none and would take pixels as the
+  screen's, so before a pixel action on the desktop the plugin takes an
+  image of the same size, and refuses the action if the screen's size
+  changed. Cua's `capture_id`, which binds pixels to one image, serves one
+  action only, so the plugin does not pass it.
 - **After each action** the plugin reads the tree again and returns what
   changed. Cua cannot check a click on the desktop, so the plugin compares
   the window list before and after, and reads the window under the point
@@ -774,10 +785,13 @@ A box is a resource of its thread and gets what the thread's own machine has.
   its window's tree instead, and the plugin points to them there. It
   names the popup after what opened it, such as "the context menu on list
   item 'Task 3'", and says when it closes. A popup never becomes the active
-  window, so keys for it go to the desktop in the foreground.
+  window, so keys for it go to the desktop in the foreground. The plugin
+  forgets a popup once a read of its window no longer lists it: each popup
+  it holds costs a read of that window on later actions on the desktop.
 - **Cua's own words** name tools and codes the agent does not have, such as
   `list_apps`, `bring_to_front` or `foreground_unavailable`, and window IDs
-  in hex. The plugin says why in its own words, with window IDs as
+  in hex. The plugin drops them, but not paths or file names that hold an
+  underscore, and says why in its own words, with window IDs as
   `computer_windows` gives them, and when an app will not open, lists the
   apps installed in the box, without settings panels and session actions.
 - **Delivery.** Background first, which does not move the shared pointer.
@@ -786,7 +800,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
   the foreground works.
 - **A URL** opens in a new browser window, or in a tab of one already open,
   whose title changes. Until the page has a title, Chrome's is its address,
-  so the plugin waits up to 10 s for a title that is not.
+  so the plugin waits up to 10 s for a title that is not. A page with no
+  title of its own, such as a JSON response, keeps its address, so the
+  plugin then says the page may still be loading or has no title.
 - **Two windows of one app** within about 20 pixels of each other, as Chrome
   places a new window 10 pixels from the last, get one tree from Cua: it
   finds a window's tree by where the window is, and takes the app's first

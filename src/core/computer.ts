@@ -241,11 +241,15 @@ interface RefEntry {
   readonly fingerprint: string;
   readonly unique: boolean;
   readonly describe: string;
+  /** Its element's role and name as bb-box last showed them to the agent; null before it did (024). */
+  readonly shown: string | null;
 }
 
 /** An image the agent was given, with the size of the screen or window it shows, in their own pixels. */
 interface Held extends Size {
   readonly source: Size;
+  /** For the desktop: the session whose Cua maps its pixels by it. */
+  readonly generation?: number;
 }
 
 interface Changes {
@@ -378,15 +382,20 @@ export function explain(result: McpResult): string {
   const text = raw
     .replace(/^[a-z]+(?:_[a-z]+)+:\s*/, "")
     .replace(/\bwindow (0x[0-9a-f]+)\b/gi, (_all, id: string) => `window ${Number(id)}`)
-    .replace(/\s*[([][^()[\]]*[=_][^()[\]]*[)\]]/g, "")
+    .replace(/\s*[([][^()[\]]*[)\]]/g, (group) => (group.includes("=") || namesCua(group) ? "" : group))
     .split(/(?<=[.;!?])\s+|\s+[\u2013\u2014]\s+/)
-    .filter((clause) => !CUA_ADVICE.test(clause) && !/\b[a-z]+_[a-z_]+\b|\bCua\b/i.test(clause))
+    .filter((clause) => !CUA_ADVICE.test(clause) && !namesCua(clause))
     .join(" ")
     .trim()
     .replace(/[;,:]$/, "");
   if (!text) return "The desktop gave no reason.";
   const said = sentence(`${text[0]!.toUpperCase()}${text.slice(1)}`);
   return said.length > 500 ? `${said.slice(0, 500)}...` : said;
+}
+
+/** Whether text names Cua, or its tools and parameters by their snake_case words; paths and file names do not count. */
+function namesCua(text: string): boolean {
+  return /\b[a-z]+_[a-z_]+\b|\bCua\b/i.test(text.replace(/\S*(?:[/\\]|\w\.\w)\S*/g, ""));
 }
 
 /** What to do after a refusal, by Cua's code. */
@@ -712,7 +721,7 @@ export class Computer {
   screenshot(box: BoxRecord, window: WindowRef, signal?: AbortSignal): Promise<ComputerResult> {
     return this.#run(box, signal, async (use) => {
       if (window === "desktop") {
-        const { result } = await this.#call(use, "get_desktop_state", { max_image_dimension: IMAGE_MAX_EDGE }, { readOnly: true });
+        const { result, live } = await this.#call(use, "get_desktop_state", { max_image_dimension: IMAGE_MAX_EDGE }, { readOnly: true });
         if (result.isError) throw new ComputerError("driver", `bb-box could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
         const image = imageOf(result);
         if (!image) throw new ComputerError("driver", "bb-box got no image of the desktop.", "Try again in a few seconds.");
@@ -722,7 +731,7 @@ export class Computer {
           if (found) use.state.windows.set(found.id, found);
         }
         const screen = { width: num(structured.screen_width) ?? image.width, height: num(structured.screen_height) ?? image.height };
-        use.state.images.set("desktop", { width: image.width, height: image.height, source: screen });
+        use.state.images.set("desktop", { width: image.width, height: image.height, source: screen, generation: live.generation });
         return {
           text: `The desktop. ${coordinates(image, screen, "screen")} Give window "desktop" with them.`,
           image: { data: image.data, mimeType: image.mimeType },
@@ -903,7 +912,7 @@ export class Computer {
         ? [`Opened ${what} in a window that was already open:\n- ${windowLine(page)}`]
         : [`Opened ${what}. Its window${windows.length === 1 ? "" : "s"}:\n${windows.map((window) => `- ${windowLine(window)}`).join("\n")}`];
       if (input.url !== undefined && placeholder(page.title, input.url)) {
-        lines.push(`The page is still loading: its window's title is still ${page.title ? `"${page.title}"` : "empty"}.`);
+        lines.push(`The page may still be loading, or it has no title of its own: its window's title is still ${page.title ? `"${page.title}"` : "empty"}.`);
       }
       return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${page.id} to read it.`] };
     });
@@ -1431,8 +1440,9 @@ export class Computer {
       elements.push(element);
       byRef.set(ref, element);
       elementAt.set(index, element);
+      const shown = state.refs.get(ref)?.shown ?? null;
       state.refs.delete(ref);
-      state.refs.set(ref, { windowId: window.id, fingerprint, unique, describe: describe(role, label) });
+      state.refs.set(ref, { windowId: window.id, fingerprint, unique, describe: describe(role, label), shown });
     }
     for (const ref of state.refs.keys()) {
       if (state.refs.size <= MAX_REFS) break;
@@ -1536,15 +1546,20 @@ export class Computer {
       chosen = [...keep].sort((a, b) => a - b);
     }
     const shown: string[] = [];
+    const told: Element[] = [];
     let elements = 0;
     let chars = 0;
     for (const index of chosen) {
       const line = lines[index]!;
       if (shown.length >= limit || chars + line.text.length > TREE_MAX_CHARS) break;
-      if (line.element) elements++;
+      if (line.element) {
+        elements++;
+        told.push(line.element);
+      }
       chars += line.text.length + 1;
       shown.push(line.text);
     }
+    this.#show(state, told);
     const cut = chosen.length - shown.length;
     const { window } = snapshot;
     const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -1567,7 +1582,11 @@ export class Computer {
     return { text: parts.join("\n\n"), large: !cut && chosen.length > TREE_LARGE };
   }
 
-  /** Finds a reference in the window's latest snapshot, reading the window again when its tokens are from an earlier session. */
+  /**
+   * Finds a reference in the window's latest snapshot, reading the window
+   * again when its tokens are from an earlier session. Refuses once when its
+   * element's role or name is not what bb-box last showed the agent (024).
+   */
   async #element(use: Use, ref: string): Promise<{ snapshot: Snapshot; element: Element }> {
     const name = refName(ref);
     const entry = use.state.refs.get(name);
@@ -1585,11 +1604,32 @@ export class Computer {
     } else if (popup) {
       await this.#stillOpen(use, popup);
     }
-    const direct = snapshot.byRef.get(name);
-    if (direct) return { snapshot, element: direct };
     const matches = entry.unique ? snapshot.elements.filter((element) => element.fingerprint === entry.fingerprint) : [];
-    if (matches.length === 1) return { snapshot, element: matches[0]! };
-    throw new ComputerError("stale", `${name} (${entry.describe}) is no longer on screen. Call computer_observe again.`, null);
+    const element = snapshot.byRef.get(name) ?? (matches.length === 1 ? matches[0]! : null);
+    const shown = use.state.refs.get(name)?.shown ?? entry.shown;
+    if (!element) throw new ComputerError("stale", `${name} (${shown ?? entry.describe}) is no longer on screen. Call computer_observe again.`, null);
+    const now = describe(element.role, element.label);
+    // A reference follows its element through a rename (023), but the agent
+    // chose it by the name it saw: refuse once, and show the new name.
+    this.#show(use.state, [element]);
+    const current = use.state.refs.get(name);
+    if (current && element.ref !== name) use.state.refs.set(name, { ...current, shown: now });
+    if (shown !== null && shown !== now) {
+      throw new ComputerError(
+        "stale",
+        `${name} is now ${now}, but bb-box last showed it as ${shown}, so nothing was done.`,
+        `Act on ${name} again if it is the one you want; otherwise call computer_observe.`,
+      );
+    }
+    return { snapshot, element };
+  }
+
+  /** Records how bb-box showed these elements to the agent. */
+  #show(state: BoxState, elements: Iterable<Element | null>): void {
+    for (const element of elements) {
+      const entry = element && state.refs.get(element.ref);
+      if (entry) state.refs.set(element.ref, { ...entry, shown: describe(element.role, element.label) });
+    }
   }
 
   #token(snapshot: Snapshot, element: Element): Json {
@@ -1631,7 +1671,9 @@ export class Computer {
     }
     if (window === "desktop") {
       // Cua maps the desktop's pixels to the screen by its latest image of the
-      // desktop in this session, which is the agent's: bb-box takes no other.
+      // desktop in this session: the agent's, or in a new session one bb-box
+      // takes of the same size.
+      await this.#mapped(use, held);
       const screen = held.source;
       const sx = Math.round((x * screen.width) / held.width);
       const sy = Math.round((y * screen.height) / held.height);
@@ -1663,6 +1705,26 @@ export class Computer {
       element: null,
       coordinates: coordinates(held, held.source, "window"),
     };
+  }
+
+  /**
+   * Makes sure Cua maps the desktop's pixels by an image the size of the
+   * agent's. A new session, after an idle close or a reconnect, has no image
+   * of the desktop, and Cua would take the pixels as the screen's.
+   */
+  async #mapped(use: Use, held: Held): Promise<void> {
+    if (held.generation === (await this.#live(use)).generation) return;
+    const { result, live } = await this.#call(use, "get_desktop_state", { max_image_dimension: IMAGE_MAX_EDGE }, { readOnly: true });
+    if (result.isError) throw new ComputerError("driver", `bb-box could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
+    const image = imageOf(result);
+    if (!image) throw new ComputerError("driver", "bb-box got no image of the desktop.", "Try again in a few seconds.");
+    const structured = obj(result.structuredContent);
+    const screen = { width: num(structured.screen_width) ?? image.width, height: num(structured.screen_height) ?? image.height };
+    if (!sameSize(image, held) || !sameSize(screen, held.source)) {
+      use.state.images.delete("desktop");
+      throw new ComputerError("stale", "The screen changed size since your image of the desktop, so its pixels no longer match.", 'Take a new image with computer_screenshot, window "desktop".');
+    }
+    use.state.images.set("desktop", { ...held, generation: live.generation });
   }
 
   /**
@@ -1708,7 +1770,8 @@ export class Computer {
     if (listed.length) {
       const shown = listed.slice(0, CHANGES_MAX_LINES);
       const more = listed.length - shown.length;
-      parts.push(`What changed in window ${id} (+ appeared, - went, ~ changed):\n${shown.join("\n")}${more ? `\n...and ${more} more. Call computer_observe to see the whole window.` : ""}`);
+      this.#show(use.state, shown.map((change) => change.element));
+      parts.push(`What changed in window ${id} (+ appeared, - went, ~ changed):\n${shown.map((change) => change.text).join("\n")}${more ? `\n...and ${more} more. Call computer_observe to see the whole window.` : ""}`);
     }
     const retitled = after.window.title !== before.window.title;
     if (retitled) parts.push(`The window's title is now "${after.window.title}".`);
@@ -1717,6 +1780,7 @@ export class Computer {
     if (!changed) parts.push(`Nothing changed in window ${id}'s tree.`);
     if (options.readBack) {
       const line = after.lines.find((candidate) => candidate.element?.ref === options.readBack);
+      if (line) this.#show(use.state, [line.element]);
       parts.push(line ? `${options.readBack} now reads: ${flat(line)}` : `${options.readBack} is no longer in the tree.`);
     }
     if (after.dialogs.length) parts.push(after.dialogs.map(dialogLine).join(" "));
@@ -1797,12 +1861,20 @@ export class Computer {
       if (over) owners.set(over.id, over);
     }
     const popups = new Map<number, Open>();
+    const glanced = new Set<number>();
     let tree: Snapshot | null = null;
     for (const owner of owners.values()) {
       const small = owner === found && !state.large.has(owner.id);
       const seen = await this.#glance(use, owner, small ? (this.#deps.smallTree ?? TREE_SMALL) : 1);
       if (small) tree = seen?.snapshot ?? null;
+      if (seen) glanced.add(owner.id);
       for (const popup of seen?.popups ?? []) popups.set(popup.id, { window: popup, over: state.popups.get(popup.id)?.over ?? owner.id });
+    }
+    // Forget popups that have closed, so later actions glance at their windows
+    // no more, and do not read those windows' whole trees again.
+    for (const popup of [...state.popups.values()]) {
+      if (popups.has(popup.window.id)) continue;
+      if (!windows.has(popup.over) || glanced.has(popup.over)) this.#lost(state, popup.window.id);
     }
     const hit = point ? [...popups.values()].filter((open) => inside(open.window, point)).at(-1) : undefined;
     if (hit) {
@@ -1924,7 +1996,9 @@ export class Computer {
         continue;
       }
       const indent = Math.min(...snapshot.lines.map((line) => /^ */.exec(line.text)![0].length));
-      const shown = snapshot.lines.slice(0, POPUP_LINES).map((line) => line.text.slice(indent));
+      const lines = snapshot.lines.slice(0, POPUP_LINES);
+      this.#show(state, lines.map((line) => line.element));
+      const shown = lines.map((line) => line.text.slice(indent));
       const more = snapshot.lines.length - shown.length;
       parts.push(`${opened}:\n${shown.join("\n")}${more ? `\n...and ${more} more. Call computer_observe with window ${id} to see them all.` : ""}`);
       hints.push(`Act on its items by reference. To close it, press Escape with computer_type and window ${id}.`);
@@ -1981,35 +2055,35 @@ function mergeText(lines: readonly Line[]): Line[] {
 }
 
 /**
- * Lines that appeared, went or changed between two snapshots of a window.
- * Elements whose references carried over are matched by reference; other
- * lines by their text.
+ * Lines that appeared, went or changed between two snapshots of a window,
+ * each with the element it shows now, if any. Elements whose references
+ * carried over are matched by reference; other lines by their text.
  */
-function diff(before: Snapshot, after: Snapshot): string[] {
+function diff(before: Snapshot, after: Snapshot): { text: string; element: Element | null }[] {
   const keyed = (snapshot: Snapshot) => new Map(snapshot.lines.filter((line) => line.element?.unique).map((line) => [line.element!.ref, line] as const));
   const loose = (snapshot: Snapshot) => snapshot.lines.filter((line) => !line.element?.unique);
   const was = keyed(before);
   const now = keyed(after);
-  const out: string[] = [];
+  const out: { text: string; element: Element | null }[] = [];
   const bare = (line: Line) => flat(line).replace(/^\[e\d+\] /, "");
   for (const [ref, line] of now) {
     const old = was.get(ref);
-    if (!old) out.push(`+ ${flat(line)}`);
-    else if (bare(old) !== bare(line)) out.push(`~ ${flat(line)}`);
+    if (!old) out.push({ text: `+ ${flat(line)}`, element: line.element });
+    else if (bare(old) !== bare(line)) out.push({ text: `~ ${flat(line)}`, element: line.element });
   }
-  for (const [ref, line] of was) if (!now.has(ref)) out.push(`- ${flat(line)}`);
+  for (const [ref, line] of was) if (!now.has(ref)) out.push({ text: `- ${flat(line)}`, element: null });
   const counts = new Map<string, number>();
   for (const line of loose(before)) counts.set(bare(line), (counts.get(bare(line)) ?? 0) + 1);
   for (const line of loose(after)) {
     const left = counts.get(bare(line)) ?? 0;
     if (left > 0) counts.set(bare(line), left - 1);
-    else out.push(`+ ${flat(line)}`);
+    else out.push({ text: `+ ${flat(line)}`, element: line.element });
   }
   for (const line of loose(before)) {
     const left = counts.get(bare(line)) ?? 0;
     if (left > 0) {
       counts.set(bare(line), left - 1);
-      out.push(`- ${flat(line)}`);
+      out.push({ text: `- ${flat(line)}`, element: null });
     }
   }
   return out;

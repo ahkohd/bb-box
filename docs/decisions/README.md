@@ -28,3 +28,4 @@ that changes gets a new record that supersedes the old one.
 | [021](021-desktop-resize-through-the-backend.md) | A desktop whose VNC server cannot resize is resized by its backend |
 | [022](022-references-follow-renames-not-rows.md) | A reference follows its element through a rename, not into another row |
 | [023](023-a-reference-follows-its-element-through-its-own-rename.md) | A reference follows its element through its own rename |
+| [024](024-an-element-renamed-out-of-sight-is-refused-once.md) | An action on an element renamed out of sight is refused once |
