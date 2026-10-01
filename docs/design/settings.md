@@ -148,8 +148,8 @@ Templates
 Linux templates            GPU desktop templates
 [9100]                     [9101 GPU-0a1b2c3d]
 VMIDs, separated by        One per line: VMID and the GPU's ID.
-spaces. Serve Linux and
-Linux with Docker.
+spaces. Serve Linux
+boxes.
 CPU desktop templates      SSH key  [secret] [set]  [Replace]
 [ ]
 Leave empty to offer no CPU desktops.

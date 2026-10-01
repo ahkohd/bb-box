@@ -65,24 +65,32 @@ Limits:
 
 ## Kinds
 
-`bb box kinds` and `box_list` show what the backends offer. The Proxmox LXC
-backend offers:
+`bb box kinds` and `box_list` show what the backends offer, and each kind's
+line ends with its providers in acquire order ("On: Proxmox LXC on pve1,
+Docker on devpc"), the words `box_acquire`'s `on` takes (044). The kinds:
 
-- `linux`: a Linux box without a desktop
-- `linux-docker`: the same, with Docker
-- `linux-desktop`: a desktop with a GPU
-- `linux-desktop-cpu`: a desktop drawn by the CPU
+- `linux`: a Linux terminal box, with Docker (041), from Proxmox LXC, Docker
+  or an SSH host pool
+- `linux-desktop`: a Linux desktop on a GPU; `linux-desktop-cpu`: one drawn
+  by the CPU
+- `linux-arm64` and `linux-arm64-desktop-cpu`: the same on arm64, as VMs on
+  a Mac with Apple silicon (040)
+- `macos` and `macos-desktop`: macOS VMs on a Mac
+- `windows-desktop`: a Windows 11 desktop VM on Proxmox; commands run in
+  PowerShell; not a BB machine yet
 
-Both desktops are labelled "Linux desktop" in `box_list`, `bb box kinds` and
-`box_status`, with "(GPU)" after the GPU one; the panel names every kind by
-its OS and shows Desktop, GPU and the rest as badges.
+Both Linux desktops are labelled "Linux desktop" in `box_list`, `bb box
+kinds` and `box_status`, with "(GPU)" after the GPU one; the panel names
+every kind by its OS and shows Desktop, GPU, arm64 and the rest as badges.
 
-A kind is on offer only when its templates are set. The Docker backend
-offers the same kinds as containers, with the same tools, and
-`linux-docker` and `linux-desktop` only when the operator turns them on. A
-Docker box runs no systemd, so `systemctl` does not work in it. The earlier
-IDs `linux-headless` and `linux-headless-docker` still work in
-`box_acquire`, as `linux` and `linux-docker`.
+Every Linux box has Docker, so `linux-docker` and `linux-arm64-docker` are
+aliases of `linux` and `linux-arm64` that insist on it: an offer without
+Docker (an SSH pool machine without a whole-machine reset, a Docker box on
+rootless Docker) is skipped for them, and `box_list` says "Docker: no"
+where that is so. The earlier IDs `linux-headless` and
+`linux-headless-docker` still work in `box_acquire`. A kind is on offer only
+when a backend that is on has it set up. A Docker box runs no systemd, so
+`systemctl` does not work in it.
 
 Its boxes run Ubuntu 24.04 with build tools, Git, Python with `uv`, Node.js
 with pnpm and Yarn, Docker, `gh`, `rg`, `fd`, `jj` and the Claude Code, Codex
@@ -103,8 +111,8 @@ and `bb box kinds` show the ones in use:
 
 | Kind | small (the default) | medium | large | largest custom size |
 | --- | --- | --- | --- | --- |
-| `linux`, `linux-docker` | 2 cores, 4 GiB | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB, 256 GiB disk |
-| `linux-desktop`, `linux-desktop-cpu` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB | 32 cores, 64 GiB, 256 GiB disk |
+| `linux`, `linux-arm64` | 2 cores, 4 GiB | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB, 256 GiB disk |
+| `linux-desktop`, `linux-desktop-cpu`, `linux-arm64-desktop-cpu`, `windows-desktop` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB | 32 cores, 64 GiB, 256 GiB disk |
 | `macos`, `macos-desktop` | 4 cores, 8 GiB | 6 cores, 16 GiB | 8 cores, 32 GiB | 16 cores, 64 GiB, 256 GiB disk |
 
 A preset keeps the kind's own disk. For a custom size, give `cores`,
