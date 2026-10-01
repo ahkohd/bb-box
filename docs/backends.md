@@ -172,9 +172,11 @@ node --test test/conformance.test.ts
   `box.<id>`, `kind.<kind>`), and in the description the clone writes, which
   names the install and the box before the tags are set.
 - A release stops the guest if it runs, then deletes it. Proxmox waits 10 s
-  for a guest's lock, and a stop can hold it for over a minute while the
-  guest quits, so while another task holds it the release tries again, for
-  up to 2 minutes.
+  for a guest's lock. A stop can hold it for over a minute while the guest
+  quits, and the cleanup Proxmox runs after a VM's QEMU exits waits behind
+  a resume, then holds it for about 10 s. So each change bb-box makes to a
+  guest (a start, stop, hibernation, config change, disk resize or delete)
+  tries again while another task holds the lock, for up to 2 minutes.
 
 ## Proxmox QEMU
 

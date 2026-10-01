@@ -35,7 +35,7 @@ export interface ProxmoxOptions {
   readonly taskPollMs?: number;
   readonly taskTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
-  /** How long `destroy` keeps trying while another task holds the guest's lock. */
+  /** How long a change to a guest keeps trying while another task holds the guest's lock. */
   readonly lockWaitMs?: number;
 }
 
@@ -299,8 +299,7 @@ export class Proxmox {
       delete: settings.delete?.length ? settings.delete.join(",") : undefined,
     };
     if (Object.values(params).every((value) => value === undefined)) return;
-    const result = await this.#request<unknown>("PUT", this.#guest(vmid, "/config"), params, signal);
-    if (typeof result === "string" && result.startsWith("UPID:")) await this.waitTask(result, signal);
+    await this.#change("PUT", this.#guest(vmid, "/config"), params, signal);
   }
 
   async config(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
@@ -316,25 +315,17 @@ export class Proxmox {
   async growRootDisk(vmid: number, sizeGiB: number, signal?: AbortSignal, disk = this.type === "qemu" ? "scsi0" : "rootfs"): Promise<boolean> {
     const currentGiB = rootDiskGiB(await this.config(vmid, signal), disk);
     if (currentGiB !== null && currentGiB >= sizeGiB) return false;
-    const result = await this.#request<unknown>(
-      "PUT",
-      this.#guest(vmid, "/resize"),
-      { disk, size: `${sizeGiB}G` },
-      signal,
-    );
-    if (typeof result === "string" && result.startsWith("UPID:")) await this.waitTask(result, signal);
+    await this.#change("PUT", this.#guest(vmid, "/resize"), { disk, size: `${sizeGiB}G` }, signal);
     return true;
   }
 
   async start(vmid: number, signal?: AbortSignal): Promise<void> {
-    const upid = await this.#request<string>("POST", this.#guest(vmid, "/status/start"), {}, signal);
-    await this.waitTask(upid, signal);
+    await this.#change("POST", this.#guest(vmid, "/status/start"), {}, signal);
   }
 
   /** Hard stop: boxes are disposable, so there is no clean shutdown wait. */
   async stop(vmid: number, signal?: AbortSignal): Promise<void> {
-    const upid = await this.#request<string>("POST", this.#guest(vmid, "/status/stop"), {}, signal);
-    await this.waitTask(upid, signal);
+    await this.#change("POST", this.#guest(vmid, "/status/stop"), {}, signal);
   }
 
   /**
@@ -343,8 +334,7 @@ export class Proxmox {
    * and `destroy` removes it with its state. VMs only.
    */
   async hibernate(vmid: number, signal?: AbortSignal): Promise<void> {
-    const upid = await this.#request<string>("POST", this.#guest(vmid, "/status/suspend"), { todisk: 1 }, signal);
-    await this.waitTask(upid, signal);
+    await this.#change("POST", this.#guest(vmid, "/status/suspend"), { todisk: 1 }, signal);
   }
 
   /** Null when the guest does not exist. */
@@ -370,24 +360,9 @@ export class Proxmox {
 
   /**
    * Stops the guest if it runs, then deletes it and its disks. A missing
-   * guest counts as deleted, and a hibernated VM goes with its state. A stop
-   * can hold the guest's lock for over a minute while QEMU quits, longer
-   * than Proxmox waits for it, so while another task holds it this tries
-   * again, for up to `lockWaitMs`.
+   * guest counts as deleted, and a hibernated VM goes with its state.
    */
   async destroy(vmid: number, signal?: AbortSignal): Promise<void> {
-    const deadline = Date.now() + this.#lockWaitMs;
-    for (;;) {
-      try {
-        return await this.#destroy(vmid, signal);
-      } catch (error) {
-        if (!(error instanceof ProxmoxError && error.locked) || Date.now() >= deadline) throw error;
-      }
-      await this.#sleep(LOCK_RETRY_MS, signal);
-    }
-  }
-
-  async #destroy(vmid: number, signal?: AbortSignal): Promise<void> {
     const current = await this.status(vmid, signal);
     if (!current) return;
     if (current.status === "running") {
@@ -398,15 +373,7 @@ export class Proxmox {
         return;
       }
     }
-    const remove = async () => {
-      const upid = await this.#request<string>(
-        "DELETE",
-        this.#guest(vmid),
-        { purge: 1, "destroy-unreferenced-disks": 1 },
-        signal,
-      );
-      await this.waitTask(upid, signal);
-    };
+    const remove = () => this.#change("DELETE", this.#guest(vmid), { purge: 1, "destroy-unreferenced-disks": 1 }, signal);
     try {
       await remove();
     } catch (error) {
@@ -519,6 +486,26 @@ export class Proxmox {
       }
       if (Date.now() >= deadline) throw new ProxmoxError("TASK", taskLabel(upid), 504, "task did not finish in time");
       await this.#sleep(this.#taskPollMs, signal);
+    }
+  }
+
+  /**
+   * Makes a change to a guest that takes its lock, and waits for its task if
+   * it has one. Proxmox waits 10 s for the lock, but a stop can hold it for
+   * over a minute while QEMU quits, and the cleanup qmeventd runs after a
+   * VM's QEMU exits waits behind a resume and then holds it for about 10 s.
+   * So while another task holds the lock, this tries again, for up to
+   * `lockWaitMs`.
+   */
+  async #change(method: "POST" | "PUT" | "DELETE", path: string, params: Params, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + this.#lockWaitMs;
+    for (;;) {
+      try {
+        return await this.waitTask(await this.#request<string>(method, path, params, signal), signal);
+      } catch (error) {
+        if (!(error instanceof ProxmoxError && error.locked) || Date.now() >= deadline) throw error;
+      }
+      await this.#sleep(LOCK_RETRY_MS, signal);
     }
   }
 
