@@ -544,7 +544,7 @@ test("doctor says what is missing", async () => {
   const byId = Object.fromEntries(report.checks.map((check) => [check.id, check]));
   assert.equal(byId["template.9104"]!.status, "ok");
   assert.equal(byId["template.9105"]!.detail, "VM 9105 is not a template.");
-  assert.equal(byId["template.9106"]!.detail, "VM 9106 does not exist on pve.");
+  assert.equal(byId["template.9106"]!.detail, "VM 9106 does not exist on pve, or is not in pool bbbox.");
   assert.match(byId["template.9106"]!.fix!, /setup\/proxmox-qemu\/build\.sh, or remove it from the Windows templates/);
   assert.match(byId["proxmox.bridge"]!.detail, /pve has no vmbr1/);
   assert.match(report.summary, /^Windows template 9105: /);

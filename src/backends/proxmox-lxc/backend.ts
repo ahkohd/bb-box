@@ -906,10 +906,10 @@ export class ProxmoxLxcBackend implements Backend {
             }
           }
         } catch (error) {
-          const missing = error instanceof ProxmoxError && error.notFound;
+          const missing = error instanceof ProxmoxError && error.gone;
           fail(
             name,
-            missing ? `CT ${template} does not exist on ${node}.` : message(error),
+            missing ? `CT ${template} does not exist on ${node}, or is not in pool ${pool}.` : message(error),
             missing
               ? `Build it with the setup guide's template/build.sh, or remove it from the ${FLAVOUR_NAMES[listed.flavour]} templates in bb-box's settings.`
               : audit(error, `Give the token VM.Audit and VM.Clone on /vms/${template}.`),
@@ -1083,7 +1083,7 @@ export class ProxmoxLxcBackend implements Backend {
     try {
       config = await api.config(template, signal);
     } catch (error) {
-      if (error instanceof ProxmoxError && (error.notFound || error.forbidden)) return undefined;
+      if (error instanceof ProxmoxError && error.gone) return undefined;
       throw error;
     }
     return isTemplate(config) ? buildFromTags(parseTags(config.tags)) : undefined;
@@ -1204,7 +1204,7 @@ export class ProxmoxLxcBackend implements Backend {
     try {
       return await api.config(vmid, signal);
     } catch (error) {
-      if (error instanceof ProxmoxError && error.notFound) return null;
+      if (error instanceof ProxmoxError && error.gone) return null;
       throw error;
     }
   }
@@ -1279,11 +1279,10 @@ export class ProxmoxLxcBackend implements Backend {
     try {
       config = await api.config(template, signal);
     } catch (error) {
-      if (!(error instanceof ProxmoxError && (error.notFound || error.forbidden))) throw error;
+      if (!(error instanceof ProxmoxError && error.gone)) throw error;
       // It may be away while build.sh --replace swaps it.
       if ((await this.#templateBack(api, template, Date.now() + this.#templateWaitMs, signal)) === "away") {
-        if (error.notFound) throw new Error(`CT template ${template} does not exist on ${api.node}. Run the doctor check in bb-box's panel.`);
-        throw error;
+        throw new Error(`CT template ${template} does not exist on ${api.node}, or is not in pool ${this.#config.proxmox.pool}. Run the doctor check in bb-box's panel.`);
       }
       config = await api.config(template, signal);
     }
@@ -1304,7 +1303,7 @@ export class ProxmoxLxcBackend implements Backend {
       const config = await api.config(template, signal);
       return !isTemplate(config) || config.lock !== undefined;
     } catch (error) {
-      if (error instanceof ProxmoxError && (error.notFound || error.forbidden)) return true;
+      if (error instanceof ProxmoxError && error.gone) return true;
       throw error;
     }
   }

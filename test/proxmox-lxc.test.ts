@@ -473,7 +473,7 @@ test("an acquire fails when the template stays away, naming it and Proxmox's err
   proxmox.guests.delete(9000);
   await assert.rejects(
     backend.acquire(identity(), null, hooks().value, signal()),
-    /^Error: CT template 9000 on pve was still missing, or not yet a template, after 0 s \(.*does not exist\)\. Run the doctor check/,
+    /^Error: CT template 9000 on pve was still missing, or not yet a template, after 0 s \(.*\(403\): Permission check failed \(\/vms\/9000, VM\.Audit\)\)\. Run the doctor check/,
   );
   assert.equal(proxmox.calls.filter((call) => call.path.endsWith("/clone")).length, 1);
 });
