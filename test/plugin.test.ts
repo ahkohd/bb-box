@@ -1607,6 +1607,31 @@ test("the backend resizes a desktop whose stream server cannot, one resize at a 
   await session.close();
 });
 
+test("the box ending the connection of the viewer with control gives control back, and the log says why (020)", async (t) => {
+  const { harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
+  await app.boxes.idle();
+  const box = await only(app);
+  const open = async (viewer: string) => {
+    const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+    await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+    await session.receive(Uint8Array.of(1));
+    await session.receive(Uint8Array.of(1));
+    return session;
+  };
+  await open("viewer-two-0002");
+  await open("viewer-one-0001");
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer: "viewer-one-0001" });
+  const warnings = () => harness.inspection.logEntries.filter((entry) => entry.level === "warn").map((entry) => entry.message);
+  const [watching, holding] = world.backend!.rfb.connections;
+  await watching!.end();
+  await holding!.end();
+  await until("control to go back", async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { box: { control: { owner: string } } }).box.control.owner === "agent");
+  await until("the log line", async () => warnings().length > 0);
+  assert.deepEqual(warnings(), [`Box ${box.name}'s desktop ended the connection of the viewer with control, so control goes back to the agent. It closed the connection.`]);
+});
+
 test("a reload while a person has control gives it back and sets the desktop's size back first (#139)", async (t) => {
   const { harness, app, world } = await start();
   t.after(() => harness.lifecycle.dispose());

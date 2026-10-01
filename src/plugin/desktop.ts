@@ -138,8 +138,16 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 resizes.request(boxId, shown, size).catch((error) => deps.logError("resize the desktop", error));
               }
             },
-            onEnd: (by) => {
+            onEnd: (by, error) => {
               relays.delete(relay!);
+              // Control goes back to the agent at once (020), so the log says why the viewer lost it.
+              if (by === "box" && control.mayInput(boxId, viewer)) {
+                const why = error?.message ?? "It closed the connection.";
+                void boxes
+                  .find(boxId)
+                  .then((box) => bb.log.warn(`Box ${box?.name ?? boxId}'s desktop ended the connection of the viewer with control, so control goes back to the agent. ${why}`))
+                  .catch((caught) => deps.logError("log a desktop's end", caught));
+              }
               control.detach(boxId, connection, by);
             },
           });
