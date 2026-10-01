@@ -32,6 +32,26 @@ async function machineOf(boxes: Boxes, threadId: string): Promise<BoxRecord | nu
   return (await boxes.list(threadId)).find((box) => box.role === "machine" && isActive(box)) ?? null;
 }
 
+/** The parts of BB's API that say which of BB's machines a box is. */
+export interface MachineLookup {
+  list(args: { includeCreating: true }): Promise<readonly { id: string; machineProviderId: string | null; lifecycle: { phase: string } }[]>;
+  getResource(hostId: string): Promise<unknown>;
+}
+
+/**
+ * The ID of BB's machine that box `boxId` is for its thread, or null when
+ * it is none. BB keeps the box's ID as the machine's resource, so a lost
+ * record is restored as the thread's machine (#127).
+ */
+export async function newBoxHost(lookup: MachineLookup, boxId: string): Promise<string | null> {
+  for (const host of await lookup.list({ includeCreating: true })) {
+    if (host.machineProviderId !== NEW_BOX_PROVIDER_ID || host.lifecycle.phase === "destroyed") continue;
+    const resource = (await lookup.getResource(host.id)) as { boxId?: unknown } | null;
+    if (resource?.boxId === boxId) return host.id;
+  }
+  return null;
+}
+
 /** Releases the thread's own boxes that failed, so a retry starts on a new one. */
 async function releaseFailed(boxes: Boxes, threadId: string): Promise<void> {
   for (const box of await boxes.list(threadId)) if (box.role === "machine" && box.state === "failed") await boxes.release(threadId, box.id);

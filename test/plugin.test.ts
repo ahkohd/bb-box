@@ -83,6 +83,8 @@ async function start(
      * calls the provider's remove and waits for it, with no time limit.
      */
     bbRemovals: new Map<string, () => Promise<unknown>>(),
+    /** The resource BB keeps for each machine a provider made, by host ID. */
+    resources: new Map<string, { boxId: string }>(),
     /** Changes bb-box made to threads. */
     updated: [] as unknown[],
     /** Threads that run on each BB machine, by host ID. */
@@ -176,6 +178,7 @@ async function start(
           })();
           return hosts.get(id)!;
         },
+        list: async () => [...hosts.values()],
         get: async ({ hostId }: { hostId: string }) => {
           const host = hosts.get(hostId);
           if (!host) throw notFound("Host");
@@ -211,6 +214,7 @@ async function start(
         },
       },
     } as never,
+    machineResource: async (hostId) => world.resources.get(hostId) ?? null,
     // BB's installer, in brief: it runs a command in the box through the
     // executor, and a machine BB already has connects again.
     machineBootstrap: {
@@ -859,11 +863,13 @@ async function newBox(harness: Awaited<ReturnType<typeof start>>["harness"], wor
   const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
   const created = (await provider.create(createContext(THREAD, { kind: "linux" }).context)) as unknown as { resource: { boxId: string } };
   const hostId = `host-${THREAD}`;
+  world.hosts.set(hostId, makeHostResponse({ id: hostId, status: "connected", machineProviderId: "bb-box-new" }));
+  world.resources.set(hostId, created.resource);
   // BB's removal of the machine, started once, as BB's removeMachine does.
   let removing: Promise<unknown> | null = null;
   const removal = () => (removing ??= provider.remove({ resource: created.resource, hostId } as never));
   world.bbRemovals.set(hostId, removal);
-  return { removal, hostId };
+  return { removal, hostId, boxId: created.resource.boxId };
 }
 
 test("New box: archiving the thread removes its box without waiting on itself (033)", async (t) => {
@@ -884,6 +890,24 @@ test("New box: the sweep releases the box of a thread that ended, and BB's remov
   assert.deepEqual(await app.boxes.list(THREAD), []);
   assert.ok(!world.events.includes(`delete ${hostId}`), "bb-box leaves BB's machine to BB");
   assert.deepEqual(await within(removal(), "BB's removal"), { status: "removed" });
+});
+
+test("New box: after bb-box loses its storage, the sweep restores the thread's box as BB's machine for the thread, which does not enrol again (#127)", async (t) => {
+  const { harness, bb, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  // Another thread's New box machine, which BB lists first, is not this box's.
+  world.hosts.set("host-thr_other", makeHostResponse({ id: "host-thr_other", status: "connected", machineProviderId: "bb-box-new" }));
+  world.resources.set("host-thr_other", { boxId: "bxother" });
+  const { hostId, boxId } = await newBox(harness, world);
+  for (const key of [...(await bb.storage.kv.list("box/")), ...(await bb.storage.kv.list("index/"))]) await bb.storage.kv.delete(key);
+
+  assert.match((await harness.behavior.runCli(["sweep"])).stdout ?? "", /Boxes restored from their guests: 1/);
+  const restored = await app.boxes.settled({ threadId: THREAD, id: boxId });
+  assert.equal(restored?.role, "machine");
+  assert.equal(restored?.projectId, PROJECT);
+  assert.deepEqual(restored?.enrol, { state: "enrolled", hostId, error: null });
+  assert.equal(restored?.restoredAt, null, "it is not waiting to enrol");
+  assert.deepEqual(world.events, [], "bb-box makes no other machine for the box");
 });
 
 test("New box: a retry makes a new box rather than reuse one that failed (033)", async (t) => {
