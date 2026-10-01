@@ -221,6 +221,18 @@ describe("SSH host pool", () => {
     await backend.dispose();
   });
 
+  it("claims machines it first sees free together in the order they are listed, whichever answers first", async () => {
+    machine("192.0.2.78", { "slow-status": "300" });
+    machine("192.0.2.79");
+    const { backend } = pool("first 192.0.2.78 linux\nsecond 192.0.2.79 linux");
+    const one = await acquire(backend);
+    const two = await acquire(backend);
+    assert.deepEqual([one.guest.ref, two.guest.ref], ["first", "second"]);
+    await backend.release(one.guest, releaseHooks().hooks);
+    await backend.release(two.guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
   it("gives no Docker in a pool where some machines have no whole-machine reset, and its doctor says so", async () => {
     machine("192.0.2.67", { hook: "" });
     machine("192.0.2.68");
@@ -302,9 +314,8 @@ describe("SSH host pool", () => {
   });
 
   it("gives each acquire that has not claimed the machine its claim would take, whatever its size", async () => {
-    // s is a little smaller than d, so every claim tries s first: machines of one size go in the order their probes answered.
     machine("192.0.2.64", { cores: "2", memory: "3900" });
-    machine("192.0.2.65", { cores: "2", memory: "3950" });
+    machine("192.0.2.65", { cores: "2", memory: "3900" });
     machine("192.0.2.66", { cores: "8", memory: "15900" });
     const { backend } = pool("s 192.0.2.64 linux\nd 192.0.2.65 linux\nl 192.0.2.66 linux");
     const small = sizeOf("linux");

@@ -181,6 +181,7 @@ boxes have Docker only when every machine's line has `reset=machine`
 When only some lines have it, no box has Docker, each says No Docker, and
 the doctor warns. Of machines of one size, bb-box then lends those without
 `reset=machine` first, since a whole-machine reset may restart the machine.
+After that it lends the one free longest, then the first listed.
 
 ### Through a jump host
 

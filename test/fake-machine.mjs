@@ -14,6 +14,7 @@
 //   restore-steps    how many more times a whole-machine reset says it is running
 //   fail-reset       the reset fails after marking the machine resetting
 //   cut-reset        as fail-reset, but as if the connection dropped, once
+//   slow-status      how many milliseconds status waits before it answers
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -44,6 +45,8 @@ const input = () => {
 const marker = () => (read("owner") !== null ? "owner" : read("resetting") !== null ? "resetting" : "none");
 
 function status() {
+  const slow = Number(flag("slow-status") ?? 0);
+  if (slow) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, slow);
   const kind = marker();
   const lines = [`helper=${flag("helper") ?? 1}`, `arch=${flag("arch") ?? "x86_64"}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
   if (kind !== "none") lines.push(...read(kind).trim().split("\n").map((line) => `marker.${line}`));
