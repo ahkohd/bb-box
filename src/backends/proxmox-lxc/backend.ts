@@ -19,8 +19,11 @@
 // GPU with the fewest desktops. Every guest carries a "template.<vmid>" tag,
 // which is how that use is counted. The warm pool keeps started guests of
 // each flavour, tagged "warm". Claiming one retags it for its box, so a new
-// box is ready as soon as the tags change. Guests of other installs, or with
-// no install, count against capacity but are otherwise left alone.
+// box is ready as soon as the tags change. build.sh tags each template it
+// makes "build.<id>", and a warm guest copies the tag: one whose template now
+// has another, or is away, is retired rather than claimed. Guests of other
+// installs, or with no install, count against capacity but are otherwise left
+// alone.
 
 import type { TLSSocket } from "node:tls";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
@@ -67,6 +70,7 @@ const WARM = "warm";
 const FILLING = "filling";
 const RETIRED = "retired";
 const INSTALL = "install.";
+const BUILD = "build.";
 const MiB = 2 ** 20;
 const GiB = 2 ** 30;
 const VNC_PORT = 5900;
@@ -161,6 +165,11 @@ function templateTag(template: number): string {
 export function templateFromTags(tags: readonly string[]): number | null {
   const vmid = Number(tags.find((tag) => /^template\.\d+$/.test(tag))?.slice(9));
   return Number.isInteger(vmid) && vmid > 0 ? vmid : null;
+}
+
+/** The build ID build.sh tags a template with, which its warm guests copy: null without one. */
+export function buildFromTags(tags: readonly string[]): string | null {
+  return tags.find((tag) => tag.startsWith(BUILD))?.slice(BUILD.length) || null;
 }
 
 /** How the doctor names each flavour's templates. */
@@ -419,7 +428,8 @@ export class ProxmoxLxcBackend implements Backend {
     const offer = this.#offer(kind);
     const api = await this.client();
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
-    const ready = guests.filter((guest) => this.warmOf(guest)?.flavour === offer.flavour && guest.status === "running").length;
+    const builds = await this.templateBuilds(api, guests, signal);
+    const ready = guests.filter((guest) => this.warmOf(guest, builds)?.flavour === offer.flavour && guest.status === "running").length;
     const waiting = pending.filter((other) => flavourOf(other) === offer.flavour).length;
     return this.#room(api, offer, guests, pending, { ready, target: offer.config.warm }, ready > waiting, signal);
   }
@@ -995,13 +1005,56 @@ export class ProxmoxLxcBackend implements Backend {
     return this.#api;
   }
 
-  /** The flavour and template of a guest that is ready in the warm pool, or null. */
-  warmOf(guest: PoolGuest): { readonly flavour: LxcFlavour; readonly template: number } | null {
+  /**
+   * The flavour and template of a guest that is ready in the warm pool, or
+   * null. `builds` is templateBuilds of the listing the guest is from: a
+   * guest of another build of its template than the one there now, or of a
+   * template that is away, is not ready.
+   */
+  warmOf(guest: PoolGuest, builds: ReadonlyMap<number, string | null>): { readonly flavour: LxcFlavour; readonly template: number } | null {
     if (guest.type !== "lxc" || guest.template || !this.#inRange(guest.vmid) || this.#filling.has(guest.vmid)) return null;
     if (!guest.tags.includes(WARM) || installFromTags(guest.tags) !== this.#context.installId) return null;
     const template = templateFromTags(guest.tags);
     const flavour = template === null ? null : this.#flavourOf(template);
-    return flavour && template !== null ? { flavour, template } : null;
+    if (!flavour || template === null || !builds.has(template) || builds.get(template) !== buildFromTags(guest.tags)) return null;
+    return { flavour, template };
+  }
+
+  /**
+   * The build ID of each template that warm guests in `guests` are clones
+   * of, as the template is now: null for one without. A template that is
+   * away, as while build.sh --replace swaps it, is left out.
+   */
+  async templateBuilds(api: Proxmox, guests: readonly PoolGuest[], signal?: AbortSignal): Promise<Map<number, string | null>> {
+    const named = new Set<number>();
+    for (const guest of guests) {
+      const template = guest.tags.includes(WARM) ? templateFromTags(guest.tags) : null;
+      if (template !== null && this.#flavourOf(template)) named.add(template);
+    }
+    const builds = new Map<number, string | null>();
+    for (const template of named) {
+      const build = await this.#buildOf(api, guests, template, signal);
+      if (build !== undefined) builds.set(template, build);
+    }
+    return builds;
+  }
+
+  /**
+   * The build ID of `template` as it is now: null without one, undefined
+   * while it is away. From `guests` when the template is in the pool, which
+   * the setup guide's templates are; otherwise read on its own.
+   */
+  async #buildOf(api: Proxmox, guests: readonly PoolGuest[], template: number, signal?: AbortSignal): Promise<string | null | undefined> {
+    const listed = guests.find((guest) => guest.vmid === template);
+    if (listed) return listed.template ? buildFromTags(listed.tags) : undefined;
+    let config: Record<string, unknown>;
+    try {
+      config = await api.config(template, signal);
+    } catch (error) {
+      if (error instanceof ProxmoxError && (error.notFound || error.forbidden)) return undefined;
+      throw error;
+    }
+    return isTemplate(config) && config.lock === undefined ? buildFromTags(parseTags(config.tags)) : undefined;
   }
 
   /** Retags a warm guest for its box. The guest keeps running. */
@@ -1416,15 +1469,17 @@ export class ProxmoxLxcBackend implements Backend {
   async #topUp(signal: AbortSignal): Promise<void> {
     const api = await this.client();
     const pool = this.#config.proxmox.pool;
-    // Retire warm guests beyond their flavour's target, or of a template no longer listed, while no claim runs.
+    // Retire warm guests beyond their flavour's target, of a template no longer
+    // listed, or of another build of their template, while no claim runs.
     const retired = await this.#warm.exclusive(async () => {
       const guests = await api.listPool(pool, signal);
+      const builds = await this.templateBuilds(api, guests, signal);
       const kept = new Map<LxcFlavour, number>();
       const out: number[] = [];
       for (const guest of guests) {
         if (!guest.tags.includes(WARM) || guest.type !== "lxc" || guest.template || !this.#inRange(guest.vmid) || this.#filling.has(guest.vmid)) continue;
         if (installFromTags(guest.tags) !== this.#context.installId) continue;
-        const flavour = this.warmOf(guest)?.flavour;
+        const flavour = this.warmOf(guest, builds)?.flavour;
         const count = flavour ? (kept.get(flavour) ?? 0) : 0;
         if (flavour && guest.status === "running" && count < this.#config.flavours[flavour].warm) {
           kept.set(flavour, count + 1);
@@ -1446,7 +1501,8 @@ export class ProxmoxLxcBackend implements Backend {
       if (!offer || offer.config.warm === 0) continue;
       const { config } = offer;
       const guests = await api.listPool(pool, signal);
-      const ready = guests.filter((guest) => this.warmOf(guest)?.flavour === flavour && guest.status === "running").length;
+      const builds = await this.templateBuilds(api, guests, signal);
+      const ready = guests.filter((guest) => this.warmOf(guest, builds)?.flavour === flavour && guest.status === "running").length;
       const filling = [...this.#filling.values()].filter((template) => this.#flavourOf(template) === flavour).length;
       for (let missing = config.warm - ready - filling; missing > 0; missing--) {
         signal.throwIfAborted();
@@ -1468,6 +1524,10 @@ export class ProxmoxLxcBackend implements Backend {
     try {
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
       const template = this.#choose(offer, guests, [], api.node, this.#placing(offer)).template.vmid;
+      // Read before the clone, so it is never newer than the clone's build. A
+      // template replaced in between retires the guest later, which is safe.
+      const build = await this.#buildOf(api, guests, template, signal);
+      const tags = (state: string) => [TAG, install, state, templateTag(template), ...(build ? [`${BUILD}${build}`] : [])];
       vmid = await this.#clone(
         api,
         guests,
@@ -1481,7 +1541,7 @@ export class ProxmoxLxcBackend implements Backend {
         signal,
       );
       await api.configure(vmid, this.#settings(config, vmid), signal);
-      await api.configure(vmid, { tags: [TAG, install, FILLING, templateTag(template)] }, signal);
+      await api.configure(vmid, { tags: tags(FILLING) }, signal);
       await api.start(vmid, signal);
       await this.#grow(api, vmid, config, template, untimed, signal);
       await this.#waitReady(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
@@ -1492,7 +1552,7 @@ export class ProxmoxLxcBackend implements Backend {
           throw new Error(`A warm linux-desktop box started without GPU ${this.#gpuOf(template) ?? "unknown"} (${display.reason || "no reason given"}), so bb-box released it.`);
         }
       }
-      await api.configure(vmid, { tags: [TAG, install, WARM, templateTag(template)] }, signal);
+      await api.configure(vmid, { tags: tags(WARM) }, signal);
     } catch (error) {
       if (vmid !== null) {
         await this.#forget(vmid);
@@ -1521,8 +1581,10 @@ class WarmStore implements PoolStore<BoxIdentity> {
     const api = await this.#backend.client();
     const members: PoolMember[] = [];
     this.#templates.clear();
-    for (const guest of await api.listPool(this.#pool, signal)) {
-      const warm = this.#backend.warmOf(guest);
+    const guests = await api.listPool(this.#pool, signal);
+    const builds = await this.#backend.templateBuilds(api, guests, signal);
+    for (const guest of guests) {
+      const warm = this.#backend.warmOf(guest, builds);
       if (!warm || guest.status !== "running") continue;
       this.#templates.set(String(guest.vmid), warm.template);
       members.push({

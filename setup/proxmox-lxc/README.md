@@ -191,6 +191,16 @@ linked clone needs its template, as on ZFS or Ceph RBD, `--replace` refuses
 while such boxes exist: release them first. Two builds at the same time each
 need their own `BBBOX_BUILD_ADDRESS` and `BBBOX_BUILD_VMID`.
 
+Each template `build.sh` makes, or copies, gets a tag with a build ID of its
+own, such as `build.20260101-120000-3f62`, which it keeps through
+`--replace`. A warm box carries the ID of the template it was cloned from.
+bb-box hands out no warm box whose template now has another ID, or is away
+while it is replaced, and replaces those boxes with clones of the new
+template. A template made some other way has no ID. If you replace a
+template by other means, tag the new one with a new ID, for example
+`pct set 9100 --tags build.$(date -u +%s)`, so bb-box replaces the warm boxes
+of the old one.
+
 Everything a build downloads is checked against a pinned SHA-256 and kept in
 `/var/cache/bb-box/artifacts`:
 

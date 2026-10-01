@@ -614,6 +614,11 @@ real backend's pool of free, reset machines is the same thing
   pool up after each claim and on every sweep, and never below the backend's
   memory and disk reserves.
 - A warm guest counts against capacity and always fits when claimed.
+- A warm guest must be a clone of what its template is now. Proxmox LXC's
+  `build.sh` tags each template with a build ID of its own, which warm
+  guests copy when they are filled. A warm guest whose template has another
+  ID, or is away while it is replaced, is not ready: capacity does not count
+  it, no claim takes it, and `maintain()` retires it.
 - Warm guests are not enrolled. Nothing thread-specific is fixed at
   enrolment, but BB has no way to hide a machine, so an enrolled warm guest
   would show in BB's machine list for anyone to start a thread on
