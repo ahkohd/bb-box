@@ -905,21 +905,33 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   assert.equal(ownerFromTags(parseTags(proxmox.guests.get(7001)!.config.tags))?.kind, "linux-docker");
 });
 
-test("a claimed warm guest is named after its box inside, and no other machine is", () => {
-  const dir = tempDir("warm-name");
+/** A stage for warmNameScript: stand-ins that keep the kernel's hostname in a file, and run as this user. */
+function warmNameStage(prefix: string) {
+  const dir = tempDir(prefix);
   const bin = join(dir, "bin");
   const etc = join(dir, "etc");
+  const auth = join(dir, "Xauthority");
   mkdirSync(bin);
   mkdirSync(etc);
-  // Stand-ins that keep the kernel's hostname in a file, and run as this user.
   writeFileSync(join(bin, "hostname"), `#!/bin/sh\nif [ $# -eq 0 ]; then cat '${dir}/kernel'; else printf '%s\\n' "$1" > '${dir}/kernel'; fi\n`);
   writeFileSync(join(bin, "sudo"), `#!/bin/sh\n[ "$1" = -n ] && shift\nexec "$@"\n`);
   for (const tool of ["hostname", "sudo"]) chmodSync(join(bin, tool), 0o755);
-  const run = (kernel: string, hosts: string) => {
+  const env = { PATH: `${bin}:/usr/bin:/bin` };
+  const name = (kernel: string, hosts: string) => {
     writeFileSync(join(dir, "kernel"), `${kernel}\n`);
     writeFileSync(join(etc, "hostname"), `${kernel}\n`);
     writeFileSync(join(etc, "hosts"), hosts);
-    const result = spawnSync("sh", ["-c", warmNameScript("calm-otter", etc)], { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin` } });
+    return spawnSync("sh", ["-c", warmNameScript("calm-otter", etc, auth)], { encoding: "utf8", env });
+  };
+  return { dir, bin, etc, auth, env, name };
+}
+
+const HAS_XAUTH = spawnSync("sh", ["-c", "command -v xauth"]).status === 0;
+
+test("a claimed warm guest is named after its box inside, and no other machine is", () => {
+  const { dir, bin, etc, name } = warmNameStage("warm-name");
+  const run = (kernel: string, hosts: string) => {
+    const result = name(kernel, hosts);
     assert.equal(result.status, 0, result.stderr);
     const read = (name: string) => readFileSync(join(name === "kernel" ? dir : etc, name), "utf8");
     return { kernel: read("kernel"), hostname: read("hostname"), hosts: read("hosts") };
@@ -935,6 +947,37 @@ test("a claimed warm guest is named after its box inside, and no other machine i
   assert.equal(run("bb-box-warm", "127.0.0.1 localhost\n").hosts, "127.0.0.1 localhost\n127.0.1.1 calm-otter\n", "a hosts file with no such line gains one");
   // A machine not named as a warm guest is left as it is.
   assert.deepEqual(run("workstation", pve("127.0.1.1 workstation")), { kernel: "workstation\n", hostname: "workstation\n", hosts: pve("127.0.1.1 workstation") });
+  // When sudo fails, so does the script, though the cookie step after it has nothing to do.
+  writeFileSync(join(bin, "sudo"), "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n");
+  const refused = name("bb-box-warm", pve("127.0.1.1 bb-box-warm"));
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /a password is required/);
+});
+
+test("a claimed warm desktop's display cookie still serves X clients under the box's name", { skip: !HAS_XAUTH && "xauth is not installed" }, () => {
+  const { auth, env, name } = warmNameStage("warm-cookie");
+  const cookie = "00112233445566778899aabbccddeeff";
+  const xauth = (...args: string[]) => {
+    const result = spawnSync("xauth", ["-q", "-f", auth, ...args], { encoding: "utf8", env });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim().split("\n").sort();
+  };
+  // xauth nlist: the family, then each field's length and bytes in hex.
+  const field = (text: string) => `${Buffer.byteLength(text).toString(16).padStart(4, "0")} ${Buffer.from(text).toString("hex")}`;
+  const entry = (family: string, host: string) => `${family} ${field(host)} ${field("99")} ${field("MIT-MAGIC-COOKIE-1")} 0010 ${cookie}`;
+  // What the display wrote while the guest was warm: a cookie for its hostname alone.
+  xauth("add", "bb-box-warm/unix:99", "MIT-MAGIC-COOKIE-1", cookie);
+  assert.deepEqual(xauth("nlist"), [entry("0100", "bb-box-warm")]);
+
+  const result = name("bb-box-warm", "127.0.1.1 bb-box-warm\n");
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(xauth("nlist"), [entry("0100", "bb-box-warm"), entry("ffff", "bb-box-warm")], "the same cookie for any hostname");
+
+  // A machine not named as a warm guest keeps its cookies as they are.
+  xauth("remove", "bb-box-warm/unix:99");
+  xauth("add", "workstation/unix:99", "MIT-MAGIC-COOKIE-1", cookie);
+  assert.equal(name("workstation", "127.0.1.1 workstation\n").status, 0);
+  assert.deepEqual(xauth("nlist"), [entry("0100", "workstation")]);
 });
 
 test("a warm guest satisfies capacity even when memory is short", async () => {
