@@ -50,15 +50,16 @@ virtualgl=$(check virtualgl)
 chrome=$(check chrome)
 # TigerVNC comes from its own release: Ubuntu 24.04's 1.13 has no clipboard
 # in x0vncserver and lacks later security fixes.
-# shellcheck disable=SC2086
 # Downloads are retried through snapshot.ubuntu.com's short outages, as in
 # baseline.sh; files already downloaded stay in apt's cache.
+# shellcheck disable=SC2086
 for try in 1 2 3 4 5; do
   apt-get install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$chrome" && break
   [ "$try" = 5 ] && exit 1
   echo "customize-desktop: download failed (try $try of 5); retrying in $((try * 30)) s" >&2
   sleep $((try * 30))
 done
+# shellcheck disable=SC2086
 apt-get install -y -q --no-install-recommends $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$chrome"
 for package in $desktop_packages $gpui_packages tigervncserver virtualgl google-chrome-stable; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || die "$package is not installed"
