@@ -46,6 +46,8 @@ export interface BoxView {
   readonly facts: readonly { readonly label: string; readonly value: string }[];
   readonly timings: Readonly<Record<string, number>>;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
+  /** Its kind's boxes join BB as machines when enrolment is on; Windows boxes cannot yet. */
+  readonly enrols: boolean;
   readonly canStopStart: boolean;
 }
 
@@ -89,6 +91,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     facts: box.guest?.facts ?? [],
     timings: box.timings,
     enrol: box.enrol,
+    enrols: box.capabilities.enrol,
     canStopStart,
   };
 }

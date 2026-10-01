@@ -107,6 +107,6 @@ export function enrolWords(box: BoxView): string {
     case "failed":
       return `could not join: ${box.enrol.error ?? "no reason given"}`;
     default:
-      return "off";
+      return box.enrols ? "off" : "not for this kind";
   }
 }

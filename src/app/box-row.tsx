@@ -188,7 +188,7 @@ export function BoxRow({
             {box.size ? <Detail label="Size">{box.size}</Detail> : null}
             <Detail label="Backend">{box.backendLabel}</Detail>
             <Detail label="System">
-              {box.os} {box.arch}
+              {osName(box.os)} {box.arch}
               {box.extras.length ? `, with ${box.extras.join(", ")}` : ""}
             </Detail>
             {box.facts.map((fact) => (

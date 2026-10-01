@@ -228,6 +228,7 @@ export function NewBox({
           <div>
             <p id="new-box-kind" className="mb-1.5 text-xs font-medium text-foreground">
               Kind
+              {machine ? <span className="ml-1.5 font-normal text-muted-foreground">of the ones whose boxes join BB</span> : null}
             </p>
             <div role="radiogroup" aria-labelledby="new-box-kind" className="space-y-0.5" onKeyDown={(event) => arrows(event, kinds.length, kindIndex, (position) => chooseKind(kinds[position]!, true))}>
               {kinds.map((candidate, position) => {

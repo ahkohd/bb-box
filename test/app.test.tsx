@@ -164,6 +164,7 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     facts: [{ label: "Template", value: "9000" }],
     timings: { clone: 700, total: 2100, enrol: 5300 },
     enrol: { state: "enrolled", hostId: "host_1", error: null },
+    enrols: true,
     canStopStart: true,
     size: "2 cores, 4 GiB memory",
     ...overrides,
@@ -477,7 +478,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.getByText("192.0.2.10")).toBeTruthy();
   expect(slot.getByText("2 cores, 4 GiB memory")).toBeTruthy();
   expect(slot.getByText("Fake host")).toBeTruthy();
-  expect(slot.getByText("linux x86_64, with docker")).toBeTruthy();
+  expect(slot.getByText("Linux x86_64, with docker")).toBeTruthy();
   expect(slot.getByText("clone 0.7 s · total 2.1 s · BB enrolment 5.3 s")).toBeTruthy();
   expect(slot.getByText("12 minutes ago")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
@@ -682,6 +683,15 @@ test("a box that is not a BB machine offers no thread", async () => {
   await slot.findByText("calm-otter");
   const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
   expect(within(menu).queryByRole("menuitem", { name: "New thread on this box…" })).toBeNull();
+});
+
+test("a Windows box, whose kind cannot enrol, says its BB machine is not for this kind", async () => {
+  const slot = panel(server([box({ kind: "windows-desktop", kindLabel: "Windows desktop", os: "windows", enrols: false, enrol: { state: "off", hostId: null, error: null } })]).handlers);
+  await slot.findByText("calm-otter");
+  fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
+  expect(await slot.findByText("not for this kind")).toBeTruthy();
+  expect(slot.getByText(/Windows x86_64/)).toBeTruthy();
+  expect(slot.queryByText("off")).toBeNull();
 });
 
 test("the panel shows why a change failed", async () => {
@@ -1285,6 +1295,7 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   const slot = settings(handlers);
   expect(await slot.findByText(/Add a box as a BB machine of your own/)).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Add machine" }));
+  expect(slot.getByText("of the ones whose boxes join BB")).toBeTruthy();
   const name = await screen.findByRole("textbox", { name: "Name" });
   fireEvent.change(name, { target: { value: "Build 1" } });
   expect(screen.getByText("Lowercase letters, digits and hyphens, starting with a letter, up to 32 characters.")).toBeTruthy();

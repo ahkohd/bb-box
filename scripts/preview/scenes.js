@@ -33,6 +33,7 @@ function box(overrides = {}) {
     facts: [{ label: "Template", value: "9100" }],
     timings: { clone: 750, start: 1000, ssh: 450, total: 2200, enrol: 5300 },
     enrol: { state: "enrolled", hostId: "host_1", error: null },
+    enrols: true,
     canStopStart: true,
     size: "2 cores, 4 GiB memory",
     ...overrides,
