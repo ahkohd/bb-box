@@ -1,11 +1,13 @@
 // A source of the thread's access in every box that is a BB machine. BB's
 // daemon gives GH_TOKEN, the git identity and the machine variables only to
-// the processes it starts, and its workers come and go. So before a command,
-// bb-box calls its host entry's "access" on the box's machine
+// the processes it starts, and its workers come and go. So before a box's
+// first command, bb-box calls its host entry's "access" on the box's machine
 // (src/host/access.ts), which keeps a process holding the current values
 // below the daemon, for the env file's loader. bb-box calls it again after
-// CHECK_MS, which brings any changed value, and at once after a reload, since
-// the worker and its process go with the plugin.
+// CHECK_MS, which brings any changed value, in the background: commands take
+// the values held meanwhile. A command waits for the call only when nothing
+// holds its names yet: on a new machine, for other names, or after a reload,
+// since the worker and its process go with the plugin.
 //
 // Before, bb-box kept a BB terminal titled RETIRED_TITLE for this (#217).
 // Each machine's are closed once, after the first call there that works.
@@ -45,7 +47,9 @@ export class Holders {
   readonly #deps: HoldersDeps;
   /** Until when bb-box trusts its last call on each machine, and with which names. */
   readonly #called = new Map<string, { until: number; names: string }>();
-  readonly #pending = new Map<string, Promise<void>>();
+  /** The names a process holds on each machine, from a call that worked until its worker ends. */
+  readonly #held = new Map<string, string>();
+  readonly #pending = new Map<string, { names: string; done: Promise<void> }>();
   readonly #retired = new Set<string>();
   /** Machines bb-box said were not connected yet, until a call there works. */
   readonly #unconnected = new Set<string>();
@@ -55,25 +59,29 @@ export class Holders {
   }
 
   /**
-   * Makes sure machine `hostId` holds the current values of `names`. Never
-   * rejects: a failure is logged, and commands then take what BB's workers
-   * have.
+   * Makes sure machine `hostId` holds values of `names`, at most CHECK_MS
+   * and a call old. Never rejects: a failure is logged, and commands then
+   * take what BB's workers have.
    */
   ensure(hostId: string, names: readonly string[]): Promise<void> {
     const key = [...names].sort().join(" ");
     const called = this.#called.get(hostId);
     if (called && called.names === key && this.#now() < called.until) return Promise.resolve();
-    let pending = this.#pending.get(hostId);
-    if (!pending) {
-      pending = this.#call(hostId, names, key).finally(() => this.#pending.delete(hostId));
-      this.#pending.set(hostId, pending);
+    const pending = this.#pending.get(hostId);
+    // One call at a time on a machine: one for other names is waited for, then this one made.
+    if (pending && pending.names !== key) return pending.done.then(() => this.ensure(hostId, names));
+    let done = pending?.done;
+    if (!done) {
+      done = this.#call(hostId, names, key).finally(() => this.#pending.delete(hostId));
+      this.#pending.set(hostId, { names: key, done });
     }
-    return pending;
+    return this.#held.get(hostId) === key ? Promise.resolve() : done;
   }
 
   /** Forgets a machine whose worker ended, or that is gone, so the next command calls it. */
   forget(hostId: string): void {
     this.#called.delete(hostId);
+    this.#held.delete(hostId);
   }
 
   async #call(hostId: string, names: readonly string[], key: string): Promise<void> {
@@ -81,6 +89,7 @@ export class Holders {
     try {
       await this.#deps.access(hostId, names);
       held = true;
+      this.#held.set(hostId, key);
       this.#unconnected.delete(hostId);
     } catch (error) {
       if (!(error instanceof Error && NOT_CONNECTED.test(error.message))) this.#deps.logError("access holder", error);

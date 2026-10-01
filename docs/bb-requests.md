@@ -508,11 +508,12 @@ known yet.
 **What we ask.** A plugin's host call that adds no more than BB's own
 requests to a machine, which take 0.1 to 0.2 s.
 
-**What it would remove.** About 0.4 s from one command in each 30 s on an
-enrolled box, and from each opening of a Docker relay.
+**What it would remove.** About 0.4 s from a box's first command after
+it enrols or after a reload, and from each opening of a Docker relay.
 
 **Until then.** bb-box calls its host entry as little as it can: for a
-box's access at most every 30 s, and once each time a relay opens.
+box's access at most every 30 s, in the background once a call has worked,
+and once each time a relay opens.
 Commands themselves go through SSH, `docker exec` or the relay.
 
 ## Checked, no request needed
