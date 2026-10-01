@@ -11,7 +11,7 @@ t "dns (resolved stub)" sh -c 'readlink /etc/resolv.conf; resolvectl dns eth0 2>
 t "address announced" sh -c '[ "$(systemctl show -p Result --value bb-box-announce)" = success ] && echo "gratuitous ARP sent"'
 t "https reach" curl -sS -o /dev/null -m 10 -w '%{http_code}' https://example.com/
 t "PATH" sh -c 'echo $PATH'
-t "tools" sh -c 'for c in node npm pnpm yarn uv gh rg fd jj git-lfs claude codex pi docker psql redis-cli sqlite3 tree; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; node --version; uv --version; claude --version | head -1'
+t "tools" sh -c 'for c in node npm pnpm yarn uv gh rg fd jj git-lfs claude codex pi docker psql redis-cli sqlite3 tree vim nvim; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; node --version; uv --version; claude --version | head -1'
 # A new box installs packages without `apt-get update` first.
 t "apt package lists" sh -c 'v=$(apt-cache policy cowsay | awk "/Candidate:/ { print \$2 }"); [ -n "$v" ] && [ "$v" != "(none)" ] && echo "cowsay $v installable, lists from $(date -u +%F -r "$(ls -t /var/lib/apt/lists/*_InRelease | head -1)")"'
 t "bb-app pre-installed" sh -c 'ls ~/.bb-machines/*/host-artifact.sha256 2>/dev/null || echo "none (no BB server URL at build)"'

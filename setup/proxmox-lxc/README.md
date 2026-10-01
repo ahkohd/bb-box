@@ -231,8 +231,9 @@ Both templates:
   removes the daemon lock and pid file a hard stop leaves behind, so a
   restarted box reconnects at once;
 - build tools, Python, Git with Git LFS, the pinned tools above, Docker with
-  compose and buildx, the Postgres, Redis and SQLite clients, and everyday
-  tools such as `tree`, `bc`, `zstd`, `socat` and `netstat`;
+  compose and buildx, the Postgres, Redis and SQLite clients, Vim and Neovim
+  (`vim` and `nvim`; `editor` stays nano), and everyday tools such as
+  `tree`, `bc`, `zstd`, `socat` and `netstat`;
 - pnpm and Yarn through Corepack, which fetches the version a project names
   on first use without asking; `~/.local/bin` is on `box`'s PATH, for
   `uv tool install` and pipx;
