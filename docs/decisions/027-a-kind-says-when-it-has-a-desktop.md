@@ -2,7 +2,9 @@
 
 Status: accepted, 1 October 2026. Partly supersedes
 [012](012-offers-may-add-features.md): the IDs and labels of the kinds
-without a desktop.
+without a desktop. Partly superseded by
+[029](029-configuration-is-one-checked-document.md): the keys from before
+027 are read once, when BB's settings move into bb-box's configuration.
 
 ## Context
 
