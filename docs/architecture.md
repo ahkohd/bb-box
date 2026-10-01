@@ -1202,9 +1202,9 @@ Push work to Git or copy it out before releasing a box.
 
 How each backend fits the interface. Proxmox LXC, the SSH host pool, Tart
 and Docker are built. Proxmox QEMU makes Windows boxes, runs their
-commands, shows their desktops and offers computer use; resizing, stop and
-start, its warm pool and file copies come next (#46). The rest are planned,
-and the later-backends research fills in the details.
+commands, shows and resizes their desktops and offers computer use; stop
+and start, its warm pool and file copies come next (#46). The rest are
+planned, and the later-backends research fills in the details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |

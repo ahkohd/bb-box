@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { Backends, DRIVERS, boxForm } from "../src/backends/index.ts";
@@ -121,7 +121,7 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   assert.equal(kind!.capabilities.os, "windows");
   assert.equal(kind!.capabilities.arch, "x86_64");
   assert.equal(kind!.capabilities.enrol, false, "BB cannot enrol a Windows box yet");
-  assert.deepEqual(kind!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: false }]);
+  assert.deepEqual(kind!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }]);
   assert.deepEqual(kind!.capabilities.computerUse, { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" });
 });
 
@@ -296,9 +296,38 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.match(ssh.log().at(-1)!.command, /FromBase64String/, "commands go to PowerShell");
   assert.deepEqual(transports.access!.ssh, { host: "192.0.2.150", port: 22, user: "box", hostKeys: [] });
   assert.deepEqual(
-    transports.displays.map(({ open: _, ...display }) => display),
-    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: false }],
+    transports.displays.map(({ open: _, resize: __, ...display }) => display),
+    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true }],
   );
+});
+
+test("the desktop resizes to the mode that fits, set by Windows in the box user's session, and gives Windows' reason when it cannot", async () => {
+  const { backend, ssh } = setup();
+  const home = ssh.home("192.0.2.150");
+  // A stand-in for PowerShell that keeps each desktop command, and exits as $HOME/exit says.
+  ssh.powershell("192.0.2.150", `case "$1" in\n  *Schedule.Service*) printf "%s" "$1" > "$HOME/desktop"; [ -f "$HOME/exit" ] && . "$HOME/exit"; exit 0;;\n  *) exec sh -c "$1";;\nesac\n`);
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  const [desktop] = (await backend.transports(guest)).displays;
+
+  await desktop!.resize!({ width: 1500, height: 900 });
+  const task = readFileSync(join(home, "desktop"), "utf8");
+  assert.match(task, /\$bbTask\.Principal\.LogonType = 3\n/, "a task in the box user's session");
+  assert.match(task, /\$bbClock\.ElapsedMilliseconds -ge 15000\)/, "that ends if it hangs");
+  const run = Buffer.from(/FromBase64String\(''([A-Za-z0-9+\/=]+)''\)/.exec(task)![1]!, "base64").toString("utf8");
+  assert.match(run, /ChangeDisplaySettingsEx\(null, ref chosen, IntPtr\.Zero, 1, IntPtr\.Zero\)/, "keeps the mode for the next logon");
+  assert.match(run, /\n\$bbRefused = \[BbDisplay\]::Fit\(1500, 900\)\n/);
+
+  writeFileSync(join(home, "exit"), `echo "Windows refused the mode 1440x900 with -2." >&2; exit 1\n`);
+  await assert.rejects(desktop!.resize!({ width: 1500, height: 900 }), { message: "Windows could not set the desktop to 1500x900: Windows refused the mode 1440x900 with -2." });
+  writeFileSync(join(home, "exit"), `echo "bb-box: there is no desktop session to join: box is not logged in to the desktop." >&2; exit 69\n`);
+  await assert.rejects(desktop!.resize!({ width: 1280, height: 800 }), /^Error: Windows could not set the desktop to 1280x800: bb-box: there is no desktop session to join/);
+  writeFileSync(join(home, "exit"), "exit 3\n");
+  await assert.rejects(desktop!.resize!({ width: 1280, height: 800 }), { message: "Windows could not set the desktop to 1280x800: exit code 3." });
+
+  rmSync(join(home, "desktop"));
+  await assert.rejects(desktop!.resize!({ width: 0, height: 800 }), { message: "The desktop cannot be 0 by 800 pixels." });
+  await assert.rejects(desktop!.resize!({ width: 1280.5, height: 800 }), { message: "The desktop cannot be 1280.5 by 800 pixels." });
+  assert.equal(existsSync(join(home, "desktop")), false, "a size that is not one runs nothing");
 });
 
 test("a larger disk grows before the box starts, and C: is extended over it", async () => {

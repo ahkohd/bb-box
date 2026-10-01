@@ -98,3 +98,92 @@ export function stageCommand(name: string): string {
 export function stagedCommand(name: string): string {
   return `${stagedPath(name)}$s=[IO.File]::ReadAllText($p,[Text.Encoding]::UTF8);Remove-Item -LiteralPath $p;${block("$s")}`;
 }
+
+function literal(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+/**
+ * What a desktop command exits with when the box user is not logged in to
+ * the desktop, and on a Mac when sudo does not allow the wrapper: sysexits'
+ * EX_UNAVAILABLE and EX_NOPERM.
+ */
+export const DESKTOP_EXITS = { noSession: 69, refused: 77 } as const;
+
+/**
+ * Puts a script in the box user's desktop session (039), for core's desktop
+ * commands and a backend's own: a one-off scheduled task with the user's
+ * interactive logon, made through Task Scheduler's COM API, which needs no
+ * module loaded. The task runs at the
+ * limited run level, as an app the user opens does. It runs a batch file in
+ * a headless console, so no window shows, and the batch file runs the
+ * command's PowerShell with its stdin, stdout and stderr in files, then
+ * writes its exit status to another. This waits for that file, passes the
+ * output on and deletes the task. What the command opened stays open, but at
+ * `timeoutMs` the command and everything it started end. Task Scheduler
+ * leaves the task of a user who is not logged on as it was, with the result
+ * SCHED_S_TASK_HAS_NOT_RUN.
+ */
+export function desktopScript(script: string, timeoutMs: number | undefined): string {
+  const timeout =
+    timeoutMs === undefined
+      ? ""
+      : String.raw`  elseif ($bbClock.ElapsedMilliseconds -ge ${timeoutMs}) {
+    $bbKill = @(Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%$bbId%'" | ForEach-Object { '/PID'; $_.ProcessId })
+    if ($bbKill) { taskkill /F /T @bbKill *> $null }
+    $bbExit = 1
+  }
+`;
+  return String.raw`$ErrorActionPreference = 'Stop'
+$bbId = 'bb-box-' + [guid]::NewGuid().ToString('n')
+$bbDir = Join-Path ([IO.Path]::GetTempPath()) $bbId
+New-Item -ItemType Directory -Path $bbDir | Out-Null
+$bbFile = [IO.File]::Create("$bbDir\in")
+[Console]::OpenStandardInput().CopyTo($bbFile)
+$bbFile.Close()
+Set-Content -LiteralPath "$bbDir\run.ps1" -Value ${literal(powershellCommand(script))}
+Set-Content -LiteralPath "$bbDir\run.cmd" -Value (
+  '@"' + [Environment]::ProcessPath + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $bbDir + '\run.ps1" <"' + $bbDir + '\in" >"' + $bbDir + '\out" 2>"' + $bbDir + '\err"'),
+  ('@>"' + $bbDir + '\code.tmp" echo %errorlevel%'),
+  ('@move /y "' + $bbDir + '\code.tmp" "' + $bbDir + '\code" >nul')
+$bbService = New-Object -ComObject Schedule.Service
+$bbService.Connect()
+$bbFolder = $bbService.GetFolder('\')
+$bbTask = $bbService.NewTask(0)
+$bbTask.Principal.UserId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$bbTask.Principal.LogonType = 3
+$bbTask.Settings.DisallowStartIfOnBatteries = $false
+$bbTask.Settings.StopIfGoingOnBatteries = $false
+$bbAction = $bbTask.Actions.Create(0)
+$bbAction.Path = "$env:WINDIR\System32\conhost.exe"
+$bbAction.Arguments = '--headless "' + $env:WINDIR + '\System32\cmd.exe" /d /c "' + $bbDir + '\run.cmd"'
+$bbAction.WorkingDirectory = $HOME
+$bbRegistered = $bbFolder.RegisterTaskDefinition($bbId, $bbTask, 6, $null, $null, 3)
+$null = $bbRegistered.Run($null)
+$bbClock = [Diagnostics.Stopwatch]::StartNew()
+$bbExit = $null
+while ($null -eq $bbExit) {
+  if (Test-Path -LiteralPath "$bbDir\code") { $bbExit = [int](Get-Content -LiteralPath "$bbDir\code" -Raw).Trim() }
+  elseif ($bbRegistered.State -ne 4 -and -not (Test-Path -LiteralPath "$bbDir\code")) {
+    if ($bbRegistered.LastTaskResult -eq 0x41303) {
+      [Console]::Error.WriteLine("bb-box: there is no desktop session to join: $([Environment]::UserName) is not logged in to the desktop.")
+      $bbExit = ${DESKTOP_EXITS.noSession}
+    } else {
+      [Console]::Error.WriteLine('bb-box: the desktop command ended without an exit status. Task Scheduler gave {0:x}.' -f $bbRegistered.LastTaskResult)
+      $bbExit = 1
+    }
+  }
+${timeout}  else { Start-Sleep -Milliseconds 50 }
+}
+$bbFolder.DeleteTask($bbId, 0)
+foreach ($bbOutput in ('out', [Console]::OpenStandardOutput()), ('err', [Console]::OpenStandardError())) {
+  if (-not (Test-Path -LiteralPath "$bbDir\$($bbOutput[0])")) { continue }
+  $bbFile = [IO.FileStream]::new("$bbDir\$($bbOutput[0])", 'Open', 'Read', 'ReadWrite, Delete')
+  $bbFile.CopyTo($bbOutput[1])
+  $bbOutput[1].Flush()
+  $bbFile.Close()
+}
+Remove-Item -LiteralPath $bbDir -Recurse -Force -ErrorAction Ignore
+exit $bbExit
+`;
+}
