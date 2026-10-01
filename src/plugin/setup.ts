@@ -550,6 +550,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],
     async found(hostId, signal) {
       const answer = await host.call("docker", {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+      // A socket that refused BB's daemon is Docker to fix, not a machine without Docker.
+      if (answer.refused) throw new Error(answer.reason ?? "Docker's socket refused BB's daemon.");
       return answer.found ? null : `there is no Docker to reach: ${answer.reason ?? "it did not answer"}`;
     },
     async docker(hostId, signal) {

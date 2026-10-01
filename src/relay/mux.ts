@@ -221,7 +221,7 @@ export class Channel extends Duplex {
   override _destroy(error: Error | null, done: (error?: Error | null) => void): void {
     const clean = this.#sentEof && this.#gotEof && !error;
     if (!this.#reset && !clean) {
-      this.#mux.send(frame(RESET, this.id, new TextEncoder().encode((error?.message ?? "closed").slice(0, 200))));
+      this.#mux.send(frame(RESET, this.id, new TextEncoder().encode((error?.message ?? "closed").slice(0, 500))));
     }
     for (const { done: write } of this.#pending.splice(0)) write(error ?? new Error("The channel closed."));
     this.#mux.forget(this.id);

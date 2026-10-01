@@ -78,8 +78,9 @@ function message(error: unknown): string {
 }
 
 /**
- * Answers the docker CLI's first request, when there is no relay, with the
- * reason as an HTTP error, which it shows as "Error response from daemon".
+ * Answers the docker CLI's first request, when there is no relay or the
+ * machine could not reach Docker, with the reason as an HTTP error, which it
+ * shows as "Error response from daemon".
  */
 function refuse(socket: Socket, reason: string): void {
   const body = `bb-box could not reach Docker on the BB machine: ${reason}`;
@@ -228,7 +229,6 @@ export class RelayHub {
           return;
         }
         this.#stopIdle(machine);
-        channel.on("error", () => socket.destroy());
         socket.on("error", () => channel.destroy());
         socket.on("close", () => channel.destroy());
         // A channel that ended cleanly has ended the socket's output through the pipe, and the socket closes once it is sent.
@@ -236,6 +236,14 @@ export class RelayHub {
           if (!mux.channels) this.#startIdle(machine, mux);
         });
         socket.pipe(channel).pipe(socket);
+        // A reset before Docker answered says why the machine could not reach it, which the docker CLI shows rather than EOF.
+        let answered = false;
+        channel.once("data", () => (answered = true));
+        channel.on("error", (error) => {
+          if (answered || socket.destroyed) return void socket.destroy();
+          this.#deps.log?.(`Docker on BB machine ${machine.hostId} did not answer: ${error.message}`);
+          refuse(socket, error.message);
+        });
       },
       (error) => refuse(socket, message(error)),
     );

@@ -1,7 +1,9 @@
 // BB machines as Docker hosts in the settings (src/plugin/docker-hosts.ts, 042).
 
 import assert from "node:assert/strict";
+import { chmodSync } from "node:fs";
 import { createServer } from "node:net";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
@@ -135,4 +137,22 @@ test("the host entry's docker check finds Docker or says why, with no lease, and
   const unset = experimental_createHostEntryHarness(hostEntry({ relay: { endpoint: async () => Promise.reject(new Error("DOCKER_HOST is ssh://me@x, which the relay cannot reach")) } }));
   t.after(() => unset.experimental_dispose());
   assert.deepEqual(await unset.experimental_call("docker", {}), { endpoint: "", found: false, reason: "DOCKER_HOST is ssh://me@x, which the relay cannot reach" });
+});
+
+test("a Docker socket that refuses BB's daemon is Docker to fix, and the host entry's check says how (042)", { skip: process.platform !== "linux" || process.getuid?.() === 0 ? "needs Linux and a user other than root" : false }, async (t) => {
+  const socket = join(tempDir("docker-refused"), "docker.sock");
+  const server = createServer((connection) => connection.end());
+  await new Promise<void>((resolve) => server.listen(socket, () => resolve()));
+  t.after(() => server.close());
+  // As a socket of root:docker 660 is to a user outside the docker group.
+  chmodSync(socket, 0o000);
+  const worker = experimental_createHostEntryHarness(hostEntry({ relay: { endpoint: async () => ({ path: socket }) } }));
+  t.after(() => worker.experimental_dispose());
+  const { username, uid } = userInfo();
+  assert.deepEqual(await worker.experimental_call("docker", {}), {
+    endpoint: socket,
+    found: false,
+    reason: `${username} may not use Docker's socket ${socket}. Add ${username} to its group, usually docker, then restart ${username}'s services so BB's daemon has the group: sudo systemctl restart user@${uid}.service.`,
+    refused: true,
+  });
 });

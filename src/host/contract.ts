@@ -17,10 +17,12 @@ export const hostContract = defineRpcContract({
    * Whether Docker is on the machine: finds it as the docker CLI would, and
    * connects to it and closes. It holds no lease and starts nothing, so the
    * settings list opens a relay only where there is Docker to read (042).
+   * `refused` is set when Docker's socket refused BB's daemon: Docker is
+   * there, but needs fixing.
    */
   docker: {
     input: z.object({}).strict(),
-    output: z.object({ endpoint: z.string(), found: z.boolean(), reason: z.string().nullable() }).strict(),
+    output: z.object({ endpoint: z.string(), found: z.boolean(), reason: z.string().nullable(), refused: z.boolean().optional() }).strict(),
   },
   /**
    * Opens the Docker API relay (042): a WebSocket out to bb-box's route at
