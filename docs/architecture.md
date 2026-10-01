@@ -1220,8 +1220,13 @@ Nothing expires, so a box must never be forgotten.
      keeps its boxes. One answer is not enough: a wrong one, as after a
      restart, would take a live thread's boxes. So the first sweep keeps
      them and the next releases them. The answers are kept in memory, so a
-     restart starts again. A thread event releases a thread's boxes at
-     once, unless BB says when asked that the thread is live;
+     restart starts again. A thread event asks BB about the thread, and
+     releases its boxes at once only when BB returns it archived or
+     deleted. When BB finds no such thread, that counts as its first
+     answer for the next sweep; while BB says the thread is live, or
+     cannot say, the boxes stay. Each line that keeps or releases boxes
+     for this gives BB's answer as it came: archivedAt and deletedAt, or
+     the error's status, code and message;
   3. finishes interrupted releases;
   4. for each of this install's guests from `held()` that no record names:
      releases it when it names no box (an acquire interrupted before the

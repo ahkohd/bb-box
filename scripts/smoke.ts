@@ -148,7 +148,7 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
     backends,
     general: async () => ({ ...generalConfig(configuration.document), perThreadLimit: null, enrol: false }),
     notify: () => {},
-    thread: async () => "live",
+    thread: async () => ({ state: "live", said: "the smoke run's own" }),
     logError,
   });
   const result = (): SmokeResult => ({
