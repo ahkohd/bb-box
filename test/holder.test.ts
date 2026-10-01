@@ -17,6 +17,8 @@ function world() {
     ["term_mine", { id: "term_mine", hostId: "host_a", title: "a person's shell", status: "running" }],
   ]);
   let failing: string | null = null;
+  /** While set, calls wait for it, as a call to a busy machine does. */
+  let gate: Promise<void> | null = null;
   const logs: string[] = [];
   const terminals: RetiredTerminals = {
     list: async ({ scope }) => ({ sessions: [...sessions.values()].filter((session) => session.hostId === scope.hostId) }),
@@ -28,6 +30,7 @@ function world() {
   const holders = new Holders({
     access: async (hostId, names) => {
       calls.push({ hostId, names });
+      await gate;
       if (failing) throw new Error(failing);
     },
     terminals: () => terminals,
@@ -35,10 +38,22 @@ function world() {
     log: (message) => logs.push(message),
     now: () => clock,
   });
-  return { holders, calls, errors, logs, sessions, advance: (ms: number) => (clock += ms), fail: (message: string | null) => (failing = message) };
+  /** Makes calls wait until the function returned is called. */
+  const slow = () => {
+    let open!: () => void;
+    gate = new Promise<void>((resolve) => (open = resolve));
+    return () => {
+      gate = null;
+      open();
+    };
+  };
+  return { holders, calls, errors, logs, sessions, slow, advance: (ms: number) => (clock += ms), fail: (message: string | null) => (failing = message) };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+/** Whether `ensure` let its command go on before the call it made was answered. */
+const wentOn = (ensure: Promise<void>) => Promise.race([ensure.then(() => true), settle().then(() => false)]);
 
 test("a machine's access is held with one call, called again after 30 s or for other names, and the old terminal is closed", async () => {
   const w = world();
@@ -58,6 +73,42 @@ test("a machine's access is held with one call, called again after 30 s or for o
   assert.equal(w.sessions.get("term_old")?.status, "exited");
   assert.equal(w.sessions.get("term_mine")?.status, "running", "only bb-box's own terminal is closed");
   assert.deepEqual(w.errors, []);
+});
+
+test("after 30 s a command goes on while bb-box calls again, but waits for a call for other names or after the worker ended", async () => {
+  const w = world();
+  await w.holders.ensure("host_a", ["GH_TOKEN"]);
+  w.advance(30_000);
+  let open = w.slow();
+  assert.equal(await wentOn(w.holders.ensure("host_a", ["GH_TOKEN"])), true, "the process holds the values meanwhile");
+  assert.equal(await wentOn(w.holders.ensure("host_a", ["GH_TOKEN"])), true);
+  assert.equal(w.calls.length, 2, "one call in the background");
+  const other = w.holders.ensure("host_a", ["GH_TOKEN", "MACHINE_VAR"]);
+  assert.equal(await wentOn(other), false, "nothing holds MACHINE_VAR yet");
+  open();
+  await other;
+  assert.deepEqual(w.calls.map((call) => call.names), [["GH_TOKEN"], ["GH_TOKEN"], ["GH_TOKEN", "MACHINE_VAR"]], "made once the call before it was answered");
+
+  w.advance(30_000);
+  w.fail("the worker did not answer");
+  await w.holders.ensure("host_a", ["GH_TOKEN", "MACHINE_VAR"]);
+  await settle();
+  w.advance(2_000);
+  open = w.slow();
+  assert.equal(await wentOn(w.holders.ensure("host_a", ["GH_TOKEN", "MACHINE_VAR"])), true, "a call that failed leaves the process as it was");
+  assert.equal(w.calls.length, 5);
+  open();
+  await settle();
+  w.fail(null);
+
+  w.holders.forget("host_a");
+  open = w.slow();
+  const after = w.holders.ensure("host_a", ["GH_TOKEN", "MACHINE_VAR"]);
+  assert.equal(await wentOn(after), false, "the process went with the worker");
+  open();
+  await after;
+  assert.equal(w.calls.length, 6);
+  assert.deepEqual(w.errors, ["access holder", "access holder"]);
 });
 
 test("a call that fails is logged, commands go on, bb-box calls again after 2 s, and the old terminal stays until a call works", async () => {

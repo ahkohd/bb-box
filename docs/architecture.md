@@ -964,9 +964,13 @@ A box is a resource of its thread and gets what the thread's own machine has.
     its "access" keeps a `sleep` started with them, so commands always find
     them. It starts a new one only when the values bb-box names change, and
     holds a lease so BB's idle timer leaves the worker alone. bb-box calls
-    it before a command, and again 30 s later at most, so a changed value
-    arrives within that time (`src/plugin/holder.ts`). The sleep ends with
-    the worker, as on a plugin reload, and the next command starts another.
+    it before a box's first command, and again in the background 30 s
+    later at most, or 2 s while BB has not given the machine `GH_TOKEN`
+    yet. Commands take the values the sleep holds meanwhile, so a changed
+    value arrives within that time and a call (`src/plugin/holder.ts`).
+    The sleep ends with the worker, as on a plugin reload, and the next
+    command waits for another, as does a command with names the sleep does
+    not hold.
   - A project's own variables are only in the agent that a worker of the
     daemon starts for a thread of the project on the box, so commands take
     the variables from any process below the daemon, not only its workers.
