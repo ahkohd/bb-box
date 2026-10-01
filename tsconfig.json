@@ -4,13 +4,34 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "jsx": "react-jsx",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
   },
-  "include": ["server.ts", "host.ts", "app.tsx", "vitest.config.ts", "src", "test", "scripts"]
+  "include": [
+    "server.ts",
+    "host.ts",
+    "app.tsx",
+    "vitest.config.ts",
+    "src",
+    "test",
+    "scripts",
+    "components",
+    "lib"
+  ]
 }
