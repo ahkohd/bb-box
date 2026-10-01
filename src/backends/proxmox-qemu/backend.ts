@@ -113,17 +113,23 @@ export const EXTEND_C = String.raw`try {
 }`;
 
 /**
- * Sets the desktop to the largest mode Windows lists that fits in `width` by
- * `height`, else to the smallest, at the colour depth it has: the display
- * driver takes only the modes it lists. The mode is kept for the user's
- * next logon. It runs in the box user's desktop session, as the session
- * SSH gives has another display.
+ * Sets the desktop to `width` by `height`. QEMU passes a viewer's size on to
+ * the display driver, which then takes it beside the modes Windows lists,
+ * though Windows does not switch to it. That can take a moment, so this tries
+ * for up to 2 s. Else it sets the smallest listed mode that covers the size,
+ * which the viewer scales down and so stays sharp, else the largest. The list
+ * can hold an earlier viewer's size that the driver no longer takes, so it
+ * tries them in turn. Each keeps the colour depth, and the mode is kept for
+ * the user's next logon. It runs in the box user's desktop session, as the
+ * session SSH gives has another display.
  */
 export function setMode(width: number, height: number): string {
   return String.raw`$ErrorActionPreference = 'Stop'
 Add-Type @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
 public static class BbDisplay {
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
   public struct Mode {
@@ -139,24 +145,36 @@ public static class BbDisplay {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplaySettings(string device, int index, ref Mode mode);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string device, ref Mode mode, IntPtr window, int flags, IntPtr param);
   static long Area(Mode mode) { return (long)mode.Width * mode.Height; }
+  static int Set(Mode mode, int width, int height) {
+    mode.Width = width;
+    mode.Height = height;
+    mode.Fields = 0x80000 | 0x100000; // DM_PELSWIDTH | DM_PELSHEIGHT
+    return ChangeDisplaySettingsEx(null, ref mode, IntPtr.Zero, 1, IntPtr.Zero); // CDS_UPDATEREGISTRY
+  }
   public static string Fit(int width, int height) {
     var current = new Mode();
     current.Size = (short)Marshal.SizeOf(typeof(Mode));
     if (!EnumDisplaySettings(null, -1, ref current)) return "Windows gave no mode for the display.";
-    Mode fits = current, smallest = current;
-    bool fitting = false, any = false;
-    var mode = new Mode();
-    mode.Size = current.Size;
-    for (int i = 0; EnumDisplaySettings(null, i, ref mode); i++) {
-      if (mode.BitsPerPel != current.BitsPerPel) continue;
-      if (!any || Area(mode) < Area(smallest)) { smallest = mode; any = true; }
-      if (mode.Width <= width && mode.Height <= height && (!fitting || Area(mode) > Area(fits))) { fits = mode; fitting = true; }
+    if (current.Width == width && current.Height == height) return null;
+    for (var deadline = DateTime.UtcNow.AddSeconds(2); ; Thread.Sleep(250)) {
+      if (Set(current, width, height) == 0) return null;
+      if (DateTime.UtcNow > deadline) break;
     }
-    Mode chosen = fitting ? fits : smallest;
-    if (chosen.Width == current.Width && chosen.Height == current.Height) return null;
-    chosen.Fields = 0x80000 | 0x100000; // DM_PELSWIDTH | DM_PELSHEIGHT
-    int result = ChangeDisplaySettingsEx(null, ref chosen, IntPtr.Zero, 1, IntPtr.Zero); // CDS_UPDATEREGISTRY
-    return result == 0 ? null : "Windows refused the mode " + chosen.Width + "x" + chosen.Height + " with " + result + ".";
+    var modes = new List<Mode>();
+    var mode = current;
+    for (int i = 0; EnumDisplaySettings(null, i, ref mode); i++) if (mode.BitsPerPel == current.BitsPerPel) modes.Add(mode);
+    modes.Sort((a, b) => {
+      bool coversA = a.Width >= width && a.Height >= height, coversB = b.Width >= width && b.Height >= height;
+      if (coversA != coversB) return coversA ? -1 : 1;
+      return coversA ? Area(a).CompareTo(Area(b)) : Area(b).CompareTo(Area(a));
+    });
+    int result = -2; // DISP_CHANGE_BADMODE
+    foreach (var chosen in modes) {
+      if (chosen.Width == current.Width && chosen.Height == current.Height) return null;
+      result = Set(current, chosen.Width, chosen.Height);
+      if (result == 0) return null;
+    }
+    return "Windows refused " + width + "x" + height + " and the modes it lists, with " + result + ".";
   }
 }
 '@
@@ -802,8 +820,9 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /**
-   * Sets the desktop to the mode that fits `size`, through Windows itself
-   * (021), as the display driver takes only the modes Windows lists.
+   * Sets the desktop to `size`, or to the listed mode that best covers it,
+   * through Windows itself (021), as the display driver does not switch to
+   * a viewer's size.
    */
   async #resize(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
     const { width, height } = size;

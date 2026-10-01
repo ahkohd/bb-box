@@ -301,7 +301,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   );
 });
 
-test("the desktop resizes to the mode that fits, set by Windows in the box user's session, and gives Windows' reason when it cannot", async () => {
+test("the desktop resizes to the viewer's size, else to the listed mode that best covers it, set by Windows in the box user's session, and gives Windows' reason when it cannot", async () => {
   const { backend, ssh } = setup();
   const home = ssh.home("192.0.2.150");
   // A stand-in for PowerShell that keeps each desktop command, and exits as $HOME/exit says.
@@ -314,11 +314,12 @@ test("the desktop resizes to the mode that fits, set by Windows in the box user'
   assert.match(task, /\$bbTask\.Principal\.LogonType = 3\n/, "a task in the box user's session");
   assert.match(task, /\$bbClock\.ElapsedMilliseconds -ge 15000\)/, "that ends if it hangs");
   const run = Buffer.from(/FromBase64String\(''([A-Za-z0-9+\/=]+)''\)/.exec(task)![1]!, "base64").toString("utf8");
-  assert.match(run, /ChangeDisplaySettingsEx\(null, ref chosen, IntPtr\.Zero, 1, IntPtr\.Zero\)/, "keeps the mode for the next logon");
+  assert.match(run, /ChangeDisplaySettingsEx\(null, ref mode, IntPtr\.Zero, 1, IntPtr\.Zero\)/, "keeps the mode for the next logon");
+  assert.match(run, /DateTime\.UtcNow\.AddSeconds\(2\)/, "waits a moment for the driver to take the size");
   assert.match(run, /\n\$bbRefused = \[BbDisplay\]::Fit\(1500, 900\)\n/);
 
-  writeFileSync(join(home, "exit"), `echo "Windows refused the mode 1440x900 with -2." >&2; exit 1\n`);
-  await assert.rejects(desktop!.resize!({ width: 1500, height: 900 }), { message: "Windows could not set the desktop to 1500x900: Windows refused the mode 1440x900 with -2." });
+  writeFileSync(join(home, "exit"), `echo "Windows refused 1500x900 and the modes it lists, with -2." >&2; exit 1\n`);
+  await assert.rejects(desktop!.resize!({ width: 1500, height: 900 }), { message: "Windows could not set the desktop to 1500x900: Windows refused 1500x900 and the modes it lists, with -2." });
   writeFileSync(join(home, "exit"), `echo "bb-box: there is no desktop session to join: box is not logged in to the desktop." >&2; exit 69\n`);
   await assert.rejects(desktop!.resize!({ width: 1280, height: 800 }), /^Error: Windows could not set the desktop to 1280x800: bb-box: there is no desktop session to join/);
   writeFileSync(join(home, "exit"), "exit 3\n");
