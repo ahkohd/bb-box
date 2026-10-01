@@ -210,6 +210,17 @@ Most take `--json`.
 | `bb box sweep` | Runs the clean-up now. |
 | `bb box install-id` | Shows this install's ID, which it records on its guests. `--set <id>` takes back the ID it had before it lost its storage, once no box holds a guest. |
 
+## Your machines
+
+You can keep boxes of your own, as ordinary BB machines that no thread owns:
+they show in BB's machine list and new-thread picker under the name you give,
+and live until you remove them, whatever happens to threads. Add, stop and
+remove them in BB Box's settings, or with `bb box machines`, `bb box machines
+add <kind> [--name <name>]` and `bb box machines remove <name>`. Any kind that
+can become a BB machine works, desktops included. A machine a thread is
+working on is removed only when you confirm, or with `--force`. A spare box
+that someone starts a thread on from BB's picker becomes one of your machines.
+
 ## A thread on its own box
 
 In BB's new-thread screen, "New box" starts a thread on a box of its own: pick

@@ -10,7 +10,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { BoxError, Boxes, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
+import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, MAC_DESKTOP_EXITS, accessCheck, accessSetup, accessSetupMs, canRunInDesktop, command, envScript } from "../src/core/in-box.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
@@ -22,7 +22,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "claimable" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "recorded" | "reconnect"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -1138,9 +1138,9 @@ test("a claim takes only a ready, enrolled spare of the kind and size whose BB m
   const world = setup(
     {},
     {
-      claimable: async () => {
+      spareThread: async () => {
         if (usable instanceof Error) throw usable;
-        return usable;
+        return usable ? null : "thr_picker";
       },
       log: (line) => logs.push(line),
     },
@@ -1224,6 +1224,26 @@ test("a spare gives its room to a thread's box that finds none, and comes back o
   await world.boxes.idle();
   assert.equal((await world.boxes.list(SPARES))[0]?.enrol.state, "enrolled");
   assert.deepEqual(world.errors, []);
+});
+
+test("the sweep keeps your machines, and restores a lost one to you under its name, asking BB for no project (036)", async () => {
+  const projects: string[] = [];
+  const world = setup({}, { projectOf: async (threadId) => (projects.push(threadId), null) });
+  world.threads.set(OPERATOR, "ended");
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: OPERATOR, projectId: null, kind: "linux", name: "build-1" }));
+  await world.boxes.sweep();
+  await world.boxes.idle();
+  assert.deepEqual((await world.boxes.list(OPERATOR)).map((each) => each.id), [box.id], "BB's answer for its thread is never asked");
+
+  await world.kv.delete(`box/${OPERATOR}/${box.id}`);
+  await world.kv.delete(`index/${box.id}`);
+  assert.equal((await world.boxes.sweep()).adopted, 1);
+  await world.boxes.idle();
+  const restored = await world.boxes.find(box.id);
+  assert.equal(restored?.threadId, OPERATOR);
+  assert.equal(restored?.name, "build-1");
+  assert.equal(restored?.projectId, null);
+  assert.deepEqual(projects, []);
 });
 
 test("the sweep keeps spares, restores a lost one as a spare, and releases those no kind keeps or no claim can take (032)", async () => {

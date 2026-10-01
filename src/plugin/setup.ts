@@ -251,7 +251,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     enrol: (box, options) => enrolment.enrol(box, { since: options?.restored ? "restored" : "ready" }),
     unenrol: (box) => enrolment.unenrol(box),
     reconnect: (box) => enrolment.reconnect(box),
-    claimable: async (box) => !box.enrol.hostId || (await bb.sdk.threads.count({ hostId: box.enrol.hostId })).total === 0,
+    // Archived and deleted threads do not count: a spare whose machine had a thread once is still free.
+    spareThread: async (box) => (await api.threadsOn(box))[0]?.id ?? null,
     claimed: (box) => {
       // A claimed spare's commands need the project's variable names, as a new box's do.
       void names(box).catch(() => {});

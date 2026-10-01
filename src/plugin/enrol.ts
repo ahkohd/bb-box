@@ -30,7 +30,7 @@
 
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { describeError, machineName, type BoxRecord, type Boxes } from "../core/boxes.ts";
+import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from "../core/boxes.ts";
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 
@@ -269,7 +269,14 @@ export class Enrolment {
       reconcileCleanup: async () => ({ status: "removed" }),
       remove: async ({ resource }) => {
         const boxId = (resource as { boxId?: unknown }).boxId;
-        if (typeof boxId === "string") await this.#off(boxId);
+        if (typeof boxId !== "string") return { status: "removed" };
+        await this.#off(boxId);
+        // One of your machines lives as its BB machine (036): removing that in BB removes the box.
+        // Its machine is cleared first, so the release does not delete it again and wait on BB.
+        // A box already being released, as when you removed it in settings, is left to that release,
+        // which is waiting for this removal.
+        const box = await this.#deps.boxes.find(boxId);
+        if (box?.threadId === OPERATOR && box.state !== "releasing") await this.#deps.boxes.release(OPERATOR, box.id);
         return { status: "removed" };
       },
     };
