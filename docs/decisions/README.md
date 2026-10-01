@@ -40,3 +40,4 @@ that changes gets a new record that supersedes the old one.
 | [033](033-a-thread-can-start-on-a-new-box.md) | A thread can start on a new box, from BB's new-thread screen |
 | [034](034-a-working-thread-holds-its-box.md) | A box a thread is working on is released or stopped only when forced |
 | [035](035-a-terminal-has-its-pty-on-bbs-server.md) | A box's terminal has its PTY on BB's server, and the plugin keeps the shell |
+| [036](036-your-machines-are-boxes-you-own.md) | Your machines are boxes you own, kept as BB machines |

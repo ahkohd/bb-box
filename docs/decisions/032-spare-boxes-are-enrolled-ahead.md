@@ -2,7 +2,8 @@
 
 Status: accepted, 1 October 2026. Partly supersedes
 [014](014-enrol-through-machine-providers.md): warm boxes are not enrolled
-ahead.
+ahead. Extended by [036](036-your-machines-are-boxes-you-own.md): a spare
+that a thread starts on through BB's picker becomes yours.
 
 ## Context
 
