@@ -288,7 +288,7 @@ test("restoring the size sets the desktop back over a connection of its own", as
 });
 
 /** Shared control over a box whose viewers are plain records. */
-function control(options: { pause?: () => Promise<void>; staleMs?: number } = {}) {
+function control(options: { pause?: () => Promise<void>; staleMs?: number; reconnectMs?: number } = {}) {
   const events: string[] = [];
   const restores: unknown[] = [];
   const errors: string[] = [];
@@ -298,6 +298,7 @@ function control(options: { pause?: () => Promise<void>; staleMs?: number } = {}
     pause: options.pause,
     logError: (operation, error) => errors.push(`${operation}: ${String(error)}`),
     staleMs: options.staleMs,
+    reconnectMs: options.reconnectMs,
   });
   const connect = (viewer: string, box = "box1") => {
     const connection: ViewerConnection & { releases: number } = {
@@ -411,11 +412,18 @@ test("control goes back to the agent when the holder's viewer stays away", async
   await until("the agent to have control", () => value.view("box1").owner === "agent");
 });
 
-test("the box ending the holder's connection gives control back at once", async () => {
-  const { value, connect } = control();
+test("the box ending the holder's connection keeps control while the viewer connects again, then gives it back sooner than a viewer going (020)", async () => {
+  const { value, connect } = control({ staleMs: 60_000, reconnectMs: 30 });
   const a = connect("viewer-a");
   await value.take("box1", "viewer-a");
+
+  // The relay's connection to the box dropped, and the viewer tried again.
   value.detach("box1", a, "box");
+  const again = connect("viewer-a");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(value.view("box1"), { owner: "human", holder: "viewer-a" });
+
+  value.detach("box1", again, "box");
   await until("the agent to have control", () => value.view("box1").owner === "agent");
 });
 

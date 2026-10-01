@@ -146,6 +146,8 @@ export interface SetupOptions {
   readonly daemonParent?: string;
   /** How long a viewer holding control may be gone before the agent has it again. */
   readonly controlStaleMs?: number;
+  /** How long a viewer holding control has to connect again after the box ended its connection. */
+  readonly controlReconnectMs?: number;
   /** How long a terminal session stays with no tab showing it. */
   readonly terminalIdleMs?: number;
   /** How long an enrolment waits for a worker of BB's daemon with the thread's variables. */
@@ -322,7 +324,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     ...options.computer,
   });
   computer = computing;
-  const desktop = registerDesktop(bb, { boxes, notify, logError, staleMs: options.controlStaleMs, pause: (boxId) => computing.pause(boxId) });
+  const desktop = registerDesktop(bb, { boxes, notify, logError, staleMs: options.controlStaleMs, reconnectMs: options.controlReconnectMs, pause: (boxId) => computing.pause(boxId) });
   desktops = desktop;
   const terminal = registerTerminals(bb, { boxes, logError, idleMs: options.terminalIdleMs });
   terminals = terminal;

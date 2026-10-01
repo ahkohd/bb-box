@@ -52,7 +52,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; controlReconnectMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -273,6 +273,7 @@ async function start(
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
+    controlReconnectMs: options.controlReconnectMs,
   };
   const app = await setup(bb, setupOptions);
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
@@ -1607,8 +1608,8 @@ test("the backend resizes a desktop whose stream server cannot, one resize at a 
   await session.close();
 });
 
-test("the box ending the connection of the viewer with control gives control back, and the log says why (020)", async (t) => {
-  const { harness, app, world } = await start();
+test("the box ending the connection of the viewer with control keeps control while the viewer connects again, and the log says why (020)", async (t) => {
+  const { harness, app, world } = await start(undefined, { controlReconnectMs: 200 });
   t.after(() => harness.lifecycle.dispose());
   await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
   await app.boxes.idle();
@@ -1620,16 +1621,30 @@ test("the box ending the connection of the viewer with control gives control bac
     await session.receive(Uint8Array.of(1));
     return session;
   };
-  await open("viewer-two-0002");
+  const connections = world.backend!.rfb.connections;
   await open("viewer-one-0001");
+  await until("the holder's connection to the box", async () => connections.length === 1);
+  await open("viewer-two-0002");
+  await until("the watcher's connection to the box", async () => connections.length === 2);
+  const [holding, watching] = connections;
   await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer: "viewer-one-0001" });
   const warnings = () => harness.inspection.logEntries.filter((entry) => entry.level === "warn").map((entry) => entry.message);
-  const [watching, holding] = world.backend!.rfb.connections;
-  await watching!.end();
+  const owner = async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { box: { control: { owner: string } } }).box.control.owner;
   await holding!.end();
-  await until("control to go back", async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { box: { control: { owner: string } } }).box.control.owner === "agent");
-  await until("the log line", async () => warnings().length > 0);
-  assert.deepEqual(warnings(), [`Box ${box.name}'s desktop ended the connection of the viewer with control, so control goes back to the agent. It closed the connection.`]);
+  await until("the relay to see the end", async () => warnings().length === 1);
+  await open("viewer-one-0001");
+  await until("the viewer's new connection to the box", async () => connections.length === 3);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(await owner(), "human", "the viewer connected again in time");
+
+  await watching!.end();
+  const ended = Date.now();
+  await connections[2]!.end();
+  await until("control to go back", async () => (await owner()) === "agent");
+  assert.ok(Date.now() - ended < 3_000, "after the time the plugin was given, not the 5 s default");
+  const line = `Box ${box.name}'s desktop ended the connection of the viewer with control. It closed the connection. Control goes back to the agent unless the viewer connects again within 0.2 s.`;
+  await until("the log lines", async () => warnings().length === 2);
+  assert.deepEqual(warnings(), [line, line], "a watching viewer's end says nothing");
 });
 
 test("a reload while a person has control gives it back and sets the desktop's size back first (#139)", async (t) => {

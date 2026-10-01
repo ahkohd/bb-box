@@ -1013,8 +1013,9 @@ A box is a resource of its thread and gets what the thread's own machine has.
   any keys and buttons still held down, and sets the desktop back to the
   size it had while the agent had control. Control returns to the agent when
   you hand back, when your viewer has been gone for 60 s, when the box ends
-  the connection, or when the plugin restarts
-  ([008](decisions/008-shared-control.md)).
+  the connection and your viewer does not connect again within 5 s, or when
+  the plugin restarts ([008](decisions/008-shared-control.md)). The plugin
+  log says why the box ended it.
 - **Pausing the agent** happens in the plugin, not the box
   ([015](decisions/015-computer-use-through-cua-driver.md)). While you hold
   control, every computer tool refuses at once without reaching the box.

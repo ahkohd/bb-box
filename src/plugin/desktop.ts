@@ -6,7 +6,7 @@
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Boxes } from "../core/boxes.ts";
-import { Control, type ViewerConnection } from "../core/control.ts";
+import { Control, RECONNECT_MS, type ViewerConnection } from "../core/control.ts";
 import { RfbRelay, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Display } from "../transports/types.ts";
 
@@ -22,6 +22,8 @@ export interface DesktopDeps {
   pause?(boxId: string): Promise<void>;
   /** How long a holder's viewer may be gone before the agent has control again. */
   readonly staleMs?: number;
+  /** How long a holder's viewer has to connect again after the box ended its connection. */
+  readonly reconnectMs?: number;
 }
 
 export interface Desktops {
@@ -92,10 +94,12 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       .catch((error) => deps.logError("notify", error));
   };
   const resizes = new Resizes();
+  const reconnectMs = deps.reconnectMs ?? RECONNECT_MS;
   const control = new Control({
     changed,
     logError: deps.logError,
     staleMs: deps.staleMs,
+    reconnectMs,
     pause: deps.pause,
     async restore(boxId, size, screen) {
       const shown = await display(boxes, boxId);
@@ -140,12 +144,14 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             },
             onEnd: (by, error) => {
               relays.delete(relay!);
-              // Control goes back to the agent at once (020), so the log says why the viewer lost it.
+              // Control goes back to the agent unless the viewer connects again soon (020), so the log says why it may lose it.
               if (by === "box" && control.mayInput(boxId, viewer)) {
                 const why = error?.message ?? "It closed the connection.";
                 void boxes
                   .find(boxId)
-                  .then((box) => bb.log.warn(`Box ${box?.name ?? boxId}'s desktop ended the connection of the viewer with control, so control goes back to the agent. ${why}`))
+                  .then((box) =>
+                    bb.log.warn(`Box ${box?.name ?? boxId}'s desktop ended the connection of the viewer with control. ${why} Control goes back to the agent unless the viewer connects again within ${reconnectMs / 1000} s.`),
+                  )
                   .catch((caught) => deps.logError("log a desktop's end", caught));
               }
               control.detach(boxId, connection, by);
