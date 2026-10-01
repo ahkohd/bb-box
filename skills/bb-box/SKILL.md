@@ -117,8 +117,11 @@ A kind can keep spare boxes: boxes made and added to BB ahead, at the kind's
 default size, that no thread owns yet. An acquire of the kind at its default
 size takes a spare when there is one, so the box is ready, with the thread's
 access, at once, and bb-box makes another spare. Any other size makes a new
-box. BB lists a spare as a machine named "<name> (spare)", and the machine
-takes the box's name when a thread takes it.
+box. When no backend has room for a thread's box, bb-box releases a spare
+there to make room, as on a Mac, where a spare holds one of its two VM
+slots. Another spare is made once there is room. BB lists a spare as a
+machine named "<name> (spare)", and the machine takes the box's name when a
+thread takes it.
 
 ## Desktops
 

@@ -1150,6 +1150,38 @@ test("a spare released by hand is replaced at once, not at the next sweep (#129)
   assert.deepEqual(world.errors, []);
 });
 
+test("a spare gives its room to a thread's box that finds none, and comes back only when there is room (#120)", async () => {
+  const logs: string[] = [];
+  const world = setup({ maxGuests: 2 }, { log: (line) => logs.push(line) });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  assert.equal(spare?.enrol.state, "enrolled");
+  // No claim takes a linux spare for a desktop, so each desktop needs a guest of its own.
+  const first = await world.boxes.acquire({ threadId: "a", projectId: null, kind: "linux-desktop" });
+
+  const second = await world.boxes.acquire({ threadId: "b", projectId: null, kind: "linux-desktop" });
+  assert.ok(logs.includes(`Releasing spare box ${spare.name}: a thread's linux-desktop box needs its room.`));
+  assert.deepEqual(await world.boxes.list(SPARES), []);
+  assert.ok(world.unenrolled.includes(spare.enrol.hostId!));
+  assert.equal((await ready(world.boxes, second)).state, "ready");
+  await world.boxes.idle();
+
+  // With no spare left, a box that finds no room fails as before, and keeping spares takes no thread's room.
+  await assert.rejects(world.boxes.acquire({ threadId: "c", projectId: null, kind: "linux-desktop" }), (error: unknown) => error instanceof BoxError && error.code === "no_capacity");
+  await world.boxes.keepSpares();
+  assert.deepEqual(await world.boxes.list(SPARES), []);
+  assert.ok(logs.some((line) => line.startsWith("bb-box keeps 0 of 1 spare linux boxes for now: ")));
+  assert.equal((await world.boxes.list("a"))[0]?.state, "ready");
+
+  assert.equal(await world.boxes.release("a", first.name), null);
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  assert.equal((await world.boxes.list(SPARES))[0]?.enrol.state, "enrolled");
+  assert.deepEqual(world.errors, []);
+});
+
 test("the sweep keeps spares, restores a lost one as a spare, and releases those no kind keeps or no claim can take (032)", async () => {
   const world = setup();
   world.general = { ...world.general, spares: { linux: 2 } };
