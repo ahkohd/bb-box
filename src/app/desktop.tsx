@@ -342,7 +342,7 @@ function DesktopRow({ box, meta, onOpen, actions }: { box: BoxView; meta?: strin
         <Icon name={`${pluginId}/monitor`} className="size-4" aria-hidden />
       </span>
       <div className="min-w-0">
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
           <span className="truncate text-xs text-muted-foreground">{box.kindLabel}</span>
           <KindBadges gpu={box.gpu} forms={box.form ? [box.form] : []} />

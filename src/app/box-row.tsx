@@ -129,7 +129,7 @@ export function BoxRow({
           onClick={onToggle}
           className="block w-full min-w-0 cursor-pointer rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
-          <span className="flex min-w-0 items-center gap-2">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
             <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{box.kindLabel}</span>
             <KindBadges gpu={box.gpu} forms={box.form ? [box.form] : []} />
