@@ -4,19 +4,22 @@
 // known_hosts file the backend writes. A jump host is reached with the same
 // key and options. Every dial has a 2 s connect timeout and one attempt;
 // callers retry on their own 1 s loop. A box that stops answering without
-// closing the connection, as when it dies, ends it within about 15 s.
+// closing the connection, as when it dies, ends it within about 20 s; a box
+// that is busy for less, as near its memory limit, keeps its commands.
 //
 // With a directory for sockets, commands to one box share a connection, so
 // each command after the first skips SSH's handshake. bb-box starts the
 // shared connection itself, one at a time, and ssh keeps it in the
 // background until it has been idle for two minutes. bb-box stops using it
 // shortly before then, and never puts more than 8 commands on it at once;
-// sshd allows 10 sessions per connection. A command that exits with 255,
-// SSH's own failure, or times out stops new commands using the connection
-// it went through, and so does a connection whose socket has gone, as ssh
-// removes it when the connection ends, for example as the box restarts. A
-// probe always dials afresh, so it says whether the box answers; the ready
-// check opens the shared connection instead, for the commands that follow.
+// sshd allows 10 sessions per connection. A command waits for it to open no
+// longer than the command's own timeout, or until it is aborted, and then
+// dials alone. A command that exits with 255, SSH's own failure, or times
+// out stops new commands using the connection it went through, and so does
+// a connection whose socket has gone, as ssh removes it when the connection
+// ends, for example as the box restarts. A probe always dials afresh, so it
+// says whether the box answers; the ready check opens the shared connection
+// instead, for the commands that follow.
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -132,7 +135,7 @@ export class Ssh {
       "-o", "GlobalKnownHostsFile=/dev/null",
       "-o", "LogLevel=ERROR",
       "-o", "ServerAliveInterval=5",
-      "-o", "ServerAliveCountMax=2",
+      "-o", "ServerAliveCountMax=3",
       ...jump,
     ];
   }
@@ -146,7 +149,7 @@ export class Ssh {
   }
 
   /** A place on the box's shared connection, opening it first. Null dials alone. */
-  async #lease(access: SshAccess): Promise<Lease | null> {
+  async #lease(access: SshAccess, waitMs?: number, signal?: AbortSignal): Promise<Lease | null> {
     const dir = this.#options.shareDir;
     if (!dir || process.platform === "win32") return null;
     const options = this.options(access);
@@ -171,11 +174,28 @@ export class Ssh {
       shared.since = Date.now();
       if (failed) this.#retire(key, shared);
     };
-    if (!(await shared.opened)) {
+    if (!(await this.#opened(shared, waitMs, signal))) {
       finish(false);
       return null;
     }
     return { args: ["-o", "ControlMaster=no", "-o", `ControlPath=${shared.path}`], done: finish };
+  }
+
+  /** Whether `shared` opened within `waitMs`. A wait that ends sooner leaves it opening. */
+  #opened(shared: Shared, waitMs?: number, signal?: AbortSignal): Promise<boolean> {
+    if (!waitMs && !signal) return shared.opened;
+    return new Promise((resolve) => {
+      const done = (open: boolean) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", stop);
+        resolve(open);
+      };
+      const stop = () => done(false);
+      const timer = waitMs ? setTimeout(stop, waitMs) : undefined;
+      signal?.addEventListener("abort", stop, { once: true });
+      if (signal?.aborted) stop();
+      void shared.opened.then(done);
+    });
   }
 
   /** Starts a shared connection, which ssh keeps in the background once it is up. */
@@ -259,8 +279,13 @@ export class Ssh {
   }
 
   /** Runs `task` with a place on the box's shared connection, when there is one. */
-  async #leased<T>(access: SshAccess, task: (share: readonly string[]) => Promise<T>, failed: (result: T) => boolean): Promise<T> {
-    const lease = await this.#lease(access);
+  async #leased<T>(
+    access: SshAccess,
+    options: { timeoutMs?: number; signal?: AbortSignal },
+    task: (share: readonly string[]) => Promise<T>,
+    failed: (result: T) => boolean,
+  ): Promise<T> {
+    const lease = await this.#lease(access, options.timeoutMs, options.signal);
     try {
       const result = await task(lease?.args ?? []);
       lease?.done(failed(result));
@@ -295,22 +320,22 @@ export class Ssh {
 
   /** Runs `remoteCommand` in the box user's shell. It returns when that shell exits, even if it left something running. */
   run(access: SshAccess, remoteCommand: string, options: RunOptions = {}, os?: GuestOs): Promise<RunResult> {
-    return this.#leased(access, (share) => this.#line(access, os, share).run(remoteCommand, options), lost);
+    return this.#leased(access, options, (share) => this.#line(access, os, share).run(remoteCommand, options), lost);
   }
 
   /** Runs `remoteCommand` and passes its output on as it arrives. */
   stream(access: SshAccess, remoteCommand: string, options: StreamOptions, os?: GuestOs): Promise<{ exitCode: number | null; timedOut: boolean }> {
-    return this.#leased(access, (share) => this.#line(access, os, share).stream(remoteCommand, options), lost);
+    return this.#leased(access, options, (share) => this.#line(access, os, share).stream(remoteCommand, options), lost);
   }
 
   /** Writes `data` to `path` in the box, creating parent directories. */
   writeFile(access: SshAccess, path: string, data: Uint8Array, options: { mode?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
-    return this.#leased(access, (share) => this.#line(access, "linux", share).writeFile(path, data, options), () => false);
+    return this.#leased(access, options, (share) => this.#line(access, "linux", share).writeFile(path, data, options), () => false);
   }
 
   /** Reads `path` from the box. Fails when it is larger than `maxBytes`. */
   readFile(access: SshAccess, path: string, options: { maxBytes: number; timeoutMs?: number; signal?: AbortSignal }): Promise<Buffer> {
-    return this.#leased(access, (share) => this.#line(access, "linux", share).readFile(path, options), () => false);
+    return this.#leased(access, options, (share) => this.#line(access, "linux", share).readFile(path, options), () => false);
   }
 
   /** True when SSH answers and the shell runs. */

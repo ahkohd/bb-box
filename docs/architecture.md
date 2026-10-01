@@ -69,7 +69,7 @@ A backend declares its nature (virtual or real) and its kinds, and implements:
 | `capacity(kind, pending)` | whether one more box fits, with the limits of each host, and a message saying what is full |
 | `acquire(box, previous, hooks, signal)` | makes or claims a guest, starts it, and returns when its command transport answers, within the kind's `readyTimeoutMs` |
 | `release(guest, hooks)` | deletes a virtual guest, or resets a real machine and returns it to the pool |
-| `power(guest)` | `running`, `stopped` or `unknown`; null when the guest is gone |
+| `power(guest)` | `running`, `stopped` or `unknown` now, not from a listing that may lag; null when the guest is gone |
 | `start?`, `stop?` | only where the provider can; the panel and tools offer them only when present |
 | `held()` | every guest this install holds for boxes, with the owner recorded at the provider ([018](decisions/018-guests-name-their-install-and-box.md)) |
 | `stamp?(boxId, guest)` | records this install on the guest of a box from before install IDs, and returns the guest with its box ID |
@@ -241,13 +241,17 @@ known_hosts file ([016](decisions/016-changes-from-building-v1.md)).
   jump host. bb-box starts it with `ControlMaster=yes -N`, one at a time,
   and ssh keeps it until it has been idle for two minutes. bb-box stops
   using it 10 s before then, puts at most 8 commands on it at once, since
-  sshd allows 10, and dials alone beyond that. A command that exits with
-  255, or that the transport stops at its timeout, retires the connection;
-  after a connection cannot be made, commands dial alone for 5 s. ssh
-  removes the socket when the connection ends, as when the box restarts,
-  and a connection whose socket has gone is retired too. Keepalives every
-  5 s end a connection to a box that died without closing it within about
-  15 s. A probe always dials afresh, so it says whether the box answers.
+  sshd allows 10, and dials alone beyond that. A command waits for the
+  connection to open no longer than its own timeout, or until it is
+  aborted, and then dials alone. A command that exits with 255, or that the
+  transport stops at its timeout, retires the connection; after a
+  connection cannot be made, commands dial alone for 5 s. ssh removes the
+  socket when the connection ends, as when the box restarts, and a
+  connection whose socket has gone is retired too. Keepalives every 5 s end
+  a connection to a box that died without closing it within about 20 s. A
+  box too busy to answer for less, as one near its memory limit during a
+  big build, keeps its commands. A probe always dials afresh, so it says
+  whether the box answers.
   The ready check opens the shared connection instead, so the box's first
   commands, such as its enrolment's, skip the handshake. The backend closes
   a box's connections, retired ones too, before it stops or releases the

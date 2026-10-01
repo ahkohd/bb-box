@@ -58,6 +58,7 @@ export function fakeSsh(options: { share?: boolean } = {}) {
   mkdirSync(join(dir, "down"));
   mkdirSync(join(dir, "up-after"));
   mkdirSync(join(dir, "shared"));
+  mkdirSync(join(dir, "hold-share"));
   writeFileSync(join(dir, "log"), "");
   const ssh = new Ssh({ keyPath: "/nonexistent/key", binary: FAKE_SSH_BINARY, shareDir: options.share ? join(dir, "shared") : null });
   return {
@@ -66,6 +67,11 @@ export function fakeSsh(options: { share?: boolean } = {}) {
     home: (host: string) => join(dir, "home", host),
     down: (host: string) => writeFileSync(join(dir, "down", host), ""),
     upAfter: (host: string, dials: number) => writeFileSync(join(dir, "up-after", host), String(dials)),
+    /** Keeps a shared connection to `host` from opening until the returned function is called. */
+    holdShare: (host: string) => {
+      writeFileSync(join(dir, "hold-share", host), "");
+      return () => rmSync(join(dir, "hold-share", host));
+    },
     log: () =>
       readFileSync(join(dir, "log"), "utf8")
         .split("\n")

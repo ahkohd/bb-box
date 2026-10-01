@@ -117,7 +117,7 @@ const STEPS: readonly Step[] = [
     alongside: true,
     parts: [
       { end: "names", after: ["access"], label: "fetching the variable names" },
-      { end: "env", after: ["names"], label: "reaching the box and writing the env file" },
+      { end: "env", after: ["names"], label: "reaching the box and back" },
       { end: "accessed", after: ["env"], label: "running the script" },
     ],
   },
@@ -375,8 +375,9 @@ export class Enrolment {
     } finally {
       phases.mark("accessed");
     }
-    // The script timed itself by the box's clock; the rest of the time since
-    // the command was sent went on reaching the box and writing the env file.
+    // The script timed itself by the box's clock. The rest of the time since
+    // the command was sent went on the trip there and back, with writing the
+    // env file; it is shown before the script.
     const sent = phases.marks.get("names");
     if (scriptMs !== null && sent !== undefined) phases.mark("env", Math.max(sent, phases.marks.get("accessed")! - scriptMs));
   }

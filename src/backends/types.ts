@@ -301,7 +301,11 @@ export interface Backend {
    */
   release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void>;
 
-  /** Null when the guest no longer exists. */
+  /**
+   * The guest's power now, from the guest or its provider, not from a
+   * listing or cache that may lag: the sweep acts on it. Null when the guest
+   * no longer exists.
+   */
   power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null>;
   /**
    * Starts a stopped guest and waits until its command transport answers.
