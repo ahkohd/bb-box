@@ -214,8 +214,9 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
 ```
 
 - One row per kind, with its switch, its OS as its name, its badges
-  (Desktop, GPU, Docker inside, then what its boxes are on the backends
-  that offer it now: LXC, Docker, VM or Physical; see the panel design),
+  (Desktop, GPU, Docker inside, arm64, then what its boxes are on the
+  backends that offer it now: LXC, Docker, VM or Physical; see the panel
+  design),
   the backends offering it, the three presets (cores · memory; the
   default marked), the largest custom size, and the warm count.
 - Clicking a row opens its editor: three fields per preset (cores, memory

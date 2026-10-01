@@ -9,7 +9,7 @@ import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/p
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
-import { forgetLive } from "../src/app/common.tsx";
+import { forgetLive, isArm64Badge } from "../src/app/common.tsx";
 type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
@@ -190,6 +190,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     gpu: desktop,
     desktop,
     os: "linux",
+    arch: id.includes("arm64") ? "arm64" : "x86_64",
     features: id === "linux-docker" ? ["docker"] : [],
     enrol: true,
     spares: { target: 0, ready: 0, making: 0 },
@@ -346,8 +347,8 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
       },
     },
     kinds: [
-      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, os: "linux", features: [], drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
-      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, os: "linux", features: [], drivers: ["fake"], spares: { ready: 0, making: 0 } },
+      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
+      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], drivers: ["fake"], spares: { ready: 0, making: 0 } },
     ],
     drivers: [
       {
@@ -1268,4 +1269,16 @@ test("the panel shows the box this thread runs on first, without Release or Stop
   expect(await theirs.findByText(/Held by/)).toBeTruthy();
   expect(await theirs.findByRole("button", { name: "UI thread" })).toBeTruthy();
   expect(theirs.queryByText("Yours")).toBeNull();
+});
+
+test("an arm64 kind carries an arm64 badge, and macOS, always arm64, does not (040)", async () => {
+  expect(isArm64Badge("linux", "arm64")).toBe(true);
+  expect(isArm64Badge("linux", "x86_64")).toBe(false);
+  expect(isArm64Badge("macos", "arm64")).toBe(false);
+  const { handlers } = server([], { kinds: [...KINDS, kindView("linux-arm64", "Linux on arm64", "A Linux box on a Mac.", 2, false)] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const form = await screen.findByRole("radiogroup", { name: "Kind" });
+  expect(within(form).getAllByRole("radio").map((option) => option.textContent)).toEqual(["LinuxLXC", "LinuxDesktopGPULXC", "Linuxarm64LXC"]);
 });

@@ -11,7 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
-import { KindBadges, osName } from "./common.tsx";
+import { isArm64Badge, KindBadges, osName } from "./common.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -252,7 +252,7 @@ export function NewBox({
                     <span className="min-w-0">
                       <span className="block truncate text-xs text-foreground">{osName(candidate.os)}</span>
                       {/* Badges on a line of their own, so a kind with several never squeezes its name. */}
-                      <KindBadges desktop={candidate.desktop} gpu={candidate.gpu} docker={candidate.features.includes("docker")} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-1 flex flex-wrap" />
+                      <KindBadges desktop={candidate.desktop} gpu={candidate.gpu} docker={candidate.features.includes("docker")} arm64={isArm64Badge(candidate.os, candidate.arch)} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-1 flex flex-wrap" />
                     </span>
                     {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
                   </button>

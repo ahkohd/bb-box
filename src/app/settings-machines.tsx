@@ -21,7 +21,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { cn } from "@/lib/utils";
 import type { BoxResult, Contract, MachineEntry, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
-import { EmptyPanel, forThread, IconButton, KindBadges, message, Meta, osName, StatusDot, useLive, useNow } from "./common.tsx";
+import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, message, Meta, osName, StatusDot, useLive, useNow } from "./common.tsx";
 import { DESKTOP_PAGE, desktopSubPath } from "./desktop.tsx";
 import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { Section } from "./settings-fields.tsx";
@@ -160,7 +160,7 @@ function MachineRow({ entry, now, busy, onStop, onStart, onRemove }: { entry: Ma
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
           <span className="min-w-0 truncate text-xs text-muted-foreground">{osName(box.os)}</span>
-          <KindBadges desktop={box.desktop} gpu={box.gpu} docker={box.requires.includes("docker")} forms={box.form ? [box.form] : []} />
+          <KindBadges desktop={box.desktop} gpu={box.gpu} docker={box.requires.includes("docker")} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
         </span>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
           <StatusDot tone={status.tone} className="mt-[0.3rem]" />
