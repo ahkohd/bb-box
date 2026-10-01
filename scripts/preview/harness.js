@@ -151,6 +151,11 @@ root.className = slot.layout === "flush" ? "flush" : scene.slot === "desktops" ?
 const reactRoot = ReactDOMClient.createRoot(root);
 reactRoot.render(h(slot.component, scene.props ?? { threadId: THREAD, params: null }));
 await new Promise((resolve) => setTimeout(resolve, 300));
-if (scene.after) await scene.after(root);
+try {
+  if (scene.after) await scene.after(root);
+} catch (error) {
+  document.documentElement.dataset.error = String(error);
+  throw error;
+}
 await new Promise((resolve) => setTimeout(resolve, 400));
 document.documentElement.dataset.ready = "1";

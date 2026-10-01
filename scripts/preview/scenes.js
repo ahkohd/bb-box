@@ -185,7 +185,8 @@ export const scenes = {
   "panel-release": {
     slot: "boxes",
     chrome: boxesChrome,
-    height: 420,
+    width: 788,
+    height: 460,
     rpc: rpc([starting, desktop, stopped]),
     after: async (root) => {
       openMenu(root, "bold-heron actions");

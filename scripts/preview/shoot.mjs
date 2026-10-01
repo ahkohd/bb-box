@@ -68,6 +68,7 @@ let count = 0;
 for (const scene of SCENES) {
   if (only && !only.includes(scene)) continue;
   for (const theme of ["dark", "light"]) {
+    await page.send("Emulation.setDeviceMetricsOverride", { width: 1200, height: 1200, deviceScaleFactor: 2, mobile: false });
     await page.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/scripts/preview/index.html?${scene}-${theme}#${scene}&${theme}` });
     let ready = false;
     for (let tries = 0; tries < 150 && !ready; tries++) {
@@ -75,14 +76,16 @@ for (const scene of SCENES) {
       ready = await page.evaluate("document.documentElement.dataset.ready === '1'").catch(() => false);
     }
     if (!ready) {
-      console.error(`not ready: ${scene} ${theme}`);
+      console.error(`not ready: ${scene} ${theme}: ${await page.evaluate("document.documentElement.dataset.error ?? 'no error'").catch(() => "unknown")}`);
       continue;
     }
     await sleep(300);
     // The viewport is sized to the frame, so fixed overlays such as menus and
-    // popovers land where they would in BB, and the clip is the frame.
+    // popovers land where they would in BB, and the clip is the frame. It
+    // stays wider than BB's compact breakpoint, so menus and popovers keep
+    // their desktop form rather than becoming bottom sheets.
     const box = await page.evaluate("(() => { const r = document.getElementById('frame').getBoundingClientRect(); return { x: 0, y: 0, width: Math.ceil(r.width + 32), height: Math.ceil(Math.min(r.height + 32, 1600)) }; })()");
-    await page.send("Emulation.setDeviceMetricsOverride", { width: box.width, height: box.height, deviceScaleFactor: 2, mobile: false });
+    await page.send("Emulation.setDeviceMetricsOverride", { width: Math.max(box.width, 820), height: box.height, deviceScaleFactor: 2, mobile: false });
     await sleep(300);
     const shot = await page.send("Page.captureScreenshot", { format: "png", clip: { ...box, scale: 2 } });
     await writeFile(`${out}/${scene}-${theme}.png`, Buffer.from(shot.data, "base64"));
