@@ -127,10 +127,11 @@ test("a side with no onOpen refuses channels the other side opens", async (t) =>
 
 import { createServer as createHttpServer, request } from "node:http";
 import { connect, createServer, type Server } from "node:net";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { hostEntry } from "../src/host/entry.ts";
-import { endpointOf, type RelayWebSocket } from "../src/host/relay.ts";
+import { endpointOf, refusal, type RelayWebSocket } from "../src/host/relay.ts";
 import { RELAY_ROUTE, RelayHub, type RelaySocket } from "../src/relay/hub.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -294,6 +295,22 @@ test("a machine the relay cannot reach answers the docker CLI with the reason, a
   assert.ok(logs.some((line) => /closed: no box or connection used it for a while/.test(line)), logs.join("\n"));
 });
 
+test("Docker the machine cannot reach answers the docker CLI with the machine's reason, not EOF, and the hub logs it", async (t) => {
+  const missing = join(tempDir("relay-reset"), "docker.sock");
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  let hub!: RelayHub;
+  const { connectTo } = joined(() => hub);
+  const worker = experimental_createHostEntryHarness(hostEntry({ relay: { connect: connectTo, endpoint: async () => ({ path: missing }) } }));
+  t.after(() => worker.experimental_dispose());
+  const logs: string[] = [];
+  hub = new RelayHub({ dir: tempDir("relay-hub"), open: (_hostId, secret) => worker.experimental_call("relay", { secret, path: "/api/v1/plugins/bb-box/http/docker-relay" }), keep: async () => false, logError: () => {}, log: (line) => logs.push(line) });
+  t.after(() => hub.dispose());
+  const answer = await get((await hub.endpoint("host_nodocker")).slice("unix://".length), "/_ping");
+  const reason = `Docker at ${missing}: connect ENOENT ${missing}`;
+  assert.deepEqual([answer.status, answer.text], [503, `bb-box could not reach Docker on the BB machine: ${reason}`]);
+  assert.ok(logs.includes(`Docker on BB machine host_nodocker did not answer: ${reason}`), logs.join("\n"));
+});
+
 test("a worker socket that opens after bb-box stopped waiting is closed, so no relay keeps the worker's lease", async (t) => {
   const dir = tempDir("relay-late");
   const docker = await fakeDocker(join(dir, "docker.sock"));
@@ -318,6 +335,20 @@ test("the worker finds Docker as the docker CLI would", () => {
   assert.deepEqual(endpointOf("npipe:////./pipe/docker_engine"), { path: "\\\\.\\pipe\\docker_engine" });
   assert.deepEqual(endpointOf("tcp://127.0.0.1:2375"), { host: "127.0.0.1", port: 2375 });
   assert.equal(endpointOf("ssh://me@host"), null);
+});
+
+test("a Docker socket that refuses BB's daemon says to put its user in the socket's group and restart the daemon with it", () => {
+  const { username, uid } = userInfo();
+  const socket = { path: "/var/run/docker.sock" };
+  const denied = Object.assign(new Error("connect EACCES /var/run/docker.sock"), { code: "EACCES" });
+  assert.equal(
+    refusal(socket, denied, "linux"),
+    `${username} may not use Docker's socket /var/run/docker.sock. Add ${username} to its group, usually docker, then restart ${username}'s services so BB's daemon has the group: sudo systemctl restart user@${uid}.service.`,
+  );
+  assert.equal(refusal(socket, denied, "darwin"), `${username} may not use Docker's socket /var/run/docker.sock. Add ${username} to its group, usually docker, then restart BB's daemon.`);
+  assert.equal(refusal({ path: "\\\\.\\pipe\\docker_engine" }, denied, "win32"), null);
+  assert.equal(refusal({ host: "127.0.0.1", port: 2375 }, denied, "linux"), null);
+  assert.equal(refusal(socket, Object.assign(new Error("connect ENOENT /var/run/docker.sock"), { code: "ENOENT" }), "linux"), null);
 });
 
 test("a connection to a relay that went quiet asks BB first: it fails at once when the machine is offline, and gets a new relay when it is not; a worker's exit drops the relay", async (t) => {

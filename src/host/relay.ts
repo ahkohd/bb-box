@@ -6,6 +6,7 @@
 
 import { execFile } from "node:child_process";
 import { connect, type NetConnectOpts } from "node:net";
+import { userInfo } from "node:os";
 import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
 import { Mux, type Channel } from "../relay/mux.ts";
 
@@ -59,18 +60,34 @@ function describe(endpoint: DockerEndpoint): string {
   return "path" in endpoint ? endpoint.path : `${endpoint.host}:${endpoint.port}`;
 }
 
-/** Connects to Docker's endpoint and closes at once: whether it is there to relay to. */
-function reachable(endpoint: DockerEndpoint, timeoutMs = 3_000): Promise<string | null> {
+/**
+ * What to do when Docker's socket refused BB's daemon, as when its user is
+ * not in the socket's group, or was put in it after the daemon started.
+ * Null for any other failure.
+ */
+export function refusal(endpoint: DockerEndpoint, error: NodeJS.ErrnoException, platform: NodeJS.Platform = process.platform): string | null {
+  if (error.code !== "EACCES" || !("path" in endpoint) || platform === "win32") return null;
+  const { username, uid } = userInfo();
+  // A systemd user service gets its groups from the user's manager, so restarting the service alone keeps the old ones.
+  const restart = platform === "linux" ? `restart ${username}'s services so BB's daemon has the group: sudo systemctl restart user@${uid}.service` : "restart BB's daemon";
+  return `${username} may not use Docker's socket ${endpoint.path}. Add ${username} to its group, usually docker, then ${restart}.`;
+}
+
+/** Connects to Docker's endpoint and closes at once: whether it is there to relay to, and if not, why and whether it refused BB's daemon. */
+function reachable(endpoint: DockerEndpoint, timeoutMs = 3_000): Promise<{ reason: string; refused: boolean } | null> {
   return new Promise((resolve) => {
     const socket = connect(endpoint as NetConnectOpts);
-    const done = (reason: string | null) => {
+    const done = (failed: { reason: string; refused: boolean } | null) => {
       clearTimeout(timer);
       socket.destroy();
-      resolve(reason);
+      resolve(failed);
     };
-    const timer = setTimeout(() => done(`it did not answer at ${describe(endpoint)} within ${timeoutMs / 1000} s`), timeoutMs);
+    const timer = setTimeout(() => done({ reason: `it did not answer at ${describe(endpoint)} within ${timeoutMs / 1000} s`, refused: false }), timeoutMs);
     socket.once("connect", () => done(null));
-    socket.once("error", (error) => done(`${describe(endpoint)}: ${error.message}`));
+    socket.once("error", (error) => {
+      const refused = refusal(endpoint, error);
+      done({ reason: refused ?? `${describe(endpoint)}: ${error.message}`, refused: refused !== null });
+    });
   });
 }
 
@@ -79,7 +96,7 @@ export function relayHandlers(options: RelayOptions = {}) {
   const muxes = new Set<Mux>();
   const join = (channel: Channel, endpoint: DockerEndpoint) => {
     const socket = connect({ ...endpoint, allowHalfOpen: true } as NetConnectOpts);
-    socket.on("error", (error) => channel.destroy(new Error(`Docker at ${describe(endpoint)}: ${error.message}`)));
+    socket.on("error", (error) => channel.destroy(new Error(refusal(endpoint, error) ?? `Docker at ${describe(endpoint)}: ${error.message}`)));
     channel.on("error", () => socket.destroy());
     socket.pipe(channel).pipe(socket);
   };
@@ -92,8 +109,8 @@ export function relayHandlers(options: RelayOptions = {}) {
         } catch (error) {
           return { endpoint: "", found: false, reason: error instanceof Error ? error.message : String(error) };
         }
-        const reason = await reachable(endpoint);
-        return { endpoint: describe(endpoint), found: reason === null, reason };
+        const failed = await reachable(endpoint);
+        return { endpoint: describe(endpoint), found: failed === null, reason: failed?.reason ?? null, ...(failed?.refused ? { refused: true } : {}) };
       },
       relay: async ({ secret, path }: { secret: string; path: string }, context: ExperimentalHostRpcContext) => {
         const endpoint = await (options.endpoint ?? dockerEndpoint)();
