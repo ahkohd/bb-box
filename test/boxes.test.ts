@@ -1136,6 +1136,20 @@ test("a claim takes only a ready, enrolled spare of the kind and size whose BB m
   assert.deepEqual((await world.boxes.list(THREAD)).map((box) => box.name).sort(), [box.name, spare.name].sort());
 });
 
+test("a spare released by hand is replaced at once, not at the next sweep (#129)", async () => {
+  const world = setup();
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  assert.equal(spare?.enrol.state, "enrolled");
+
+  assert.equal(await world.boxes.release(SPARES, spare.name), null);
+  await until(async () => (await world.boxes.list(SPARES)).some((other) => other.id !== spare.id && other.enrol.state === "enrolled"));
+  assert.equal((await world.boxes.list(SPARES)).length, 1);
+  assert.deepEqual(world.errors, []);
+});
+
 test("the sweep keeps spares, restores a lost one as a spare, and releases those no kind keeps or no claim can take (032)", async () => {
   const world = setup();
   world.general = { ...world.general, spares: { linux: 2 } };
