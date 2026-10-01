@@ -40,17 +40,34 @@ Pin: origin "gb.archive.ubuntu.com"
 Pin-Priority: -1
 EOF
 rm -rf /var/lib/apt/lists/*
+# snapshot.ubuntu.com also has outages of a few minutes in which it refuses
+# connections, and the archive no longer serves a package's snapshot version
+# once the package has been updated there. So the download steps are retried
+# with growing waits; files already downloaded stay in apt's cache, so a
+# retry fetches only what is missing.
+apt_retry() {
+  local try
+  for try in 1 2 3 4 5; do
+    "$@" && return 0
+    [ "$try" = 5 ] && break
+    echo "baseline: '$*' failed (try $try of 5); retrying in $((try * 30)) s" >&2
+    sleep $((try * 30))
+  done
+  return 1
+}
 # A snapshot index that failed to download would leave only the archive's.
-apt-get update --error-on=any
+apt_retry apt-get update --error-on=any
 apt-get -s dist-upgrade \
   | awk '/^Inst / { from = $3; gsub(/[][]/, "", from); if ($3 !~ /^\[/) from = "-"; to = ($3 ~ /^\[/) ? $4 : $3; sub(/^\(/, "", to); print $2 "\t" from "\t" to }' \
   >"$build/apt-upgrades.tsv"
+apt_retry apt-get -y --download-only dist-upgrade
 apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade
 
 grep -v -e '^#' -e '^$' "$build/baseline-packages.txt" >"$build/packages.txt"
 printf '%s\n' "$@" >>"$build/packages.txt"
 sort -u -o "$build/packages.txt" "$build/packages.txt"
 sed -i '/^$/d' "$build/packages.txt"
+apt_retry xargs -a "$build/packages.txt" apt-get install -y --no-install-recommends --download-only
 xargs -a "$build/packages.txt" apt-get install -y --no-install-recommends
 while read -r package; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || {
