@@ -170,7 +170,7 @@ export function Badge({ children, tone = "muted", className }: { children: React
   return <span className={cn("shrink-0 rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-2xs leading-none", tone === "warn" ? "text-warning-text" : "text-subtle-foreground", className)}>{children}</span>;
 }
 
-/** What a kind or a box has beyond its label, as badges: GPU, then what its boxes are (LXC, Docker, VM, Physical). */
+/** What a kind or a box has beyond its label, as badges: GPU, then what its boxes are (LXC, Docker, VM, Physical). In a wrapping line they go under the name rather than squeeze it. */
 /** `ready`: a spare of the kind is ready, so a box of it comes at once (032). */
 export function KindBadges({ gpu, forms, ready = false, className }: { gpu: boolean; forms: readonly string[]; ready?: boolean; className?: string }) {
   if (!gpu && !forms.length && !ready) return null;

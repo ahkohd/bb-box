@@ -68,6 +68,11 @@ New box options and the desktop lists:
 
 Nothing else is a badge: "desktop" and "with Docker" are in the label, and
 the backend's name is in the row's details. Calm, not stacked.
+
+Badges never squeeze a name. In the New box options they sit on a line
+of their own under the label (the operator's annotation of 1 October 2026:
+Linux's four badges had left one letter of its name). In a row the title
+line wraps, so badges go under the name before the name would truncate.
 bb-box's own icon is a cube; BB has no cube, monitor, server or terminal glyph, so the
 plugin declares its four as SVGs (`bb.branding.experimental_icons`), drawn
 in the weight of BB's set.
@@ -108,7 +113,8 @@ tab (1 October 2026): one tab, one place for the thread's boxes.
   is after pressing the button.
 - **Row**: BB's resource row. A leading glyph (server or monitor), the name
   in `text-sm font-medium`, the kind label beside it in muted `text-xs`, its
-  badges, and a status line below in muted `text-xs`. Trailing: the row's quick actions
+  badges (wrapping under the name when the row is narrow), and a status line
+  below in muted `text-xs`. Trailing: the row's quick actions
   and its menu, always visible, since the panel is narrow and touch is
   common.
 - **Click** on the row (not on a button) opens its details under the status
@@ -196,9 +202,12 @@ small form:
 
 ```
 Kind:
-  (o) [=] Linux [LXC]
-  ( ) [#] Linux desktop [GPU] [LXC]
-  ( ) [#] Linux desktop [LXC]
+  (o) [=] Linux
+          [LXC] [Physical] [Docker] [Ready now]
+  ( ) [#] Linux desktop
+          [GPU] [LXC]
+  ( ) [#] Linux desktop
+          [LXC] [Docker]
 Size:
   [ Small ] [ Medium ] [ Large ] [ Custom ]
   2 cores · 4 GiB memory · base disk
@@ -212,8 +221,8 @@ The popover has no heading of its own: the button that opens it is named
 (a second annotation the same day). On a compact viewport the bottom sheet
 still carries the title "New box".
 
-- **Kind** is a list of options, each its glyph, label and badges and
-  nothing more (the operator found the descriptions noise, 1 October 2026;
+- **Kind** is a list of options, each its glyph, its label and, on a line
+  of its own under the label, its badges, and nothing more (the operator found the descriptions noise, 1 October 2026;
   they stay where agents read them, in `box_list` and the skill), chosen
   with a click or the arrow keys; the chosen one is
   highlighted with a check. The list comes from the kinds on offer, so a
@@ -221,7 +230,10 @@ still carries the title "New box".
 - **Size** follows decision 028: Small, Medium and Large are the kind's
   presets, and the kind's default preset is chosen at first; being chosen
   says so, so nothing calls it the default. The chosen size's words sit
-  under the control ("2 cores · 4 GiB memory · base disk"). Custom shows three fields, cores, memory in GiB and
+  under the control as a caption ("2 cores · 4 GiB memory · base disk"), in
+  BB's `text-xs` at 12 px and the subtle foreground, as are the custom
+  fields' labels; the operator asked for the caption at about 12 px
+  (1 October 2026). Custom shows three fields, cores, memory in GiB and
   disk in GiB, each with "up to" the kind's largest, starting from the
   preset the person was looking at; a field left empty takes the default
   preset's value, and an empty disk keeps the base disk. The form sends a

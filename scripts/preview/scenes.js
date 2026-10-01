@@ -104,7 +104,7 @@ function kind(id, label, description, cores, desktop, gpu, spares = { target: 0,
 
 export const KINDS = [
   // Linux keeps a spare, ready, so the chooser shows "Ready now".
-  kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false, { target: 1, ready: 1, making: 0 }),
+  { ...kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false, { target: 1, ready: 1, making: 0 }), forms: ["LXC", "Physical", "Docker"] },
   kind("linux-desktop", "Linux desktop", "A Linux desktop on the host's GPU, for computer use, browsers and app development.", 4, true, true),
   kind("linux-desktop-cpu", "Linux desktop", "A Linux desktop drawn by the CPU. Graphics are slower; nothing else changes.", 4, true, false),
 ];

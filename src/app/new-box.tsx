@@ -162,7 +162,7 @@ export function NewBox({
 
   const largest = kind?.largest ?? null;
   const field = (name: "cores" | "memoryGiB" | "diskGiB", label: string, limit: number | null) => (
-    <label className="flex min-w-0 flex-col gap-1 text-2xs text-muted-foreground">
+    <label className="flex min-w-0 flex-col gap-1 text-xs leading-snug text-subtle-foreground">
       <span>{label}</span>
       <Input
         inputMode="numeric"
@@ -217,14 +217,15 @@ export function NewBox({
                     tabIndex={selected ? 0 : -1}
                     onClick={() => chooseKind(candidate)}
                     className={cn(
-                      "grid w-full grid-cols-[1rem_minmax(0,1fr)_1rem] items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
+                      "grid w-full grid-cols-[1rem_minmax(0,1fr)_1rem] items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
                       selected && "bg-state-active",
                     )}
                   >
                     <Icon name={`${pluginId}/${candidate.desktop ? "monitor" : "server"}`} className="size-4 text-muted-foreground" aria-hidden />
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate text-xs text-foreground">{candidate.label}</span>
-                      <KindBadges gpu={candidate.gpu} forms={candidate.forms} ready={candidate.spares.ready > 0} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs text-foreground">{candidate.label}</span>
+                      {/* Badges on a line of their own, so a kind with several never squeezes its name. */}
+                      <KindBadges gpu={candidate.gpu} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-1 flex flex-wrap" />
                     </span>
                     {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
                   </button>
@@ -262,7 +263,7 @@ export function NewBox({
                 })}
               </div>
               {preset ? (
-                <p className="mt-1.5 text-xs text-muted-foreground">{sizeLine(preset)}</p>
+                <p className="mt-1.5 text-xs leading-snug text-subtle-foreground">{sizeLine(preset)}</p>
               ) : (
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {field("cores", "Cores", largest?.cores ?? null)}

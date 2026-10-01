@@ -5,7 +5,9 @@
 // say it is ready, and clips the screenshot to the frame.
 
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const out = process.argv[2] ?? "scripts/preview/out";
 const only = process.argv[3] ? process.argv[3].split(",") : null;
@@ -19,10 +21,13 @@ const DEBUG = 9222;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 await mkdir(out, { recursive: true });
 const server = spawn("python3", ["-m", "http.server", String(PORT), "--bind", "127.0.0.1"], { stdio: "ignore" });
-const chrome = spawn("google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", `--remote-debugging-port=${DEBUG}`, "--window-size=1200,1200", "about:blank"], { stdio: "ignore" });
+// A profile of its own, so a run killed half-way leaves nothing for the next to trip on.
+const profile = await mkdtemp(join(tmpdir(), "bb-box-preview-"));
+const chrome = spawn("google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", `--user-data-dir=${profile}`, `--remote-debugging-port=${DEBUG}`, "--window-size=1200,1200", "about:blank"], { stdio: "ignore" });
 process.on("exit", () => {
   server.kill();
   chrome.kill();
+  void rm(profile, { recursive: true, force: true });
 });
 for (let tries = 0; ; tries++) {
   try {

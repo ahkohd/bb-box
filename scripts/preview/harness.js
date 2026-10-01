@@ -121,11 +121,15 @@ const slots = { threadPanelActions: [], navPanels: [], settingsSections: [] };
 const pluginSdkApp = {
   definePluginApp(setup) {
     setup({
-      slots: {
-        threadPanelAction: (registration) => slots.threadPanelActions.push(registration),
-        navPanel: (registration) => slots.navPanels.push(registration),
-        settingsSection: (registration) => slots.settingsSections.push(registration),
-      },
+      // Any slot the app registers that the preview has no scene for is taken and ignored.
+      slots: new Proxy(
+        {
+          threadPanelAction: (registration) => slots.threadPanelActions.push(registration),
+          navPanel: (registration) => slots.navPanels.push(registration),
+          settingsSection: (registration) => slots.settingsSections.push(registration),
+        },
+        { get: (known, name) => known[name] ?? (() => {}) },
+      ),
       experimental_icons: { register() {} },
     });
     return slots;
