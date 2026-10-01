@@ -16,8 +16,8 @@ The operator asked for a page "to enable or disable stuff or set stuff up"
 
 ## Where configuration lives
 
-Decided with the architect (decision 029, which records the detail):
-configuration is one versioned
+Decided with the architect ([decision 029](../decisions/029-configuration-is-one-checked-document.md),
+which records the detail): configuration is one versioned
 document in the plugin's storage, written only through bb-box's RPC and
 CLI, and bb-box declares no BB settings once the document exists. BB's
 page for bb-box then shows only this page. Secrets live in the document
@@ -196,12 +196,20 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
 | kinds | Small · Medium · Large · Largest · Warm · default · Not offered: no backend has it |
 | off | Off stops new boxes. Boxes already made keep working. |
 
-## Until the document exists
+## As built
 
-The page is built against `config.*`. Until the core ships it, the settings
-section keeps BB's generic form above it and shows the Backends section
-read-only: state, problems, the guide link and the check. The Kinds and
-General sections appear with the document.
+The page is one settings section with three blocks, Backends, Kinds and
+General, titled as BB titles a plugin's sections. It reads `config.get` once
+and on each change signal, and writes with `config.apply` against the
+revision it read. A row's switch, a kind's switch and the general settings
+save at once, each as the saved document with that one change. A backend's
+setup area and a kind's editor hold their edits until Save, and send the
+saved document with that backend or kind replaced, so two open forms never
+overwrite each other. A stale revision reloads the page and says so; the
+open form keeps its edits. `config.check` with the backend's ID runs the
+doctor against the form without saving. The code is in
+`src/app/settings.tsx`, `settings-backends.tsx`, `settings-kinds.tsx`,
+`settings-fields.tsx` and the helpers in `config.ts`.
 
 ## A possible BB request
 

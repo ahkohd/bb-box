@@ -130,6 +130,113 @@ const DOCTOR = {
   ],
 };
 
+const sizeOf = (cores, memoryGiB, diskGiB = null) => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB });
+const DOCTOR_PROXMOX = {
+  ok: false,
+  summary: "Proxmox VE 9.2 on pve",
+  checks: [
+    { id: "proxmox.api", name: "Proxmox API", status: "ok", detail: "Proxmox VE 9.2 on pve.", fix: null },
+    { id: "proxmox.token", name: "Token rights", status: "ok", detail: "VM.Allocate, VM.Clone, VM.Config.*, VM.PowerMgmt on /pool/bbbox.", fix: null },
+    { id: "template.9101", name: "Template 9101", status: "fail", detail: "has no build tag, so warm boxes cannot be checked against it.", fix: "Run build.sh desktop again; it tags the template." },
+    { id: "memory", name: "Memory", status: "warn", detail: "pve has 6 GiB free; 4 GiB is kept back, so one Linux box fits.", fix: "Release a box, or lower the memory kept free." },
+    { id: "ssh", name: "SSH into a box", status: "skipped", detail: "skipped, since a template check failed.", fix: null },
+  ],
+  notes: ["Install this public key in the templates:\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB0Zk3Y7XkG0rvmP2tq1u8jq2QwKxH1tO6V6bFm5wQ4a bb-box"],
+};
+const field = (key, label, group, extra = {}) => ({ key, type: "string", label, group, default: "", ...extra });
+const DRIVERS = [
+  {
+    type: "proxmox-lxc",
+    label: "Proxmox LXC",
+    description: "Linux containers on a Proxmox VE host, with or without a desktop on its GPU.",
+    nature: "virtual",
+    kinds: ["linux", "linux-docker", "linux-desktop", "linux-desktop-cpu"],
+    fields: [
+      field("url", "API URL", "connection", { description: "For example https://192.0.2.10:8006, as the setup guide's token file gives it." }),
+      field("node", "Node", "connection", { description: "The node boxes run on. Leave empty on a single-node host." }),
+      field("tls-fingerprint", "TLS fingerprint", "connection", { description: "The SHA-256 fingerprint of the API's certificate, from the token file." }),
+      field("ca-certificate", "CA certificate", "connection", { experimental_multiline: true, description: "PEM certificate of the CA that signed the API's certificate, when there is no fingerprint." }),
+      field("token-id", "API token ID", "credentials", { description: "For example bbbox@pve!plugin." }),
+      field("token-secret", "API token secret", "credentials", { secret: true }),
+      field("ssh-private-key", "SSH private key", "credentials", { secret: true, description: "Leave empty and bb-box makes one and shows its public key, which the templates must then accept." }),
+      field("pool", "Resource pool", "boxes", { default: "bbbox", description: "Boxes are made in this pool." }),
+      field("linux-templates", "Linux templates", "boxes", { default: "9100", description: "VMIDs of the CT templates Linux boxes are linked clones of, separated by spaces." }),
+      field("desktop-templates", "GPU desktop templates", "boxes", { experimental_multiline: true, description: "One line per template: its VMID, a space and the ID of the GPU it carries." }),
+      field("desktop-cpu-templates", "CPU desktop templates", "boxes", { description: "VMIDs of the CPU-only desktop templates. Empty turns them off." }),
+      { key: "desktops-per-gpu", type: "number", label: "Desktops per GPU", group: "advanced", default: 0, description: "0 means no limit." },
+      field("bridge", "Network bridge", "advanced", { default: "vmbr200" }),
+      field("subnet", "Subnet", "advanced", { default: "10.200.0.0/24" }),
+      field("gateway", "Gateway", "advanced", { default: "10.200.0.1" }),
+      field("addresses", "Box addresses", "advanced", { default: "10.200.0.10-10.200.0.254" }),
+      { key: "vmid-first", type: "number", label: "First box VMID", group: "advanced", default: 9900 },
+      { key: "vmid-last", type: "number", label: "Last box VMID", group: "advanced", default: 9999 },
+      field("ssh-user", "SSH user", "advanced", { default: "box" }),
+      { key: "reserve-memory-mib", type: "number", label: "Memory kept free (MiB)", group: "advanced", default: 4096 },
+      { key: "reserve-disk-gib", type: "number", label: "Disk kept free (GiB)", group: "advanced", default: 50 },
+    ],
+    hostFields: [],
+    setup: { guide: "setup/proxmox-lxc/README.md", scripts: ["setup/proxmox-lxc/host/setup-host.sh", "setup/proxmox-lxc/host/setup-network.sh", "setup/proxmox-lxc/host/setup-token.sh", "setup/proxmox-lxc/template/build.sh"] },
+  },
+  {
+    type: "ssh-pool",
+    label: "SSH host pool",
+    description: "Your own machines, reached over SSH and reset between boxes.",
+    nature: "real",
+    kinds: ["linux"],
+    fields: [field("machines", "Machines", "boxes", { experimental_multiline: true, description: "One per line: a name, its address and the kinds it serves." }), field("host-keys", "Host keys", "boxes", { experimental_multiline: true }), field("ssh-private-key", "SSH private key", "credentials", { secret: true })],
+    hostFields: [],
+    setup: { guide: "setup/ssh-pool/README.md", scripts: ["setup/ssh-pool/setup.sh"] },
+  },
+  {
+    type: "tart",
+    label: "Tart",
+    description: "macOS VMs on your Macs, through Tart.",
+    nature: "virtual",
+    kinds: ["macos", "macos-desktop"],
+    fields: [field("ssh-private-key", "SSH private key", "credentials", { secret: true }), field("vm-user", "VM user", "advanced", { default: "admin" }), field("macos-image", "macOS image", "boxes", { default: "ghcr.io/cirruslabs/macos-sequoia-base:latest" })],
+    hostFields: [field("address", "Address", "connection", { description: "The Mac's address, with :port when SSH is not on 22." }), field("user", "User", "connection", { description: "The user bb-box logs in to the Mac as." }), field("host-keys", "Host keys", "connection", { experimental_multiline: true })],
+    setup: { guide: "setup/tart/README.md", scripts: ["setup/tart/setup-mac.sh"] },
+  },
+];
+const KIND_INFO = [
+  { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, drivers: ["proxmox-lxc", "ssh-pool"] },
+  { id: "linux-docker", label: "Linux with Docker", description: "A Linux box with Docker.", gpu: false, desktop: false, drivers: ["proxmox-lxc"] },
+  { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, drivers: ["proxmox-lxc"] },
+  { id: "linux-desktop-cpu", label: "Linux desktop (no GPU)", description: "A Linux desktop without a GPU.", gpu: false, desktop: true, drivers: ["proxmox-lxc"] },
+  { id: "macos", label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, drivers: ["tart"] },
+  { id: "macos-desktop", label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, drivers: ["tart"] },
+];
+const LINUX_SIZES = { enabled: true, presets: { small: sizeOf(2, 4), medium: sizeOf(4, 8), large: sizeOf(8, 16) }, default: "small", largest: sizeOf(16, 32, 256) };
+const DESKTOP_SIZES = { enabled: true, presets: { small: sizeOf(4, 8), medium: sizeOf(8, 16), large: sizeOf(16, 32) }, default: "small", largest: sizeOf(32, 64, 256) };
+function configState(options = {}) {
+  const document = options.document ?? {
+    schema: 1,
+    revision: 4,
+    backends: [
+      { id: "proxmox-lxc", type: "proxmox-lxc", enabled: true, fields: { url: "https://192.0.2.10:8006", node: "pve", "tls-fingerprint": "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89", "token-id": "bbbox@pve!plugin", "token-secret": { set: options.tokenSet ?? true }, "ssh-private-key": { set: true }, "linux-templates": "9800", "desktop-templates": "9801 GPU-0a1b2c3d" }, warm: { linux: 1, "linux-desktop": 1 } },
+      { id: "tart", type: "tart", enabled: false, fields: { "ssh-private-key": { set: false } }, hosts: [{ name: "studio", enabled: true, fields: { address: "192.0.2.20", user: "var" } }] },
+    ],
+    kinds: { "linux-desktop-cpu": { enabled: false }, linux: { default: "medium" } },
+    general: {},
+  };
+  const tokenSet = options.tokenSet ?? true;
+  return {
+    document,
+    revision: document.revision,
+    defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux" }, kinds: { linux: LINUX_SIZES, "linux-docker": LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
+    kinds: KIND_INFO,
+    drivers: DRIVERS,
+    backends: [
+      tokenSet
+        ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-docker", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 } }
+        : { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC", state: "misconfigured", problems: [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }], boxes: 0, kinds: [], doctor: null },
+      { id: "tart", type: "tart", label: "Tart", state: "off", problems: [], boxes: 0, kinds: [], doctor: null },
+    ],
+    problems: tokenSet ? [] : [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }],
+    migrated: { at: now - 3 * 3600_000, version: "0.2.0" },
+  };
+}
+
 function rpc(boxes, options = {}) {
   const find = (ref) => boxes.find((candidate) => candidate.id === ref) ?? null;
   return {
@@ -145,6 +252,9 @@ function rpc(boxes, options = {}) {
     handBack: ({ box: ref }) => ({ box: find(ref), error: null }),
     backends: () => BACKENDS,
     doctor: () => DOCTOR,
+    "config.get": () => configState(options.config ?? {}),
+    "config.check": ({ test }) => ({ problems: [], doctor: test === "proxmox-lxc" ? DOCTOR_PROXMOX : null }),
+    "config.apply": ({ draft, revision }) => ({ ok: true, state: configState({ ...options.config, document: { ...draft, revision: revision + 1 } }) }),
   };
 }
 
@@ -241,14 +351,24 @@ export const scenes = {
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop (no GPU)", state: "stopped" }]) },
   "desktops-page": { slot: "desktops", width: 900, props: { subPath: "" }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop (no GPU)", state: "stopped" }]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([]) },
-  "settings-checked": {
+  "settings-setup": {
+    slot: "settings",
+    width: 860,
+    props: {},
+    rpc: rpc([], { config: { tokenSet: false } }),
+    after: async (root) => {
+      [...root.querySelectorAll("button")].find((b) => b.textContent.trim() === "Set up")?.click();
+      await wait(300);
+    },
+  },
+  "settings-kind": {
     slot: "settings",
     width: 860,
     props: {},
     rpc: rpc([]),
     after: async (root) => {
-      click(root, "button", "Check the backends");
-      await wait(400);
+      [...root.querySelectorAll("button")].filter((b) => b.textContent.trim() === "Edit")[2]?.click();
+      await wait(300);
     },
   },
 };

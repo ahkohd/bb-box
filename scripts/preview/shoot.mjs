@@ -11,7 +11,7 @@ const out = process.argv[2] ?? "scripts/preview/out";
 const only = process.argv[3] ? process.argv[3].split(",") : null;
 const SCENES = [
   "panel-empty", "panel-nobackend", "panel-list", "panel-list-open", "panel-problems", "panel-chooser", "panel-chooser-custom", "panel-refused", "panel-menu", "panel-release",
-  "desktop-connecting", "desktop-stopped", "desktop-released", "desktop-chooser", "desktops-page", "settings", "settings-checked",
+  "desktop-connecting", "desktop-stopped", "desktop-released", "desktop-chooser", "desktops-page", "settings", "settings-setup", "settings-kind",
 ];
 const PORT = 8765;
 const DEBUG = 9222;

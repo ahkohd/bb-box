@@ -1,175 +1,240 @@
-// The Backends section of bb-box's settings page: each backend's state and
-// what it still needs, its setup guide, and the doctor's checks with their
-// fixes. The full page, with the backends' fields, kinds and sizes, follows
-// decision 029 and docs/design/settings.md once the core has config.*.
+// bb-box's settings page (029): the backends with their switches and setup,
+// the kinds with their sizes, and the general settings, all one checked
+// document the page reads with config.get and writes with config.apply.
+// The design is in docs/design/settings.md.
 
-import { experimental_Icon as Icon, UrlLink, useRpc } from "@get-bb/plugin-sdk/app";
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import type { DoctorCheck, DoctorReport } from "../backends/types.ts";
-import type { Contract } from "../plugin/contract.ts";
-import type { BackendView, DoctorView } from "../plugin/views.ts";
-import { EmptyPanel, message, Meta, relativeTime, StatusDot, useLive, type Tone } from "./common.tsx";
+import { useRpc } from "@get-bb/plugin-sdk/app";
+import { useState, type ReactNode } from "react";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import type { BackendConfig, ConfigDocument, Problem } from "../core/document.ts";
+import type { ConfigState, Contract } from "../plugin/contract.ts";
+import { EmptyPanel, message, relativeTime, useLive } from "./common.tsx";
+import { effectiveKind, kindChanges, withBackend, withGeneral, withKind } from "./config.ts";
+import { BackendForm, BackendRow, backendId, type BackendRowModel } from "./settings-backends.tsx";
+import { KindForm, KindRow, kindRowModel } from "./settings-kinds.tsx";
 
-/** Where the setup guides and scripts are read, as pages. */
-export const REPOSITORY_URL = "https://github.com/moonstead/bb-box/blob/main";
+const STALE = "Someone saved the configuration first. It has been reloaded; make your change again.";
 
-const CHECK_ICON: Record<DoctorCheck["status"], { icon: string; className: string }> = {
-  ok: { icon: "CircleCheck", className: "text-success" },
-  warn: { icon: "AlertTriangle", className: "text-warning" },
-  fail: { icon: "X", className: "text-destructive" },
-  skipped: { icon: "Minus", className: "text-subtle-foreground" },
-};
+/** What a write came to: saved, and the problems left, which refused it when it was not saved. */
+export interface Saved {
+  readonly saved: boolean;
+  readonly problems: readonly Problem[];
+}
 
-function Check({ check }: { check: DoctorCheck }) {
-  const { icon, className } = CHECK_ICON[check.status];
+/** A block of the page, titled as BB titles a plugin's settings sections. */
+function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <li className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-xs leading-snug">
-      <Icon name={icon} className={cn("mt-0.5 size-4", className)} aria-label={check.status} />
-      <div className="min-w-0">
-        <span className={cn(check.status === "skipped" ? "text-muted-foreground" : "text-foreground")}>{check.name}</span> <span className="text-muted-foreground">{check.detail}</span>
-        {check.fix && check.status !== "ok" ? <div className="text-muted-foreground">Fix: {check.fix}</div> : null}
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-xs font-medium text-foreground">{title}</h3>
+        {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
       </div>
-    </li>
+      <div className="rounded-lg border border-border bg-card px-4 py-3.5">
+        <div className="divide-y divide-border">{children}</div>
+      </div>
+    </section>
   );
 }
 
-function Report({ report }: { report: DoctorReport }) {
+function GeneralRow({ label, description, children, problem }: { label: string; description?: string; children: ReactNode; problem?: string | null }) {
   return (
-    <ul className="mt-3 space-y-1.5">
-      {report.checks.map((check) => (
-        <Check key={check.id} check={check} />
-      ))}
-      {report.notes.map((note) => (
-        <li key={note} className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2 text-xs leading-snug">
-          <Icon name="Info" className="mt-0.5 size-4 text-muted-foreground" aria-hidden />
-          <pre className="min-w-0 whitespace-pre-wrap break-all rounded-md bg-surface-recessed px-2 py-1 font-mono text-2xs text-foreground">{note}</pre>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function stateOf(backend: BackendView, report: DoctorReport | undefined): { tone: Tone; words: string } {
-  if (backend.state === "off") return { tone: "off", words: "Off" };
-  if (backend.state === "misconfigured") return { tone: "warn", words: "Needs setting up" };
-  if (report && !report.ok) return { tone: "warn", words: "Needs attention" };
-  return { tone: "ok", words: "Ready" };
-}
-
-function BackendRow({ backend, report, checkedAt, now }: { backend: BackendView; report: DoctorReport | undefined; checkedAt: number | null; now: number }) {
-  const { tone, words } = stateOf(backend, report);
-  const guide = backend.setup.guide ? `${REPOSITORY_URL}/${backend.setup.guide}` : null;
-  return (
-    <div className="py-3 first:pt-0 last:pb-0">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-foreground">{backend.label}</p>
-          <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-            <StatusDot tone={tone} className="mt-[0.3rem]" />
-            <Meta
-              items={[
-                <span key="state" className={cn(tone === "warn" && "text-warning-text")}>
-                  {words}
-                </span>,
-                backend.state === "misconfigured" ? backend.problems[0] : null,
-                report?.summary,
-                checkedAt !== null ? `checked ${relativeTime(checkedAt, now)}` : null,
-              ]}
-            />
-          </div>
-        </div>
+    <div className="flex items-start justify-between gap-5 py-3 first:pt-0 last:pb-0">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-foreground">{label}</p>
+        {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
+        {problem ? (
+          <p role="alert" className="mt-0.5 text-xs text-destructive-text">
+            {problem}
+          </p>
+        ) : null}
       </div>
-      {backend.state === "misconfigured" && backend.problems.length > 1 ? (
-        <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-warning-text">
-          {backend.problems.slice(1).map((problem) => (
-            <li key={problem}>{problem}</li>
-          ))}
-        </ul>
-      ) : null}
-      {backend.state !== "active" && guide ? (
-        <p className="mt-2 text-xs leading-snug text-muted-foreground">
-          Follow the{" "}
-          <UrlLink href={guide} className="text-foreground underline underline-offset-2">
-            {backend.label} setup guide
-          </UrlLink>
-          {backend.setup.scripts.length ? (
-            <>
-              . It runs{" "}
-              {backend.setup.scripts.map((script, index) => (
-                <span key={script}>
-                  {index > 0 ? (index === backend.setup.scripts.length - 1 ? " and " : ", ") : ""}
-                  <UrlLink href={`${REPOSITORY_URL}/${script}`} className="text-foreground underline underline-offset-2">
-                    {script.split("/").pop()}
-                  </UrlLink>
-                </span>
-              ))}
-              , in that order.
-            </>
-          ) : (
-            "."
-          )}
-        </p>
-      ) : null}
-      {report ? <Report report={report} /> : null}
+      <div className="flex shrink-0 items-center">{children}</div>
     </div>
   );
 }
 
 export function SettingsSection() {
   const rpc = useRpc<Contract>();
-  const { value: backends, error } = useLive<BackendView[]>("backends", () => rpc.call("backends"), () => true);
-  const [doctor, setDoctor] = useState<{ view: DoctorView; at: number } | null>(null);
-  const [checking, setChecking] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  const check = async () => {
-    setChecking(true);
+  const { value: state, error, refresh } = useLive<ConfigState>("config", () => rpc.call("config.get"), () => true);
+  const [openBackend, setOpenBackend] = useState<string | null>(null);
+  const [openKind, setOpenKind] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [boxesPerThread, setBoxesPerThread] = useState<string | null>(null);
+
+  /**
+   * Saves a document as the whole configuration. `saved` with problems means
+   * it was saved anyway: a backend that is off and has no boxes may be saved
+   * part way, and the problems say what is still missing.
+   */
+  const apply = async (draft: ConfigDocument): Promise<Saved> => {
+    if (!state) return { saved: false, problems: [] };
     try {
-      setDoctor({ view: await rpc.call("doctor"), at: Date.now() });
-      setProblem(null);
+      const result = await rpc.call("config.apply", { draft, revision: state.revision });
+      if (result.ok) {
+        setNotice(null);
+        await refresh();
+        return { saved: true, problems: result.problems };
+      }
+      if (result.reason === "revision") {
+        setNotice(STALE);
+        await refresh();
+        return { saved: false, problems: [{ path: "", message: STALE }] };
+      }
+      return { saved: false, problems: result.problems };
     } catch (caught) {
-      setProblem(message(caught));
-    } finally {
-      setChecking(false);
+      return { saved: false, problems: [{ path: "", message: message(caught) }] };
     }
   };
-  const now = Date.now();
-  // A section is titled with the live backend's label, "Proxmox LXC on pve",
-  // while the row has the driver's, "Proxmox LXC"; a misconfigured backend's
-  // section has the driver's. Both start with the driver's label.
-  const reportOf = (label: string) =>
-    (doctor?.view.sections.find((section) => section.title === label) ?? doctor?.view.sections.find((section) => section.title.startsWith(`${label} `)))?.report;
-  const kinds = doctor?.view.sections.find((section) => section.title === "Kinds")?.report;
+  /** A change applied at once, such as a switch; a refusal shows at the top of the page. */
+  const applyNow = async (key: string, draft: ConfigDocument): Promise<void> => {
+    setBusy(key);
+    try {
+      const { saved, problems } = await apply(draft);
+      setNotice(!saved && problems.length ? problems.map((problem) => problem.message).join(" ") : null);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (error) {
+    return <EmptyPanel role="alert">{error}</EmptyPanel>;
+  }
+  if (!state) return null;
+
+  const { document } = state;
+  const backends: BackendRowModel[] = [
+    ...document.backends.map((config) => ({
+      driver: state.drivers.find((driver) => driver.type === config.type)!,
+      config,
+      state: state.backends.find((candidate) => candidate.id === config.id) ?? null,
+      problems: state.problems.filter((problem) => problem.path === `backends.${config.id}` || problem.path.startsWith(`backends.${config.id}.`)),
+    })),
+    ...state.drivers.filter((driver) => !document.backends.some((config) => config.type === driver.type)).map((driver) => ({ driver, config: null, state: null, problems: [] })),
+  ].filter((model) => model.driver);
+  const general = { ...state.defaults.general, ...document.general };
+  const kindsOn = state.kinds.filter((kind) => effectiveKind(state, kind.id).enabled);
+
   return (
-    <div className="space-y-3">
-      {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-      {backends ? (
-        <div className="rounded-lg border border-border bg-card px-4 py-3.5">
-          <div className="divide-y divide-border">
-            {backends.map((backend) => (
-              <BackendRow key={backend.type} backend={backend} report={reportOf(backend.label)} checkedAt={doctor?.at ?? null} now={now} />
-            ))}
-            {kinds ? (
-              <div className="py-3 last:pb-0">
-                <p className="text-sm font-medium text-foreground">Kinds</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{kinds.summary}</p>
-                <Report report={kinds} />
-              </div>
-            ) : null}
-          </div>
-        </div>
+    <div className="space-y-6">
+      {notice ? (
+        <p role="alert" className="rounded-md border border-warning/40 bg-surface-recessed px-3 py-2 text-xs leading-snug text-warning-text">
+          {notice}
+        </p>
       ) : null}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" variant="outline" size="sm" disabled={checking || !backends?.length} onClick={() => void check()}>
-          {checking ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-          {checking ? "Checking…" : "Check the backends"}
-        </Button>
-        <span className="text-xs text-muted-foreground">Checks each backend's settings, host and templates. It changes nothing.</span>
-      </div>
-      {problem ? (
-        <p role="alert" className="text-xs text-destructive-text">
-          {problem}
+      <Section title="Backends" description="Where boxes come from. Turn one on and set it up; the check says what is still missing.">
+        {backends.map((model) => {
+          const id = backendId(model);
+          return (
+            <BackendRow
+              key={id}
+              model={model}
+              open={openBackend === id}
+              onToggle={() => setOpenBackend((current) => (current === id ? null : id))}
+              switching={busy === id}
+              onSwitch={(on) => {
+                const entry: BackendConfig = model.config ?? { id, type: model.driver.type, enabled: false, fields: {} };
+                if (!model.config && on) {
+                  // Nothing is set yet, so the switch opens the setup instead.
+                  setOpenBackend(id);
+                  return;
+                }
+                void applyNow(id, withBackend(document, { ...entry, enabled: on })).then(() => {
+                  if (on && (model.state?.state === "misconfigured" || model.problems.length)) setOpenBackend(id);
+                });
+              }}
+            >
+              <BackendForm
+                key={`${id}-${state.revision}`}
+                model={model}
+                onSave={(config) => apply(withBackend(document, config))}
+                onCheck={async (config) => {
+                  try {
+                    return await rpc.call("config.check", { draft: withBackend(document, config), test: config.id });
+                  } catch (caught) {
+                    return { problems: [{ path: `backends.${config.id}`, message: message(caught) }], doctor: null };
+                  }
+                }}
+                onClose={() => setOpenBackend(null)}
+              />
+            </BackendRow>
+          );
+        })}
+      </Section>
+      <Section title="Kinds" description="What a thread can ask for. A kind is offered when it is on and a backend that is on has it.">
+        {state.kinds.map((info) => {
+          const sizes = effectiveKind(state, info.id);
+          const model = kindRowModel(state, info, sizes);
+          return (
+            <KindRow
+              key={info.id}
+              model={model}
+              open={openKind === info.id}
+              onToggle={() => setOpenKind((current) => (current === info.id ? null : info.id))}
+              switching={busy === `kind:${info.id}`}
+              onSwitch={(on) => void applyNow(`kind:${info.id}`, withKind(document, info.id, kindChanges(state, info.id, { ...sizes, enabled: on })))}
+            >
+              <KindForm
+                key={`${info.id}-${state.revision}`}
+                model={model}
+                onSave={(edit) => {
+                  let draft = withKind(document, info.id, kindChanges(state, info.id, edit.sizes));
+                  for (const [backendId, count] of Object.entries(edit.warm)) {
+                    const backend = draft.backends.find((candidate) => candidate.id === backendId);
+                    if (!backend) continue;
+                    const warm = { ...backend.warm };
+                    if (count > 0) warm[info.id] = count;
+                    else delete warm[info.id];
+                    draft = withBackend(draft, { ...backend, ...(Object.keys(warm).length ? { warm } : { warm: undefined }) });
+                  }
+                  return apply(draft);
+                }}
+                onClose={() => setOpenKind(null)}
+              />
+            </KindRow>
+          );
+        })}
+      </Section>
+      <Section title="General">
+        <GeneralRow label="Default kind" description="What a thread gets when it does not say." problem={state.problems.find((problem) => problem.path === "general.defaultKind")?.message}>
+          <Select value={general.defaultKind} onValueChange={(kind) => void applyNow("general", withGeneral(document, { defaultKind: kind === state.defaults.general.defaultKind ? undefined : kind }))}>
+            <SelectTrigger className="h-8 w-48 text-xs" aria-label="Default kind">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(kindsOn.some((kind) => kind.id === general.defaultKind) ? kindsOn : [...kindsOn, ...state.kinds.filter((kind) => kind.id === general.defaultKind)]).map((kind) => (
+                <SelectItem key={kind.id} value={kind.id} className="text-xs">
+                  {kind.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </GeneralRow>
+        <GeneralRow label="Boxes per thread" description="The most one thread may hold. 0 means no limit; a backend still refuses a box it has no room for." problem={state.problems.find((problem) => problem.path === "general.boxesPerThread")?.message}>
+          <Input
+            className="h-8 w-20 text-xs"
+            inputMode="numeric"
+            aria-label="Boxes per thread"
+            value={boxesPerThread ?? String(general.boxesPerThread)}
+            onChange={(event) => setBoxesPerThread(event.target.value)}
+            onBlur={() => {
+              if (boxesPerThread === null) return;
+              const count = Number(boxesPerThread.trim() || "0");
+              setBoxesPerThread(null);
+              if (!Number.isFinite(count) || count === general.boxesPerThread) return;
+              void applyNow("general", withGeneral(document, { boxesPerThread: count === state.defaults.general.boxesPerThread ? undefined : count }));
+            }}
+          />
+        </GeneralRow>
+        <GeneralRow label="Enrol boxes as BB machines" description="A ready box joins BB, so threads and terminals can use it and it gets the thread's credentials.">
+          <Switch aria-label="Enrol boxes as BB machines" checked={general.enrol} disabled={busy === "general"} onCheckedChange={(enrol) => void applyNow("general", withGeneral(document, { enrol: enrol === state.defaults.general.enrol ? undefined : enrol }))} />
+        </GeneralRow>
+      </Section>
+      {state.migrated ? (
+        <p className="text-xs leading-snug text-subtle-foreground/75">
+          bb-box moved its settings from BB into this configuration {relativeTime(state.migrated.at, Date.now())}, and kept a copy; <code className="font-mono">bb box config migrated</code> shows it.
         </p>
       ) : null}
     </div>
