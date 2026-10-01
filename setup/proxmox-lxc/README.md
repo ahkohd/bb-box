@@ -350,6 +350,8 @@ separation, and the role `BBBoxPlugin` with only what the plugin uses:
 | VM.Config.CPU, VM.Config.Memory, VM.Config.Disk | cores, memory, disk size |
 | VM.Config.Network | the box's address on `net0` |
 | VM.Config.Options | description, tags, and clearing the protection a clone inherits |
+| VM.Config.HWType | a Windows box's SMBIOS serial, which carries its address (Proxmox QEMU) |
+| VM.Console | a Windows box's desktop, through the API's VNC proxy (Proxmox QEMU) |
 | VM.PowerMgmt | start and stop |
 | VM.Audit, Pool.Audit | status, config and the pool's members |
 
@@ -359,8 +361,9 @@ network need, and `Sys.Audit` on `/nodes/<node>` (a role named after the API
 role with `-node` added), so the capacity guard and `doctor` can read the
 node's memory, disk and network. With privilege separation the token has the intersection of
 its own ACLs and its user's, so both get the same ones. The token cannot
-touch guests outside the pool, add devices, or set container features other
-than nesting.
+touch guests outside the pool, pass host devices through, or set container
+features other than nesting. Run the script again after an update that adds
+a privilege: it changes the role in place and keeps the token.
 
 The token is written to `BBBOX_TOKEN_FILE` (mode 0600) with the API URL,
 node and the SHA-256 fingerprint of the host's certificate. The script never
