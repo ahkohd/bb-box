@@ -1041,8 +1041,10 @@ export class ProxmoxLxcBackend implements Backend {
 
   /**
    * The build ID of `template` as it is now: null without one, undefined
-   * while it is away. From `guests` when the template is in the pool, which
-   * the setup guide's templates are; otherwise read on its own.
+   * while it is missing or not yet a template. From `guests` when the
+   * template is in the pool, which the setup guide's templates are;
+   * otherwise read on its own. A lock, as during a backup, changes nothing:
+   * its warm guests are still clones of it.
    */
   async #buildOf(api: Proxmox, guests: readonly PoolGuest[], template: number, signal?: AbortSignal): Promise<string | null | undefined> {
     const listed = guests.find((guest) => guest.vmid === template);
@@ -1054,7 +1056,7 @@ export class ProxmoxLxcBackend implements Backend {
       if (error instanceof ProxmoxError && (error.notFound || error.forbidden)) return undefined;
       throw error;
     }
-    return isTemplate(config) && config.lock === undefined ? buildFromTags(parseTags(config.tags)) : undefined;
+    return isTemplate(config) ? buildFromTags(parseTags(config.tags)) : undefined;
   }
 
   /** Retags a warm guest for its box. The guest keeps running. */
