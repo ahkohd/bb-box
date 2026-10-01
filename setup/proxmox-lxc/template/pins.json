@@ -1,11 +1,12 @@
 {
-  "schema": 2,
+  "schema": 3,
   "resolvedAt": "2026-09-26T06:16:54.911Z",
   "aptSnapshot": "20260926T060000Z",
   "tools": [
     {
       "name": "node",
       "version": "24.21.0",
+      "arch": "x86_64",
       "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
       "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6",
       "source": "SHASUMS256.txt signed by 5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
@@ -21,6 +22,7 @@
     {
       "name": "gh",
       "version": "2.101.0",
+      "arch": "x86_64",
       "url": "https://github.com/cli/cli/releases/download/v2.101.0/gh_2.101.0_linux_amd64.tar.gz",
       "sha256": "9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8",
       "source": "GitHub release asset digest for cli/cli v2.101.0",
@@ -33,6 +35,7 @@
     {
       "name": "ripgrep",
       "version": "15.2.0",
+      "arch": "x86_64",
       "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
       "sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
       "source": "GitHub release asset digest for BurntSushi/ripgrep 15.2.0",
@@ -45,6 +48,7 @@
     {
       "name": "fd",
       "version": "10.5.0",
+      "arch": "x86_64",
       "url": "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-x86_64-unknown-linux-musl.tar.gz",
       "sha256": "761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7",
       "source": "GitHub release asset digest for sharkdp/fd v10.5.0",
@@ -57,6 +61,7 @@
     {
       "name": "jj",
       "version": "0.45.1",
+      "arch": "x86_64",
       "url": "https://github.com/jj-vcs/jj/releases/download/v0.45.1/jj-v0.45.1-x86_64-unknown-linux-musl.tar.gz",
       "sha256": "f35438350b5d61963aac5dd74ede510b31d6b9690769d1a6268cf058cc825f72",
       "source": "GitHub release asset digest for jj-vcs/jj v0.45.1",
@@ -69,6 +74,7 @@
     {
       "name": "uv",
       "version": "0.12.21",
+      "arch": "x86_64",
       "url": "https://github.com/astral-sh/uv/releases/download/0.12.21/uv-x86_64-unknown-linux-musl.tar.gz",
       "sha256": "d69d543a55ec9cdf9d3d9f2648b0a161847e3dbddc477e3be6b5813a6d46f639",
       "source": "GitHub release asset digest for astral-sh/uv 0.12.21",
@@ -82,6 +88,7 @@
     {
       "name": "claude-code",
       "version": "2.1.283",
+      "arch": "x86_64",
       "url": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.283/linux-x64/claude",
       "sha256": "1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2",
       "source": "latest channel; manifest.json signed by 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
@@ -95,6 +102,7 @@
     {
       "name": "codex",
       "version": "0.157.1",
+      "arch": "x86_64",
       "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-x86_64-unknown-linux-musl.tar.gz",
       "sha256": "e98c1e8e028e8137fa2d2415c82ec58e7b3701a627e3554aace5b3ca31454af2",
       "source": "GitHub release asset digest for openai/codex rust-v0.157.1",
@@ -107,8 +115,131 @@
     {
       "name": "pi",
       "version": "0.87.1",
+      "arch": "x86_64",
       "url": "https://github.com/earendil-works/pi/releases/download/v0.87.1/pi-linux-x64.tar.gz",
       "sha256": "80d78dd62d50049a006b981d994c61255bcc10e730b0c278d4ea0a755909764c",
+      "source": "GitHub release asset digest for earendil-works/pi v0.87.1",
+      "strip": 1,
+      "links": {
+        "pi": "pi"
+      },
+      "check": "pi"
+    },
+    {
+      "name": "node",
+      "version": "24.21.0",
+      "arch": "arm64",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.xz",
+      "sha256": "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2",
+      "source": "SHASUMS256.txt signed by 5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+      "strip": 1,
+      "links": {
+        "node": "bin/node",
+        "npm": "bin/npm",
+        "npx": "bin/npx",
+        "corepack": "bin/corepack"
+      },
+      "check": "node"
+    },
+    {
+      "name": "gh",
+      "version": "2.101.0",
+      "arch": "arm64",
+      "url": "https://github.com/cli/cli/releases/download/v2.101.0/gh_2.101.0_linux_arm64.tar.gz",
+      "sha256": "b57e8063f18862647c9d22727c32e9da1b963f8bf9db648fe123a6975695640f",
+      "source": "GitHub release asset digest for cli/cli v2.101.0",
+      "strip": 1,
+      "links": {
+        "gh": "bin/gh"
+      },
+      "check": "gh"
+    },
+    {
+      "name": "ripgrep",
+      "version": "15.2.0",
+      "arch": "arm64",
+      "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+      "source": "GitHub release asset digest for BurntSushi/ripgrep 15.2.0",
+      "strip": 1,
+      "links": {
+        "rg": "rg"
+      },
+      "check": "rg"
+    },
+    {
+      "name": "fd",
+      "version": "10.5.0",
+      "arch": "arm64",
+      "url": "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "d76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4",
+      "source": "GitHub release asset digest for sharkdp/fd v10.5.0",
+      "strip": 1,
+      "links": {
+        "fd": "fd"
+      },
+      "check": "fd"
+    },
+    {
+      "name": "jj",
+      "version": "0.45.1",
+      "arch": "arm64",
+      "url": "https://github.com/jj-vcs/jj/releases/download/v0.45.1/jj-v0.45.1-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "7349a43dd5a20dbc998b10114daa0ee63d2ab863fb822c7eb6b0ebca5903cc69",
+      "source": "GitHub release asset digest for jj-vcs/jj v0.45.1",
+      "strip": 0,
+      "links": {
+        "jj": "jj"
+      },
+      "check": "jj"
+    },
+    {
+      "name": "uv",
+      "version": "0.12.21",
+      "arch": "arm64",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.21/uv-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "67389a674e62adffa5a395d9a3b80688731c4aa7b33a6def3e62d00f7fec821f",
+      "source": "GitHub release asset digest for astral-sh/uv 0.12.21",
+      "strip": 1,
+      "links": {
+        "uv": "uv",
+        "uvx": "uvx"
+      },
+      "check": "uv"
+    },
+    {
+      "name": "claude-code",
+      "version": "2.1.283",
+      "arch": "arm64",
+      "url": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.283/linux-arm64/claude",
+      "sha256": "346d294f0103d6fc0de11ac953579b5c62dfa90698a4cfc486b6f927c615e697",
+      "source": "latest channel; manifest.json signed by 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
+      "strip": 0,
+      "file": "claude",
+      "links": {
+        "claude": "claude"
+      },
+      "check": "claude"
+    },
+    {
+      "name": "codex",
+      "version": "0.157.1",
+      "arch": "arm64",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "4c6b1c17c1c5fd0d4fb2951b7481867b95ea732b1feab269c98588b15db16253",
+      "source": "GitHub release asset digest for openai/codex rust-v0.157.1",
+      "strip": 0,
+      "links": {
+        "codex": "codex-aarch64-unknown-linux-musl"
+      },
+      "check": "codex"
+    },
+    {
+      "name": "pi",
+      "version": "0.87.1",
+      "arch": "arm64",
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.87.1/pi-linux-arm64.tar.gz",
+      "sha256": "364b4a9f8491450b27a4857d4e3c780dbaf696790821c176a873e860cbbc3b89",
       "source": "GitHub release asset digest for earendil-works/pi v0.87.1",
       "strip": 1,
       "links": {

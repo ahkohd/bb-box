@@ -6,6 +6,7 @@
 # and only its declared commands are linked into <bindir>.
 #
 # usage: install-tools.sh <pins.json> <artifact-dir> [<prefix>] [<bindir>]
+# It installs the entries for the image's architecture (x86_64 or arm64).
 set -euo pipefail
 umask 022
 
@@ -24,9 +25,15 @@ for tool in jq sha256sum tar xz; do
 done
 install -d -m 0755 "$prefix" "$bindir"
 
-count=$(jq -er '.tools | length' "$pins")
+case "$(uname -m)" in
+  x86_64) arch=x86_64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *) die "no tools are pinned for $(uname -m)" ;;
+esac
+count=$(jq -er --arg arch "$arch" '[.tools[] | select(.arch == $arch)] | length' "$pins")
+[ "$count" -gt 0 ] || die "pins.json has no tools for $arch"
 for index in $(seq 0 $((count - 1))); do
-  entry=$(jq -c ".tools[$index]" "$pins")
+  entry=$(jq -c --arg arch "$arch" "[.tools[] | select(.arch == \$arch)][$index]" "$pins")
   name=$(jq -er .name <<<"$entry")
   version=$(jq -er .version <<<"$entry")
   url=$(jq -er .url <<<"$entry")
