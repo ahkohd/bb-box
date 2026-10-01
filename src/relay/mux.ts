@@ -10,7 +10,13 @@
 
 import { Duplex } from "node:stream";
 
-export const INITIAL_WINDOW = 256 * 1024;
+/**
+ * What a side may send before the other grants more. The worker reaches the
+ * server through BB's public URL, so even a PC on the LAN can be tens of ms
+ * away: 256 KiB carried 8 MiB/s at 30 ms, 1 MiB 34 MiB/s. Memory stays
+ * bounded at this much per open channel on each side.
+ */
+export const INITIAL_WINDOW = 1024 * 1024;
 export const FRAME_BYTES = 64 * 1024;
 export const PING_MS = 15_000;
 /** A link that has sent nothing for this long is dead. */
@@ -85,6 +91,11 @@ export class Mux {
 
   get closed(): string | null {
     return this.#closed;
+  }
+
+  /** How long since the other side last sent anything. Its pings make this at most PING_MS on a live link. */
+  get quietMs(): number {
+    return Date.now() - this.#heard;
   }
 
   /** Opens a channel to the other side. */

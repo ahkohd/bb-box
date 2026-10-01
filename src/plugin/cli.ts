@@ -220,7 +220,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               return out(
                 `Docker ${info.version} on ${check.name} (${check.hostId}) answers through bb-box's relay: ${info.operatingSystem}, ${info.arch}, ` +
                   `${info.cpus} cores, ${(info.memoryMiB / 1024).toFixed(1)} GiB memory. ` +
-                  `The first call took ${(check.firstMs / 1000).toFixed(1)} s, opening the relay; the next ${(check.againMs / 1000).toFixed(2)} s.`,
+                  `The first call took ${(check.firstMs / 1000).toFixed(1)} s, opening the relay if it was closed; the next ${(check.againMs / 1000).toFixed(2)} s.`,
               );
             }),
         }),

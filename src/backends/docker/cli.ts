@@ -154,9 +154,23 @@ export class DockerCli {
   /** The -H address, or null for the CLI's own default. */
   readonly host: string | null;
 
-  constructor(host: string | null, binary = "docker") {
+  /** Run before each command that reaches the daemon, as when the host is a BB machine's relay (042). */
+  readonly #prepare: (() => Promise<void>) | null;
+
+  constructor(host: string | null, binary = "docker", prepare: (() => Promise<void>) | null = null) {
     this.host = host;
     this.#binary = binary;
+    this.#prepare = prepare;
+  }
+
+  /** Makes the host ready to use, as the transport needs before its first command. Throws a DockerError when it cannot. */
+  async prepare(): Promise<void> {
+    if (!this.#prepare) return;
+    try {
+      await this.#prepare();
+    } catch (error) {
+      throw new DockerError(error instanceof Error ? error.message : String(error), true);
+    }
   }
 
   /** The command line for `docker <args>` on this host. */
@@ -164,7 +178,13 @@ export class DockerCli {
     return [this.#binary, ...(this.host ? ["-H", this.host] : []), ...args];
   }
 
-  run(args: readonly string[], options: RunOptions = {}): Promise<DockerResult> {
+  async run(args: readonly string[], options: RunOptions = {}): Promise<DockerResult> {
+    // The CLI's own version needs no daemon.
+    if (args[0] !== "--version") await this.prepare();
+    return this.#spawn(args, options);
+  }
+
+  #spawn(args: readonly string[], options: RunOptions): Promise<DockerResult> {
     const [binary, ...rest] = this.argv(args);
     const stdout = new Capture(8 * MiB);
     const stderr = new Capture(64 * 1024);

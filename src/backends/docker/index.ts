@@ -15,5 +15,7 @@ export const dockerDriver: BackendDriver<DockerConfig> = {
     scripts: ["setup/docker/build.sh"],
   },
   parse: parseDockerPart,
+  // One per Docker host: a BB machine's (042), a socket or ssh://, or the CLI's default.
+  several: (fields) => (typeof fields.host === "string" ? fields.host.trim() : ""),
   create: (config, context) => new DockerBackend(config, context),
 };

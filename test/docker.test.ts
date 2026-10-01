@@ -70,6 +70,7 @@ test("parses the fields, with the setup guide's defaults", () => {
   const config = dockerConfig();
   assert.deepEqual(config, {
     host: null,
+    machine: null,
     images: { linux: "bbbox/linux:1", "linux-desktop-cpu": "bbbox/linux-desktop:1", "linux-desktop": null },
     docker: false,
     network: "bbbox",
@@ -83,6 +84,8 @@ test("parses the fields, with the setup guide's defaults", () => {
   assert.equal(all.host, "ssh://builder@docker.example:2222");
   assert.equal(all.boxes, 3);
   assert.equal(dockerConfig({ "host": "unix:///run/user/1000/docker.sock" }).host, "unix:///run/user/1000/docker.sock");
+  // A BB machine, reached through bb-box's relay (042).
+  assert.deepEqual([dockerConfig({ host: "bb:host_ajdbftx7ha" }).host, dockerConfig({ host: "bb:host_ajdbftx7ha" }).machine], ["bb:host_ajdbftx7ha", "host_ajdbftx7ha"]);
   // An empty image turns its kinds off.
   assert.deepEqual(dockerConfig({ "desktop-image": "", "gpu-desktops": true }).images, {
     linux: "bbbox/linux:1",
@@ -667,4 +670,45 @@ test("a box that changes hands keeps its new owner and name for the sweep, thoug
   assert.deepEqual([owner?.threadId, owner?.name, owner?.boxId], ["operator", "build-1", box.boxId]);
   await backend.release(guest, releasing);
   assert.deepEqual(await backend.held(), []);
+});
+
+test("a Docker host that is a BB machine is reached through bb-box's relay, named as BB names it, and an offline one takes no box and runs nothing (042)", async () => {
+  const fake = fakeDockerHost();
+  const state = { connected: true as boolean | null, readies: 0 };
+  const context = {
+    ...testContext(),
+    machines: {
+      dockerHost: (hostId: string) => `unix:///tmp/bb-box-relay/${hostId}.sock`,
+      ready: async (hostId: string) => {
+        state.readies++;
+        if (state.connected !== true) throw new Error(`behemoth is offline in BB.`);
+        assert.equal(hostId, "host_m1");
+      },
+      name: () => "behemoth",
+      connected: async () => state.connected,
+    },
+  };
+  const backend = new DockerBackend(dockerConfig({ host: "bb:host_m1" }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  assert.equal(backend.label, "Docker on behemoth");
+
+  const room = await backend.capacity("linux", SMALL, [], signal());
+  assert.equal(room.ok, true, room.message ?? "");
+  const raw = readFileSync(join(fake.root, "log"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
+  assert.ok(raw.length && raw.every((args) => args[0] === "-H" && args[1] === "unix:///tmp/bb-box-relay/host_m1.sock"), "every command goes to the relay's socket");
+  assert.ok(state.readies >= raw.length, "the relay is made ready before each command");
+
+  // Offline in BB: capacity says so from BB's view, with no command to the machine.
+  state.connected = false;
+  const before = fake.calls().length;
+  const offline = await backend.capacity("linux", SMALL, [], signal());
+  assert.deepEqual([offline.ok, offline.message], [false, "behemoth is offline in BB."]);
+  assert.equal(fake.calls().length, before);
+  // A command on one of its boxes fails at once, saying so.
+  await assert.rejects(() => backend.transports({ ref: "bbbox-x", host: "behemoth", address: null, size: null }, "linux"), /behemoth is offline in BB\./);
+  const report = await backend.doctor(signal());
+  const daemon = report.checks.find((check) => check.id === "docker.daemon");
+  assert.equal(daemon?.status, "fail");
+  assert.match(daemon?.detail ?? "", /behemoth is offline in BB\./);
+  assert.match(daemon?.fix ?? "", /bb box docker-check host_m1/);
+  assert.equal(report.checks.find((check) => check.id === "docker.cli")?.status, "ok", "the CLI's own version needs no machine");
 });

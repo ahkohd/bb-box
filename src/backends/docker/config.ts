@@ -16,8 +16,14 @@ export type DockerKind = (typeof DOCKER_KINDS)[number];
 export const IMAGE_VERSION = "1";
 
 export interface DockerConfig {
-  /** A unix:// or ssh:// address, or null for the docker CLI's own default: DOCKER_HOST, its context, or the local socket. */
+  /**
+   * A unix:// or ssh:// address, bb:<machine ID> for a BB machine reached
+   * through bb-box's relay (042), or null for the docker CLI's own default:
+   * DOCKER_HOST, its context, or the local socket.
+   */
   readonly host: string | null;
+  /** The BB machine's ID when the host is one, else null. */
+  readonly machine: string | null;
   /** The image of each kind, or null when the kind is off. */
   readonly images: Readonly<Record<DockerKind, string | null>>;
   /** Whether linux boxes are privileged containers with their own Docker daemon (041). */
@@ -57,7 +63,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Host",
     description:
-      "Where the Docker daemon is, as unix:///path/to/docker.sock or ssh://user@host. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket. Over SSH, BB's server user must log in without a prompt.",
+      "Where the Docker daemon is, as unix:///path/to/docker.sock, ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket. Over SSH, BB's server user must log in without a prompt.",
     group: "connection",
     default: "",
   },
@@ -139,6 +145,8 @@ function number(values: Readonly<Record<string, unknown>>, key: string, fallback
 const IMAGE = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 const NETWORK = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 const UNIX = /^unix:\/\/\/[^\s'"]+$/;
+/** A BB machine, by its ID: bb-box reaches its Docker through BB (042). */
+export const BB_MACHINE = /^bb:([A-Za-z0-9_-]{1,64})$/;
 const SSH = /^ssh:\/\/(?:[a-z_][a-z0-9_.-]{0,31}@)?(?:\[[0-9a-fA-F:.]+\]|[A-Za-z0-9][A-Za-z0-9.-]*)(?::\d{1,5})?$/;
 
 /** Docker's part of bb-box's configuration (029), with each problem at its field. */
@@ -148,8 +156,8 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   const problem = (path: string, message: string) => problems.push({ path, message });
 
   const host = text(values, DOCKER_KEYS.host);
-  if (host && !UNIX.test(host) && !SSH.test(host)) {
-    problem(DOCKER_KEYS.host, `Docker: the host "${host}" must be unix:///path/to/docker.sock or ssh://user@host, or empty for the docker CLI's default.`);
+  if (host && !UNIX.test(host) && !SSH.test(host) && !BB_MACHINE.test(host)) {
+    problem(DOCKER_KEYS.host, `Docker: the host "${host}" must be unix:///path/to/docker.sock, ssh://user@host or bb:<machine ID>, or empty for the docker CLI's default.`);
   }
 
   const linux = text(values, DOCKER_KEYS.linuxImage, DOCKER_DEFAULTS.linuxImage);
@@ -179,5 +187,5 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   if (!(reserveMemoryMiB >= 0)) problem(DOCKER_KEYS.reserveMemoryMiB, "Docker: the memory kept free cannot be negative.");
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { host: host || null, images, docker: privileged && Boolean(linux), network, boxes, desktopsPerGpu, reserveMemoryMiB } };
+  return { ok: true, config: { host: host || null, machine: BB_MACHINE.exec(host)?.[1] ?? null, images, docker: privileged && Boolean(linux), network, boxes, desktopsPerGpu, reserveMemoryMiB } };
 }
