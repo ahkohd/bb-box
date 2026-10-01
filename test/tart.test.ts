@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
+import { TartBackend, hostnameOf, nameScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { parseState, parseVnc } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
@@ -139,7 +139,7 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   assert.deepEqual(recorded.claimed.at(-1), guest, "claimed again with its address");
   assert.equal(recorded.claimed[0]!.ref, `bb-box-${box.boxId}`);
   assert.deepEqual(recorded.claimed[0]!.data, { box: box.boxId });
-  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh"]);
+  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "name"]);
   assert.equal(guest.host, "mac1");
   assert.match(guest.address ?? "", /^192\.168\.64\.\d+$/);
   const owner = readFileSync(join(owners, guest.ref), "utf8");
@@ -155,9 +155,13 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   assert.ok(opened.route.type === "command" && opened.route.argv.includes("-W") && opened.route.argv.at(-1) === `bbbox-admin@${MAC}`);
   assert.match(opened.auth.type === "vnc-password" ? opened.auth.password : "", /^fake-pass-word-\d+$/);
 
-  // The VM's commands went to the VM, the rest to the Mac.
+  // The VM's commands went to the VM, the rest to the Mac, and the VM is named after the box.
   const targets = new Set(ssh.log().map((entry) => entry.target));
   assert.ok(targets.has(`bbbox-admin@${MAC}`) && targets.has(`admin@${guest.address}`));
+  assert.ok(
+    ssh.log().some((entry) => entry.target === `admin@${guest.address}` && entry.command.includes("scutil --set") && entry.command.includes(box.name)),
+    "the VM is named after the box",
+  );
   await backend.release(guest, releasing);
 });
 
@@ -286,4 +290,13 @@ test("a box has the cores and memory it asks for, read from its config; capacity
   const big: BoxSize = { cores: 8, memoryMiB: 64 * 1024, diskGiB: null };
   assert.equal((await backend.capacity("macos", big, [])).ok, true);
   assert.match(await refused(big, [{ kind: "macos", size: big }]), /memory free/, "a pending box's memory counts");
+});
+
+test("a box's hostname comes from its name, and only a VM is renamed", () => {
+  assert.equal(hostnameOf("calm-otter-3"), "calm-otter-3");
+  assert.equal(hostnameOf("Calm Otter_3!"), "calm-otter-3");
+  assert.equal(hostnameOf("--"), "box");
+  assert.equal(hostnameOf("a".repeat(80)).length, 63);
+  // The test machine is not a Virtualization framework VM, so this renames nothing.
+  assert.match(nameScript("calm-otter-3"), /^case "\$\(sysctl -n hw\.model 2>\/dev\/null\)" in VirtualMac\*\)/);
 });

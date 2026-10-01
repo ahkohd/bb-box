@@ -18,6 +18,7 @@
 //   for it when it does not know it, and forgets it when the VM stops.
 
 import { performance } from "node:perf_hooks";
+import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { TransportError, type Display, type RunResult, type SshAccess } from "../../transports/types.ts";
@@ -170,6 +171,28 @@ export function tartKinds(config: TartConfig): BoxKind[] {
     },
   };
   return TART_KINDS.filter((kind) => config.kinds[kind].image).map((kind) => kinds[kind]);
+}
+
+/** A hostname from a box's name: lower-case letters, digits and "-", at most 63. */
+export function hostnameOf(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 63) || "box"
+  );
+}
+
+/**
+ * Names a VM after its box: its ComputerName, LocalHostName and HostName,
+ * which its prompt, its Bonjour name and its BB machine show. Only in a
+ * Virtualization framework VM, never on a Mac a command reaches by mistake,
+ * such as a test machine.
+ */
+export function nameScript(name: string): string {
+  return `case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) echo "not a VM"; exit 0 ;; esac
+for key in ComputerName LocalHostName HostName; do sudo -n scutil --set "$key" ${quote(hostnameOf(name))} || exit 1; done`;
 }
 
 /** A Mac that did not answer over SSH, or whose script failed. */
@@ -341,6 +364,7 @@ export class TartBackend implements Backend {
       await step("start", () => this.#start(host, vm, deadline, signal));
       const address = await step("network", () => this.#address(host, vm, deadline, signal));
       await step("ssh", () => this.#waitReady(host, vm, address, deadline, signal));
+      await step("name", () => this.#name(host, address, box.name, signal));
       // Claimed again, so the box's record has the address and size as it becomes ready.
       await hooks.claim(guest(address, size));
       return guest(address, size);
@@ -640,6 +664,17 @@ export class TartBackend implements Backend {
     const vnc = parseVnc((await this.#run(host, vncScript(vm), { timeoutMs: 15_000, signal })).stdout);
     if (!vnc) throw new Error(`Tart's VNC server for ${vm} on ${host.name} is not running. The VM may be stopped.`);
     return vnc;
+  }
+
+  /** Names the VM after its box. A box whose name could not be set still works, so this only logs. */
+  async #name(host: TartHost, address: string, name: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos");
+    const result = await command.run(nameScript(name), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 }).catch((error: unknown) => error);
+    if (result instanceof Error || (result as RunResult).exitCode !== 0) {
+      const why = result instanceof Error ? result.message : (result as RunResult).stderr.trim() || `exit code ${(result as RunResult).exitCode}`;
+      this.#context.logError("name the box", new Error(`Could not name the macOS VM on ${host.name} ${hostnameOf(name)}: ${why}`));
+    }
   }
 
   /** Closes the shared SSH connections to a VM that is stopping or going, and forgets its address. */
