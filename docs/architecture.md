@@ -1274,3 +1274,4 @@ Notes:
 | First boot of a Windows clone, Tart boot and resume, a physical Mac's reset; until then `readyTimeoutMs` values are estimates | [later backends](research/later-backends.md) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
+| Whether the Docker backend runs as it is against Docker Engine in WSL2, and how fast Hyper-V clones and resumes | the experiments in [Windows hosts](research/windows-hosts.md) |
