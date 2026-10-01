@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { Backends, DRIVERS, boxForm } from "../src/backends/index.ts";
+import { Backends, DRIVERS, boxForm, overlapChecks } from "../src/backends/index.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
+import { proxmoxFootprint } from "../src/backends/proxmox/settings.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxQemuBackend, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
 import { parseQemuPart, type QemuConfig } from "../src/backends/proxmox-qemu/config.ts";
@@ -15,7 +16,7 @@ import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { driverFields } from "../src/plugin/configuration.ts";
 import { generateKeyPair } from "../src/transports/ssh.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
-import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
 const KIND = "windows-desktop";
@@ -631,4 +632,35 @@ test("a Windows box is from its template as built now only while the template ha
   assert.equal(await backend.asOffered(cloned, KIND, during.createdAt), false, "made during the build, before the swap");
   const { build: _, ...data } = old.data!;
   assert.equal(await backend.asOffered({ ...old, data }, KIND, Date.UTC(2026, 8, 26)), true, "with no recorded build, by the build's time");
+});
+
+test("the doctor warns when Proxmox QEMU's VMIDs or box addresses overlap Proxmox LXC's, and says nothing when they are apart (#194)", () => {
+  const url = "https://pve.example.com:8006/";
+  const lxc = (values: Record<string, unknown> = {}) => ({
+    id: "proxmox-lxc",
+    label: "Proxmox LXC",
+    footprint: () =>
+      proxmoxFootprint(lxcConfig({ "proxmox-lxc-url": url, "proxmox-lxc-vmid-first": 3000, "proxmox-lxc-vmid-last": 3189, "proxmox-lxc-addresses": "192.0.2.10-192.0.2.199", ...values })),
+  });
+  const qemu = (values: Record<string, unknown> = {}) => ({
+    id: "proxmox-qemu",
+    label: "Proxmox QEMU",
+    footprint: () => proxmoxFootprint(qemuConfig({ url, "vmid-first": 3190, "vmid-last": 3239, addresses: "192.0.2.200-192.0.2.249", ...values })),
+  });
+  // As the live configuration has them: apart.
+  assert.deepEqual(overlapChecks([lxc(), qemu()]), []);
+
+  const [both] = overlapChecks([lxc(), qemu({ "vmid-first": 3180, addresses: "192.0.2.190-192.0.2.249" })]);
+  assert.equal(both?.status, "warn");
+  assert.equal(
+    both?.detail,
+    "They both use IDs 3180 to 3189, and both give boxes 10 addresses, from 192.0.2.190 to 192.0.2.199, so a box of one could take what a box of the other has.",
+  );
+  // The same addresses on another bridge are another network; VMIDs are the cluster's, whatever the bridge.
+  const [ids] = overlapChecks([lxc(), qemu({ bridge: "vmbr2", "vmid-first": 3189, addresses: "192.0.2.199-192.0.2.249" })]);
+  assert.match(ids?.detail ?? "", /^They both use ID 3189, so/);
+  // Another cluster shares nothing.
+  assert.deepEqual(overlapChecks([lxc(), qemu({ url: "https://other.example.com:8006/", "vmid-first": 3000, addresses: "192.0.2.10-192.0.2.249" })]), []);
+  // Only the addresses its VMIDs use count: the rest of a longer range is never handed out.
+  assert.deepEqual(overlapChecks([lxc({ "proxmox-lxc-addresses": "192.0.2.10-192.0.2.254" }), qemu()]), []);
 });

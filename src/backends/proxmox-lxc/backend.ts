@@ -52,13 +52,14 @@ import {
   templateFromTags,
   templateTag,
 } from "../proxmox/owner.ts";
-import { addressFor } from "../proxmox/settings.ts";
+import { addressFor, proxmoxFootprint } from "../proxmox/settings.ts";
 import { proxmoxFetch } from "../proxmox/tls.ts";
 import {
   BackendError,
   type AcquireHooks,
   type Backend,
   type BackendContext,
+  type Footprint,
   type BoxIdentity,
   type BoxKind,
   type BoxSize,
@@ -1130,6 +1131,10 @@ export class ProxmoxLxcBackend implements Backend {
   /** The flavour whose settings list `template`, or null. */
   #flavourOf(template: number): LxcFlavour | null {
     return LXC_FLAVOURS.find((flavour) => this.#config.flavours[flavour].templates.some((listed) => listed.vmid === template)) ?? null;
+  }
+
+  footprint(): Footprint {
+    return proxmoxFootprint(this.#config);
   }
 
   /** A guest of a template the kind's flavour lists now, from that template's build as it is now. */

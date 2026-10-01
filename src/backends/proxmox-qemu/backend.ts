@@ -38,13 +38,14 @@ import {
   templateBuild,
   templateFromTags,
 } from "../proxmox/owner.ts";
-import { addressFor } from "../proxmox/settings.ts";
+import { addressFor, proxmoxFootprint } from "../proxmox/settings.ts";
 import { proxmoxFetch } from "../proxmox/tls.ts";
 import {
   BackendError,
   type AcquireHooks,
   type Backend,
   type BackendContext,
+  type Footprint,
   type BoxIdentity,
   type BoxKind,
   type BoxSize,
@@ -787,6 +788,10 @@ export class ProxmoxQemuBackend implements Backend {
       if (error instanceof ProxmoxError && error.gone) return null;
       throw error;
     }
+  }
+
+  footprint(): Footprint {
+    return proxmoxFootprint(this.#config);
   }
 
   /** A guest of a Windows template listed now, from that template's build as it is now. */

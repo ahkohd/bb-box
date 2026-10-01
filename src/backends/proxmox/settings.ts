@@ -7,6 +7,7 @@
 // never share an address and no address is stored or leased.
 
 import { normalisePrivateKey } from "../../transports/ssh.ts";
+import type { Footprint } from "../types.ts";
 
 export interface ProxmoxConnection {
   readonly apiUrl: string;
@@ -226,4 +227,17 @@ export function checkReserve(values: Values, keys: ProxmoxKeys, defaults: Proxmo
 /** The address fixed to `vmid`, or null outside the range. */
 export function addressFor(config: { readonly vmids: VmidRange; readonly network: ProxmoxNetwork }, vmid: number): string | null {
   return config.network.addresses[vmid - config.vmids.first] ?? null;
+}
+
+/**
+ * A Proxmox backend's VMIDs, which are unique in a cluster, and the
+ * addresses of its boxes, on its node's bridge.
+ */
+export function proxmoxFootprint(config: { readonly proxmox: ProxmoxConnection; readonly vmids: VmidRange; readonly network: ProxmoxNetwork }): Footprint {
+  const { apiUrl, node } = config.proxmox;
+  const count = config.vmids.last - config.vmids.first + 1;
+  return {
+    ids: { scope: `proxmox ${apiUrl}`, first: config.vmids.first, last: config.vmids.last },
+    addresses: { scope: `proxmox ${apiUrl} ${node ?? ""} ${config.network.bridge}`, list: config.network.addresses.slice(0, count) },
+  };
 }

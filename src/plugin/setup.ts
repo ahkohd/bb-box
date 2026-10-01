@@ -4,7 +4,7 @@
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
-import { Backends, DRIVERS, offerChecks } from "../backends/index.ts";
+import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
 import type { BackendDriver, DoctorReport } from "../backends/types.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadLiveness } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
@@ -448,6 +448,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Kinds",
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
+        });
+      }
+      const overlaps = overlapChecks(backends.on());
+      if (overlaps.length) {
+        sections.push({
+          title: "Backends",
+          report: { ok: true, summary: "Some backends' boxes could take the same IDs or addresses.", checks: overlaps, notes: [] },
         });
       }
       return { ok: sections.every((section) => section.report.ok), sections };
