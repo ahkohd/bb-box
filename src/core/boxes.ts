@@ -787,10 +787,14 @@ export class Boxes {
    * Releases a box: its BB machine is removed, then the backend deletes the
    * guest or resets and returns the machine. Resolves when that is done, with
    * null, or with the box still releasing and the error when it failed; the
-   * sweep then tries again.
+   * sweep then tries again. A spare released this way is replaced then, not
+   * at the next sweep (#129).
    */
   async release(threadId: string, ref: string): Promise<BoxRecord | null> {
-    return this.#release(await this.get(threadId, ref));
+    const box = await this.get(threadId, ref);
+    const left = await this.#release(box);
+    if (box.threadId === SPARES) void this.keepSpares();
+    return left;
   }
 
   async #release(box: BoxRecord): Promise<BoxRecord | null> {
