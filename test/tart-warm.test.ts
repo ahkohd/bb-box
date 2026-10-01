@@ -205,7 +205,7 @@ test("a restarted acquire resumes the warm VM it held, and starts over when it h
 
 test("an acquire that meets a fill holding the last slot takes it over at the fill's size, and stops it at any other", async () => {
   for (const size of [SMALL, MEDIUM]) {
-    const { ssh, make, warmVms, owner, nextAddress, up } = setup();
+    const { ssh, vmsDir, make, warmVms, owner, nextAddress, up } = setup();
     const backend = make();
     // One box runs, so a fill takes the second, last slot.
     const running = await backend.acquire(identity("macos", MEDIUM), null, hooks().hooks, signal());
@@ -213,7 +213,8 @@ test("an acquire that meets a fill holding the last slot takes it over at the fi
     const address = nextAddress();
     ssh.down(address);
     const filling = backend.maintain().catch((error: unknown) => error);
-    await until(() => warmVms().length === 1, "the fill to start");
+    // The fill has its address, and waits for SSH there.
+    await until(() => warmVms().length === 1 && existsSync(join(vmsDir, warmVms()[0]!, "lease")), "the fill to wait for its VM");
     const [fill] = warmVms();
     const box = identity("macos", size);
     const recorded = hooks();
