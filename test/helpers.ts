@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseLxcSettings, type LxcConfig } from "../src/backends/proxmox-lxc/config.ts";
 import type { BackendContext, BackendStorage, KindSettings } from "../src/backends/types.ts";
 import { defaultSize, kindSizes, presetSizes } from "../src/core/sizes.ts";
@@ -140,11 +140,16 @@ function quote(value: string): string {
  * `parent`, whose workers each have only the given variables. Workers start
  * in order, so the last is the newest. With `startOn`, they start `seconds`
  * after that file appears, as BB's do a moment after its daemon connects,
- * and this returns without waiting for them. Stop it when the test ends.
+ * and this returns without waiting for them. With `parent`, the program is
+ * there, so a box can be told of it before the daemon runs. Stop it when the
+ * test ends.
  */
-export async function fakeDaemon(workers: readonly Readonly<Record<string, string>>[], options: { startOn?: { file: string; seconds: number } } = {}) {
-  const dir = tempDir("daemon");
-  const parent = join(dir, "daemon-bundle");
+export async function fakeDaemon(
+  workers: readonly Readonly<Record<string, string>>[],
+  options: { startOn?: { file: string; seconds: number }; parent?: string } = {},
+) {
+  const parent = options.parent ?? join(tempDir("daemon"), "daemon-bundle");
+  const dir = dirname(parent);
   const lines = workers.map(
     (variables) =>
       `env -i ${Object.entries(variables)
@@ -159,9 +164,10 @@ export async function fakeDaemon(workers: readonly Readonly<Record<string, strin
   const pid = daemon.pid!;
   const running = () => {
     try {
-      return execFileSync("ps", ["-o", "pid=,comm=", "--ppid", String(pid)], { encoding: "utf8" })
+      // Not the `sleep` before them, with `startOn`.
+      return execFileSync("ps", ["-o", "pid=,args=", "--ppid", String(pid)], { encoding: "utf8" })
         .split("\n")
-        .filter((line) => /\bsleep$/.test(line.trim()));
+        .filter((line) => /\bsleep 300$/.test(line.trim()));
     } catch {
       // ps exits 1 when it finds none.
       return [];

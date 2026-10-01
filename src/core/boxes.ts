@@ -129,7 +129,7 @@ export interface BoxesDeps {
   unenrol?(box: BoxRecord): Promise<void>;
   /**
    * Starts an enrolled box's BB daemon again after bb-box started the box:
-   * BB's bootstrap with the box ID as the key. Called without awaiting.
+   * BB's bootstrap with the box ID as the key. Commands wait for it a while.
    */
   reconnect?(box: BoxRecord): Promise<void>;
   /**
@@ -140,7 +140,7 @@ export interface BoxesDeps {
   logError(operation: string, error: unknown): void;
   /** Records what the sweep did to a guest, and why. */
   log?(message: string): void;
-  /** How long a command waits for its box to finish enrolling. */
+  /** How long a command waits for its box to finish enrolling, or reconnecting after a start. */
   readonly enrolWaitMs?: number;
   now?(): number;
   random?(bytes: number): Uint8Array;
@@ -210,6 +210,21 @@ function sentence(text: string): string {
   return /[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
 }
 
+/** Waits for `promise`, which never rejects, for up to `ms`, or until `signal` aborts. */
+function within(promise: Promise<void>, ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, Math.max(0, ms));
+    signal?.addEventListener("abort", done, { once: true });
+    void promise.then(done);
+    if (signal?.aborted) done();
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+  });
+}
+
 /** Capabilities for a guest whose kind no backend offers any more: it can only be released. */
 const UNKNOWN_KIND: KindCapabilities = {
   os: "linux",
@@ -225,6 +240,8 @@ const UNKNOWN_KIND: KindCapabilities = {
 /** How much longer than the timeout in the box bb-box waits before it stops the command itself. */
 const LOCAL_TIMEOUT_GRACE_MS = 10_000;
 const ENROL_POLL_MS = 250;
+/** Long enough for a Mac box's enrolment, which takes 8 to 10 s from ready. */
+const ENROL_WAIT_MS = 20_000;
 
 /** For releases whose progress nobody watches: leftovers the sweep finds, and guests whose box was forgotten. */
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
@@ -274,6 +291,8 @@ export class Boxes {
   readonly #work = new Map<string, Promise<unknown>>();
   /** Acquires running in this process, so a release can cancel them. */
   readonly #acquiring = new Map<string, AbortController>();
+  /** Reconnects of BB machines after a start in this process, while they run. */
+  readonly #reconnects = new Map<string, Promise<void>>();
   #disposed = false;
 
   constructor(deps: BoxesDeps) {
@@ -706,7 +725,11 @@ export class Boxes {
       }
       // A hard stop ends BB's daemon, and nothing in the box starts it again (017).
       if (started.state === "ready" && started.enrol.state === "enrolled" && this.#deps.reconnect) {
-        void this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error));
+        const reconnect = this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error));
+        this.#reconnects.set(started.id, reconnect);
+        void reconnect.then(() => {
+          if (this.#reconnects.get(started.id) === reconnect) this.#reconnects.delete(started.id);
+        });
       }
       return started;
     });
@@ -861,9 +884,17 @@ export class Boxes {
     return (await this.#deps.access?.(box)) ?? undefined;
   }
 
-  /** Waits a few seconds for a box that is enrolling to finish, and returns it as it is then. */
+  /**
+   * Waits a while for a box that is enrolling to finish, or for its BB
+   * machine to reconnect after a start, and returns it as it is then.
+   */
   async enrolled(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
-    const deadline = this.#now() + (this.#deps.enrolWaitMs ?? 10_000);
+    const deadline = this.#now() + (this.#deps.enrolWaitMs ?? ENROL_WAIT_MS);
+    const reconnect = this.#reconnects.get(box.id);
+    if (reconnect) {
+      await within(reconnect, deadline - this.#now(), signal);
+      box = (await this.find(box.id)) ?? box;
+    }
     while (box.state === "ready" && box.enrol.state === "enrolling" && this.#now() < deadline && !signal?.aborted) {
       await new Promise((resolve) => setTimeout(resolve, ENROL_POLL_MS));
       box = (await this.find(box.id)) ?? box;

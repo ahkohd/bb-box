@@ -22,7 +22,9 @@
 // the machine connected soon after. BB starts the daemon's workers, which
 // carry the variables, a moment after that, so the enrolment ends once the
 // box's commands find one, or 10 s later, and the box's first command has
-// them. Each enrolment logs how long its steps took.
+// them. A reconnect waits in the same way for BB to show the machine
+// connected again, then for such a worker.
+// Each enrolment logs how long its steps took.
 
 import type { MachineExecutor, PluginMachineProviderDeclaration } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -70,6 +72,11 @@ const QUIET: Progress = { step: () => {}, log: () => {} };
 const ACCESS_SETUP_TIMEOUT_MS = 60_000;
 const ACCESS_CHECK_TIMEOUT_MS = 10_000;
 const VARIABLES_POLL_MS = 250;
+
+/** A wait for the log, such as "10 s" or "0.3 s". */
+function waited(ms: number): string {
+  return `${Number((ms / 1000).toFixed(1))} s`;
+}
 
 function sh(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
@@ -338,16 +345,23 @@ export class Enrolment {
       const host = await this.#deps.hosts().get({ hostId });
       const phase = host.lifecycle.phase;
       if (phase === "active" && host.status === "connected") {
-        phases.mark("connected");
+        const connected = Date.now();
+        phases.mark("connected", connected);
         await access;
-        await this.#variables(current, phases);
+        await this.#variables(current, "the machine connected", connected, phases);
+        // BB may have removed the machine during the waits, and the box is then not enrolled.
         // A resumed enrolment's own time is only its last part, so the box shows none.
-        const enrolled = await this.#deps.boxes.update(box, (latest) => ({
-          enrol: { state: "enrolled", hostId, error: null },
-          ...(phases.since === "resumed" ? {} : { timings: { ...latest.timings, enrol: Date.now() - phases.origin } }),
-        }));
+        const enrolled = await this.#deps.boxes.update(box, (latest) =>
+          latest.enrol.hostId !== hostId
+            ? {}
+            : {
+                enrol: { state: "enrolled", hostId, error: null },
+                ...(phases.since === "resumed" ? {} : { timings: { ...latest.timings, enrol: Date.now() - phases.origin } }),
+              },
+        );
+        if (enrolled?.enrol.hostId !== hostId) return;
         phases.mark("enrolled");
-        if (enrolled) this.#deps.log?.(phases.line(enrolled.name));
+        this.#deps.log?.(phases.line(enrolled.name));
         return;
       }
       if (phase === "destroyed" || phase === "removing") {
@@ -397,11 +411,12 @@ export class Enrolment {
   /**
    * Waits, once the machine connects, until the box's commands find a worker
    * of BB's daemon with the thread's variables, which BB starts a moment
-   * later. A box with no names to take, or in which bb-box finds no daemon,
+   * later. The wait counts from `connected`, and `since` says what happened
+   * then. A box with no names to take, or in which bb-box finds no daemon,
    * does not wait. A failure leaves the box enrolled.
    */
-  async #variables(box: BoxRecord, phases: Phases): Promise<void> {
-    const deadline = Date.now() + this.#variablesWaitMs;
+  async #variables(box: BoxRecord, since: string, connected: number, phases?: Phases): Promise<void> {
+    const deadline = connected + this.#variablesWaitMs;
     try {
       const access = await this.#deps.boxes.access(box);
       const script = access ? accessCheck(box.capabilities.os, access) : null;
@@ -415,8 +430,7 @@ export class Enrolment {
           throw new Error(`Looking for the thread's variables in box ${box.name} exited with ${result.exitCode ?? "no code"}: ${result.stderr.trim()}`);
         }
         if (Date.now() >= deadline) {
-          const waited = `${Number((this.#variablesWaitMs / 1000).toFixed(1))} s`;
-          this.#deps.log?.(`BB's daemon in box ${box.name} had no worker with the thread's variables ${waited} after the machine connected. Its commands take them once one has.`);
+          this.#deps.log?.(`BB's daemon in box ${box.name} had no worker with the thread's variables ${waited(this.#variablesWaitMs)} after ${since}. Its commands take them once one has.`);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, VARIABLES_POLL_MS));
@@ -424,7 +438,7 @@ export class Enrolment {
     } catch (error) {
       this.#deps.logError("enrol variables", error);
     } finally {
-      phases.mark("variables");
+      phases?.mark("variables");
     }
   }
 
@@ -441,9 +455,15 @@ export class Enrolment {
     }
   }
 
-  /** Starts BB's daemon again after bb-box started a stopped box: bootstrap with the same key. */
+  /**
+   * Starts BB's daemon again after bb-box started a stopped box: bootstrap
+   * with the same key. Returns once BB shows the machine connected again and
+   * the box's commands have the thread's variables, or the waits for them
+   * end. A box whose machine BB removed meanwhile is left unenrolled.
+   */
   async reconnect(box: BoxRecord): Promise<void> {
-    if (this.#reconnecting.has(box.id)) return;
+    const hostId = box.enrol.hostId;
+    if (!hostId || this.#reconnecting.has(box.id)) return;
     this.#reconnecting.add(box.id);
     try {
       const transport = await this.#transport(box);
@@ -451,14 +471,38 @@ export class Enrolment {
       try {
         await this.#deps.bootstrap({ key: box.id, executor: executor(transport), report: QUIET, signal });
       } catch (error) {
-        await this.#deps.boxes.update(box, (current) => ({
-          enrol: { ...current.enrol, error: describeError(error, "Reconnecting the box's BB machine") },
-        }));
+        await this.#deps.boxes.update(box, (current) =>
+          current.enrol.hostId !== hostId ? {} : { enrol: { ...current.enrol, error: describeError(error, "Reconnecting the box's BB machine") } },
+        );
         throw error;
       }
-      await this.#deps.boxes.update(box, (current) => ({ enrol: { ...current.enrol, state: "enrolled", error: null } }));
+      const reconnected = await this.#deps.boxes.update(box, (current) =>
+        current.enrol.hostId !== hostId ? {} : { enrol: { ...current.enrol, state: "enrolled", error: null } },
+      );
+      if (reconnected?.enrol.hostId !== hostId) return;
+      const connected = await this.#connected(reconnected, hostId);
+      if (connected !== null) await this.#variables(reconnected, "the machine connected again", connected);
     } finally {
       this.#reconnecting.delete(box.id);
+    }
+  }
+
+  /**
+   * Waits for BB to show a box's machine connected after its daemon started
+   * again, for as long as an enrolment waits for the variables. Returns when
+   * it did, or null.
+   */
+  async #connected(box: BoxRecord, hostId: string): Promise<number | null> {
+    const deadline = Date.now() + this.#variablesWaitMs;
+    for (;;) {
+      const host = await this.#deps.hosts().get({ hostId });
+      if (host.lifecycle.phase !== "active") return null;
+      if (host.status === "connected") return Date.now();
+      if (Date.now() >= deadline) {
+        this.#deps.log?.(`BB did not show box ${box.name}'s machine connected ${waited(this.#variablesWaitMs)} after its daemon started again.`);
+        return null;
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.#fastPollMs));
     }
   }
 

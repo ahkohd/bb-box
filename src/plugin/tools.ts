@@ -126,7 +126,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
       cores: z.number().int().positive().optional().describe("Cores, for a custom size. Parts you leave out come from the preset."),
       memory_gib: z.number().int().positive().optional().describe("Memory in GiB, for a custom size."),
       disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, for a custom size. Presets keep the kind's own disk."),
-      wait: z.boolean().optional().describe("Wait until the box answers, and up to 10 s more while it becomes a BB machine. Defaults to true."),
+      wait: z.boolean().optional().describe("Wait until the box answers, and up to 20 s more while it becomes a BB machine. Defaults to true."),
     }),
     async execute({ kind, size, cores, memory_gib, disk_gib, wait }, { threadId, projectId, signal }) {
       try {
@@ -314,12 +314,13 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
 
   bb.agents.registerTool({
     name: "box_start",
-    description: "Start a stopped box again, with its disk as it was.",
+    description: "Start a stopped box again, with its disk as it was, and wait up to 20 s more while it reconnects as a BB machine.",
     presentation: { label: { pending: "Starting a box", completed: "Started a box" } },
     parameters: z.object({ box: boxParam }),
     async execute({ box: ref }, { threadId, signal }) {
       try {
-        const box = await boxes.start(thread(threadId), ref, signal);
+        // Its BB machine reconnects after the start; box_run would wait for that anyway.
+        const box = await boxes.enrolled(await boxes.start(thread(threadId), ref, signal), signal);
         return `${boxDetail(box, app.control(box))}${next(...using(box))}`;
       } catch (error) {
         return failure(error, "Starting the box");

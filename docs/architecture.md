@@ -840,9 +840,13 @@ A box is a resource of its thread and gets what the thread's own machine has.
   - BB's daemon starts the workers that carry the variables a moment after
     BB shows the machine connected, up to about a second later on a Mac. So
     the enrolment ends once a command in the box finds such a worker, or
-    10 s after the machine connects. `box_run` waits for the enrolment, so
-    its first command has the variables. A box with no names to take, or
-    with nothing running the daemon's program, does not wait.
+    10 s after the machine connects. A reconnect after bb-box starts a box
+    waits up to 10 s for BB to show the machine connected again, then in
+    the same way. `box_run` waits up to 20 s for either, as `box_acquire`
+    and `box_start` do, so its first command has the variables; a Mac box
+    takes 8 to 10 s from ready to enrolled. A box with no names to take,
+    or with nothing running the daemon's program, does not wait. If BB
+    removes the machine during these waits, the box is left unenrolled.
   - BB can take seconds to answer while it is busy, so bb-box asks for the
     machine's and the project's names together, first as the box starts,
     and keeps them for a minute. After that, a command gets the names it

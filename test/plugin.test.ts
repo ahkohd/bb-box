@@ -76,6 +76,8 @@ async function start(
     threadErrors: new Map<string, Error>(),
     /** Calls for the names of BB's machine variables: "system", or the project's ID. */
     names: [] as string[],
+    /** How long after bootstrap returns BB shows a machine it has connected again, or null for never. */
+    connectAfterMs: 0 as number | null,
   };
   const { bb, harness } = createFakePluginHost({
     pluginId: "bb-box",
@@ -171,8 +173,12 @@ async function start(
         world.bootstraps.push(key);
         const { exitCode } = await executor.exec({ command: ["sh", "-c", world.installer], timeoutMs: 10_000, signal, stdin: "", onOutput: () => {} });
         if (exitCode !== 0) throw new Error(`The installer exited with ${exitCode}.`);
-        const host = hosts.get(`host-${key}`);
-        if (host?.lifecycle.phase === "active") hosts.set(host.id, { ...host, status: "connected" });
+        const connect = () => {
+          const host = hosts.get(`host-${key}`);
+          if (host?.lifecycle.phase === "active") hosts.set(host.id, { ...host, status: "connected" });
+        };
+        if (world.connectAfterMs === 0) connect();
+        else if (world.connectAfterMs !== null) setTimeout(connect, world.connectAfterMs);
         return { hostId: `host-${key}` };
       },
     },
@@ -376,6 +382,91 @@ test("the enrolment waits for BB's daemon to start a worker with the thread's va
   assert.match(logged ?? "", /, waiting for a worker with the thread's variables (0\.[5-9]|[1-4]\.\d)\d s, finishing /);
 });
 
+test("box_start waits for the box's BB daemon to start again with a worker with the thread's variables", async (t) => {
+  const parent = join(tempDir("daemon"), "daemon-bundle");
+  const { harness, app, world, tool } = await start(undefined, { daemonParent: parent });
+  t.after(() => harness.lifecycle.dispose());
+  // Nothing runs the daemon's program yet, so the enrolment does not wait.
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  const box = await only(app);
+  await tool("box_stop", { box: box.name });
+
+  // Bootstrap starts the daemon again, and it starts the workers a second later.
+  const restarted = join(tempDir("restarted"), "restarted");
+  const daemon = await fakeDaemon([{ GH_TOKEN: "value-token", MACHINE_VAR: "value-machine" }], { parent, startOn: { file: restarted, seconds: 1 } });
+  t.after(daemon.stop);
+  world.installer = `: > '${restarted}'`;
+  const started = await tool("box_start", { box: box.name });
+  assert.ok(!isError(started), text(started));
+  assert.equal(daemon.workers().length, 1, "box_start returned once the worker started");
+  const run = await tool("box_run", { box: box.name, command: 'printf "%s|%s\\n" "${GH_TOKEN:+token}" "$MACHINE_VAR"' });
+  assert.match(text(run), /stdout:\ntoken\|value-machine\n/);
+});
+
+test("box_start waits for BB to show the box's machine connected again, but only so long", async (t) => {
+  const { harness, app, world, tool } = await start(undefined, { variablesWaitMs: 300 });
+  t.after(() => harness.lifecycle.dispose());
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  const box = await only(app);
+  const hostId = `host-${box.id}`;
+  const stop = async () => {
+    await tool("box_stop", { box: box.name });
+    world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  };
+
+  await stop();
+  world.connectAfterMs = 200;
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  assert.equal(world.hosts.get(hostId)?.status, "connected", "box_start returned once BB showed the machine connected");
+
+  await stop();
+  world.connectAfterMs = null;
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  const messages = harness.inspection.logEntries.map((entry) => entry.message);
+  assert.ok(messages.includes(`BB did not show box ${box.name}'s machine connected 0.3 s after its daemon started again.`), messages.join("\n"));
+});
+
+test("a box whose machine BB removes while bb-box waits for the variables is not enrolled", async (t) => {
+  const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
+  t.after(daemon.stop);
+  const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent, variablesWaitMs: 1_500 });
+  t.after(() => harness.lifecycle.dispose());
+
+  const acquired = tool("box_acquire", { kind: "linux" });
+  const box = await until("BB to show the machine connected", async () => {
+    const [current] = await app.boxes.list(THREAD);
+    return current && world.hosts.get(`host-${current.id}`)?.status === "connected" ? current : null;
+  });
+  // The enrolment notices within 100 ms, then waits for a worker that never starts.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  world.hosts.delete(`host-${box.id}`);
+  await app.enrolment.forgetHost(`host-${box.id}`);
+  assert.ok(!isError(await acquired));
+  const messages = () => harness.inspection.logEntries.map((entry) => entry.message);
+  await until("the wait to end", async () => messages().some((line) => line.startsWith(`BB's daemon in box ${box.name} had no worker`)));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "off", hostId: null, error: null });
+  assert.ok(!messages().some((line) => line.startsWith(`Enrolled box ${box.name} `)));
+});
+
+test("a box whose machine BB removes while its daemon starts again is not enrolled", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  const box = await only(app);
+  await tool("box_stop", { box: box.name });
+
+  const go = join(tempDir("go"), "go");
+  world.installer = `while [ ! -e '${go}' ]; do sleep 0.05; done`;
+  const started = tool("box_start", { box: box.name });
+  await until("bootstrap", async () => world.bootstraps.length === 2);
+  world.hosts.delete(`host-${box.id}`);
+  await app.enrolment.forgetHost(`host-${box.id}`);
+  writeFileSync(go, "");
+  assert.ok(!isError(await started));
+  assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "off", hostId: null, error: null });
+});
+
 test("the enrolment waits only so long for a worker with the thread's variables", async (t) => {
   const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
   t.after(daemon.stop);
@@ -389,7 +480,11 @@ test("the enrolment waits only so long for a worker with the thread's variables"
     messages.includes(`BB's daemon in box ${box.name} had no worker with the thread's variables 0.3 s after the machine connected. Its commands take them once one has.`),
     messages.join("\n"),
   );
-  assert.match(messages.find((line) => line.startsWith(`Enrolled box ${box.name} `)) ?? "", /, waiting for a worker with the thread's variables 0\.[3-9]\d s, finishing /);
+  // The wait counts from when the machine connected, so any wait for the access setup is part of it.
+  const line = messages.find((entry) => entry.startsWith(`Enrolled box ${box.name} `)) ?? "";
+  const step = (label: string) => Number(new RegExp(`, ${label} (\\d+\\.\\d+) s,`).exec(line)?.[1] ?? 0);
+  assert.match(line, /, waiting for a worker with the thread's variables 0\.\d+ s, finishing /);
+  assert.ok(step("waiting for the access setup") + step("waiting for a worker with the thread's variables") >= 0.29, line);
 });
 
 test("the enrolment's log lists its steps in the order they started, with the access setup's parts", () => {
