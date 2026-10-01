@@ -203,9 +203,9 @@ section keeps BB's generic form above it and shows the Backends section
 read-only: state, problems, the guide link and the check. The Kinds and
 General sections appear with the document.
 
-## BB request
+## A possible BB request
 
 If BB later lets a plugin hide or group its declared settings, bb-box could
-keep secrets in BB's own secret store and still own its page. That is
-drafted as request 7 in [bb-requests.md](../bb-requests.md); it is not
-needed for this design.
+keep secrets in BB's own secret store and still own its page. Decision 029
+does not need it, so no request is drafted; it is worth one once the page
+exists and the trade-off can be shown.
