@@ -194,8 +194,10 @@ Together these should bring an enrolment with bb-app installed under 2 s.
 **Until then.** bb-box sets up the thread's access in the box while BB's
 installer runs, asks BB whether the machine is connected every 100 ms once
 the installer has finished, and logs each step's time in
-`bb plugin logs bb-box`. Enrolling warm boxes ahead would hide the wait, but
-needs machines hidden from thread placement (below).
+`bb plugin logs bb-box`. Spare boxes, enrolled ahead, are to hide the wait
+for the kinds that have them
+([032](decisions/032-spare-boxes-are-enrolled-ahead.md)). BB shows them as
+machines until a thread claims them (below).
 
 ## 6. Find a machine by its key
 
@@ -329,9 +331,12 @@ and macOS boxes parse `ps -E`, choosing the worker the same way
 
 ## Possible later
 
-- **Machines hidden from thread placement.** If warm boxes are enrolled ahead,
-  bb-box would ask for a way to keep an unclaimed machine out of BB's machine
-  list and thread placement until a thread claims it.
+- **Machines hidden from thread placement.** bb-box enrols spare boxes ahead
+  ([032](decisions/032-spare-boxes-are-enrolled-ahead.md)), and BB shows them
+  in its machine list and picker until a thread claims them. bb-box would
+  ask for a way to keep a machine out of both, such as a flag that
+  `hosts.update` can set and clear. BB now hides only ephemeral machines.
+  Only BB makes those, and it removes them once no thread uses them.
 - **Linger in the installer.** Where the installer makes a systemd user
   service, it could enable linger, so the service outlives the session that
   installed it. bb-box does this in its templates meanwhile.
