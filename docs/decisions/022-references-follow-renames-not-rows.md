@@ -2,7 +2,9 @@
 
 Status: accepted, 30 September 2026. Partly supersedes
 [015](015-computer-use-through-cua-driver.md): how an old reference is found
-again.
+again. Partly superseded by
+[023](023-a-reference-follows-its-element-through-its-own-rename.md): what
+makes up an element's place.
 
 ## Context
 

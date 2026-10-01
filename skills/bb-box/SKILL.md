@@ -26,8 +26,8 @@ Every result ends with a `Next:` line that says what to do next.
 | `computer_windows` | `box` | Lists the windows on a desktop box's screen, with their IDs. |
 | `computer_observe` | `box`, `window`, `query?`, `limit?`, `screenshot?` | Reads a window's accessibility tree, with a reference such as `e12` for each element you can act on. |
 | `computer_screenshot` | `box`, `window?` | Returns an image of a window, or of the whole desktop by default. |
-| `computer_act` | `box`, `action`, `ref?`, `window?`, `x?`, `y?`, `value?`, `direction?`, `amount?` | Clicks, double-clicks, right-clicks, scrolls or sets a value, on a reference or at pixels, and says what changed. |
-| `computer_type` | `box`, `text?`, `keys?`, `ref?`, `window?` | Types text, or presses a key or chord such as `ctrl+a`, and says what the element reads afterwards. |
+| `computer_act` | `box`, `action`, `ref?`, `window?`, `x?`, `y?`, `value?`, `direction?`, `amount?`, `keys?` | Clicks, double-clicks, right-clicks, scrolls or sets a value, on a reference or at pixels, or presses `keys` with action `key`, and says what changed. |
+| `computer_type` | `box`, `text?`, `keys?`, `ref?`, `window?` | Types text, or presses a key or chord such as `ctrl+a`, and says what the element reads afterwards. `window` can be `"desktop"`. |
 | `computer_launch` | `box`, `app?`, `url?` | Opens an app or a URL and says which windows it opened. |
 
 `box` is the box's name or ID.
@@ -90,8 +90,8 @@ with `computer_observe` first, and act on its references. Take an image with
 `computer_screenshot` only when appearance matters.
 
 - A reference stays valid while its element is on screen, including after
-  you type into it. When the element has gone, the tool says so; observe the
-  window again.
+  you type into it and its name changes. When the element has gone, the tool
+  says so; observe the window again.
 - `limit` counts lines of the tree. A web page can be long: pass `query` to
   see only the lines you need.
 - Pixels count only in your latest image of that window, or of the desktop.
@@ -99,9 +99,22 @@ with `computer_observe` first, and act on its references. Take an image with
   smaller than the screen. Each image and pixel action states the image's
   size, the window's or screen's size and the scale between them.
 - A pixel action on the desktop says which windows opened, closed or
-  changed. When it finds none, take a screenshot to see what happened.
-- Input goes in the background first. When the app refuses it there, it goes
-  in the foreground, and the result says so.
+  changed. It reads the tree of the window under the point only when that
+  tree is small; otherwise it says so. When it finds no change, take a
+  screenshot to see what happened.
+- An action that opens a menu or popup says so, with the menu's items and
+  their references, and says when it closes. Some apps' menu items show in
+  their window's tree instead: the result says so. A menu never becomes the active
+  window: press keys in it, such as Escape, with its window ID or window
+  `"desktop"`.
+- Input goes in the background first. When the app refuses it there,
+  bb-box uses the real pointer or keyboard, and the result says so: the
+  desktop's focus may have moved.
+- A URL opened in a browser that is already open waits up to 10 s for the
+  page's title.
+- Of two windows of one app a few pixels apart, the desktop reads one's tree
+  for both. bb-box then moves the window you read a little way, and says so.
+  It cannot move a maximised window: un-maximise or close one of the two.
 - While a person holds control, every computer tool refuses at once. After
   they hand back, references and images are gone: observe again.
 
