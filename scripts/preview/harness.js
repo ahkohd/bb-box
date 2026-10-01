@@ -50,6 +50,9 @@ const ICONS = {
   ArrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   ArrowUpRight: '<path d="M7 17 17 7M8 7h9v9"/>',
   ArrowTurnBackward: '<path d="M20 17v-3a4 4 0 0 0-4-4H5M9 6l-4 4 4 4"/>',
+  ChevronDown: '<path d="m6 9 6 6 6-6"/>',
+  ChevronRight: '<path d="m9 6 6 6-6 6"/>',
+  ChevronUp: '<path d="m6 15 6-6 6 6"/>',
   Zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
 };
 const assets = {};

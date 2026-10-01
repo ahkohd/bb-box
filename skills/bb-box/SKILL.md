@@ -188,10 +188,15 @@ timings, whether the box is a BB machine, and GPU or CPU for a desktop. A
 row opens to its details. "New box" makes a box of any kind; each row's
 actions stop, start, check and release it (release asks first). A desktop
 box opens in a panel tab of its own, or in a browser tab, which shows who
-has control. The Desktops page lists every desktop box. The Backends
-section in bb-box's settings shows each backend's state, its setup guide
-and what it still needs, and runs the doctor. The design is in
+has control. The Desktops page lists every desktop box. The design is in
 `docs/design/panel.md`.
+
+bb-box's settings page in BB has three parts: Backends, each with a switch,
+its state in words and a setup area with the driver's fields, hosts,
+write-only secrets and a check that runs the doctor against the form;
+Kinds, each with a switch, its presets, largest size and warm counts; and
+General, the default kind, boxes per thread and enrolment. The design is in
+`docs/design/settings.md`.
 
 ## Configuration
 
