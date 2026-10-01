@@ -13,7 +13,7 @@ import type { BackendDriver } from "../src/backends/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases } from "../src/plugin/enrol.ts";
-import { KEEPER_COMMAND, KEEPER_TITLE } from "../src/plugin/keeper.ts";
+import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
@@ -102,8 +102,10 @@ async function start(
     hostThreads: new Map<string, number>(),
     /** BB's terminal sessions, by ID. */
     terminals: new Map<string, { id: string; hostId: string; title: string; command: string; status: "starting" | "running" | "exited"; createdAt: number }>(),
-    /** Starts a terminal's process in the box, returning whether it has started; null starts none. */
-    startTerminal: null as (() => () => boolean) | null,
+    /** Calls of bb-box's host entry, by method, with the machine and input. */
+    hostCalls: [] as { method: string; hostId: string; input: unknown }[],
+    /** Answers a call of bb-box's host entry, as its worker on the machine would. */
+    hostEntry: null as ((method: string, hostId: string, input: unknown) => unknown) | null,
   };
   const terminalStarted = new Map<string, () => boolean>();
   const terminal = (id: string) => {
@@ -113,6 +115,10 @@ async function start(
     return { ...session };
   };
   const { bb, harness } = createFakePluginHost({
+    experimental_callHostRpc: ({ method, hostId, input }) => {
+      world.hostCalls.push({ method, hostId, input });
+      return world.hostEntry ? world.hostEntry(method, hostId, input) : { started: false, pid: null };
+    },
     pluginId: "bb-box",
     settings,
     sdk: {
@@ -145,7 +151,6 @@ async function start(
         create: async ({ scope, start, title }: { scope: { hostId: string }; start: { command: string }; title: string }) => {
           const id = `term_${world.terminals.size + 1}`;
           world.terminals.set(id, { id, hostId: scope.hostId, title, command: start.command, status: "starting", createdAt: Date.now() });
-          if (world.startTerminal) terminalStarted.set(id, world.startTerminal());
           return terminal(id);
         },
         get: async ({ terminalId }: { terminalId: string }) => terminal(terminalId),
@@ -516,22 +521,37 @@ test("box_start waits for the box's BB daemon to start again with a worker with 
   assert.match(text(run), /stdout:\ntoken\|value-machine\n/);
 });
 
-test("commands in an enrolled box keep the thread's access when BB's workers that had it are gone, from a BB terminal bb-box keeps there", async (t) => {
+test("commands in an enrolled box keep the thread's access when BB's workers that had it are gone, from bb-box's host entry, and its old terminal is closed", async (t) => {
   // No worker has the variables, as after a plugin reload stopped BB's plugin workers in the box.
   const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
   t.after(daemon.stop);
   const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent, variablesWaitMs: 300 });
   t.after(() => harness.lifecycle.dispose());
-  // BB's daemon gives a terminal's process the machine's variables and GH_TOKEN.
-  world.startTerminal = () => daemon.start({ GH_TOKEN: "value-token", MACHINE_VAR: "value-machine" });
+  // BB's worker for bb-box's host entry starts a process with the daemon's variables, below the daemon.
+  let started: (() => boolean) | null = null;
+  world.hostEntry = (_method, hostId) => {
+    if (!started) {
+      // The terminal bb-box kept for this before (#217), there before the first call.
+      world.terminals.set("term_old", { id: "term_old", hostId, title: RETIRED_TITLE, command: "sleep 2147483647", status: "running", createdAt: 1 });
+      started = daemon.start({ GH_TOKEN: "value-token", MACHINE_VAR: "value-machine" });
+    }
+    return { started: true, pid: 1 };
+  };
 
   assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
   const box = await only(app);
+  const hostId = `host-${box.id}`;
+  await until("the host entry's process", async () => started?.() ?? false);
   const show = { box: box.name, command: 'printf "%s|%s\\n" "${GH_TOKEN:+token}" "$MACHINE_VAR"' };
   assert.match(text(await tool("box_run", show)), /stdout:\ntoken\|value-machine\n/);
   assert.match(text(await tool("box_run", show)), /stdout:\ntoken\|value-machine\n/);
-  const keepers = [...world.terminals.values()].map(({ hostId, title, command, status }) => ({ hostId, title, command, status }));
-  assert.deepEqual(keepers, [{ hostId: `host-${box.id}`, title: KEEPER_TITLE, command: KEEPER_COMMAND, status: "running" }], "one keeper serves every command");
+
+  const calls = world.hostCalls.filter((call) => call.method === "access");
+  assert.ok(calls.length >= 1 && calls.every((call) => call.hostId === hostId), JSON.stringify(calls));
+  assert.ok(calls.length <= 2, "within 30 s, commands do not call again");
+  const names = (calls[0]!.input as { names: string[] }).names;
+  assert.ok(names.includes("GH_TOKEN") && names.includes("MACHINE_VAR"), names.join(" "));
+  await until("the old terminal to close", async () => world.terminals.get("term_old")?.status === "exited");
 });
 
 test("box_start waits for BB to show the box's machine connected again, but only so long", async (t) => {

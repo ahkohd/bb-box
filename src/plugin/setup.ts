@@ -19,7 +19,8 @@ import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, type HostApi } from "./enrol.ts";
-import { Keepers, type KeeperTerminals } from "./keeper.ts";
+import { CALL_TIMEOUT_MS, Holders, type RetiredTerminals } from "./holder.ts";
+import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { ThreadOnBox } from "./contract.ts";
 import { newBoxHost, registerNewBox } from "./new-box.ts";
@@ -230,8 +231,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     return [...new Set([...DAEMON_NAMES, ...system, ...project])];
   };
 
-  // A BB terminal on each enrolled box whose process carries the thread's access, as BB's workers come and go.
-  const keepers = new Keepers({ terminals: () => bb.sdk.terminals as unknown as KeeperTerminals, logError });
+  // bb-box's host entry on each enrolled box keeps a process with the thread's access, as BB's workers come and go.
+  const host = bb.hosts.experimental_client({ contract: hostContract });
+  const holders = new Holders({
+    access: (hostId, names) => host.call("access", { names: [...names] }, { hostId, timeoutMs: CALL_TIMEOUT_MS }),
+    terminals: () => bb.sdk.terminals as unknown as RetiredTerminals,
+    logError,
+  });
+  host.experimental_onWorkerExit(({ hostId }) => holders.forget(hostId));
   let enrolment: Enrolment;
   let desktops: Desktops | undefined;
   let terminals: Terminals | undefined;
@@ -273,7 +280,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return enrolment.claimed(box);
     },
     access: async (box) => {
-      const [listed] = await Promise.all([names(box), box.enrol.hostId ? keepers.ensure(box.enrol.hostId) : undefined]);
+      const listed = await names(box);
+      if (box.enrol.hostId) await holders.ensure(box.enrol.hostId, listed);
       return { names: listed, parent: options.daemonParent ?? DAEMON_PARENT };
     },
     logError,
@@ -345,7 +353,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     void boxes.releaseThread(thread.id).catch((error) => logError("thread deleted", error));
   });
   bb.events.on("experimental_host.deleted", ({ host }) => {
-    keepers.forget(host.id);
+    holders.forget(host.id);
     void enrolment.forgetHost(host.id).catch((error) => logError("host deleted", error));
   });
 

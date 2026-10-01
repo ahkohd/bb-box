@@ -22,7 +22,8 @@
     "app": "./app.tsx",
     "skills": [
       "skills"
-    ]
+    ],
+    "host": "./host.ts"
   },
   "scripts": {
     "typecheck": "tsc",
