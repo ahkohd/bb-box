@@ -268,6 +268,7 @@ package, in `node_modules/@novnc/novnc` after `npm install`.
 - [Decision records](docs/decisions)
 - [Research](docs/research)
 - [Setting up the Proxmox LXC backend](setup/proxmox-lxc/README.md)
+- [Building the Windows template (Proxmox QEMU)](setup/proxmox-qemu/README.md)
 - [Setting up the SSH host pool backend](setup/ssh-pool/README.md)
 - [Setting up the Tart backend](setup/tart/README.md)
 - [Setting up the Docker backend](setup/docker/README.md)

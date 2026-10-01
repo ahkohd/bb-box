@@ -1,0 +1,166 @@
+# The Windows template's first logon, as box with an elevated token, from the
+# answer file. Reads C:\bb-box\build.json, which build.sh writes, and deletes
+# it at the end, since it holds the password. Logs to C:\bb-box\firstlogon.log,
+# writes C:\bb-box\firstlogon-done and restarts.
+$ErrorActionPreference = 'Continue'
+$ProgressPreference = 'SilentlyContinue'
+Start-Transcript -Path C:\bb-box\firstlogon.log -Append | Out-Null
+function Step($text) { Write-Output "$(Get-Date -Format HH:mm:ss) $text" }
+# New-Item -Force would empty a registry key that exists, so only make missing ones.
+function Set-Reg($path, $name, $value, $type = 'DWord') {
+  if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+  New-ItemProperty -Path $path -Name $name -Value $value -PropertyType $type -Force | Out-Null
+}
+# Downloads a pinned file and checks its SHA-256, trying a few times.
+function Get-Pinned($url, $sha256, $out) {
+  for ($try = 1; $try -le 5; $try++) {
+    try {
+      Invoke-WebRequest $url -OutFile $out -UseBasicParsing -ErrorAction Stop
+      if ((Get-FileHash $out -Algorithm SHA256).Hash -eq $sha256) { return }
+      Step "$url does not match its SHA-256 (try $try)"
+    } catch { Step "could not download $url (try $try): $_" }
+    Remove-Item $out -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 10
+  }
+  throw "could not download $url with its SHA-256"
+}
+# A task in box's desktop session at logon, with no console window.
+function Register-LogonTask($name, $command, $level) {
+  $user = "$env:COMPUTERNAME\box"
+  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" -Argument "--headless $command"
+  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+  $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel $level
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+}
+
+# A step that fails stops the script and leaves C:\bb-box\firstlogon-failed,
+# which build.sh watches for, so a failed build ends at once.
+trap {
+  Step "FAILED: $_"
+  Set-Content C:\bb-box\firstlogon-failed "$_"
+  Stop-Transcript | Out-Null
+  break
+}
+
+$build = Get-Content C:\bb-box\build.json -Raw | ConvertFrom-Json
+
+Step 'VirtIO drivers and the QEMU guest agent'
+$virtio = Get-PSDrive -PSProvider FileSystem | Where-Object { Test-Path (Join-Path $_.Root 'virtio-win-gt-x64.msi') } | Select-Object -First 1
+if ($virtio) {
+  Start-Process msiexec.exe -Wait -ArgumentList "/i `"$($virtio.Root)virtio-win-gt-x64.msi`" /qn /norestart"
+  Start-Process msiexec.exe -Wait -ArgumentList "/i `"$($virtio.Root)guest-agent\qemu-ga-x86_64.msi`" /qn /norestart"
+} else { Step 'No virtio-win disc found' }
+
+Step "Build address $($build.address)"
+& C:\bb-box\boot.ps1 -Address $build.address -Gateway $build.gateway -Dns $build.dns
+# The downloads below need the network the address has just brought up.
+for ($i = 0; $i -lt 60 -and -not (Resolve-DnsName github.com -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 2 }
+
+Step "PowerShell $($build.pwsh.version)"
+$msi = "C:\bb-box\pwsh.msi"
+Get-Pinned $build.pwsh.url $build.pwsh.sha256 $msi
+Start-Process msiexec.exe -Wait -ArgumentList "/i `"$msi`" /qn /norestart ADD_PATH=1 USE_MU=0 ENABLE_MU=0 ENABLE_PSREMOTING=0 ADD_EXPLORER_CONTEXT_MENU_OPENPOWERSHELL=0"
+Remove-Item $msi -Force
+$pwsh = 'C:\Program Files\PowerShell\7\pwsh.exe'
+
+Step 'OpenSSH Server'
+$capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server*' | Select-Object -First 1
+if ($capability -and $capability.State -ne 'Installed') { Add-WindowsCapability -Online -Name $capability.Name | Out-Null }
+if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+  Step 'No sshd from the capability: Win32-OpenSSH from GitHub'
+  $release = Invoke-RestMethod https://api.github.com/repos/PowerShell/Win32-OpenSSH/releases/latest
+  $asset = $release.assets | Where-Object name -like 'OpenSSH-Win64-*.msi' | Select-Object -First 1
+  Invoke-WebRequest $asset.browser_download_url -OutFile C:\bb-box\openssh.msi
+  Start-Process msiexec.exe -Wait -ArgumentList '/i C:\bb-box\openssh.msi /qn'
+  Remove-Item C:\bb-box\openssh.msi -Force
+}
+Set-Reg 'HKLM:\SOFTWARE\OpenSSH' DefaultShell $pwsh String
+Set-Service sshd -StartupType Automatic
+Start-Service sshd
+# Keys for members of Administrators are read from here, not from the user's home.
+$keys = 'C:\ProgramData\ssh\administrators_authorized_keys'
+Set-Content -Path $keys -Value ($build.keys -join "`n") -Encoding ascii
+icacls.exe $keys /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null
+# Windows puts the box network in the Public profile; the capability's rule allows only Private.
+if (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue) {
+  Set-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -Profile Any -Enabled True
+} else {
+  New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Profile Any -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+}
+
+Step 'UTF-8 as the system code page'
+foreach ($name in 'ACP', 'OEMCP', 'MACCP') { Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage' -Name $name -Value '65001' }
+
+Step 'Automatic logon; no lock screen, sleep, screen saver, UAC prompt, updates or first-run screens'
+$winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+Set-Reg $winlogon AutoAdminLogon '1' String
+Set-Reg $winlogon DefaultUserName 'box' String
+Set-Reg $winlogon DefaultPassword $build.password String
+Remove-ItemProperty -Path $winlogon -Name AutoLogonCount -ErrorAction SilentlyContinue
+Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device' DevicePasswordLessBuildVersion 0
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization' NoLockScreen 1
+Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' ConsentPromptBehaviorAdmin 0
+Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' PromptOnSecureDesktop 0
+Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\BitLocker' PreventDeviceEncryption 1
+Set-Reg 'HKCU:\Control Panel\Desktop' ScreenSaveActive '0' String
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement' ScoobeSystemSettingEnabled 0
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoUpdate 1
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoRebootWithLoggedOnUsers 1
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore' AutoDownload 2
+powercfg.exe /change standby-timeout-ac 0
+powercfg.exe /change monitor-timeout-ac 0
+powercfg.exe /change hibernate-timeout-ac 0
+# No hibernation in the guest, so no Fast Startup: a shutdown is a full one, and
+# a clone boots afresh. Proxmox's own hibernation of a box does not need it.
+powercfg.exe /hibernate off
+powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_NONE CONSOLELOCK 0
+powercfg.exe /setactive SCHEME_CURRENT
+
+Step 'Edge: its whole page in the accessibility tree'
+# A running Edge ignores new flags, so it must not stay running in the background.
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' HideFirstRunExperience 1
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' StartupBoostEnabled 0
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' BackgroundModeEnabled 0
+# Links and URLs open Edge through its handler, which then passes the flag.
+$handler = 'HKLM:\SOFTWARE\Classes\MSEdgeHTM\shell\open\command'
+$open = (Get-ItemProperty $handler -ErrorAction SilentlyContinue).'(default)'
+if ($open -and $open -notmatch 'force-renderer-accessibility') {
+  Set-ItemProperty $handler -Name '(default)' -Value ($open -replace '(msedge\.exe"?)', '$1 --force-renderer-accessibility')
+}
+# Edge's own shortcuts pass the flag too; logon.ps1 does the same for box's taskbar pins.
+& C:\bb-box\logon.ps1 -Shortcuts "$env:PUBLIC\Desktop", "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
+# The screen-reader flag, set at each logon, turns Chromium's full tree on however it starts.
+Register-LogonTask 'bb-box accessibility' "`"$pwsh`" -NoProfile -NonInteractive -File C:\bb-box\logon.ps1" Limited
+
+Step "Cua Driver $($build.cua.version)"
+$zip = 'C:\bb-box\cua.zip'
+Get-Pinned $build.cua.url $build.cua.sha256 $zip
+$dir = 'C:\Program Files\CuaDriver'
+Expand-Archive $zip -DestinationPath C:\bb-box\cua -Force
+Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+Move-Item (Get-ChildItem C:\bb-box\cua -Directory | Select-Object -First 1).FullName $dir
+Remove-Item C:\bb-box\cua, $zip -Recurse -Force
+[Environment]::SetEnvironmentVariable('CUA_DRIVER_RS_TELEMETRY_ENABLED', 'false', 'Machine')
+[Environment]::SetEnvironmentVariable('CUA_DRIVER_RS_UPDATE_CHECK', 'false', 'Machine')
+$path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+if ($path -notlike "*$dir*") { [Environment]::SetEnvironmentVariable('Path', "$path;$dir", 'Machine') }
+$env:CUA_DRIVER_RS_TELEMETRY_ENABLED = 'false'
+& "$dir\cua-driver.exe" telemetry disable 2>&1 | Out-Null
+# Elevated: its pipe accepts only its own account, and an elevated SSH client
+# cannot reach a daemon that is not. The apps it opens still run unelevated.
+Register-LogonTask 'bb-box cua-driver' "`"$dir\cua-driver.exe`" serve" Highest
+
+Step 'The box address at each boot, from the SMBIOS serial'
+$action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\bb-box\boot.ps1'
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName 'bb-box address' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+Set-Content C:\bb-box\dns.txt ($build.dns -join ' ')
+
+Step 'Done: restarting'
+Remove-Item C:\bb-box\build.json -Force
+Set-Content C:\bb-box\firstlogon-done (Get-Date -Format o)
+Stop-Transcript | Out-Null
+shutdown.exe /r /t 10 /c 'bb-box first logon done'
