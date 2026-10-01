@@ -102,6 +102,10 @@ const ID = /^[a-z0-9][a-z0-9-]*$/;
 const RECONNECT_MS = 3_000;
 /** Prints the SHA-256 of stdin, on Linux and macOS. */
 const SHA256 = "if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-64";
+/** The stock editor each OS's desktop has, which the computer-use check opens. */
+const EDITOR: Readonly<Record<string, string>> = { linux: "mousepad", macos: "TextEdit", windows: "notepad" };
+/** How long an app's window may take to appear, a first start of the app included. */
+const WINDOW_WAIT_MS = 20_000;
 const MIB_UNITS: readonly Limit["resource"][] = ["memory", "disk", "gpu-memory"];
 const RESOURCES: readonly Limit["resource"][] = ["memory", "disk", "cpu", "guests", "gpu-desktops", "gpu-memory", "machines"];
 
@@ -659,6 +663,34 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
                 if (!problem && Array.isArray(windows)) return;
                 if (Date.now() > deadline) assert.fail(`the driver did not list the windows: ${problem || "no windows array"}`);
                 await new Promise((resolve) => setTimeout(resolve, 1_000));
+              }
+            });
+
+            // As computer_launch does. An app reaches the desktop's display only
+            // when the box is as its desktop needs, also after the backend named
+            // it: a Linux display's X cookie is looked up by the hostname.
+            const editor = EDITOR[capabilities.os];
+            it(`opens an app, ${editor}, whose window appears on the desktop`, { timeout, skip: skip["computer-use"] ?? (editor ? false : `no stock app is known for ${capabilities.os}`) }, async () => {
+              const { command } = need();
+              const channel = await command.spawn!(driverCommand(capabilities.os, computerUse.socket), signal());
+              const session = await McpSession.open(channel, { client: { name: "bb-box-conformance", version: "1" }, timeoutMs: 20_000 });
+              try {
+                const windows = async () => {
+                  const listed = await session.call("list_windows", {}, { timeoutMs: 20_000 });
+                  assert.ok(!listed.isError, listed.content.map((part) => part.text ?? "").join(" "));
+                  const all = (listed.structuredContent?.windows ?? []) as { window_id?: number; width?: number; height?: number; bounds?: { width?: number; height?: number } }[];
+                  return all.filter((window) => (window.bounds?.width ?? window.width ?? 0) > 1 && (window.bounds?.height ?? window.height ?? 0) > 1).map((window) => window.window_id);
+                };
+                const before = new Set(await windows());
+                const launched = await session.call("launch_app", { name: editor! }, { timeoutMs: 30_000 });
+                assert.ok(!launched.isError, `the driver could not open ${editor}: ${launched.content.map((part) => part.text ?? "").join(" ")}`);
+                const deadline = Date.now() + WINDOW_WAIT_MS;
+                while (!(await windows()).some((id) => !before.has(id))) {
+                  if (Date.now() > deadline) assert.fail(`${editor} opened, but no new window appeared within ${WINDOW_WAIT_MS / 1000} s`);
+                  await new Promise((resolve) => setTimeout(resolve, 500));
+                }
+              } finally {
+                await session.close();
               }
             });
           }
