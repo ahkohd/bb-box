@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.trycua.cua-driver</string>
+<key>ProgramArguments</key><array><string>/Applications/CuaDriver.app/Contents/MacOS/cua-driver</string><string>serve</string></array>
+<key>EnvironmentVariables</key><dict>
+<key>CUA_DRIVER_RS_TELEMETRY_ENABLED</key><string>false</string>
+<key>CUA_DRIVER_RS_UPDATE_CHECK</key><string>false</string>
+</dict>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ProcessType</key><string>Interactive</string>
+</dict></plist>
