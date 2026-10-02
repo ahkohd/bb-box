@@ -59,6 +59,10 @@ const novnc = vi.hoisted(() => {
       this.focused++;
     }
     blur() {}
+    /** noVNC's own measure: the element's rect, fractional. */
+    _screenSize() {
+      return { w: 851.5, h: 1007.25 };
+    }
   }
   return { FakeRfb };
 });
@@ -1251,6 +1255,8 @@ test("once the tab's size holds, a desktop in your control asks for it once; whi
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
   const [client] = novnc.FakeRfb.made;
   const observer = observerOf(client!);
+  // The viewer measures its screen in whole pixels, as noVNC floors what it asks for, so a size that holds is asked for once (#353).
+  expect(client!._screenSize()).toEqual({ w: 851, h: 1007 });
   act(() => void client!.dispatchEvent(new Event("connect")));
   vi.useFakeTimers();
   act(() => observer.resize(1037, 746));

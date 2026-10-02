@@ -462,7 +462,11 @@ frame of a change, with no wait, and the box's queue set that size
 before the final one, so a maximise landed in two steps (the Windows box
 of 2 October 2026); now a maximise, a restore and a window drag each land
 in one step. The opening fit is asked for at connect, before any move,
-and the first frame does not wait for it.
+and the first frame does not wait for it. The viewer measures its screen
+in whole pixels, as noVNC floors the size it asks for: with fractional
+pixels the two never matched after a resize, so a pane of 851.5 px kept
+a one-pixel request outstanding, and a maximise that met it waited for
+that request's round trip (#353).
 
   While you hold control, the screen area has a two-pixel inset ring in the
   primary colour, so it is clear which tab sends input. Resizing is

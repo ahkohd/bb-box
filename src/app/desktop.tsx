@@ -24,6 +24,20 @@ const MAX_RETRY_MS = 15_000;
 /** How long the viewer's size must hold before the desktop is asked for it again. */
 export const SETTLE_MS = 250;
 
+/**
+ * noVNC measures its screen in fractional pixels and asks the box for the
+ * floor; after the resize it finds the two unequal and asks for the same
+ * floor again, so a pane of 851.5 px kept a one-pixel request outstanding,
+ * and a maximise that met it waited for it (#353). Measured in whole
+ * pixels, as the request is made, a size that holds is asked for once.
+ */
+class Viewer extends RFB {
+  override _screenSize(): { w: number; h: number } {
+    const size = super._screenSize();
+    return { w: Math.floor(size.w), h: Math.floor(size.h) };
+  }
+}
+
 /** Where the Desktops page shows one box, for a new browser tab. */
 export function pageHref(pluginId: string, threadId: string, boxId: string): string {
   return `/plugins/${encodeURIComponent(pluginId)}/${DESKTOP_PAGE}/${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
@@ -149,7 +163,7 @@ export class DesktopSession implements Kept {
     if (this.#disposed) return;
     clearTimeout(this.#retry);
     this.#refused = null;
-    const client = new RFB(this.element, this.#url, { shared: true });
+    const client = new Viewer(this.element, this.#url, { shared: true });
     client.scaleViewport = true;
     client.viewOnly = !this.#mine;
     client.resizeSession = this.#mine && this.#resizable;
