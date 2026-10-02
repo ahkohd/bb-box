@@ -2,6 +2,11 @@
 
 Status: accepted, 1 October 2026. Extends
 [011](011-interface-v1.md): an acquire may name the one provider to try.
+Amended while it was built, 2 October 2026: the provider choice is a step
+of the stepped New box form (#333), filtered by kind of provider and by
+the machine it runs on; and `on` takes a list of providers, the first with
+room among them taking the box, so a filtered "First with room" never
+places a box outside the filter.
 
 ## Context
 
@@ -36,13 +41,32 @@ an agent can say where a box goes.
   kind's providers. A name that matches two is refused with their IDs. A
   provider without the kind is refused with the kinds it has.
 
+**`on` may be a list** (amended while it was built).
+
+- `on` takes one provider or a list of them, each in the words above.
+  `box_acquire`'s `on` is a string or a list of strings: "Where the box
+  goes, from box_list: a provider such as Docker on devpc, or a list of
+  them for the first with room among them. Leave it out for the first with
+  room." `--on` takes names separated by commas (`--on pve1,devpc`). The
+  forms send backend IDs.
+- The first with room among them takes the box, in acquire order. The list
+  narrows the choice and does not reorder it: the configuration's order
+  stays the one preference, and the form's rows, in that order, read true.
+- Each name is checked as one is above, and any refusal there refuses the
+  acquire: a list with a mistake in it is a mistake, and placing the box on
+  the rest would hide it. A name given twice counts once. An empty list is
+  refused.
+- A list of one is the same as that name.
+
 **Strict, with no fallback.**
 
-- Only that provider's offer of the kind is tried. A spare is claimed only
-  from it, and a spare is released to make room only on it.
-- When it is full, offline or off, the acquire is refused with its words.
-  The refusal names the kind's other providers and says that leaving `on`
-  out takes the first with room.
+- Only the named providers' offers of the kind are tried. A spare is
+  claimed only from them, and a spare is released to make room only on
+  them.
+- When none has room, the acquire is refused, with each named provider's
+  reason in its own words: full, offline or off. The refusal names the
+  kind's other providers and says that leaving `on` out takes the first
+  with room.
 - A person or agent who names a place wants that place. A box placed
   elsewhere would also pass a live check that should fail.
 
@@ -50,27 +74,48 @@ an agent can say where a box goes.
 providers in acquire order, in the words `on` takes: "On: Proxmox LXC on
 pve1, Docker on devpc." An agent never guesses a name.
 
-**The New box form.**
+**The New box form** (amended while it was built: the stepped form of
+#333; docs/design/panel.md has the detail).
 
-- When the detail pane shows the chosen kind and the kind has more than
-  one offer, its offers are a choice. "First with room" comes first and is
-  chosen at first, in place of the line "the first with room, in that
-  order"; each offer follows. When the pane follows the pointer to another
-  kind, its offers are plain text, as now.
-- The tab order is kinds, then the provider choice when there is one, then
-  Size, Name and Create.
-- Choosing another kind sets the choice back to "First with room". The
-  form does not remember it, as it remembers the kind and size. The
+- The provider choice is the form's Provider step, after System,
+  Architecture and Type, and before Resources. Two filters narrow its
+  rows: Kind chips (All, Container, VM, Physical) and Runs on (Any
+  machine, a Mac, a Linux machine, a Windows PC). A provider that does not
+  know yet what its machine runs stays under every Runs on choice.
+- "First with room" comes first and is chosen at first; one row per
+  provider follows, in acquire order.
+- What the form sends:
+  - a chosen row sends its backend ID as `on`;
+  - "First with room" with every provider of the kind shown sends no
+    `on`;
+  - "First with room" with the filters hiding some sends the shown rows'
+    backend IDs as a list, so the box never lands on a provider the
+    filters hid; a filter that leaves one sends that one.
+- One offer is no choice: its row stands alone, checked, and no `on` goes.
+- Another type, or closing the form, sets the choice and the filters back.
+  The form does not remember them, as it remembers the kind and size. The
   configuration's order is the standing preference, so a person who always
   wants one machine first moves it up in settings.
-- A refusal shows under the button, as other refusals do, and the popover
-  stays open.
+- A refusal shows under the form's summary bar, as other refusals do, and
+  the popover stays open.
 - Add machine ([036](036-your-machines-are-boxes-you-own.md)) is the same
   form, so it has the same choice.
 
+**The Backend interface** gains one optional field (amended while it was
+built): `hostOs`, what the machine its boxes run on runs (`linux`, `macos`
+or `windows`), or null until it knows, for the Runs on filter. Proxmox
+and pool machines are Linux and Tart's are Macs. A Docker backend reports
+what its machine says:
+
+- for a BB machine, the platform bb-box's host entry there reports over
+  the relay;
+- for a local daemon, the platform of BB's server;
+- for an `ssh://` daemon, what `docker info` says, kept in the backend's
+  storage as its host's name is.
+
 **Not changed.**
 
-- The Backend interface. Core keeps only the named provider's offer before
+- How core places a box. It keeps only the named providers' offers before
   it asks for capacity, and the box record keeps its backend, as now.
 - "New box" in BB's new-thread screen
   ([033](033-a-thread-can-start-on-a-new-box.md)) takes the first with
@@ -83,6 +128,9 @@ pve1, Docker on devpc." An agent never guesses a name.
   stays as it is.
 - An acquire with `on` can be refused where one without it would get a
   box. The refusal says how to get one anyway.
+- A person who filters the form and leaves "First with room" gets a box on
+  one of the providers they see, or a refusal that says why each is full.
+  An agent can ask for "any of these" in the same way.
 - A provider's name is now something an agent types. A BB machine renamed
   in BB renames its "Docker on" provider, and an `on` with the old name is
   refused, with the new name listed.

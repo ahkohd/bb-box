@@ -11,7 +11,7 @@ driver's setup is a guide with a list of scripts. Partly superseded by
 [028](028-a-box-size-is-chosen-when-it-is-made.md): a box's size is chosen
 when it is made, and `capacity` is asked about that size. Extended by
 [044](044-a-box-can-be-asked-for-on-one-provider.md): an acquire may name
-the one provider to try.
+the provider, or the providers, to try.
 
 ## Context
 
