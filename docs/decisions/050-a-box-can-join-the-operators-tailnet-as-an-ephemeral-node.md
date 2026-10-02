@@ -5,6 +5,8 @@ Status: accepted, 2 October 2026. Extends
 holds the tailnet and its key; and
 [049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md):
 standard Linux images carry Tailscale, stopped and with no state.
+Checked after it was written: TUN in a Proxmox LXC container, its clones,
+and the API token, below.
 
 ## Context
 
@@ -189,9 +191,11 @@ is gone within 10 s.
 
 ### To verify in the first PRs
 
-- That `pct set <vmid> --dev0 /dev/net/tun` gives a container a working
-  TUN, that a linked clone of a template with it keeps it, and that the
-  API token cannot set it.
+- Checked: `pct set <vmid> --dev0 /dev/net/tun` gives a container a
+  working TUN, and tailscaled starts with it. A template made from that
+  container keeps the line, and its linked clone has TUN too. The API
+  token is refused: "configuring device passthrough is only allowed for
+  root@pam".
 - That a privileged Docker box sees `/dev/net/tun` once its LXC Docker
   host has the device.
 - The time to join, expected to be under 3 s and hidden by BB enrolment.

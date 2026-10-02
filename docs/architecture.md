@@ -1604,4 +1604,4 @@ Notes:
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
 | Whether the Proxmox API token can capture and replace templates, whether the guest scripts run again cleanly on a built template, and whether a BB script automation can run `bb box` | the first PRs of [049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md#to-verify-in-the-first-prs) |
-| Whether a Proxmox LXC template's TUN device line reaches its clones, whether a Docker host that is an LXC container passes TUN to privileged boxes, and how long a join takes | the first PRs of [050](decisions/050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md#to-verify-in-the-first-prs) |
+| Whether a Docker host that is an LXC container passes TUN to privileged boxes, and how long a join takes | the first PRs of [050](decisions/050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md#to-verify-in-the-first-prs) |
