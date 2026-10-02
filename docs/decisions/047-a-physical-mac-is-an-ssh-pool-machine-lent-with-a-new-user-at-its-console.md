@@ -102,7 +102,9 @@ Where it fits:
   when all are Macs, and null with both. The Physical chip hides Runs on
   anyway (044).
 - A Mac lent by the pool is not also a Tart host: a box takes the whole
-  Mac. The doctor warns when one address is in both.
+  Mac, and on macOS 27 and later each reset restarts its userspace, which
+  stops every Tart VM on it. The doctor warns when one address is in both,
+  and says so.
 
 **A box is a new standard user, already signed in at the console.**
 
@@ -132,8 +134,8 @@ Where it fits:
      whole Mac, each when the way before has not signed the user in within
      its time, and the Mac's next reset starts with the way that worked.
      On macOS 27 restarting loginwindow signed nobody in within 60 s, so a
-     Mac's first reset takes a minute longer, and later ones restart
-     userspace. A restart ends the helper, so it waits for step 5;
+     Mac with no way remembered starts with userspace on macOS 27 and
+     later (#383). A restart ends the helper, so it waits for step 5;
   4. remove the old user's crontab, at jobs, System V IPC objects, sudoers
      rule, managed preferences and places in groups, including the
      `-disabled` group that allowing all users to a service makes, and
