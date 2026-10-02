@@ -592,6 +592,8 @@ test("a take or hand-back in the last instance after this one started holds once
   assert.equal(value.mayInput("box2", "viewer-b"), true);
   assert.equal(value.mayInput("box3", "viewer-d"), true);
   assert.equal(reads, 1, "once, for every box");
+  value.resume([{ boxId: "box1", ...kept }]);
+  assert.deepEqual(value.view("box1"), { owner: "agent", holder: null }, "a read at start that ends after a viewer connected is older");
   assert.deepEqual(storage, [
     { boxId: "box3", holder: "viewer-d", size: null, resized: null },
     { boxId: "box2", holder: "viewer-b", size: null, resized: null },
