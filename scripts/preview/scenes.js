@@ -442,6 +442,22 @@ export const scenes = {
       await wait(400);
     },
   },
+  "panel-chooser-host": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 720,
+    rpc: rpc([]),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      // Host: the Docker machine, so every step narrows to what it makes.
+      document.querySelector('[role="combobox"][aria-label="Host"]')?.click();
+      await wait(300);
+      [...document.querySelectorAll('[role="option"]')].find((option) => option.textContent.trim() === "docker-host")?.click();
+      await wait(300);
+    },
+  },
   "panel-chooser-filter": {
     slot: "boxes",
     chrome: boxesChrome,

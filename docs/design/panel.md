@@ -223,6 +223,7 @@ words are never cut off.
 
 ```
 +------------------------------------------------------------------+
+|                                          [ Host: Any host    v ] |
 | System                                                            |
 | [ Linux            ] [ macOS            ] [ Windows            ]  |
 | [ pve1, pool       ] [ mac-mini         ] [ pve1               ]  |
@@ -268,6 +269,14 @@ session of 1 October 2026 took the "Add Box" heading off, and gave the
 footer the form's own background, not a band). On a compact viewport the
 bottom sheet still carries the title "New box".
 
+- **Host** is the form's first row, a compact menu at the right, "Host:
+  Any host", listing the hosts the providers run on (the operator's
+  artboard had it in a heading the form no longer has). One host chosen
+  narrows every step below to what that host can make: the systems,
+  architectures and types its kinds have, and only its providers in the
+  list, so "First with room" sends them as a list (044) and a box never
+  lands elsewhere. A pool of machines, with no host of its own, is under
+  Any host only. Closing the form puts the host back to any.
 - **System** is a card per OS on offer, Linux, macOS, Windows in that
   order, with its hosts under the name ("pve1, SSH host pool") or, past
   two, how many providers have it ("3 providers").
@@ -560,7 +569,7 @@ panel."
 | plugin description | Computers for BB threads. The plugin shows as "BB Box"; its ID stays bb-box. |
 | tab titles | Box; the box's name for its desktop |
 | toolbar | New box |
-| chooser | System · Architecture · Type · Server · Desktop · Not available · Provider · Filter · Kind · All · Container · VM · Physical · Runs on · Any machine · First with room · Resources · Small · Medium · Large · Custom · GPU · None · 1 GPU · Create box · Add machine · No provider matches these filters. |
+| chooser | Host · Any host · System · Architecture · Type · Server · Desktop · Not available · Provider · Filter · Kind · All · Container · VM · Physical · Runs on · Any machine · First with room · Resources · Small · Medium · Large · Custom · GPU · None · 1 GPU · Create box · Add machine · No provider matches these filters. |
 | provider profile | About <provider> · Runs on · Makes · Room · Usually · Status · Looking… · Not known: the provider did not answer. |
 | empty | No boxes yet · A computer for this thread. |
 | not set up | BB Box is not set up yet. Set a backend up in its settings and turn it on. · Open BB Box settings |
