@@ -18,7 +18,7 @@ each Mac. It offers these kinds:
 - **windows-arm64-desktop**: Windows 11 on arm64, its desktop shown in the
   thread's panel, and computer use through Cua Driver (046). QEMU runs its
   VM, with Apple's Hypervisor framework, not Tart. Off until you give its
-  image; the script that prepares the image is to come (#207).
+  image, which you build from your own Windows ISO.
 
 The macOS and Linux boxes enrol in BB as machines, as other Linux boxes do.
 A Windows box does not, as on Proxmox.
@@ -43,6 +43,8 @@ Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
 | --- | --- |
 | `prepare-image.sh` | Builds the image a Mac's boxes are cloned from |
 | `prepare-linux-image.sh` | Builds the image a Mac's Linux boxes are cloned from (040) |
+| `prepare-windows-image.sh` | Builds the image a Mac's Windows boxes are made from, in QEMU (046) |
+| `windows/` | What that script adds to the Proxmox Windows template's files: Windows' clock, and its check |
 | `guest/customize.sh` | Runs inside the image's VM while it is built |
 | `grant-tcc.sh` | Grants Cua Driver its permissions in a stopped VM's disk |
 
@@ -239,6 +241,47 @@ desktop as the box user. It takes about 8 minutes, and the image is about
 ./prepare-linux-image.sh --desktop --key 'ssh-ed25519 AAAA... bb-box' --bb-url https://bb.example.com
 ```
 
+### The Windows image (arm64)
+
+Windows boxes on a Mac (`windows-arm64-desktop`, 046) are made from an
+image that `prepare-windows-image.sh` builds in QEMU from your own Windows
+11 Arm64 ISO, in English (United States), from Microsoft
+(<https://www.microsoft.com/software-download/windows11arm64>). It installs
+Windows unattended with the Proxmox Windows template's answer file and
+first-logon scripts (`../proxmox-qemu`), adapted for arm64, and the arm64
+virtio-win drivers, so a Windows box on a Mac has what one on Proxmox has:
+OpenSSH with PowerShell 7 as its shell, Git, GitHub CLI and Cua Driver,
+with `box` logged on at boot. Then it boots the image once as a box boots,
+and checks a clone of it over SSH (`../proxmox-qemu/check.ps1`), saved and
+restored as bb-box stops and starts a box.
+
+```sh
+./prepare-windows-image.sh --iso ~/Downloads/Win11_arm64.iso --iso-sha256 <its SHA-256> \
+  --key 'ssh-ed25519 AAAA... bb-box' --delete-iso
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--iso`, `--iso-sha256` | (required) | The ISO, and its SHA-256, which the script checks |
+| `--key` | (required) | bb-box's public key, as for the other images. ed25519 only |
+| `--name` | `bb-box-windows` | The image to make, in `~/.bb-box/qemu/images` |
+| `--edition`, `--product-key` | `Windows 11 Pro`, Microsoft's generic key for it | The edition to install, and its key. The generic key installs without activating, as on Proxmox |
+| `--reserve-gib` | 50 | The disk space the build leaves free. It stops rather than leave less |
+| `--delete-iso` | off | Delete the ISO once Setup has copied Windows from it |
+| `--replace` | off | Build an image of that name again. Boxes made from the old build keep it |
+| `--keep` | off | Keep a failed build's directory, to boot and look at |
+
+It needs about 25 GiB beyond the reserve while it runs. Watch Setup with a
+VNC viewer on the Mac, at the address the script prints. Each build is a
+directory of the image, `build.<time>`, with a read-only `disk.qcow2` and
+the UEFI variables; `current` links to the one new boxes are made from. A
+failed build leaves its last screen and QEMU's output beside them.
+
+QEMU's clock is UTC. The image reads it as UTC, and Windows' time service
+syncs every 15 minutes, which corrects a box a sleeping Mac has left behind
+(`windows/clock.ps1`). bb-box also sets the clock when it starts a stopped
+box.
+
 ### Permissions for computer use
 
 macOS keeps Accessibility and Screen Recording grants in the system TCC
@@ -283,6 +326,7 @@ keeps its boxes and takes no new ones. The backend's own fields:
 | `macos-image`, `macos-desktop-image` | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
 | `linux-image` | empty | The Tart VM `linux-arm64` boxes are cloned from, such as `bb-box-linux`. Empty, the default, turns them off |
 | `linux-desktop-image` | empty | The Tart VM `linux-arm64-desktop-cpu` boxes are cloned from, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
+| `windows-image` | empty | The image in `~/.bb-box/qemu/images` that `windows-arm64-desktop` boxes are made from, such as `bb-box-windows`. Empty, the default, turns them off |
 | `vm-user` | `admin` | The macOS images' user. Linux boxes work as `box` |
 | `vms-per-host` | 2 | At most 2 |
 | `reserve-memory-mib`, `reserve-disk-gib` | 16384, 50 | A new box is refused when the Mac would have less. With 16 GiB kept free, a 16 GiB Mac takes no box and a 32 GiB Mac takes two 8 GiB boxes, so lower it on a small Mac you do not use yourself |
