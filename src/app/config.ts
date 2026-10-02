@@ -1,7 +1,7 @@
 // Pure helpers for the settings page: reading the configuration state the
 // server gives, and building the drafts the page sends back (029).
 
-import type { BoxSize, FieldValue } from "../backends/types.ts";
+import type { BoxSize, FieldValue, WarmShortfall } from "../backends/types.ts";
 import type { BackendConfig, ConfigDocument, KindConfig, Problem, SecretState } from "../core/document.ts";
 import type { Preset } from "../core/sizes.ts";
 import type { ConfigState, FieldView } from "../plugin/configuration.ts";
@@ -148,6 +148,16 @@ export function withGeneral(document: ConfigDocument, patch: Partial<ConfigDocum
 /** A backend's warm count for a kind, as the document has it. */
 export function warmOf(backend: BackendConfig | undefined, kind: string): number {
   return backend?.warm?.[kind] ?? 0;
+}
+
+/**
+ * How the settings page tells the operator a backend's warm pool is short of
+ * its count for want of room (#356), in its voice: "Has 0 of 1 ready: no room.
+ * <reason>". A shortfall is always a room problem, so "no room" leads, then
+ * the backend's own reason gives the specifics.
+ */
+export function warmShortWords(short: WarmShortfall): string {
+  return `Has ${short.have} of ${short.count} ready: no room. ${short.reason}`;
 }
 
 /** What a field's control holds while the form is open. A secret is kept, replaced by a string, or cleared by null. */

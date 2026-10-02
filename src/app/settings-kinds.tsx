@@ -7,19 +7,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { BoxForm, BoxSize } from "../backends/types.ts";
+import type { BoxForm, BoxSize, WarmShortfall } from "../backends/types.ts";
 import type { Problem } from "../core/document.ts";
 import type { Preset } from "../core/sizes.ts";
 import type { BackendState, ConfigState, KindInfoView } from "../plugin/configuration.ts";
 import { isArm64Badge, KindBadges, lacksDocker, Meta, osName, StatusDot } from "./common.tsx";
-import { PRESET_LABELS, PRESET_NAMES, gib, mib, problemAt, problemsLeft, sizeWords, type KindSizes } from "./config.ts";
+import { PRESET_LABELS, PRESET_NAMES, gib, mib, problemAt, problemsLeft, sizeWords, warmShortWords, type KindSizes } from "./config.ts";
 import { FieldShell, FormHeading } from "./settings-fields.tsx";
 
 export interface KindRowModel {
   readonly info: KindInfoView;
   readonly sizes: KindSizes;
-  /** The backends in the document that can make it, with what its boxes are there, whether each offers it now and its warm count. */
-  readonly backends: readonly { readonly id: string; readonly label: string; readonly form: BoxForm | null; readonly offers: boolean; readonly warm: number }[];
+  /** The backends in the document that can make it, with what its boxes are there, whether each offers it now, its warm count, and any shortfall its warm pool is left at for want of room (#356). */
+  readonly backends: readonly { readonly id: string; readonly label: string; readonly form: BoxForm | null; readonly offers: boolean; readonly warm: number; readonly short: WarmShortfall | null }[];
   readonly problems: readonly Problem[];
 }
 
@@ -28,7 +28,8 @@ export function kindRowModel(state: ConfigState, info: KindInfoView, sizes: Kind
     .filter((backend) => info.drivers.includes(backend.type))
     .map((backend) => {
       const live: BackendState | undefined = state.backends.find((candidate) => candidate.id === backend.id);
-      return { id: backend.id, label: live?.label ?? backend.label ?? backend.type, form: live?.form ?? null, offers: live?.kinds.includes(info.id) ?? false, warm: backend.warm?.[info.id] ?? 0 };
+      const short = live?.warmShort?.find((pool) => pool.kinds.includes(info.id)) ?? null;
+      return { id: backend.id, label: live?.label ?? backend.label ?? backend.type, form: live?.form ?? null, offers: live?.kinds.includes(info.id) ?? false, warm: backend.warm?.[info.id] ?? 0, short };
     });
   return { info, sizes, backends, problems: state.problems.filter((problem) => problem.path === `kinds.${info.id}` || problem.path.startsWith(`kinds.${info.id}.`)) };
 }
@@ -221,6 +222,11 @@ export function KindForm({ model, onSave, onClose }: { model: KindRowModel; onSa
             {model.backends.map((backend) => (
               <FieldShell key={backend.id} label={backend.label} problem={problemAt(problems, `backends.${backend.id}.warm.${info.id}`)}>
                 <Input className="h-8 w-24 text-xs" inputMode="numeric" aria-label={`Warm ${info.label} boxes on ${backend.label}`} value={warm[backend.id] ?? "0"} onChange={(event) => setWarm((current) => ({ ...current, [backend.id]: event.target.value }))} />
+                {backend.short ? (
+                  <span role="status" className="text-2xs leading-snug text-warning-text/80">
+                    {warmShortWords(backend.short)}
+                  </span>
+                ) : null}
               </FieldShell>
             ))}
           </div>

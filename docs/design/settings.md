@@ -242,6 +242,10 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
   "2 spares ready", "1 of 2 spares ready", or "2 spares, being made". With
   none ready and none being made, as while its backend is off, it says
   nothing: the row's state already says why. No spinner or dot of its own.
+- A warm count a backend cannot fill for want of room says so under that
+  backend's field in the editor: "Has 0 of 1 ready: no room.", then the
+  backend's own reason, in dim warning text. It goes when the pool fills
+  or the count is lowered.
 - A kind that is on but that no backend can make shows "Not offered: no
   backend has it" in warning text, and says which backend setting would
   provide it.

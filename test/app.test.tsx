@@ -19,7 +19,7 @@ type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "you
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
-import { sourceName } from "../src/app/config.ts";
+import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
 import type { FieldView } from "../src/plugin/configuration.ts";
@@ -809,6 +809,11 @@ test("the (i) on a provider row opens its profile, fetched for every provider on
   await waitFor(() => expect(asked).toEqual(["fake", "ssh-pool", "ssh-pool", "fake", "ssh-pool"]));
 });
 
+test("the warm-short note names how short a pool is and why, in the operator's voice", () => {
+  expect(warmShortWords({ kinds: ["linux-desktop"], count: 1, have: 0, reason: "pve has no memory left." })).toBe("Has 0 of 1 ready: no room. pve has no memory left.");
+  expect(warmShortWords({ kinds: ["linux"], count: 2, have: 1, reason: "No host has room for a warm box." })).toBe("Has 1 of 2 ready: no room. No host has room for a warm box.");
+});
+
 test("the profile's words: limits, room, where it runs, what it makes, the usual start and the status", () => {
   expect(limitWords({ resource: "memory", used: 12 * 1024, total: 64 * 1024, reserve: 4 * 1024, unit: "MiB" })).toBe("memory 12 of 64 GiB, 4 GiB kept back");
   expect(limitWords({ resource: "disk", used: 100 * 1024, total: null, reserve: 0, unit: "MiB" })).toBe("disk 100 GiB used");
@@ -1214,6 +1219,18 @@ test("a kind's editor saves its presets, default, largest size, warm counts and 
   fireEvent.click(slot.getByRole("switch", { name: "Linux desktop on" }));
   await waitFor(() => expect(changes).toHaveLength(2));
   expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).kinds["linux-desktop"]).toEqual({ enabled: false });
+});
+
+test("a kind's warm pool short of room shows a note under that backend's warm count, and none when it has room", async () => {
+  const short = { kinds: ["linux"], count: 1, have: 0, reason: "pve has no memory left." };
+  const withShort = configState({}).backends.map((backend) => (backend.id === "fake" ? { ...backend, warmShort: [short] } : backend));
+  const slot = settings(server([], { config: { backends: withShort } }).handlers);
+  fireEvent.click((await slot.findAllByRole("button", { name: "Edit" }))[0]!);
+  expect(slot.getByText("Has 0 of 1 ready: no room. pve has no memory left.")).toBeTruthy();
+
+  const ok = settings(server([]).handlers);
+  fireEvent.click((await ok.findAllByRole("button", { name: "Edit" }))[0]!);
+  expect(ok.queryByText(/no room/)).toBeNull();
 });
 
 test("the general settings save at once, leaving out a value at its default", async () => {
