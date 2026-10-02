@@ -57,7 +57,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     return refused;
   };
   // The size key is left out for the kind's default: RPC input must be JSON.
-  const make = (kind: string, size?: SizeRequest, _name?: string, on?: string) => settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}), ...(on ? { on } : {}) }));
+  const make = (kind: string, size?: SizeRequest, _name?: string, on?: string | string[]) => settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}), ...(on ? { on } : {}) }));
   const act = async (method: BoxAction, box: BoxView, force = false) => {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && force ? { force: true } : {}) };

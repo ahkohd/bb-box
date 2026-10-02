@@ -1613,13 +1613,49 @@ test("Runs on keeps the providers on that machine, and one that does not know it
   expect(options.map((option) => option.textContent)).toEqual(["Any machine", "a Mac", "a Linux machine"]);
   fireEvent.click(options[1]!);
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("a Mac"));
-  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomAny provider with room, not only these 2", "mac-miniVM · usually ~26.0 s", "an unnamed machineContainer"]);
-  // Container on a Mac leaves the Docker machine, which the request then names.
+  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomAny of the 2 below, in order", "mac-miniVM · usually ~26.0 s", "an unnamed machineContainer"]);
+  // First with room among the providers the filters left sends them as a list, so the box never lands outside the filter (044).
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(changes).toEqual(["acquire linux on tart,docker:host_1"]));
+  await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
+
+  // Reopened, the filters are back; Container on a Mac leaves the Docker machine, which the request then names alone.
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  expect((await screen.findByRole("combobox", { name: "Runs on" })).textContent).toBe("Any machine");
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "Runs on" }), { key: "ArrowDown" });
+  fireEvent.click((await screen.findAllByRole("option"))[1]!);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("a Mac"));
   fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Container" }));
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomThe one below", "an unnamed machineContainer"]);
   expect(screen.getByText("Linux · x86_64 · Server on an unnamed machine · 2 cores · 4 GiB")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
-  await waitFor(() => expect(changes).toEqual(["acquire linux on docker:host_1"]));
+  await waitFor(() => expect(changes).toEqual(["acquire linux on tart,docker:host_1", "acquire linux on docker:host_1"]));
+});
+
+test("filters that leave no provider disable Create and say so", async () => {
+  const pair: KindView = {
+    ...KINDS[0]!,
+    admin: null,
+    forms: ["LXC", "VM"],
+    offers: [KINDS[0]!.offers[0]!, { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos" }],
+  };
+  Element.prototype.scrollIntoView = () => {};
+  const { handlers, changes } = server([], { kinds: [pair, KINDS[1]!] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("group", { name: "Kind" })).getByRole("button", { name: "Container" }));
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "Runs on" }), { key: "ArrowDown" });
+  fireEvent.click((await screen.findAllByRole("option"))[1]!);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("a Mac"));
+  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomNo provider matches these filters"]);
+  expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(changes).toEqual([]);
+  // All brings the Mac back, and Create with it.
+  fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "All" }));
+  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomThe one below", "mac-miniVM · usually ~26.0 s"]);
+  expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 test("the form's words: a provider's title, the systems' hosts, the nearest choice, the filters, the summary and the access", () => {

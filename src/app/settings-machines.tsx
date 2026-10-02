@@ -71,7 +71,7 @@ export function MachinesSection() {
     await refresh();
     return refused;
   };
-  const add = (kind: string, size?: SizeRequest, name?: string, on?: string) => settle(rpc.call("machines.add", { kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) }));
+  const add = (kind: string, size?: SizeRequest, name?: string, on?: string | string[]) => settle(rpc.call("machines.add", { kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) }));
   const act = async (method: Guarded | "start", box: BoxView, force = false) => {
     setBusy(`${method}:${box.id}`);
     try {

@@ -104,7 +104,7 @@ export function NewBox({
 }: {
   kinds: readonly KindView[];
   /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036). */
-  make: (kind: string, size?: SizeRequest, name?: string, on?: string) => Promise<string | null>;
+  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[]) => Promise<string | null>;
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
   machine?: boolean;
 }) {
@@ -189,10 +189,20 @@ export function NewBox({
   };
   const typedName = name.trim();
   const nameWrong = machine ? nameProblem(typedName) : null;
-  // "First with room" names no provider; with the filters leaving one, that one is named (044 takes one provider).
-  const sendOn = choiceless ? undefined : (onOffer?.backend ?? (shown.length === 1 && shown.length < offers.length ? shown[0]!.backend : undefined));
+  // "First with room" with every provider shown names none; with the filters hiding some, it names the shown ones, as a list when there are several, so the box never lands outside the filter (044).
+  const sendOn: string | string[] | undefined = choiceless
+    ? undefined
+    : onOffer
+      ? onOffer.backend
+      : shown.length && shown.length < offers.length
+        ? shown.length === 1
+          ? shown[0]!.backend
+          : shown.map((offer) => offer.backend)
+        : undefined;
+  /** Filters that leave no provider: nothing to create. */
+  const noMatch = !choiceless && !shown.length;
   const submit = async () => {
-    if (!kind || making || (size === CUSTOM && !custom) || nameWrong) return;
+    if (!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong) return;
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
@@ -224,7 +234,7 @@ export function NewBox({
     </label>
   );
   const sizeWords = preset ? { cores: preset.cores, memoryGiB: preset.memoryGiB } : custom && custom.cores && custom.memoryGiB ? { cores: custom.cores, memoryGiB: custom.memoryGiB } : null;
-  const summary = summaryWords(picked, kind, onOffer ?? (sendOn ? (shown[0] ?? null) : null), sizeWords);
+  const summary = summaryWords(picked, kind, onOffer ?? (shown.length === 1 ? shown[0]! : null), sizeWords);
   const access = accessWords(kind, picked);
   const providerValues: (string | null)[] = [...(choiceless ? [] : [null]), ...shown.map((offer) => offer.backend)];
   const providerIndex = Math.max(0, providerValues.indexOf(onOffer?.backend ?? null));
@@ -331,8 +341,7 @@ export function NewBox({
                     <span className="min-w-0">
                       <span className="block text-xs font-medium text-foreground">First with room</span>
                       <span className="block text-2xs text-muted-foreground">
-                        {/* The server takes one provider or none (044): a filter that leaves several cannot bind it, so the words say so. */}
-                        {shown.length === offers.length ? `Any of the ${shown.length} below, in order` : shown.length === 1 ? "The one below" : shown.length ? `Any provider with room, not only these ${shown.length}` : "Any provider with room"}
+                        {shown.length === 1 ? "The one below" : shown.length ? `Any of the ${shown.length} below, in order` : "No provider matches these filters"}
                       </span>
                     </span>
                   </button>
@@ -348,7 +357,6 @@ export function NewBox({
                     }}
                   />
                 ))}
-                {!shown.length ? <p className="px-1 text-2xs text-muted-foreground">No provider matches these filters.</p> : null}
               </div>
             </div>
           </Step>
@@ -418,7 +426,7 @@ export function NewBox({
                 ))}
               </p>
             </div>
-            <Button type="submit" size="sm" className="shrink-0" disabled={!kind || making || (size === CUSTOM && !custom) || nameWrong !== null}>
+            <Button type="submit" size="sm" className="shrink-0" disabled={!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong !== null}>
               {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
               {machine ? "Add" : "Create"}
             </Button>

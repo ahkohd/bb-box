@@ -288,9 +288,10 @@ bottom sheet still carries the title "New box".
   row stands alone, checked, and the request sends no `on`. The chosen
   row's backend ID goes as `on`; a filter that leaves one provider sends
   that one too. First with room among several that a filter left sends
-  nothing, and its words say so ("Any provider with room, not only these
-  2"), since 044 takes one provider or none. The choice and the filters
-  are not remembered: another type, or closing the form, puts them back.
+  them as a list, and the first with room among them takes the box, in
+  acquire order (044). Filters that leave none disable Create, and the
+  First with room row says so. The choice and the filters are not
+  remembered: another type, or closing the form, puts them back.
 - **Resources** are the kind's presets (028), Small, Medium and Large,
   each with its cores and memory under it, and Custom with "up to N
   cores"; the kind's default preset is chosen at first. Custom shows three
