@@ -664,16 +664,43 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   await screen.findByRole("radiogroup", { name: "Type" });
   expect(screen.queryByRole("combobox", { name: "GPU" })).toBeNull();
-  expect(screen.queryByRole("heading", { level: 3, name: "GPU" })).toBeNull();
+  expect(screen.queryByText("GPU")).toBeNull();
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
-  // Desktop opens on the CPU desktop; the GPU is a section of its own, before Provider, and 1 GPU names the GPU kind.
-  expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["System", "Architecture", "Type", "GPU", "Provider", "Resources"]);
-  expect(screen.getByText("One of the host's GPUs for the desktop, or none, and the CPU draws it.")).toBeTruthy();
+  // Desktop opens on the CPU desktop; the GPU is a resource, a sub-label and menu under the presets, and 1 GPU names the GPU kind.
+  expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["System", "Architecture", "Type", "Provider", "Resources"]);
+  expect(screen.getByText("GPU").tagName).toBe("P");
   expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("None");
   expect(await optionsOf("GPU")).toEqual(["None", "1 GPU"]);
   await choose("GPU", "1 GPU");
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux-desktop"]));
+});
+
+test("one Escape closes the form whatever was used last: a card, a menu, a field", async () => {
+  const { handlers } = server([], { kinds: [POOLED, KINDS[1]!] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  const isOpen = () => screen.queryByRole("radiogroup", { name: "System" }) !== null;
+  const escape = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("radiogroup", { name: "System" });
+  escape();
+  await waitFor(() => expect(isOpen()).toBe(false));
+
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("radiogroup", { name: "System" });
+  await choose("Kind", "Physical");
+  expect(isOpen()).toBe(true);
+  escape();
+  await waitFor(() => expect(isOpen()).toBe(false));
+
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const types = await screen.findByRole("radiogroup", { name: "Type" });
+  const card = within(types).getByRole("radio", { name: /^Desktop/ });
+  fireEvent.click(card);
+  card.focus();
+  escape();
+  await waitFor(() => expect(isOpen()).toBe(false));
 });
 
 test("a provider row says how many spares it has ready now (#121)", async () => {
@@ -1578,7 +1605,8 @@ test("the steps narrow each other: a system with no server snaps to Desktop, the
   const types = screen.getByRole("radiogroup", { name: "Type" });
   expect(within(types).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["ServerNot available:false", "DesktopScreen · Terminal · Computer use:true"]);
   // The Kind menu keeps an option no provider makes, but it cannot be chosen; Runs on lists the machines the providers run on.
-  expect(screen.getByRole("combobox", { name: "Kind" }).textContent).toBe("Kind:All");
+  const filters = screen.getByRole("group", { name: "Filter" });
+  expect(within(filters).getAllByRole("combobox").map((menu) => menu.textContent)).toEqual(["Kind:All", "Runs on:Any machine"]);
   expect(await optionsOf("Kind")).toEqual(["All", "Container:disabled", "VM", "Physical:disabled"]);
   expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("Runs on:Any machine");
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pve1VM · usually ~30.0 s"]);

@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
 import type { GuestOs } from "../backends/types.ts";
-import { archAvailable, ARCHS, choiceOf, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
+import { archAvailable, ARCHS, choiceOf, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -109,6 +109,7 @@ export function NewBox({
 }) {
   const pluginId = experimental_usePluginId();
   const [open, setOpen] = useState(false);
+  useEscapeCloses(open, setOpen);
   const [last] = useState(() => remembered(`${pluginId}:${machine ? "new-machine" : "new-box"}`));
   const [name, setName] = useState("");
   // The steps that pick the kind (the operator's redesign of 1 October 2026): the OS, the architecture, a desktop or not, a GPU.
@@ -137,6 +138,8 @@ export function NewBox({
   const kind = kindFor(kinds, picked);
   const systems = systemsOf(kinds);
   const gpus = gpuChoices(kinds, picked.os, picked.arch);
+  /** A desktop whose system has a GPU desktop and a CPU one: the GPU is a choice. */
+  const gpuChoice = picked.desktop && gpus.none && gpus.gpu;
   const offers = kind?.offers ?? [];
   const runsOnChoices = runsOnOptions(offers);
   const effectiveRunsOn: RunsOn = runsOnChoices.includes(runsOn as GuestOs) ? runsOn : "any";
@@ -296,49 +299,33 @@ export function NewBox({
               <OptionCard title="Desktop" words="Screen · Terminal · Computer use" glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
             </div>
           </FormSection>
-          {picked.desktop && gpus.none && gpus.gpu ? (
-            <FormSection title="GPU" description="One of the host's GPUs for the desktop, or none, and the CPU draws it.">
+          <FormSection title="Provider" description="Where the box goes: the first with room, in this order, unless you choose one.">
+            {/* The filters: a row of their own under the description, the menus wrapping under "Filter" on a narrow pane (the operator's note of 2 October 2026). */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-2" role="group" aria-label="Filter">
+              <span className="text-2xs text-muted-foreground">Filter</span>
               <MenuSelect
-                label="GPU"
-                value={picked.gpu ? "1" : "0"}
-                options={[
-                  { value: "0", label: "None" },
-                  { value: "1", label: "1 GPU" },
-                ]}
-                onChange={(value) => pick({ gpu: value === "1" })}
+                label="Kind"
+                labelInside
+                value={filter}
+                options={kindOptions}
+                onChange={(value) => {
+                  setFilter(value as FormFilter);
+                  setOn(null);
+                }}
               />
-            </FormSection>
-          ) : null}
-          <FormSection
-            title="Provider"
-            description="Where the box goes: the first with room, in this order, unless you choose one."
-            action={
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              {filter !== "physical" ? (
                 <MenuSelect
-                  label="Kind"
+                  label="Runs on"
                   labelInside
-                  value={filter}
-                  options={kindOptions}
+                  value={effectiveRunsOn}
+                  options={runsOnChoiceList}
                   onChange={(value) => {
-                    setFilter(value as FormFilter);
+                    setRunsOn(value as RunsOn);
                     setOn(null);
                   }}
                 />
-                {filter !== "physical" ? (
-                  <MenuSelect
-                    label="Runs on"
-                    labelInside
-                    value={effectiveRunsOn}
-                    options={runsOnChoiceList}
-                    onChange={(value) => {
-                      setRunsOn(value as RunsOn);
-                      setOn(null);
-                    }}
-                  />
-                ) : null}
-              </div>
-            }
-          >
+              ) : null}
+            </div>
             <div role="radiogroup" aria-label="Provider" className="space-y-2" onKeyDown={(event) => arrows(event, providerValues.length, providerIndex, (position) => { setOn(providerValues[position] ?? null); providerOptions.current[position]?.focus(); })}>
               {!choiceless && shown.length ? (
                 <button
@@ -370,7 +357,7 @@ export function NewBox({
             </div>
           </FormSection>
           {kind ? (
-            <FormSection title="Resources" description="A preset of the kind, or Custom for your own cores, memory and disk.">
+            <FormSection title="Resources" description={`Configure the box's cores, memory${gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
               <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
                 {choices.map((candidate, position) => {
                   const own = presets.find((item) => item.name === candidate) ?? null;
@@ -393,6 +380,21 @@ export function NewBox({
                   {field("cores", "Cores", largest?.cores ?? null)}
                   {field("memoryGiB", "Memory, GiB", largest?.memoryGiB ?? null)}
                   {field("diskGiB", "Disk, GiB", largest?.diskGiB ?? null)}
+                </div>
+              ) : null}
+              {gpuChoice ? (
+                // A GPU is a resource: a dim sub-label of its own line under the presets, then the menu (the operator's note of 2 October 2026).
+                <div className="space-y-1">
+                  <p className="text-2xs text-muted-foreground">GPU</p>
+                  <MenuSelect
+                    label="GPU"
+                    value={picked.gpu ? "1" : "0"}
+                    options={[
+                      { value: "0", label: "None" },
+                      { value: "1", label: "1 GPU" },
+                    ]}
+                    onChange={(value) => pick({ gpu: value === "1" })}
+                  />
                 </div>
               ) : null}
             </FormSection>
