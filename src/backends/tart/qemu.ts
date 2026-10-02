@@ -9,9 +9,10 @@
 //   `current` names the build new VMs are made from.
 // - qemu/vms/<vm>/: a VM. disk.qcow2 is an overlay on its build's disk, and
 //   vars.fd a copy of the build's. config names its image and build, its
-//   size, its two ports on the Mac's loopback, for SSH and VNC, and the
-//   machine, such as virt-11.1, that QEMU's virt stood for, all chosen when
-//   it is made. While QEMU runs it, it has QEMU's QMP socket, pid file and
+//   size, with its disk's when that is larger than the image's, its two
+//   ports on the Mac's loopback, for SSH and VNC, and the machine, such as
+//   virt-11.1, that QEMU's virt stood for, all chosen when it is made.
+//   While QEMU runs it, it has QEMU's QMP socket, pid file and
 //   output. A stopped VM keeps its memory in state, saved by QEMU's
 //   migration to a file, until it starts again.
 // - The VM's owner file is in Tart's directory (host.ts) and names the
@@ -46,6 +47,8 @@ qstate() {
   [ -d "$q/vms/$1" ] || return 0
   if qrunning "$1"; then echo running; elif [ -f "$q/vms/$1/state" ]; then echo suspended; else echo stopped; fi
 }
+# Disk $1's virtual size in bytes. -U reads a base that running VMs hold.
+qbytes() { qemu-img info -U "$1" 2>/dev/null | sed -n 's/^virtual size: .*(\([0-9]*\) bytes).*/\1/p'; }
 # QEMU's own data, with its firmware, beside the binary on the PATH.
 qshare() {
   _b=$(command -v qemu-system-aarch64) || return 1
@@ -99,8 +102,10 @@ done
 echo @hvf; sysctl -n kern.hv_support 2>/dev/null
 echo @qemu-firmware; f="$(qshare)/edk2-aarch64-code.fd" && [ -f "$f" ] && echo "$f"
 echo @qemu-image
-b=$(cd "$q/images/"${quote(image)}"/current" 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] &&
-  if [ -w "$b/disk.qcow2" ]; then echo "$(basename "$b") writable"; else echo "$(basename "$b") read-only"; fi
+b=$(cd "$q/images/"${quote(image)}"/current" 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] && {
+  mode=read-only; [ -w "$b/disk.qcow2" ] && mode=writable
+  echo "$(basename "$b") $mode $(qbytes "$b/disk.qcow2")"
+}
 `}`;
 }
 
@@ -113,6 +118,8 @@ export interface QemuVm {
   /** Its ports on the Mac's loopback. */
   readonly ssh: number;
   readonly vnc: number;
+  /** Its disk's size in GiB when it was made larger than the image's; null when it is the image's. */
+  readonly diskGiB: number | null;
   /** "running", "suspended" or "stopped". */
   readonly power: string;
 }
@@ -124,8 +131,11 @@ export interface QemuState {
   readonly hvf: boolean;
   /** QEMU's UEFI firmware, or null when it is missing. */
   readonly firmware: string | null;
-  /** The Windows image's current build, and whether its disk is read-only; null when it has none. */
-  readonly image: { readonly build: string; readonly readOnly: boolean } | null;
+  /**
+   * The Windows image's current build, whether its disk is read-only, and the
+   * disk's size in GiB, null when qemu-img did not say; null when it has none.
+   */
+  readonly image: { readonly build: string; readonly readOnly: boolean; readonly diskGiB: number | null } | null;
 }
 
 /** A VM's config, or the part after a line `@config`; null when it is not whole. */
@@ -133,7 +143,9 @@ export function parseQemuVm(text: string): QemuVm | null {
   const fields = parseFields(text.includes("@config") ? (sections(text).get("config") ?? "") : text);
   const [cores = 0, memoryMiB = 0, ssh = 0, vnc = 0] = ["cores", "memory", "ssh", "vnc"].map((key) => Number(fields[key]));
   if (!fields.image || ![cores, memoryMiB, ssh, vnc].every((value) => Number.isInteger(value) && value > 0)) return null;
-  return { image: fields.image, build: fields.build ?? "", cores, memoryMiB, ssh, vnc, power: fields.power || "stopped" };
+  const disk = Number(fields.disk);
+  const diskGiB = Number.isInteger(disk) && disk > 0 ? disk : null;
+  return { image: fields.image, build: fields.build ?? "", cores, memoryMiB, ssh, vnc, diskGiB, power: fields.power || "stopped" };
 }
 
 export function parseQemuState(text: string): QemuState {
@@ -143,33 +155,41 @@ export function parseQemuState(text: string): QemuState {
     const vm = parseQemuVm(config);
     if (vm) vms.set(name, vm);
   }
-  const [build, mode] = (parts.get("qemu-image") ?? "").trim().split(/\s+/);
+  const [build, mode, bytes] = (parts.get("qemu-image") ?? "").trim().split(/\s+/);
+  const size = Number(bytes);
   return {
     version: /\bversion (\S+)/.exec(parts.get("qemu-version") ?? "")?.[1] ?? "",
     vms,
     hvf: parts.get("hvf")?.trim() === "1",
     firmware: parts.get("qemu-firmware")?.trim() || null,
-    image: build ? { build, readOnly: mode === "read-only" } : null,
+    image: build ? { build, readOnly: mode === "read-only", diskGiB: size > 0 ? Math.ceil(size / 2 ** 30) : null } : null,
   };
 }
 
 /**
  * Makes the VM unless it is there: an overlay on the image's current build,
- * a copy of its UEFI variables, two free ports, and the machine QEMU's virt
- * stands for. The VM keeps that machine, so that a state saved by this QEMU
- * restores after QEMU is updated. Then sizes it, and prints its config after
- * a line `@config`.
+ * of `diskGiB` when that is larger than the image's disk, a copy of its UEFI
+ * variables, two free ports, and the machine QEMU's virt stands for. The VM
+ * keeps that machine, so that a state saved by this QEMU restores after QEMU
+ * is updated. Then sizes it, and prints its config after a line `@config`.
  */
-export function qemuCloneScript(image: string, vm: string, cores: number, memoryMiB: number): string {
-  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"; image=${quote(image)}
+export function qemuCloneScript(image: string, vm: string, cores: number, memoryMiB: number, diskGiB: number | null = null): string {
+  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"; image=${quote(image)}; disk=${Math.max(0, Math.trunc(diskGiB ?? 0))}
 mkdir -p "$q/vms" || exit 1
 if [ ! -d "$v" ]; then
   b=$(cd "$q/images/$image/current" 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] ||
     { echo "There is no Windows image $image on this Mac, in $q/images." >&2; exit 1; }
   machine=$(qemu-system-aarch64 -machine help 2>/dev/null | sed -n 's/^virt .*(alias of \(virt-[0-9.]*\)).*/\1/p' | head -n 1)
   [ -n "$machine" ] || machine=virt
+  # A larger disk is the overlay's own size; Windows extends C: over the rest.
+  size=
+  if [ "$disk" -gt 0 ]; then
+    base=$(qbytes "$b/disk.qcow2")
+    [ -n "$base" ] || { echo "qemu-img could not read the size of $b/disk.qcow2." >&2; exit 1; }
+    [ $((disk * 1073741824)) -le "$base" ] || size="$disk"G
+  fi
   rm -rf "$v.new"; mkdir "$v.new" || exit 1
-  qemu-img create -q -f qcow2 -F qcow2 -b "$b/disk.qcow2" "$v.new/disk.qcow2" || exit 1
+  qemu-img create -q -f qcow2 -F qcow2 -b "$b/disk.qcow2" "$v.new/disk.qcow2" $size || exit 1
   # An APFS clone, which shares the image's blocks until it changes.
   cp -c "$b/vars.fd" "$v.new/vars.fd" 2>/dev/null || cp "$b/vars.fd" "$v.new/vars.fd" || exit 1
   # One VM at a time takes ports: none another VM has, and none that something listens on.
@@ -189,7 +209,10 @@ if [ ! -d "$v" ]; then
   }
   ssh=$(free ${FIRST_PORT}) && vnc=$(free $((ssh + 1))) ||
     { rmdir "$q/ports.lock"; echo "No two ports from ${FIRST_PORT} to ${LAST_PORT} are free on this Mac's loopback." >&2; exit 1; }
-  printf 'image=%s\nbuild=%s\nmachine=%s\nssh=%s\nvnc=%s\n' "$image" "$(basename "$b")" "$machine" "$ssh" "$vnc" > "$v.new/config" && mv "$v.new" "$v"
+  {
+    printf 'image=%s\nbuild=%s\nmachine=%s\nssh=%s\nvnc=%s\n' "$image" "$(basename "$b")" "$machine" "$ssh" "$vnc"
+    [ -z "$size" ] || echo "disk=$disk"
+  } > "$v.new/config" && mv "$v.new" "$v"
   made=$?; rmdir "$q/ports.lock"; [ "$made" -eq 0 ] || exit 1
 fi
 sed -e '/^cores=/d' -e '/^memory=/d' "$v/config" > "$v/config.new" && printf 'cores=%s\nmemory=%s\n' ${cores} ${memoryMiB} >> "$v/config.new" &&

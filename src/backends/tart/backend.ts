@@ -56,7 +56,7 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { ReadyPool } from "../pool.ts";
-import { CUA_PIPE, desktopUp, setClock } from "../windows.ts";
+import { CUA_PIPE, desktopUp, extendC, setClock } from "../windows.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
   claimScript,
@@ -549,7 +549,9 @@ export class TartBackend implements Backend {
    * Whether a box of `size` fits on the Mac, and if not, why, with what to
    * do. VMs `yielding` count as gone. A Linux or Windows VM (`os`) does not
    * count against the Mac's two macOS VMs, and a Windows VM's QEMU takes
-   * memory of its own.
+   * memory of its own. A Windows box may ask for a disk larger than the
+   * image's, and the Mac must have what it grew by beyond the disk reserve,
+   * as on Proxmox, though the overlay takes only what Windows writes.
    */
   #room(
     host: TartHost,
@@ -578,13 +580,14 @@ export class TartBackend implements Backend {
     const image = this.#config.kinds["windows-arm64-desktop"].image;
     const reserve = this.#config.reserve;
     const diskReserveMiB = reserve.diskGiB * MiB_PER_GiB;
+    const grow = os === "windows" && size.diskGiB !== null ? Math.max(0, size.diskGiB - (state.qemu.image?.diskGiB ?? 0)) : 0;
     const limits: Limit[] = [
       { resource: "guests", used: macos.length + starting, total: this.#config.vmsPerHost, reserve: 0, unit: "count" },
       { resource: "memory", used: memoryUsed, total: state.memoryMiB, reserve: reserve.memoryMiB, unit: "MiB" },
       { resource: "disk", used: state.disk.totalMiB - state.disk.freeMiB, total: state.disk.totalMiB, reserve: diskReserveMiB, unit: "MiB" },
     ];
     let why: string | null = null;
-    if (size.diskGiB !== null) {
+    if (size.diskGiB !== null && os !== "windows") {
       // Growing a macOS VM's disk needs its recovery partition removed and its APFS container grown inside the guest.
       why = `a Tart box keeps its image's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk yet. Ask for the base disk`;
     } else if (state.cpus && size.cores > state.cpus) {
@@ -605,6 +608,10 @@ export class TartBackend implements Backend {
         "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings";
     } else if (state.disk.freeMiB < diskReserveMiB) {
       why = `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than the ${formatMiB(diskReserveMiB)} kept free. Release boxes or free some space`;
+    } else if (state.disk.freeMiB - grow * MiB_PER_GiB < diskReserveMiB) {
+      why =
+        `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free. A ${size.diskGiB} GiB disk needs ${grow} GiB more than the Windows image's, ` +
+        `and ${formatMiB(diskReserveMiB)} is kept free. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings`;
     }
     return { capacity: { host: host.name, ok: why === null, limits }, why };
   }
@@ -774,9 +781,10 @@ export class TartBackend implements Backend {
 
   /**
    * Acquires a Windows box (046): claims its VM, bb-box-<box ID>, makes its
-   * overlay and ports, starts QEMU, and waits for SSH through the Mac, then
-   * for Windows' desktop, as a box is ready only once Cua can drive it. The
-   * VM keeps the clock its image set, so it is set only after a restore.
+   * overlay and ports, starts QEMU, and waits for SSH through the Mac. A disk
+   * larger than the image's has C: extended over it then. Then it waits for
+   * Windows' desktop, as a box is ready only once Cua can drive it. The VM
+   * keeps the clock its image set, so it is set only after a restore.
    */
   async #acquireWindows(
     box: BoxIdentity,
@@ -797,7 +805,7 @@ export class TartBackend implements Backend {
       ref: vm,
       host: on.name,
       address: null,
-      size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: null } : null,
+      size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB } : null,
       data: made ? { box: box.boxId, os: "windows", ssh: made.ssh, vnc: made.vnc } : { box: box.boxId, os: "windows" },
     });
     let owned = false;
@@ -812,7 +820,7 @@ export class TartBackend implements Backend {
         }
       }
       owned = true;
-      const clone = await step("clone", () => this.#run(on, qemuCloneScript(image, vm, box.size.cores, box.size.memoryMiB), { timeoutMs: 120_000, signal }));
+      const clone = await step("clone", () => this.#run(on, qemuCloneScript(image, vm, box.size.cores, box.size.memoryMiB, box.size.diskGiB), { timeoutMs: 120_000, signal }));
       made = parseQemuVm(clone.stdout);
       if (!made) throw new Error(`QEMU's VM ${vm} on ${on.name} has no whole config: ${clone.stdout.trim() || "nothing"}`);
       const ports = made;
@@ -820,6 +828,11 @@ export class TartBackend implements Backend {
       await step("start", () => this.#start(on, vm, "windows", deadline, signal));
       const access = this.#windows(await this.#mac(on), ports.ssh);
       await step("ssh", () => this.#waitReady(on, vm, access, "windows", deadline, signal));
+      // A restarted acquire extends again, which leaves a C: that fills its disk as it is.
+      if (made.diskGiB !== null) {
+        const { ssh } = await this.#keys();
+        await step("extend", () => extendC(new SshTransport(ssh, access, "windows"), signal));
+      }
       await step("desktop", () => this.#windowsDesktop(on, vm, access, deadline, signal));
       // Claimed again, so the box's record has the ports and size as it becomes ready.
       await hooks.claim(guest(made));
@@ -951,7 +964,7 @@ export class TartBackend implements Backend {
             ref: vm,
             host: host.name,
             address: null,
-            size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: null } : null,
+            size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB } : null,
             data: owner ? { box: owner.boxId, os: "windows", ...(made ? { ssh: made.ssh, vnc: made.vnc } : {}) } : { os: "windows" },
             owner,
             power: made ? powerOf(made.power) : "stopped",

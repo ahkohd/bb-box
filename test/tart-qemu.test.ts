@@ -3,7 +3,7 @@
 // reaches at its port on the Mac's loopback.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
@@ -45,14 +45,15 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
   addImage(mac);
   const build = addWindowsImage(mac);
   ssh.windows(GUEST);
-  // A stand-in for PowerShell that keeps the clock script, counts the looks at
-  // the desktop, which is up at the third unless ~/no-desktop is there, and
-  // runs the rest in sh.
+  // A stand-in for PowerShell that keeps the clock script, counts the
+  // extensions of C: and the looks at the desktop, which is up at the third
+  // unless ~/no-desktop is there, and runs the rest in sh.
   ssh.powershell(
     GUEST,
     [
       `case "$1" in`,
       `  *Set-Date*) printf "%s" "$1" > "$HOME/clock"; exit 0;;`,
+      `  *Resize-Partition*) echo extended >> "$HOME/extend"; exit 0;;`,
       `  *"Get-Process explorer"*) n=$(cat "$HOME/desktop" 2>/dev/null || echo 0); echo $((n + 1)) > "$HOME/desktop"; [ ! -f "$HOME/no-desktop" ] && [ "$n" -ge 2 ];;`,
       `  *) exec sh -c "$1";;`,
       `esac`,
@@ -168,6 +169,15 @@ test("reads QEMU's VMs and its checks from the state script", () => {
       "cores=4",
       "memory=8192",
       "power=suspended",
+      "=bb-box-wx3",
+      "image=bb-box-windows",
+      "build=2",
+      "ssh=42002",
+      "vnc=42003",
+      "cores=4",
+      "memory=8192",
+      "disk=72",
+      "power=running",
       "=bb-box-wx2",
       "image=bb-box-windows",
       "power=stopped",
@@ -178,14 +188,21 @@ test("reads QEMU's VMs and its checks from the state script", () => {
       "@qemu-firmware",
       "/opt/qemu/share/qemu/edk2-aarch64-code.fd",
       "@qemu-image",
-      "2 read-only",
+      "2 read-only 68719476736",
     ].join("\n"),
   );
-  assert.deepEqual([...state.vms], [["bb-box-wx1", { image: "bb-box-windows", build: "2", cores: 4, memoryMiB: 8192, ssh: 42000, vnc: 42001, power: "suspended" }]]);
+  assert.deepEqual(
+    [...state.vms],
+    [
+      ["bb-box-wx1", { image: "bb-box-windows", build: "2", cores: 4, memoryMiB: 8192, ssh: 42000, vnc: 42001, diskGiB: null, power: "suspended" }],
+      ["bb-box-wx3", { image: "bb-box-windows", build: "2", cores: 4, memoryMiB: 8192, ssh: 42002, vnc: 42003, diskGiB: 72, power: "running" }],
+    ],
+  );
   assert.deepEqual(
     { version: state.version, hvf: state.hvf, firmware: state.firmware, image: state.image },
-    { version: "11.1.0", hvf: true, firmware: "/opt/qemu/share/qemu/edk2-aarch64-code.fd", image: { build: "2", readOnly: true } },
+    { version: "11.1.0", hvf: true, firmware: "/opt/qemu/share/qemu/edk2-aarch64-code.fd", image: { build: "2", readOnly: true, diskGiB: 64 } },
   );
+  assert.deepEqual(parseQemuState("@qemu-image\n2 writable\n").image, { build: "2", readOnly: false, diskGiB: null }, "a disk whose size qemu-img did not read");
   assert.deepEqual(parseQemuState("@owners\n"), { version: "", vms: new Map(), hvf: false, firmware: null, image: null });
 });
 
@@ -221,6 +238,7 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   assert.equal(await backend.power(guest, signal()), "running");
   assert.equal(await backend.power({ ...guest, data: { ...guest.data, box: "another" } }, signal()), null, "another box's VM is not this one's");
   assert.equal(readFileSync(join(ssh.home(GUEST), "desktop"), "utf8"), "3\n", "ready once Windows' desktop is up");
+  assert.equal(existsSync(join(ssh.home(GUEST), "extend")), false, "C: fills the image's disk already");
 
   const dials = ssh.log().filter((entry) => entry.target === `box@${GUEST}`);
   assert.ok(dials.length > 0, "SSH to the guest");
@@ -256,6 +274,58 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   assert.equal(existsSync(join(qemu, "vms", vm)), false);
   assert.equal(existsSync(join(owners, vm)), false);
   assert.equal(await backend.power(guest, signal()), null);
+});
+
+test("a Windows box with a disk larger than the image's has an overlay of that size, and Windows extends C: over it", async () => {
+  const { backend, qemu, ssh, build } = setup();
+  const size: BoxSize = { ...SMALL, diskGiB: 72 };
+  const box = identity(size);
+  const vm = `bb-box-${box.boxId}`;
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.deepEqual(guest.size, size);
+  assert.equal(config(qemu, vm).disk, "72");
+  assert.equal(readFileSync(join(qemu, "vms", vm, "disk.qcow2"), "utf8"), `overlay on ${join(realpathSync(build), "disk.qcow2")}\nsize 72G\n`);
+  const extended = join(ssh.home(GUEST), "extend");
+  assert.equal(readFileSync(extended, "utf8"), "extended\n");
+  assert.deepEqual((await backend.held(signal())).find((candidate) => candidate.ref === vm)?.size, size);
+
+  // A restarted acquire extends again, as it may have ended before C: was.
+  const again = await backend.acquire(box, { ...guest, data: { box: box.boxId, os: "windows" } }, hooks().hooks, signal());
+  assert.deepEqual(again, guest);
+  assert.equal(readFileSync(extended, "utf8"), "extended\nextended\n");
+  await backend.release(guest, releasing, signal());
+});
+
+test("a Windows box that asks for a disk no larger than the image's keeps the image's", async () => {
+  const { backend, qemu, ssh } = setup();
+  for (const diskGiB of [32, 64]) {
+    const box = identity({ ...SMALL, diskGiB });
+    const guest = await backend.acquire(box, null, hooks().hooks, signal());
+    assert.equal(guest.size?.diskGiB, null, `${diskGiB} GiB`);
+    assert.equal(config(qemu, guest.ref).disk, undefined);
+    assert.doesNotMatch(readFileSync(join(qemu, "vms", guest.ref, "disk.qcow2"), "utf8"), /size/);
+    await backend.release(guest, releasing, signal());
+  }
+  assert.equal(existsSync(join(ssh.home(GUEST), "extend")), false);
+});
+
+test("a Windows box's disk may grow by what the Mac has free beyond the disk kept free; a macOS box keeps its image's", async () => {
+  const { mac, context } = setup();
+  const { bavail, bsize } = statfsSync(mac);
+  // 4 GiB above what is kept free.
+  const reserve = Math.floor((Number(bavail) * Number(bsize)) / 2 ** 30) - 4;
+  assert.ok(reserve > 0, "the test needs 5 GiB of disk free");
+  const backend = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": reserve }), context, FAKES);
+  made.push(backend);
+  const disk = (diskGiB: number | null): BoxSize => ({ ...SMALL, diskGiB });
+  for (const diskGiB of [null, 32, 64, 66]) assert.equal((await backend.capacity(KIND, disk(diskGiB), [], signal())).ok, true, `${diskGiB} GiB`);
+  const refused = await backend.capacity(KIND, disk(72), [], signal());
+  assert.equal(refused.ok, false);
+  assert.match(
+    refused.message!,
+    new RegExp(`mac1 has [\\d.]+ GiB of disk free\\. A 72 GiB disk needs 8 GiB more than the Windows image's, and ${reserve} GiB is kept free\\. Ask for a smaller disk`),
+  );
+  assert.match((await backend.capacity("macos", disk(66), [], signal())).message!, /a Tart box keeps its image's disk/);
 });
 
 test("a VM whose QEMU does not say what virt stands for runs on virt", async () => {
