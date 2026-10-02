@@ -826,9 +826,11 @@ export class Boxes {
    * Makes a spare yours when a thread started on its BB machine from BB's
    * picker (036): it moves to OPERATOR under the spares' lock, as a claim
    * does, its machine drops "(spare)", and the upkeep makes another spare.
+   * A stopped one is yours too, not released as failed, and stays stopped
+   * until you start it (#156).
    */
   async #adoptIfUsed(spare: BoxRecord): Promise<boolean> {
-    if (!this.#deps.spareThread || spare.state !== "ready" || spare.enrol.state !== "enrolled" || this.#work.has(spare.id)) return false;
+    if (!this.#deps.spareThread || (spare.state !== "ready" && spare.state !== "stopped") || spare.enrol.state !== "enrolled" || this.#work.has(spare.id)) return false;
     let threadId: string | null;
     try {
       threadId = await this.#deps.spareThread(spare);
@@ -861,7 +863,8 @@ export class Boxes {
   /**
    * After a spare changed owner, and perhaps name (`from` was its name): the
    * backend records them on the guest and names it inside, BB's machine is
-   * renamed, and reconnected if BB shows it disconnected. Commands wait for
+   * renamed, and reconnected if BB shows it disconnected and the box is
+   * running; a stopped one reconnects when it starts. Commands wait for
    * the guest's new name only when it changed (#128), so a claim's total
    * then counts the relabel too (#186).
    */
@@ -886,7 +889,7 @@ export class Boxes {
     if (!box.enrol.hostId || !claimed) return;
     void claimed(box).then(
       (disconnected) => {
-        if (disconnected && reconnect) this.#waitFor(box.id, reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));
+        if (disconnected && reconnect && box.state === "ready") this.#waitFor(box.id, reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));
       },
       (error) => this.#deps.logError("claim", error),
     );

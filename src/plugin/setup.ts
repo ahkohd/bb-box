@@ -512,6 +512,17 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     threadHosts.delete(thread.id);
     void boxes.releaseThread(thread.id, "deleted").catch((error) => logError("thread deleted", error));
   });
+  // A thread that starts on a spare's machine from BB's picker makes it yours
+  // now, not at the next spare upkeep (036, #155). Its machine is known once
+  // it has an environment, which it may not have when it is created.
+  const startedOn = async (thread: { id: string; environmentId: string | null }) => {
+    if (thread.environmentId && (await boxes.list(SPARES)).length) await api.runsOn(thread.id);
+  };
+  for (const event of ["thread.created", "thread.active"] as const) {
+    bb.events.on(event, ({ thread }) => {
+      void startedOn(thread).catch((error) => logError(event, error));
+    });
+  }
   bb.events.on("experimental_host.deleted", ({ host }) => {
     holders.forget(host.id);
     void enrolment.forgetHost(host.id).catch((error) => logError("host deleted", error));
