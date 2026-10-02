@@ -262,7 +262,8 @@ The command capability:
 
 **Displays.** Each display has an ID, a label, a protocol (`rfb` or
 `selkies`), whether it can resize, and `open()`, which returns a route and the
-authentication the box expects (none, or a VNC password). A display whose
+authentication the box expects (none, a VNC password, or a user and password
+for Apple's). A display whose
 stream server cannot resize may offer `resize()`, which the relay calls
 beside the viewer's own request, one at a time per box with the latest size
 last ([021](decisions/021-desktop-resize-through-the-backend.md)). A display
@@ -277,13 +278,16 @@ request on, so the viewer has noVNC check its pane once the pane's size has
 held for 250 ms: the last frame of a pane opening is not lost.
 
 - For RFB the relay does the security handshake with the box itself: it
-  answers VNC authentication (security type 2) with the password, then offers
-  the viewer RFB 3.8 with security type None only. Passwords and tickets never
-  reach the browser; BB has already authenticated the viewer.
-- macOS Screen Sharing, which a pool's Macs will use (047), gives a client
-  with only the VNC password a session of its own at the login window. So
-  the relay will sign in as the box's user with Apple's own type 30, which
-  shows that user's console, and Screen Sharing's VNC password stays off.
+  answers VNC authentication (security type 2) with the password, or Apple's
+  (type 30) with the user and password, then offers the viewer RFB 3.8 with
+  security type None only. Passwords and tickets never reach the browser; BB
+  has already authenticated the viewer.
+- macOS Screen Sharing, which a pool's Macs use (047), gives a client with
+  only the VNC password a session of its own at the login window. So the
+  relay signs in as the box's user with Apple's type 30, which shows that
+  user's console, and Screen Sharing's VNC password stays off. Type 30 is
+  Diffie-Hellman in the server's group, whose shared secret's MD5 is the
+  AES-128 key for the user and password, as noVNC does it.
 - Windows uses RFB through Proxmox's console: nothing to install in the
   guest, the same noVNC client, and it shows the console session the agent
   uses. `vncproxy` returns a one-time ticket, which authorises the WebSocket,
@@ -499,7 +503,11 @@ export type Route =
 /** src/transports/route.ts, the only code that opens a route. */
 export declare function openRoute(route: Route, signal?: AbortSignal): Promise<ByteChannel>;
 
-export type DisplayAuth = { readonly type: "none" } | { readonly type: "vnc-password"; readonly password: string };
+export type DisplayAuth =
+  | { readonly type: "none" }
+  | { readonly type: "vnc-password"; readonly password: string }
+  /** macOS Screen Sharing's sign-in, RFB security type 30 (047). */
+  | { readonly type: "apple"; readonly user: string; readonly password: string };
 
 export interface Display {
   readonly id: string;
@@ -552,7 +560,10 @@ export interface CommandCapability {
 export interface ComputerUse {
   readonly driver: "cua";
   readonly version: string;
-  /** Where `cua-driver serve` listens: a Unix socket, or a named pipe on Windows. */
+  /**
+   * Where `cua-driver serve` listens: a Unix socket, or a named pipe on
+   * Windows. A leading `~/` is the home of the user the driver runs as (047).
+   */
   readonly socket: string;
 }
 
@@ -1074,10 +1085,11 @@ A box is a resource of its thread and gets what the thread's own machine has.
   [docs/design/panel.md](design/panel.md). Each viewer opens one WebSocket on the plugin's
   `/desktop?box=<id>&viewer=<id>` route. The relay opens the display's route,
   answers the box's RFB authentication itself (VNC authentication with the
-  password the box wrote at boot), offers the viewer security type None, and
-  copies bytes both ways without decoding pixels. It always joins the desktop
-  as a shared client, so one viewer never disconnects another. The panel
-  loads the client for the stream type: noVNC for `rfb`
+  password the box wrote at boot, or Apple's as the box user), offers the
+  viewer security type None, and copies bytes both ways without decoding
+  pixels. It always joins the desktop as a shared client, so one viewer never
+  disconnects another. The panel loads the client for the stream type: noVNC
+  for `rfb`
   ([007](decisions/007-desktop-stream-is-a-typed-transport.md),
   [011](decisions/011-interface-v1.md)).
 - **Viewer ID.** Each viewer has a random ID kept in the browser tab's

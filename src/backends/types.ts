@@ -45,7 +45,10 @@ export interface CommandCapability {
 export interface ComputerUse {
   readonly driver: "cua";
   readonly version: string;
-  /** Where `cua-driver serve` listens: a Unix socket, or a named pipe on Windows. */
+  /**
+   * Where `cua-driver serve` listens: a Unix socket, or a named pipe on
+   * Windows. A leading `~/` is the home of the user the driver runs as (047).
+   */
   readonly socket: string;
 }
 
