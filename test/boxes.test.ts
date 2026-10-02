@@ -14,6 +14,7 @@ import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type Box
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, accessCheck, accessSetup, accessSetupMs, command, envScript } from "../src/core/in-box.ts";
 import { powershellCommand } from "../src/transports/powershell.ts";
+import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
 import { adminText, boxDetail, boxView, kindViews } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
@@ -726,6 +727,11 @@ test("when bb-box cannot tell which variables to take, commands keep the env fil
   assert.deepEqual(world.errors, ["access: BB did not answer"]);
 });
 
+/** The lines access setup puts at the top of the shell's startup file. */
+const HOOK =
+  "# Added by bb-box: the thread's environment and access, for SSH commands too.\n" +
+  `case "\${BASH_EXECUTION_STRING-}\${ZSH_EXECUTION_STRING-}" in ': bb-box-env; '*) ;; *) if [ -r "$HOME/.config/bb-box/env" ]; then . "$HOME/.config/bb-box/env"; fi ;; esac\n`;
+
 test("access setup puts the env file above ~/.bashrc's early return, once, and keeps the file's mode", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
@@ -739,13 +745,57 @@ test("access setup puts the env file above ~/.bashrc's early return, once, and k
   const { result } = await world.boxes.run(THREAD, box.name, "stat -c %a .bashrc; cat .bashrc; bash -c '. ~/.bashrc; printf %s \"$BB_BOX_NAME\"'");
   assert.equal(
     result.stdout,
-    `640\n# Added by bb-box: the thread's environment and access, for SSH commands too.\nif [ -r "$HOME/.config/bb-box/env" ]; then . "$HOME/.config/bb-box/env"; fi\n\ncase $- in *i*) ;; *) return;; esac\nexport MINE=1\n${box.name}`,
+    `640\n${HOOK}\ncase $- in *i*) ;; *) return;; esac\nexport MINE=1\n${box.name}`,
   );
   assert.equal(accessSetup("windows"), null);
 
   // A date that cannot give nanoseconds leaves the time out, and the script's exit code as it was.
   const { result: untimed } = await world.boxes.run(THREAD, box.name, `date() { echo 1700000000N; }\n${accessSetup("linux")!}`);
   assert.deepEqual([untimed.exitCode, untimed.stdout, accessSetupMs(untimed.stdout)], [0, "", null]);
+});
+
+test("access setup puts the new hook in place of the one before #100, once", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const old =
+    "# Added by bb-box: the thread's environment and access, for SSH commands too.\n" +
+    'if [ -r "$HOME/.config/bb-box/env" ]; then . "$HOME/.config/bb-box/env"; fi\n';
+  await world.boxes.writeFile(THREAD, box.name, ".bashrc", Buffer.from(`${old}\nexport MINE=1\n`));
+  for (let i = 0; i < 2; i++) assert.equal((await world.boxes.run(THREAD, box.name, accessSetup("linux")!)).result.exitCode, 0);
+  assert.equal((await world.boxes.run(THREAD, box.name, "cat .bashrc")).result.stdout, `${HOOK}\nexport MINE=1\n`);
+});
+
+test("the hook loads the env file in a shell, but not in one whose command loads it itself (#100)", () => {
+  const home = tempDir("hook");
+  mkdirSync(join(home, ".config", "bb-box"), { recursive: true });
+  writeFileSync(join(home, ".config", "bb-box", "env"), "echo loaded\n");
+  writeFileSync(join(home, ".bashrc"), HOOK);
+  writeFileSync(join(home, ".zshenv"), HOOK);
+  // Node's pipes are sockets, and bash reads ~/.bashrc itself when stdin is
+  // one, taking it for rshd's.
+  const run = (shell: string, script: string) =>
+    execFileSync(shell, ["-c", script], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: home }, stdio: ["ignore", "pipe", "pipe"] });
+  assert.equal(run("bash", ". ~/.bashrc; echo plain"), "loaded\nplain\n");
+  assert.equal(run("bash", ": bb-box-env; . ~/.bashrc; echo marked"), "marked\n");
+  if (spawnSync("zsh", ["-fc", ":"]).status !== 0) return;
+  // zsh reads ~/.zshenv in every shell, as an SSH command's and the one inside it.
+  assert.equal(run("zsh", "echo plain"), "loaded\nplain\n");
+  assert.equal(run("zsh", ": bb-box-env; echo marked"), "marked\n");
+});
+
+test("bb-box's commands start with the mark, in each shell they start (#100)", () => {
+  const marked = (script: string) => script.startsWith(LOADS_ENV);
+  assert.ok(marked(command("linux", "true")));
+  assert.ok(marked(command("macos", "true")));
+  assert.ok(marked(command("macos", "true", { session: "desktop" })));
+  const inner = `-c ${"'"}${LOADS_ENV}`;
+  assert.ok(command("linux", "true", { timeoutMs: 1_000 }).includes(inner));
+  assert.ok(command("macos", "true", { timeoutMs: 1_000 }).includes(inner));
+  assert.ok(command("macos", "true", { session: "desktop" }).includes(inner));
+  // The login shell gets the mark only when the script has it: one that is
+  // not bb-box's command leaves the hook to load the env file.
+  assert.ok(marked(endMarked(command("linux", "true"), "MARK", false)));
+  assert.ok(!marked(endMarked("true", "MARK", false)));
 });
 
 test("access setup has git fetch GitHub's SSH URLs over HTTPS, and leaves other URLs and rewrites as they are", async () => {
@@ -776,7 +826,7 @@ test("in a macOS box, access setup puts the env file at the top of ~/.zshenv, on
   const { result } = await world.boxes.run(THREAD, box.name, "stat -c %a .zshenv; cat .zshenv");
   assert.equal(
     result.stdout,
-    `640\n# Added by bb-box: the thread's environment and access, for SSH commands too.\nif [ -r "$HOME/.config/bb-box/env" ]; then . "$HOME/.config/bb-box/env"; fi\n\nexport PATH="/opt/homebrew/bin:$PATH"\n`,
+    `640\n${HOOK}\nexport PATH="/opt/homebrew/bin:$PATH"\n`,
   );
   if (spawnSync("zsh", ["-fc", ":"]).status !== 0) return;
   // A zsh that is not a login shell, as SSH runs, reads it.

@@ -1009,6 +1009,13 @@ A box is a resource of its thread and gets what the thread's own machine has.
     `GIT_COMMITTER_EMAIL`). `git` asks `gh` for GitHub credentials, so it
     uses `GH_TOKEN`, and fetches `git@github.com:` and
     `ssh://git@github.com/` URLs over HTTPS, as on the thread's machine.
+    The startup file skips the env file in a shell whose command starts
+    with `: bb-box-env;`, as bb-box's commands and the shells they start
+    do, since the command reads it itself. So a command reads it once, not
+    once more in each shell around it, which saves about 10 ms a command on
+    Linux and 60 ms on macOS (#100). Any other shell that reads the startup
+    file, such as a zsh a command starts on macOS, still reads the env file,
+    so it does not keep an old `GH_TOKEN`.
   - BB's daemon starts the workers that carry the variables a moment after
     BB shows the machine connected, up to about a second later on a Mac. So
     the enrolment ends once a command in the box finds such a worker, or
