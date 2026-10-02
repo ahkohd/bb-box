@@ -130,6 +130,7 @@ and `start` and `stop` throw `gone`.
 | `linux` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
 | `linux-desktop-cpu` | a Linux desktop without a GPU | Proxmox LXC from a CPU-only desktop template, Docker |
+| `linux-desktop-wayland-cpu` | a Linux desktop on Wayland without a GPU, where X11-only apps do not run | planned (048): Proxmox LXC from a CPU Wayland desktop template, then Docker |
 | `linux-arm64` | Linux on arm64, no GPU | Tart |
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
@@ -171,6 +172,14 @@ and `start` and `stop` throw `gone`.
   `linux-desktop-cpu`, and a `linux-desktop` box back on the CPU, take the
   viewer's resize themselves. Both desktops resize to the viewer while you
   hold control.
+- A Wayland desktop will be Sway, headless, with floating windows and
+  Waybar's taskbar, streamed by wayvnc
+  ([048](decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md)).
+  wayvnc refuses a viewer's resize, so the backend sets Sway's output size
+  and fits the windows into it, in about 20 ms. Xwayland is off, as one X11
+  window hides every window from Cua, so X11-only apps need
+  `linux-desktop-cpu`. A Wayland desktop on the GPU, and Hyprland, wait for
+  the host's `nvidia-drm` module to have `modeset=1`.
 - Docker comes with Proxmox LXC (`nesting=1`) and Tart's Linux VMs, and
   with the Docker backend's boxes when they are privileged, as they are by
   default but for GPU desktops.
@@ -291,6 +300,8 @@ held for 250 ms: the last frame of a pane opening is not lost.
   user's console, and Screen Sharing's VNC password stays off. Type 30 is
   Diffie-Hellman in the server's group, whose shared secret's MD5 is the
   AES-128 key for the user and password, as noVNC does it.
+- wayvnc, which streams a Wayland desktop (048), offers no VNC password,
+  so the relay signs in there with type 30 too, as the user `box`.
 - Windows uses RFB through Proxmox's console: nothing to install in the
   guest, the same noVNC client, and it shows the console session the agent
   uses. `vncproxy` returns a one-time ticket, which authorises the WebSocket,
@@ -1235,7 +1246,11 @@ A box is a resource of its thread and gets what the thread's own machine has.
 - **Delivery.** Background first, which does not move the shared pointer.
   When Cua refuses, in 2 to 4 ms, the plugin retries in foreground and says
   that the desktop's focus may have moved. On the desktop and in popups only
-  the foreground works.
+  the foreground works. On Wayland, typing and keys go only to the focused
+  window, so they always go in the foreground (048).
+- **An element with no action** on Wayland: Cua clicks it through X11, and
+  refuses because it cannot inject input. The plugin then clicks the centre
+  of the element's frame, in window pixels, and says that it did (048).
 - **A URL** opens in a new browser window, or in a tab of one already open,
   whose title changes. Until the page has a title, Chrome's is its address,
   so the plugin waits up to 10 s for a title that is not. A page with no

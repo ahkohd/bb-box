@@ -52,3 +52,4 @@ that changes gets a new record that supersedes the old one.
 | [045](045-a-persons-control-lasts-through-a-restart-of-the-plugin.md) | A person's control lasts through a restart of the plugin |
 | [046](046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md) | Windows on a Mac runs in QEMU, in the Tart backend |
 | [047](047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md) | A physical Mac is an SSH pool machine, lent with a new user at its console |
+| [048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md) | A Wayland desktop is Sway with floating windows, streamed by wayvnc |
