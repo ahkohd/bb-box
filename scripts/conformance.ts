@@ -53,6 +53,7 @@ await conformance({
       storage,
       installId,
       warm: () => 0,
+      warmShortfalls: () => {},
       hostOn: () => true,
       kind: (id) => {
         const sizes = kindSizes(id);

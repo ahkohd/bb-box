@@ -411,13 +411,28 @@ export interface Backend {
    */
   doctor(signal?: AbortSignal): Promise<DoctorReport>;
 
-  /** Periodic upkeep, such as topping up a warm pool. Called by the sweep. */
+  /**
+   * Periodic upkeep, such as topping up a warm pool. Called by the sweep,
+   * and at once when the configuration changes (#355). A call during a run
+   * starts another after it.
+   */
   maintain?(signal?: AbortSignal): Promise<void>;
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   dispose?(): Promise<void>;
+}
+
+/** A warm pool below its count because no host had room for another (#356). */
+export interface WarmShortfall {
+  /** The kinds whose counts make the pool's. */
+  readonly kinds: readonly string[];
+  /** The pool's count, and the warm guests it has, ready or being made. */
+  readonly count: number;
+  readonly have: number;
+  /** Why no host had room, as an acquire would be told. */
+  readonly reason: string;
 }
 
 /**
@@ -485,6 +500,11 @@ export interface BackendContext {
   kind(id: string): KindSettings;
   /** BB machines bb-box reaches through BB (042). Absent where there is no BB, as in the conformance run. */
   readonly machines?: MachineAccess;
+  /**
+   * Tells bb-box which warm pools an upkeep that ran to its end left short
+   * for want of room (#356), for the log, the doctor and the settings.
+   */
+  warmShortfalls(short: readonly WarmShortfall[]): void;
   logError(operation: string, error: unknown): void;
 }
 

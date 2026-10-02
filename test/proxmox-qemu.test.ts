@@ -882,7 +882,10 @@ test("the pool fills only while there is room, and a box a ready warm VM serves 
   const { backend, proxmox, context } = warmSetup(3, { "vmid-last": 9701 });
   await backend.maintain(signal());
   assert.deepEqual(warmVms(proxmox), [9700, 9701]);
-  assert.match(context.errors.join("\n"), /^warm pool: .*VMID/m);
+  const [short] = context.short.at(-1)!;
+  assert.deepEqual([short!.kinds, short!.count, short!.have], [[KIND], 3, 2]);
+  assert.match(short!.reason, /VMID/);
+  assert.deepEqual(context.errors, [], "a short pool is no error");
   const ok = await backend.capacity(KIND, sized(), [], signal());
   assert.equal(ok.ok, true, ok.message ?? "");
   assert.deepEqual(ok.warm, { ready: 2, target: 3 });
@@ -893,7 +896,11 @@ test("the pool fills only while there is room, and a box a ready warm VM serves 
   low.proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
   await low.backend.maintain(signal());
   assert.equal(clones(low.proxmox), 0);
-  assert.match(low.context.errors.join("\n"), /^warm pool: pve has 10 GiB of memory free/m);
+  assert.match(low.context.short.at(-1)![0]!.reason, /^pve has 10 GiB of memory free/);
+  low.proxmox.memory = { total: 64 * GiB, available: 48 * GiB };
+  await low.backend.maintain(signal());
+  assert.equal(clones(low.proxmox), 1);
+  assert.deepEqual(low.context.short.at(-1), [], "a full pool is short no more");
 });
 
 test("dispose stops a warm fill", async () => {

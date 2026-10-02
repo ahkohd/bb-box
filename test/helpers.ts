@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseLxcSettings, type LxcConfig } from "../src/backends/proxmox-lxc/config.ts";
-import type { BackendContext, BackendStorage, KindSettings } from "../src/backends/types.ts";
+import type { BackendContext, BackendStorage, KindSettings, WarmShortfall } from "../src/backends/types.ts";
 import { defaultSize, kindSizes, presetSizes } from "../src/core/sizes.ts";
 import { Ssh } from "../src/transports/ssh.ts";
 import type { SshAccess } from "../src/transports/types.ts";
@@ -124,8 +124,9 @@ export function testContext(
   storage: BackendStorage = new MemoryStorage(),
   installId = "test",
   options: { id?: string; warm?: Readonly<Record<string, number>> } = {},
-): BackendContext & { errors: string[] } {
+): BackendContext & { errors: string[]; short: (readonly WarmShortfall[])[] } {
   const errors: string[] = [];
+  const short: (readonly WarmShortfall[])[] = [];
   return {
     id: options.id ?? "test",
     storage,
@@ -133,7 +134,9 @@ export function testContext(
     warm: (kind) => options.warm?.[kind] ?? 0,
     hostOn: () => true,
     kind: shippedKind,
+    warmShortfalls: (pools) => void short.push(pools),
     errors,
+    short,
     logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
   };
 }

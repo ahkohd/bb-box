@@ -5,7 +5,7 @@
 
 import { layeredStorage, scopedStorage, type Backends } from "../backends/index.ts";
 import { kindInfo } from "../backends/kinds.ts";
-import type { Arch, BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs } from "../backends/types.ts";
+import type { Arch, BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs, WarmShortfall } from "../backends/types.ts";
 import type { BoxRecord } from "../core/boxes.ts";
 import {
   GENERAL_DEFAULTS,
@@ -91,6 +91,8 @@ export interface BackendState {
   readonly kinds: readonly string[];
   /** Its doctor's last run, kept across restarts. */
   readonly doctor: DoctorRun | null;
+  /** Its warm pools that are short for want of room now, and why (#356). */
+  readonly warmShort: readonly WarmShortfall[];
 }
 
 export interface ConfigState {
@@ -314,6 +316,7 @@ export class Configuration {
           boxes: inUse.backends.get(backend.id) ?? 0,
           kinds: status?.kinds ?? [],
           doctor: this.#doctor.get(backend.id) ?? null,
+          warmShort: this.#deps.backends.warmShort(backend.id),
         };
       }),
       problems: checkDocument(this.#document, this.#secrets, drivers, inUse),

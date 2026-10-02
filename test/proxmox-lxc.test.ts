@@ -1175,7 +1175,10 @@ test("the warm pool stops at the capacity guard", async () => {
   };
   await backend.maintain();
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 1);
-  assert.match(context.errors.join("\n"), /warm pool: .*memory free/);
+  const [short] = context.short.at(-1)!;
+  assert.deepEqual([short!.kinds, short!.count, short!.have], [["linux"], 3, 1]);
+  assert.match(short!.reason, /memory free/);
+  assert.deepEqual(context.errors, []);
 });
 
 test("doctor passes on a complete setup and shows the generated public key", async () => {

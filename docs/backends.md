@@ -118,7 +118,11 @@ The core uses only [src/backends/types.ts](../src/backends/types.ts) and
    guests too, and list only this install's guests in `held()`
    ([018](decisions/018-guests-name-their-install-and-box.md)).
 4. Write `doctor()` so that it checks everything the backend needs and says
-   how to fix each failure. Give each check a stable ID.
+   how to fix each failure. Give each check a stable ID. A backend with a
+   warm pool gives `context.warmShortfalls()`, at the end of each
+   `maintain()`, the pools it left short for want of room and why; bb-box
+   logs them, warns of them in the doctor and shows them in the settings
+   (#356).
 5. Add the driver to `DRIVERS` in
    [src/backends/index.ts](../src/backends/index.ts).
 6. Add `setup/<type>/` with the guide and its scripts. Keep deployment

@@ -36,6 +36,7 @@ function backend(file: string, errors: string[] = []): Backend {
     storage: new MemoryStorage(),
     installId: "live",
     warm: () => 0,
+    warmShortfalls: () => {},
     hostOn: () => true,
     kind: shippedKind,
     logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),

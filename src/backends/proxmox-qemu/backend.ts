@@ -50,6 +50,7 @@ import {
 import { addressFor, proxmoxFootprint } from "../proxmox/settings.ts";
 import { proxmoxFetch } from "../proxmox/tls.ts";
 import { ReadyPool } from "../pool.ts";
+import { Upkeep } from "../warm.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -70,6 +71,7 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type WarmShortfall,
 } from "../types.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -282,7 +284,7 @@ export class ProxmoxQemuBackend implements Backend {
     hold: async (member) => void this.#claimed.add(Number(member.ref)),
   });
   readonly #stopping = new AbortController();
-  #maintaining: Promise<void> | null = null;
+  readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
 
   constructor(config: QemuConfig, context: BackendContext, options: QemuBackendOptions = {}) {
     this.id = context.id;
@@ -746,18 +748,12 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   maintain(signal?: AbortSignal): Promise<void> {
-    if (!this.#maintaining) {
-      const run = this.#topUp(signal ?? this.#stopping.signal).finally(() => {
-        this.#maintaining = null;
-      });
-      this.#maintaining = run;
-    }
-    return this.#maintaining;
+    return this.#upkeep.run(signal ?? this.#stopping.signal);
   }
 
   async dispose(): Promise<void> {
     this.#stopping.abort(new Error("bb-box is stopping."));
-    await this.#maintaining?.catch(() => undefined);
+    await this.#upkeep.running?.catch(() => undefined);
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
     await this.#keyFile.dispose();
     await this.#http.close();
@@ -1208,7 +1204,10 @@ export class ProxmoxQemuBackend implements Backend {
     }
 
     const target = this.#warmTarget();
-    if (target === 0) return;
+    if (target === 0) {
+      this.#context.warmShortfalls([]);
+      return;
+    }
     const size = this.#context.kind(KIND.id).defaultSize;
     const guests = await api.listPool(pool, signal);
     const ready = (await this.#ready(api, guests, signal)).length;
@@ -1216,11 +1215,12 @@ export class ProxmoxQemuBackend implements Backend {
       signal.throwIfAborted();
       const room = await this.#room(api, size, await api.listPool(pool, signal), [], { ready, target }, false, signal);
       if (!room.ok) {
-        this.#context.logError("warm pool", new Error(room.message ?? "No room for a warm box."));
-        break;
+        this.#context.warmShortfalls([{ kinds: [KIND.id], count: target, have: target - missing, reason: room.message ?? "No host has room for a warm box." }]);
+        return;
       }
       await this.#fill(api, size, signal);
     }
+    this.#context.warmShortfalls([]);
   }
 
   /**
