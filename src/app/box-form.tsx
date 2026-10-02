@@ -7,7 +7,7 @@
 // provider's mark or colour.
 
 import { useEffect, type ReactNode } from "react";
-import type { GuestOs } from "../backends/types.ts";
+import type { GuestOs, Windowing } from "../backends/types.ts";
 import type { KindView, OfferView } from "../plugin/views.ts";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,12 +16,14 @@ import { MonitorGlyph, ServerGlyph } from "./glyphs.tsx";
 
 export type Arch = "x86_64" | "arm64";
 
-/** What the first steps say: the OS, the architecture, a desktop or not, and a GPU for a desktop. */
+/** What the first steps say: the OS, the architecture, a desktop or not, a GPU for a desktop, and its windowing system. */
 export interface Choice {
   readonly os: GuestOs;
   readonly arch: Arch;
   readonly desktop: boolean;
   readonly gpu: boolean;
+  /** A desktop's windowing system (048); "x11" for a server, which never shows the choice. */
+  readonly windowing: Windowing;
 }
 
 const OS_ORDER: readonly GuestOs[] = ["linux", "macos", "windows"];
@@ -68,32 +70,42 @@ export function typeAvailable(kinds: readonly KindView[], os: GuestOs, arch: Arc
   return kindsAt(kinds, os, arch).some((kind) => kind.desktop === desktop);
 }
 
-/** For a desktop: whether a GPU desktop and a CPU one both exist, so GPU is a choice. */
-export function gpuChoices(kinds: readonly KindView[], os: GuestOs, arch: Arch): { readonly none: boolean; readonly gpu: boolean } {
-  const desktops = kindsAt(kinds, os, arch).filter((kind) => kind.desktop);
+/** For a desktop of a windowing system: whether a GPU desktop and a CPU one both exist, so GPU is a choice. */
+export function gpuChoices(kinds: readonly KindView[], os: GuestOs, arch: Arch, windowing: Windowing): { readonly none: boolean; readonly gpu: boolean } {
+  const desktops = kindsAt(kinds, os, arch).filter((kind) => kind.desktop && kind.windowing === windowing);
   return { none: desktops.some((kind) => !kind.gpu), gpu: desktops.some((kind) => kind.gpu) };
 }
 
-/** The kind the choice names, taking the desktop that exists when the GPU choice does not. */
+/** For a desktop: whether an X11 desktop and a Wayland one both exist, so the windowing is a choice (048). */
+export function displayChoices(kinds: readonly KindView[], os: GuestOs, arch: Arch): { readonly x11: boolean; readonly wayland: boolean } {
+  const desktops = kindsAt(kinds, os, arch).filter((kind) => kind.desktop);
+  return { x11: desktops.some((kind) => kind.windowing === "x11"), wayland: desktops.some((kind) => kind.windowing === "wayland") };
+}
+
+/** The kind the choice names: the desktop of its windowing and GPU, falling back to its windowing, then to any that exists. */
 export function kindFor(kinds: readonly KindView[], choice: Choice): KindView | null {
   const at = kindsAt(kinds, choice.os, choice.arch).filter((kind) => kind.desktop === choice.desktop);
   if (!at.length) return null;
-  return at.find((kind) => kind.gpu === choice.gpu) ?? at[0]!;
+  if (!choice.desktop) return at.find((kind) => kind.gpu === choice.gpu) ?? at[0]!;
+  return at.find((kind) => kind.windowing === choice.windowing && kind.gpu === choice.gpu) ?? at.find((kind) => kind.windowing === choice.windowing) ?? at[0]!;
 }
 
-/** The nearest choice that exists: the OS stays, then the arch, then the type, then the GPU snap to what there is. */
+/** The nearest choice that exists: the OS stays, then the arch, the type, the windowing, and the GPU snap to what there is. */
 export function nearest(kinds: readonly KindView[], wanted: Choice): Choice {
   const os = kinds.some((kind) => kind.os === wanted.os) ? wanted.os : (systemsOf(kinds)[0]?.os ?? wanted.os);
   const arch = archAvailable(kinds, os, wanted.arch) ? wanted.arch : (ARCHS.find((candidate) => archAvailable(kinds, os, candidate.id))?.id ?? wanted.arch);
   const desktop = typeAvailable(kinds, os, arch, wanted.desktop) ? wanted.desktop : !wanted.desktop;
-  const choices = gpuChoices(kinds, os, arch);
+  const displays = displayChoices(kinds, os, arch);
+  // A desktop keeps the windowing wanted when it exists, else the other; a server has none, so "x11" stands in.
+  const windowing: Windowing = !desktop ? "x11" : wanted.windowing === "wayland" ? (displays.wayland ? "wayland" : "x11") : displays.x11 ? "x11" : "wayland";
+  const choices = gpuChoices(kinds, os, arch, windowing);
   const gpu = desktop ? (wanted.gpu ? choices.gpu : !choices.none && choices.gpu) : false;
-  return { os, arch, desktop, gpu };
+  return { os, arch, desktop, gpu, windowing };
 }
 
 /** The choice a kind stands for, for the form to open on a remembered kind. */
 export function choiceOf(kind: KindView): Choice {
-  return { os: kind.os, arch: archOf(kind), desktop: kind.desktop, gpu: kind.gpu };
+  return { os: kind.os, arch: archOf(kind), desktop: kind.desktop, gpu: kind.gpu, windowing: kind.windowing };
 }
 
 export type FormFilter = "all" | "container" | "vm" | "physical";

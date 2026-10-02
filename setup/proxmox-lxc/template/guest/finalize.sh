@@ -63,6 +63,10 @@ find /root/.cua-driver /home/*/.cua-driver -mindepth 1 -maxdepth 1 ! -name confi
 # Desktop state that each box makes for itself: VNC password, X logs, profiles.
 rm -rf /var/lib/bb-box/vnc-password /var/lib/bb-box/vnc.passwd /home/*/.local/share/xorg \
   /home/*/.config/google-chrome /root/.config/google-chrome /home/*/.Xauthority
+# State the checks' apps leave: Mousepad's autosaved document and its session
+# in dconf, which would make a box's first Mousepad ask to restore it. No
+# template sets anything in dconf.
+rm -rf /home/*/.local/share/Mousepad /home/*/.config/dconf/user
 # PVE also truncates this on clone; an empty file avoids first-boot presets.
 : >/etc/machine-id
 rm -f /var/lib/dbus/machine-id

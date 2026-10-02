@@ -33,32 +33,49 @@ t "no Xwayland, no DISPLAY" sh -c '
   ! systemctl --user show-environment | grep -q "^DISPLAY=" || { echo "DISPLAY in the user manager"; exit 1; }
   echo "none; WAYLAND_DISPLAY=$WAYLAND_DISPLAY"'
 t "VNC sign-in, first frame" node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password
-# As the backend resizes a viewer's desktop (021): while a viewer watches, as
-# the relay's does, the screen takes the new size, and a new connection has
-# it. wayvnc 0.7.2 can crash when a viewer connects after a resize made with
-# none connected (#394), which the backend does not do.
-t "resize" sh -c '
-  before=$(swaymsg -r -t get_outputs | python3 -c "import json,sys; r=json.load(sys.stdin)[0][\"rect\"]; print(\"%dx%d\" % (r[\"width\"], r[\"height\"]))")
-  hold=$(mktemp); node '"$libexec"'/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password --hold >"$hold" 2>&1 &
+# As the backend resizes a viewer's desktop (021): display resize, then a new
+# connection's ServerInit has the size. Larger with no viewer connected, as the
+# conformance suite does; smaller while a viewer watches, as through the relay,
+# which must stay connected.
+size_of() { swaymsg -r -t get_outputs | python3 -c 'import json,sys; r=json.load(sys.stdin)[0]["rect"]; print("%dx%d" % (r["width"], r["height"]))'; }
+init_size() { node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password --init-only | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%dx%d" % (d["width"], d["height"]))'; }
+resize_to() { # size: resizes, and prints the time and what a new viewer has
+  local s got
+  s=$(date +%s%N); $libexec/display resize "$1" || return 1
+  echo "$1 in $(( ($(date +%s%N) - s) / 1000000 )) ms"
+  got=$(init_size); [ "$got" = "$1" ] || { echo "a new viewer has $got"; return 1; }
+}
+export -f size_of init_size resize_to; export libexec
+t "resize larger, no viewer" bash -c '
+  before=$(size_of); w=${before%x*}; h=${before#*x}
+  resize_to $((w + 128))x$((h + 64)); ok=$?; resize_to "$before" >/dev/null || ok=1; exit $ok'
+t "resize smaller, a viewer" bash -c '
+  before=$(size_of)
+  hold=$(mktemp); node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password --hold >"$hold" 2>&1 &
   viewer=$!
   for _ in $(seq 1 100); do [ -s "$hold" ] && break; sleep 0.1; done
-  s=$(date +%s%N); '"$libexec"'/display resize 1233x677 || { kill $viewer; exit 1; }; ms=$(( ($(date +%s%N) - s) / 1000000 ))
-  got=$(node '"$libexec"'/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password | python3 -c "import json,sys; d=json.load(sys.stdin); print(\"%dx%d\" % (d[\"width\"], d[\"height\"]))")
-  '"$libexec"'/display resize "$before"; back=$?
-  kill -0 $viewer 2>/dev/null; alive=$?
-  kill $viewer 2>/dev/null; rm -f "$hold"
-  [ "$back" = 0 ] || exit 1
-  [ "$got" = 1233x677 ] || { echo "a new viewer has $got after resizing to 1233x677"; exit 1; }
-  [ "$alive" = 0 ] || { echo "the watching viewer was disconnected"; exit 1; }
-  echo "1233x677 in $ms ms, a new viewer has it, the watching one stayed; back to $before"'
+  resize_to 1233x677; ok=$?
+  resize_to "$before" >/dev/null || ok=1
+  kill -0 $viewer 2>/dev/null || { echo "the watching viewer was disconnected"; ok=1; }
+  kill $viewer 2>/dev/null; rm -f "$hold"; exit $ok'
 t "at-spi bus" sh -c 'n=$(pgrep -u "$(id -un)" -c at-spi-bus-laun); a=$(busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress) || exit 1; [ "$n" -le 1 ] || { echo "$n bus launchers"; exit 1; }; echo "$a" | cut -c1-60'
-t "Cua Driver daemon" sh -c 'systemctl --user is-active bb-box-cua-driver && cua-driver telemetry status | head -1'
+t "Cua Driver daemon" sh -c 'systemctl --user is-active bb-box-cua-driver && cua-driver telemetry status | sed -n 1p'
 # Cua's get_screen_size is X11's; on Wayland it lists the windows through Sway.
 t "Cua Driver over MCP" node $libexec/cua-probe.mjs --socket "$socket" --call list_windows
 t "Cua: a GTK 4 window" node $libexec/cua-launch-probe.mjs --socket "$socket" --app gtk4-demo --min 10
 # As the conformance suite does: type into the editor, in the foreground, and
 # read the text back from its tree.
 t "Cua: type into Mousepad" node $libexec/cua-launch-probe.mjs --socket "$socket" --app mousepad --type "bb-box typed on Wayland"
+# The typed document is left unsaved, so Mousepad keeps it, and its session in
+# dconf, and would ask to restore them. finalize.sh removes both; so does this,
+# then a new Mousepad must open its editor, as on a fresh box.
+mousepad_clean() {
+  pkill -u "$(id -un)" -x mousepad; pkill -u "$(id -un)" -x dconf-service; sleep 0.3
+  rm -rf "$home/.local/share/Mousepad" "$home/.config/dconf/user"
+}
+mousepad_clean
+t "Mousepad opens its editor" node $libexec/cua-launch-probe.mjs --socket "$socket" --app mousepad --title "^Untitled"
+mousepad_clean
 t "Cua: Chrome, native" sh -c '
   node '"$libexec"'/cua-launch-probe.mjs --socket "'"$socket"'" --min 10 \
     --url "data:text/html,<title>bb-box check</title><h1>bb-box</h1><p>A page for the check.</p><button>OK</button><a href=%23>Link</a>" || exit 1

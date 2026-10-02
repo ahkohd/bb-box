@@ -18,6 +18,9 @@ import type { Arch, CommandTransport, Display, DisplayProtocol, GuestOs, SshAcce
 
 export type { Arch, GuestOs } from "../transports/types.ts";
 
+/** The windowing system a Linux desktop runs (048): X11, or Wayland (Sway). A kind without a desktop is "x11" and never shows it. */
+export type Windowing = "x11" | "wayland";
+
 /** Whether a backend's boxes are guests it makes and deletes, or existing machines it lends. */
 export type MachineNature = "virtual" | "real";
 
