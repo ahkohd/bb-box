@@ -1417,8 +1417,9 @@ Notes:
   ([013](decisions/013-docker-boxes-run-unprivileged.md)). Docker inside a
   box needs a privileged container, which is root on the Docker host. Boxes
   are privileged unless the operator turns it off, or the host is rootless
-  Docker, but a GPU desktop never is: it would see every GPU on the host
-  ([041](decisions/041-every-linux-box-has-docker.md)). Without
+  Docker ([041](decisions/041-every-linux-box-has-docker.md)). A privileged
+  GPU desktop sees every GPU on the host, so its start script points Xorg
+  at the one placed, by its PCI bus ID (#283). Without
   systemd, BB's installer leaves its host daemon running in the background.
   After a restart, the start script removes BB's daemon lock and PID file,
   and bb-box calls `bootstrap` again, which starts the daemon

@@ -218,9 +218,7 @@ export function dockerKinds(config: DockerConfig, rootless = false): BoxKind[] {
         os: "linux",
         arch: "x86_64",
         gpu: true,
-        // Never privileged: a privileged container sees every GPU on the
-        // host, and Xorg would take the first, not the one placed (041).
-        features: [],
+        features: docker,
         command: DOCKER_COMMAND,
         // As in a Proxmox LXC box, x0vncserver on the GPU refuses a viewer's
         // resize, so transports() gives this display a resize that runs xrandr (021).
@@ -387,7 +385,7 @@ export class DockerBackend implements Backend {
 
   /** Whether a box of `kind` is a privileged container with its own Docker daemon (041). */
   #privileged(kind: string): boolean {
-    return this.#config.docker && !this.#info?.rootless && kind !== "linux-desktop";
+    return this.#config.docker && !this.#info?.rootless;
   }
 
   #kind(id: string): BoxKind {
@@ -792,7 +790,7 @@ export class DockerBackend implements Backend {
           "docker.privileged",
           "Docker in boxes",
           "ok",
-          `Each box but a GPU desktop is a privileged container with its own Docker daemon, so a box can become root on ${info.name}. This is not a security boundary.`,
+          `Each box is a privileged container with its own Docker daemon, so a box can become root on ${info.name}. This is not a security boundary.`,
         );
       }
 
@@ -925,10 +923,15 @@ export class DockerBackend implements Backend {
       [LABELS.created]: String(box.createdAt),
       ...(gpu ? { [LABELS.gpu]: gpu } : {}),
     };
+    const privileged = this.#privileged(box.kind);
     const extra = [
       // Docker's own data on a volume, since overlayfs cannot hold overlayfs.
-      ...(this.#privileged(box.kind) ? ["--privileged", "--env", "BBBOX_DOCKERD=1", "--volume", "/var/lib/docker"] : []),
+      ...(privileged ? ["--privileged", "--env", "BBBOX_DOCKERD=1", "--volume", "/var/lib/docker"] : []),
       ...(box.kind === "linux-desktop" && gpu ? ["--device", gpu, "--env", "NVIDIA_DRIVER_CAPABILITIES=all", "--env", "BBBOX_GPU=1"] : []),
+      // A privileged container sees every GPU on the host, and Xorg would
+      // take the first, so the box's start points Xorg at the one placed, by
+      // its UUID or index, as nvidia-smi --id takes it (#283).
+      ...(box.kind === "linux-desktop" && gpu && privileged ? ["--env", `BBBOX_GPU_ID=${gpu.slice(gpu.indexOf("=") + 1)}`] : []),
     ];
     const args = [
       "container", "create",

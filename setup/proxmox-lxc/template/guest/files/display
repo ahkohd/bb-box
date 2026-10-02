@@ -14,6 +14,9 @@
 #         with xrandr
 #   cpu   Xtigervnc: OpenGL and Vulkan on the CPU (llvmpipe, lavapipe); resizable
 #
+# GPU_BUS_ID, which a Docker box's start sets when the box sees every GPU
+# on the host, is the GPU whose free memory auto reads.
+#
 # The path taken is in /run/bb-box/display-mode (gpu or cpu), and why in
 # /run/bb-box/display-reason. After freeing GPU memory, `systemctl restart
 # bb-box-display` tries the GPU again (it restarts the desktop session).
@@ -51,7 +54,9 @@ if [ "$mode" = auto ]; then
   elif [ -z "$want" ] || [ "$want" != "$have" ]; then
     mode=cpu reason="host NVIDIA driver '${have:-none}' does not match the template's '${want:-none}'"
   else
-    free=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9)
+    gpu=()
+    [ -z "${GPU_BUS_ID:-}" ] || gpu=(--id="$GPU_BUS_ID")
+    free=$(nvidia-smi "${gpu[@]}" --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9)
     if [ -z "$free" ]; then
       mode=cpu reason="nvidia-smi cannot read the GPU"
     elif [ "$free" -lt "$min_free" ]; then

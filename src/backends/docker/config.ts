@@ -26,7 +26,7 @@ export interface DockerConfig {
   readonly machine: string | null;
   /** The image of each kind, or null when the kind is off. */
   readonly images: Readonly<Record<DockerKind, string | null>>;
-  /** Whether boxes are privileged containers with their own Docker daemon: on unless set (041). A GPU desktop never is. */
+  /** Whether boxes are privileged containers with their own Docker daemon: on unless set (041). */
   readonly docker: boolean;
   /** The network bb-box makes for its boxes and keeps them on. */
   readonly network: string;
@@ -85,7 +85,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "boolean",
     label: "Docker in boxes",
     description:
-      "Give each box its own Docker daemon, started by its first docker command. Each runs as a privileged container, which can take over the Docker host. A GPU desktop never does. Off, or on rootless Docker, boxes say No Docker.",
+      "Give each box its own Docker daemon, started by its first docker command. Each runs as a privileged container, which can take over the Docker host. Off, or on rootless Docker, boxes say No Docker.",
     group: "boxes",
     default: true,
   },

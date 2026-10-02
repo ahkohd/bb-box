@@ -492,13 +492,15 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   desktops. A box gets its size's cores and memory as container limits, and
   may not have more cores than the host. A disk size is refused, and
   `Guest.size` has `diskGiB` null. There is no warm pool.
-- Each box but a GPU desktop is a privileged container with Docker's data
-  on an anonymous volume, unless `privileged` is off. Its start script
-  listens on Docker's socket with `systemd-socket-activate`, so `dockerd`
-  starts with the first `docker` command, or at once when the box has
-  containers. A privileged GPU desktop would see every GPU on the host. On
-  rootless Docker, `kinds()` drops `docker` once the daemon has said so
-  ([041](decisions/041-every-linux-box-has-docker.md)).
+- Each box is a privileged container with Docker's data on an anonymous
+  volume, unless `privileged` is off. Its start script listens on Docker's
+  socket with `systemd-socket-activate`, so `dockerd` starts with the first
+  `docker` command, or at once when the box has containers. A privileged
+  GPU desktop sees every GPU on the host, so `BBBOX_GPU_ID` names the one
+  placed, and the start script's `gpu-bus-id` writes its PCI bus ID as
+  Xorg's `BusID`, or leaves the display on the CPU when it cannot find it
+  (#283). On rootless Docker, `kinds()` drops `docker` once the daemon has
+  said so ([041](decisions/041-every-linux-box-has-docker.md)).
 - The tests run against a fake `docker` CLI whose daemon state is a
   directory, and whose `docker exec` runs commands on the test machine
   ([test/fake-docker.mjs](../test/fake-docker.mjs),

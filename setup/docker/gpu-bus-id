@@ -1,0 +1,51 @@
+#!/bin/bash
+# bb-box: points Xorg in a Docker GPU desktop at the GPU bb-box placed in it
+# (#283). A GPU desktop with Docker is a privileged container, which sees
+# every GPU on the host, and Xorg would take the first. Run as root by
+# bb-box-start (start) at each start.
+#
+# usage: gpu-bus-id GPU [CONF]
+#
+# GPU is the placed GPU as nvidia-smi --id takes it: the part of its CDI name
+# after "=", a UUID or an index. Writes the GPU's BusID into CONF
+# (/etc/X11/bb-box-xorg.conf), in place of any BusID there, and prints the
+# GPU's PCI bus ID as nvidia-smi gives it, for the display to read that GPU's
+# free memory. When nvidia-smi cannot find the GPU, says why and exits 1,
+# leaving CONF as it was.
+#
+# Installed as /usr/local/libexec/bb-box/gpu-bus-id by
+# setup/docker/Dockerfile.
+set -u
+gpu=${1:?usage: gpu-bus-id GPU [CONF]}
+conf=${2:-/etc/X11/bb-box-xorg.conf}
+fail() {
+  echo "gpu-bus-id: $*" >&2
+  exit 1
+}
+
+id=$(nvidia-smi --id="$gpu" --query-gpu=pci.bus_id --format=csv,noheader 2>&1) ||
+  fail "nvidia-smi cannot find GPU $gpu: ${id:-no output}"
+id=${id//[[:space:]]/}
+# domain:bus:device.function in hex, as 00000000:41:00.0.
+[[ $id =~ ^([0-9A-Fa-f]{4,8}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2})\.([0-7])$ ]] ||
+  fail "nvidia-smi gave GPU $gpu the bus ID '$id', not domain:bus:device.function"
+domain=$((16#${BASH_REMATCH[1]}))
+bus=$((16#${BASH_REMATCH[2]}))
+device=$((16#${BASH_REMATCH[3]}))
+fn=${BASH_REMATCH[4]}
+# Xorg's form is decimal, with the domain only when it is not 0.
+if [ "$domain" = 0 ]; then
+  busid="PCI:$bus:$device:$fn"
+else
+  busid="PCI:$bus@$domain:$device:$fn"
+fi
+
+grep -q '^[[:space:]]*Driver[[:space:]]*"nvidia"' "$conf" 2>/dev/null ||
+  fail "$conf has no Driver \"nvidia\" line for the BusID"
+written=$(awk -v busid="$busid" '
+  /^[[:space:]]*BusID[[:space:]]/ { next }
+  { print }
+  /^[[:space:]]*Driver[[:space:]]*"nvidia"/ { print "  BusID \"" busid "\"" }
+' "$conf") || fail "cannot read $conf"
+printf '%s\n' "$written" >"$conf" || fail "cannot write $conf"
+echo "$id"

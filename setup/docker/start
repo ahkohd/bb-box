@@ -95,6 +95,17 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
   if [ "${BBBOX_GPU:-0}" = 1 ] && [ -r /sys/module/nvidia/version ]; then
     cat /sys/module/nvidia/version >/usr/share/bb-box/nvidia-version
     display_env[0]=DISPLAY_MODE=auto
+    # A box with Docker is privileged and sees every GPU on the host, so
+    # BBBOX_GPU_ID names the one placed, for Xorg and the display (#283).
+    # The display takes the CPU when that GPU cannot be found.
+    if [ -n "${BBBOX_GPU_ID:-}" ]; then
+      if bus=$(/usr/local/libexec/bb-box/gpu-bus-id "$BBBOX_GPU_ID"); then
+        display_env+=(GPU_BUS_ID="$bus")
+      else
+        display_env[0]=DISPLAY_MODE=cpu
+        log "the display takes the CPU, as Xorg cannot be pointed at GPU $BBBOX_GPU_ID"
+      fi
+    fi
   fi
   keep as_box env "${display_env[@]}" /usr/local/libexec/bb-box/display &
   session_env=(DISPLAY=:99 XAUTHORITY="$run/Xauthority" XDG_RUNTIME_DIR="/run/user/$uid"

@@ -69,5 +69,6 @@ RUN --mount=type=bind,source=proxmox-lxc/template/guest/install-bb-app.sh,target
       bash /mnt/install-bb-app.sh box "$BB_URL" /mnt/app && rm -rf /home/box/.npm /home/box/.cache /tmp/*; \
     fi
 COPY --chmod=0755 docker/start /usr/local/sbin/bb-box-start
+COPY --chmod=0755 docker/gpu-bus-id /usr/local/libexec/bb-box/gpu-bus-id
 LABEL bbbox.image-version="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]

@@ -15,13 +15,11 @@ All of them enrol in BB as machines, as Proxmox LXC boxes do.
 
 Both images have Docker installed, as every Linux image does
 ([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md)).
-By default each box but a GPU desktop is a privileged container with a
-Docker daemon of its own, which its first `docker` command starts. A GPU
-desktop is never privileged, since it would see every GPU on the host, so
-it says No Docker. With `privileged` off, or on rootless Docker, every box
-here is unprivileged and says No Docker. An agent that must have Docker
-asks for `linux-docker` rather than `linux`: that takes only offers with
-Docker, here or on another backend.
+By default each box is a privileged container with a Docker daemon of its
+own, which its first `docker` command starts. With `privileged` off, or on
+rootless Docker, every box here is unprivileged and says No Docker. An
+agent that must have Docker asks for `linux-docker` rather than `linux`:
+that takes only offers with Docker, here or on another backend.
 
 The bb-box plugin, on BB's server, runs the `docker` CLI for every call. It
 runs commands and copies files in a box with `docker exec`, and streams the
@@ -131,7 +129,7 @@ In BB, on BB Box's settings page, set up the Docker backend and turn it on. Its 
 | `host` | empty | `unix:///path/to/docker.sock` or `ssh://user@host`. Empty uses the `docker` CLI's own default on BB's server: `DOCKER_HOST`, its current context, or the local socket |
 | `linux-image` | `bbbox/linux:1` | The image of linux boxes. Empty turns them off |
 | `desktop-image` | `bbbox/linux-desktop:1` | The image of linux-desktop-cpu and linux-desktop boxes. Empty turns them off |
-| `privileged` | on | Docker in boxes: each box but a GPU desktop is a privileged container with a Docker daemon of its own, started by its first `docker` command. Off, boxes say No Docker |
+| `privileged` | on | Docker in boxes: each box is a privileged container with a Docker daemon of its own, started by its first `docker` command. Off, boxes say No Docker |
 | `gpu-desktops` | off | Offers linux-desktop boxes, on the GPUs the NVIDIA Container Toolkit lists |
 | `desktops-per-gpu` | 4 | The most linux-desktop boxes on one GPU |
 | `network` | `bbbox` | The network bb-box makes for its boxes |
@@ -240,8 +238,12 @@ Interface (CDI). On the Docker host:
 bb-box gives each desktop the GPU with the fewest desktops, by its UUID, and
 counts a stopped desktop against its GPU, since it takes the GPU again when it
 starts. The toolkit mounts the host driver's own libraries into the box, so
-they always match the driver. When the GPU cannot drive the display, the
-desktop falls back to the CPU, as on Proxmox LXC.
+they always match the driver. A desktop with Docker is privileged, so it sees
+every GPU on the host: its start script asks `nvidia-smi` for the PCI bus ID
+of the GPU placed, and gives it to Xorg as its `BusID` and to the display,
+which reads that GPU's free memory (#283). When the GPU cannot be found or
+cannot drive the display, the desktop falls back to the CPU, as on Proxmox
+LXC, and the reason is in the container's log.
 
 GPU desktops have not yet been tested on a Docker host with a GPU.
 
