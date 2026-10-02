@@ -1969,6 +1969,43 @@ test("a reload keeps a person's control and the desktop's size for their viewer,
   assert.equal(logged("info").filter((message) => message.includes("as bb-box restarted")).length, 2);
 });
 
+test("a take in the last instance after the next one started holds when the viewer connects to the next one (#318)", async (t) => {
+  const { harness, app, setupOptions } = await start();
+  let host = harness;
+  t.after(() => host.lifecycle.dispose());
+  await host.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
+  await app.boxes.idle();
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  const viewer = "viewer-one-0001";
+  const open = async () => {
+    const session = await host.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+    await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+    await session.receive(Uint8Array.of(1));
+    await session.receive(Uint8Array.of(1));
+    return session;
+  };
+  await open();
+  const control = async () => ((await host.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { box: { control: unknown } }).box.control;
+
+  // The next instance starts and finds nobody's control kept. Then the
+  // person takes control in the last one, which then stops.
+  const last = host;
+  const next = await host.lifecycle.reload(async (bb) => {
+    await setup(bb, setupOptions);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await last.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  });
+  host = next.harness;
+  assert.deepEqual(await control(), { owner: "agent", holder: null }, "until a viewer connects");
+  await open();
+  await until("the viewer's control", async () => JSON.stringify(await control()) === JSON.stringify({ owner: "human", holder: viewer }));
+  assert.deepEqual(
+    [last, host].flatMap((each) => each.inspection.logEntries.filter((entry) => entry.level === "error").map((entry) => entry.message)),
+    [],
+  );
+});
+
 test("a box without a desktop has no desktop to control", async (t) => {
   const { harness, app } = await start();
   t.after(() => harness.lifecycle.dispose());

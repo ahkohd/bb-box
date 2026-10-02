@@ -1115,6 +1115,8 @@ A box is a resource of its thread and gets what the thread's own machine has.
   storage on every change, so after a restart, as for an update, your
   viewer keeps it and the desktop's size if it connects again within 60 s
   ([045](decisions/045-a-persons-control-lasts-through-a-restart-of-the-plugin.md)).
+  A take or hand-back in the old instance while the new one starts holds
+  too: the new one reads control again as the first viewer connects.
   The plugin log says why the box ended the connection, and what a restart
   did with your control.
 - **Pausing the agent** happens in the plugin, not the box

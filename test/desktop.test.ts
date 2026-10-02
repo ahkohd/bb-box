@@ -348,7 +348,14 @@ test("restoring the size sets the desktop back over a connection of its own", as
 
 /** Shared control over a box whose viewers are plain records. */
 function control(
-  options: { pause?: () => Promise<void>; keep?: (kept: readonly KeptControl[]) => Promise<void>; stopping?: (boxId: string, kept: boolean) => Promise<void>; staleMs?: number; reconnectMs?: number } = {},
+  options: {
+    pause?: () => Promise<void>;
+    keep?: (kept: readonly KeptControl[]) => Promise<void>;
+    read?: () => Promise<readonly KeptControl[]>;
+    stopping?: (boxId: string, kept: boolean) => Promise<void>;
+    staleMs?: number;
+    reconnectMs?: number;
+  } = {},
 ) {
   const events: string[] = [];
   const restores: unknown[] = [];
@@ -358,6 +365,7 @@ function control(
     restore: async (_boxId, size, screen) => void restores.push([size, screen]),
     pause: options.pause,
     keep: options.keep,
+    read: options.read,
     stopping: options.stopping,
     logError: (operation, error) => errors.push(`${operation}: ${String(error)}`),
     staleMs: options.staleMs,
@@ -545,6 +553,51 @@ test("kept control goes back to the agent with the desktop's size when the viewe
       { boxId: "box3", ...kept },
     ],
   );
+  assert.deepEqual(errors, []);
+});
+
+test("a take or hand-back in the last instance after this one started holds once the first viewer connects (#318)", async () => {
+  let storage: readonly KeptControl[] = [];
+  let reads = 0;
+  const { value, events, restores, errors, connect } = control({
+    keep: async (kept) => void (storage = kept),
+    read: async () => {
+      reads++;
+      return storage;
+    },
+  });
+  // As this instance started, viewer-a had box1 and viewer-c had box3.
+  const kept = { holder: "viewer-a", size: { width: 1280, height: 800 }, resized: SCREEN };
+  value.resume([
+    { boxId: "box1", ...kept },
+    { boxId: "box3", ...kept, holder: "viewer-c" },
+  ]);
+  // Then, in the last instance, viewer-a handed box1 back, viewer-b took
+  // box2, and viewer-d took box3 from viewer-c.
+  storage = [
+    { boxId: "box2", holder: "viewer-b", size: null, resized: null },
+    { boxId: "box3", holder: "viewer-d", size: null, resized: null },
+  ];
+  events.length = 0;
+  connect("viewer-a");
+  connect("viewer-c", "box3");
+  await until("the stored control", () => value.view("box1").owner === "agent" && value.view("box2").owner === "human" && value.view("box3").holder === "viewer-d");
+  assert.deepEqual(events.sort(), ["box1 agent", "box2 human", "box3 human"], "box2 with no viewer yet too");
+  assert.deepEqual(restores, [], "the last instance set box1's size back");
+  assert.equal(value.mayInput("box3", "viewer-c"), false);
+
+  connect("viewer-b", "box2");
+  connect("viewer-d", "box3");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(value.mayInput("box2", "viewer-b"), true);
+  assert.equal(value.mayInput("box3", "viewer-d"), true);
+  assert.equal(reads, 1, "once, for every box");
+  value.resume([{ boxId: "box1", ...kept }]);
+  assert.deepEqual(value.view("box1"), { owner: "agent", holder: null }, "a read at start that ends after a viewer connected is older");
+  assert.deepEqual(storage, [
+    { boxId: "box3", holder: "viewer-d", size: null, resized: null },
+    { boxId: "box2", holder: "viewer-b", size: null, resized: null },
+  ]);
   assert.deepEqual(errors, []);
 });
 
