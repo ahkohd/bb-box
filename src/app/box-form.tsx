@@ -1,14 +1,18 @@
-// The stepped box form (the operator's redesign of 1 October 2026): steps
+// The stepped box form (the operator's redesign of 1 October 2026): sections
 // that narrow each other, System, Architecture, Type, Provider, Resources,
-// Name, then a summary and one button. The words come from today's kinds
-// and offers; nothing here names a kind ID or a host ID.
+// Name, laid out as the settings page lays out its sections (a title row,
+// then the options at full width; the operator's notes of 2 October 2026),
+// then a summary and one button. The words come from today's kinds and
+// offers; nothing here names a kind ID or a host ID, and nothing carries a
+// provider's mark or colour.
 
 import type { ReactNode } from "react";
 import type { GuestOs } from "../backends/types.ts";
 import type { KindView, OfferView } from "../plugin/views.ts";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { osName, seconds } from "./common.tsx";
-import { DockerGlyph, LaptopGlyph, MonitorGlyph, PlugGlyph, ProxmoxGlyph, ServerGlyph } from "./glyphs.tsx";
+import { MonitorGlyph, ServerGlyph } from "./glyphs.tsx";
 
 export type Arch = "x86_64" | "arm64";
 
@@ -165,7 +169,7 @@ export function OfferWords({ offer }: { offer: OfferView }) {
   if (offer.typicalReadyMs !== null) parts.push(<span key="usually">usually ~{seconds(offer.typicalReadyMs)}</span>);
   if (!parts.length) return null;
   return (
-    <span className="text-2xs text-muted-foreground">
+    <span className="mt-0.5 block text-2xs text-muted-foreground">
       {parts.map((part, index) => (
         <span key={index}>
           {index > 0 ? " · " : ""}
@@ -176,34 +180,47 @@ export function OfferWords({ offer }: { offer: OfferView }) {
   );
 }
 
-/** The summary bar's words: "Linux · x86_64 · Desktop on first provider with room · 4 cores · 8 GiB". */
-export function summaryWords(choice: Choice, kind: KindView | null, on: OfferView | null, size: { cores: number; memoryGiB: number } | null): string {
-  const type = choice.desktop ? "Desktop" : "Server";
-  const where = on ? providerTitle(on) : "first provider with room";
-  const parts = [osName(choice.os), choice.arch, `${type} on ${where}`];
-  if (size) parts.push(`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${size.memoryGiB} GiB`);
-  if (kind?.desktop && kind.gpu) parts.push("1 GPU");
-  return parts.join(" · ");
-}
-
-/** The access a box gives: a terminal always, a desktop and computer use when it has them. */
-export function accessWords(kind: KindView | null, choice: Choice): string[] {
-  const words = ["Terminal"];
-  if (choice.desktop) words.push("Desktop");
-  if (kind?.computerUse) words.push("Computer use");
-  return words;
-}
-
-/** One step: its label left, its options right; narrow panels stack them. */
-export function Step({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
+/** One section, as the settings page has them: its title, a dim line under it where useful, then its options at full width. */
+export function FormSection({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <div className="grid gap-1.5 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-3">
-      <p className="text-xs font-medium text-foreground sm:pt-1.5">{label}</p>
-      <div className="min-w-0">
-        {children}
-        {hint ? <p className="mt-1 text-2xs leading-snug text-subtle-foreground">{hint}</p> : null}
+    <section className="space-y-2.5">
+      <div>
+        <h3 className="text-xs font-medium text-foreground">{title}</h3>
+        {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
       </div>
-    </div>
+      {children}
+    </section>
+  );
+}
+
+/** A small menu with its label before it: Kind, Runs on and GPU. An option no provider has is there, but cannot be chosen. */
+export function LabelledSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: readonly { readonly value: string; readonly label: string; readonly disabled?: boolean }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-2xs text-muted-foreground">
+      <span>{label}</span>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="h-7 w-40 text-xs" aria-label={label}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </label>
   );
 }
 
@@ -237,7 +254,7 @@ export function OptionCard({
         if (available) onClick();
       }}
       className={cn(
-        "flex min-w-0 flex-1 items-start gap-2 rounded-md border px-2.5 py-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "flex min-w-0 flex-1 items-start gap-2.5 rounded-md border px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
         selected ? "border-transparent bg-state-active" : "border-input hover:bg-state-hover",
         !available && "cursor-default opacity-50 hover:bg-transparent",
       )}
@@ -245,86 +262,13 @@ export function OptionCard({
       {glyph}
       <span className="min-w-0">
         <span className="block truncate text-xs font-medium text-foreground">{title}</span>
-        <span className="block truncate text-2xs text-muted-foreground">{available ? words : "Not available"}</span>
+        <span className="mt-0.5 block truncate text-2xs text-muted-foreground">{available ? words : "Not available"}</span>
       </span>
     </button>
   );
 }
 
-/** A filter chip, BB's small bordered word, pressed when chosen. */
-export function Chip({ label, selected, available = true, title, onClick }: { label: string; selected: boolean; available?: boolean; title?: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      aria-disabled={!available || undefined}
-      title={title}
-      onClick={() => {
-        if (available) onClick();
-      }}
-      className={cn(
-        "rounded-full border px-2 py-0.5 text-2xs leading-none outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        selected ? "border-transparent bg-foreground text-background" : "border-border text-muted-foreground hover:bg-state-hover",
-        !available && "cursor-default opacity-50 hover:bg-transparent",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
-/** The glyph for an offer's provider: Proxmox, Docker, a laptop for a Mac, a plug for a pool machine, a server otherwise. */
-export function providerGlyph(offer: Pick<OfferView, "type">): "proxmox" | "docker" | "laptop" | "plug" | "server" {
-  switch (offer.type) {
-    case "proxmox-lxc":
-    case "proxmox-qemu":
-      return "proxmox";
-    case "docker":
-      return "docker";
-    case "tart":
-      return "laptop";
-    case "ssh-pool":
-      return "plug";
-    default:
-      return "server";
-  }
-}
-
-/**
- * The provider's brand colour on its glyph and name, so providers tell apart
- * at a glance (the operator's note of 1 October 2026): Proxmox orange and
- * Docker blue, each a shade that reads on light and dark; a neutral for a
- * Mac and a pool machine.
- */
-export function providerTone(offer: Pick<OfferView, "type">): string {
-  switch (providerGlyph(offer)) {
-    case "proxmox":
-      return "text-orange-700 dark:text-orange-400";
-    case "docker":
-      return "text-sky-700 dark:text-sky-400";
-    default:
-      return "text-foreground";
-  }
-}
-
-/** The provider's glyph, inline, with its room reserved. */
-export function ProviderGlyph({ offer, className }: { offer: Pick<OfferView, "type">; className?: string }) {
-  const props = { className: cn(providerTone(offer), className) };
-  switch (providerGlyph(offer)) {
-    case "proxmox":
-      return <ProxmoxGlyph {...props} />;
-    case "docker":
-      return <DockerGlyph {...props} />;
-    case "laptop":
-      return <LaptopGlyph {...props} />;
-    case "plug":
-      return <PlugGlyph {...props} />;
-    default:
-      return <ServerGlyph {...props} />;
-  }
-}
-
-/** A provider row: its glyph in its colour, its name, and its words. */
+/** A provider row: its name at full strength, its words dim, no mark and no colour (the operator's note of 2 October 2026). */
 export function ProviderRow({ offer, selected, onClick, optionRef }: { offer: OfferView; selected: boolean; onClick: () => void; optionRef?: (element: HTMLButtonElement | null) => void }) {
   return (
     <button
@@ -335,17 +279,14 @@ export function ProviderRow({ offer, selected, onClick, optionRef }: { offer: Of
       tabIndex={selected ? 0 : -1}
       onClick={onClick}
       className={cn(
-        "flex w-full items-start gap-2 rounded-md border px-2.5 py-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "flex w-full flex-col items-start rounded-md border px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
         selected ? "border-transparent bg-state-active" : "border-input hover:bg-state-hover",
       )}
     >
-      <ProviderGlyph offer={offer} className="mt-0.5 size-3.5" />
-      <span className="min-w-0">
-        <span className={cn("block truncate text-xs font-medium", providerTone(offer))}>{providerTitle(offer)}</span>
-        <OfferWords offer={offer} />
-      </span>
+      <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer)}</span>
+      <OfferWords offer={offer} />
     </button>
   );
 }
 
-export const TYPE_GLYPHS = { server: <ServerGlyph className="mt-0.5 text-muted-foreground" />, desktop: <MonitorGlyph className="mt-0.5 text-muted-foreground" /> };
+export const TYPE_GLYPHS = { server: <ServerGlyph className="mt-0.5 shrink-0 text-muted-foreground" />, desktop: <MonitorGlyph className="mt-0.5 shrink-0 text-muted-foreground" /> };

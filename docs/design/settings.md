@@ -78,10 +78,11 @@ Boxes of your own, kept as BB machines.
   the panel's Release does (034): "Stop build-1 anyway?" with "Stop
   anyway"; then the request goes with `force`.
 - **Add machine** is the New box form (the panel design's "New box": its
-  steps and provider choice) with a Name step after Resources and an Add
-  button: only kinds that can enrol (`KindView.enrol`; the System step
-  says "Of the kinds whose boxes join BB."), the kind's presets starting
-  at its default, and a name, a hostname label of up to 32 lowercase
+  sections and provider choice) with a Name section after Resources and
+  an "Add machine" button: only kinds that can enrol (`KindView.enrol`;
+  the System section says "Of the kinds whose boxes join BB."), the
+  kind's presets starting at its default, and a name, a hostname label of
+  up to 32 lowercase
   letters, digits and hyphens starting with a letter, unique among your
   machines. What is wrong shows under the field as the person types; a
   name left empty lets bb-box pick one; the server's refusal (a taken
