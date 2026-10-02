@@ -360,6 +360,14 @@ Mac given over to bb-box. On a Mac you also use, know what a warm VM costs:
 
 A suspended VM takes no slot and no memory.
 
+For `windows-arm64-desktop`, the warm count keeps that many Windows VMs
+booted to the desktop and saved by QEMU, as a stop saves a box, so a box of
+the default size restores one instead of booting a clone. Each holds what
+its first boot wrote and its saved memory, up to its memory size, on disk.
+While it is made, it takes its memory and 2 GiB more, after each box that
+takes one and after each change of the Windows image's build, QEMU or the
+Mac's macOS, which retire warm VMs. A saved VM takes no memory.
+
 ## How the plugin drives a box
 
 - **Sizes.** A box gets the cores and memory of its size. bb-box refuses a
@@ -389,7 +397,10 @@ A suspended VM takes no slot and no memory.
   size takes it: bb-box rewrites the owner file with the box's fields,
   resumes the VM, and names it after the box. A VM whose saved state does not restore is deleted, and
   the box gets a clone. An acquire that finds a warm VM being made in the
-  last slot takes it over when it suits, or stops it.
+  last slot takes it over when it suits, or stops it. A Windows warm VM is
+  made the same way, with its display helper compiled before QEMU saves
+  it; its owner file names QEMU's version instead of Tart's, and a box that
+  takes it has Windows' clock set after the restore.
 - **Stop and start.** Stop suspends the VM, which frees its memory and its
   slot of the two; start resumes it in about 4 s, with its apps still open.
   A box's address is looked up again with `tart ip` when bb-box does not

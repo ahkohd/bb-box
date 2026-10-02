@@ -13,7 +13,7 @@
 //   ports on the Mac's loopback, for SSH and VNC, and the machine, such as
 //   virt-11.1, that QEMU's virt stood for, all chosen when it is made.
 //   While QEMU runs it, it has QEMU's QMP socket, pid file and
-//   output. A stopped VM keeps its memory in state, saved by QEMU's
+//   output. A stopped or warm VM keeps its memory in state, saved by QEMU's
 //   migration to a file, until it starts again.
 // - The VM's owner file is in Tart's directory (host.ts) and names the
 //   engine, qemu. It is written before the VM's directory and removed after.
@@ -281,15 +281,11 @@ echo restored
 }
 
 /**
- * Stops the VM when it names the box, saving it: paused, its memory and
- * devices written to a file at full speed, then QEMU quits. A start restores
- * it. One that cannot be saved runs on. Prints "stopped", or "gone" when it
- * is not there or not this box's.
+ * Saves VM $vm, in $v, when it runs: paused, its memory and devices written
+ * to a file at full speed, then QEMU quits. A start restores it. One that
+ * cannot be saved runs on, and the script fails.
  */
-export function qemuStopScript(vm: string, installId: string, boxId: string | null): string {
-  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
-mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} && [ -d "$v" ] || { echo gone; exit 0; }
-if qrunning "$vm"; then
+const SAVE = String.raw`if qrunning "$vm"; then
   pid=$(cat "$v/pid")
   qmp_open "$vm" || { echo "QEMU's monitor for $vm did not answer." >&2; exit 1; }
   failed() { rm -f "$v/state.part"; qmp '{"execute":"cont"}' >/dev/null; qmp_close; echo "QEMU could not save $vm: $1" >&2; exit 1; }
@@ -312,7 +308,30 @@ if qrunning "$vm"; then
   i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
   kill -9 "$pid" 2>/dev/null
 fi
-echo stopped
+`;
+
+/**
+ * Stops the VM when it names the box, saving it (SAVE). Prints "stopped", or
+ * "gone" when it is not there or not this box's.
+ */
+export function qemuStopScript(vm: string, installId: string, boxId: string | null): string {
+  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
+mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} && [ -d "$v" ] || { echo gone; exit 0; }
+${SAVE}echo stopped
+`);
+}
+
+/**
+ * Saves a warm VM bb-box has filled, once it is ready (SAVE), and marks it
+ * warm. Prints "warm", or "gone" when its owner file no longer says it is
+ * filling.
+ */
+export function qemuWarmScript(vm: string, installId: string): string {
+  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"; f="$d/owners/$vm"
+grep -qxF ${quote(`install=${installId}`)} "$f" 2>/dev/null && grep -qx 'state=filling' "$f" || { echo gone; exit 0; }
+${SAVE}[ -f "$v/state" ] || { echo "$vm was not running, so it has no state to restore." >&2; exit 1; }
+sed 's/^state=filling$/state=warm/' "$f" > "$f.new" && mv -f "$f.new" "$f"
+echo warm
 `);
 }
 

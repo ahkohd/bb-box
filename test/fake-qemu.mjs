@@ -3,16 +3,17 @@
 // chosen by the first argument. With the fake ssh they run the Tart backend's
 // QEMU scripts (qemu.ts) on the test machine, in the Mac's fake home.
 //
-// - `qemu-system-aarch64 --version` says 11.1.0, and `-machine help` that
-//   virt stands for virt-11.1, or the machine in ~/.fake-qemu-virt. A run
-//   writes its pid file and serves QMP on its -qmp socket, answering as QEMU
-//   does, with an event before some answers: stop, cont,
-//   migrate-set-parameters, migrate (to a file), query-migrate, query-status,
-//   migrate-incoming and quit. A save is cancelled while ~/.fake-qemu-cancel
-//   is there. With -incoming defer it waits for migrate-incoming, then loads
-//   the file for a moment, and is paused; a file that holds "corrupt" does
-//   not load, and QEMU exits, as it does. It ends on quit, on SIGTERM, when
-//   its pid file goes, or after two minutes, so no test leaves one running.
+// - `qemu-system-aarch64 --version` says 11.1.0, or the version in
+//   ~/.fake-qemu-version, and `-machine help` that virt stands for virt-11.1,
+//   or the machine in ~/.fake-qemu-virt. A run writes its pid file and
+//   serves QMP on its -qmp socket, answering as QEMU does, with an event
+//   before some answers: stop, cont, migrate-set-parameters, migrate (to a
+//   file), query-migrate, query-status, migrate-incoming and quit. A save is
+//   cancelled while ~/.fake-qemu-cancel is there. With -incoming defer it
+//   waits for migrate-incoming, then loads the file for a moment, and is
+//   paused; a file that holds "corrupt" does not load, and QEMU exits, as it
+//   does. It ends on quit, on SIGTERM, when its pid file goes, or after two
+//   minutes, so no test leaves one running.
 // - `qemu-img create -f qcow2 -F qcow2 -b <base> <file> [<n>G]` writes an
 //   overlay that names its base, and its size when given. `qemu-img info -U
 //   <file>` says a disk is that size, or 64 GiB.
@@ -34,7 +35,10 @@ const fail = (text, code = 1) => {
 };
 
 function qemu() {
-  if (args.includes("--version")) return console.log("QEMU emulator version 11.1.0\nCopyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers");
+  if (args.includes("--version")) {
+    const version = existsSync(join(home, ".fake-qemu-version")) ? readFileSync(join(home, ".fake-qemu-version"), "utf8").trim() : "11.1.0";
+    return console.log(`QEMU emulator version ${version}\nCopyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers`);
+  }
   if (option("-machine") === "help") {
     const virt = existsSync(join(home, ".fake-qemu-virt")) ? readFileSync(join(home, ".fake-qemu-virt"), "utf8").trim() : "virt-11.1";
     return console.log(
