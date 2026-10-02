@@ -123,7 +123,10 @@ The core uses only [src/backends/types.ts](../src/backends/types.ts) and
    warm pool gives `context.warmShortfalls()`, at the end of each
    `maintain()`, the pools it left short for want of room and why; bb-box
    logs them, warns of them in the doctor and shows them in the settings
-   (#356).
+   (#356). Give `sizesCheck()` in
+   [src/backends/fit.ts](../src/backends/fit.ts) each host's cores and
+   memory, so the doctor warns about a host too small for a kind's default
+   size (#74).
 5. Add the driver to `DRIVERS` in
    [src/backends/index.ts](../src/backends/index.ts).
 6. Add `setup/<type>/` with the guide and its scripts. Keep deployment

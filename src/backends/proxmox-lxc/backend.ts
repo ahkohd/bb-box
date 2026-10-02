@@ -78,6 +78,7 @@ import {
   type ReleaseHooks,
   type WarmShortfall,
 } from "../types.ts";
+import { sizesCheck } from "../fit.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -892,6 +893,17 @@ export class ProxmoxLxcBackend implements Backend {
       try {
         const status = await api.nodeStatus(signal);
         pass(MEMORY, `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(status.memoryTotal / MiB)} available.`);
+        const { reserve } = this.#config;
+        const largest = { cores: status.cpus ?? Infinity, memoryMiB: Math.floor(status.memoryTotal / MiB) - reserve.memoryMiB, diskGiB: null };
+        const sizes = sizesCheck({
+          id: "proxmox.sizes",
+          name: "Box sizes",
+          host: node,
+          has: `${status.cpus === null ? "" : `${status.cpus} CPU threads and `}${formatMiB(status.memoryTotal / MiB)} memory`,
+          keepsMiB: reserve.memoryMiB,
+          kinds: this.kinds().map(({ id }) => ({ kind: id, settings: this.#context.kind(id), largest })),
+        });
+        if (sizes) checks.push(sizes);
       } catch (error) {
         fail(MEMORY, message(error), audit(error, `Give the token Sys.Audit on /nodes/${node}; the capacity guard needs it.`));
       }

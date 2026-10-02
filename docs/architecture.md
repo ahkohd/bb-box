@@ -465,9 +465,10 @@ memory and root disk, where a disk of null is the backend's base.
   checks fail, printing them.
 - A doctor checks each host's room for a box of its kinds' default size. It
   warns about a host or machine that could not hold a kind's default size
-  even when empty, and says which of the kind's presets it can hold: one
-  that holds none gets no box of that kind. The fix is smaller presets or a
-  larger machine (029).
+  even when empty, by its cores and its memory less what it keeps free, and
+  says which of the kind's presets it can hold: one that holds none takes a
+  box of the kind only at a smaller custom size. The fix is smaller presets
+  or a larger machine (029, #74).
 - Each driver names its setup guide and scripts. The guide is the entry
   point: the settings page links it first, then the scripts in the order the
   guide runs them ([016](decisions/016-changes-from-building-v1.md)). Drivers

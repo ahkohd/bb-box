@@ -44,6 +44,7 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
+import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
@@ -62,8 +63,6 @@ const DISPLAY_ENV = "DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority";
 const MiB_PER_GiB = 1024;
 /** Docker's own default for /dev/shm is 64 MiB, too little for Chrome. */
 const SHM_MIN_MiB = 1024;
-/** The doctor checks room for a box of the small preset core ships for linux (028). */
-const DOCTOR_SIZE: BoxSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
 /** Statuses in which a container holds its memory. */
 const ACTIVE = new Set(["running", "paused", "restarting"]);
 
@@ -799,7 +798,7 @@ export class DockerBackend implements Backend {
         }
       }
 
-      const room = this.#room(state, "linux", DOCTOR_SIZE);
+      const room = this.#room(state, "linux", this.#context.kind("linux").defaultSize);
       push(
         "docker.capacity",
         `Room on ${info.name}`,
@@ -808,6 +807,19 @@ export class DockerBackend implements Backend {
           room.capacity.limits.map((limit) => `${limit.resource} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}`).join(", "),
         room.why === null ? null : "Release a box, or change the most boxes or the memory kept free in bb-box's settings.",
       );
+      const sizes = sizesCheck({
+        id: "docker.sizes",
+        name: "Box sizes",
+        host: info.name,
+        has: `${info.cpus ? `${info.cpus} cores and ` : ""}${formatMiB(info.memoryMiB)} memory`,
+        keepsMiB: this.#config.reserveMemoryMiB,
+        kinds: DOCKER_KINDS.filter((kind) => this.#config.images[kind]).map((kind) => ({
+          kind,
+          settings: this.#context.kind(kind),
+          largest: { cores: info.cpus || Infinity, memoryMiB: info.memoryMiB - this.#config.reserveMemoryMiB, diskGiB: null },
+        })),
+      });
+      if (sizes) checks.push(sizes);
 
       const others = new Map<string, number>();
       for (const container of state.containers) {

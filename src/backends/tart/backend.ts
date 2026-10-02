@@ -56,6 +56,7 @@ import {
   type ReleaseHooks,
   type WarmShortfall,
 } from "../types.ts";
+import { sizesCheck } from "../fit.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import { CUA_PIPE, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
@@ -107,9 +108,6 @@ const READY_TIMEOUT_MS = 5 * 60_000;
 /** Cua Driver as the images pin it (015). The setup guide's image script installs this release. */
 export const CUA_VERSION = "0.30.4";
 const MiB_PER_GiB = 1024;
-
-/** The doctor checks room for a box of the small preset core ships for the macOS kinds (028). */
-const DOCTOR_SIZE: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
 
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
 
@@ -1460,7 +1458,7 @@ export class TartBackend implements Backend {
           push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "ok", `${image}${config ? `, ${config.cpus} cores and ${formatMiB(config.memoryMiB)} as prepared` : ""}.`);
         }
       }
-      const room = this.#room(host, state, DOCTOR_SIZE);
+      const room = this.#room(host, state, this.#context.kind("macos").defaultSize);
       push(
         `capacity.${host.name}`,
         `Room on ${host.name}`,
@@ -1468,6 +1466,21 @@ export class TartBackend implements Backend {
         room.why ?? room.capacity.limits.map((limit) => `${limit.resource} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}`).join(", "),
         room.capacity.ok ? null : "Release or stop a macOS box, or stop another VM on the Mac.",
       );
+      const { reserve } = this.#config;
+      const sizes = sizesCheck({
+        id: `sizes.${host.name}`,
+        name: `Box sizes on ${host.name}`,
+        host: host.name,
+        has: `${state.cpus ? `${state.cpus} cores and ` : ""}${formatMiB(state.memoryMiB)} memory`,
+        keepsMiB: reserve.memoryMiB,
+        // A Windows VM's QEMU takes memory of its own.
+        kinds: [...images, ...(windowsImage ? (["windows-arm64-desktop"] as const) : [])].map((kind) => ({
+          kind,
+          settings: this.#context.kind(kind),
+          largest: { cores: state.cpus || Infinity, memoryMiB: state.memoryMiB - reserve.memoryMiB - (guestOsOf(kind) === "windows" ? QEMU_OVERHEAD_MIB : 0), diskGiB: null },
+        })),
+      });
+      if (sizes) checks.push(sizes);
       for (const [, fields] of state.owners) {
         if (fields.install === this.#context.installId) continue;
         const key = fields.install || "none";

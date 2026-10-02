@@ -40,6 +40,7 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
+import { sizesCheck } from "../fit.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
@@ -739,6 +740,12 @@ export class SshPoolBackend implements Backend {
       } else if (view.state === "resetting" && status.owner && !install) {
         warn(STATE, "An operator's reset on the machine has not finished.", `If it is not still running, run ${reset} on ${name} again. bb-box lends it again once it is clean.`);
       } else pass(STATE, this.#describe(view));
+      // A machine shows 90% of its memory, as fits() allows.
+      const has = machineSize(status);
+      const largest = has && { ...has, memoryMiB: has.memoryMiB / 0.9, diskGiB: status.diskGiB ?? 0 };
+      const [id, label] = check("sizes", "box sizes");
+      const sizes = largest && sizesCheck({ id, name: label, host: name, has: hasWords(status).join(", "), keepsMiB: 0, kinds: machine.kinds.map((kind) => ({ kind, settings: this.#context.kind(kind), largest })) });
+      if (sizes) checks.push(sizes);
     }
 
     if (others.size) {

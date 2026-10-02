@@ -581,6 +581,17 @@ test("the doctor checks QEMU, the Hypervisor framework, the firmware and the Win
   assert.equal(check("qemu.mac1")?.detail, "mac1 has no qemu-system-aarch64 on the PATH of bbbox-admin's SSH sessions.");
 });
 
+test("the doctor counts the memory a Windows VM's QEMU takes against the Mac (#74)", async () => {
+  // 128 GiB less 119 GiB kept free leaves 9 GiB: a small macOS box, but not a small Windows one and QEMU's 2 GiB.
+  const { backend } = setup({ "tart-reserve-memory-mib": 119 * 1024 });
+  const sizes = (await backend.doctor(signal())).checks.find((check) => check.id === "sizes.mac1")!;
+  assert.equal(sizes.status, "warn");
+  assert.equal(
+    sizes.detail,
+    "mac1 has 16 cores and 128 GiB memory, and keeps 119 GiB free. It cannot hold a windows-arm64-desktop box at any of its presets, the smallest 4 cores, 8 GiB memory.",
+  );
+});
+
 test("a Mac that serves only Windows boxes needs no Tart", async () => {
   const { backend, mac } = setup({ "tart-macos-image": "", "tart-macos-desktop-image": "" });
   rmSync(join(mac, ".nix-profile", "bin", "tart"));

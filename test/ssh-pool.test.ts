@@ -267,10 +267,10 @@ describe("SSH host pool", () => {
   });
 
   it("claims the smallest free machine of at least the size, counting 90% of the memory as all of it (028)", async () => {
-    // MemTotal leaves out what the kernel keeps: 7861 MiB is an 8 GiB machine, 3500 MiB is less than 4 GiB.
+    // MemTotal leaves out what the kernel keeps: 7861 MiB is an 8 GiB machine, 2900 MiB is less than 4 GiB.
     machine("192.0.2.46", { cores: "16", memory: "64000", disk: "500" });
     machine("192.0.2.47", { cores: "4", memory: "7861", disk: "40" });
-    machine("192.0.2.48", { cores: "2", memory: "3500", disk: "40" });
+    machine("192.0.2.48", { cores: "2", memory: "2900", disk: "40" });
     const { backend } = pool("large 192.0.2.46 linux\nmedium 192.0.2.47 linux\ntiny 192.0.2.48 linux");
     const size = (cores: number, memoryGiB: number, diskGiB: number | null = null): BoxSize => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB });
     const small = await acquire(backend, "linux", size(2, 4));
@@ -286,6 +286,20 @@ describe("SSH host pool", () => {
     assert.equal((await backend.capacity("linux", size(8, 4), [])).ok, false, "no free machine has 8 cores");
     assert.equal((await backend.capacity("linux", size(1, 3), [])).ok, true, "tiny serves a box of 3 GiB");
     await backend.release(disked.guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
+  it("the doctor warns about a machine that holds no preset of its kinds, counting 90% of the memory as all of it (#74)", async () => {
+    machine("192.0.2.47", { cores: "4", memory: "7861", disk: "40" });
+    machine("192.0.2.48", { cores: "2", memory: "2900", disk: "40" });
+    const { backend } = pool("medium 192.0.2.47 linux\ntiny 192.0.2.48 linux");
+    const doctor = await backend.doctor();
+    const sizes = (name: string) => doctor.checks.find((check) => check.id === `machine.${name}.sizes`)!;
+    assert.deepEqual([sizes("medium").name, sizes("medium").status, sizes("medium").detail], ["medium: box sizes", "ok", "medium holds linux boxes at the default size."]);
+    assert.equal(sizes("tiny").status, "warn");
+    assert.equal(sizes("tiny").detail, "tiny has 2 cores, 2.8 GiB memory, 40 GiB free disk. It cannot hold a linux box at any of its presets, the smallest 2 cores, 4 GiB memory.");
+    assert.match(sizes("tiny").fix!, /^Give tiny more memory, or make the presets of linux smaller/);
+    assert.equal(doctor.ok, true, "a warning");
     await backend.dispose();
   });
 

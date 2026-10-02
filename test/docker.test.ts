@@ -563,6 +563,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["docker.network", "ok"],
       ["docker.privileged", "ok"],
       ["docker.capacity", "ok"],
+      ["docker.sizes", "ok"],
     ],
   );
   assert.match(report.checks[1]!.detail, /Docker 29\.0\.0 on fake-docker \(Ubuntu 24\.04 LTS, x86_64, 16 cores, 64 GiB\)/);
@@ -591,6 +592,19 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
   assert.equal(by("docker.privileged").status, "warn");
   assert.match(by("docker.privileged").detail, /^Rootless Docker cannot run the privileged containers .* say No Docker\.$/);
   assert.equal(broken.summary, `Image bbbox/linux-desktop:1: ${by("image.bbbox/linux-desktop:1").detail}`);
+});
+
+test("the doctor warns about a kind the host cannot hold at any preset, less the memory it keeps free (#74)", async () => {
+  const { backend } = setup({}, { cpus: 4, memoryMiB: 10240 });
+  const report = await backend.doctor(signal());
+  const sizes = report.checks.find((check) => check.id === "docker.sizes")!;
+  assert.equal(sizes.status, "warn");
+  assert.equal(
+    sizes.detail,
+    "fake-docker has 4 cores and 10 GiB memory, and keeps 4 GiB free. It cannot hold a linux-desktop-cpu box at any of its presets, the smallest 4 cores, 8 GiB memory.",
+  );
+  assert.match(sizes.fix!, /^Give fake-docker more memory, lower the memory kept free, or make the presets of linux-desktop-cpu smaller/);
+  assert.equal(report.ok, true, "a warning");
 });
 
 test("the doctor fails without a daemon or a CLI, and skips what depends on them", async () => {

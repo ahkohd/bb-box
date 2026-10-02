@@ -597,6 +597,7 @@ test("doctor passes on a complete setup, and warns that a template from build.sh
       ["proxmox.api", "Proxmox API", "ok"],
       ["proxmox.node", "Node", "ok"],
       ["proxmox.memory", "Node memory", "ok"],
+      ["proxmox.sizes", "Box sizes", "ok"],
       ["proxmox.pool", "Resource pool", "ok"],
       ["template.9104", "Windows template 9104", "ok"],
       ["proxmox.bridge", "Network bridge", "ok"],

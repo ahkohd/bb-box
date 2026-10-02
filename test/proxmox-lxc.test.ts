@@ -1209,6 +1209,7 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["proxmox.api", "Proxmox API", "ok"],
       ["proxmox.node", "Node", "ok"],
       ["proxmox.memory", "Node memory", "ok"],
+      ["proxmox.sizes", "Box sizes", "ok"],
       ["proxmox.pool", "Resource pool", "ok"],
       ["template.9000", "Linux template 9000", "ok"],
       ["template.9001", "GPU desktop template 9001 (GPU gpu-a)", "ok"],
@@ -1221,6 +1222,19 @@ test("doctor passes on a complete setup and shows the generated public key", asy
   const stored = await storage.get<{ privateKey: string; publicKey: string }>("ssh-key");
   assert.ok(stored?.privateKey.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"));
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE KEY/);
+});
+
+test("doctor warns about a kind the node cannot hold at any preset (#74)", async () => {
+  const { backend, proxmox } = setup();
+  proxmox.cpus = 2;
+  const report = await backend.doctor();
+  const sizes = report.checks.find((check) => check.id === "proxmox.sizes")!;
+  assert.equal(sizes.status, "warn");
+  assert.equal(
+    sizes.detail,
+    "pve has 2 CPU threads and 64 GiB memory, and keeps 4 GiB free. It cannot hold a linux-desktop box at any of its presets, the smallest 4 cores, 8 GiB memory.",
+  );
+  assert.match(sizes.fix!, /^Give pve more cores, or make the presets of linux-desktop smaller/);
 });
 
 test("doctor shows this install's ID and counts the containers it leaves alone", async () => {
