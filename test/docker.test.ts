@@ -1,7 +1,7 @@
 import type { GuestOs } from "../src/backends/types.ts";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -16,13 +16,15 @@ import { BackendError, type AcquireHooks, type Backend, type BoxIdentity, type B
 import { backendPart } from "../src/core/document.ts";
 import { TransportError } from "../src/transports/types.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
-import { MemoryStorage, lxcConfig, testContext } from "./helpers.ts";
+import { MemoryStorage, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
 const MiB = 2 ** 20;
 /** The linux kinds' small preset (028). */
 const SMALL: BoxSize = { cores: 2, memoryMiB: 4096, diskGiB: null };
 const GPU_A = "nvidia.com/gpu=GPU-0b1c2d3e-0000-0000-0000-000000000001";
 const GPU_B = "nvidia.com/gpu=GPU-0b1c2d3e-0000-0000-0000-000000000002";
+/** A GPU's UUID, as nvidia-smi --id takes it: its CDI name after "=". */
+const uuidOf = (gpu: string) => gpu.slice(gpu.indexOf("=") + 1);
 
 function setup(values: Record<string, FieldValue> = {}, host: Record<string, unknown> = {}) {
   const fake = fakeDockerHost(host);
@@ -144,9 +146,9 @@ test("offers kinds by image, and its offers agree with Proxmox LXC's", async () 
   assert.deepEqual(dockerKinds(dockerConfig()).map((kind) => kind.id), ["linux", "linux-desktop-cpu"]);
   const kinds = dockerKinds(dockerConfig({ "gpu-desktops": true }));
   assert.deepEqual(kinds.map((kind) => kind.id), ["linux", "linux-desktop-cpu", "linux-desktop"]);
-  // Every box has Docker in a privileged container but a GPU desktop, and none does with the setting off or on rootless Docker (041).
-  assert.deepEqual(kinds.map((kind) => kind.capabilities.features), [["docker"], ["docker"], []]);
-  assert.deepEqual(dockerKinds(dockerConfig({ privileged: false })).map((kind) => kind.capabilities.features), [[], []]);
+  // Every box has Docker in a privileged container, a GPU desktop too (#283), and none does with the setting off or on rootless Docker (041).
+  assert.deepEqual(kinds.map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
+  assert.deepEqual(dockerKinds(dockerConfig({ privileged: false, "gpu-desktops": true })).map((kind) => kind.capabilities.features), [[], [], []]);
   assert.deepEqual(dockerKinds(dockerConfig(), true).map((kind) => kind.capabilities.features), [[], []]);
   for (const kind of kinds) {
     assert.equal(kind.capabilities.arch, "x86_64");
@@ -289,11 +291,16 @@ test("acquires a box as a container labelled from its first write, claimed befor
   assert.equal(fake.calls().filter((args) => args[0] === "network" && args[1] === "create").length, 1);
 });
 
-test("gives each box but a GPU desktop its own Docker daemon, privileged, unless the setting is off, and a GPU desktop one GPU", async () => {
-  const plain = setup({ privileged: false });
+test("gives each box its own Docker daemon, privileged, unless the setting is off, and a GPU desktop one GPU, named for Xorg (#283)", async () => {
+  const plain = setup({ privileged: false, "gpu-desktops": true }, { gpus: [GPU_A] });
   const unprivileged = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
   assert.equal(plain.fake.inspect(unprivileged.ref).HostConfig.Privileged, false);
   assert.ok(!plain.fake.inspect(unprivileged.ref).Config.Env.includes("BBBOX_DOCKERD=1"));
+  // An unprivileged GPU desktop sees only its GPU, so Xorg needs no name for it.
+  const alone = await plain.backend.acquire(identity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().hooks, signal());
+  assert.equal(plain.fake.inspect(alone.ref).HostConfig.Privileged, false);
+  assert.deepEqual(plain.fake.inspect(alone.ref).HostConfig.Devices, [GPU_A]);
+  assert.ok(!plain.fake.inspect(alone.ref).Config.Env.some((pair: string) => pair.startsWith("BBBOX_GPU_ID=")));
   const { fake, backend } = setup({ "gpu-desktops": true }, { gpus: [GPU_A, GPU_B] });
   const docker = await backend.acquire(identity("linux"), null, hooks().hooks, signal());
   const made = fake.inspect(docker.ref);
@@ -307,9 +314,10 @@ test("gives each box but a GPU desktop its own Docker daemon, privileged, unless
   assert.deepEqual(fake.inspect(gpu.ref).HostConfig.Devices, [GPU_A]);
   assert.equal(fake.inspect(gpu.ref).Config.Labels["bbbox.gpu"], GPU_A);
   assert.ok(fake.inspect(gpu.ref).Config.Env.includes("BBBOX_GPU=1"));
-  // A privileged container would see every GPU on the host.
-  assert.equal(fake.inspect(gpu.ref).HostConfig.Privileged, false);
-  assert.ok(!fake.inspect(gpu.ref).Config.Env.includes("BBBOX_DOCKERD=1"));
+  // It has Docker, so it sees every GPU on the host, and its start points Xorg at the one placed.
+  assert.equal(fake.inspect(gpu.ref).HostConfig.Privileged, true);
+  assert.ok(fake.inspect(gpu.ref).Config.Env.includes("BBBOX_DOCKERD=1"));
+  assert.ok(fake.inspect(gpu.ref).Config.Env.includes(`BBBOX_GPU_ID=${uuidOf(GPU_A)}`));
   // The next desktop gets the GPU with fewer desktops.
   const next = await backend.acquire(identity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().hooks, signal());
   assert.equal(next.data?.gpu, GPU_B);
@@ -318,6 +326,103 @@ test("gives each box but a GPU desktop its own Docker daemon, privileged, unless
   assert.equal(fake.inspect(cpu.ref).HostConfig.Privileged, true);
   assert.ok(fake.inspect(cpu.ref).Config.Env.includes("BBBOX_DOCKERD=1"));
   assert.equal(after(fake.calls().filter((args) => args[1] === "create").at(-1)!, "--shm-size"), "4096m");
+  // A GPU nvidia-ctk names by index goes by its index.
+  const indexed = setup({ "gpu-desktops": true }, { gpus: ["nvidia.com/gpu=1"] });
+  const second = await indexed.backend.acquire(identity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().hooks, signal());
+  assert.ok(indexed.fake.inspect(second.ref).Config.Env.includes("BBBOX_GPU_ID=1"));
+});
+
+test("a GPU desktop on a desktop image built before gpu-bus-id stays unprivileged, without Docker, until the image is built again (#283)", async () => {
+  const { fake, backend } = setup({ "gpu-desktops": true }, { gpus: [GPU_A] });
+  const desktop = (labels: Record<string, string>) =>
+    writeFileSync(join(fake.root, "images.json"), JSON.stringify({ "bbbox/linux:1": { "bbbox.image-version": "1" }, "bbbox/linux-desktop:1": labels }));
+  desktop({ "bbbox.image-version": "1" });
+  // Until bb-box has seen the image, the setting decides.
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
+  assert.equal((await backend.capacity("linux-desktop", SMALL, [], signal())).ok, true);
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], []]);
+  const size = { cores: 4, memoryMiB: 8192, diskGiB: null };
+  const old = fake.inspect((await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal())).ref);
+  assert.equal(old.HostConfig.Privileged, false);
+  assert.deepEqual(old.HostConfig.Devices, [GPU_A]);
+  assert.ok(old.Config.Env.includes("BBBOX_GPU=1"));
+  assert.ok(!old.Config.Env.some((pair: string) => pair.startsWith("BBBOX_DOCKERD=") || pair.startsWith("BBBOX_GPU_ID=")));
+  // A CPU desktop on the same image has Docker still.
+  assert.equal(fake.inspect((await backend.acquire(identity("linux-desktop-cpu", size), null, hooks().hooks, signal())).ref).HostConfig.Privileged, true);
+  const report = await backend.doctor(signal());
+  const image = report.checks.find((check) => check.id === "image.bbbox/linux-desktop:1")!;
+  assert.equal(image.status, "warn");
+  assert.match(image.detail, /^Built before GPU desktops could have Docker, so they have none/);
+  assert.match(image.fix!, /setup\/docker\/build\.sh to give GPU desktops Docker/);
+
+  // Built again, the image has the label, and the next GPU desktop has Docker.
+  desktop({ "bbbox.image-version": "1", "bbbox.gpu-bus-id": "1" });
+  const fresh = fake.inspect((await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal())).ref);
+  assert.equal(fresh.HostConfig.Privileged, true);
+  assert.ok(fresh.Config.Env.includes(`BBBOX_GPU_ID=${uuidOf(GPU_A)}`));
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
+  assert.equal((await backend.doctor(signal())).checks.find((check) => check.id === "image.bbbox/linux-desktop:1")!.status, "ok");
+});
+
+const GPU_BUS_ID = new URL("../setup/docker/gpu-bus-id", import.meta.url).pathname;
+/** The Device section of the desktop's Xorg configuration, as setup/proxmox-lxc/template/guest/customize-desktop.sh writes it. */
+const XORG_DEVICE = `Section "Device"
+  Identifier "nvidia"
+  Driver "nvidia"
+  Option "AllowEmptyInitialConfiguration" "true"
+EndSection
+`;
+
+/** Runs setup/docker/gpu-bus-id with an nvidia-smi that knows `gpus`, each id=bus ID, or none at all. */
+function gpuBusId(gpu: string, gpus: Record<string, string> | null, conf = XORG_DEVICE) {
+  const dir = tempDir("gpu-bus-id");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  if (gpus) {
+    const cases = Object.entries(gpus).map(([id, bus]) => `  --id=${id}) echo "${bus}" ;;`).join("\n");
+    writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\ncase "$1" in\n${cases}\n  *) echo "No devices were found"; exit 6 ;;\nesac\n`);
+    chmodSync(join(bin, "nvidia-smi"), 0o755);
+  }
+  writeFileSync(join(dir, "xorg.conf"), conf);
+  const bash = execFileSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).trim();
+  const run = spawnSync(bash, [GPU_BUS_ID, gpu, join(dir, "xorg.conf")], { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin` } });
+  return { status: run.status, stdout: run.stdout, stderr: run.stderr, conf: readFileSync(join(dir, "xorg.conf"), "utf8") };
+}
+
+test("a GPU desktop's start finds the placed GPU's bus ID and writes it as Xorg's BusID, in place of any there (#283)", () => {
+  const found = gpuBusId(uuidOf(GPU_B), { [uuidOf(GPU_A)]: "00000000:01:00.0", [uuidOf(GPU_B)]: "00000000:41:00.0" });
+  assert.equal(found.status, 0, found.stderr);
+  // The display reads this GPU's free memory with it.
+  assert.equal(found.stdout, "00000000:41:00.0\n");
+  assert.equal(found.conf, XORG_DEVICE.replace('  Driver "nvidia"\n', '  Driver "nvidia"\n  BusID "PCI:65:0:0"\n'));
+
+  // At the next start the GPU may be another, after a restore elsewhere.
+  const again = gpuBusId("1", { "1": "0000:0A:1F.7" }, found.conf);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(again.conf, XORG_DEVICE.replace('  Driver "nvidia"\n', '  Driver "nvidia"\n  BusID "PCI:10:31:7"\n'));
+  // Xorg names a PCI domain other than 0 after the bus.
+  assert.match(gpuBusId("0", { "0": "00000001:C1:00.0" }).conf, /^  BusID "PCI:193@1:0:0"$/m);
+});
+
+test("when the placed GPU cannot be found, a GPU desktop's start leaves Xorg's configuration alone and says why, and its display takes the CPU (#283)", () => {
+  for (const [gpus, why] of [
+    [{ "GPU-other": "00000000:01:00.0" }, /nvidia-smi cannot find GPU GPU-gone: No devices were found/],
+    [null, /nvidia-smi cannot find GPU GPU-gone/],
+    [{ "GPU-gone": "[Unknown Error]" }, /the bus ID '\[UnknownError\]', not domain:bus:device.function/],
+  ] as const) {
+    const lost = gpuBusId("GPU-gone", gpus);
+    assert.equal(lost.status, 1);
+    assert.equal(lost.stdout, "");
+    assert.match(lost.stderr, why);
+    assert.equal(lost.conf, XORG_DEVICE);
+  }
+  const start = readFileSync(new URL("../setup/docker/start", import.meta.url), "utf8");
+  const fallback = `      if bus=$(/usr/local/libexec/bb-box/gpu-bus-id "$BBBOX_GPU_ID"); then
+        display_env+=(GPU_BUS_ID="$bus")
+      else
+        display_env[0]=DISPLAY_MODE=cpu
+`;
+  assert.ok(start.includes(fallback), "start keeps the display on the CPU when gpu-bus-id fails");
 });
 
 test("on rootless Docker, offers no Docker once the daemon has said so, and makes boxes unprivileged", async () => {

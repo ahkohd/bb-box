@@ -50,7 +50,7 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
   writeFileSync(binary, `#!/bin/sh\nFAKE_DOCKER_ROOT='${root}' exec '${process.execPath}' '${script}' "$@"\n`);
   chmodSync(binary, 0o755);
   const label = { "bbbox.image-version": "1" };
-  writeFileSync(join(root, "images.json"), JSON.stringify({ "bbbox/linux:1": label, "bbbox/linux-desktop:1": label }));
+  writeFileSync(join(root, "images.json"), JSON.stringify({ "bbbox/linux:1": label, "bbbox/linux-desktop:1": { ...label, "bbbox.gpu-bus-id": "1" } }));
   let values = { ...host };
   writeFileSync(join(root, "host.json"), JSON.stringify(values));
   const containers = join(root, "containers");

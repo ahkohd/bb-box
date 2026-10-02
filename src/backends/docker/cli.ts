@@ -47,6 +47,8 @@ export const LABELS = {
   imageVersion: "bbbox.image-version",
   /** On an image setup/docker/build.sh made: the digest of BB's app in it, or empty for none. */
   bbApp: "bbbox.bb-app",
+  /** On a desktop image whose start points Xorg at the GPU placed, so a GPU desktop may be privileged (#283). */
+  gpuBusId: "bbbox.gpu-bus-id",
 } as const;
 
 export interface DockerInfo {

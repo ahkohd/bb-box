@@ -6,8 +6,11 @@ Status: accepted, 1 October 2026. Partly supersedes
 `linux-arm64-docker` become aliases; and
 [013](013-docker-boxes-run-unprivileged.md): Docker boxes are privileged
 by default. Amended while it was built: a GPU desktop on the Docker backend
-is never privileged, so it has no Docker. A privileged container sees every
-GPU on the host, and Xorg would take the first, not the one bb-box placed.
+was at first never privileged, so it had no Docker. A privileged container
+sees every GPU on the host, and Xorg would take the first, not the one
+bb-box placed. Amended 2 October 2026 (#283): a GPU desktop is privileged
+too, and its start script points Xorg at the GPU placed, by its PCI bus ID.
+On an image built before then, which cannot, it stays unprivileged.
 
 ## Context
 
@@ -80,7 +83,7 @@ inside" for the feature, which reads as the same thing.
 | --- | --- |
 | Proxmox LXC | every template, with `nesting=1`, as now |
 | Tart | its Linux images, as now |
-| Docker | each box but a GPU desktop is a privileged container, by default. A GPU desktop, or any box with the setting off or on a rootless Docker host, says "No Docker" |
+| Docker | each box is a privileged container, by default. Any box with the setting off or on a rootless Docker host says "No Docker" |
 | SSH host pool | only on a machine whose reset restores the whole machine, as now. Otherwise "No Docker" |
 
 ## Consequences
