@@ -29,6 +29,11 @@
 // Like Cua, it finds a window's tree by where the window is: of two windows
 // of one app within 20 pixels of each other, a read of either gives the
 // first's tree. set_window_frame moves a window, unless it is maximised.
+//
+// With wayland, it is like Cua on a Wayland desktop: a click on an element
+// with no action fails, as Cua clicks it through X11, and a click by pixels
+// works only in the foreground. A window with noActions has elements with
+// no actions, as a GTK tab or row has none.
 
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -54,6 +59,8 @@ export interface FakeWindow {
   plainButtons?: boolean;
   /** set_window_frame leaves it where it is. */
   maximised?: boolean;
+  /** Its elements have no actions. */
+  noActions?: boolean;
 }
 
 export interface FakeDesktop {
@@ -77,6 +84,8 @@ export interface FakeDesktop {
   misreadPopups?: boolean;
   /** A Tasks window's tree holds the items of its open menu, as a GTK app's does. */
   menusInWindow?: boolean;
+  /** Cua is on Wayland. */
+  wayland?: boolean;
 }
 
 export function emptyDesktop(): FakeDesktop {
@@ -160,6 +169,11 @@ function text(message: string, structured?: Record<string, unknown>, isError = f
 }
 
 function tree(desktop: FakeDesktop, window: FakeWindow): Node {
+  const strip = (node: Node): Node => ({ ...node, actions: [], children: node.children.map(strip) });
+  return window.noActions ? strip(shape(desktop, window)) : shape(desktop, window);
+}
+
+function shape(desktop: FakeDesktop, window: FakeWindow): Node {
   const frame = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
   if (window.dialogOf !== undefined) {
     return {
@@ -519,11 +533,21 @@ export class FakeCua {
       if (!("id" in window)) return window;
       let node: Node | Result;
       if (typeof args.x === "number" && typeof args.y === "number") {
+        if (desktop.wayland && args.delivery_mode !== "foreground") {
+          return text("Background delivery is not available: the requested target has no focus-free input backend.", {
+            code: "background_unavailable",
+            effect: "none",
+            escalation: { recommended: "foreground" },
+          }, true);
+        }
         const shot = this.#shots.get(window.id);
         if (!shot) return text("A pixel click needs a screenshot from get_window_state of this window first.", { code: "no_screenshot" }, true);
         node = hit(desktop, window, (args.x * window.width) / shot.width, (args.y * window.height) / shot.height);
       } else {
         node = this.#element(desktop, window, args.element_token);
+        if (desktop.wayland && "key" in node && !node.actions.length) {
+          return text("AT-SPI element click failed: cannot inject input: X11 connection failed (DISPLAY=None): No such file or directory (os error 2)", undefined, true);
+        }
       }
       if (!("key" in node)) return node;
       this.#activate(desktop, window, node, args);

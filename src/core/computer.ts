@@ -457,6 +457,14 @@ function refusedInBackground(result: McpResult): boolean {
   return /^Background delivery is not available/.test(rawText(result));
 }
 
+/**
+ * Cua found no action to click an element by, and could not click it as a
+ * pointer does: on Wayland it tries X11, which is not there (048).
+ */
+function cannotInject(result: McpResult): boolean {
+  return !!result.isError && /\bcannot inject input\b/i.test(rawText(result));
+}
+
 /** The window Cua's agent cursor is drawn in on Windows. It covers the screen above the desktop, and is not an app's. */
 const CURSOR_OVERLAY = /^Cua\.AgentCursorOverlay\b/;
 
@@ -819,11 +827,16 @@ export class Computer {
       // On the desktop or in a popup, Cua cannot say what changed: bb-box looks before and after.
       const inPopup = !!target.snapshot && use.state.popups.has(target.snapshot.window.id);
       const watch = target.screen || inPopup ? await this.#watch(use, target.screen ?? null) : null;
-      const { result, foreground } = await this.#deliver(use, step.tool, { ...target.args, ...step.args }, input.action !== "set_value");
-      const done = `${step.done} ${target.label}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? POINTER : ""}.`;
+      // An element Cua cannot click as an element is clicked at its centre (048).
+      const centre = step.tool === "click" && target.element?.frame ? cannotInject : undefined;
+      let { result, foreground } = await this.#deliver(use, step.tool, { ...target.args, ...step.args }, input.action !== "set_value", centre);
+      const byPosition = !!result.isError;
+      let before = target.snapshot;
+      if (byPosition) ({ result, foreground, snapshot: before } = await this.#centre(use, target, step.args));
+      const done = `${step.done} ${target.label}${byPosition ? " at its centre" : ""}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? POINTER : ""}.${byPosition ? ` ${BY_POSITION}` : ""}`;
       const lines = [target.coordinates ? `${done} ${target.coordinates}` : done];
       const cause: Cause = { element: watch?.element ?? target.element, right: input.action === "right_click" };
-      const seen = watch ? await this.#settle(use, watch, cause) : await this.#changes(use, target.snapshot!, { popups: { ...cause, result } });
+      const seen = watch ? await this.#settle(use, watch, cause) : await this.#changes(use, before!, { popups: { ...cause, result } });
       return { text: [...lines, ...seen.parts].join("\n\n"), hints: seen.hints };
     });
   }
@@ -1229,9 +1242,9 @@ export class Computer {
    * Does an action in the background, or in the foreground when Cua cannot
    * do it in the background. Cua says so before it does anything. An action
    * on the desktop has no background, so it needs no note that it went in
-   * the foreground.
+   * the foreground. A failure that `handled` takes is returned, not thrown.
    */
-  async #deliver(use: Use, tool: string, args: Json, delivery: boolean): Promise<{ result: McpResult; foreground: boolean }> {
+  async #deliver(use: Use, tool: string, args: Json, delivery: boolean, handled?: (result: McpResult) => boolean): Promise<{ result: McpResult; foreground: boolean }> {
     let result: McpResult;
     let foreground = false;
     if (args.scope === "desktop") {
@@ -1243,13 +1256,37 @@ export class Computer {
         foreground = true;
       }
     }
-    if (result.isError) {
+    if (result.isError && !handled?.(result)) {
       const code = codeOf(result);
       const id = num(args.window_id);
       if (code === "stale_element_token" && id !== undefined) this.#outdated(use.state, id);
       throw new ComputerError("refused", `bb-box could not do it: ${explain(result)}`, adviceFor(code));
     }
     return { result, foreground };
+  }
+
+  /**
+   * Clicks an element at the centre of its frame. The frame is in the
+   * screen's pixels, and the click in those of Cua's latest image of the
+   * window, which Cua takes only after a read of the window with an image in
+   * this session: bb-box reads it first when the session has not (048).
+   */
+  async #centre(use: Use, target: Target, args: Json): Promise<{ result: McpResult; foreground: boolean; snapshot: Snapshot }> {
+    let snapshot = target.snapshot!;
+    let element = target.element!;
+    if (!snapshot.screenshot || snapshot.generation !== use.state.live?.generation) {
+      snapshot = (await this.#read(use, snapshot.window.id, true)).snapshot;
+      const found = snapshot.byRef.get(element.ref);
+      if (!found?.frame) throw new ComputerError("stale", `${element.ref} (${describe(element.role, element.label)}) is no longer on screen. Call computer_observe again.`, null);
+      element = found;
+    }
+    const { window, screenshot } = snapshot;
+    if (!screenshot) throw new ComputerError("driver", `bb-box got no image of window ${window.id}, which it needs to click ${element.ref} by position.`, "Try again in a few seconds.");
+    const frame = element.frame!;
+    const x = Math.round(((frame.x + frame.width / 2 - window.x) * screenshot.width) / window.width);
+    const y = Math.round(((frame.y + frame.height / 2 - window.y) * screenshot.height) / window.height);
+    const { result, foreground } = await this.#deliver(use, "click", { pid: window.pid, window_id: window.id, x, y, ...args }, true);
+    return { result, foreground, snapshot };
   }
 
   /** The names of the apps installed in the box, as Cua lists them, without settings panels or session actions; none when it cannot. */
@@ -2089,6 +2126,8 @@ function unread(error: unknown, hint: string): Changes {
 /** Said of an action Cua could not do in the background, or that has no background. */
 const POINTER = ", with the real pointer (the desktop's focus may have moved)";
 const KEYBOARD = ", with the real keyboard (the desktop's focus may have moved)";
+/** Said of a click on an element at its centre (048). */
+const BY_POSITION = "The desktop could not click it as an element, so bb-box clicked where it is drawn.";
 
 /** A line of text that cannot be acted on: `- static = "Hello"`. */
 const PASSIVE = /^(\s*)- ([^"\n]+?) = "([\s\S]*)"$/;
