@@ -132,6 +132,7 @@ export function overlapChecks(backends: readonly Pick<Backend, "id" | "label" | 
         if (shared.length) problems.push(`both give boxes ${shared.length === 1 ? `address ${shared[0]}` : `${shared.length} addresses, from ${shared[0]} to ${shared.at(-1)}`}`);
       }
       const fixes = problems.length ? ["Give them ranges that do not overlap, in their settings."] : [];
+      const notes: string[] = [];
       const machines = [a.footprint.machines, b.footprint.machines];
       if (machines[0] && machines[1]) {
         const theirs = new Set(machines[1]);
@@ -139,6 +140,7 @@ export function overlapChecks(backends: readonly Pick<Backend, "id" | "label" | 
         if (shared.length) {
           problems.push(`both use the ${shared.length === 1 ? "machine" : "machines"} at ${shared.join(", ")}`);
           fixes.push(`List ${shared.length === 1 ? "the machine" : "each machine"} in one of them only.`);
+          notes.push(...[a.footprint.machinesNote, b.footprint.machinesNote].filter((note) => note !== undefined));
         }
       }
       if (!problems.length) continue;
@@ -146,7 +148,7 @@ export function overlapChecks(backends: readonly Pick<Backend, "id" | "label" | 
         id: `overlap.${a.backend.id}.${b.backend.id}`,
         name: `${a.backend.label} and ${b.backend.label}`,
         status: "warn",
-        detail: `They ${problems.join(", and ")}, so a box of one could take what a box of the other has.`,
+        detail: [`They ${problems.join(", and ")}, so a box of one could take what a box of the other has.`, ...notes].join(" "),
         fix: fixes.join(" "),
       });
     }

@@ -452,6 +452,11 @@ export interface Footprint {
    * them at, in lower case, such as a pool's Macs and Tart's hosts (047).
    */
   readonly machines?: readonly string[];
+  /**
+   * What lending its machines does to anything else on them, which the
+   * doctor adds when another backend uses one of them (047).
+   */
+  readonly machinesNote?: string;
 }
 
 export interface DoctorCheck {

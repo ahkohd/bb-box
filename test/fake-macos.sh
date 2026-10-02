@@ -309,7 +309,8 @@ case $tool in
       *) exit 1 ;;
     esac
     ;;
-  sw_vers) if [ "${1:-}" = -buildVersion ]; then echo 25A354; else echo 26.0; fi ;;
+  # sw_vers: macOS 26.0, or the version in flags/macos.
+  sw_vers) if [ "${1:-}" = -buildVersion ]; then echo 25A354; else cat "$F/flags/macos" 2>/dev/null || echo 26.0; fi ;;
   uname) case ${1:-} in -m) echo arm64 ;; *) echo Darwin ;; esac ;;
   fdesetup) if flag filevault-on; then echo "FileVault is On."; else echo "FileVault is Off."; fi ;;
   ioreg) echo '  |   "IOPlatformUUID" = "0A1B2C3D-0000-4000-8000-000000000001"' ;;
