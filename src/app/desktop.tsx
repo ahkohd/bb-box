@@ -103,22 +103,33 @@ export class DesktopSession implements Kept {
   #disposed = false;
   readonly #observer: ResizeObserver | null;
   #settle: ReturnType<typeof setTimeout> | undefined;
+  /** The viewer's size as last observed, so the first observation, at mount, is not taken for a move. */
+  #lastSize: string | null = null;
 
   constructor(url: string) {
     this.#url = url;
     this.element.className = "absolute inset-0";
-    // noVNC asks the box for one size at a time and does not ask again when
-    // the box answers that it passed the request on, as QEMU does. A size
-    // the viewer reaches while a request is out, such as the last frame of a
-    // pane opening, is never asked for. Once the size holds, setting
-    // resizeSession again makes noVNC ask for it if the desktop differs.
+    // noVNC 1.7 asks the box for a new size on the first frame of a change,
+    // with no wait, and asks for one size at a time without asking again
+    // when the box answers that it passed the request on, as QEMU does. So
+    // a maximise landed in two steps: the box's queue set the size of that
+    // first frame, and the final size came only with the nudge below (the
+    // Windows box of 2 October 2026). While the viewer's size moves, noVNC
+    // may not ask; once the size has held, the nudge sets resizeSession
+    // again, which makes noVNC ask once, for the size that holds. This
+    // observer is made before noVNC's own, so it runs first in a frame.
     this.#observer =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver((entries) => {
             const size = entries.at(-1)?.contentRect;
             clearTimeout(this.#settle);
-            if (size && size.width > 0 && size.height > 0) this.#settle = setTimeout(() => this.#nudge(), SETTLE_MS);
+            if (!size || size.width <= 0 || size.height <= 0) return;
+            const key = `${Math.round(size.width)}x${Math.round(size.height)}`;
+            const moved = this.#lastSize !== null && this.#lastSize !== key;
+            this.#lastSize = key;
+            if (moved && this.#client) this.#client.resizeSession = false;
+            this.#settle = setTimeout(() => this.#nudge(), SETTLE_MS);
           });
     this.#observer?.observe(this.element);
     this.connect();
@@ -191,7 +202,7 @@ export class DesktopSession implements Kept {
     if (this.#mine) client.focus({ preventScroll: true });
   }
 
-  /** The viewer's size held: noVNC asks for it, if the desktop differs and this viewer may resize it. */
+  /** The viewer's size has held: noVNC asks for it once, if the desktop differs and this viewer may resize it. */
   #nudge(): void {
     const client = this.#client;
     if (client && this.connection.state === "connected" && this.#mine && this.#resizable) client.resizeSession = true;
