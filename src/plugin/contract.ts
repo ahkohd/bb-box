@@ -4,7 +4,7 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
-import type { BackendView, BoxView, DoctorView, KindView } from "./views.ts";
+import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "./views.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 
@@ -113,6 +113,8 @@ export const contract = defineRpcContract({
   "machines.stop": { input: machineRef.extend({ force: z.boolean().optional() }), output: boxResult },
   "machines.start": { input: machineRef, output: boxResult },
   /** The kinds on offer now, for "New box" in BB's new-thread screen. */
+  /** A provider's profile for the form's (i): data the plugin has, and one capacity call to the provider. Asked only when opened. */
+  provider: { input: z.object({ backend: z.string().min(1) }), output: z.custom<ProviderProfile>() },
   kinds: { input: z.null(), output: z.custom<KindView[]>() },
   /** Starts a child thread on a box's BB machine. */
   thread: { input: oneBox.extend({ prompt: z.string().min(1) }), output: z.custom<ThreadResult>() },

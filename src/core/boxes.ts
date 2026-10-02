@@ -29,6 +29,7 @@ import {
   type BoxKind,
   type BoxSize,
   type BoxTransports,
+  type Capacity,
   type Guest,
   type HeldGuest,
   type KindCapabilities,
@@ -892,6 +893,22 @@ export class Boxes {
   }
 
   /** A provider's name for people and for `on` (044): "Proxmox LXC on pve1", "Docker on devpc", "Tart on 2 Macs". */
+  /**
+   * The room one provider has for one more box of a kind at its default
+   * size, as the provider says it, with the boxes still being acquired on
+   * it counted, for the provider's profile. Null when it does not offer the
+   * kind.
+   */
+  async room(backendId: string, kindId: string, signal?: AbortSignal): Promise<Capacity | null> {
+    const candidate = this.#deps.backends.kinds().find((offer) => offer.backend.id === backendId && offer.kind.id === kindId);
+    if (!candidate) return null;
+    const general = await this.#deps.general();
+    const size = defaultSize(kindSizes(kindId, general.sizes));
+    const acquiring = (await this.all()).filter((box) => box.backend === backendId && isAcquiring(box));
+    const pending = await Promise.all(acquiring.map(async (box) => ({ kind: box.kind, size: await this.#size(box) })));
+    return candidate.backend.capacity(kindId, size, pending, signal);
+  }
+
   #providerName(backend: Backend): string {
     return providerName({ label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! });
   }

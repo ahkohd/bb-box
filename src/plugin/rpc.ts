@@ -105,6 +105,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       }
     },
     kinds: () => app.kinds(),
+    provider: ({ backend }) => app.providerProfile(backend),
     backends: () => app.backendViews(),
     doctor: () => app.doctor(),
     "config.get": () => app.configuration.state(),

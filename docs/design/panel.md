@@ -315,7 +315,18 @@ bottom sheet still carries the title "New box".
   A row's name is its host ("pve1"), "2 Macs" or "3 hosts" for several,
   the backend's label for a pool, and "an unnamed machine" for a Docker
   machine BB has not named: a row never shows a host ID (the operator's
-  rule). One provider is no choice: its row stands alone, checked, and
+  rule). Each row ends with an (i) that
+  opens the provider's profile, a popover in the form's rhythm: the
+  provider's name and its technology (the driver's description) as title
+  and dim line, then plain rows, Runs on (its hosts and what they run),
+  Makes (the kinds it offers and what the boxes are), Room (each host's
+  limits in words, "memory 12 of 64 GiB, 4 GiB kept back", and the
+  provider's own words when none is left), Usually (the kind's last cold
+  starts on it, with spares ready now) and Status (Ready, Needs attention
+  or Needs setting up, the doctor's summary, boxes on it, when it was
+  checked). The profile is read when the (i) opens, with one capacity
+  call to the provider, kept while the form stays open, and never on a
+  panel load (the operator's artboard). One provider is no choice: its row stands alone, checked, and
   the request sends no `on`. The chosen row's backend ID goes as `on`; a
   filter that leaves one provider sends that one too. First with room
   among several that a filter left sends them as a list, and the first
@@ -549,7 +560,8 @@ panel."
 | plugin description | Computers for BB threads. The plugin shows as "BB Box"; its ID stays bb-box. |
 | tab titles | Box; the box's name for its desktop |
 | toolbar | New box |
-| chooser | System · Architecture · Type · Server · Desktop · Not available · Provider · Kind · All · Container · VM · Physical · Runs on · Any machine · First with room · Resources · Small · Medium · Large · Custom · GPU · None · 1 GPU · Create box · Add machine · No provider matches these filters. |
+| chooser | System · Architecture · Type · Server · Desktop · Not available · Provider · Filter · Kind · All · Container · VM · Physical · Runs on · Any machine · First with room · Resources · Small · Medium · Large · Custom · GPU · None · 1 GPU · Create box · Add machine · No provider matches these filters. |
+| provider profile | About <provider> · Runs on · Makes · Room · Usually · Status · Looking… · Not known: the provider did not answer. |
 | empty | No boxes yet · A computer for this thread. |
 | not set up | BB Box is not set up yet. Set a backend up in its settings and turn it on. · Open BB Box settings |
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |
