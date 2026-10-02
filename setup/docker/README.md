@@ -31,8 +31,10 @@ On a Linux host with local Docker, a linux box was ready 0.4 s after it was
 asked for, and a linux-desktop-cpu box 0.6 s, its desktop running. Neither
 waits for Docker: a box's first `docker` command took 0.3 s, as it started
 the daemon. A desktop stream opened in under 0.1 s. Over `ssh://`, every
-`docker` call opens an SSH session, so a box took about 1.5 s, and its
-stream 0.6 s.
+`docker` call logs in over SSH again, unless the calls share one connection
+([Requirements](#requirements)). At a 2 ms round trip, the seven calls that
+make a box took 2.1 s, against 0.43 s on a shared connection and 0.26 s on
+the local socket, and a `docker exec` took 0.5 s, against 0.09 s (#97).
 
 | Path | What it does |
 | --- | --- |
@@ -78,7 +80,20 @@ stream 0.6 s.
 - The `docker` CLI on BB's server, on the PATH of the user BB runs as, and
   that user allowed to use Docker. On Linux, add it to the `docker` group.
   For a Docker host over SSH, that user must log in to it with a key and no
-  prompt, as a user who may use Docker there.
+  prompt, as a user who may use Docker there. Let the `docker` calls share
+  one SSH connection, which makes each about 0.2 s faster, in that user's
+  `~/.ssh/config`:
+
+  ```
+  Host docker.example.com
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%C
+    ControlPersist 10m
+  ```
+
+  The doctor warns when they do not. Calls beyond sshd's `MaxSessions`, 10
+  by default, open their own connections. ssh on Windows cannot share
+  connections.
 - Memory for the boxes: by default bb-box keeps 4 GiB of the host's memory
   free, and a small linux box has a 4 GiB limit, so the host needs at least
   8 GiB.
