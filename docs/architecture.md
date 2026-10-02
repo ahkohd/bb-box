@@ -1425,11 +1425,11 @@ Notes:
     macOS Server or personal non-commercial use, and not as a service bureau
     or time-sharing service. Agents developing and testing on your own Macs
     fit.
-  - Windows on arm64 (planned) runs in QEMU with HVF, as a second engine
-    of the same backend, so one survey of each Mac counts every VM's
-    memory and disk. A box is a qcow2 overlay on an image the setup builds
-    on each Mac, reached through the Mac as Tart's VMs are, and saved to a
-    file when stopped. Windows VMs do not count against the two macOS VMs
+  - Windows on arm64 runs in QEMU with HVF, as a second engine of the same
+    backend, so one survey of each Mac counts every VM's memory and disk.
+    A box is a qcow2 overlay on an image the setup builds on each Mac,
+    reached through the Mac as Tart's VMs are, and saved to a file when
+    stopped. Windows VMs do not count against the two macOS VMs
     ([046](decisions/046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md)).
   - Tart, Orchard and tart-guest-agent are under FSL-1.1-ALv2, where internal
     use is a permitted purpose. bb-box drives Tart and does not redistribute

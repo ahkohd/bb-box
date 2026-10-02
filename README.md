@@ -79,7 +79,7 @@ a desktop box has a terminal too.
 | Proxmox LXC | virtual | Linux terminal; Linux desktop on a GPU or the CPU | working |
 | Docker, on BB's server, another host over SSH, or a BB machine | virtual | Linux terminal; Linux desktop on the CPU or an NVIDIA GPU | working |
 | SSH host pool | real | Linux terminal, on Linux machines you own | working |
-| [Tart](https://tart.run), on your Macs with Apple silicon | virtual | macOS terminal and desktop; Linux terminal and desktop on arm64 | working |
+| [Tart](https://tart.run), on your Macs with Apple silicon | virtual | macOS terminal and desktop; Linux terminal and desktop on arm64; Windows desktop on arm64 | working |
 | Proxmox QEMU | virtual | Windows desktop | working, not yet a BB machine |
 | macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
 | Physical pool | real | Linux or Windows machines you own | possible |
