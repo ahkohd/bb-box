@@ -262,6 +262,11 @@ words are never cut off.
 +------------------------------------------------------------------+
 ```
 
+The popover takes the height the window gives it and scrolls inside, so
+a short window scrolls the form rather than losing its lower sections
+and its button (found on 2 October 2026 on an 805 px window, where the
+lower provider rows and Create box sat past the edge, unreachable).
+
 The popover has no heading of its own: the button that opens it is named
 "New box", so its first line is the System section (the operator's design
 session of 1 October 2026 took the "Add Box" heading off, and gave the
