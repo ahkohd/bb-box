@@ -237,6 +237,13 @@ export class BoxError extends Error {
 }
 
 /** #choose finding no offer for a box, with the backends that had no room: only their spares give room (#282). */
+/** What `on` named (044): the offers to try, in acquire order; why each named provider that is off was passed over; and every provider named. */
+interface Named {
+  readonly offers: OfferedKind[];
+  readonly out: string[];
+  readonly ids: ReadonlySet<string>;
+}
+
 class Unplaced extends BoxError {
   readonly full: readonly string[];
   constructor(code: BoxErrorCode, message: string, full: readonly string[]) {
@@ -501,7 +508,7 @@ export class Boxes {
    * backend has said the box fits; the box is ready when its command
    * transport answers.
    */
-  async acquire(input: { threadId: string; projectId: string | null; kind: string; size?: SizeRequest; role?: BoxRole; name?: string; on?: string }): Promise<BoxRecord> {
+  async acquire(input: { threadId: string; projectId: string | null; kind: string; size?: SizeRequest; role?: BoxRole; name?: string; on?: string | readonly string[] }): Promise<BoxRecord> {
     const requested = this.#now();
     const { kind: wanted, features } = kindRequest(input.kind);
     const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
@@ -521,15 +528,16 @@ export class Boxes {
       const from = [...new Set(ofKind.map((candidate) => candidate.backend.label))].join(" and ");
       throw new BoxError("unknown_kind", `No backend offers ${input.kind} now: ${wanted} boxes from ${from} have no ${lacking}. Ask for ${wanted} if the box can do without it.`);
     }
-    // A named provider is the only one tried (044).
-    const offered = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : everywhere;
+    // The named providers are the only ones tried, in acquire order (044).
+    const named = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : null;
+    const offered = named ? named.offers : everywhere;
     const role = input.role ?? "box";
     const yours = input.threadId === OPERATOR;
     if (yours) {
       if (input.name !== undefined && !isMachineName(input.name)) {
         throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${input.name}" is not one.`);
       }
-      const kind = offered[0]!.kind;
+      const kind = everywhere[0]!.kind;
       if (!kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so it cannot be one of your machines.`);
     }
     // Spares and your machines are outside the per-thread limit.
@@ -554,7 +562,7 @@ export class Boxes {
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
         const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
-        const chosen = await this.#place(input, offered, everywhere, sized.size, features);
+        const chosen = await this.#place({ threadId: input.threadId, named }, offered, everywhere, sized.size, features);
         const box: BoxRecord = {
           id: newBoxId(this.#random),
           threadId: input.threadId,
@@ -889,55 +897,78 @@ export class Boxes {
   }
 
   /**
-   * The one offer `on` names (044), among the active backends: by the
-   * provider's name, its backend ID or its one host, without case. A name
-   * that matches none, or two, or a provider without the kind, is refused
-   * with what would do.
+   * The offers `on` names (044): one provider, or a list for the first with
+   * room among them. Each name is matched among the active backends by the
+   * provider's name, its backend ID or its one host, without case; a name
+   * that matches none, or two, or a provider without the kind, refuses the
+   * acquire, and so does an empty list. A name given twice counts once.
+   * The offers come in acquire order: the list narrows, never reorders. A
+   * named provider that is off is passed over, with its reason in `out`,
+   * and `ids` holds every provider named.
    */
-  #on(on: string, kind: string, offered: OfferedKind[]): OfferedKind[] {
-    const key = foldName(on);
-    const providers = this.#deps.backends.active();
-    const matched = providers.filter((backend) =>
-      providerKeys(backend.id, { label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! }).includes(key),
-    );
+  #on(on: string | readonly string[], kind: string, offered: OfferedKind[]): Named {
+    const names = (typeof on === "string" ? [on] : on).map((name) => name.trim()).filter((name) => name.length);
     const others = offered.map((candidate) => this.#providerName(candidate.backend));
-    if (!matched.length) {
-      throw new BoxError("unknown_provider", `No provider is called "${on}". ${kind} comes from: ${others.join(", ")}. Leave "on" out for the first with room.`);
+    if (!names.length) {
+      throw new BoxError("unknown_provider", `Name a provider in "on", or leave it out for the first with room. ${kind} comes from: ${others.join(", ")}.`);
     }
-    if (matched.length > 1) {
-      throw new BoxError("unknown_provider", `"${on}" names ${matched.length} providers: ${matched.map((backend) => backend.id).join(", ")}. Give the ID.`);
-    }
-    const [backend] = matched;
-    if (this.#deps.backends.on && !this.#deps.backends.on().some((candidate) => candidate.id === backend!.id)) {
-      throw new BoxError("unknown_provider", `${this.#providerName(backend!)} is off. Turn it on in BB Box's settings, or leave "on" out for the first with room.`);
-    }
-    const offer = offered.find((candidate) => candidate.backend.id === backend!.id);
-    if (!offer) {
-      const has = [...new Set(this.#deps.backends.kinds().filter((candidate) => candidate.backend.id === backend!.id).map((candidate) => candidate.kind.id))];
-      throw new BoxError(
-        "unknown_provider",
-        `${this.#providerName(backend!)} has no ${kind}${has.length ? `; it has: ${has.join(", ")}` : ""}. ${kind} comes from: ${others.join(", ")}.`,
+    const providers = this.#deps.backends.active();
+    const chosen = new Map<string, Backend>();
+    for (const name of names) {
+      const key = foldName(name);
+      const matched = providers.filter((backend) =>
+        providerKeys(backend.id, { label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! }).includes(key),
       );
+      if (!matched.length) {
+        throw new BoxError("unknown_provider", `No provider is called "${name}". ${kind} comes from: ${others.join(", ")}. Leave "on" out for the first with room.`);
+      }
+      if (matched.length > 1) {
+        throw new BoxError("unknown_provider", `"${name}" names ${matched.length} providers: ${matched.map((backend) => backend.id).join(", ")}. Give the ID.`);
+      }
+      chosen.set(matched[0]!.id, matched[0]!);
     }
-    return [offer];
+    const out: string[] = [];
+    const ids = new Set<string>();
+    for (const backend of chosen.values()) {
+      ids.add(backend.id);
+      if (this.#deps.backends.on && !this.#deps.backends.on().some((candidate) => candidate.id === backend.id)) {
+        out.push(`${this.#providerName(backend)} is off; turn it on in BB Box's settings.`);
+        continue;
+      }
+      if (!offered.some((candidate) => candidate.backend.id === backend.id)) {
+        const has = [...new Set(this.#deps.backends.kinds().filter((candidate) => candidate.backend.id === backend.id).map((candidate) => candidate.kind.id))];
+        throw new BoxError(
+          "unknown_provider",
+          `${this.#providerName(backend)} has no ${kind}${has.length ? `; it has: ${has.join(", ")}` : ""}. ${kind} comes from: ${others.join(", ")}.`,
+        );
+      }
+    }
+    return { offers: offered.filter((candidate) => ids.has(candidate.backend.id)), out, ids };
   }
 
   /**
    * Where the box goes: the first offer with room, freeing a spare's room
-   * when none has it. With `on`, only the named offer is tried, and a
-   * refusal names the kind's other providers (044).
+   * when none has it. With `on`, only the named offers are tried, and a
+   * refusal gives each named provider's reason, then names the kind's
+   * other providers (044).
    */
-  async #place(input: { threadId: string; on?: string }, offered: OfferedKind[], everywhere: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
-    try {
-      return input.threadId === SPARES ? await this.#choose(offered, size, features) : await this.#chooseFreeing(offered, size, features);
-    } catch (error) {
-      if (input.on === undefined || !(error instanceof BoxError) || error.code !== "no_capacity") throw error;
-      const others = everywhere.filter((candidate) => candidate.backend.id !== offered[0]!.backend.id).map((candidate) => this.#providerName(candidate.backend));
-      throw new BoxError(
-        "no_capacity",
-        `${error.message}${others.length ? ` ${offered[0]!.kind.id} also comes from ${others.join(", ")}.` : ""} Leave "on" out for the first with room.`,
-      );
+  async #place(input: { threadId: string; named: Named | null }, offered: OfferedKind[], everywhere: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
+    const choose = () => (input.threadId === SPARES ? this.#choose(offered, size, features) : this.#chooseFreeing(offered, size, features));
+    if (!input.named) return choose();
+    let reasons: string[];
+    if (offered.length) {
+      try {
+        return await choose();
+      } catch (error) {
+        if (!(error instanceof BoxError) || error.code !== "no_capacity") throw error;
+        reasons = [error.message, ...input.named.out];
+      }
+    } else {
+      reasons = input.named.out;
     }
+    const kind = everywhere[0]!.kind.id;
+    const others = everywhere.filter((candidate) => !input.named!.ids.has(candidate.backend.id)).map((candidate) => this.#providerName(candidate.backend));
+    throw new BoxError("no_capacity", `${reasons.join(" ")}${others.length ? ` ${kind} also comes from ${others.join(", ")}.` : ""} Leave "on" out for the first with room.`);
   }
 
   /** The first backend with room for a box of the kind and size, and still the features asked for, or the reasons none has. */

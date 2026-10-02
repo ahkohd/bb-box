@@ -20,7 +20,7 @@ const RUN_TIMEOUT_MAX_S = 60 * 60;
 const HINTS: Record<BoxErrorCode, string> = {
   not_found: "Call box_list to see this thread's boxes.",
   unknown_kind: "Call box_list to see the kinds you can acquire.",
-  unknown_provider: "Call box_list: each kind's line ends with its providers, in the words \"on\" takes. Leave \"on\" out for the first with room.",
+  unknown_provider: "Call box_list: each kind's line ends with its providers, in the words \"on\" takes, one or a list. Leave \"on\" out for the first with room.",
   invalid_size: "Pick a preset, or a custom size within the largest. box_list shows each kind's sizes.",
   limit_reached: "Release a box you no longer need with box_release, then try again.",
   no_capacity: "Try again later, release a box you no longer need, or pick another kind.",
@@ -146,7 +146,10 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
       memory_gib: z.number().int().positive().optional().describe("Memory in GiB, for a custom size: at least 2 for a Linux box."),
       disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, for a custom size. Presets keep the kind's own disk."),
       wait: z.boolean().optional().describe("Wait until the box answers, and up to 20 s more while it becomes a BB machine. Defaults to true."),
-      on: z.string().min(1).optional().describe("Where the box goes, from box_list: a provider such as Docker on devpc. Leave it out for the first with room."),
+      on: z
+        .union([z.string().min(1), z.array(z.string().min(1))])
+        .optional()
+        .describe("Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room."),
     }),
     async execute({ kind, size, cores, memory_gib, disk_gib, wait, on }, { threadId, projectId, signal }) {
       try {

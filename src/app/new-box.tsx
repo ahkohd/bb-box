@@ -11,9 +11,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
-import { KindBadges, lacksDocker } from "./common.tsx";
-import { groupKinds, KindDetail, kindTitle, OfferMarks } from "./kind-picker.tsx";
-import { MonitorGlyph, ServerGlyph } from "./glyphs.tsx";
+import { Badge } from "./common.tsx";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { GuestOs } from "../backends/types.ts";
+import { accessWords, archAvailable, ARCHS, Chip, choiceOf, FORM_FILTERS, formFilterOf, gpuChoices, kindFor, nearest, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, Step, summaryWords, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -23,8 +24,8 @@ export interface SizeRequest {
   readonly diskGiB?: number;
 }
 
-type Choice = string;
-const CUSTOM: Choice = "custom";
+type Choice2 = string;
+const CUSTOM: Choice2 = "custom";
 
 interface Fields {
   readonly cores: string;
@@ -34,7 +35,7 @@ interface Fields {
 
 interface Remembered {
   readonly kind?: string;
-  readonly size?: Choice;
+  readonly size?: Choice2;
   /** The custom fields a person edited, by kind. */
   readonly custom?: Readonly<Record<string, Fields>>;
 }
@@ -62,8 +63,6 @@ export function sizeLine(size: SizeView): string {
 
 const PRESET_LABELS: Readonly<Record<string, string>> = { small: "Small", medium: "Medium", large: "Large" };
 
-/** The detail pane's element, which each kind option describes itself by. */
-const DETAIL_ID = "new-box-kind-detail";
 
 /** A whole number of at least 1, or null for an empty field; undefined when the text is not one. */
 function whole(text: string): number | null | undefined {
@@ -105,7 +104,7 @@ export function NewBox({
 }: {
   kinds: readonly KindView[];
   /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036). */
-  make: (kind: string, size?: SizeRequest, name?: string, on?: string) => Promise<string | null>;
+  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[]) => Promise<string | null>;
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
   machine?: boolean;
 }) {
@@ -113,8 +112,12 @@ export function NewBox({
   const [open, setOpen] = useState(false);
   const [last] = useState(() => remembered(`${pluginId}:${machine ? "new-machine" : "new-box"}`));
   const [name, setName] = useState("");
-  const [chosenKind, setChosenKind] = useState<string>(last.kind ?? "");
-  const [choice, setChoice] = useState<Choice | null>(last.size ?? null);
+  // The steps that pick the kind (the operator's redesign of 1 October 2026): the OS, the architecture, a desktop or not, a GPU.
+  const [wanted, setWanted] = useState<Choice>(() => {
+    const remembered = kinds.find((kind) => kind.id === last.kind);
+    return remembered ? choiceOf(remembered) : { os: "linux", arch: "x86_64", desktop: false, gpu: false };
+  });
+  const [choice, setChoice] = useState<Choice2 | null>(last.size ?? null);
   /** The preset last chosen, which Custom starts from. */
   const [viewed, setViewed] = useState<string | null>(last.size && last.size !== CUSTOM ? last.size : null);
   // Custom fields belong to a kind: edited ones are kept per kind, and a
@@ -122,22 +125,29 @@ export function NewBox({
   const [edited, setEdited] = useState<Readonly<Record<string, Fields>>>(() => (last.custom && typeof last.custom === "object" ? last.custom : {}));
   const [making, setMaking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const kindOptions = useRef<(HTMLButtonElement | null)[]>([]);
-  const sizeOptions = useRef<(HTMLButtonElement | null)[]>([]);
-
-  /** The kind under the pointer or the keyboard focus, which the pane shows; the chosen kind otherwise. */
-  const [peek, setPeek] = useState<string | null>(null);
+  /** The Provider step's filters: what the boxes are, and the machine they run on. */
+  const [filter, setFilter] = useState<FormFilter>("all");
+  const [runsOn, setRunsOn] = useState<RunsOn>("any");
   /** Where the box goes (044): a provider's backend ID, or null for the first with room. Not remembered; another kind resets it. */
   const [on, setOn] = useState<string | null>(null);
-  const groups = groupKinds(kinds);
-  const ordered = groups.flatMap((group) => group.kinds);
+  const sizeOptions = useRef<(HTMLButtonElement | null)[]>([]);
+  const providerOptions = useRef<(HTMLButtonElement | null)[]>([]);
 
-  const kind = kinds.find((candidate) => candidate.id === chosenKind) ?? ordered[0] ?? null;
-  const kindIndex = kind ? ordered.indexOf(kind) : -1;
-  const shown = ordered.find((candidate) => candidate.id === peek) ?? kind;
+  // Every step shows what exists; a choice snaps to the nearest that does.
+  const picked = nearest(kinds, wanted);
+  const kind = kindFor(kinds, picked);
+  const systems = systemsOf(kinds);
+  const gpus = gpuChoices(kinds, picked.os, picked.arch);
+  const offers = kind?.offers ?? [];
+  const runsOnChoices = runsOnOptions(offers);
+  const effectiveRunsOn: RunsOn = runsOnChoices.includes(runsOn as GuestOs) ? runsOn : "any";
+  const shown = offersShown(offers, filter, effectiveRunsOn);
+  // One offer is no choice: its row stands alone, checked, and nothing goes as `on` (044's first with room is that one).
+  const choiceless = offers.length <= 1;
+  const onOffer = choiceless ? (shown[0] ?? null) : (shown.find((offer) => offer.backend === on) ?? null);
   const presets = kind?.presets ?? [];
-  const choices: Choice[] = [...presets.map((preset) => preset.name), CUSTOM];
-  const size: Choice = choice && choices.includes(choice) ? choice : (kind?.defaultPreset ?? CUSTOM);
+  const choices: Choice2[] = [...presets.map((preset) => preset.name), CUSTOM];
+  const size: Choice2 = choice && choices.includes(choice) ? choice : (kind?.defaultPreset ?? CUSTOM);
   const preset = presets.find((candidate) => candidate.name === size) ?? null;
   // The preset Custom starts from: the one chosen last, else the kind's default.
   const inView = preset ?? presets.find((candidate) => candidate.name === viewed) ?? presets.find((candidate) => candidate.name === kind?.defaultPreset) ?? null;
@@ -146,16 +156,20 @@ export function NewBox({
   const sizeIndex = choices.indexOf(size);
 
   useEffect(() => {
-    if (!open) setProblem(null);
+    if (open) return;
+    // The provider choice and its filters are not remembered (044): the next box starts from the first with room.
+    setProblem(null);
+    setOn(null);
+    setFilter("all");
+    setRunsOn("any");
   }, [open]);
 
-  const chooseKind = (next: KindView, focus = false) => {
-    setChosenKind(next.id);
+  const pick = (change: Partial<Choice>) => {
+    setWanted((current) => nearest(kinds, { ...current, ...change }));
     setOn(null);
     setProblem(null);
-    if (focus) kindOptions.current[ordered.indexOf(next)]?.focus();
   };
-  const chooseSize = (next: Choice, focus = false) => {
+  const chooseSize = (next: Choice2, focus = false) => {
     setChoice(next);
     if (next !== CUSTOM) setViewed(next);
     setProblem(null);
@@ -175,12 +189,24 @@ export function NewBox({
   };
   const typedName = name.trim();
   const nameWrong = machine ? nameProblem(typedName) : null;
+  // "First with room" with every provider shown names none; with the filters hiding some, it names the shown ones, as a list when there are several, so the box never lands outside the filter (044).
+  const sendOn: string | string[] | undefined = choiceless
+    ? undefined
+    : onOffer
+      ? onOffer.backend
+      : shown.length && shown.length < offers.length
+        ? shown.length === 1
+          ? shown[0]!.backend
+          : shown.map((offer) => offer.backend)
+        : undefined;
+  /** Filters that leave no provider: nothing to create. */
+  const noMatch = !choiceless && !shown.length;
   const submit = async () => {
-    if (!kind || making || (size === CUSTOM && !custom) || nameWrong) return;
+    if (!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong) return;
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = await make(kind.id, request, machine && typedName ? typedName : undefined, on ?? undefined);
+      const refused = await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -207,6 +233,11 @@ export function NewBox({
       {limit !== null ? <span>up to {limit}</span> : null}
     </label>
   );
+  const sizeWords = preset ? { cores: preset.cores, memoryGiB: preset.memoryGiB } : custom && custom.cores && custom.memoryGiB ? { cores: custom.cores, memoryGiB: custom.memoryGiB } : null;
+  const summary = summaryWords(picked, kind, onOffer ?? (shown.length === 1 ? shown[0]! : null), sizeWords);
+  const access = accessWords(kind, picked);
+  const providerValues: (string | null)[] = [...(choiceless ? [] : [null]), ...shown.map((offer) => offer.backend)];
+  const providerIndex = Math.max(0, providerValues.indexOf(onOffer?.backend ?? null));
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -231,125 +262,149 @@ export function NewBox({
           </Tooltip>
         </TooltipProvider>
       )}
-      <PopoverContent align="end" className="w-80 p-4 sm:w-[640px]" mobileTitle={machine ? "Add machine" : "New box"}>
-        {/* Two columns when there is room: the detail pane left of the list, as the operator asked; stacked under it otherwise. */}
+      <PopoverContent align="end" className="w-80 p-4 sm:w-[560px]" mobileTitle={machine ? "Add machine" : "New box"}>
         <form
-          className="space-y-3 sm:grid sm:grid-cols-[240px_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-3 sm:space-y-0"
+          className="space-y-3"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <div className="sm:col-start-2 sm:row-start-1">
-            <p id="new-box-kind" className="mb-1.5 text-xs font-medium text-foreground">
-              Kind
-              {machine ? <span className="ml-1.5 font-normal text-muted-foreground">of the ones whose boxes join BB</span> : null}
-            </p>
-            <div
-              role="radiogroup"
-              aria-labelledby="new-box-kind"
-              className="space-y-0.5"
-              onKeyDown={(event) => arrows(event, ordered.length, kindIndex, (position) => chooseKind(ordered[position]!, true))}
-              onMouseLeave={() => setPeek(null)}
-              onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPeek(null);
-              }}
-            >
-              {groups.map((group, index) => (
-                <div key={group.os} role="group" aria-label={group.label}>
-                  <p className={cn("px-2 pb-0.5 text-2xs font-medium text-subtle-foreground", index === 0 ? "pt-0" : "pt-1.5")}>{group.label}</p>
-                  {group.kinds.map((candidate) => {
-                    const position = ordered.indexOf(candidate);
-                    const selected = candidate.id === kind?.id;
-                    return (
-                      <button
-                        key={candidate.id}
-                        ref={(element) => {
-                          kindOptions.current[position] = element;
-                        }}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        aria-describedby={DETAIL_ID}
-                        tabIndex={selected ? 0 : -1}
-                        onClick={() => chooseKind(candidate)}
-                        onMouseEnter={() => setPeek(candidate.id)}
-                        onFocus={() => setPeek(candidate.id)}
-                        className={cn(
-                          "grid w-full grid-cols-[1rem_minmax(0,1fr)_auto_1rem] items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
-                          selected && "bg-state-active",
-                        )}
-                      >
-                        {candidate.desktop ? <MonitorGlyph className="text-muted-foreground" /> : <ServerGlyph className="text-muted-foreground" />}
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs text-foreground">{kindTitle(candidate)}</span>
-                          {/* Badges on a line of their own: what the boxes are, and whether one is ready; the title says the rest. */}
-                          <KindBadges gpu={false} noDocker={lacksDocker(candidate)} forms={candidate.forms} ready={candidate.spares.ready > 0} className="mt-0.5 flex-wrap" />
-                        </span>
-                        <OfferMarks offers={candidate.offers} />
-                        {selected ? <Icon name="Check" className="size-4 text-foreground" aria-hidden /> : <span />}
-                      </button>
-                    );
-                  })}
-                </div>
+          <Step label="System" hint={machine ? "Of the kinds whose boxes join BB." : undefined}>
+            <div role="radiogroup" aria-label="System" className="flex flex-wrap gap-1.5" onKeyDown={(event) => arrows(event, systems.length, systems.findIndex((system) => system.os === picked.os), (position) => pick({ os: systems[position]!.os }))}>
+              {systems.map((system) => (
+                <OptionCard key={system.os} title={system.label} words={system.words} selected={system.os === picked.os} onClick={() => pick({ os: system.os })} />
               ))}
             </div>
-          </div>
-          {shown ? (
-            <div className="sm:col-start-1 sm:row-span-4 sm:row-start-1 sm:border-r sm:border-border sm:pr-4">
-              <KindDetail kind={shown} pluginId={pluginId} id={DETAIL_ID} choice={shown.id === kind?.id ? { value: on, onChange: setOn } : undefined} />
+          </Step>
+          <Step label="Architecture">
+            <div role="radiogroup" aria-label="Architecture" className="flex flex-wrap gap-1.5" onKeyDown={(event) => arrows(event, ARCHS.length, ARCHS.findIndex((arch) => arch.id === picked.arch), (position) => pick({ arch: ARCHS[position]!.id }))}>
+              {ARCHS.map((arch) => (
+                <OptionCard key={arch.id} title={arch.label} words={arch.words} selected={arch.id === picked.arch} available={archAvailable(kinds, picked.os, arch.id)} onClick={() => pick({ arch: arch.id })} />
+              ))}
             </div>
-          ) : null}
+          </Step>
+          <Step label="Type">
+            <div role="radiogroup" aria-label="Type" className="flex flex-wrap gap-1.5" onKeyDown={(event) => arrows(event, 2, picked.desktop ? 1 : 0, (position) => pick({ desktop: position === 1 }))}>
+              <OptionCard title="Server" words="Terminal" glyph={TYPE_GLYPHS.server} selected={!picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, false)} onClick={() => pick({ desktop: false })} />
+              <OptionCard title="Desktop" words="Screen · Terminal · Computer use" glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
+            </div>
+          </Step>
+          <Step label="Provider">
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-2xs text-muted-foreground">
+                <span id="new-box-kind-filter">Kind</span>
+                <div className="flex flex-wrap gap-1" role="group" aria-labelledby="new-box-kind-filter">
+                  {FORM_FILTERS.map((option) => {
+                    const available = option.id === "all" || offers.some((offer) => formFilterOf(offer) === option.id);
+                    return <Chip key={option.id} label={option.label} title={option.words} selected={filter === option.id} available={available} onClick={() => { setFilter(option.id); setOn(null); }} />;
+                  })}
+                </div>
+                {filter !== "physical" ? (
+                  <>
+                    <span id="new-box-runs-on">Runs on</span>
+                    <div>
+                      <Select value={effectiveRunsOn} onValueChange={(value) => { setRunsOn(value as RunsOn); setOn(null); }}>
+                        <SelectTrigger className="h-7 w-44 text-xs" aria-label="Runs on">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="any">Any machine</SelectItem>
+                          {runsOnChoices.map((os) => (
+                            <SelectItem key={os} value={os}>
+                              {RUNS_ON_WORDS[os]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+              <div role="radiogroup" aria-label="Provider" className="space-y-1" onKeyDown={(event) => arrows(event, providerValues.length, providerIndex, (position) => { setOn(providerValues[position] ?? null); providerOptions.current[position]?.focus(); })}>
+                {!choiceless ? (
+                  <button
+                    ref={(element) => {
+                      providerOptions.current[0] = element;
+                    }}
+                    type="button"
+                    role="radio"
+                    aria-checked={onOffer === null}
+                    tabIndex={onOffer === null ? 0 : -1}
+                    onClick={() => setOn(null)}
+                    className={cn(
+                      "flex w-full items-start gap-2 rounded-md border px-2.5 py-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                      onOffer === null ? "border-transparent bg-state-active" : "border-input hover:bg-state-hover",
+                    )}
+                  >
+                    <Icon name="Check" className={cn("mt-0.5 size-3.5 shrink-0", onOffer === null ? "text-foreground" : "invisible")} aria-hidden />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-foreground">First with room</span>
+                      <span className="block text-2xs text-muted-foreground">
+                        {shown.length === 1 ? "The one below" : shown.length ? `Any of the ${shown.length} below, in order` : "No provider matches these filters"}
+                      </span>
+                    </span>
+                  </button>
+                ) : null}
+                {shown.map((offer, index) => (
+                  <ProviderRow
+                    key={offer.backend}
+                    offer={offer}
+                    selected={onOffer?.backend === offer.backend}
+                    onClick={() => setOn(offer.backend)}
+                    optionRef={(element) => {
+                      providerOptions.current[index + (choiceless ? 0 : 1)] = element;
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          </Step>
           {kind ? (
-            <div className="sm:col-start-2">
-              <p id="new-box-size" className="mb-1.5 text-xs font-medium text-foreground">
-                Size
-              </p>
-              <div role="radiogroup" aria-labelledby="new-box-size" className="flex gap-1" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
+            <Step label="Resources">
+              <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-1.5" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
                 {choices.map((candidate, position) => {
-                  const selected = candidate === size;
+                  const own = presets.find((item) => item.name === candidate) ?? null;
                   return (
-                    <button
+                    <OptionCard
                       key={candidate}
-                      ref={(element) => {
+                      optionRef={(element) => {
                         sizeOptions.current[position] = element;
                       }}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      tabIndex={selected ? 0 : -1}
+                      title={PRESET_LABELS[candidate] ?? (candidate === CUSTOM ? "Custom" : candidate)}
+                      words={own ? `${own.cores} cores · ${own.memoryGiB} GiB` : largest ? `up to ${largest.cores} cores` : null}
+                      selected={candidate === size}
                       onClick={() => chooseSize(candidate)}
-                      className={cn(
-                        "h-7 min-w-0 flex-1 rounded-md border border-input px-2 text-xs font-medium text-foreground outline-none hover:bg-state-hover focus-visible:ring-1 focus-visible:ring-ring",
-                        selected && "border-transparent bg-foreground text-background hover:bg-foreground/90",
-                      )}
-                    >
-                      {PRESET_LABELS[candidate] ?? (candidate === CUSTOM ? "Custom" : candidate)}
-                    </button>
+                    />
                   );
                 })}
               </div>
-              {preset ? (
-                <p className="mt-1.5 text-xs leading-snug text-subtle-foreground">{sizeLine(preset)}</p>
-              ) : (
+              {!preset ? (
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {field("cores", "Cores", largest?.cores ?? null)}
                   {field("memoryGiB", "Memory, GiB", largest?.memoryGiB ?? null)}
                   {field("diskGiB", "Disk, GiB", largest?.diskGiB ?? null)}
                 </div>
-              )}
-            </div>
+              ) : null}
+              {picked.desktop && gpus.none && gpus.gpu ? (
+                <div className="mt-2 grid grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-x-2 text-2xs text-muted-foreground">
+                  <span id="new-box-gpu">GPU</span>
+                  <div role="radiogroup" aria-labelledby="new-box-gpu" className="flex gap-1">
+                    <Chip label="None" selected={!picked.gpu} onClick={() => pick({ gpu: false })} />
+                    <Chip label="1 GPU" selected={picked.gpu} onClick={() => pick({ gpu: true })} />
+                  </div>
+                </div>
+              ) : null}
+            </Step>
           ) : null}
           {machine ? (
-            <div className="sm:col-start-2">
-              <label htmlFor="new-machine-name" className="mb-1.5 block text-xs font-medium text-foreground">
-                Name
-              </label>
+            <Step label="Name" hint={nameWrong ? <span role="alert" className="text-destructive-text">{nameWrong}</span> : null}>
               <Input
                 id="new-machine-name"
+                aria-label="Name"
                 className="h-7 px-2 text-xs"
                 value={name}
-                placeholder="a name, or leave it to bb-box"
+                placeholder="optional; bb-box picks one"
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
@@ -359,24 +414,28 @@ export function NewBox({
                   setProblem(null);
                 }}
               />
-              {nameWrong ? (
-                <p role="alert" className="mt-1 text-xs leading-snug text-destructive-text">
-                  {nameWrong}
-                </p>
-              ) : null}
-            </div>
+            </Step>
           ) : null}
-          <div className="space-y-3 sm:col-start-2">
-            <Button type="submit" size="sm" className="w-full" disabled={!kind || making || (size === CUSTOM && !custom) || nameWrong !== null}>
+          <div className="flex items-start justify-between gap-3 border-t border-border pt-3">
+            <div className="min-w-0 space-y-1">
+              <p className="text-xs leading-snug text-foreground">{summary}</p>
+              <p className="flex flex-wrap items-center gap-1 text-2xs text-muted-foreground">
+                <span className="mr-0.5">Access</span>
+                {access.map((word) => (
+                  <Badge key={word}>{word}</Badge>
+                ))}
+              </p>
+            </div>
+            <Button type="submit" size="sm" className="shrink-0" disabled={!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong !== null}>
               {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
               {machine ? "Add" : "Create"}
             </Button>
-            {problem ? (
-              <p role="alert" className="text-xs leading-snug text-destructive-text">
-                {problem}
-              </p>
-            ) : null}
           </div>
+          {problem ? (
+            <p role="alert" className="text-xs leading-snug text-destructive-text">
+              {problem}
+            </p>
+          ) : null}
         </form>
       </PopoverContent>
     </Popover>

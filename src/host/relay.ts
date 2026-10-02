@@ -6,7 +6,7 @@
 
 import { execFile } from "node:child_process";
 import { connect, type NetConnectOpts } from "node:net";
-import { userInfo } from "node:os";
+import { release, userInfo } from "node:os";
 import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
 import { Mux, type Channel } from "../relay/mux.ts";
 
@@ -29,6 +29,13 @@ export interface RelayOptions {
   readonly endpoint?: () => Promise<DockerEndpoint>;
   readonly pingMs?: number;
   readonly deadMs?: number;
+}
+
+/** The OS of this machine for bb-box's forms: windows when BB's daemon runs in WSL (its kernel says microsoft), macos on a Mac, else linux. */
+export function machinePlatform(platform: string = process.platform, kernel: string = release()): "linux" | "macos" | "windows" {
+  if (platform === "win32" || /microsoft/i.test(kernel)) return "windows";
+  if (platform === "darwin") return "macos";
+  return "linux";
 }
 
 /** Docker's endpoint from a docker host address, or null for one the relay cannot reach. */
@@ -107,10 +114,10 @@ export function relayHandlers(options: RelayOptions = {}) {
         try {
           endpoint = await (options.endpoint ?? dockerEndpoint)();
         } catch (error) {
-          return { endpoint: "", found: false, reason: error instanceof Error ? error.message : String(error) };
+          return { endpoint: "", found: false, reason: error instanceof Error ? error.message : String(error), platform: machinePlatform() };
         }
         const failed = await reachable(endpoint);
-        return { endpoint: describe(endpoint), found: failed === null, reason: failed?.reason ?? null, ...(failed?.refused ? { refused: true } : {}) };
+        return { endpoint: describe(endpoint), found: failed === null, reason: failed?.reason ?? null, ...(failed?.refused ? { refused: true } : {}), platform: machinePlatform() };
       },
       relay: async ({ secret, path }: { secret: string; path: string }, context: ExperimentalHostRpcContext) => {
         const endpoint = await (options.endpoint ?? dockerEndpoint)();

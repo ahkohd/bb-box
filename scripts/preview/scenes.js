@@ -113,7 +113,7 @@ function kind(id, label, description, cores, desktop, gpu, spares = { target: 0,
 /** One backend's offer of a kind, for the picker's pane. */
 function offer(type, label, hosts, form, extra = {}) {
   const name = hosts.length === 1 ? `${label} on ${hosts[0]}` : hosts.length > 1 ? `${label} on ${hosts.length} ${type === "tart" ? "Macs" : "hosts"}` : label;
-  return { backend: type, name, type, label, hosts, form, ready: 0, free: null, admin: true, resizable: null, typicalReadyMs: null, docker: true, ...extra };
+  return { backend: type, name, type, label, hosts, form, ready: 0, free: null, admin: true, resizable: null, typicalReadyMs: null, docker: true, hostOs: type === "tart" ? "macos" : "linux", ...extra };
 }
 
 export const KINDS = [
@@ -354,6 +354,13 @@ const click = (root, role, name) => {
   element.click();
   return element;
 };
+/** Clicks the option of a role whose text starts with the words given: an option card's title, a provider row's name. */
+const pick = (role, prefix) => {
+  const element = [...document.querySelectorAll(`[role="${role}"]`)].find((candidate) => candidate.textContent.trim().startsWith(prefix));
+  if (!element) throw new Error(`No ${role} starting "${prefix}"`);
+  element.click();
+  return element;
+};
 const openMenu = (root, name) => {
   const trigger = [...root.querySelectorAll("button")].find((candidate) => candidate.getAttribute("aria-label") === name);
   trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -379,7 +386,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 520,
+    height: 600,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -390,29 +397,27 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 640,
+    height: 600,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      // The chosen kind has three offers: the pane's choice, with Docker picked.
-      const option = [...document.querySelectorAll('[role="radiogroup"][aria-label="Provider"] [role="radio"]')].find((candidate) => candidate.textContent.startsWith("Docker on"));
-      option?.click();
+      // Linux has three providers: the Docker machine picked, so the request names it (044).
+      pick("radio", "docker-host");
       await wait(200);
     },
   },
-  "panel-chooser-hover": {
+  "panel-chooser-filter": {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 640,
+    height: 480,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      // The pointer over the GPU desktop: the pane follows it.
-      const row = [...document.querySelectorAll('[role="radio"]')].find((candidate) => candidate.textContent.startsWith("Desktop, GPU"));
-      row?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      // The Physical chip keeps the pool only and hides Runs on.
+      [...document.querySelectorAll('[role="group"][aria-labelledby="new-box-kind-filter"] button')].find((chip) => chip.textContent.trim() === "Physical")?.click();
       await wait(200);
     },
   },
@@ -420,12 +425,13 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 640,
+    height: 470,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      click(document.body, "radio", "DesktopVMpve");
+      // Windows has no server, so Type snaps to Desktop and Server says Not available.
+      pick("radio", "Windows");
       await wait(200);
     },
   },
@@ -433,7 +439,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 568,
-    height: 980,
+    height: 760,
     viewport: 600,
     rpc: rpc([]),
     after: async (root) => {
@@ -445,27 +451,27 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 560,
+    height: 640,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      click(document.body, "radio", "Desktop, GPULXCpve");
+      pick("radio", "Desktop");
       await wait(100);
-      click(document.body, "radio", "Custom");
+      pick("radio", "Custom");
       await wait(300);
     },
   },
   "panel-refused": {
     slot: "boxes",
     chrome: boxesChrome,
-    height: 560,
+    height: 620,
     rpc: rpc([], { refuse: "pve has 10 GiB of memory free. A Linux desktop box needs 8 GiB and 4 GiB is kept free. Release a box you no longer need, or pick another kind." }),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      click(document.body, "radio", "Desktop, GPULXCpve");
-      click(document.body, "radio", "Large");
+      pick("radio", "Desktop");
+      pick("radio", "Large");
       click(document.body, "button", "Create");
       await wait(300);
     },
@@ -519,6 +525,18 @@ export const scenes = {
   "desktops-page": { slot: "desktops", width: 900, props: { subPath: "" }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([], { machines: MACHINES }) },
   "settings-machines-empty": { slot: "settings", width: 860, height: 420, props: {}, rpc: rpc([]) },
+  "settings-machines-add": {
+    slot: "settings",
+    width: 860,
+    height: 640,
+    props: {},
+    rpc: rpc([]),
+    after: async (root) => {
+      // Add machine is the same form with a Name step and an Add button (036).
+      click(root, "button", "Add machine");
+      await wait(300);
+    },
+  },
   "settings-setup": {
     slot: "settings",
     width: 860,

@@ -287,6 +287,13 @@ export interface Backend {
    * boxes themselves, and for a local Docker daemon.
    */
   readonly hosts?: readonly string[];
+  /**
+   * The OS of the machine its boxes run on, for the form's "Runs on" (a Mac,
+   * a Linux machine, a Windows PC): a Proxmox node and a pool machine are
+   * Linux, a Tart host a Mac, a Docker host as the machine says. Null while
+   * not yet known.
+   */
+  readonly hostOs?: GuestOs | null;
   readonly nature: MachineNature;
   /** Real backends: what a release restores, the box user's home or the whole machine. */
   readonly restores?: "home" | "machine";
@@ -496,6 +503,8 @@ export interface MachineAccess {
   ready(hostId: string): Promise<void>;
   /** The machine's name as BB has it, or null while bb-box does not know it. */
   name(hostId: string): string | null;
+  /** The OS of BB machine `hostId`, as bb-box's host entry there reported it (a Windows PC's BB daemon runs in WSL and says windows), or null until it has. */
+  platform?(hostId: string): GuestOs | null;
   /** Whether BB shows the machine connected now and has heard from it lately, with no call to it. Null when BB has no such machine. */
   connected(hostId: string): Promise<boolean | null>;
 }

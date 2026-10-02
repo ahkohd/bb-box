@@ -115,6 +115,9 @@ and `start` and `stop` throw `gone`.
   `box_list` gives it, its backend ID, or its one host's name. Then the
   registry tries that offer only, and refuses rather than place the box
   elsewhere ([044](decisions/044-a-box-can-be-asked-for-on-one-provider.md)).
+  `on` will also take a list, of which the first with room in acquire
+  order takes the box; the New box form sends one when its filters hide
+  some providers.
 - Offers of one kind must agree on what the agent relies on: `os`, `arch`,
   `gpu`, the computer-use driver, `enrol`, whether there is a desktop display,
   and the features the kind requires (`requires`). Each offer's `features`
@@ -839,7 +842,7 @@ any state -> releasing -> released     (release, or the thread is archived or de
 1. **Requested.** The registry asks each backend that offers the kind for
    `capacity` for the box's size, in the configuration's order, and uses the
    first one with room. An acquire that names a provider asks that one
-   only (044).
+   only, and one that names several asks only those (044).
    If none has room you see the backend's message, which says what is full
    and what to release. The registry records the box and returns at once.
 2. **Acquiring.** In the background, the backend claims a guest with

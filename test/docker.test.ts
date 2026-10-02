@@ -1,3 +1,4 @@
+import type { GuestOs } from "../src/backends/types.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -5,7 +6,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { toConfiguration } from "../scripts/smoke.ts";
-import { containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
+import { daemonOs, containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
 import { gpusOf, parseContainers, parseInfo } from "../src/backends/docker/cli.ts";
 import { parseDockerPart } from "../src/backends/docker/config.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
@@ -211,6 +212,7 @@ test("reads the daemon's facts and its containers", () => {
       version: "29.0.0",
       operatingSystem: "Ubuntu 24.04 LTS",
       osType: "linux",
+      kernelVersion: "",
       arch: "x86_64",
       cpus: 8,
       memoryMiB: 16 * 1024,
@@ -531,6 +533,20 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
   assert.deepEqual([remote.hosts, remote.label], [["docker.example"], "Docker on docker.example"]);
   const report = await backend.doctor(signal());
   assert.deepEqual([backend.hosts, backend.label], [["fake-docker"], "Docker on fake-docker"]);
+  // The host's OS for "Runs on": a local daemon is this machine's, and one over ssh:// the daemon's own words, kept with the name.
+  assert.equal(backend.hostOs, process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux");
+  // A backend over ssh:// asks its daemon once at a first start; the fake daemon's plain kernel reads as Linux.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(remote.hostOs, "linux");
+  assert.deepEqual(
+    [
+      daemonOs({ kernelVersion: "5.15.167.4-microsoft-standard-WSL2", operatingSystem: "Docker Desktop" }),
+      daemonOs({ kernelVersion: "6.6.0", operatingSystem: "Docker Desktop" }),
+      daemonOs({ kernelVersion: "6.6.0", operatingSystem: "OrbStack" }),
+      daemonOs({ kernelVersion: "6.8.0-45-generic", operatingSystem: "Ubuntu 24.04" }),
+    ],
+    ["windows", "macos", "macos", "linux"],
+  );
   // The name is kept, so a backend built again on the same storage, as after a restart, shows it before asking (#265).
   const later = new DockerBackend(dockerConfig(), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
   await new Promise((resolve) => setTimeout(resolve, 150));
@@ -739,6 +755,30 @@ test("a Docker host that is a BB machine is reached through bb-box's relay, name
   assert.match(daemon?.detail ?? "", /devpc is offline in BB\./);
   assert.match(daemon?.fix ?? "", /bb box docker-check host_m1/);
   assert.equal(report.checks.find((check) => check.id === "docker.cli")?.status, "ok", "the CLI's own version needs no machine");
+});
+
+test("a BB machine's OS is BB's word, kept in storage, so a restart knows a Windows PC before the host entry has answered again", async () => {
+  const fake = fakeDockerHost();
+  const state = { platform: null as GuestOs | null };
+  const context = {
+    ...testContext(),
+    machines: { dockerHost: () => "unix:///tmp/relay/host_m1.sock", ready: async () => {}, name: () => "devpc", platform: () => state.platform, connected: async () => true },
+  };
+  const backend = new DockerBackend(dockerConfig({ host: "bb:host_m1" }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(backend.hostOs, null, "unknown until the host entry has answered");
+  // The host entry says BB's daemon runs in WSL on a Windows PC.
+  state.platform = "windows";
+  assert.equal(backend.hostOs, "windows");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(await context.storage.get("host-os"), "windows", "kept with the host's name");
+  // After a restart BB has not answered yet: the kept OS stands until it does, and BB's word wins when it comes.
+  state.platform = null;
+  const restarted = new DockerBackend(dockerConfig({ host: "bb:host_m1" }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(restarted.hostOs, "windows");
+  state.platform = "linux";
+  assert.equal(restarted.hostOs, "linux");
 });
 
 test("on a BB machine, the doctor's fix for a missing image is bb-box's own build there (042)", async () => {

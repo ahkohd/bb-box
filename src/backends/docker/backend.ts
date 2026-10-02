@@ -21,6 +21,7 @@ import { hostname as localHostname } from "node:os";
 import { performance } from "node:perf_hooks";
 import { MIN_DESKTOP, type Display, type DisplaySize } from "../../transports/types.ts";
 import {
+  type GuestOs,
   BackendError,
   type AcquireHooks,
   type Backend,
@@ -145,6 +146,20 @@ interface Relabelled {
 
 /** The storage key of the host's last known name (#265). */
 const NAME_KEY = "host-name";
+/** The storage key of the host's OS, learned from a daemon over ssh://. */
+const OS_KEY = "host-os";
+
+/** This process's platform as a guest OS word: BB's server, for a local daemon. */
+function platformOs(platform: string): GuestOs {
+  return platform === "darwin" ? "macos" : platform === "win32" ? "windows" : "linux";
+}
+
+/** The OS of a daemon's machine, from docker info: WSL2's kernel says microsoft; Docker Desktop or OrbStack on another kernel is a Mac; Colima and Rancher Desktop read as plain Linux. */
+export function daemonOs(info: Pick<DockerInfo, "kernelVersion" | "operatingSystem">): GuestOs {
+  if (/microsoft/i.test(info.kernelVersion)) return "windows";
+  if (/docker desktop|orbstack/i.test(info.operatingSystem)) return "macos";
+  return "linux";
+}
 
 function relabelKey(ref: string): string {
   return `relabel/${ref}`;
@@ -261,6 +276,8 @@ export class DockerBackend implements Backend {
   #info: DockerInfo | null = null;
   /** The host's name as last known, kept in storage so a restart shows it before the daemon or BB has answered again (#265). */
   #knownName: string | null = null;
+  /** The host's OS as last learned, from BB for a BB machine or from the daemon over ssh://, kept with the name. */
+  #knownOs: GuestOs | null = null;
   /** Containers being acquired, by box ID, until their acquire ends. */
   readonly #placing = new Map<string, Placing>();
   /** Placement is one at a time, so two acquires never take the last room on the host. */
@@ -289,6 +306,8 @@ export class DockerBackend implements Backend {
     try {
       const kept = await this.#context.storage.get<string>(NAME_KEY);
       if (kept && !this.#info && !this.#config.machine) this.#knownName = kept;
+      const keptOs = await this.#context.storage.get<GuestOs>(OS_KEY);
+      if (keptOs && !this.#info) this.#knownOs = keptOs;
       if (!kept && !this.#config.machine && this.#config.host) {
         const info = await this.#cli.info();
         if (!this.#info) this.#info = info;
@@ -304,6 +323,36 @@ export class DockerBackend implements Backend {
     if (!name || name === this.#knownName) return;
     this.#knownName = name;
     await this.#context.storage.set(NAME_KEY, name).catch(() => {});
+  }
+
+  /** Remembers the host's OS, as BB or the daemon over ssh:// said it, for the next start. */
+  async #keepOs(os: GuestOs): Promise<void> {
+    if (os === this.#knownOs) return;
+    this.#knownOs = os;
+    await this.#context.storage.set(OS_KEY, os).catch(() => {});
+  }
+
+  /**
+   * The OS of the machine the daemon runs on: BB's word for a BB machine
+   * (its host entry knows a Windows PC under WSL), kept so a restart knows
+   * it before the host entry has answered again; this process's platform
+   * for a local daemon; and the daemon's own words for one over ssh://,
+   * where a kernel saying "microsoft" is a Windows PC and Docker Desktop
+   * or OrbStack on any other kernel is a Mac. Null until known.
+   */
+  get hostOs(): GuestOs | null {
+    if (this.#config.machine) {
+      const live = this.#context.machines?.platform?.(this.#config.machine) ?? null;
+      if (live) void this.#keepOs(live);
+      return live ?? this.#knownOs;
+    }
+    if (!this.#config.host) return platformOs(process.platform);
+    if (this.#info) {
+      const os = daemonOs(this.#info);
+      void this.#keepOs(os);
+      return os;
+    }
+    return this.#knownOs;
   }
 
   /** "Docker on" the host as hosts names it, so the kinds' text and the picker agree; "Docker" for a local daemon not yet asked. */

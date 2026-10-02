@@ -22,7 +22,16 @@ export const hostContract = defineRpcContract({
    */
   docker: {
     input: z.object({}).strict(),
-    output: z.object({ endpoint: z.string(), found: z.boolean(), reason: z.string().nullable(), refused: z.boolean().optional() }).strict(),
+    output: z
+      .object({
+        endpoint: z.string(),
+        found: z.boolean(),
+        reason: z.string().nullable(),
+        refused: z.boolean().optional(),
+        /** The machine's OS: windows for a Windows PC, whose BB daemon runs in WSL; macos for a Mac; else linux. */
+        platform: z.enum(["linux", "macos", "windows"]).optional(),
+      })
+      .strict(),
   },
   /**
    * Opens the Docker API relay (042): a WebSocket out to bb-box's route at

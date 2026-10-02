@@ -239,6 +239,7 @@ export class SshPoolBackend implements Backend {
   readonly nature = "real" as const;
   readonly label: string;
   readonly hosts: readonly string[] = [];
+  readonly hostOs = "linux" as const;
   readonly restores: "home" | "machine";
   readonly #config: SshPoolConfig;
   readonly #context: BackendContext;

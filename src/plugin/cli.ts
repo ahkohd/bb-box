@@ -24,7 +24,14 @@ const sizeOptions = {
   "disk-gib": { type: "integer", min: 1, max: 65536, description: "Root disk in GiB, for a custom size. Presets keep the kind's own disk." },
 } as const;
 /** Where a box goes (044): a provider by its name from bb box kinds, its backend ID or its one host. */
-const onOption = { on: { type: "string", description: "The provider to use, from bb box kinds, such as \"Docker on devpc\": only it is tried. Without it, the first with room." } } as const;
+const onOption = {
+  on: { type: "string", description: "The provider to use, from bb box kinds, such as \"Docker on devpc\", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room." },
+} as const;
+/** --on's names, one or several with commas between (044). */
+function providersOf(text: string): string | string[] {
+  const names = text.split(",").map((name) => name.trim()).filter((name) => name.length);
+  return names.length === 1 ? names[0]! : names;
+}
 const boxPositional = [{ name: "box", description: "The box's name or ID.", required: true }] as const;
 
 function out(text: string): PluginCliResult {
@@ -135,7 +142,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const threadId = threadOf(options.thread, ctx);
               const projectId = ctx.projectId ?? (await app.projectOf(threadId));
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: options.on } : {}) });
+              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}) });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
               return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };
@@ -168,7 +175,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ positionals, options }) =>
             guard("Adding the machine", async () => {
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}), ...(options.on ? { on: options.on } : {}) });
+              let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}), ...(options.on ? { on: providersOf(options.on) } : {}) });
               if (!options["no-wait"]) box = await boxes.enrolled((await boxes.settled(box)) ?? box);
               if (options.json) return json(app.view(box));
               return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };
