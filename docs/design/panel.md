@@ -236,7 +236,7 @@ words are never cut off.
 | Where the box goes: the first with room, in this order, unless    |
 | you choose one.                                                   |
 |                                                                   |
-| Filter [ Kind: All  v ] [ Runs on: Any machine  v ]               |
+|               Filter [ Kind: All  v ] [ Runs on: Any machine  v ] |
 |                                                                   |
 | [ First with room                                              ]  |
 | [ Any of the 3 below, in order                                 ]  |
@@ -289,13 +289,16 @@ bottom sheet still carries the title "New box".
   kind needs no panel change. Descriptions stay where agents read them, in
   `box_list` and the skill.
 - **Provider** is where the box goes (044). Under the description, a row
-  of its own holds a dim "Filter" and two compact menus, their labels
-  inside the trigger ("Kind: All", "Runs on: Any machine"), since they
-  filter the list rather than choose from it; on a narrow pane the menus
-  wrap under "Filter". The row sits the section's usual space below the
+  of its own holds a dim "Filter", at the menus' text size, and two
+  compact menus, their labels inside the trigger ("Kind: All", "Runs on:
+  Any machine"), since they filter the list rather than choose from it,
+  the three together at the row's right edge; on a narrow pane they wrap,
+  still right-aligned. The row sits the section's usual space below the
   description and above the list (the operator's notes of 2 October
-  2026: chips had read as a second kind of control, and the menus had
-  then sat on the title row, too tight). **Kind**: All, Container (LXC or Docker), VM,
+  2026: chips had read as a second kind of control, the menus had then
+  sat on the title row, too tight, and a left-aligned row in a small
+  size read as a third kind of thing). The GPU sub-label under
+  Resources is the same dim label at the same size. **Kind**: All, Container (LXC or Docker), VM,
   Physical; an option no provider of the kind makes is there but cannot
   be chosen. **Runs on**: Any machine, a Mac, a Linux machine, a Windows
   PC, listing the machines the providers run on (`OfferView.hostOs`);
