@@ -3,7 +3,11 @@
 Status: accepted, 1 October 2026. Partly supersedes
 [027](027-a-kind-says-when-it-has-a-desktop.md): how the settings keys from
 before 027 are read. Amended before it was built: what backends see of the
-configuration.
+configuration. Extended by
+[049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md):
+the configuration holds images; and
+[050](050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md):
+it holds the tailnet and its key.
 
 ## Context
 

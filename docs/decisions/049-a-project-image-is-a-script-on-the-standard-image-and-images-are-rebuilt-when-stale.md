@@ -6,7 +6,9 @@ holds images; [033](033-a-thread-can-start-on-a-new-box.md): a new box
 takes its project's image; [032](032-spare-boxes-are-enrolled-ahead.md):
 spares can be of an image; and
 [042](042-a-docker-host-can-be-a-bb-machine.md): Docker images are rebuilt
-through the same relay.
+through the same relay. Extended by
+[050](050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md):
+standard Linux images carry Tailscale, stopped and with no state.
 
 ## Context
 
@@ -122,8 +124,8 @@ The example project's script:
     curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list \
       -o /etc/apt/sources.list.d/tailscale.list
     apt-get update && apt-get install -y tailscale
-    # Each box makes its own node key.
-    systemctl stop tailscaled && rm -f /var/lib/tailscale/tailscaled.state
+    # No node of its own: a box joins at start (050).
+    systemctl disable --now tailscaled && rm -rf /var/lib/tailscale
     sudo -iu box sh -c 'curl -fsSL https://sh.rustup.rs |
       sh -s -- -y --profile minimal -c clippy -c rustfmt'
 

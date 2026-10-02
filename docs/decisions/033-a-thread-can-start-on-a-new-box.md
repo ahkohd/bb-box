@@ -2,7 +2,9 @@
 
 Status: accepted, 1 October 2026. Partly superseded by
 [034](034-a-working-thread-holds-its-box.md): only a thread that is
-working stops a release or a stop, and a person can force one.
+working stops a release or a stop, and a person can force one. Extended
+by [049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md):
+a new box takes its project's image.
 
 ## Context
 
