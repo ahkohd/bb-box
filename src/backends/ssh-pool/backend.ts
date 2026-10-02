@@ -1,14 +1,14 @@
-// The SSH host pool backend. It lends Linux machines the operator already
-// has, reached over SSH, one box per machine. bb-box logs in as its admin
-// user on each machine and runs only its helper, setup/ssh-pool/machine.sh,
-// as root through sudo. The helper claims the machine for a box by making a
+// The SSH host pool backend. It lends Linux machines and Macs the operator
+// already has, reached over SSH, one box per machine. bb-box logs in as its
+// admin user on each machine and runs only its helper, setup/ssh-pool/machine.sh
+// or machine-mac.sh on a Mac, as root through sudo. The helper claims the machine for a box by making a
 // new user for it, bbx-<generation>, whose SSH the box's commands use, and
 // releases it by removing that user and everything the user left. The reset
 // generation counts completed resets: a claim names the generation it
 // expects, so a machine is never lent twice without a reset between.
 //
 // The truth is on the machine (016, 018). The helper's markers in
-// /var/lib/bb-box say which install and box hold it, or that it is being
+// /var/lib/bb-box, or /var/db/bb-box on a Mac, say which install and box hold it, or that it is being
 // reset, and every method reads them before it acts. bb-box's storage keeps
 // only what the machine cannot say: that a machine is out of service and
 // why, the generation it last saw, and the box on a machine that does not
@@ -18,6 +18,11 @@
 // returnToService resets it again, or when the operator runs the helper's
 // reset on the machine, which bb-box sees as a clean machine at a later
 // generation.
+//
+// A Mac (047) has no whole-machine reset. Its reset makes the next box's user
+// ahead and signs it in at the console, so a free Mac is a warm box. The box's
+// desktop is the console, through Screen Sharing, which the relay signs in to
+// as the box user with a password the helper gives for each connection.
 
 import {
   BackendError,
@@ -32,6 +37,7 @@ import {
   type Capacity,
   type CommandCapability,
   type DoctorCheck,
+  type ComputerUse,
   type DoctorReport,
   type Guest,
   type GuestFact,
@@ -40,16 +46,19 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
+import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import type { RunResult, SshAccess } from "../../transports/types.ts";
+import type { Arch, Display, DisplayAuth, Route, RunResult, SshAccess } from "../../transports/types.ts";
+import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
-import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, parseStatus, releaseInput, type MachineStatus, type Marker } from "./protocol.ts";
+import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, parseDisplay, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker } from "./protocol.ts";
 
 const SSH_KEY = "ssh-key";
 const RECORD = "machine/";
 const USER_PREFIX = "bbx-";
-const ARCH = "x86_64";
+/** The architecture each OS's offers promise, so every machine of it must have. */
+const ARCH: Readonly<Record<SshPoolMachine["os"], Arch>> = { linux: "x86_64", macos: "arm64" };
 /** The pool's single entry in capacity. */
 const POOL_HOST = "SSH host pool";
 /** Claiming makes a user; SSH as it answers at once. This leaves room for a slow machine or jump host. */
@@ -59,6 +68,13 @@ const CLAIM_TIMEOUT_MS = 60_000;
 /** The helper waits this long for its lock, and a whole-machine reset may take as long. */
 const RESET_TIMEOUT_MS = 15 * 60_000;
 const RESET_POLL_MS = 2_000;
+/** A Mac's claim waits for SSH, the box user at the console and, for a desktop, Cua's socket (047). */
+const MAC_READY_TIMEOUT_MS = 3 * 60_000;
+const MAC_READY_POLL_MS = 1_000;
+/** Screen Sharing, which a Mac's display reaches through the box user's SSH. */
+const SCREEN_SHARING_PORT = 5900;
+/** The Cua Driver setup-mac.sh installs, as Tart's image does, with its socket in the box user's home. */
+const MAC_CUA: ComputerUse = { driver: "cua", version: CUA_VERSION, socket: "~/Library/Caches/cua-driver/cua-driver.sock" };
 
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
 
@@ -73,7 +89,7 @@ function linuxOffer(docker: boolean): BoxKind {
     requires: [],
     capabilities: {
       os: "linux",
-      arch: ARCH,
+      arch: ARCH.linux,
       gpu: false,
       features: docker ? ["docker"] : [],
       command: docker ? { ...SSH_COMMAND, admin: true } : SSH_COMMAND,
@@ -82,6 +98,29 @@ function linuxOffer(docker: boolean): BoxKind {
       enrol: true,
     },
     readyTimeoutMs: READY_TIMEOUT_MS,
+  };
+}
+
+/** A Mac's offers (047): its box user at the console, with the desktop and computer use for macos-desktop. */
+function macOffer(desktop: boolean): BoxKind {
+  return {
+    id: desktop ? "macos-desktop" : "macos",
+    label: desktop ? "macOS desktop" : "macOS",
+    description: desktop
+      ? "A Mac of its own, with its desktop shown in the panel and computer use, for Apple's tools and apps."
+      : "A Mac of its own, for builds and Apple's tools. Its desktop is not shown.",
+    requires: [],
+    capabilities: {
+      os: "macos",
+      arch: ARCH.macos,
+      gpu: false,
+      features: [],
+      command: SSH_COMMAND,
+      displays: desktop ? [{ id: "desktop", protocol: "rfb", resizable: false }] : [],
+      computerUse: desktop ? MAC_CUA : null,
+      enrol: true,
+    },
+    readyTimeoutMs: MAC_READY_TIMEOUT_MS,
   };
 }
 
@@ -218,6 +257,45 @@ function nodeFits(version: string): boolean {
 const NODE_FIX =
   "Install Node.js 22.19 or newer with npm, such as Node.js 24 from NodeSource or nodejs.org. Debian's and Ubuntu's own nodejs is too old. BB's installer needs it to enrol a box.";
 const GIT_FIX = "Install git and gh. On Debian or Ubuntu: sudo apt-get install git gh.";
+const MAC_NODE_FIX = "Install Node.js 22.19 or newer with Homebrew: brew install node. BB's installer needs it to enrol a box.";
+const MAC_GIT_FIX = "Install git and gh with Homebrew: brew install git gh.";
+const FULL_DISK_FIX = "In System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users.";
+
+/** The setup script for the machine, and how to run it. */
+function setupWords(machine: SshPoolMachine): string {
+  return machine.os === "macos" ? "setup/ssh-pool/setup-mac.sh" : "setup/ssh-pool/setup.sh";
+}
+
+function setupAs(machine: SshPoolMachine): string {
+  return machine.os === "macos" ? "with sudo" : "as root";
+}
+
+/** Where the helper keeps its state. */
+function stateDir(machine: SshPoolMachine): string {
+  return machine.os === "macos" ? "/var/db/bb-box" : "/var/lib/bb-box";
+}
+
+/** The helper's mode for a release or reset: "machine" only for a Linux machine with a whole-machine reset. A Mac has none (047). */
+function resetMode(machine: SshPoolMachine): string[] {
+  return machine.os === "linux" && machine.reset === "machine" ? ["machine"] : [];
+}
+
+/** Why a free Mac cannot take a box, or null when it can (047). */
+function macProblem(mac: MacStatus, generation: number): string | null {
+  const user = `${USER_PREFIX}${generation}`;
+  const reset = `Reset it there with "sudo /usr/local/libexec/bb-box/machine reset".`;
+  if (mac.fileVault) return "FileVault is on, so the Mac cannot sign its box user in. Turn it off, then reset the Mac.";
+  if (!mac.fullDisk) return `The helper lacks Full Disk Access, which the Mac's reset needs. ${FULL_DISK_FIX}`;
+  if (mac.user !== user) return `Box user ${user} is not made. ${reset}`;
+  if (mac.console === user) return null;
+  if (mac.console && mac.console !== "root" && !mac.console.startsWith(USER_PREFIX)) return `${mac.console} is signed in at the console, so box user ${user} cannot be. Sign them out. ${reset}`;
+  return `Box user ${user} is not signed in at the console. If the Mac has just started, it signs in within a minute or so. If not, check that FileVault is off. ${reset}`;
+}
+
+/** Tests as the box user that Cua's socket is in its home: the socket may start with ~/, which only the box user's $HOME expands (047). */
+function socketTest(socket: string): string {
+  return `test -S ${socket.startsWith("~/") ? `"$HOME"/${quote(socket.slice(2))}` : quote(socket)}`;
+}
 
 function sameSize(a: BoxSize, b: BoxSize): boolean {
   return a.cores === b.cores && a.memoryMiB === b.memoryMiB && a.diskGiB === b.diskGiB;
@@ -239,14 +317,15 @@ export class SshPoolBackend implements Backend {
   readonly nature = "real" as const;
   readonly label: string;
   readonly hosts: readonly string[] = [];
-  readonly hostOs = "linux" as const;
+  /** linux while every machine runs Linux, macos while every one is a Mac, and null with both (047). */
+  readonly hostOs: "linux" | "macos" | null;
   readonly restores: "home" | "machine";
   readonly #config: SshPoolConfig;
   readonly #context: BackendContext;
   readonly #options: SshPoolBackendOptions;
   readonly #keyFile = new KeyFile();
   readonly #machines: ReadonlyMap<string, SshPoolMachine>;
-  /** Every machine gives Docker, so the pool's boxes have it. */
+  /** Every Linux machine gives Docker, so the pool's linux boxes have it. */
   readonly #docker: boolean;
   /** Machines this process is resetting, which held() leaves to it. */
   readonly #resetting = new Set<string>();
@@ -266,11 +345,20 @@ export class SshPoolBackend implements Backend {
     this.#machines = new Map(config.machines.map((machine) => [machine.name, machine]));
     this.label = `SSH host pool of ${plural(config.machines.length, "machine")}`;
     this.restores = config.machines.length && config.machines.every((machine) => machine.reset === "machine") ? "machine" : "home";
-    this.#docker = config.machines.length > 0 && config.machines.every((machine) => machine.docker);
+    const linux = config.machines.filter((machine) => machine.os === "linux");
+    this.#docker = linux.length > 0 && linux.every((machine) => machine.docker);
+    const systems = new Set(config.machines.map((machine) => machine.os));
+    this.hostOs = systems.size > 1 ? null : systems.has("macos") ? "macos" : "linux";
   }
 
+  /** The kinds some machine lists. */
   kinds(): readonly BoxKind[] {
-    return this.#config.machines.length ? [linuxOffer(this.#docker)] : [];
+    const listed = new Set(this.#config.machines.flatMap((machine) => machine.kinds));
+    return [
+      ...(listed.has("linux") ? [linuxOffer(this.#docker)] : []),
+      ...(listed.has("macos") ? [macOffer(false)] : []),
+      ...(listed.has("macos-desktop") ? [macOffer(true)] : []),
+    ];
   }
 
   #offer(kind: string): BoxKind {
@@ -436,6 +524,7 @@ export class SshPoolBackend implements Backend {
 
   async #waitReady(machine: SshPoolMachine, user: string, kind: BoxKind, signal: AbortSignal): Promise<void> {
     const timeoutMs = this.#options.readyTimeoutMs ?? kind.readyTimeoutMs;
+    const deadline = Date.now() + timeoutMs;
     const command = await this.#command(machine, user);
     // Through the shared connection, which the box's first commands then use.
     const answers = { probe: (signal?: AbortSignal) => command.answers(signal) };
@@ -445,6 +534,33 @@ export class SshPoolBackend implements Backend {
         `Machine ${machine.name} made box user ${user}, but SSH as ${user} did not answer within ${Math.round(timeoutMs / 1000)} s. ` +
           `Check that sshd on ${machine.name} lets users ${USER_PREFIX}* log in with a key, as the setup guide says.`,
       );
+    }
+    if (machine.os === "macos") await this.#waitSession(machine, user, kind, command, deadline, timeoutMs, signal);
+  }
+
+  /** Waits for a Mac's box user at the console and, for a desktop, Cua's socket in its home, which the box user tests (047). */
+  async #waitSession(machine: SshPoolMachine, user: string, kind: BoxKind, command: SshTransport, deadline: number, timeoutMs: number, signal: AbortSignal): Promise<void> {
+    const socket = kind.capabilities.computerUse?.socket ?? null;
+    const sleep = this.#options.sleep ?? pause;
+    for (;;) {
+      const status = (await this.#status(machine, signal)).status;
+      let missing: "console" | "socket" | null = null;
+      if (status?.mac?.console !== user) missing = "console";
+      else if (socket) {
+        const test = await command.run(socketTest(socket), { timeoutMs: STATUS_TIMEOUT_MS, signal }).catch(() => null);
+        if (test?.exitCode !== 0) missing = "socket";
+      }
+      if (!missing) return;
+      signal.throwIfAborted();
+      if (Date.now() >= deadline) {
+        const within = `within ${Math.round(timeoutMs / 1000)} s`;
+        throw new Error(
+          missing === "console"
+            ? `Box user ${user} was not signed in at ${machine.name}'s console ${within}. Check that FileVault is off and nobody else is signed in there, as the setup guide says.`
+            : `Cua Driver's socket did not appear in box user ${user}'s session on ${machine.name} ${within}. Check that setup-mac.sh installed Cua Driver there.`,
+        );
+      }
+      await sleep(MAC_READY_POLL_MS, signal);
     }
   }
 
@@ -479,7 +595,7 @@ export class SshPoolBackend implements Backend {
     try {
       await this.#write(machine, { state: "resetting", since: Date.now(), generation, reason: null, owner: markerOwner(marker), user });
       await (await this.#keys()).ssh.forget(this.#access(machine, user));
-      const args = ["release", String(generation), ...(machine.reset === "machine" ? ["machine"] : [])];
+      const args = ["release", String(generation), ...resetMode(machine)];
       const outcome = await this.#reset(machine, args, releaseInput(this.#context.installId, box), signal);
       if (outcome.generation !== null) {
         await this.#write(machine, { state: "free", since: Date.now(), generation: outcome.generation, reason: null, owner: null, user: null });
@@ -518,9 +634,10 @@ export class SshPoolBackend implements Backend {
         if (result.exitCode === 255 || result.timedOut) throw new Error(`Machine ${machine.name} stopped answering during its reset: ${said(result)} bb-box finishes the reset later.`);
         return { generation: null, reason: `Its reset failed: ${said(result)}` };
       }
-      // The whole-machine reset runs on, and may restart the machine.
+      // The whole-machine reset, or a Mac's sign-in of its next box user, runs on, and may restart the machine.
       if (Date.now() >= deadline) {
-        return { generation: null, reason: `Its whole-machine reset did not finish within ${Math.round(timeoutMs / 60_000)} minutes.` };
+        const what = machine.os === "macos" ? "Its reset did not sign the next box user in" : "Its whole-machine reset did not finish";
+        return { generation: null, reason: `${what} within ${Math.round(timeoutMs / 60_000)} minutes.` };
       }
       await sleep(this.#options.resetPollMs ?? RESET_POLL_MS, signal);
     }
@@ -569,17 +686,43 @@ export class SshPoolBackend implements Backend {
     if (!machine) throw new BackendError("gone", `Machine ${guest.ref} is no longer in the SSH host pool's settings.`);
     const user = typeof guest.data?.user === "string" ? guest.data.user : `${USER_PREFIX}${guest.data?.generation}`;
     const access = this.#access(machine, user);
-    const docker = this.kinds().find((offer) => offer.id === kind)?.capabilities.features.includes("docker") ?? false;
+    const offer = this.kinds().find((other) => other.id === kind);
+    const docker = offer?.capabilities.features.includes("docker") ?? false;
     const host = access.host.includes(":") ? `[${access.host}]` : access.host;
+    const { ssh } = await this.#keys();
+    const displays = (machine.os === "macos" ? (offer?.capabilities.displays ?? []) : []).map(
+      (display): Display => ({ ...display, label: "Desktop", open: (signal) => this.#openDisplay(machine, guest, ssh, access, signal) }),
+    );
     return {
       command: await this.#command(machine, user),
-      displays: [],
+      displays,
       access: {
         ssh: access,
         // DOCKER_HOST cannot go through a jump host.
         dockerHost: docker && !machine.jump ? `ssh://${user}@${host}${access.port === 22 ? "" : `:${access.port}`}` : null,
       },
     };
+  }
+
+  /**
+   * A Mac's Screen Sharing, through `ssh -W` as the box user, which the relay
+   * signs in to as the box user. The helper's display command gives the
+   * password over the admin's SSH at each open, only to the box that holds the
+   * Mac. It goes into the sign-in and nowhere else: no error or log quotes
+   * the command's output (047).
+   */
+  async #openDisplay(machine: SshPoolMachine, guest: Guest, ssh: Ssh, access: SshAccess, signal?: AbortSignal): Promise<{ route: Route; auth: DisplayAuth }> {
+    const generation = whole(guest.data?.generation);
+    const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+    if (generation === null || !box) throw new BackendError("gone", `Machine ${machine.name} does not say which box holds it, so its desktop cannot be shown.`);
+    const result = await this.#helper(machine, ["display", String(generation)], releaseInput(this.#context.installId, box), STATUS_TIMEOUT_MS, signal);
+    if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Machine ${machine.name} is no longer this box's, so its desktop cannot be shown.`);
+    if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} did not give its desktop's sign-in: ${said(result)}`);
+    const signIn = parseDisplay(result.stdout);
+    if (!signIn || signIn.user !== access.user) {
+      throw new Error(`Machine ${machine.name} did not give box user ${access.user}'s sign-in for its desktop. Run this bb-box's setup/ssh-pool/setup-mac.sh on it with sudo.`);
+    }
+    return { route: ssh.route(access, SCREEN_SHARING_PORT), auth: { type: "apple", user: signIn.user, password: signIn.password } };
   }
 
   async members(signal?: AbortSignal): Promise<readonly PoolMember[]> {
@@ -618,7 +761,7 @@ export class SshPoolBackend implements Backend {
     }
     this.#resetting.add(ref);
     try {
-      const args = ["reset", ...(machine.reset === "machine" ? ["machine"] : [])];
+      const args = ["reset", ...resetMode(machine)];
       const outcome = await this.#reset(machine, args, releaseInput(this.#context.installId, null), signal);
       if (outcome.generation === null) {
         const reason = outcome.reason ?? "Another bb-box install holds it.";
@@ -633,7 +776,9 @@ export class SshPoolBackend implements Backend {
 
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {
     const checks: DoctorCheck[] = [];
-    const notes: string[] = [`This install's ID is ${this.#context.installId}. The machines it holds name it in /var/lib/bb-box/owner.`];
+    const macs = this.#config.machines.filter((machine) => machine.os === "macos");
+    const owners = macs.length ? (macs.length === this.#config.machines.length ? "/var/db/bb-box/owner" : "/var/lib/bb-box/owner, or /var/db/bb-box/owner on a Mac") : "/var/lib/bb-box/owner";
+    const notes: string[] = [`This install's ID is ${this.#context.installId}. The machines it holds name it in ${owners}.`];
     const pass = ([id, name]: Check, detail: string) => checks.push({ id, name, status: "ok", detail, fix: null });
     const warn = ([id, name]: Check, detail: string, fix: string) => checks.push({ id, name, status: "warn", detail, fix });
     const fail = ([id, name]: Check, detail: string, fix: string) => checks.push({ id, name, status: "fail", detail, fix });
@@ -646,7 +791,7 @@ export class SshPoolBackend implements Backend {
       keys = await this.#keys();
       if (keys.publicKey) {
         pass(SSH_KEY_CHECK, keys.generated ? "bb-box made a key; its public key is below." : "From bb-box's settings; its public key is below.");
-        notes.push(`Give setup/ssh-pool/setup.sh this public key with --key, so each machine's admin user accepts it: ${keys.publicKey}`);
+        notes.push(`Give setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, this public key with --key, so each machine's admin user accepts it: ${keys.publicKey}`);
       } else {
         fail(SSH_KEY_CHECK, "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole private key, or clear the setting so bb-box makes one.");
       }
@@ -655,16 +800,27 @@ export class SshPoolBackend implements Backend {
     }
 
     if (!this.#config.machines.length) {
-      fail(MACHINES_CHECK, "The pool has no machines yet.", `Set up a machine with setup.sh and this public key, then add the line it prints to the machines, like ${EXAMPLE}.`);
+      fail(MACHINES_CHECK, "The pool has no machines yet.", `Set up a machine with setup.sh, or a Mac with setup-mac.sh, and this public key, then add the line it prints to the machines, like ${EXAMPLE}.`);
     }
     const views = keys?.publicKey ? await this.#survey(signal) : [];
+    // Only the doctor asks for Cua's grants, which take the helper seconds to read.
+    const desktops = views.filter((view) => view.probe.status?.mac && this.#lists(view.machine, "macos-desktop"));
+    const grants = new Map(await Promise.all(desktops.map(async (view) => [view.machine, (await this.#status(view.machine, signal, true)).status?.mac?.grants ?? null] as const)));
     const others = new Map<string, number>();
     for (const machine of this.#config.machines) {
       const name = machine.name;
+      const mac = machine.os === "macos";
+      const docker = this.#docker && !mac;
+      const setup = `${setupWords(machine)} on ${name} ${setupAs(machine)}`;
       const check = (what: string, label: string): Check => [`machine.${name}.${what}`, `${name}: ${label}`];
       const SSH = check("ssh", "SSH"), HELPER = check("helper", "helper"), ARCH_CHECK = check("arch", "architecture");
       const TOOLS = check("tools", "tools"), DOCKER = check("docker", "Docker"), STATE = check("state", "state");
-      const rest = [HELPER, ARCH_CHECK, TOOLS, ...(this.#docker ? [DOCKER] : []), STATE];
+      const FILEVAULT = check("filevault", "FileVault"), SIGNIN = check("signin", "sign-in"), FULL_DISK = check("fulldisk", "Full Disk Access");
+      const SCREEN = check("screensharing", "Screen Sharing"), GRANTS = check("grants", "Cua Driver's grants");
+      const desktop = this.#lists(machine, "macos-desktop");
+      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, ...(desktop ? [SCREEN, GRANTS] : [])] : [];
+      const after = [ARCH_CHECK, TOOLS, ...(docker ? [DOCKER] : []), ...macChecks, STATE];
+      const rest = [HELPER, ...after];
       const view = views.find((other) => other.machine === machine);
       const where = `${machine.admin.user}@${machine.admin.host}${machine.admin.port === 22 ? "" : `:${machine.admin.port}`}${machine.jump ? ` through ${machine.jump.host}` : ""}`;
       if (!view) {
@@ -678,8 +834,8 @@ export class SshPoolBackend implements Backend {
           SSH,
           `${where} did not answer: ${probe.problem}`,
           hostKey
-            ? `Put ${name}'s current host key in the host keys setting. setup.sh prints it.`
-            : `Check that ${name} is on and that BB's server reaches it, and that its admin user accepts bb-box's key: run setup.sh on it with --key and the public key below.`,
+            ? `Put ${name}'s current host key in the host keys setting. ${mac ? "setup-mac.sh" : "setup.sh"} prints it.`
+            : `Check that ${name} is on and that BB's server reaches it, and that its admin user accepts bb-box's key: run ${mac ? "setup-mac.sh" : "setup.sh"} on it with --key and the public key below.`,
         );
         skip(...rest);
         continue;
@@ -687,19 +843,22 @@ export class SshPoolBackend implements Backend {
       pass(SSH, `${where} answers.`);
       const { status } = probe;
       if (!status || status.helper === null) {
-        fail(HELPER, `bb-box's helper did not run: ${probe.problem ?? "it gave no version."}`, `Run setup/ssh-pool/setup.sh on ${name} as root.`);
-        skip(ARCH_CHECK, TOOLS, ...(this.#docker ? [DOCKER] : []), STATE);
+        fail(HELPER, `bb-box's helper did not run: ${probe.problem ?? "it gave no version."}`, `Run ${setup}.`);
+        skip(...after);
         continue;
       }
       if (status.helper < HELPER_VERSION || status.generation === null) {
         fail(
           HELPER,
-          status.generation === null ? "The machine has no reset generation in /var/lib/bb-box." : `The helper is version ${status.helper}; this bb-box needs ${HELPER_VERSION}.`,
-          `Run this bb-box's setup/ssh-pool/setup.sh on ${name} as root.`,
+          status.generation === null ? `The machine has no reset generation in ${stateDir(machine)}.` : `The helper is version ${status.helper}; this bb-box needs ${HELPER_VERSION}.`,
+          `Run this bb-box's ${setup}.`,
         );
       } else pass(HELPER, `Version ${status.helper}, reset generation ${status.generation}.`);
-      if (status.arch === ARCH) pass(ARCH_CHECK, ARCH);
-      else fail(ARCH_CHECK, `${name} is ${status.arch || "of unknown architecture"}, but its kinds promise ${ARCH}.`, `Take ${name} out of the machines list: every machine that serves a kind must be ${ARCH}.`);
+      const arch = ARCH[machine.os];
+      if ((status.mac !== null) !== mac) {
+        fail(ARCH_CHECK, `${name} runs ${status.mac ? "macOS" : "Linux"}, but its line lists ${machine.kinds.join(", ")}.`, `List ${status.mac ? "macos or macos-desktop" : "linux"} on ${name}'s line, or take it out of the machines list.`);
+      } else if (status.arch === arch) pass(ARCH_CHECK, status.mac ? `macOS ${status.mac.version || "of unknown version"} on ${arch}.` : arch);
+      else fail(ARCH_CHECK, `${name} is ${status.arch || "of unknown architecture"}, but its kinds promise ${arch}.`, `Take ${name} out of the machines list: every machine that serves a kind must be ${arch}.`);
       const { missing, enrolment } = status;
       const node = enrolment?.node ?? null;
       const forBB = enrolment ? [...(node === null ? ["node"] : []), ...enrolment.lacks.filter((tool) => tool === "npm")] : [];
@@ -710,30 +869,35 @@ export class SshPoolBackend implements Backend {
         ...(lacks.length ? [`${name} lacks ${lacks.join(", ")}.`] : []),
         ...(oldNode ? [`${name} has Node.js ${node}, but BB's installer needs 22.19 or newer.`] : []),
       ].join(" ");
+      const [nodeFix, gitFix] = mac ? [MAC_NODE_FIX, MAC_GIT_FIX] : [NODE_FIX, GIT_FIX];
       const fixes = [
-        ...(missing.length ? [`Install ${missing.join(", ")}. curl-or-wget means either. Boxes need sh, tar and curl or wget to enrol in BB.`] : []),
-        ...(forBB.length || oldNode ? [NODE_FIX] : []),
-        ...(forGit.length ? [GIT_FIX] : []),
+        ...(missing.length
+          ? [mac ? `Install ${missing.join(", ")}, or run ${setupWords(machine)} again.` : `Install ${missing.join(", ")}. curl-or-wget means either. Boxes need sh, tar and curl or wget to enrol in BB.`]
+          : []),
+        ...(forBB.length || oldNode ? [nodeFix] : []),
+        ...(forGit.length ? [gitFix] : []),
       ];
       if (missing.length || forBB.length || oldNode) fail(TOOLS, found, `On ${name}: ${fixes.join(" ")}`);
-      else if (forGit.length) warn(TOOLS, `${found} Boxes there enrol in BB, but cannot use the thread's GitHub access, which git takes through gh.`, `On ${name}: ${GIT_FIX}`);
+      else if (forGit.length) warn(TOOLS, `${found} Boxes there enrol in BB, but cannot use the thread's GitHub access, which git takes through gh.`, `On ${name}: ${gitFix}`);
       else if (!enrolment) {
-        warn(TOOLS, `The helper does not say whether ${name} has Node.js, npm, git and gh, which enrolment and the thread's GitHub access need.`, `Run this bb-box's setup/ssh-pool/setup.sh on ${name} as root.`);
+        warn(TOOLS, `The helper does not say whether ${name} has Node.js, npm, git and gh, which enrolment and the thread's GitHub access need.`, `Run this bb-box's ${setup}.`);
       } else {
-        const linger = status.systemd ? "It has systemd, so BB's daemon lingers." : "There is no systemd, so BB's daemon runs without linger.";
-        pass(TOOLS, `Everything the helper, enrolment and the thread's GitHub access need, with Node.js ${node}. ${linger}`);
+        const linger = mac ? "" : status.systemd ? " It has systemd, so BB's daemon lingers." : " There is no systemd, so BB's daemon runs without linger.";
+        pass(TOOLS, `Everything the helper, enrolment and the thread's GitHub access need, with Node.js ${node}.${linger}`);
       }
       // A machine's Docker matters only when the pool's boxes get it.
-      if (this.#docker) {
+      if (docker) {
         const problem = this.#dockerProblem(view);
         if (problem) {
           fail(DOCKER, `${problem} Its line has reset=machine, so its boxes get Docker.`, `Install Docker on ${name}, and its reset-machine command with setup.sh --reset-hook, as the SSH host pool's setup guide says.`);
         } else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
+      if (mac && !status.mac) skip(...macChecks);
+      else if (mac) this.#macChecks(status, machine, grants.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, SCREEN, GRANTS }, { pass, warn, fail });
       // An operator's reset names no install.
       const install = status.owner?.install;
       if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
-      const reset = `"sudo /usr/local/libexec/bb-box/machine reset${machine.reset === "machine" ? " machine" : ""}"`;
+      const reset = `"sudo /usr/local/libexec/bb-box/machine ${["reset", ...resetMode(machine)].join(" ")}"`;
       if (view.state === "out-of-service") {
         warn(STATE, `Out of service: ${view.reason}`, `Fix the cause on ${name}, then reset it there with ${reset}. bb-box lends it again once it is clean.`);
       } else if (view.state === "resetting" && status.owner && !install) {
@@ -748,8 +912,9 @@ export class SshPoolBackend implements Backend {
           "If one of these IDs was this install's before it lost its storage, take it back with bb box install-id --set <id>.",
       );
     }
-    const without = this.#config.machines.filter((machine) => !machine.docker);
-    if (this.#config.machines.some((machine) => machine.docker) && without.length) {
+    const linux = this.#config.machines.filter((machine) => machine.os === "linux");
+    const without = linux.filter((machine) => !machine.docker);
+    if (linux.some((machine) => machine.docker) && without.length) {
       const names = without.map((machine) => machine.name).join(", ");
       warn(
         DOCKER_CHECK,
@@ -758,8 +923,14 @@ export class SshPoolBackend implements Backend {
         `To give them Docker, set up a whole-machine reset on ${names} and add reset=machine to ${without.length === 1 ? "its line" : "their lines"}, as the SSH host pool's setup guide says.`,
       );
     }
-    if (this.restores === "home") {
+    if (linux.length && !this.#docker) {
       notes.push("A release removes the box's user, its files and its processes. It does not undo changes made as root, which boxes from this pool cannot make, since none of them has Docker.");
+    }
+    if (macs.length) {
+      notes.push(
+        "On a Mac, a release removes the box's user, its processes and every file it owns on the Data volume, then signs the next box's user in. It keeps macOS, apps, Homebrew and Cua Driver's grants. " +
+          "What a standard user can change for the whole Mac, such as Wi-Fi networks joined, may carry over to the next box. A box can read what any user on the Mac can, so lend Macs set aside for boxes.",
+      );
     }
 
     const ok = checks.every((check) => check.status !== "fail");
@@ -771,6 +942,48 @@ export class SshPoolBackend implements Backend {
       checks,
       notes,
     };
+  }
+
+  /** The doctor's checks of what a Mac's boxes need: FileVault off, its box user signed in, Full Disk Access, Screen Sharing and Cua's grants (047). */
+  #macChecks(
+    status: MachineStatus,
+    machine: SshPoolMachine,
+    grants: MacStatus["grants"],
+    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "SCREEN" | "GRANTS", Check>>,
+    report: Readonly<Record<"pass", (check: Check, detail: string) => void> & Record<"warn" | "fail", (check: Check, detail: string, fix: string) => void>>,
+  ): void {
+    const mac = status.mac!;
+    const name = machine.name;
+    const { pass, warn, fail } = report;
+    const reset = `reset ${name} there with "sudo /usr/local/libexec/bb-box/machine reset"`;
+    if (mac.fileVault) {
+      fail(ids.FILEVAULT, "FileVault is on, so after a restart the Mac waits for a password and signs no box user in.", `Turn FileVault off on ${name} in System Settings, Privacy and Security, wait until it has decrypted the disk, then ${reset}.`);
+    } else pass(ids.FILEVAULT, "Off, so the Mac signs its box user in by itself after a restart.");
+
+    if (status.marker === "resetting") pass(ids.SIGNIN, "Its reset is signing the next box user in.");
+    else if (!mac.user) fail(ids.SIGNIN, `Box user ${USER_PREFIX}${status.generation} is not made.`, `Fix what the state check says, then ${reset}.`);
+    else if (mac.console !== mac.user) {
+      const person = mac.console && mac.console !== "root" && !mac.console.startsWith(USER_PREFIX) ? mac.console : null;
+      fail(
+        ids.SIGNIN,
+        person ? `${person} is signed in at the console, so box user ${mac.user} cannot be.` : `Box user ${mac.user} is not signed in at the console.`,
+        `${person ? `Sign ${person} out, then` : "Check that FileVault is off, then"} ${reset}.`,
+      );
+    } else if (mac.autologin !== mac.user) {
+      fail(ids.SIGNIN, `Box user ${mac.user} is at the console, but the automatic login is ${mac.autologin ? `for ${mac.autologin}` : "off"}, so after a restart it would not sign in.`, `Turn FileVault off if it is on, then ${reset}.`);
+    } else pass(ids.SIGNIN, `Box user ${mac.user} is at the console, and signs in by itself after a restart.`);
+
+    if (mac.fullDisk) pass(ids.FULL_DISK, "The helper has it, so a reset can remove the folders macOS protects.");
+    else fail(ids.FULL_DISK, "The helper lacks Full Disk Access, so a reset cannot remove the folders macOS protects, such as ~/Library/Mail, and would put the Mac out of service.", `On ${name}: ${FULL_DISK_FIX}`);
+
+    if (!this.#lists(machine, "macos-desktop")) return;
+    if (mac.screenSharing) pass(ids.SCREEN, "On, so macos-desktop boxes show the desktop.");
+    else fail(ids.SCREEN, "Screen Sharing is off, so the Mac is not lent for macos-desktop.", `On ${name}, turn on Screen Sharing in System Settings, General, Sharing, and allow all users.`);
+    const lacking = [...(grants?.accessibility === false ? ["Accessibility"] : []), ...(grants?.screenRecording === false ? ["Screen Recording"] : [])];
+    if (lacking.length) {
+      fail(ids.GRANTS, `Cua Driver lacks ${lacking.join(" and ")}, so computer use cannot ${grants?.screenRecording === false ? "see" : "act on"} the desktop.`, `On ${name}, turn on CuaDriver under ${lacking.join(" and under ")}, in System Settings, Privacy and Security.`);
+    } else if (grants?.accessibility && grants.screenRecording) pass(ids.GRANTS, "Accessibility and Screen Recording, so computer use works.");
+    else warn(ids.GRANTS, "Cua Driver did not say its grants: no box user is at the console, or Cua did not answer.", `Check that the box user is at ${name}'s console and that setup-mac.sh installed Cua Driver there.`);
   }
 
   #describe(view: View): string {
@@ -798,6 +1011,7 @@ export class SshPoolBackend implements Backend {
 
   /** Why a free machine cannot serve `kind` now, or null when it can. */
   #ready(view: View, kind: string): string | null {
+    if (kind === "macos-desktop") return view.probe.status?.mac && !view.probe.status.mac.screenSharing ? "Screen Sharing is off." : null;
     return this.kinds().find((offer) => offer.id === kind)?.capabilities.features.includes("docker") ? this.#dockerProblem(view) : null;
   }
 
@@ -837,7 +1051,7 @@ export class SshPoolBackend implements Backend {
   }
 
   async #command(machine: SshPoolMachine, user: string): Promise<SshTransport> {
-    return new SshTransport((await this.#keys()).ssh, this.#access(machine, user), "linux");
+    return new SshTransport((await this.#keys()).ssh, this.#access(machine, user), machine.os);
   }
 
   /** Runs the helper as root through the admin user. */
@@ -852,9 +1066,10 @@ export class SshPoolBackend implements Backend {
     });
   }
 
-  async #status(machine: SshPoolMachine, signal?: AbortSignal): Promise<Probe> {
+  /** The helper's status. Only the doctor asks a Mac for Cua's grants. */
+  async #status(machine: SshPoolMachine, signal?: AbortSignal, grants = false): Promise<Probe> {
     try {
-      const result = await this.#helper(machine, ["status"], null, STATUS_TIMEOUT_MS, signal);
+      const result = await this.#helper(machine, ["status", ...(grants ? ["grants"] : [])], null, STATUS_TIMEOUT_MS, signal);
       if (result.exitCode === 0) return { status: parseStatus(result.stdout), unreachable: false, problem: null };
       return { status: null, unreachable: result.exitCode === 255 || result.timedOut, problem: said(result) };
     } catch (error) {
@@ -883,7 +1098,7 @@ export class SshPoolBackend implements Backend {
   /** `machine` as it is now. A state that its record does not have began at `now`, or for a held machine, when its box was made. */
   async #look(machine: SshPoolMachine, now: number, signal?: AbortSignal): Promise<View> {
     const [record, probe] = await Promise.all([this.#read(machine), this.#status(machine, signal)]);
-    const { state, reason } = this.#judge(probe, record);
+    const { state, reason } = this.#judge(machine, probe, record);
     const marker = probe.status?.owner ?? null;
     const since = record?.state === state ? record.since : state === "held" && marker?.createdAt ? marker.createdAt : now;
     const generation = probe.status?.generation ?? record?.generation ?? 0;
@@ -915,24 +1130,28 @@ export class SshPoolBackend implements Backend {
   }
 
   /** The machine's state from its own word, and from bb-box's record of it. */
-  #judge(probe: Probe, record: MachineRecord | null): { state: PoolMember["state"]; reason: string | null } {
+  #judge(machine: SshPoolMachine, probe: Probe, record: MachineRecord | null): { state: PoolMember["state"]; reason: string | null } {
     const out = (reason: string) => ({ state: "out-of-service" as const, reason });
     const { status } = probe;
+    const setup = `${setupWords(machine)} on it ${setupAs(machine)}`;
     if (probe.unreachable) return record?.state === "out-of-service" ? out(record.reason ?? "A reset failed.") : out(`It does not answer over SSH: ${probe.problem}`);
-    if (!status) return out(`bb-box's helper did not run: ${probe.problem} Run setup/ssh-pool/setup.sh on it.`);
+    if (!status) return out(`bb-box's helper did not run: ${probe.problem} Run ${setup}.`);
     // Whatever else is wrong, a box holds it: an old helper only stops new claims.
     if (status.marker === "owner") return { state: "held", reason: null };
-    if (status.helper === null || status.helper < HELPER_VERSION) return out("bb-box's helper is missing or too old. Run this bb-box's setup/ssh-pool/setup.sh on it.");
-    if (status.generation === null) return out("It has no reset generation. Run setup/ssh-pool/setup.sh on it.");
+    if (status.helper === null || status.helper < HELPER_VERSION) return out(`bb-box's helper is missing or too old. Run this bb-box's ${setup}.`);
+    if (status.generation === null) return out(`It has no reset generation. Run ${setup}.`);
     if (record?.state === "out-of-service") {
       // Back once the operator has reset it on the machine: clean, at a later generation.
       const back = status.marker === "none" && !status.dirty && status.generation > record.generation;
       if (!back) return out(record.reason ?? "A reset failed.");
     }
     if (status.marker === "resetting") return { state: "resetting", reason: null };
-    if (status.arch !== ARCH) return out(`It is ${status.arch || "of unknown architecture"}, not ${ARCH}.`);
+    if ((status.mac !== null) !== (machine.os === "macos")) return out(`It runs ${status.mac ? "macOS" : "Linux"}, but its line lists ${machine.kinds.join(", ")}.`);
+    if (status.arch !== ARCH[machine.os]) return out(`It is ${status.arch || "of unknown architecture"}, not ${ARCH[machine.os]}.`);
     if (status.missing.length) return out(`It lacks ${status.missing.join(", ")}.`);
     if (status.dirty) return out(`An earlier box left ${status.dirty}`);
+    const mac = status.mac && macProblem(status.mac, status.generation);
+    if (mac) return out(mac);
     if (record && status.generation < record.generation) {
       return out(`Its reset generation went back from ${record.generation} to ${status.generation}, as if restored from an older copy. Check it, then reset it.`);
     }

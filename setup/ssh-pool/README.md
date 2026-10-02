@@ -1,7 +1,7 @@
 # SSH host pool backend
 
-This backend lends Linux machines you already have, reached over SSH. A box
-has a whole machine to itself. When the box is released, bb-box resets the
+This backend lends Linux machines and Macs you already have, reached over
+SSH. A box has a whole machine to itself. When the box is released, bb-box resets the
 machine and lends it again.
 
 It suits spare desktops, build servers and virtual machines you run
@@ -12,7 +12,7 @@ your machine, and can read what any user there can read.
 | --- | --- |
 | `setup.sh` | Sets up a machine: run it once on each machine, as root |
 | `machine.sh` | bb-box's helper, which `setup.sh` installs on the machine |
-| `setup-mac.sh`, `machine-mac.sh`, `mac-home/` | A Mac's setup, helper and box users' home template ([047](../../docs/decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)). The pool does not lend Macs yet |
+| `setup-mac.sh`, `machine-mac.sh`, `mac-home/` | A Mac's setup, helper and box users' home template. See [Macs](#macs) |
 | `test/` | A pool of Docker containers for testing the backend on one computer |
 
 ## How it works
@@ -32,6 +32,8 @@ or loses its storage, it reads the markers and carries on. Two bb-box
 installs can share machines: each leaves alone the boxes of the other.
 
 ## Requirements
+
+These are for a Linux machine. A Mac's are under [Macs](#macs).
 
 - Linux on x86_64.
 - root, to run `setup.sh`.
@@ -171,9 +173,9 @@ A line is:
 | --- | --- |
 | `<name>` | Lower-case letters, digits and `-`, unique in the pool |
 | `[user@]host[:port]` | The admin user and how to reach sshd. Put an IPv6 address in brackets |
-| `<kinds>` | `linux`. A line from before may also list `linux-docker`, linux with Docker, which needs `reset=machine` |
+| `<kinds>` | `linux` on a Linux machine, and `macos`, `macos-desktop` or both on a Mac. A line from before may also list `linux-docker`, linux with Docker, which needs `reset=machine` |
 | `via=` | A jump host, reached with the same key |
-| `reset=machine` | The machine has a whole-machine reset, so its boxes get Docker. `setup.sh` adds it when you give `--reset-hook` |
+| `reset=machine` | The machine has a whole-machine reset, so its boxes get Docker. `setup.sh` adds it when you give `--reset-hook`. Not on a Mac |
 | `labels=` | Words for your own use |
 
 bb-box lends the smallest free machine that fits the box's size. The pool's
@@ -353,13 +355,195 @@ the machine when it answers again. Its power shows as unknown meanwhile.
 - **Sizes.** Every machine is lent whole. bb-box claims the smallest free
   machine of at least the size a box asks for: as many cores, 90% of the
   memory or more (the kernel keeps some of it), and, when the size names a
-  disk, that much free under `/home`. It counts the cores and memory a
+  disk, that much free under `/home`, or `/Users` on a Mac. It counts the cores and memory a
   process may use, so on a machine that is a container with a CPU or
   memory limit, it counts the limit, not the host's. The doctor shows each
   machine's cores, memory and free disk. If your machines are smaller than
   the presets, change them in the kinds part of BB Box's settings.
-- **Desktops.** The pool lends terminal boxes only. Desktops are not
-  supported yet.
+- **Desktops.** On a Linux machine, the pool lends terminal boxes only. A
+  Mac lends its desktop as `macos-desktop`.
+
+## Macs
+
+A Mac lends its box a new standard user, `bbx-<generation>`, signed in at
+the Mac's console. A `macos` box reaches it over SSH. A `macos-desktop` box
+gets the console's desktop too, through Screen Sharing, and computer use
+through Cua Driver. Decision
+[047](../../docs/decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)
+explains why.
+
+### What a Mac needs
+
+- Apple silicon.
+- FileVault off, so the Mac signs its box user in by itself after a
+  restart.
+- Remote Login on, in System Settings, General, Sharing.
+- Nobody signed in at the console, as the box user takes it.
+- At least the default size of the kinds it serves: 4 cores and 8 GiB of
+  memory for `macos` and `macos-desktop`. Change the sizes in the kinds
+  part of BB Box's settings if your Macs are smaller.
+- A Mac set aside for boxes, not one people use. A box can read whatever
+  any user on the Mac can read, and the reset removes users.
+
+Xcode is optional. Boxes do not get the iOS Simulator yet.
+
+### Set up a Mac
+
+Copy this directory to the Mac, then run `setup-mac.sh` with sudo, from an
+administrator's account:
+
+```sh
+scp -r setup/ssh-pool mac-mini:
+ssh mac-mini
+sudo sh ssh-pool/setup-mac.sh --key "ssh-ed25519 AAAA... bb-box"
+```
+
+It takes the same options as `setup.sh`, except `--reset-hook`.
+`setup-mac.sh`:
+
+- makes the admin user, `bbbox-admin`, hidden, which accepts only bb-box's
+  keys and may run only the helper as root
+- installs the helper as `/usr/local/libexec/bb-box/machine`, and the box
+  users' home template in `/usr/local/share/bb-box/home`
+- installs Homebrew if it is missing, as the administrator who ran sudo,
+  then Git, GitHub CLI and Node.js with it
+- installs Cua Driver in `/Applications`
+- adds a launch daemon that clears BB's lock and PID files in box homes at
+  boot
+- keeps the Mac awake, starts it after a power failure, and turns off
+  automatic macOS updates and Spotlight indexing
+- prepares Xcode, if it is in `/Applications`
+- starts the Mac's reset generation at 0, in `/var/db/bb-box`, and makes
+  the first box user, `bbx-0`, the automatic login
+
+It prints the line for the machines setting, the host keys, and steps for a
+person at the Mac or on Screen Sharing:
+
+```text
+  mac-mini bbbox-admin@192.0.2.30 macos,macos-desktop
+```
+
+1. Turn on Screen Sharing, allow all users, and leave the VNC password
+   off.
+2. Select the (i) beside Remote Login, and turn on Allow full disk access
+   for remote users. Without it, the reset cannot remove the folders macOS
+   protects in a box user's home, such as `~/Library/Mail`.
+3. Turn on CuaDriver under Accessibility and under Screen Recording, in
+   Privacy and Security.
+
+If someone was signed in when you ran it, sign them out or restart the Mac,
+so that it signs in `bbx-0`. Then add the line and host keys to bb-box, as
+for a Linux machine. Leave out `macos-desktop` if boxes should not get the
+Mac's desktop.
+
+### What the doctor checks on a Mac
+
+Besides SSH, the helper, the architecture, the tools and the state, the
+doctor checks that:
+
+- FileVault is off
+- the box user is signed in at the console, and is the automatic login
+- the helper has Full Disk Access
+- Screen Sharing is on, for `macos-desktop`
+- Cua Driver has Accessibility and Screen Recording, for `macos-desktop`
+
+A Mac with FileVault on, without Full Disk Access, or without its box user
+at the console is out of service, and the doctor says why. A Mac without
+Screen Sharing lends `macos` only. Only the doctor asks Cua Driver for its
+grants, as that takes a moment. Lending a box does not.
+
+### How a box gets a Mac
+
+bb-box claims a free Mac whose box user is at the console. If the user is
+still signing in, the box waits for it, then, for `macos-desktop`, for Cua
+Driver's socket in the user's home. It waits up to 3 minutes in all.
+
+The desktop is Screen Sharing on the Mac, reached through SSH as the box
+user. Each time the desktop opens, bb-box asks the helper for the box
+user's password, over the admin user's SSH, and gives it only to Screen
+Sharing's sign-in. bb-box never stores it. Each box's user has its own
+password, which the reset removes with the user. The desktop has the size
+of the Mac's display, and cannot be resized. A Mac without a display may
+need an HDMI dummy plug for a useful size.
+
+The box user is a standard user, not an administrator. It cannot run
+commands as root, install into `/Applications` or `/opt/homebrew`, or change
+system settings.
+So `brew install` fails in a box. Installs into its home work, such as npm,
+pip, cargo and apps in `~/Applications`. Install what every box needs with
+Homebrew as the Mac's administrator.
+
+### What a Mac's reset does
+
+When a box is released, the helper:
+
+1. logs the box's user out and ends its processes
+2. makes the next box's user, with a new random password, and sets it as
+   the automatic login
+3. starts the login window again, which signs the next user in
+4. removes the old user's crontab, at jobs, System V IPC objects, sudo rule
+   and every file it owns on the Data volume, then the user
+5. checks that nothing is left and that the next user is at the console,
+   then adds 1 to the reset generation
+
+If starting the login window again has not signed the user in within a
+minute, the helper restarts macOS's user space, then, 3 minutes later, the
+Mac. It gives up 8 minutes after that, and the Mac goes out of service. It
+remembers the way that worked, and the next reset starts with it.
+
+A person signed in at the console stops the reset. Their session is left
+alone, and the Mac goes out of service until they sign out.
+
+A Mac's reset keeps macOS, its settings and apps, Homebrew, and Cua
+Driver's grants. It removes the box's user and home, with its keychain,
+its LaunchAgents and login items, and its files anywhere on the Data
+volume. It does not undo:
+
+- changes to files that others own and anyone may write
+- what a standard user can change for the whole Mac, such as Wi-Fi
+  networks joined, Bluetooth devices paired and an iPhone trusted over USB
+- the system log and crash reports that name the box's processes
+- anything the box sent elsewhere
+
+A Mac has no whole-machine reset, and its boxes have no Docker.
+
+### A Mac out of service
+
+Fix the cause the doctor shows, then reset the Mac on it:
+
+```sh
+sudo /usr/local/libexec/bb-box/machine reset
+```
+
+The command waits while the next box user signs in. If the helper restarts
+the Mac, run it again once the Mac is back. A Mac takes no `machine`
+argument.
+
+### Removing a Mac
+
+1. Release any box on it.
+2. Remove its line from the machines setting, and its host keys.
+3. On the Mac, turn the automatic login off in System Settings, Users and
+   Groups, then restart the Mac.
+4. Delete the box user, which is hidden. The first command lists it:
+
+   ```sh
+   dscl . -list /Users | grep '^bbx-'
+   sudo sysadminctl -deleteUser bbx-3
+   ```
+
+   Here `bbx-3` stands for the name the first command prints.
+5. Remove what `setup-mac.sh` added:
+
+   ```sh
+   sudo sysadminctl -deleteUser bbbox-admin
+   sudo launchctl bootout system/dev.bb-box.clear-bb-state
+   sudo rm -rf /usr/local/libexec/bb-box /usr/local/share/bb-box /etc/sudoers.d/bb-box /Library/LaunchDaemons/dev.bb-box.clear-bb-state.plist /var/db/bb-box
+   ```
+
+Homebrew, Cua Driver and the settings setup changed stay. Turn Spotlight
+indexing back on with `sudo mdutil -a -i on`, and automatic updates in
+System Settings, General, Software Update.
 
 ## Testing on one computer
 

@@ -81,7 +81,7 @@ a desktop box has a terminal too.
 | SSH host pool | real | Linux terminal, on Linux machines you own | working |
 | [Tart](https://tart.run), on your Macs with Apple silicon | virtual | macOS terminal and desktop; Linux terminal and desktop on arm64; Windows desktop on arm64 | working |
 | Proxmox QEMU | virtual | Windows desktop | working, not yet a BB machine |
-| SSH host pool, Macs | real | macOS terminal and desktop, iOS Simulator, on Macs you own | planned |
+| SSH host pool, Macs | real | macOS terminal and desktop, on Macs you own with Apple silicon | built, not yet checked on a real Mac |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
 
@@ -114,18 +114,22 @@ working box.
 
 ### SSH host pool
 
-Lends Linux machines you already have, reached over SSH, directly or
-through a jump host. A box has a whole machine to itself, as a new user
+Lends Linux machines and Macs you already have, reached over SSH, directly
+or through a jump host. A box has a whole machine to itself, as a new user
 made for it. When the box is released, the machine is reset and lent again.
 
-- **Setup**: `setup/ssh-pool/setup.sh` adds an admin user that may run only
-  bb-box's helper as root. Each machine keeps its own state, so bb-box
-  carries on after it loses its storage.
+- **Setup**: `setup/ssh-pool/setup.sh`, or `setup-mac.sh` on a Mac, adds an
+  admin user that may run only bb-box's helper as root. Each machine keeps
+  its own state, so bb-box carries on after it loses its storage.
 - **Reset**: removes the box's user and everything it left. A machine whose
   reset fails goes out of service until the operator resets it.
 - **Docker**: only on a machine with a whole-machine reset, a program you
   provide, since a box with Docker is root on the machine.
-- **Limits**: terminal boxes only, no desktops. It is not a security
+- **Macs**: a box's user is signed in at the Mac's console, so a
+  `macos-desktop` box gets the Mac's desktop through Screen Sharing over
+  SSH, and computer use through Cua Driver. A Mac has no Docker and no
+  whole-machine reset.
+- **Limits**: no desktops on Linux machines. It is not a security
   boundary: a box can read what any user on the machine can read.
 
 See [its guide](setup/ssh-pool/README.md).

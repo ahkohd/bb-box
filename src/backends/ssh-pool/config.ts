@@ -7,21 +7,24 @@
 //
 //   build-1 bbbox-admin@192.0.2.21 linux
 //   build-2 192.0.2.22:2222 linux via=jump@bastion.example.com reset=machine labels=fast
+//   mac-mini bbbox-admin@192.0.2.30 macos,macos-desktop
 //
 // The user is bb-box's admin user on the machine, bbbox-admin by default,
 // which setup/ssh-pool/setup.sh makes. "via" is a jump host, reached with the
 // same key. "reset=machine" says the machine has a whole-machine reset, so
 // its boxes have Docker, which gives root (041). The pool's linux boxes have
 // Docker only when every machine does. linux-docker, an alias of linux with
-// Docker, may still be listed on such a line. setup.sh prints each machine's
-// line and its host keys.
+// Docker, may still be listed on such a line. A Mac, set up with
+// setup-mac.sh, serves macos, macos-desktop or both, and has no whole-machine
+// reset (047). setup.sh and setup-mac.sh print each machine's line and its
+// host keys.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { kindRequest } from "../kinds.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
-export const SSH_POOL_KINDS = ["linux"] as const;
+export const SSH_POOL_KINDS = ["linux", "macos", "macos-desktop"] as const;
 export type SshPoolKind = (typeof SSH_POOL_KINDS)[number];
 
 export const SSH_POOL_DEFAULTS = { adminUser: "bbbox-admin", port: 22 } as const;
@@ -46,6 +49,8 @@ export interface SshPoolMachine {
   readonly admin: SshPoolHost;
   readonly jump: SshPoolHost | null;
   readonly kinds: readonly SshPoolKind[];
+  /** A Mac serves only macOS kinds, and a Linux machine only linux. */
+  readonly os: "linux" | "macos";
   /** It has a whole-machine reset, so its boxes may have Docker, and root through it (041). */
   readonly docker: boolean;
   /** "machine" when the operator's reset-machine restores the whole machine. */
@@ -65,21 +70,21 @@ export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [SSH_POOL_KEYS.enabled]: {
     type: "boolean",
     label: "SSH host pool: enabled",
-    description: "Lend Linux machines you already have, reached over SSH. Each box has a machine to itself, which is reset when the box is released.",
+    description: "Lend Linux machines and Macs you already have, reached over SSH. Each box has a machine to itself, which is reset when the box is released.",
     default: false,
   },
   [SSH_POOL_KEYS.machines]: {
     type: "string",
     label: "SSH host pool: machines",
     description:
-      'One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux". setup/ssh-pool/setup.sh prints the line for each machine.',
+      'One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine.',
     experimental_multiline: true,
     default: "",
   },
   [SSH_POOL_KEYS.knownHosts]: {
     type: "string",
     label: "SSH host pool: host keys",
-    description: "known_hosts lines for every machine and jump host, as setup.sh prints them. bb-box connects only to a machine whose key is here.",
+    description: "known_hosts lines for every machine and jump host, as setup.sh and setup-mac.sh print them. bb-box connects only to a machine whose key is here.",
     experimental_multiline: true,
     default: "",
   },
@@ -170,7 +175,7 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
     const asked = kindRequest(word);
     const kind = SSH_POOL_KINDS.includes(asked.kind as SshPoolKind) ? (asked.kind as SshPoolKind) : null;
     if (!kind || asked.features.some((feature) => feature !== "docker")) {
-      return bad(`Machine ${name} cannot serve kind "${word}": the SSH host pool offers linux, with Docker on a machine with reset=machine.`);
+      return bad(`Machine ${name} cannot serve kind "${word}": the SSH host pool offers linux, with Docker on a machine with reset=machine, and macos and macos-desktop on a Mac.`);
     }
     if (!kinds.includes(kind)) kinds.push(kind);
     if (asked.features.includes("docker")) listsDocker = true;
@@ -193,13 +198,21 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
       }
     } else return bad(`Machine ${name} has an unknown option "${option}".`);
   }
+  const os = kinds[0] === "linux" ? "linux" : "macos";
+  if (kinds.some((kind) => (kind === "linux" ? "linux" : "macos") !== os)) {
+    return bad(`Machine ${name} lists Linux and macOS kinds. List linux on a Linux machine, and macos or macos-desktop on a Mac.`);
+  }
+  if (os === "macos" && reset === "machine") {
+    problems.push(`Machine ${name} is a Mac, which has no whole-machine reset. Remove reset=machine: its reset removes the box's user and makes a new one.`);
+    return null;
+  }
   if (listsDocker && reset !== "machine") {
     problems.push(
       `Machine ${name} serves linux-docker, which needs reset=machine: Docker gives the box root, so only a whole-machine reset makes the machine clean. Remove linux-docker, or set up reset-machine as the setup guide says and add reset=machine, which gives its boxes Docker.`,
     );
     return null;
   }
-  return { name, admin, jump, kinds, docker: reset === "machine", reset, labels };
+  return { name, admin, jump, kinds, os, docker: reset === "machine", reset, labels };
 }
 
 export const SSH_POOL_PREFIX = "ssh-pool-";
