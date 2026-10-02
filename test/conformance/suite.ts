@@ -34,6 +34,8 @@ import {
   type MachineNature,
   type ReleaseHooks,
 } from "../../src/backends/types.ts";
+import type { BoxRecord } from "../../src/core/boxes.ts";
+import { Computer } from "../../src/core/computer.ts";
 import { DESKTOP_EXITS, command as inBox, driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
 import { desktopSize, displayOpener, restoreSize } from "../../src/core/relay.ts";
@@ -736,6 +738,40 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
                 }
               } finally {
                 await session.close();
+              }
+            });
+
+            // As computer_launch, computer_type and computer_observe do.
+            // Where the desktop takes input only in the foreground, as on
+            // Wayland, the typing goes there (048).
+            it(`types into ${editor} as the computer tools do, and reads the text back`, { timeout, skip: skip["computer-use"] ?? (editor ? false : `no stock app is known for ${capabilities.os}`) }, async () => {
+              const { command } = need();
+              const computer = new Computer({
+                spawn: (_box, script, signal) => command.spawn!(script, signal),
+                owner: () => "agent",
+                takeBack: async () => false,
+                logError: () => {},
+                launchWaitMs: WINDOW_WAIT_MS,
+              });
+              // The computer tools read only these of a box's record.
+              const record = { id: box.boxId, name: box.name, kind: kind.id, capabilities } satisfies Pick<BoxRecord, "id" | "name" | "kind" | "capabilities"> as BoxRecord;
+              try {
+                const opened = await computer.launch(record, { app: editor! }, signal());
+                const window = Number(/computer_observe with window (\d+)/.exec(opened.hints.join("\n"))?.[1]);
+                assert.ok(window, opened.text);
+                const word = `conformance${randomBytes(3).toString("hex")}`;
+                const typed = await computer.type(record, { window, text: word }, signal());
+                console.log(`# ${options.name} ${kind.id}: ${typed.text.split("\n")[0]}`);
+                // The app may take in the last keys a moment after the driver sent them.
+                const deadline = Date.now() + 5_000;
+                for (;;) {
+                  const tree = (await computer.observe(record, { window, query: word }, signal())).text;
+                  if (tree.split("\n\n")[1]?.includes(word)) break;
+                  if (Date.now() > deadline) assert.fail(`${editor}'s tree does not show the text typed into it:\n${tree}`);
+                  await new Promise((resolve) => setTimeout(resolve, 250));
+                }
+              } finally {
+                await computer.dispose();
               }
             });
           }

@@ -35,8 +35,10 @@ const virtualHost = new MemoryStorage();
 await conformance({
   name: "fake virtual backend",
   storage: new MemoryStorage(),
-  // Its desktops resize through the backend, as a GPU desktop does; the real one's through the stream (021).
-  create: (storage, installId) => new FakeBackend({ root, storage, host: virtualHost, installId, id: "fake-virtual", resize: "backend" }),
+  // Its desktops are Wayland's: Apple's sign-in, a resize through the
+  // backend and Cua's input in the foreground (048). The real one's are
+  // X11's, resized through the stream (021).
+  create: (storage, installId) => new FakeBackend({ root, storage, host: virtualHost, installId, id: "fake-virtual", resize: "backend", wayland: true }),
   // The fake numbers its guests g1, g2 and so on from a counter.
   reuse: async (_storage, ref) => virtualHost.set("counter", Number(ref.slice(1)) - 1),
   bb: fakeBb(),
@@ -56,12 +58,13 @@ await conformance({
 
 fakeSsh();
 const proxmox = new FakeProxmox();
-for (const template of [9000, 9001, 9002, 9003]) proxmox.addTemplate(template);
+for (const template of [9000, 9001, 9002, 9003, 9004]) proxmox.addTemplate(template);
 const config = lxcConfig({
   "proxmox-lxc-token-id": FAKE_TOKEN.tokenId,
   "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret,
   "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b",
   "proxmox-lxc-desktop-cpu-templates": "9003",
+  "proxmox-lxc-desktop-wayland-cpu-templates": "9004",
   "proxmox-lxc-ssh-private-key": "",
 });
 
