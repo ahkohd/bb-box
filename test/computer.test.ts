@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ComputerError, chord, explain, launchArgs, pngSize } from "../src/core/computer.ts";
@@ -199,4 +199,17 @@ test("an MCP session opens with the driver command and talks to the driver", asy
   const clicking = assert.rejects(session.call("click", { x: 1, y: 1, scope: "desktop" }, { timeoutMs: 5_000 }), /^McpClosedError: Stopped\.$/);
   await session.close("Stopped.");
   await clicking;
+});
+
+test("a driver socket that starts with ~/ is in the home of the user the command runs as (047)", async () => {
+  const home = tempDir("bb-box-cua-");
+  mkdirSync(join(home, "it's here"));
+  writeFileSync(join(home, "it's here", "cua-driver.json"), JSON.stringify(emptyDesktop()));
+  const script = `HOME='${home}' && PATH='${FAKE_CUA_BIN}':"$PATH" && export HOME PATH && ${driverCommand("macos", "~/it's here/cua-driver.json")}`;
+  const channel = await openRoute({ type: "command", argv: ["sh", "-c", script] });
+  const session = await McpSession.open(channel, CLIENT);
+  assert.deepEqual((await session.call("list_windows", {}, { timeoutMs: 5_000 })).structuredContent?.windows, []);
+  await session.close("Done.");
+  assert.equal(driverCommand("windows", "~/cua.sock"), "& cua-driver mcp --socket (Join-Path $HOME 'cua.sock')");
+  assert.equal(driverCommand("linux", "/tmp/~/cua.sock"), "exec cua-driver mcp --socket '/tmp/~/cua.sock'");
 });

@@ -1,14 +1,20 @@
 // The RFB (VNC) protocol, as much as the desktop relay needs: the box's
-// security handshake, answered with its password, and the client's messages,
-// parsed so the relay can drop input from viewers without control. The relay
-// never decodes the server's messages or pixels (011).
+// security handshake, answered with its VNC password or as its user with
+// Apple's authentication (047), and the client's messages, parsed so the
+// relay can drop input from viewers without control. The relay never decodes
+// the server's messages or pixels (011).
 
-import { createCipheriv } from "node:crypto";
+import { createCipheriv, createDiffieHellman, createHash, randomBytes } from "node:crypto";
 import type { DisplayAuth } from "../transports/types.ts";
 
 export const VERSION_3_8 = "RFB 003.008\n";
 const SECURITY_NONE = 1;
 const SECURITY_VNC = 2;
+/** Apple's authentication, which macOS Screen Sharing asks for. */
+const SECURITY_APPLE = 30;
+/** The longest user or password Apple's authentication carries, in UTF-8. */
+const APPLE_TEXT_BYTES = 63;
+const APPLE_NONE = "The box's desktop asks for a user and password, and its backend gave none.";
 /** Longest reason or desktop name the relay reads. */
 const MAX_TEXT_BYTES = 64 * 1024;
 /** A pseudo-encoding that makes PointerEvent 7 bytes long when its top bit is set. */
@@ -113,8 +119,47 @@ export function vncResponse(challenge: Uint8Array, password: string): Uint8Array
 }
 
 /**
+ * Apple's answer, as noVNC gives it: Diffie-Hellman in the server's group,
+ * whose shared secret's MD5 is an AES-128 key, then the user and password,
+ * each ended by a zero in 64 bytes of noise, encrypted with it. The answer is
+ * those 128 bytes, then the relay's public key.
+ */
+function appleResponse(generator: Uint8Array, prime: Uint8Array, serverKey: Uint8Array, user: string, password: string): Uint8Array {
+  const credentials = randomBytes(128);
+  for (const [at, value] of [
+    [0, user],
+    [64, password],
+  ] as const) {
+    const bytes = new TextEncoder().encode(value);
+    if (bytes.byteLength > APPLE_TEXT_BYTES) throw new RfbError(`The box user's name or password is longer than the ${APPLE_TEXT_BYTES} bytes Apple's authentication carries.`);
+    credentials.set(bytes, at);
+    credentials[at + bytes.byteLength] = 0;
+  }
+  let publicKey: Uint8Array;
+  let secret: Uint8Array;
+  try {
+    const dh = createDiffieHellman(prime, generator);
+    publicKey = padded(dh.generateKeys(), prime.byteLength);
+    secret = padded(dh.computeSecret(serverKey), prime.byteLength);
+  } catch (error) {
+    throw new RfbError(`The box's desktop sent a Diffie-Hellman key the relay cannot use: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const cipher = createCipheriv("aes-128-ecb", createHash("md5").update(secret).digest(), null).setAutoPadding(false);
+  return concat(concat(cipher.update(credentials), cipher.final()), publicKey);
+}
+
+/** A big-endian number with zeros in front, to `length` bytes. */
+function padded(bytes: Uint8Array, length: number): Uint8Array {
+  if (bytes.byteLength >= length) return bytes;
+  const out = new Uint8Array(length);
+  out.set(bytes, length - bytes.byteLength);
+  return out;
+}
+
+/**
  * Does the box's side of the handshake up to its security result, answering
- * VNC authentication with the password. Writes go straight to `write`.
+ * VNC authentication with the password, and Apple's with the user and
+ * password. Writes go straight to `write`.
  */
 export async function boxHandshake(reader: StreamReader, write: (bytes: Uint8Array) => Promise<void>, auth: DisplayAuth): Promise<void> {
   const version = parseVersion(await reader.read(12));
@@ -131,16 +176,28 @@ export async function boxHandshake(reader: StreamReader, write: (bytes: Uint8Arr
     const count = (await reader.read(1))[0]!;
     if (count === 0) throw new RfbError(`The box's desktop refused the connection: ${await readText(reader)}`);
     const offered = [...(await reader.read(count))];
-    if (auth.type === "vnc-password" && offered.includes(SECURITY_VNC)) chosen = SECURITY_VNC;
+    if (auth.type === "apple" && offered.includes(SECURITY_APPLE)) chosen = SECURITY_APPLE;
+    else if (auth.type === "vnc-password" && offered.includes(SECURITY_VNC)) chosen = SECURITY_VNC;
     else if (offered.includes(SECURITY_NONE)) chosen = SECURITY_NONE;
     else if (offered.includes(SECURITY_VNC)) throw new RfbError("The box's desktop asks for a VNC password, and its backend gave none.");
+    else if (offered.includes(SECURITY_APPLE)) throw new RfbError(APPLE_NONE);
     else throw new RfbError(`The box's desktop offers no security type the relay can answer (it offers ${offered.join(", ")}).`);
     await write(Uint8Array.of(chosen));
   }
 
+  let refused = "refused the connection";
   if (chosen === SECURITY_VNC) {
     if (auth.type !== "vnc-password") throw new RfbError("The box's desktop asks for a VNC password, and its backend gave none.");
     await write(vncResponse(await reader.read(16), auth.password));
+    refused = "refused its VNC password";
+  } else if (chosen === SECURITY_APPLE) {
+    if (auth.type !== "apple") throw new RfbError(APPLE_NONE);
+    const head = await reader.read(4);
+    const keyLength = new DataView(head.buffer, head.byteOffset, 4).getUint16(2);
+    const prime = await reader.read(keyLength);
+    const serverKey = await reader.read(keyLength);
+    await write(appleResponse(head.subarray(0, 2), prime, serverKey, auth.user, auth.password));
+    refused = `refused the sign-in of user ${auth.user}`;
   } else if (chosen !== SECURITY_NONE) {
     throw new RfbError(`The box's desktop chose security type ${chosen}, which the relay cannot answer.`);
   }
@@ -149,12 +206,9 @@ export async function boxHandshake(reader: StreamReader, write: (bytes: Uint8Arr
   const result = u32(await reader.read(4));
   if (result === 0) return;
   const reason = minor === 8 ? await readText(reader).catch(() => "") : "";
-  throw new RfbError(
-    chosen === SECURITY_VNC
-      ? `The box's desktop refused its VNC password${reason ? `: ${reason}` : "."}`
-      : `The box's desktop refused the connection${reason ? `: ${reason}` : "."}`,
-  );
+  throw new RfbError(`The box's desktop ${refused}${reason ? `: ${reason}` : "."}`);
 }
+
 
 export interface ServerInit {
   readonly width: number;
