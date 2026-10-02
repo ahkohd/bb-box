@@ -4,7 +4,7 @@
 // and never on every panel load.
 
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Capacity, Limit } from "../backends/types.ts";
 import type { OfferView, ProviderProfile } from "../plugin/views.ts";
@@ -91,33 +91,92 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 
 type Loaded = { readonly profile: ProviderProfile | null; readonly error: string | null; readonly loading: boolean };
 
-/** The (i) at the end of a provider row, and its popover: asked once per open form, kept while the form stays open. */
+/** The pointer resting on the (i) opens the profile after this long, and leaving the (i) or the profile closes it after a short grace, so the pointer can move into it. */
+export const HOVER_OPEN_MS = 300;
+export const HOVER_CLOSE_MS = 250;
+
+/**
+ * The (i) at the end of a provider row, and its popover: asked once per
+ * open form, kept while the form stays open. The pointer resting on the
+ * (i) opens it as a preview, which leaving closes; a click or the keyboard
+ * opens it and keeps it until Escape or a click away, for touch and screen
+ * readers (the operator's note of 2 October 2026).
+ */
 export function ProviderInfo({ offer, profile, now = () => Date.now() }: { offer: OfferView; profile: (backend: string) => Promise<ProviderProfile>; now?: () => number }) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState<Loaded>({ profile: null, error: null, loading: false });
+  /** Opened, or kept, by a click or the keyboard: the pointer leaving does not close it. */
+  const pinned = useRef(false);
+  const asked = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const title = providerTitle(offer);
+  const clear = () => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  useEffect(() => clear, []);
   const load = () => {
-    if (loaded.profile || loaded.loading) return;
+    if (asked.current) return;
+    asked.current = true;
     setLoaded({ profile: null, error: null, loading: true });
     profile(offer.backend).then(
       (found) => setLoaded({ profile: found, error: null, loading: false }),
-      (error: unknown) => setLoaded({ profile: null, error: message(error), loading: false }),
+      (error: unknown) => {
+        asked.current = false;
+        setLoaded({ profile: null, error: message(error), loading: false });
+      },
     );
+  };
+  const hoverIn = (event: ReactPointerEvent) => {
+    if (event.pointerType === "touch") return;
+    clear();
+    if (open) return;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      setOpen(true);
+      load();
+    }, HOVER_OPEN_MS);
+  };
+  const hoverOut = (event: ReactPointerEvent) => {
+    if (event.pointerType === "touch") return;
+    clear();
+    if (!open || pinned.current) return;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      setOpen(false);
+    }, HOVER_CLOSE_MS);
   };
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
+        clear();
+        pinned.current = next;
         setOpen(next);
         if (next) load();
       }}
     >
       <PopoverTrigger asChild>
-        <button type="button" aria-label={`About ${title}`} className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-state-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
-          <Icon name="Info" className="size-3.5" aria-hidden />
+        {/* A small (i), the size of the row's dim line, on a hit area of 24 px (the operator's note of 2 October 2026). */}
+        <button
+          type="button"
+          aria-label={`About ${title}`}
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-state-hover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          onPointerEnter={hoverIn}
+          onPointerLeave={hoverOut}
+          onClick={(event) => {
+            // A click on a preview keeps it open, in place of closing it.
+            if (open && !pinned.current) {
+              event.preventDefault();
+              pinned.current = true;
+              clear();
+            }
+          }}
+        >
+          <Icon name="Info" className="size-3" aria-hidden />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-4 sm:w-96" data-nested-layer="" mobileTitle={title}>
+      <PopoverContent align="end" className="w-80 p-4 sm:w-96" data-nested-layer="" mobileTitle={title} onPointerEnter={clear} onPointerLeave={hoverOut}>
         {loaded.error ? (
           <p role="alert" className="text-xs leading-snug text-destructive-text">
             {loaded.error}

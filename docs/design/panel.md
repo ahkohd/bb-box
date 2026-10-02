@@ -223,7 +223,6 @@ words are never cut off.
 
 ```
 +------------------------------------------------------------------+
-|                                          [ Host: Any host    v ] |
 | System                                                            |
 | [ Linux            ] [ macOS            ] [ Windows            ]  |
 | [ pve1, pool       ] [ mac-mini         ] [ pve1               ]  |
@@ -233,9 +232,17 @@ words are never cut off.
 | Type                                                              |
 | [ [=] Server                   ] [ [#] Desktop                 ]  |
 | [     Terminal                 ] [     Screen · Terminal · Co… ]  |
+| Resources                                                         |
+| Configure the box's cores, memory, disk and GPU: pick a size, or  |
+| Custom to set your own.                                           |
+| [ Small      ] [ Medium     ] [ Large      ] [ Custom         ]   |
+| [ 2 cores ·… ] [ 4 cores ·… ] [ 8 cores ·… ] [ up to 16 cores ]   |
+|                                                                   |
+| GPU                                                               |
+| [ None            v ]                                             |
 | Provider                                                          |
-| Where the box goes: the first with room, in this order, unless    |
-| you choose one.                                                   |
+| Where the box goes: the first with room for it, in this order,    |
+| unless you choose one.                                            |
 |                                                                   |
 |               Filter [ Kind: All  v ] [ Runs on: Any machine  v ] |
 |                                                                   |
@@ -247,14 +254,6 @@ words are never cut off.
 | [ Physical · 1 free                                            ]  |
 | [ docker-host                                                  ]  |
 | [ Container · usually ~1.8 s                                   ]  |
-| Resources                                                         |
-| Configure the box's cores, memory, disk and GPU: pick a size, or  |
-| Custom to set your own.                                           |
-| [ Small      ] [ Medium     ] [ Large      ] [ Custom         ]   |
-| [ 2 cores ·… ] [ 4 cores ·… ] [ 8 cores ·… ] [ up to 16 cores ]   |
-|                                                                   |
-| GPU                                                               |
-| [ None            v ]                                             |
 | Name                                                              |
 | Optional; bb-box picks one when it is left empty.                 |
 | [                                                              ]  |
@@ -269,14 +268,6 @@ session of 1 October 2026 took the "Add Box" heading off, and gave the
 footer the form's own background, not a band). On a compact viewport the
 bottom sheet still carries the title "New box".
 
-- **Host** is the form's first row, a compact menu at the right, "Host:
-  Any host", listing the hosts the providers run on (the operator's
-  artboard had it in a heading the form no longer has). One host chosen
-  narrows every step below to what that host can make: the systems,
-  architectures and types its kinds have, and only its providers in the
-  list, so "First with room" sends them as a list (044) and a box never
-  lands elsewhere. A pool of machines, with no host of its own, is under
-  Any host only. Closing the form puts the host back to any.
 - **System** is a card per OS on offer, Linux, macOS, Windows in that
   order, with its hosts under the name ("pve1, SSH host pool") or, past
   two, how many providers have it ("3 providers").
@@ -297,6 +288,23 @@ bottom sheet still carries the title "New box".
   (`src/app/box-form.tsx`, `kindFor`), so the IDs appear nowhere and a new
   kind needs no panel change. Descriptions stay where agents read them, in
   `box_list` and the skill.
+- **Resources** comes before Provider (the operator's note of 2 October
+  2026): the size and the GPU narrow what the providers below can hold,
+  and later the rows can say which have room for that size. It says
+  what to do, "Configure the box's cores, memory, disk
+  and GPU: pick a size, or Custom to set your own." ("and GPU" only where
+  a GPU is a choice), then the kind's presets (028), Small, Medium and
+  Large, each with its cores and memory under it, and Custom with "up to N
+  cores"; the kind's default preset is chosen at first. Custom shows three
+  fields, cores, memory in GiB and disk in GiB, each with "up to" the
+  kind's largest, starting from the preset the person was looking at; a
+  field left empty takes the default preset's value, and an empty disk
+  keeps the base disk. A GPU is a resource: where a desktop's system has
+  both a GPU desktop and a CPU one, a dim sub-label "GPU" on a line of
+  its own under the presets, then one menu, None or 1 GPU (more counts
+  can join it later), as the operator asked on 2 October 2026. The form
+  sends a preset by name, or the custom fields, and nothing for the
+  default.
 - **Provider** is where the box goes (044). Under the description, a row
   of its own holds a dim "Filter", at the menus' text size, and two
   compact menus, their labels inside the trigger ("Kind: All", "Runs on:
@@ -324,8 +332,17 @@ bottom sheet still carries the title "New box".
   A row's name is its host ("pve1"), "2 Macs" or "3 hosts" for several,
   the backend's label for a pool, and "an unnamed machine" for a Docker
   machine BB has not named: a row never shows a host ID (the operator's
-  rule). Each row ends with an (i) that
-  opens the provider's profile, a popover in the form's rhythm: the
+  rule). A row is one card: its hover and
+  chosen backgrounds span the whole card, and a small (i), the size of
+  the row's dim line on a 24 px hit area, sits inside it at the right,
+  shown while the pointer is over the row, the row or the (i) has
+  keyboard focus, or its profile is open, its space kept otherwise so
+  nothing shifts; a touch screen, with no hover, shows it on the chosen
+  row (the operator's notes of 2 October 2026). The pointer resting on the (i) for about 300 ms opens the
+  provider's profile as a preview, which the pointer may move into and
+  leaving closes after a short grace; a click or the keyboard (Tab, then
+  Enter) opens it and keeps it until Escape or a click away, for touch and
+  screen readers. The profile is a popover in the form's rhythm: the
   provider's name and its technology (the driver's description) as title
   and dim line, then plain rows, Runs on (its hosts and what they run),
   Makes (the kinds it offers and what the boxes are), Room (each host's
@@ -343,20 +360,6 @@ bottom sheet still carries the title "New box".
   that leave none leave the list empty, say so in the footer, and disable
   the button. The choice and the filters are not remembered: another
   type, or closing the form, puts them back.
-- **Resources** says what to do, "Configure the box's cores, memory, disk
-  and GPU: pick a size, or Custom to set your own." ("and GPU" only where
-  a GPU is a choice), then the kind's presets (028), Small, Medium and
-  Large, each with its cores and memory under it, and Custom with "up to N
-  cores"; the kind's default preset is chosen at first. Custom shows three
-  fields, cores, memory in GiB and disk in GiB, each with "up to" the
-  kind's largest, starting from the preset the person was looking at; a
-  field left empty takes the default preset's value, and an empty disk
-  keeps the base disk. A GPU is a resource: where a desktop's system has
-  both a GPU desktop and a CPU one, a dim sub-label "GPU" on a line of
-  its own under the presets, then one menu, None or 1 GPU (more counts
-  can join it later), as the operator asked on 2 October 2026. The form
-  sends a preset by name, or the custom fields, and nothing for the
-  default.
 - **Name** appears for Add machine only (036): optional, as its
   description says, checked as the person types, with what is wrong under
   the field.
@@ -569,7 +572,7 @@ panel."
 | plugin description | Computers for BB threads. The plugin shows as "BB Box"; its ID stays bb-box. |
 | tab titles | Box; the box's name for its desktop |
 | toolbar | New box |
-| chooser | Host · Any host · System · Architecture · Type · Server · Desktop · Not available · Provider · Filter · Kind · All · Container · VM · Physical · Runs on · Any machine · First with room · Resources · Small · Medium · Large · Custom · GPU · None · 1 GPU · Create box · Add machine · No provider matches these filters. |
+| chooser | System · Architecture · Type · Server · Desktop · Not available · Provider · Filter · Kind · All · Container · VM · Physical · Runs on · Any machine · First with room · Resources · Small · Medium · Large · Custom · GPU · None · 1 GPU · Create box · Add machine · No provider matches these filters. |
 | provider profile | About <provider> · Runs on · Makes · Room · Usually · Status · Looking… · Not known: the provider did not answer. |
 | empty | No boxes yet · A computer for this thread. |
 | not set up | BB Box is not set up yet. Set a backend up in its settings and turn it on. · Open BB Box settings |

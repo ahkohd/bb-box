@@ -96,17 +96,6 @@ export function choiceOf(kind: KindView): Choice {
   return { os: kind.os, arch: archOf(kind), desktop: kind.desktop, gpu: kind.gpu };
 }
 
-/** The hosts the providers run on, for the Host menu, in acquire order. A pool, with no host of its own, is under Any host only. */
-export function hostsOf(kinds: readonly KindView[]): string[] {
-  return [...new Set(kinds.flatMap((kind) => kind.offers.flatMap((offer) => offer.hosts)))];
-}
-
-/** The kinds as one host can make them: only the offers on it, and no kind that has none there; every kind for Any host. */
-export function onHost(kinds: readonly KindView[], host: string | null): KindView[] {
-  if (host === null) return [...kinds];
-  return kinds.map((kind) => ({ ...kind, offers: kind.offers.filter((offer) => offer.hosts.includes(host)) })).filter((kind) => kind.offers.length);
-}
-
 export type FormFilter = "all" | "container" | "vm" | "physical";
 export const FORM_FILTERS: readonly { readonly id: FormFilter; readonly label: string; readonly words: string }[] = [
   { id: "all", label: "All", words: "Every provider below" },
@@ -310,10 +299,18 @@ export function OptionCard({
   );
 }
 
-/** A provider row: its name at full strength, its words dim, no mark and no colour (the operator's note of 2 October 2026); an (i) at its end opens its profile. */
+/**
+ * A provider row: one card, its name at full strength, its words dim, no
+ * mark and no colour; the hover and chosen backgrounds span the whole
+ * card, and the (i) that opens its profile sits inside at the right, shown
+ * while the pointer is over the row, the row or the (i) has keyboard
+ * focus, or the profile is open, its space kept otherwise so nothing
+ * shifts; a touch screen, with no hover, shows it on the chosen row (the
+ * operator's notes of 2 October 2026).
+ */
 export function ProviderRow({ offer, selected, onClick, optionRef, info }: { offer: OfferView; selected: boolean; onClick: () => void; optionRef?: (element: HTMLButtonElement | null) => void; info?: ReactNode }) {
   return (
-    <div className={cn("flex items-center rounded-md border", selected ? "border-transparent bg-state-active" : "border-input")}>
+    <div className={cn("group flex items-center rounded-md border", selected ? "border-transparent bg-state-active" : "border-input hover:bg-state-hover")}>
       <button
         ref={optionRef}
         type="button"
@@ -321,12 +318,22 @@ export function ProviderRow({ offer, selected, onClick, optionRef, info }: { off
         aria-checked={selected}
         tabIndex={selected ? 0 : -1}
         onClick={onClick}
-        className={cn("flex min-w-0 flex-1 flex-col items-start rounded-md px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring", !selected && "hover:bg-state-hover")}
+        className="flex min-w-0 flex-1 flex-col items-start rounded-md px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer)}</span>
         <OfferWords offer={offer} />
       </button>
-      {info ? <div className="flex shrink-0 items-center pr-1.5">{info}</div> : null}
+      {info ? (
+        <div
+          data-testid="provider-info"
+          className={cn(
+            "flex shrink-0 items-center pr-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 has-[[data-state=open]]:opacity-100",
+            selected && "[@media(hover:none)]:opacity-100",
+          )}
+        >
+          {info}
+        </div>
+      ) : null}
     </div>
   );
 }
