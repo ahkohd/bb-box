@@ -18,5 +18,7 @@ declare module "@novnc/novnc" {
     disconnect(): void;
     focus(options?: FocusOptions): void;
     blur(): void;
+    /** The size of the element it draws in, which it asks the box for, floored; a subclass may measure it otherwise. */
+    _screenSize(): { w: number; h: number };
   }
 }
