@@ -1229,7 +1229,7 @@ test("a desktop that cannot be resized says only that you have control, and noVN
   expect(client!.resizeChecks).toBe(0);
 });
 
-test("once the tab's size holds, a desktop in your control asks for it again, as noVNC drops a size that comes while a resize is out", async () => {
+test("once the tab's size holds, a desktop in your control asks for it once; while it moves, noVNC may not ask", async () => {
   const { handlers } = server([desktopBox()]);
   const slot = desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
@@ -1246,23 +1246,31 @@ test("once the tab's size holds, a desktop in your control asks for it again, as
   expect(await slot.findByText("You have control. The desktop follows this tab's size.")).toBeTruthy();
   const taken = client!.resizeChecks;
   vi.useFakeTimers();
-  // A pane opening: each frame puts the wait back.
+  // The size as it was, observed again (a mount's first observation), is no move: noVNC keeps asking, and the settle asks once more.
+  act(() => observer.resize(1037, 746));
+  expect(client!.resizeSession).toBe(true);
+  act(() => void vi.advanceTimersByTime(SETTLE_MS));
+  const held = client!.resizeChecks;
+  expect(held).toBe(taken + 1);
+  // A pane opening: while the size moves noVNC may not ask (1.7 would ask on the first frame, and the box would set that size first), each frame puts the wait back, and the one request comes once the size holds.
   act(() => observer.resize(1006, 746));
+  expect(client!.resizeSession).toBe(false);
   act(() => void vi.advanceTimersByTime(SETTLE_MS - 50));
   act(() => observer.resize(1037, 746));
+  expect(client!.resizeSession).toBe(false);
   act(() => void vi.advanceTimersByTime(SETTLE_MS - 50));
-  expect(client!.resizeChecks).toBe(taken);
+  expect(client!.resizeChecks).toBe(held);
   act(() => void vi.advanceTimersByTime(50));
-  expect(client!.resizeChecks).toBe(taken + 1);
+  expect([client!.resizeChecks, client!.resizeSession]).toEqual([held + 1, true]);
   // Out of the page the element has no size, which is not asked for.
   act(() => observer.resize(0, 0));
   act(() => void vi.advanceTimersByTime(SETTLE_MS));
-  expect(client!.resizeChecks).toBe(taken + 1);
+  expect(client!.resizeChecks).toBe(held + 1);
 
   act(() => observer.resize(518, 722));
   dropAllKept();
   act(() => void vi.advanceTimersByTime(SETTLE_MS));
-  expect([client!.resizeChecks, observer.disconnected]).toEqual([taken + 1, true]);
+  expect([client!.resizeChecks, observer.disconnected]).toEqual([held + 1, true]);
 });
 
 test("a desktop tab shows the box through the relay, and takes and hands back control", async () => {

@@ -449,6 +449,15 @@ titled after the box.
   | the agent, which took it from you (038) | The agent took control | Take control again |
   | nobody, for a moment | Control is changing hands… | none |
 
+**Size.** With control, the desktop follows the tab's size: the viewer
+asks the box for a new size once the pane's size has held for 250 ms
+(`SETTLE_MS`), and not while it moves. noVNC 1.7 would ask on the first
+frame of a change, with no wait, and the box's queue set that size
+before the final one, so a maximise landed in two steps (the Windows box
+of 2 October 2026); now a maximise, a restore and a window drag each land
+in one step. The opening fit is asked for at connect, before any move,
+and the first frame does not wait for it.
+
   While you hold control, the screen area has a two-pixel inset ring in the
   primary colour, so it is clear which tab sends input. Resizing is
   automatic while you hold control; handing back puts the desktop back to
