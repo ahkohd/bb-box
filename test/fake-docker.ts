@@ -7,7 +7,7 @@ import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { parseDockerPart, type DockerConfig } from "../src/backends/docker/config.ts";
 import type { FieldValue } from "../src/backends/types.ts";
-import { tempDir } from "./helpers.ts";
+import { fakeGroup, tempDir } from "./helpers.ts";
 
 /** A container as the fake's `docker container inspect` prints it. */
 export interface FakeContainer {
@@ -44,6 +44,7 @@ export interface FakeDockerHost {
 
 export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHost {
   const root = tempDir("fake-docker");
+  fakeGroup();
   const binary = join(root, "docker");
   const script = new URL("./fake-docker.mjs", import.meta.url).pathname;
   writeFileSync(binary, `#!/bin/sh\nFAKE_DOCKER_ROOT='${root}' exec '${process.execPath}' '${script}' "$@"\n`);
