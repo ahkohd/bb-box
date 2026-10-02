@@ -153,6 +153,7 @@ template/build.sh linux 9100
 template/build.sh desktop 9101 --gpu 0000:01:00.0
 template/build.sh copy-desktop 9101 9102 --gpu 0000:02:00.0   # a second GPU
 template/build.sh desktop 9103 --cpu                          # no GPU
+template/build.sh desktop 9105 --cpu --wayland                # Wayland, no GPU
 ```
 
 `build.sh` creates a CT from Proxmox's Ubuntu 24.04 template (downloading it
@@ -165,8 +166,9 @@ GPU's device nodes; use it to spread desktops across GPUs. `desktop --cpu`
 makes a desktop template with no device nodes and no NVIDIA userspace,
 whose display always takes the CPU path; it is what a host without an
 NVIDIA driver gets, and a GPU host can offer CPU desktops with it without
-using GPU memory. `build.sh headless`, the Linux template's earlier name,
-still works.
+using GPU memory. `desktop --cpu --wayland` makes the Wayland desktop
+template (048) instead of XFCE; see [The Wayland desktop](#the-wayland-desktop).
+`build.sh headless`, the Linux template's earlier name, still works.
 
 To rebuild a template in place, for example with new pins, add `--replace`:
 
@@ -339,6 +341,47 @@ Limits:
   `x0vncserver` cannot resize a screen with no RandR outputs.
 - When the host's NVIDIA driver changes, desktops fall back to the CPU until
   you rebuild the desktop templates.
+
+### The Wayland desktop
+
+`build.sh desktop <vmid> --cpu --wayland` builds a desktop on Wayland
+instead of X11 (decision 048), on the CPU only for now. It has what the
+CPU desktop has, Chrome, the small apps, Cua Driver, Rust and the GPUI
+build dependencies, but no XFCE, no TigerVNC and no X server:
+
+- **Sway 1.9**, headless, drawn by the CPU (`WLR_RENDERER=pixman`), as the
+  box user in `bb-box-display.service`. Windows float: apps open at their
+  own size, centred, with title bars, and Mod4 with a drag moves one.
+  **Waybar** along the bottom has Apps (the `wofi` launcher), Terminal
+  (`foot`), a button for each window, which brings it to the front, and a
+  clock. Its config is `/etc/bb-box/sway.conf`.
+- **wayvnc 0.7.2** in `bb-box-vnc.service`, on port 5900 at 60 frames a
+  second. It offers no VNC password: it signs in user `box` with the
+  password in `/var/lib/bb-box/vnc-password`, through Apple's
+  authentication (type 30), which the relay speaks.
+- **Resize**: `/usr/local/libexec/bb-box/display resize <W>x<H>` sets
+  Sway's output to that size and fits the floating windows into it; the
+  backend runs it for a viewer's size, as wayvnc refuses a viewer's own.
+- **No Xwayland and no `DISPLAY`**: one X11 window on Sway hides every
+  window's process and bounds from Cua, so `xwayland disable` is in Sway's
+  config and the `xwayland` package is not installed. X11-only apps, such as
+  xterm, Java Swing, Wine and older Electron apps, need `linux-desktop-cpu`.
+- **Environment**: `/run/bb-box/display.env` has `WAYLAND_DISPLAY`,
+  `SWAYSOCK=/run/bb-box/sway.sock`, `XDG_SESSION_TYPE=wayland` and
+  `XDG_CURRENT_DESKTOP=sway`. The box user's shells and the units read it,
+  and Sway gives them to the user manager and D-Bus, so the accessibility
+  bus and apps it starts are on the desktop. Chrome draws natively on
+  Wayland with them.
+- **Cua Driver** runs with `CUA_DRIVER_RS_ENABLE_WAYLAND=1` and finds
+  windows through Sway's IPC; `bb-box-display` starts it after Sway and
+  stops it with Sway. Input goes to the focused window only.
+- `wl-clipboard`, `grim`, `slurp` and `wtype` stand in for `xclip`,
+  `scrot` and `xdotool`.
+
+Its check, `bb-box-check-desktop` in the template, signs in to wayvnc with
+type 30 and times the first full frame, resizes the screen and checks that a
+new viewer has the new size, reads a GTK 4 window (`gtk4-demo`) and a page in
+Chrome through Cua, and checks that no Xwayland or `DISPLAY` is anywhere.
 
 ## 5. The plugin's API token
 

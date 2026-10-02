@@ -1,12 +1,16 @@
 // bb-box: check Cua Driver end to end over MCP (stdio, newline-delimited JSON-RPC):
-// initialize, list tools, and read the screen size of the desktop. With a
-// socket, it goes through the running daemon (`cua-driver mcp --socket`), as
-// the bb-box plugin does.
-// usage: node cua-probe.mjs [--socket <path>]
+// initialize, list tools, and read the screen size of the desktop, or call
+// another tool with --call (list_windows on Wayland, where get_screen_size
+// needs X11). With a socket, it goes through the running daemon
+// (`cua-driver mcp --socket`), as the bb-box plugin does.
+// usage: node cua-probe.mjs [--socket <path>] [--call <tool>]
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 
-const args = ["mcp", ...process.argv.slice(2)];
+const argv = process.argv.slice(2);
+const at = argv.indexOf("--call");
+const tool = at >= 0 ? argv.splice(at, 2)[1] : "get_screen_size";
+const args = ["mcp", ...argv];
 const driver = spawn("cua-driver", args, { stdio: ["pipe", "pipe", "ignore"] });
 const pending = new Map();
 readline.createInterface({ input: driver.stdout }).on("line", (line) => {
@@ -37,12 +41,12 @@ try {
   });
   send({ method: "notifications/initialized" });
   const tools = await call(2, "tools/list", {});
-  const size = await call(3, "tools/call", { name: "get_screen_size", arguments: {} });
+  const size = await call(3, "tools/call", { name: tool, arguments: {} });
   console.log(
     JSON.stringify({
       server: init.result?.serverInfo,
       tools: tools.result?.tools?.length,
-      screen: size.error ?? size.result?.content?.find((c) => c.type === "text")?.text,
+      [tool === "get_screen_size" ? "screen" : tool]: size.error ?? size.result?.content?.find((c) => c.type === "text")?.text?.slice(0, 200),
     }),
   );
   driver.stdin.end();

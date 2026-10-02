@@ -6,7 +6,8 @@
 # the host, VirtualGL, GPUI build dependencies and Rust.
 #
 # usage: customize-desktop.sh <build-dir>
-# build.env as for customize-base.sh, and DESKTOP_GPU.
+# build.env as for customize-base.sh, DESKTOP_GPU, and DESKTOP_SESSION:
+# x11 (the default) or wayland, which customize-desktop-wayland.sh makes (048).
 set -Eeuo pipefail
 trap 'echo "customize-desktop: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 umask 022
@@ -14,6 +15,7 @@ umask 022
 build=$1
 # shellcheck disable=SC1091
 . "$build/build.env"
+[ "${DESKTOP_SESSION:-x11}" != wayland ] || exec bash "$build/guest/customize-desktop-wayland.sh" "$build"
 art=$build/artifacts
 user=${BOX_USER:-box}
 runtime=${BOX_RUNTIME:-lxc}
