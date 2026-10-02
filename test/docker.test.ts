@@ -1,13 +1,13 @@
 import type { GuestOs } from "../src/backends/types.ts";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { toConfiguration } from "../scripts/smoke.ts";
 import { daemonOs, containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
-import { gpusOf, parseContainers, parseInfo } from "../src/backends/docker/cli.ts";
+import { gpusOf, parseContainers, parseInfo, sshReuse } from "../src/backends/docker/cli.ts";
 import { parseDockerPart } from "../src/backends/docker/config.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
 import { offerChecks } from "../src/backends/index.ts";
@@ -760,6 +760,52 @@ test("the doctor fails without a daemon or a CLI, and skips what depends on them
     ["docker.daemon", "skipped"],
   ]);
   assert.match(report.checks[0]!.fix!, /Install the docker CLI/);
+});
+
+test("the doctor says whether the docker calls to an ssh:// host share one SSH connection (#97)", { skip: process.platform === "win32" }, async () => {
+  const fake = fakeDockerHost();
+  const dir = tempDir("ssh-g");
+  const ssh = join(dir, "ssh");
+  // ssh -G prints the config it would use, one "key value" line each, without logging in.
+  writeFileSync(ssh, `#!/bin/sh\nprintf '%s\\n' "$*" >"${dir}/args"\n[ -f "${dir}/config" ] || exit 255\ncat "${dir}/config"\n`);
+  chmodSync(ssh, 0o755);
+  const config = (lines: string) => writeFileSync(join(dir, "config"), `user builder\nhostname docker.example\n${lines}`);
+  const host = "ssh://builder@docker.example:2222";
+  const shared = async (lines: string) => {
+    config(lines);
+    return (await sshReuse(host, ssh, signal()))?.shared;
+  };
+  assert.equal(await shared("controlmaster false\ncontrolpersist no\n"), false);
+  assert.equal(readFileSync(join(dir, "args"), "utf8"), "-G -l builder -p 2222 -- docker.example\n", "as the docker CLI logs in");
+  assert.equal(await shared("controlmaster auto\ncontrolpath /home/builder/.ssh/cm-0a1b\ncontrolpersist 600\n"), true);
+  assert.equal(await shared("controlmaster true\ncontrolpath /home/builder/.ssh/cm-0a1b\ncontrolpersist yes\n"), true);
+  // A master that lasts only as long as the call that opened it is no use to short calls.
+  assert.equal(await shared("controlmaster auto\ncontrolpath /home/builder/.ssh/cm-0a1b\ncontrolpersist no\n"), false);
+  // ControlMaster no with a ControlPath uses a connection something else keeps open.
+  assert.equal(await shared("controlmaster false\ncontrolpath /home/builder/.ssh/cm-0a1b\ncontrolpersist no\n"), true);
+  assert.deepEqual(await sshReuse("ssh://[2001:db8::1]", ssh, signal()), { host: "2001:db8::1", shared: true });
+  assert.equal(readFileSync(join(dir, "args"), "utf8"), "-G -- 2001:db8::1\n");
+  assert.equal(await sshReuse(null, ssh, signal()), null);
+  assert.equal(await sshReuse("unix:///var/run/docker.sock", ssh, signal()), null);
+
+  const backend = new DockerBackend(dockerConfig({ host }), testContext(), { binary: fake.binary, ssh, readyTimeoutMs: 2_000 });
+  const check = async () => (await backend.doctor(signal())).checks.find((entry) => entry.id === "docker.ssh");
+  config("controlmaster false\ncontrolpersist no\n");
+  const off = await check();
+  assert.equal(off?.status, "warn");
+  assert.match(off!.detail, /^Each docker call to docker\.example logs in over SSH again, which took about 0\.2 s/);
+  assert.match(off!.fix!, /give Host docker\.example the lines ControlMaster auto, ControlPath ~\/\.ssh\/cm-%C and ControlPersist 10m\./);
+  config("controlmaster auto\ncontrolpath /home/builder/.ssh/cm-0a1b\ncontrolpersist 600\n");
+  assert.deepEqual(await check(), {
+    id: "docker.ssh",
+    name: "SSH connection reuse",
+    status: "ok",
+    detail: "The docker calls to docker.example share one SSH connection.",
+    fix: null,
+  });
+  // When ssh cannot say, the doctor does not guess.
+  rmSync(join(dir, "config"));
+  assert.equal(await check(), undefined);
 });
 
 test("the doctor warns of a network bb-box did not make", async () => {

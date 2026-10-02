@@ -3,7 +3,7 @@
 // ssh:// host alike, and its `docker exec` is a plain command line, which
 // the command transport and the desktop's route use (031).
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { Capture } from "../../transports/process.ts";
 import { abortable } from "../../core/abortable.ts";
 
@@ -160,6 +160,43 @@ export function parseContainers(text: string): ContainerInfo[] {
       memoryMiB: memory ? Math.round(memory / MiB) : null,
       addresses,
     };
+  });
+}
+
+export interface SshReuse {
+  /** The host's name as ssh matches it against Host lines. */
+  readonly host: string;
+  readonly shared: boolean;
+}
+
+/**
+ * Whether the docker CLI's logins to an ssh:// host share one SSH
+ * connection, by the SSH config of the user BB runs as: a ControlPath with
+ * ControlMaster and ControlPersist (#97). Null when the host is not ssh://,
+ * on Windows, whose ssh cannot share, or when ssh -G cannot say.
+ */
+export function sshReuse(host: string | null, ssh = "ssh", signal?: AbortSignal): Promise<SshReuse | null> {
+  if (!host?.startsWith("ssh://") || process.platform === "win32") return Promise.resolve(null);
+  let url: URL;
+  try {
+    url = new URL(host);
+  } catch {
+    return Promise.resolve(null);
+  }
+  const name = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  // As the docker CLI logs in: ssh -l user -p port -- host.
+  const target = [...(url.username ? ["-l", decodeURIComponent(url.username)] : []), ...(url.port ? ["-p", url.port] : []), "--", name];
+  return new Promise((resolve) => {
+    execFile(ssh, ["-G", ...target], { timeout: 10_000, signal }, (error, stdout) => {
+      if (error) return resolve(null);
+      const config = new Map(stdout.split("\n").map((line) => line.trim().split(/\s+/)).map(([key = "", ...value]) => [key.toLowerCase(), value.join(" ")]));
+      const path = config.get("controlpath");
+      // ControlMaster no uses a connection something else opened. Without
+      // ControlPersist, a connection lasts only as long as the call that
+      // opened it, which is short.
+      const shared = !!path && path !== "none" && (config.get("controlmaster") === "false" || (config.get("controlpersist") ?? "no") !== "no");
+      resolve({ host: name, shared });
+    });
   });
 }
 

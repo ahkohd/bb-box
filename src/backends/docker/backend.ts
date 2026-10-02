@@ -45,7 +45,7 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { DockerCli, LABELS, NO_SUCH, abortable, type ContainerInfo, type DockerInfo } from "./cli.ts";
+import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 
@@ -75,6 +75,8 @@ type Pending = { readonly kind: string; readonly size: BoxSize };
 export interface DockerBackendOptions {
   /** The docker CLI, instead of `docker` on the PATH. */
   readonly binary?: string;
+  /** The ssh client the docker CLI runs for an ssh:// host, instead of `ssh` on the PATH. */
+  readonly ssh?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
 }
@@ -748,6 +750,19 @@ export class DockerBackend implements Backend {
         );
       } else {
         push("docker.daemon", "Docker daemon", "ok", `${facts}.`);
+      }
+
+      const reuse = await sshReuse(this.#cli.host, this.#options.ssh, signal);
+      if (reuse?.shared) {
+        push("docker.ssh", "SSH connection reuse", "ok", `The docker calls to ${reuse.host} share one SSH connection.`);
+      } else if (reuse) {
+        push(
+          "docker.ssh",
+          "SSH connection reuse",
+          "warn",
+          `Each docker call to ${reuse.host} logs in over SSH again, which took about 0.2 s on a LAN against 30 ms on a shared connection (#97).`,
+          `In the ~/.ssh/config of the user BB runs as, give Host ${reuse.host} the lines ControlMaster auto, ControlPath ~/.ssh/cm-%C and ControlPersist 10m. See setup/docker/README.md.`,
+        );
       }
 
       const limits = ["docker.limits", "CPU and memory limits"] as const;
