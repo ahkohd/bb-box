@@ -54,3 +54,4 @@ that changes gets a new record that supersedes the old one.
 | [047](047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md) | A physical Mac is an SSH pool machine, lent with a new user at its console |
 | [048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md) | A Wayland desktop is Sway with floating windows, streamed by wayvnc |
 | [049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md) | A project's image is a script on the standard image, and images are rebuilt when stale |
+| [050](050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md) | A box can join the operator's tailnet as an ephemeral node |

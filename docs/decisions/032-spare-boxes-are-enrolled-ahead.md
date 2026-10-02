@@ -3,7 +3,9 @@
 Status: accepted, 1 October 2026. Partly supersedes
 [014](014-enrol-through-machine-providers.md): warm boxes are not enrolled
 ahead. Extended by [036](036-your-machines-are-boxes-you-own.md): a spare
-that a thread starts on through BB's picker becomes yours.
+that a thread starts on through BB's picker becomes yours. Extended by
+[049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md):
+spares can be of an image.
 
 ## Context
 

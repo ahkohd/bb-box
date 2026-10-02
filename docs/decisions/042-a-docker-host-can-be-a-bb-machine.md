@@ -4,7 +4,9 @@ Status: accepted, 1 October 2026. Extends
 [031](031-docker-boxes-are-reached-through-docker-exec.md): the Docker
 backend reaches a BB machine's Docker without SSH. Checked after it was
 built: on a Windows PC, the relay reaches Docker Desktop's socket in WSL,
-and privileged boxes there start and enrol (#233).
+and privileged boxes there start and enrol (#233). Extended by
+[049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md):
+Docker images are rebuilt through the same relay.
 
 ## Context
 

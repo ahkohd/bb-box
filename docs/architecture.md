@@ -1356,6 +1356,32 @@ Today each kind has one image per backend, built by the setup scripts.
   and macOS monthly, within each host's disk reserve. A trial box from the
   new build must pass the checks before it replaces the old one.
 
+## Tailnet
+
+Planned
+([050](decisions/050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md)).
+A box can join the operator's tailnet, for a project whose app talks to
+the operator's machines over it.
+
+- **Opt-in** per kind or image in the configuration, or per box from New
+  box, `box_acquire` and `bb box acquire`. Spares and warm guests never
+  join; a spare joins when a thread takes it.
+- **The key** is a secret in the configuration's `tailnet` part: an OAuth
+  client (recommended), from which bb-box creates a one-off, ephemeral,
+  pre-approved, tagged key for each join, or a reusable, ephemeral,
+  pre-approved, tagged auth key.
+- **Joining** runs beside BB enrolment once the box is ready: a guest
+  script starts tailscaled and runs `tailscale up` with the box's name as
+  its hostname and `tag:bb-box`. A failed join fails the acquire. The box
+  shows its tailnet name and addresses.
+- **Leaving.** Release and stop run `tailscale logout` first, which removes
+  an ephemeral node at once. If the box cannot, bb-box removes the node
+  through Tailscale's API, or Tailscale does within an hour.
+- **TUN.** Proxmox LXC templates get `/dev/net/tun` from `build.sh`; Docker
+  boxes use their host's; Tart's Linux VMs have their own. Without TUN, a
+  box joins in userspace mode, which takes connections but cannot dial its
+  peers. The SSH host pool does not join.
+
 ## Configuration
 
 bb-box's configuration is one checked document in its plugin storage
@@ -1401,7 +1427,7 @@ bb-box's configuration is one checked document in its plugin storage
 | Which guest belongs to which box and thread | the provider (tags, names), or a marker on a real machine | backend | the plugin's storage being lost |
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Configuration | plugin storage, one document | operator | exported by `bb box config show --json`; deleted by `bb plugin remove` |
-| Provider credentials | plugin storage, apart from the configuration | operator | never shown in output, logs or errors, nor sent to the browser |
+| Provider credentials, and the tailnet key (planned, 050) | plugin storage, apart from the configuration | operator | never shown in output, logs or errors, nor sent to the browser |
 | bb-box's SSH key | plugin storage; its public key is installed by setup | core | |
 | The install ID | plugin storage, and on every guest | core | the plugin's storage being lost: the doctor shows the old ID and an operator command restores it |
 | The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; read from BB's daemon in the box by each command, never written to disk or to bb-box's storage |
@@ -1578,3 +1604,4 @@ Notes:
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
 | Whether the Proxmox API token can capture and replace templates, whether the guest scripts run again cleanly on a built template, and whether a BB script automation can run `bb box` | the first PRs of [049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md#to-verify-in-the-first-prs) |
+| Whether a Proxmox LXC template's TUN device line reaches its clones, whether a Docker host that is an LXC container passes TUN to privileged boxes, and how long a join takes | the first PRs of [050](decisions/050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md#to-verify-in-the-first-prs) |
