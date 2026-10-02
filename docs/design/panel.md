@@ -255,8 +255,7 @@ words are never cut off.
 | [ docker-host                                                  ]  |
 | [ Container · usually ~1.8 s                                   ]  |
 | Name                                                              |
-| Optional; bb-box picks one when it is left empty.                 |
-| [                                                              ]  |
+| [ Optional: bb-box picks a name like calm-tundra               ]  |
 |------------------------------------------------------------------|
 | No provider matches these filters.              [ Create box ]    |
 +------------------------------------------------------------------+
