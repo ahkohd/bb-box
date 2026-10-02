@@ -8,11 +8,12 @@ import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
-import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/views.ts";
+import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
 import { choiceOf, formFilterOf, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
+import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
@@ -298,6 +299,28 @@ const KINDS: KindView[] = [
   kindView("linux-desktop", "Linux desktop", "A desktop on the GPU.", 4, true),
 ];
 
+/** The LXC host's profile, as the (i) on its row shows it. */
+const PROFILE: ProviderProfile = {
+  backend: "fake",
+  name: "Fake host on pve",
+  technology: "Linux containers on a test host.",
+  nature: "virtual",
+  hosts: ["pve"],
+  hostOs: "linux",
+  makes: [
+    { id: "linux", label: "Linux", form: "LXC", typicalReadyMs: 2200, ready: 1 },
+    { id: "linux-desktop", label: "Linux desktop (GPU)", form: "LXC", typicalReadyMs: 3100, ready: 0 },
+  ],
+  boxes: 2,
+  room: {
+    ok: true,
+    message: null,
+    warm: null,
+    hosts: [{ host: "pve", ok: true, limits: [{ resource: "memory", used: 12 * 1024, total: 64 * 1024, reserve: 4 * 1024, unit: "MiB" }, { resource: "cpu", used: 6, total: 16, reserve: 0, unit: "count" }] }],
+  },
+  status: { state: "active", problem: null, ok: true, summary: "Proxmox VE 9.2 on pve", checkedAt: 0 },
+};
+
 /** Linux as two backends offer it: the LXC host and a pool of real machines. */
 const POOLED: KindView = {
   ...KINDS[0]!,
@@ -378,6 +401,10 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
       return result(machines.find((candidate) => candidate.box.id === ref)?.box ?? null);
     },
     kinds: () => options.kinds ?? KINDS,
+    provider: ({ backend }) => {
+      changes.push(`provider ${backend}`);
+      return { ...PROFILE, backend, status: { ...PROFILE.status, checkedAt: Date.now() - 120_000 } };
+    },
     thread: ({ box: ref, prompt }) => {
       changes.push(`thread ${ref} ${prompt}`);
       return { threadId: "thr_child", error: null };
@@ -701,6 +728,61 @@ test("one Escape closes the form whatever was used last: a card, a menu, a field
   card.focus();
   escape();
   await waitFor(() => expect(isOpen()).toBe(false));
+});
+
+test("the (i) on a provider row opens its profile, asked once while the form is open, in plain rows; Escape closes the profile first", async () => {
+  const { handlers, changes } = server([], { kinds: [POOLED, KINDS[1]!] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("radiogroup", { name: "Provider" });
+  expect(changes).toEqual([]);
+  // Nothing is asked until the (i) opens; then the profile comes once.
+  fireEvent.click(screen.getByRole("button", { name: "About pve" }));
+  expect(await screen.findByText("Fake host on pve")).toBeTruthy();
+  expect(screen.getByText("Linux containers on a test host.")).toBeTruthy();
+  const rows = screen.getAllByRole("definition").map((row) => row.textContent);
+  expect(rows).toEqual([
+    "pve (a Linux machine)",
+    "Linux, Linux desktop (GPU) · LXC containers",
+    "pve: memory 12 of 64 GiB, 4 GiB kept back · cores 6 of 16",
+    "Linux ~2.2 s (1 ready now) · Linux desktop (GPU) ~3.1 s",
+    "Ready · Proxmox VE 9.2 on pve · 2 boxes on it · checked 2 minutes ago",
+  ]);
+  expect(changes).toEqual(["provider fake"]);
+  // The (i) does not choose the row.
+  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+  // Escape closes the profile and leaves the form; opening the profile again asks nothing more.
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull());
+  expect(screen.getByRole("radiogroup", { name: "System" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "About pve" }));
+  expect(await screen.findByText("Linux containers on a test host.")).toBeTruthy();
+  expect(changes).toEqual(["provider fake"]);
+  // The pool's (i) asks for the pool.
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "About SSH host pool" }));
+  await waitFor(() => expect(changes).toEqual(["provider fake", "provider ssh-pool"]));
+});
+
+test("the profile's words: limits, room, where it runs, what it makes, the usual start and the status", () => {
+  expect(limitWords({ resource: "memory", used: 12 * 1024, total: 64 * 1024, reserve: 4 * 1024, unit: "MiB" })).toBe("memory 12 of 64 GiB, 4 GiB kept back");
+  expect(limitWords({ resource: "disk", used: 100 * 1024, total: null, reserve: 0, unit: "MiB" })).toBe("disk 100 GiB used");
+  expect(limitWords({ resource: "machines", used: 1, total: 2, reserve: 0, unit: "count" })).toBe("machines 1 of 2");
+  expect(limitWords({ resource: "gpu-desktops", id: "0", used: 1, total: 1, reserve: 0, unit: "count" })).toBe("GPU desktops 0 1 of 1");
+  expect(roomWords(null)).toEqual(["Not known: the provider did not answer."]);
+  expect(roomWords({ ok: false, message: "pve has no memory left.", warm: { ready: 1, target: 2 }, hosts: [{ host: "pve", ok: false, limits: [] }] })).toEqual(["pve: full", "pve has no memory left.", "1 of 2 warm"]);
+  expect(roomWords({ ok: true, message: null, warm: null, hosts: [] })).toEqual(["Room for one more box."]);
+  expect(runsOnWords({ hosts: ["devpc"], hostOs: "windows", nature: "virtual" })).toBe("devpc (a Windows PC)");
+  expect(runsOnWords({ hosts: ["devpc"], hostOs: null, nature: "virtual" })).toBe("devpc (not known yet)");
+  expect(runsOnWords({ hosts: [], hostOs: "linux", nature: "real" })).toBe("machines of its own (Linux machine)");
+  expect(makesWords({ makes: [] })).toBe("Nothing now.");
+  expect(makesWords({ makes: [{ id: "macos", label: "macOS", form: "VM", typicalReadyMs: null, ready: 0 }] })).toBe("macOS · VMs");
+  expect(usuallyWords({ makes: [{ id: "macos", label: "macOS", form: "VM", typicalReadyMs: null, ready: 0 }] })).toBe("No cold start recorded yet.");
+  expect(statusWords({ status: { state: "off", problem: null, ok: null, summary: null, checkedAt: null }, boxes: 1 }, 0)).toBe("Off · 1 box on it");
+  expect(statusWords({ status: { state: "misconfigured", problem: "Set the API token.", ok: null, summary: null, checkedAt: null }, boxes: 0 }, 0)).toBe("Needs setting up: Set the API token. · 0 boxes on it");
+  expect(statusWords({ status: { state: "active", problem: null, ok: false, summary: "Template 9101 has no build tag.", checkedAt: 0 }, boxes: 3 }, 60_000)).toBe("Needs attention · Template 9101 has no build tag. · 3 boxes on it · checked 1 minute ago");
 });
 
 test("a provider row says how many spares it has ready now (#121)", async () => {

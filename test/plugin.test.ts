@@ -2670,3 +2670,36 @@ test("a computer-use session closes when idle, opens again when needed, and goes
   assert.equal(isError(notTaken), true);
   assert.equal(text(notTaken), text(refused));
 });
+
+test("a provider's profile for the form's (i): its technology, hosts, kinds, room, usual start and status, with one capacity call", async (t) => {
+  const { harness, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { kinds: { id: string; offers: { backend: string; name: string }[] }[] };
+  const offer = state.kinds.find((kind) => kind.id === "linux")!.offers[0]!;
+  const profile = (await harness.behavior.callRpc("provider", { backend: offer.backend })) as {
+    backend: string;
+    name: string;
+    technology: string;
+    nature: string;
+    hosts: string[];
+    hostOs: string | null;
+    makes: { id: string; label: string; form: string | null; typicalReadyMs: number | null; ready: number }[];
+    boxes: number;
+    room: { ok: boolean; hosts: { host: string; ok: boolean }[] } | null;
+    status: { state: string; problem: string | null; ok: boolean | null; summary: string | null; checkedAt: number | null };
+  };
+  assert.equal(profile.backend, offer.backend);
+  assert.equal(profile.name, offer.name, "named as the row names it");
+  assert.ok(profile.technology.length > 0, "the driver's description");
+  assert.ok(["virtual", "real"].includes(profile.nature));
+  assert.ok(profile.makes.some((kind) => kind.id === "linux"), "makes linux");
+  assert.equal(profile.boxes, 0);
+  assert.ok(profile.room && profile.room.ok, "room for one more, as the fake backend says");
+  assert.equal(profile.status.state, "active");
+  assert.equal(profile.status.problem, null);
+  // A box on it counts; a name that is no provider is refused.
+  await tool("box_acquire", {});
+  const again = (await harness.behavior.callRpc("provider", { backend: offer.backend })) as { boxes: number };
+  assert.equal(again.boxes, 1);
+  await assert.rejects(harness.behavior.callRpc("provider", { backend: "elsewhere" }), /No provider has the ID elsewhere/);
+});

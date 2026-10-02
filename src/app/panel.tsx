@@ -108,7 +108,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{boxes.length ? `${boxes.length} ${boxes.length === 1 ? "box" : "boxes"}` : null}</span>
-        {state.kinds.length ? <NewBox kinds={state.kinds} make={make} /> : null}
+        {state.kinds.length ? <NewBox kinds={state.kinds} make={make} profile={(backend) => rpc.call("provider", { backend })} /> : null}
       </div>
       {problem ? (
         <p role="alert" className="text-xs leading-snug text-destructive-text">

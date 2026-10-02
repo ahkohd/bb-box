@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { KindView, SizeView } from "../plugin/views.ts";
+import type { KindView, ProviderProfile, SizeView } from "../plugin/views.ts";
+import { ProviderInfo } from "./provider-profile.tsx";
 import type { GuestOs } from "../backends/types.ts";
 import { archAvailable, ARCHS, choiceOf, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
@@ -100,12 +101,15 @@ export function NewBox({
   kinds,
   make,
   machine = false,
+  profile,
 }: {
   kinds: readonly KindView[];
   /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036). */
   make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[]) => Promise<string | null>;
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
   machine?: boolean;
+  /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
+  profile?: (backend: string) => Promise<ProviderProfile>;
 }) {
   const pluginId = experimental_usePluginId();
   const [open, setOpen] = useState(false);
@@ -352,6 +356,7 @@ export function NewBox({
                   optionRef={(element) => {
                     providerOptions.current[index + (choiceless ? 0 : 1)] = element;
                   }}
+                  info={profile ? <ProviderInfo offer={offer} profile={profile} /> : undefined}
                 />
               ))}
             </div>
