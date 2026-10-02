@@ -19,6 +19,7 @@ import {
   vncResponse,
   type Screen,
 } from "../src/core/rfb.ts";
+import type { DisplayAuth } from "../src/transports/types.ts";
 import { FakeRfb, until } from "./fake-rfb.ts";
 
 const bytes = (...values: number[]) => Uint8Array.of(...values);
@@ -104,14 +105,14 @@ async function failure(reader: StreamReader): Promise<string> {
   return new TextDecoder().decode(await reader.read(length));
 }
 
-function relayTo(server: FakeRfb, options: Partial<RelayOptions> & { password?: string } = {}) {
+function relayTo(server: FakeRfb, options: Partial<RelayOptions> & { password?: string; auth?: DisplayAuth } = {}) {
   const viewer = fakeViewer();
   let control = false;
   const ends: string[] = [];
   const resizes: unknown[] = [];
   const open: OpenDisplay = async () => ({
     channel: server.channel(),
-    auth: options.password === undefined ? { type: "none" } : { type: "vnc-password", password: options.password },
+    auth: options.auth ?? (options.password === undefined ? { type: "none" } : { type: "vnc-password", password: options.password }),
   });
   const relay = new RfbRelay({
     viewer,
@@ -291,6 +292,29 @@ test("a wrong password reaches the viewer as a security failure with the reason"
   assert.equal(reason, "The box's desktop refused its VNC password: Authentication failed");
   assert.equal(relay.viewer.closed?.code, 1011);
   assert.deepEqual(relay.ends, [`box: ${reason}`]);
+});
+
+test("the relay signs in to Screen Sharing as the box user with Apple's authentication, and the viewer still gets type None (047)", async () => {
+  const server = new FakeRfb({ user: "boxuser", password: "pässwort 9" });
+  const relay = relayTo(server, { auth: { type: "apple", user: "boxuser", password: "pässwort 9" } });
+  assert.deepEqual(await relay.init(), { width: 1280, height: 800 });
+  assert.equal(server.connections[0]!.shared, 1);
+  await relay.relay.close();
+  assert.deepEqual(relay.ends, ["viewer"]);
+});
+
+test("a sign-in Screen Sharing refuses, or the relay cannot make, reaches the viewer as a security failure with the reason", async () => {
+  const cases: [DisplayAuth, string][] = [
+    [{ type: "apple", user: "boxuser", password: "wrong" }, "The box's desktop refused the sign-in of user boxuser: Authentication failed"],
+    [{ type: "none" }, "The box's desktop asks for a user and password, and its backend gave none."],
+    [{ type: "apple", user: "boxuser", password: "x".repeat(64) }, "The box user's name or password is longer than the 63 bytes Apple's authentication carries."],
+  ];
+  for (const [auth, reason] of cases) {
+    const relay = relayTo(new FakeRfb({ user: "boxuser", password: "right" }), { auth });
+    assert.equal(hex(await relay.handshake()), "00000001");
+    assert.equal(await failure(relay.viewer.reader), reason);
+    assert.deepEqual(relay.ends, [`box: ${reason}`]);
+  }
 });
 
 test("a display that cannot open reaches the viewer as a security failure", async () => {

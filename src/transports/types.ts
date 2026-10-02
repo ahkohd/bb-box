@@ -49,8 +49,15 @@ export type Route =
       readonly ca?: string;
     };
 
-/** What the stream server in the box expects. The relay answers it; the browser never sees it. */
-export type DisplayAuth = { readonly type: "none" } | { readonly type: "vnc-password"; readonly password: string };
+/**
+ * What the stream server in the box expects. The relay answers it; the
+ * browser never sees it. `apple` is macOS Screen Sharing's sign-in (RFB
+ * security type 30), which shows the screen of the user it signs in as (047).
+ */
+export type DisplayAuth =
+  | { readonly type: "none" }
+  | { readonly type: "vnc-password"; readonly password: string }
+  | { readonly type: "apple"; readonly user: string; readonly password: string };
 
 export interface DisplaySize {
   readonly width: number;
