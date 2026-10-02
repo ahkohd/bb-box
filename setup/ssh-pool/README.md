@@ -191,10 +191,11 @@ After that it lends the one free longest, then the first listed.
 bb-box reaches the jump host with the same key, as the user in `via=`, and
 asks it to forward to the machine. The admin user cannot forward, so use
 another user on the jump host. In its `authorized_keys`, you can limit the
-key to forwarding to your machines:
+key to forwarding to your machines. `restrict` alone still lets the key run
+commands there, so add `command="false"`:
 
 ```text
-restrict,port-forwarding,permitopen="build-1:22",permitopen="build-2:22" ssh-ed25519 AAAA... bb-box
+command="false",restrict,port-forwarding,permitopen="build-1:22",permitopen="build-2:22" ssh-ed25519 AAAA... bb-box
 ```
 
 Add the jump host's keys to the host keys setting too. Name the machine by
@@ -502,19 +503,29 @@ Homebrew as the Mac's administrator.
 
 When a box is released, the helper:
 
-1. logs the box's user out and ends its processes
-2. makes the next box's user, with a new random password, and sets it as
-   the automatic login
+1. makes the next box's user, with a new random password, and sets it as
+   the automatic login, so that macOS does not sign the old user in again
+2. logs the box's user out and ends its processes
 3. starts the login window again, which signs the next user in
-4. removes the old user's crontab, at jobs, System V IPC objects, sudo rule
-   and every file it owns on the Data volume, then the user
+4. removes the old user's crontab, at jobs, System V IPC objects, sudo rule,
+   managed preferences, places in groups and every file it owns on the Data
+   volume, then the user
 5. checks that nothing is left and that the next user is at the console,
    then adds 1 to the reset generation
 
 If starting the login window again has not signed the user in within a
 minute, the helper restarts macOS's user space, then, 3 minutes later, the
 Mac. It gives up 8 minutes after that, and the Mac goes out of service. It
-remembers the way that worked, and the next reset starts with it.
+remembers the way that worked, and the next reset starts with it. macOS 27
+does not sign the user in when the login window starts again, so there the
+first reset takes a minute longer, and later ones restart user space.
+
+Restarting user space or the Mac ends every process on it, SSH sessions
+included. bb-box then asks the helper again, which waits for the sign-in to
+finish.
+
+The next user's home says which macOS it last signed in on, so its first
+sign-in does not open Setup Assistant.
 
 A person signed in at the console stops the reset, and the Mac goes out of
 service. Their session is left alone. Sign them out, then run
@@ -545,8 +556,8 @@ sudo /usr/local/libexec/bb-box/machine reset
 ```
 
 The command waits while the next box user signs in. If the helper restarts
-the Mac, run it again once the Mac is back. A Mac takes no `machine`
-argument.
+macOS's user space or the Mac, which ends your SSH session, run it again
+once SSH answers. A Mac takes no `machine` argument.
 
 ### Removing a Mac
 

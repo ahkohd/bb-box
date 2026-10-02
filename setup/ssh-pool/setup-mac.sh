@@ -184,7 +184,8 @@ chmod 0644 "$daemon"
 pmset -a sleep 0 displaysleep 0 disksleep 0 autorestart 1 >/dev/null
 defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false
 # Nor App Store apps, such as Xcode, which a person updates and then runs this again.
-# System Settings' Install application updates from the App Store has used each key.
+# macOS 27 keeps the App Store's Automatic Updates in com.apple.commerce, and System
+# Settings has no switch for them. Earlier macOS kept them in SoftwareUpdate.
 defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallAppUpdates -bool false
 defaults write /Library/Preferences/com.apple.commerce AutoUpdate -bool false
 softwareupdate --schedule off >/dev/null 2>&1 || :

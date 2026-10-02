@@ -938,7 +938,7 @@ export class SshPoolBackend implements Backend {
         } else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
       if (mac && !status.mac) skip(...macChecks);
-      else if (mac) this.#macChecks(status, machine, grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, XCODE, SCREEN, GRANTS }, { pass, warn, fail });
+      else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, XCODE, SCREEN, GRANTS }, { pass, warn, fail });
       // An operator's reset names no install.
       const install = status.owner?.install;
       if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
@@ -1036,6 +1036,7 @@ export class SshPoolBackend implements Backend {
   #macChecks(
     status: MachineStatus,
     machine: SshPoolMachine,
+    outOfService: boolean,
     grants: MacStatus["grants"],
     xcodeProbe: Probe | null,
     ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "XCODE" | "SCREEN" | "GRANTS", Check>>,
@@ -1049,7 +1050,9 @@ export class SshPoolBackend implements Backend {
       fail(ids.FILEVAULT, "FileVault is on, so after a restart the Mac waits for a password and signs no box user in.", `Turn FileVault off on ${name} in System Settings, Privacy and Security, wait until it has decrypted the disk, then ${reset}.`);
     } else pass(ids.FILEVAULT, "Off, so the Mac signs its box user in by itself after a restart.");
 
-    if (status.marker === "resetting") pass(ids.SIGNIN, "Its reset is signing the next box user in.");
+    // A reset that failed keeps its marker, and signs nobody in.
+    if (status.marker === "resetting" && outOfService) warn(ids.SIGNIN, "Its reset stopped before signing the next box user in.", `Fix what the state check says, then ${reset}.`);
+    else if (status.marker === "resetting") pass(ids.SIGNIN, "Its reset is signing the next box user in.");
     else if (!mac.user) fail(ids.SIGNIN, `Box user ${USER_PREFIX}${status.generation} is not made.`, `Fix what the state check says, then ${reset}.`);
     else if (mac.console !== mac.user) {
       const person = mac.console && mac.console !== "root" && !mac.console.startsWith(USER_PREFIX) ? mac.console : null;

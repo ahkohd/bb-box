@@ -10,7 +10,8 @@
 #   console                    the user at the console: root at the login window
 #   owners                     "<uid> <path>" lines, the last for a path winning, which find -uid reads
 #   processes                  "<pid> <uid> <name> <kills>" lines: a process ends at its last kill
-#   at, ipc                    "<job> <owner>" and "<type> <id> <owner>" lines
+#   again                      each user loginwindow signed in again as it was logged out
+#   ipc                        "<type> <id> <owner>" lines
 #   clock                      what date +%s says, when it exists
 #   flags/<name>               changes a tool, as each tool below says
 #   calls                      each tool and its arguments, one a line
@@ -32,6 +33,17 @@ uid_of() {
 values() { tr '\n' ' ' <"$1" | sed 's/ $//'; }
 domain() { printf '%s' "$1" | tr / _; }
 autologin_user() { cat "$F/defaults/_Library_Preferences_com.apple.loginwindow/autoLoginUser" 2>/dev/null; }
+# The password in /etc/kcpassword, as loginwindow reads it: XORed with Apple's key, up to the first null.
+kcpassword_of() {
+  [ -s "$R/etc/kcpassword" ] || return 0
+  perl -e '
+    my @key = (0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F);
+    local $/;
+    my @bytes = unpack("C*", <STDIN>);
+    my $password = pack("C*", map { $bytes[$_] ^ $key[$_ % 11] } 0 .. $#bytes);
+    $password =~ s/\0.*//s;
+    print $password;' <"$R/etc/kcpassword"
+}
 # Rewrites a state file through a filter.
 edit() {
   file=$1
@@ -65,8 +77,13 @@ case $tool in
     ;;
 
   dscl)
-    # dscl . -read|-list|-create|-delete <record> [attribute [value...]]
+    # dscl . -read|-list|-create|-delete <record> [attribute [value...]]. flags/directory-down: the directory
+    # service does not answer, as while userspace restarts.
     [ "${1:-}" = . ] || exit 64
+    if flag directory-down; then
+      echo "<dscl_cmd> DS Error: -14002 (eDSNodeNotFound)" >&2
+      exit 70
+    fi
     op=$2 record=${3:-}
     case $record in
       /Users) dir=$F/users ;;
@@ -106,14 +123,25 @@ case $tool in
         ;;
       -delete)
         [ -d "$dir" ] || exit 56
-        if [ -n "$attribute" ]; then rm -f "$dir/$attribute"; else rm -rf "$dir"; fi
+        if [ -z "$attribute" ]; then
+          rm -rf "$dir"
+        elif [ $# -eq 0 ]; then
+          rm -f "$dir/$attribute"
+        else
+          grep -qxF "$1" "$dir/$attribute" 2>/dev/null || {
+            echo "<dscl_cmd> DS Error: -14134 (eDSAttributeNotFound)" >&2
+            exit 54
+          }
+          edit "$dir/$attribute" grep -vxF "$1"
+        fi
         ;;
       *) exit 64 ;;
     esac
     ;;
 
   sysadminctl)
-    # flags/sysadminctl-fails: says it made a user, makes none, and exits 0, as sysadminctl can.
+    # It writes as NSLog does. flags/sysadminctl-fails: says it made a user, makes none, and exits 0, as sysadminctl can.
+    say() { echo "2026-01-01 00:00:00.000 sysadminctl[1:1] $*" >&2; }
     case ${1:-} in
       -addUser)
         user=$2
@@ -128,8 +156,16 @@ case $tool in
           esac
           shift 2
         done
-        echo "sysadminctl[1]: Creating user record..." >&2
+        # -password - reads it from stdin.
+        [ "$password" != - ] || IFS= read -r password || :
+        say "Creating user record..."
         flag sysadminctl-fails && exit 0
+        # It makes no user whose full name another user has, and exits 0.
+        for name in "$F"/users/*/RealName; do
+          [ -e "$name" ] && [ "$(cat "$name")" = "$full" ] || continue
+          say "User with full name '$full' already exists."
+          exit 0
+        done
         if [ -z "$uid" ]; then
           uid=501
           while dscl . -list /Users UniqueID | awk -v id="$uid" '$2 == id { found = 1 } END { exit !found }'; do uid=$((uid + 1)); done
@@ -148,14 +184,13 @@ case $tool in
         [ -z "$home" ] || rm -rf "$R$home"
         ;;
       -autologin)
-        # -autologin set -userName <user> -password <password>. It needs the user's password, and FileVault off.
+        # -autologin set -userName <user> -password <password>, as on macOS 27: it names the user, writes no
+        # /etc/kcpassword, and exits 0.
         case $2 in
           set)
-            flag filevault-on && exit 0
-            [ "$(cat "$F/secrets/$4" 2>/dev/null)" = "$6" ] || exit 0
             mkdir -p "$F/defaults/_Library_Preferences_com.apple.loginwindow"
             echo "$4" >"$F/defaults/_Library_Preferences_com.apple.loginwindow/autoLoginUser"
-            echo obscured >"$R/etc/kcpassword"
+            say "SACSetAutoLoginPassword error:22"
             ;;
           off) rm -f "$F/defaults/_Library_Preferences_com.apple.loginwindow/autoLoginUser" "$R/etc/kcpassword" ;;
         esac
@@ -178,6 +213,10 @@ case $tool in
     [ -d "$F/groups/$group" ] || {
       echo "Group not found." >&2
       exit 64
+    }
+    [ -d "$F/users/$who" ] || {
+      echo "Record was not found." >&2
+      exit 200
     }
     edit "$F/groups/$group/GroupMembership" grep -vx "$who"
     [ "$change" = remove ] || echo "$who" >>"$F/groups/$group/GroupMembership"
@@ -217,16 +256,23 @@ case $tool in
         if [ -x "$FAKE_MAC_BIN/${command##*/}" ]; then exec "$FAKE_MAC_BIN/${command##*/}" "$@"; fi
         exec "$R$command" "$@"
         ;;
-      # loginwindow signs in the automatic login as it starts, unless flags/loginwindow-waits.
+      # loginwindow signs in the automatic login as it starts, when /etc/kcpassword holds its password, unless
+      # flags/loginwindow-waits.
       kickstart)
         flag loginwindow-waits && exit 0
         user=$(autologin_user)
-        if [ -n "$user" ] && [ -e "$R/etc/kcpassword" ] && [ -d "$F/users/$user" ]; then echo "$user" >"$F/console"; else echo root >"$F/console"; fi
+        if [ -n "$user" ] && [ -d "$F/users/$user" ] && [ "$(kcpassword_of)" = "$(cat "$F/secrets/$user" 2>/dev/null)" ]; then
+          echo "$user" >"$F/console"
+        else
+          echo root >"$F/console"
+        fi
         ;;
-      # Logging a user out leaves its processes for pkill.
+      # Logging a user out leaves its processes for pkill. loginwindow signs the user in again when it is
+      # the automatic login, as macOS 27 does a few seconds later.
       bootout)
-        uid=${2#*/}
-        [ "$(uid_of "$(cat "$F/console")")" != "$uid" ] || echo root >"$F/console"
+        uid=${2#*/} console=$(cat "$F/console")
+        [ "$(uid_of "$console")" = "$uid" ] || exit 0
+        if [ "$console" = "$(autologin_user)" ]; then echo "$console" >>"$F/again"; else echo root >"$F/console"; fi
         ;;
     esac
     ;;
@@ -263,7 +309,7 @@ case $tool in
       *) exit 1 ;;
     esac
     ;;
-  sw_vers) echo 26.0 ;;
+  sw_vers) if [ "${1:-}" = -buildVersion ]; then echo 25A354; else echo 26.0; fi ;;
   uname) case ${1:-} in -m) echo arm64 ;; *) echo Darwin ;; esac ;;
   fdesetup) if flag filevault-on; then echo "FileVault is On."; else echo "FileVault is Off."; fi ;;
   ioreg) echo '  |   "IOPlatformUUID" = "0A1B2C3D-0000-4000-8000-000000000001"' ;;
@@ -282,7 +328,10 @@ case $tool in
     ;;
 
   find)
-    # find with -uid: the paths owners says the UID owns. Each argument is moved to the end once.
+    # find with -uid: the paths owners says the UID owns. Each argument is moved to the end once. flags/mds: once
+    # a sweep of the Data volume has run, as Spotlight's mds does, a process of the user runs again and has made
+    # its temporary folders again.
+    start=${1:-} uid=''
     count=$#
     while [ "$count" -gt 0 ]; do
       argument=$1
@@ -301,7 +350,16 @@ case $tool in
         set -- "$@" "$argument"
       fi
     done
-    exec /usr/bin/find "$@"
+    case $start in
+      */private/var/folders) exec /usr/bin/find "$@" ;;
+    esac
+    [ -n "$uid" ] && flag mds || exec /usr/bin/find "$@"
+    status=0
+    /usr/bin/find "$@" || status=$?
+    mkdir -p "$R/private/var/folders/zz/user$uid/T"
+    own "$uid" yes "$R/private/var/folders/zz/user$uid"
+    echo "9$uid $uid distnoted 1" >>"$F/processes"
+    exit "$status"
     ;;
 
   crontab)
@@ -309,12 +367,6 @@ case $tool in
     [ -e "$R/private/var/at/tabs/$2" ] || exit 1
     rm -f "$R/private/var/at/tabs/$2"
     ;;
-  atq)
-    [ -s "$F/at" ] || exit 0
-    printf 'Date                            Owner           Queue   Job#\n'
-    while read -r job owner; do printf 'Thu Oct  2 12:00:00 UTC 2026    %s  a  %s\n' "$owner" "$job"; done <"$F/at"
-    ;;
-  atrm) edit "$F/at" awk -v j="$1" '$1 != j' ;;
   ipcs)
     type=${1#-}
     printf 'IPC status from <running system> as of Thu Oct  2 12:00:00 UTC 2026\nT     ID     KEY        MODE       OWNER    GROUP\n'
@@ -341,7 +393,7 @@ case $tool in
   date) if [ "${1:-}" = +%s ] && [ -e "$F/clock" ]; then cat "$F/clock"; else exec /bin/date "$@"; fi ;;
   shutdown) ;;
   node) echo v24.9.0 ;;
-  npm | git | gh | brew | pmset | softwareupdate | mdutil | xcodebuild | DevToolsSecurity | open) ;;
+  npm | git | gh | brew | pmset | softwareupdate | mdutil | xcodebuild | DevToolsSecurity | open | dsmemberutil) ;;
   # xcode-select -p chooses the Xcode in /Applications, or the Command Line Tools without one.
   xcode-select)
     [ "${1:-}" = -p ] || exit 0

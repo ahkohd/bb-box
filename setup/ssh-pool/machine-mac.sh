@@ -30,27 +30,29 @@
 # /usr/local/share/bb-box/home, on top. The reset makes the next box's user
 # ahead and signs it in, so a free Mac has it at the console:
 #
-# 1. It logs the old box users out and ends their processes.
-# 2. It makes the next user, with a random password, and sets it as the
-#    automatic login.
+# 1. It makes the next user, with a random password, and sets it as the
+#    automatic login, so that macOS does not sign an old user in again.
+# 2. It logs the old box users out and ends their processes.
 # 3. It starts loginwindow again, which signs the next user in.
 # 4. It removes the old users' crontabs, at jobs, System V IPC objects, sudo
-#    rules and every file they own on the Data volume, then the users.
+#    rules, managed preferences, places in groups and every file they own on
+#    the Data volume, then the users.
 #    Some folders a user's first sign-in makes, such as ~/Library/Mail, are
 #    protected: root removes them only with Full Disk Access, which SSH
-#    sessions have when Remote Login allows it.
+#    sessions have when Remote Login allows it, or with System Integrity
+#    Protection off.
 # 5. It checks that nothing of theirs is left and that the next user is at
 #    the console, then moves the generation on.
 #
 # loginwindow signs a user in only when it starts. The reset restarts
 # loginwindow alone first. If that does not sign the user in within a
-# minute, it restarts userspace, then the whole Mac, and until the user is at
-# the console it reports the reset as still running (exit 10). It remembers
-# which way worked.
+# minute, as on macOS 27, it restarts userspace, then the whole Mac, and
+# until the user is at the console it reports the reset as still running
+# (exit 10). It remembers which way worked.
 #
 # The password is for Screen Sharing, which the relay signs in to as the box
-# user: display prints it, and nothing else does. It is in sysadminctl's
-# arguments, which ps shows, only in step 2, while no box user has a process.
+# user: display prints it, and nothing else does. sysadminctl and the
+# automatic login read it on stdin, so it is never in a command's arguments.
 #
 # Exit codes: 0 done; 1 failed, with the reason on stderr; 2 usage; 3 another
 # box holds the Mac; 4 not this box's, so release does nothing; 5 not clean,
@@ -105,6 +107,9 @@ full_disk() { head -c 1 "$ROOT$TCC" >/dev/null 2>&1; }
 # The user at the console: root at the login window.
 console() { stat -f %Su /dev/console 2>/dev/null; }
 box_users() { dscl . -list /Users 2>/dev/null | grep "^$PREFIX"; }
+# Whether the Mac's directory service answers. While userspace restarts it
+# does not, and every user seems gone.
+directory() { dscl . -read /Groups/staff >/dev/null 2>&1; }
 
 # Takes the lock that commands which change the Mac hold, waiting up to $1
 # seconds. macOS has no flock command, so perl locks the file open on
@@ -160,13 +165,23 @@ read_input() {
   [ -n "$install" ] || [ "${1:-}" = optional ] || quit 2 "The input needs install=."
 }
 
-# Box users, and the names of those that left a home, a sudo rule, a crontab or a password.
+# The box users in group $1.
+box_members() {
+  for member in $(dscl . -read "/Groups/$1" GroupMembership 2>/dev/null | sed 's/^GroupMembership://'); do
+    case $member in "$PREFIX"*) echo "$member" ;; esac
+  done
+}
+
+# Box users, and the names of those that left a home, a sudo rule, a
+# crontab, a password, managed preferences or a place in a group.
 box_names() {
   {
     box_users
-    for path in "$ROOT"/Users/"$PREFIX"* "$ROOT"/etc/sudoers.d/"$PREFIX"* "$ROOT"/private/var/at/tabs/"$PREFIX"* "$STATE"/passwords/"$PREFIX"*; do
+    for path in "$ROOT"/Users/"$PREFIX"* "$ROOT"/etc/sudoers.d/"$PREFIX"* "$ROOT"/private/var/at/tabs/"$PREFIX"* "$STATE"/passwords/"$PREFIX"* \
+      "$ROOT/Library/Managed Preferences"/"$PREFIX"*; do
       [ -e "$path" ] && echo "${path##*/}"
     done
+    for group in $JOINS; do box_members "$group"; box_members "$group-disabled"; done
   } | sed 's/\.new$//' | sort -u
 }
 
@@ -179,9 +194,7 @@ dirt() {
     [ -e "$path" ] && [ "${path##*/}" != "$ready" ] && echo "${path#"$ROOT"}"
   done
   for group in $JOINS; do
-    for user in $(dscl . -read "/Groups/$group" GroupMembership 2>/dev/null | sed 's/^GroupMembership://'); do
-      case $user in "$PREFIX"*) [ "$user" = "$ready" ] || echo "$user in group $group" ;; esac
-    done
+    for user in $(box_members "$group"); do [ "$user" = "$ready" ] || echo "$user in group $group"; done
   done
   ipc_orphans | sed 's/^/a System V IPC object of removed UID /'
 }
@@ -339,14 +352,24 @@ make_user() {
   fi
   password=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)
   [ "${#password}" = 24 ] || return 1
-  sysadminctl -addUser "$user" -fullName "bb-box box" -UID "$uid" -password "$password" -home "/Users/$user" >/dev/null 2>&1
-  # sysadminctl can fail and still exit 0.
-  [ "$(attribute "$user" UniqueID)" = "$uid" ] || return 1
+  # The password goes through stdin. The full name is the user's own, as
+  # sysadminctl refuses one another user has. It can fail and still exit 0.
+  said=$(printf '%s\n' "$password" |
+    sysadminctl -addUser "$user" -fullName "bb-box $user" -UID "$uid" -password - -home "/Users/$user" 2>&1)
+  if [ "$(attribute "$user" UniqueID)" != "$uid" ]; then
+    reason=$(printf '%s\n' "$said" | sed -n 's/^.*sysadminctl\[[0-9:]*\] //p' | grep -v -e '^-*$' -e 'clear text password' -e 'Creating user record' | tail -n 1)
+    if [ -n "$reason" ]; then echo "sysadminctl did not make $user: $reason" >&2; else echo "sysadminctl did not make $user." >&2; fi
+    return 1
+  fi
   dscl . -create "/Users/$user" IsHidden 1 || return 1
   for group in $JOINS; do
     [ "$group" = _developer ] || dscl . -read "/Groups/$group" >/dev/null 2>&1 || continue
     dseditgroup -o edit -a "$user" -t user "$group" >/dev/null 2>&1 || return 1
   done
+  # macOS caches who is in which group. A user made again with an earlier
+  # user's name and UID, as when a reset is tried again, can meet the cache
+  # of the earlier user, and Screen Sharing then refuses them.
+  dsmemberutil flushcache >/dev/null 2>&1
   home=$ROOT/Users/$user
   [ -d "$home" ] || createhomedir -c -u "$user" >/dev/null 2>&1
   [ -d "$home" ] || return 1
@@ -359,6 +382,15 @@ make_user() {
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
     '<plist version="1.0"><dict><key>idleTime</key><integer>0</integer></dict></plist>' \
     >"$home/Library/Preferences/ByHost/com.apple.screensaver.$uuid.plist" || return 1
+  # The macOS version the user last signed in on. A home without it is a new
+  # account's, whose first sign-in opens Setup Assistant to ask for an Apple
+  # Account, and takes about 15 s longer.
+  version=$(sw_vers -productVersion) build=$(sw_vers -buildVersion)
+  [ -n "$version" ] && [ -n "$build" ] || return 1
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    "<plist version=\"1.0\"><dict><key>SystemVersionStampAsString</key><string>$version</string><key>BuildVersionStampAsString</key><string>$build</string></dict></plist>" \
+    >"$home/Library/Preferences/loginwindow.plist" || return 1
   chown -R "$uid:20" "$home" || return 1
   # No notices that background items were added, such as Cua's and BB's daemons, as in Tart's image.
   launchctl disable "gui/$uid/com.apple.backgroundtaskmanagement.agent" >/dev/null 2>&1
@@ -369,23 +401,47 @@ make_user() {
 # Makes box user $1 with UID $2, unless it is made already. A user half made, by a reset cut short, is made again.
 ready_user() {
   if [ "$(attribute "$1" UniqueID)" = "$2" ] && [ -s "$STATE/passwords/$1" ]; then return 0; fi
+  directory || {
+    echo "The Mac's directory service did not answer." >&2
+    return 1
+  }
   if dscl . -read "/Users/$1" >/dev/null 2>&1 || [ -e "$ROOT/Users/$1" ]; then remove_user "$1"; fi
   make_user "$1" "$2" && return 0
   remove_user "$1" >/dev/null
   return 1
 }
 
-# Sets box user $1 as the user loginwindow signs in when it starts.
+# The automatic login's /etc/kcpassword for the password on stdin: XORed
+# with Apple's key, with a null after it, padded with nulls to a multiple of
+# 12 bytes.
+kcpassword() {
+  perl -e '
+    my @key = (0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F);
+    my $password = <STDIN>;
+    chomp $password;
+    my @bytes = (unpack("C*", $password), 0);
+    push @bytes, 0 while @bytes % 12;
+    print pack("C*", map { $bytes[$_] ^ $key[$_ % 11] } 0 .. $#bytes);'
+}
+
+# Sets box user $1 as the user loginwindow signs in when it starts. macOS
+# 27's sysadminctl -autologin set names the user but writes no
+# /etc/kcpassword (SACSetAutoLoginPassword error 22), and exits 0, so the
+# helper writes both itself. The password goes only through stdin.
 automatic_login() {
   user=$1
-  if [ "$(defaults read "$LOGINWINDOW" autoLoginUser 2>/dev/null)" = "$user" ] && [ -e "$ROOT/etc/kcpassword" ]; then return 0; fi
-  password=$(cat "$STATE/passwords/$user" 2>/dev/null)
-  [ -n "$password" ] || fail "Box user $user has no password in $STATE/passwords."
-  sysadminctl -autologin set -userName "$user" -password "$password" >/dev/null 2>&1
-  [ "$(defaults read "$LOGINWINDOW" autoLoginUser 2>/dev/null)" != "$user" ] || return 0
+  secret=$STATE/passwords/$user
+  [ -s "$secret" ] || fail "Box user $user has no password in $STATE/passwords."
+  if [ "$(defaults read "$LOGINWINDOW" autoLoginUser 2>/dev/null)" = "$user" ] &&
+    kcpassword <"$secret" | cmp -s - "$ROOT/etc/kcpassword"; then return 0; fi
   fdesetup status 2>/dev/null | grep -qx 'FileVault is Off\.' ||
     fail "FileVault is on, so the Mac cannot sign box users in by itself. Turn FileVault off."
-  fail "sysadminctl did not set $user as the automatic login."
+  (umask 077 && kcpassword <"$secret" >"$ROOT/etc/kcpassword.new") &&
+    chown root:wheel "$ROOT/etc/kcpassword.new" && mv -f "$ROOT/etc/kcpassword.new" "$ROOT/etc/kcpassword" ||
+    fail "Could not write /etc/kcpassword for $user."
+  defaults write "$LOGINWINDOW" autoLoginUser -string "$user" >/dev/null 2>&1
+  [ "$(defaults read "$LOGINWINDOW" autoLoginUser 2>/dev/null)" = "$user" ] ||
+    fail "Could not set $user as the automatic login."
 }
 
 # How long each way of starting loginwindow again may take to sign the user in, in seconds.
@@ -461,10 +517,11 @@ log_out() {
   done
 }
 
-# Removes every file and directory UID $1 owns on the Data volume, clearing
-# the flags that stop even root, and prints those still there.
+# Removes every file and directory UID $1 owns on the Data volume, or under
+# directory $2, clearing the flags that stop even root, and prints those
+# still there.
 sweep() {
-  find "$DATA" -xdev -uid "$1" -prune -exec sh -c '
+  find "${2:-$DATA}" -xdev -uid "$1" -prune -exec sh -c '
     chflags -R nouchg,nouappnd "$@" 2>/dev/null
     rm -rf "$@" 2>/dev/null
     for path; do if [ -e "$path" ] || [ -L "$path" ]; then printf "%s\n" "$path"; fi; done' sh {} + 2>/dev/null
@@ -479,12 +536,30 @@ remove_user() {
   rm -f "$ROOT/etc/sudoers.d/$user" "$ROOT/etc/sudoers.d/$user.new"
   crontab -u "$user" -r >/dev/null 2>&1
   rm -f "$ROOT/private/var/at/tabs/$user"
-  # macOS's atq: the date, then the owner, queue and job number.
-  atq 2>/dev/null | awk -v u="$user" 'NF > 3 && $(NF - 2) == u { print $NF }' | while read -r job; do atrm "$job"; done
+  # Its at jobs are files it owns, in /private/var/at/jobs, which the sweep
+  # removes. macOS's atq does not say whose a job is.
   [ -z "$uid" ] || remove_ipc "$user" "$uid"
-  for group in $JOINS; do dseditgroup -o edit -d "$user" -t user "$group" >/dev/null 2>&1; done
+  # Allowing all users to a service renames its group with -disabled, and the
+  # group keeps its members for when only some are allowed again.
+  # dseditgroup refuses a user whose record has gone, so dscl takes its name
+  # out instead.
+  for group in $JOINS; do
+    for name in "$group" "$group-disabled"; do
+      dseditgroup -o edit -d "$user" -t user "$name" >/dev/null 2>&1 ||
+        dscl . -delete "/Groups/$name" GroupMembership "$user" >/dev/null 2>&1
+    done
+  done
   if number "$uid"; then
-    left=$(sweep "$uid" | head -n 1)
+    left=$(sweep "$uid")
+    # As the sweep removes the user's files, Spotlight's mds can start the
+    # user's launchd domain again, even with indexing off, and its distnoted
+    # makes the user's temporary folders again. So the user is logged out
+    # again, and those folders swept again.
+    log_out "$user" "$uid"
+    left=$({
+      printf '%s\n' "$left"
+      sweep "$uid" "$DATA/private/var/folders"
+    } | while IFS= read -r path; do if [ -e "$path" ] || [ -L "$path" ]; then printf '%s\n' "$path"; fi; done | head -n 1)
     if [ -n "$left" ]; then
       full_disk || fail "Could not remove ${left#"$DATA"}, which $user owned. The helper has no Full Disk Access: on the Mac, in System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users."
       fail "Could not remove ${left#"$DATA"}, which $user owned."
@@ -495,7 +570,7 @@ remove_user() {
     ! dscl . -read "/Users/$user" >/dev/null 2>&1 || dscl . -delete "/Users/$user" >/dev/null 2>&1
     ! dscl . -read "/Users/$user" >/dev/null 2>&1 || fail "Could not remove user $user."
   fi
-  rm -rf "$ROOT/Users/$user"
+  rm -rf "$ROOT/Users/$user" "$ROOT/Library/Managed Preferences/$user"
   rm -f "$STATE/passwords/$user"
 }
 
@@ -567,13 +642,27 @@ finish() {
   old_uid=$(field "$marker" uid)
   [ "$old" != "$next_user" ] || old=''
 
-  # 1. Log the old box users out, and end their processes.
-  [ -z "$old" ] || log_out "$old" "$old_uid"
-  for other in $(box_users); do [ "$other" = "$next_user" ] || log_out "$other"; done
+  # While userspace or the Mac restarts to sign the next user in, users and
+  # processes seem to come and go. Steps 1 to 4 ran before the restart
+  # began, so wait for the sign-in.
+  method=$(field "$STATE/signin" method) since=$(field "$STATE/signin" since)
+  if [ "$method" = userspace ] || [ "$method" = restart ]; then
+    if [ "$(field "$STATE/signin" user)" = "$next_user" ] && number "$since" && [ "$(console)" != "$next_user" ] &&
+      [ $(($(now) - since)) -lt "$(patience "$method")" ]; then
+      echo "signin=$method"
+      exit 10
+    fi
+  fi
 
-  # 2. Make the next box's user, and set it as the automatic login.
+  # 1. Make the next box's user, and set it as the automatic login. While an
+  # old user is still the automatic login, macOS signs it in again a few
+  # seconds after step 2 logs it out.
   ready_user "$next_user" "$next_uid" || fail "Could not make box user $next_user."
   automatic_login "$next_user"
+
+  # 2. Log the old box users out, and end their processes.
+  [ -z "$old" ] || log_out "$old" "$old_uid"
+  for other in $(box_users); do [ "$other" = "$next_user" ] || log_out "$other"; done
 
   # 3. Start loginwindow again, which signs the next user in. Restarting
   # loginwindow alone leaves this helper running, so it starts now and signs

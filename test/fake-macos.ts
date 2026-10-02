@@ -13,9 +13,10 @@ const POOL = fileURLToPath(new URL("../setup/ssh-pool/", import.meta.url));
 const TOOLS = fileURLToPath(new URL("./fake-macos.sh", import.meta.url));
 const TOOL_NAMES = [
   "id", "dscl", "sysadminctl", "dseditgroup", "createhomedir", "defaults", "launchctl", "sudo", "stat", "sysctl", "sw_vers",
-  "uname", "fdesetup", "ioreg", "visudo", "chflags", "chown", "find", "crontab", "atq", "atrm", "ipcs", "ipcrm", "pgrep",
+  "uname", "fdesetup", "ioreg", "visudo", "chflags", "chown", "find", "crontab", "ipcs", "ipcrm", "pgrep",
   "pkill", "date", "shutdown", "node", "npm", "git", "gh", "brew", "pmset", "softwareupdate", "mdutil", "xcode-select",
   "xcodebuild", "xcrun", "DevToolsSecurity", "open", "scutil", "ipconfig", "curl", "shasum",
+  "dsmemberutil",
 ];
 /** Where the Data volume's folders appear at the top of a Mac's disk. */
 const FIRMLINKS = ["Users", "private", "Library", "Applications", "opt", "usr"];
