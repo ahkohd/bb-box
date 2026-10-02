@@ -300,9 +300,9 @@ export function NewBox({
             </div>
           </FormSection>
           <FormSection title="Provider" description="Where the box goes: the first with room, in this order, unless you choose one.">
-            {/* The filters: a row of their own under the description, the menus wrapping under "Filter" on a narrow pane (the operator's note of 2 October 2026). */}
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-2" role="group" aria-label="Filter">
-              <span className="text-2xs text-muted-foreground">Filter</span>
+            {/* The filters: a row of their own under the description, at the row's right edge, "Filter" at the menus' text size, wrapping right-aligned on a narrow pane (the operator's notes of 2 October 2026). */}
+            <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-2" role="group" aria-label="Filter">
+              <span className="text-xs text-muted-foreground">Filter</span>
               <MenuSelect
                 label="Kind"
                 labelInside
@@ -385,7 +385,7 @@ export function NewBox({
               {gpuChoice ? (
                 // A GPU is a resource: a dim sub-label of its own line under the presets, then the menu (the operator's note of 2 October 2026).
                 <div className="space-y-1">
-                  <p className="text-2xs text-muted-foreground">GPU</p>
+                  <p className="text-xs text-muted-foreground">GPU</p>
                   <MenuSelect
                     label="GPU"
                     value={picked.gpu ? "1" : "0"}
