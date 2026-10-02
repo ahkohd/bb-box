@@ -204,6 +204,7 @@ test("reads the daemon's facts and its containers", () => {
         NCPU: 8,
         MemTotal: 16 * 1024 * MiB + 5,
         SecurityOptions: ["name=seccomp,profile=builtin", "name=rootless"],
+        CpuCfsQuota: false,
         DiscoveredDevices: devices,
       }),
     ),
@@ -217,6 +218,8 @@ test("reads the daemon's facts and its containers", () => {
       cpus: 8,
       memoryMiB: 16 * 1024,
       rootless: true,
+      cpuLimit: false,
+      memoryLimit: true,
       gpus: [GPU_A, GPU_B],
     },
   );
@@ -558,6 +561,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
     [
       ["docker.cli", "ok"],
       ["docker.daemon", "ok"],
+      ["docker.limits", "ok"],
       ["image.bbbox/linux:1", "ok"],
       ["image.bbbox/linux-desktop:1", "ok"],
       ["docker.network", "ok"],
@@ -605,6 +609,25 @@ test("the doctor warns about a kind the host cannot hold at any preset, less the
   );
   assert.match(sizes.fix!, /^Give fake-docker more memory, lower the memory kept free, or make the presets of linux-desktop-cpu smaller/);
   assert.equal(report.ok, true, "a warning");
+});
+
+test("the doctor fails when Docker cannot limit a box's CPU, as rootless Docker with systemd before 252, and warns when it cannot limit memory (#94)", async () => {
+  const { fake, backend } = setup({}, { rootless: true, cpuLimit: false });
+  const report = await backend.doctor(signal());
+  const limits = () => report.checks.find((check) => check.id === "docker.limits")!;
+  assert.equal(report.ok, false);
+  assert.deepEqual([limits().name, limits().status], ["CPU and memory limits", "fail"]);
+  assert.equal(limits().detail, "Docker on fake-docker cannot limit a container's CPU, so it refuses the CPU limit each box has, and no box starts.");
+  assert.equal(
+    limits().fix,
+    "Have systemd delegate the cgroup controllers to the user that runs rootless Docker on fake-docker: put Delegate=cpu cpuset io memory pids under [Service] in /etc/systemd/system/user@.service.d/delegate.conf, run sudo systemctl daemon-reload, and restart the host.",
+  );
+  assert.equal(report.summary, `CPU and memory limits: ${limits().detail}`);
+  fake.set({ rootless: false, cpuLimit: true, memoryLimit: false });
+  const memory = (await backend.doctor(signal())).checks.find((check) => check.id === "docker.limits")!;
+  assert.equal(memory.status, "warn");
+  assert.match(memory.detail, /^Docker on fake-docker cannot limit a container's memory, so boxes there start without their memory limit/);
+  assert.match(memory.fix!, /^Turn on the kernel's cpu and memory cgroup controllers on fake-docker\./);
 });
 
 test("the doctor fails without a daemon or a CLI, and skips what depends on them", async () => {

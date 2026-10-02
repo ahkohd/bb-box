@@ -71,9 +71,12 @@ stream 0.6 s.
 - Docker Engine with BuildKit, on Linux, or Docker Desktop. bb-box was tested
   with Docker 29.8, rootful, on Linux, and with Docker Desktop on Windows as
   a BB machine's ([Docker Desktop on a Windows PC](#docker-desktop-on-a-windows-pc)).
-  Rootless Docker has not yet been tested. It cannot run the privileged
-  containers that give boxes Docker, so there boxes say No Docker, and the
-  doctor warns.
+  Rootless Docker has not yet been tested with bb-box. It needs systemd to
+  delegate the cpu cgroup controller to the user that runs it, as systemd
+  252 and later do. With an older systemd, Docker refuses each box's CPU
+  limit, so no box starts; the doctor fails and gives the fix (#94). Rootless
+  Docker cannot run the privileged containers that give boxes Docker, so
+  there boxes say No Docker, and the doctor warns.
 - The `docker` CLI on BB's server, on the PATH of the user BB runs as, and
   that user allowed to use Docker. On Linux, add it to the `docker` group.
   For a Docker host over SSH, that user must log in to it with a key and no
@@ -142,9 +145,10 @@ From a terminal, `bb box config show --json` prints the configuration and
 { "id": "docker", "type": "docker", "enabled": true, "fields": {} }
 ```
 
-Then `bb box doctor` checks the `docker` CLI, the daemon, each image, the
-network, Docker in boxes, GPU desktops when they are on, and the room on the
-host. It also gives bb-box's install ID, which labels its containers.
+Then `bb box doctor` checks the `docker` CLI, the daemon, that it can limit a
+box's CPU and memory, each image, the network, Docker in boxes, GPU desktops
+when they are on, and the room on the host. It also gives bb-box's install ID,
+which labels its containers.
 
 ### Trying it without BB
 
