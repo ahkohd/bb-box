@@ -2,6 +2,8 @@
 // in one viewer, or nobody while control changes hands. It lives in memory,
 // and each person's control is also kept in plugin storage, so after a
 // restart of the plugin their viewer keeps it if it connects again (045).
+// It is read again as the first viewer connects after the restart, for what
+// changed in the last instance after this one started (#318).
 // The relay asks mayInput for every input message it passes.
 
 import type { Size } from "./relay.ts";
@@ -43,6 +45,8 @@ export interface ControlDeps {
   pause?(boxId: string): Promise<void>;
   /** Stores each person's control, after every change, for the plugin's next start (045). It fails by throwing. */
   keep?(kept: readonly KeptControl[]): Promise<void>;
+  /** Reads each person's control as last stored, by this instance or the last one (#318). */
+  read?(): Promise<readonly KeptControl[]>;
   /** bb-box is stopping while a person has control of the box, so the log can say whether it stays theirs or goes back to the agent. */
   stopping?(boxId: string, kept: boolean): Promise<void>;
   logError(operation: string, error: unknown): void;
@@ -84,6 +88,8 @@ export class Control {
   #disposed = false;
   /** The latest store of each person's control, and whether it worked. */
   #stored: Promise<boolean> = Promise.resolve(true);
+  /** Whether a viewer has connected since this instance started, which read each person's control again (#318). */
+  #reread = false;
 
   constructor(deps: ControlDeps) {
     this.#deps = deps;
@@ -121,6 +127,50 @@ export class Control {
       clearTimeout(state.stale);
       state.stale = null;
     }
+    if (this.#deps.read && !this.#reread) {
+      this.#reread = true;
+      void this.#readAgain().catch((error) => this.#deps.logError("read kept control", error));
+    }
+  }
+
+  /**
+   * Each person's control as last stored, read again as the first viewer
+   * connects after a restart (#318). The last instance stores until it
+   * stops, after this one started, so a person may have taken control there
+   * or handed it back. Viewers connect again once it has stopped, so its
+   * last store is read, for every box at once: this instance's next store
+   * holds every box.
+   */
+  async #readAgain(): Promise<void> {
+    const kept = await this.#deps.read!();
+    if (this.#disposed) return;
+    const boxIds = new Set([...this.#boxes.keys(), ...kept.map((each) => each.boxId)]);
+    await Promise.all(
+      [...boxIds].map((boxId) => {
+        const state = this.#box(boxId);
+        return this.#serial(state, async () => this.#settle(boxId, state, kept.find((each) => each.boxId === boxId)));
+      }),
+    );
+  }
+
+  /** A box's control as read again. A hand-back in the last instance set the desktop's size back. */
+  #settle(boxId: string, state: BoxControl, kept: KeptControl | undefined): void {
+    if (kept) {
+      state.size = kept.size;
+      state.resized = kept.resized;
+      if (state.owner === "human" && state.holder === kept.holder) return;
+      this.#set(boxId, state, "human", kept.holder);
+      if (!this.connected(boxId, kept.holder)) this.#wait(boxId, state, this.#deps.staleMs ?? STALE_MS);
+      else if (state.stale) {
+        clearTimeout(state.stale);
+        state.stale = null;
+      }
+    } else if (state.owner === "human") {
+      if (state.stale) clearTimeout(state.stale);
+      state.stale = null;
+      state.resized = null;
+      this.#set(boxId, state, "agent", null);
+    }
   }
 
   /**
@@ -154,7 +204,8 @@ export class Control {
    * and the desktop gets back the size it had while the agent had control.
    */
   resume(kept: readonly KeptControl[]): void {
-    if (this.#disposed) return;
+    // A viewer connected since this start, which read it again.
+    if (this.#disposed || this.#reread) return;
     for (const { boxId, holder, size, resized } of kept) {
       const state = this.#box(boxId);
       // A person took control since this start.

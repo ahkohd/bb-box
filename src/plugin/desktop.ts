@@ -115,6 +115,14 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const reconnectMs = deps.reconnectMs ?? RECONNECT_MS;
   const staleMs = deps.staleMs ?? STALE_MS;
   const kv = bb.storage.kv;
+  /** Each person's control as stored, for the boxes still ready, read again as the first viewer connects (#318). */
+  const read = async () => {
+    const ready: KeptControl[] = [];
+    for (const entry of keptControl(await kv.get<unknown>(KEPT_KEY))) {
+      if ((await boxes.find(entry.boxId))?.state === "ready") ready.push(entry);
+    }
+    return ready;
+  };
   const control = new Control({
     changed,
     logError: deps.logError,
@@ -122,6 +130,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     reconnectMs,
     pause: deps.pause,
     keep: (kept) => (kept.length ? kv.set(KEPT_KEY, kept) : kv.delete(KEPT_KEY)),
+    read,
     // A deploy or reload looks to a person like the box ending the viewer's connection, so the log says it was bb-box.
     async stopping(boxId, kept) {
       const box = await boxes.find(boxId);

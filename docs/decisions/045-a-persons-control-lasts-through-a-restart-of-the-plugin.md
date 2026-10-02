@@ -4,6 +4,8 @@ Status: accepted, 1 October 2026. Partly supersedes
 [008](008-shared-control.md): a restart of the plugin no longer gives
 control back to the agent. Extends
 [043](043-a-viewer-has-5-s-to-come-back-after-the-box-ends-its-connection.md).
+Amended 2 October 2026: the first viewer to connect after a restart has
+each person's control read again (#318).
 
 ## Context
 
@@ -35,6 +37,12 @@ viewer's connection closes. The viewer tries again after 1 s, then after
   still ready. The viewer has 60 s to connect again, as a viewer that goes
   away has. If it does, it keeps control and the desktop's size. If not,
   control goes back to the agent and the desktop's size is set back.
+- The last instance stores until it stops, after the next one started, so
+  a person may take control there, or hand it back, while both run. The
+  next instance reads each person's control again as the first viewer
+  connects, which is after the last one closed the viewers' connections,
+  and takes what it finds for every box. A hand-back in the last instance
+  has set the desktop's size back already.
 - A box that stopped or went while the plugin was away starts with the
   agent in control.
 - The plugin log says, as the plugin stops and as it starts, which desktops
