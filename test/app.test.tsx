@@ -12,7 +12,7 @@ import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
-import { choiceOf, formFilterOf, hostsOf, kindFor, nearest, offersShown, onHost, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
+import { choiceOf, formFilterOf, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
@@ -694,7 +694,7 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
   expect(screen.queryByText("GPU")).toBeNull();
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
   // Desktop opens on the CPU desktop; the GPU is a resource, a sub-label and menu under the presets, and 1 GPU names the GPU kind.
-  expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["System", "Architecture", "Type", "Provider", "Resources"]);
+  expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["System", "Architecture", "Type", "Resources", "Provider"]);
   expect(screen.getByText("GPU").tagName).toBe("P");
   expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("None");
   expect(await optionsOf("GPU")).toEqual(["None", "1 GPU"]);
@@ -750,8 +750,14 @@ test("the (i) on a provider row opens its profile, asked once while the form is 
     "Ready · Proxmox VE 9.2 on pve · 2 boxes on it · checked 2 minutes ago",
   ]);
   expect(changes).toEqual(["provider fake"]);
-  // The (i) does not choose the row.
+  // The (i) does not choose the row; it keeps its place in the card, shown on hover, focus or while its profile is open.
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+  const holder = screen.getByRole("button", { name: "About pve" }).parentElement!;
+  expect(holder.getAttribute("data-testid")).toBe("provider-info");
+  expect(holder.className).toMatch(/\bopacity-0\b/);
+  expect(holder.className).toMatch(/group-hover:opacity-100/);
+  expect(holder.className).toMatch(/group-focus-within:opacity-100/);
+  expect(holder.className).toMatch(/has-\[\[data-state=open\]\]:opacity-100/);
   // Escape closes the profile and leaves the form; opening the profile again asks nothing more.
   fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull());
@@ -764,6 +770,22 @@ test("the (i) on a provider row opens its profile, asked once while the form is 
   await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull());
   fireEvent.click(screen.getByRole("button", { name: "About SSH host pool" }));
   await waitFor(() => expect(changes).toEqual(["provider fake", "provider ssh-pool"]));
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByText("Fake host on pve")).toBeNull());
+
+  // The pointer resting on the (i) opens the profile as a preview after a moment; leaving closes it; a click keeps it.
+  fireEvent.pointerEnter(screen.getByRole("button", { name: "About pve" }));
+  expect(screen.queryByText("Linux containers on a test host.")).toBeNull();
+  await waitFor(() => expect(screen.getByText("Linux containers on a test host.")).toBeTruthy(), { timeout: 1500 });
+  fireEvent.pointerLeave(screen.getByRole("button", { name: "About pve" }));
+  await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull(), { timeout: 1500 });
+  fireEvent.pointerEnter(screen.getByRole("button", { name: "About pve" }));
+  await waitFor(() => expect(screen.getByText("Linux containers on a test host.")).toBeTruthy(), { timeout: 1500 });
+  fireEvent.click(screen.getByRole("button", { name: "About pve" }));
+  fireEvent.pointerLeave(screen.getByRole("button", { name: "About pve" }));
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  expect(screen.getByText("Linux containers on a test host.")).toBeTruthy();
+  expect(changes).toEqual(["provider fake", "provider ssh-pool"]);
 });
 
 test("the profile's words: limits, room, where it runs, what it makes, the usual start and the status", () => {
@@ -783,47 +805,6 @@ test("the profile's words: limits, room, where it runs, what it makes, the usual
   expect(statusWords({ status: { state: "off", problem: null, ok: null, summary: null, checkedAt: null }, boxes: 1 }, 0)).toBe("Off · 1 box on it");
   expect(statusWords({ status: { state: "misconfigured", problem: "Set the API token.", ok: null, summary: null, checkedAt: null }, boxes: 0 }, 0)).toBe("Needs setting up: Set the API token. · 0 boxes on it");
   expect(statusWords({ status: { state: "active", problem: null, ok: false, summary: "Template 9101 has no build tag.", checkedAt: 0 }, boxes: 3 }, 60_000)).toBe("Needs attention · Template 9101 has no build tag. · 3 boxes on it · checked 1 minute ago");
-});
-
-test("the Host menu narrows every step to what that host can make, and First with room then names the host's providers (the artboard)", async () => {
-  const mixed: KindView = {
-    ...KINDS[0]!,
-    admin: null,
-    forms: ["LXC", "VM", "Docker"],
-    offers: [
-      KINDS[0]!.offers[0]!,
-      { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos" },
-      { backend: "docker:host_1", name: "Docker", type: "docker", label: "Docker", hosts: [], form: "Docker", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: null, docker: true, hostOs: null },
-    ],
-  };
-  expect(hostsOf([mixed, KINDS[1]!])).toEqual(["pve", "mac-mini"]);
-  expect(onHost([mixed, KINDS[1]!], "mac-mini").map((kind) => [kind.id, kind.offers.map((offer) => offer.backend)])).toEqual([["linux", ["tart"]]]);
-  expect(onHost([mixed, KINDS[1]!], null)).toHaveLength(2);
-  const { handlers, changes } = server([], { kinds: [mixed, KINDS[1]!] });
-  const slot = panel(handlers);
-  await slot.findByText("No boxes yet");
-  fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  await screen.findByRole("radiogroup", { name: "System" });
-  expect(screen.getByRole("combobox", { name: "Host" }).textContent).toBe("Host:Any host");
-  expect(await optionsOf("Host")).toEqual(["Any host", "pve", "mac-mini"]);
-  // A Mac makes a Linux server only, on Tart: the other steps follow, and the request names that one provider.
-  await choose("Host", "mac-mini");
-  expect(within(screen.getByRole("radiogroup", { name: "System" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["Linuxmac-mini"]);
-  expect(within(screen.getByRole("radiogroup", { name: "Type" })).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-disabled")}`)).toEqual(["ServerTerminal:null", "DesktopNot available:true"]);
-  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomThe one below", "mac-miniVM · usually ~26.0 s"]);
-  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
-  await waitFor(() => expect(changes).toEqual(["acquire linux on tart"]));
-  await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
-
-  // Reopened, the host is back to any; the LXC host makes both kinds, and a kind with one provider anywhere sends no on.
-  fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  expect((await screen.findByRole("combobox", { name: "Host" })).textContent).toBe("Host:Any host");
-  await choose("Host", "pve");
-  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomThe one below", "pveContainer · usually ~2.2 s"]);
-  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
-  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pveContainer · usually ~3.1 s"]);
-  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
-  await waitFor(() => expect(changes).toEqual(["acquire linux on tart", "acquire linux-desktop"]));
 });
 
 test("a provider row says how many spares it has ready now (#121)", async () => {

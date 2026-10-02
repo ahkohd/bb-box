@@ -432,7 +432,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 840,
+    height: 980,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -440,22 +440,6 @@ export const scenes = {
       // The (i) on the first provider row opens its profile.
       click(document.body, "button", "About pve");
       await wait(400);
-    },
-  },
-  "panel-chooser-host": {
-    slot: "boxes",
-    chrome: boxesChrome,
-    width: 720,
-    height: 720,
-    rpc: rpc([]),
-    after: async (root) => {
-      click(root, "button", "New box");
-      await wait(300);
-      // Host: the Docker machine, so every step narrows to what it makes.
-      document.querySelector('[role="combobox"][aria-label="Host"]')?.click();
-      await wait(300);
-      [...document.querySelectorAll('[role="option"]')].find((option) => option.textContent.trim() === "docker-host")?.click();
-      await wait(300);
     },
   },
   "panel-chooser-filter": {
