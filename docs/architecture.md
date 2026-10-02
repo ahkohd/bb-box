@@ -130,7 +130,7 @@ and `start` and `stop` throw `gone`.
 | `linux` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
 | `linux-desktop-cpu` | a Linux desktop without a GPU | Proxmox LXC from a CPU-only desktop template, Docker |
-| `linux-desktop-wayland-cpu` | a Linux desktop on Wayland without a GPU, where X11-only apps do not run | planned (048): Proxmox LXC from a CPU Wayland desktop template, then Docker |
+| `linux-desktop-wayland-cpu` | a Linux desktop on Wayland without a GPU, where X11-only apps do not run | Proxmox LXC from a CPU Wayland desktop template; Docker planned (048) |
 | `linux-arm64` | Linux on arm64, no GPU | Tart |
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
@@ -172,14 +172,14 @@ and `start` and `stop` throw `gone`.
   `linux-desktop-cpu`, and a `linux-desktop` box back on the CPU, take the
   viewer's resize themselves. Both desktops resize to the viewer while you
   hold control.
-- A Wayland desktop will be Sway, headless, with floating windows and
-  Waybar's taskbar, streamed by wayvnc
+- A Wayland desktop, `linux-desktop-wayland-cpu`, is Sway, headless, with
+  floating windows and Waybar's taskbar, streamed by wayvnc
   ([048](decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md)).
-  wayvnc refuses a viewer's resize, so the backend sets Sway's output size
-  and fits the windows into it, in about 20 ms. Xwayland is off, as one X11
-  window hides every window from Cua, so X11-only apps need
-  `linux-desktop-cpu`. A Wayland desktop on the GPU, and Hyprland, wait for
-  the host's `nvidia-drm` module to have `modeset=1`.
+  wayvnc refuses a viewer's resize, so the backend runs the display script's
+  `resize`, which sets Sway's output size and fits the windows into it, in
+  about 20 ms. Xwayland is off, as one X11 window hides every window from Cua,
+  so X11-only apps need `linux-desktop-cpu`. A Wayland desktop on the GPU, and
+  Hyprland, wait for the host's `nvidia-drm` module to have `modeset=1`.
 - Docker comes with Proxmox LXC (`nesting=1`) and Tart's Linux VMs, and
   with the Docker backend's boxes when they are privileged, as they are by
   default but for GPU desktops.

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LXC_SETTINGS, earlierLxcSizes, net0For, parseLxcSettings, readEarlierLxc } from "../src/backends/proxmox-lxc/config.ts";
+import { LXC_FIELDS, LXC_SETTINGS, earlierLxcSizes, net0For, parseLxcPart, parseLxcSettings, readEarlierLxc } from "../src/backends/proxmox-lxc/config.ts";
 import { addressFor } from "../src/backends/proxmox/settings.ts";
 import { normalisePrivateKey } from "../src/transports/ssh.ts";
 import { VALID, lxcConfig, tempDir } from "./helpers.ts";
@@ -60,6 +60,7 @@ test("each flavour takes a list of templates, and GPU desktop templates name the
     "proxmox-lxc-linux-templates": "9000, 9004",
     "proxmox-lxc-desktop-templates": "9001 GPU-0a1b2c3d\n9002=GPU-4e5f6a7b\n9005 GPU-0a1b2c3d",
     "proxmox-lxc-desktop-cpu-templates": "9003",
+    "proxmox-lxc-desktop-wayland-cpu-templates": "9006 9007",
   });
   assert.deepEqual(config.flavours.linux.templates, [
     { vmid: 9000, gpu: null },
@@ -71,9 +72,30 @@ test("each flavour takes a list of templates, and GPU desktop templates name the
     { vmid: 9005, gpu: "GPU-0a1b2c3d" },
   ]);
   assert.deepEqual(config.flavours["desktop-cpu"].templates, [{ vmid: 9003, gpu: null }]);
+  assert.deepEqual(config.flavours["desktop-wayland-cpu"].templates, [
+    { vmid: 9006, gpu: null },
+    { vmid: 9007, gpu: null },
+  ]);
   assert.deepEqual(lxcConfig({ "proxmox-lxc-linux-templates": 9000 }).flavours.linux.templates, [{ vmid: 9000, gpu: null }]);
   const desktopsOnly = lxcConfig({ "proxmox-lxc-linux-templates": "", "proxmox-lxc-desktop-cpu-templates": "9003" });
   assert.deepEqual(desktopsOnly.flavours.linux.templates, []);
+  const waylandOnly = lxcConfig({ "proxmox-lxc-linux-templates": "", "proxmox-lxc-desktop-wayland-cpu-templates": "9006" });
+  assert.deepEqual(waylandOnly.flavours["desktop-wayland-cpu"].templates, [{ vmid: 9006, gpu: null }]);
+});
+
+test("the CPU Wayland desktop templates are a field of the configuration, never a BB setting (048)", () => {
+  assert.equal("proxmox-lxc-desktop-wayland-cpu-templates" in LXC_SETTINGS, false, "BB's settings are those from before 029");
+  const field = LXC_FIELDS["desktop-wayland-cpu-templates"]!;
+  assert.deepEqual([field.label, field.group, field.type, field.default], ["CPU Wayland desktop templates", "boxes", "string", ""]);
+  assert.equal(Object.keys(LXC_FIELDS).indexOf("desktop-wayland-cpu-templates"), Object.keys(LXC_FIELDS).indexOf("desktop-cpu-templates") + 1);
+  const fields = Object.fromEntries(Object.entries({ ...VALID, "proxmox-lxc-desktop-wayland-cpu-templates": "9006" }).map(([key, value]) => [key.slice("proxmox-lxc-".length), value]));
+  const parsed = parseLxcPart({ id: "proxmox-lxc", fields, hosts: [] });
+  assert.ok(parsed.ok, JSON.stringify(parsed));
+  assert.deepEqual(parsed.config.flavours["desktop-wayland-cpu"].templates, [{ vmid: 9006, gpu: null }]);
+  const wrong = parseLxcPart({ id: "proxmox-lxc", fields: { ...fields, "desktop-wayland-cpu-templates": "9006 sway" }, hosts: [] });
+  assert.deepEqual(!wrong.ok && wrong.problems, [
+    { path: "desktop-wayland-cpu-templates", message: 'Use VMIDs from 100 for the CPU Wayland desktop templates. "sway" is not one.' },
+  ]);
 });
 
 test("an unset Linux setting reads its key from before 027, and a set one wins", () => {

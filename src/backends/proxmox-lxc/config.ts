@@ -2,10 +2,11 @@
 // starts with "proxmox-lxc-". The plugin's settings page, the smoke script's
 // settings file and the tests all go through parseLxcSettings.
 //
-// Templates come in three flavours, each a list of CT templates: Linux ones
+// Templates come in four flavours, each a list of CT templates: Linux ones
 // serve linux, GPU desktop ones (each carrying one GPU, named by an ID) serve
-// linux-desktop, and CPU-only desktop ones serve linux-desktop-cpu. A new box
-// is cloned from the flavour's least used template; a GPU desktop goes to the
+// linux-desktop, CPU-only desktop ones serve linux-desktop-cpu, and CPU-only
+// Wayland desktop ones serve linux-desktop-wayland-cpu (048). A new box is
+// cloned from the flavour's least used template; a GPU desktop goes to the
 // GPU with the fewest desktops.
 //
 // Each VMID in the owned range has a fixed address: the n-th VMID gets the
@@ -56,7 +57,7 @@ import {
   type ParsedSettings,
 } from "../types.ts";
 
-export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu"] as const;
+export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu", "desktop-wayland-cpu"] as const;
 export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
 
 /** The kinds each flavour's clones serve. */
@@ -64,6 +65,7 @@ export const FLAVOUR_KINDS: Readonly<Record<LxcFlavour, readonly string[]>> = {
   linux: ["linux"],
   desktop: ["linux-desktop"],
   "desktop-cpu": ["linux-desktop-cpu"],
+  "desktop-wayland-cpu": ["linux-desktop-wayland-cpu"],
 };
 
 export function flavourOf(kind: string): LxcFlavour | null {
@@ -173,6 +175,11 @@ const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readon
   "desktop-cpu": {
     name: "CPU desktop",
     templates: "VMIDs of the CPU-only desktop templates linux-desktop-cpu boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+  },
+  "desktop-wayland-cpu": {
+    name: "CPU Wayland desktop",
+    templates:
+      "VMIDs of the CPU-only Wayland desktop templates linux-desktop-wayland-cpu boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
   },
 };
 
@@ -352,6 +359,13 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
 };
 
 /**
+ * Settings that came after 029, which BB never declared: fields alone. Of the
+ * Wayland flavour (048) only the templates are a field, as warm counts are
+ * the configuration's, by kind.
+ */
+const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = flavourSettings("desktop-wayland-cpu");
+
+/**
  * The backend's fields in bb-box's configuration (029): the settings above
  * without the prefix, in the order the setup guide gives their values.
  */
@@ -367,6 +381,7 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
   [flavourKey("linux", "templates"), "boxes"],
   [flavourKey("desktop", "templates"), "boxes"],
   [flavourKey("desktop-cpu", "templates"), "boxes"],
+  [flavourKey("desktop-wayland-cpu", "templates"), "boxes"],
   [LXC_KEYS.perGpu, "advanced"],
   [LXC_KEYS.bridge, "advanced"],
   [LXC_KEYS.subnet, "advanced"],
@@ -381,7 +396,7 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
 
 export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
   FIELD_GROUPS.map(([key, group]) => {
-    const setting = LXC_SETTINGS[key]!;
+    const setting = LXC_SETTINGS[key] ?? LATER_SETTINGS[key]!;
     const field = { ...setting, label: fieldLabel(setting.label), group } as FieldDescriptor;
     // The Linux templates have a default of their own now that no earlier key stands in for it.
     if (key === flavourKey("linux", "templates")) {
@@ -392,7 +407,12 @@ export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.from
 );
 
 /** Where each flavour's warm count goes in the configuration: its first kind (029). */
-const WARM_KIND: Readonly<Record<LxcFlavour, string>> = { linux: "linux", desktop: "linux-desktop", "desktop-cpu": "linux-desktop-cpu" };
+const WARM_KIND: Readonly<Record<LxcFlavour, string>> = {
+  linux: "linux",
+  desktop: "linux-desktop",
+  "desktop-cpu": "linux-desktop-cpu",
+  "desktop-wayland-cpu": "linux-desktop-wayland-cpu",
+};
 
 function isSet(value: unknown): boolean {
   return value !== undefined && value !== null;
@@ -521,7 +541,7 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
     const first = LXC_FLAVOURS.find((flavour) => flavours[flavour].templates.some((template) => template.vmid === vmid))!;
     problem(flavourKey(first, "templates"), `Template ${vmid} is listed more than once. List each template once, under one flavour.`);
   }
-  if (!listed.length) problem(flavourKey("linux", "templates"), "Set the VMID of at least one CT template: Linux, GPU desktop or CPU desktop.");
+  if (!listed.length) problem(flavourKey("linux", "templates"), "Set the VMID of at least one CT template: Linux, GPU desktop, CPU desktop or CPU Wayland desktop.");
 
   const vmids = checkVmids(values, LXC_KEYS, LXC_DEFAULTS, listed, problem);
   const network = checkNetwork(values, LXC_KEYS, LXC_DEFAULTS, vmids, problem);
