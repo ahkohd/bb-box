@@ -872,6 +872,9 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           others.push(other);
           const before = await other.capacity(kind, sizeOf(kind), [], signal());
           const mine = await acquire(identity(kind), recordingHooks().hooks);
+          // A box that took a warm guest starts a fill, which holds room the
+          // other install cannot take from it until it is done.
+          await backend.maintain?.(signal());
           const after = await other.capacity(kind, sizeOf(kind), [], signal());
           assert.ok(
             after.hosts.some((host) => host.limits.some((limit) => limit.used > (limitOf(before, host.host, limit.resource)?.used ?? Infinity))),

@@ -354,6 +354,12 @@ A backend refuses a new box when the host would fall below its memory or disk
 reserve, cannot make the size asked for, or has no free address or GPU. The
 refusal says what to do instead.
 
+Saving the configuration tops the warm pools up at once, rather than at the
+next sweep. A warm pool left below its count because no host has room for
+another says why: `bb plugin logs bb-box` has a line when it falls short,
+when the reason changes and when it has room again, and `bb box doctor`
+warns of it.
+
 ## Clean-up
 
 - When a thread is archived or deleted, bb-box asks BB about the thread,

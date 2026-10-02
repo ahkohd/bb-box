@@ -540,6 +540,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
       boxes: 2,
       kinds: backend.enabled ? ["linux", "linux-desktop"] : [],
       doctor: null,
+      warmShort: [],
     })),
     problems: document.backends.some((backend) => backend.enabled && (backend.fields.token as { set: boolean } | undefined)?.set === false) ? [{ path: "backends.fake.token", message: "Set the API token." }] : [],
     migrated: { at: 1_790_000_000_000, version: "0.2.0" },

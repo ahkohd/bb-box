@@ -33,6 +33,7 @@
 // left alone.
 
 import { ReadyPool, type PoolStore } from "../pool.ts";
+import { Upkeep } from "../warm.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest } from "../proxmox/api.ts";
 import {
   BUILD,
@@ -75,6 +76,7 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type WarmShortfall,
 } from "../types.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
@@ -386,7 +388,7 @@ export class ProxmoxLxcBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Where the next VMID search starts, so a deleted box's VMID and address are not reused at once. */
   #nextVmid: number | null = null;
-  #maintaining: Promise<void> | null = null;
+  readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
 
   constructor(config: LxcConfig, context: BackendContext, options: LxcBackendOptions = {}) {
     this.id = context.id;
@@ -1002,18 +1004,12 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   maintain(signal?: AbortSignal): Promise<void> {
-    if (!this.#maintaining) {
-      const run = this.#topUp(signal ?? this.#stopping.signal).finally(() => {
-        this.#maintaining = null;
-      });
-      this.#maintaining = run;
-    }
-    return this.#maintaining;
+    return this.#upkeep.run(signal ?? this.#stopping.signal);
   }
 
   async dispose(): Promise<void> {
     this.#stopping.abort(new Error("bb-box is stopping."));
-    await this.#maintaining?.catch(() => undefined);
+    await this.#upkeep.running?.catch(() => undefined);
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
     await this.#keyFile.dispose();
     await this.#http.close();
@@ -1569,6 +1565,7 @@ export class ProxmoxLxcBackend implements Backend {
       await api.destroy(vmid, signal).catch((error) => this.#context.logError("retire a warm box", error));
     }
 
+    const short: WarmShortfall[] = [];
     for (const flavour of LXC_FLAVOURS) {
       // Any kind of the flavour stands for it: their guests are the same.
       const offer = this.#offers().find((candidate) => candidate.flavour === flavour);
@@ -1582,12 +1579,14 @@ export class ProxmoxLxcBackend implements Backend {
         signal.throwIfAborted();
         const room = await this.#room(api, offer, null, await api.listPool(pool, signal), [], { ready, target }, null, signal);
         if (!room.ok) {
-          this.#context.logError("warm pool", new Error(room.message ?? "No room for a warm box."));
+          const kinds = FLAVOUR_KINDS[flavour].filter((kind) => this.#context.warm(kind) > 0);
+          short.push({ kinds, count: target, have: target - missing, reason: room.message ?? "No host has room for a warm box." });
           break;
         }
         await this.#fill(api, offer, signal);
       }
     }
+    this.#context.warmShortfalls(short);
   }
 
   async #fill(api: Proxmox, offer: Offer, signal: AbortSignal): Promise<void> {

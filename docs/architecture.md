@@ -76,7 +76,7 @@ A backend declares its nature (virtual or real) and its kinds, and implements:
 | `asOffered?(guest, kind, createdAt)` | whether the guest comes from what the kind is offered from now, so a box gains what a release adds to its kind (see [Capabilities](#capabilities)) |
 | `transports(guest, kind)` | the command transport, the displays, and how the thread reaches the box |
 | `doctor()` | checks the setup end to end and says what is missing |
-| `maintain?()` | upkeep, such as topping up a warm pool |
+| `maintain?()` | upkeep, such as topping up a warm pool, on every sweep and when the configuration is applied; a call during a run starts one more after it |
 | `members?()`, `returnToService?(ref)` | pool members and their state; puts back a machine the operator has fixed |
 
 A real backend also states what a release restores: `home` (the box user's
@@ -799,6 +799,8 @@ export interface BackendContext {
   hostOn(name: string): boolean;
   /** BB machines reached through BB (042); absent where there is no BB. */
   readonly machines?: MachineAccess;
+  /** The warm pools an upkeep that ran to its end left short for want of room (#356). */
+  warmShortfalls(short: readonly WarmShortfall[]): void;
   logError(operation: string, error: unknown): void;
 }
 
@@ -886,9 +888,17 @@ real backend's pool of free, reset machines is the same thing
   guest tags; real backends keep it in the backend's plugin storage.
 - The target size is set per backend and kind in the configuration, 0 by
   default, and the backend reads it with `context.warm(kind)`. `maintain()`
-  tops the pool up after each claim and on every sweep, and never below the
-  backend's memory and disk reserves. An off backend or kind keeps no warm
-  guests.
+  tops the pool up after each claim, when the configuration is applied
+  (#355) and on every sweep, and never below the backend's memory and disk
+  reserves. It runs one at a time, and a call during a run starts one more
+  after it, as the run may have read a count or a pool from before the
+  call. An off backend or kind keeps no warm guests.
+- An upkeep that runs to its end gives `context.warmShortfalls()` each pool
+  it left below its count because no host had room, with the reason an
+  acquire would be told (#356). bb-box logs a pool when it falls short, when
+  the reason's words change and when it has room again, not at each sweep;
+  the doctor warns of each short pool; and the settings page reads them in
+  `ConfigState.backends[].warmShort`, as `{ kinds, count, have, reason }`.
 - Warm guests wait at their kind's default size, from `context.kind(kind)`
   (029). One that cannot serve the default after the operator changes it,
   such as a Proxmox LXC guest with other cores, is retired and made again.

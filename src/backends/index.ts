@@ -12,7 +12,8 @@ import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
 import { backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
-import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess } from "./types.ts";
+import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall } from "./types.ts";
+import { WarmShortfalls } from "./warm.ts";
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver];
 
@@ -193,7 +194,11 @@ export class Backends {
   readonly #drivers: readonly BackendDriver<any>[];
   readonly #storage: BackendStorage;
   readonly #logError: (operation: string, error: unknown) => void;
+  readonly #log: (message: string) => void;
+  readonly #changed: () => void;
   readonly #entries = new Map<string, Entry>();
+  /** Each backend's warm pools that are short for want of room, by ID, kept while it is built again. */
+  readonly #short = new Map<string, WarmShortfalls>();
   #installId: string;
   #document: ConfigDocument | null = null;
   #secrets: Secrets = {};
@@ -205,6 +210,10 @@ export class Backends {
     /** This install's ID (018), which every backend records on its guests. */
     installId: string;
     logError(operation: string, error: unknown): void;
+    /** Logs what the operator may want to know, such as why a warm pool is short. */
+    log?(message: string): void;
+    /** Tells open pages that what they show changed, such as a pool's shortfall. */
+    changed?(): void;
     drivers?: readonly BackendDriver<any>[];
     /** BB machines backends reach through bb-box (042). */
     machines?: MachineAccess;
@@ -214,6 +223,8 @@ export class Backends {
     this.#storage = options.storage;
     this.#installId = options.installId;
     this.#logError = options.logError;
+    this.#log = options.log ?? (() => {});
+    this.#changed = options.changed ?? (() => {});
   }
 
   get installId(): string {
@@ -244,6 +255,7 @@ export class Backends {
         if (!document || !backend?.enabled || !kindOn(document, kind)) return 0;
         return backend.warm?.[kind] ?? 0;
       },
+      warmShortfalls: (short) => this.#shortfalls(id).set(short),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
       kind: (kind) => {
         const document = this.#document;
@@ -298,6 +310,20 @@ export class Backends {
     this.#entries.clear();
     for (const entry of sorted) this.#entries.set(entry.id, entry);
     this.#statuses = statuses;
+  }
+
+  #shortfalls(id: string): WarmShortfalls {
+    let short = this.#short.get(id);
+    if (!short) {
+      short = new WarmShortfalls(id, this.#log, this.#changed);
+      this.#short.set(id, short);
+    }
+    return short;
+  }
+
+  /** The backend's warm pools that its last upkeep left short for want of room (#356), while it is built. */
+  warmShort(id: string): readonly WarmShortfall[] {
+    return this.#entries.has(id) ? (this.#short.get(id)?.list() ?? []) : [];
   }
 
   async #dispose(entry: Entry): Promise<void> {

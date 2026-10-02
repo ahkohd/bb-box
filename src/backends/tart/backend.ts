@@ -54,8 +54,10 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type WarmShortfall,
 } from "../types.ts";
 import { ReadyPool } from "../pool.ts";
+import { Upkeep } from "../warm.ts";
 import { CUA_PIPE, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
@@ -497,7 +499,7 @@ export class TartBackend implements Backend {
   readonly #compiling = new Map<string, Promise<void>>();
   readonly #warm: ReadyPool<BoxIdentity>;
   readonly #stopping = new AbortController();
-  #maintaining: Promise<void> | null = null;
+  readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
 
   constructor(config: TartConfig, context: BackendContext, options: TartBackendOptions = {}) {
     this.id = context.id;
@@ -1069,13 +1071,7 @@ export class TartBackend implements Backend {
 
   /** Retires warm VMs that serve no pool now, or beyond their pool's count, then fills what is missing. */
   maintain(signal?: AbortSignal): Promise<void> {
-    if (!this.#maintaining) {
-      const run = this.#topUp(signal ?? this.#stopping.signal).finally(() => {
-        this.#maintaining = null;
-      });
-      this.#maintaining = run;
-    }
-    return this.#maintaining;
+    return this.#upkeep.run(signal ?? this.#stopping.signal);
   }
 
   /** Tops the pool up in the background after a box takes a warm VM. */
@@ -1197,6 +1193,7 @@ export class TartBackend implements Backend {
       await this.#delete(host, vm, os, null, signal).catch((error) => this.#context.logError("retire a warm VM", error));
     }
 
+    const short: WarmShortfall[] = [];
     for (const pool of pools) {
       if (pool.target === 0) continue;
       const states = await this.#states(signal);
@@ -1206,11 +1203,19 @@ export class TartBackend implements Backend {
         if (!(state instanceof Error)) ready += this.#freeWarm(state).filter((warm) => warm.kinds.includes(pool.kinds[0]!)).length;
       }
       const filling = [...this.#filling.values()].filter((fill) => !fill.adopted && sameSize(fill.size, pool.size) && fill.kinds.includes(pool.kinds[0]!)).length;
-      for (let missing = pool.target - ready - filling; missing > 0; missing--) {
+      let have = ready + filling;
+      while (have < pool.target) {
         signal.throwIfAborted();
-        if (!(await this.#fill(pool, signal))) break;
+        const made = await this.#fill(pool, signal);
+        if (made === true) {
+          have++;
+          continue;
+        }
+        if (made !== false) short.push({ kinds: pool.kinds.filter((kind) => this.#context.warm(kind) > 0), count: pool.target, have, reason: made });
+        break;
       }
     }
+    this.#context.warmShortfalls(short);
   }
 
   /**
@@ -1218,22 +1223,28 @@ export class TartBackend implements Backend {
    * desktop, and suspends it, or for Windows compiles the display helper
    * and saves it. It takes its memory, and a macOS VM a VM slot, until then,
    * so it is placed as a box is, and an acquire that needs the room takes it
-   * over or stops it. Resolves false when no Mac has room.
+   * over or stops it. Resolves true once made, false when an acquire took
+   * its room, or with why no Mac has room.
    */
-  async #fill(pool: WarmPool, signal: AbortSignal): Promise<boolean> {
+  async #fill(pool: WarmPool, signal: AbortSignal): Promise<boolean | string> {
     const vm = `${WARM_PREFIX}${randomBytes(6).toString("hex")}`;
     const windows = pool.os === "windows";
     const placed = await this.#chain(async () => {
       const states = await this.#states(signal);
+      const whys: string[] = [];
       for (const host of this.#on()) {
         const state = states.get(host.name)!;
-        if (state instanceof Error || !this.#room(host, state, pool.size, NONE_UNPLACED, new Set(), pool.os, true).capacity.ok) continue;
+        const room = this.#room(host, state, pool.size, NONE_UNPLACED, new Set(), pool.os, true);
+        if (state instanceof Error || !room.capacity.ok) {
+          whys.push(room.why!);
+          continue;
+        }
         this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(pool.kinds[0]!, pool.size), macos: !windows });
         return { host, state };
       }
-      return null;
+      return whys.length ? `${whys.join("; ")}.` : "Every Mac is off in bb-box's settings.";
     });
-    if (!placed) return false;
+    if (typeof placed === "string") return placed;
     const { host, state } = placed;
     const abort = new AbortController();
     const fillSignal = AbortSignal.any([signal, abort.signal]);
@@ -1504,7 +1515,7 @@ export class TartBackend implements Backend {
 
   async dispose(): Promise<void> {
     this.#stopping.abort(new Error("bb-box is stopping."));
-    await this.#maintaining?.catch(() => undefined);
+    await this.#upkeep.running?.catch(() => undefined);
     const pending = this.#ssh;
     this.#ssh = null;
     const keys = await pending?.catch(() => null);

@@ -7,6 +7,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
 import { providerName } from "../core/provider-name.ts";
 import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../backends/types.ts";
+import { warmChecks } from "../backends/warm.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -309,7 +310,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     connected: machineConnected,
   };
 
-  const backends = new Backends({ storage: kv, installId: await loadInstallId(kv), logError, drivers, machines });
+  const backends = new Backends({
+    storage: kv,
+    installId: await loadInstallId(kv),
+    logError,
+    log: (message) => bb.log.info(message),
+    changed: () => notify(null),
+    drivers,
+    machines,
+  });
   const configuration = await Configuration.load({
     kv,
     backends,
@@ -323,6 +332,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       // A kind may keep more or fewer spares now, and offer what older boxes lack.
       void boxes.keepSpares();
       void boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
+      // A warm count, a switch or the room kept free may have changed: tops the pools up now, not at the next sweep (#355).
+      for (const backend of backends.active()) void backend.maintain?.().catch((error) => logError(`maintain ${backend.id}`, error));
     },
     logError,
   });
@@ -700,7 +711,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       }
       const reports = await Promise.all(
         backends.on().map(async (backend) => {
-          const report = await boundedDoctor((bounded) => backend.doctor(bounded), DOCTOR_TIMEOUT_MS, signal);
+          const doctor = await boundedDoctor((bounded) => backend.doctor(bounded), DOCTOR_TIMEOUT_MS, signal);
+          const short = warmChecks(backends.warmShort(backend.id));
+          const report = short.length ? { ...doctor, checks: [...doctor.checks, ...short] } : doctor;
           await configuration.recordDoctor(backend.id, report);
           return { title: backend.label, report };
         }),

@@ -471,6 +471,43 @@ test("apply answers once the backends are rebuilt, and lists the problems an off
   assert.deepEqual(partway.problems.map((problem) => problem.path), ["backends.fake.address"], "a field it could not save is named");
 });
 
+test("apply tops the warm pools up at once, and a pool short of room is in the log once, the doctor and the settings (#355, #356)", async () => {
+  const { rpc, app, world, latest } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  const base = app().configuration.exported();
+  const applied = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [{ ...base.backends[0]!, warm: { linux: 2 } }] }, revision: 1 });
+  assert.ok(applied.ok, JSON.stringify(applied));
+  assert.equal(world.backend!.warmGuests.get("linux"), 2, "the pool was topped up without waiting for the sweep");
+
+  const logs = () => latest().inspection.logEntries.map((entry) => entry.message).filter((line) => line.includes("warm pool"));
+  const signals = () => latest().inspection.realtimeSignals.length;
+  const context = world.contexts.at(-1)!;
+  const before = signals();
+  context.warmShortfalls([{ kinds: ["linux"], count: 2, have: 1, reason: "pve has 3.5 GiB of memory free, and a warm box needs 4 GiB" }]);
+  assert.ok(signals() > before, "the settings page is told");
+  const shown = (await rpc<ConfigState>("config.get", null)).backends[0]!.warmShort;
+  assert.deepEqual(shown, [{ kinds: ["linux"], count: 2, have: 1, reason: "pve has 3.5 GiB of memory free, and a warm box needs 4 GiB" }]);
+  const doctor = await rpc<{ ok: boolean; sections: { title: string; report: DoctorReport }[] }>("doctor", null);
+  assert.equal(doctor.ok, true, "a short pool is a warning");
+  assert.deepEqual(doctor.sections[0]!.report.checks.at(-1), {
+    id: "warm.linux",
+    name: "Warm pool of linux",
+    status: "warn",
+    detail: "It has 1 of its 2 boxes, and no room for another: pve has 3.5 GiB of memory free, and a warm box needs 4 GiB",
+    fix: "Make room there, or lower the warm count in bb-box's settings.",
+  });
+
+  // Another sweep with other figures but the same reason says nothing more.
+  const quiet = signals();
+  context.warmShortfalls([{ kinds: ["linux"], count: 2, have: 1, reason: "pve has 3.2 GiB of memory free, and a warm box needs 4 GiB" }]);
+  assert.equal(signals(), quiet);
+  context.warmShortfalls([]);
+  assert.deepEqual(logs(), [
+    "The warm pool of linux on fake has 1 of its 2 boxes, and no room for another: pve has 3.5 GiB of memory free, and a warm box needs 4 GiB",
+    "The warm pool of linux on fake is no longer short of room.",
+  ]);
+  assert.deepEqual((await rpc<ConfigState>("config.get", null)).backends[0]!.warmShort, []);
+});
+
 test("every driver's fields have labels for the settings page: a capital first, and no backend name in front", () => {
   for (const driver of DRIVERS) {
     for (const [key, field] of [...Object.entries(driver.fields), ...Object.entries(driver.hostFields ?? {})]) {
@@ -638,7 +675,7 @@ test("config.get gives the document with each secret as set or not, the defaults
     spares: { ready: 0, making: 0 },
   });
   assert.deepEqual(state.drivers[0]!.fields.map((field) => [field.key, field.group]), [["address", "connection"], ["token", "credentials"]]);
-  assert.deepEqual(state.backends, [{ id: "fake", type: "fake", label: "Fake host", form: "VM", state: "active", problems: [], boxes: 0, kinds: ["linux", "linux-desktop"], doctor: null }]);
+  assert.deepEqual(state.backends, [{ id: "fake", type: "fake", label: "Fake host", form: "VM", state: "active", problems: [], boxes: 0, kinds: ["linux", "linux-desktop"], doctor: null, warmShort: [] }]);
   assert.deepEqual(state.problems, []);
   assert.ok(state.migrated);
 });

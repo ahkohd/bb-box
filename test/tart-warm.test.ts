@@ -103,7 +103,7 @@ test("maintain fills a pool with suspended clones at the default size, which hel
 });
 
 test("a fill needs its memory free on disk beyond the disk kept free, for its suspend; a box does not", async () => {
-  const { mac, make, warmVms } = setup();
+  const { mac, make, contexts, warmVms } = setup();
   const { bavail, bsize } = statfsSync(mac);
   const free = Math.floor((Number(bavail) * Number(bsize)) / 2 ** 30);
   assert.ok(free > 12, "the test needs 13 GiB of disk free");
@@ -111,9 +111,14 @@ test("a fill needs its memory free on disk beyond the disk kept free, for its su
   const short = make("test", { macos: 1 }, { "tart-reserve-disk-gib": free - 4 });
   await short.maintain();
   assert.deepEqual(warmVms(), []);
+  // Why, for the log, the doctor and the settings (#356).
+  const [pool, ...more] = contexts[0]!.short.at(-1)!;
+  assert.deepEqual([pool!.kinds, pool!.count, pool!.have, more], [["macos"], 1, 0, []]);
+  assert.match(pool!.reason, /^mac1 has [\d.]+ GiB of disk free, and a warm VM saved with its 8 GiB of memory would leave less than the [\d.]+ GiB kept free\.$/);
   assert.equal((await short.capacity("macos", SMALL, [])).ok, true, "a box still fits");
   await make("test", { macos: 1 }, { "tart-reserve-disk-gib": free - 12 }).maintain();
   assert.equal(warmVms().length, 1);
+  assert.deepEqual(contexts[1]!.short.at(-1), []);
 });
 
 test("a box at the default size takes a warm VM, and the pool fills again", async () => {
