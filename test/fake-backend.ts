@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
 import { FakeRfb } from "./fake-rfb.ts";
 import {
+  type GuestOs,
   BackendError,
   type AcquireHooks,
   type Backend,
@@ -68,6 +69,8 @@ export interface FakeBackendOptions {
   readonly nature?: MachineNature;
   /** Where its boxes run, by name, for a provider's name (044). None by default. */
   readonly hosts?: readonly string[];
+  /** The OS of its hosts, for "Runs on". Linux by default. */
+  readonly hostOs?: GuestOs | null;
   /** The kinds it offers. FAKE_KINDS by default. */
   readonly kinds?: readonly BoxKind[];
   /** Real: how many machines the pool has. */
@@ -170,6 +173,7 @@ export class FakeBackend implements Backend {
   readonly id: string;
   readonly label: string;
   readonly hosts: readonly string[];
+  readonly hostOs: GuestOs | null;
   readonly nature: MachineNature;
   readonly restores?: "home" | "machine";
   readonly faults: FakeFaults = {};
@@ -214,6 +218,7 @@ export class FakeBackend implements Backend {
     this.nature = options.nature ?? "virtual";
     this.label = this.nature === "real" ? "Fake machine pool" : "Fake host";
     this.hosts = options.hosts ?? [];
+    this.hostOs = options.hostOs === undefined ? "linux" : options.hostOs;
     this.#pool = new KvPoolStore(this.#storage, () => this.machines());
     this.#ready = new ReadyPool(this.#pool);
     if (options.stopStart ?? true) {

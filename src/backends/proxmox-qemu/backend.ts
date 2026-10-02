@@ -251,6 +251,7 @@ export class ProxmoxQemuBackend implements Backend {
   readonly nature = "virtual" as const;
   readonly label: string;
   readonly hosts: readonly string[];
+  readonly hostOs = "linux" as const;
   readonly #config: QemuConfig;
   readonly #context: BackendContext;
   readonly #options: QemuBackendOptions;

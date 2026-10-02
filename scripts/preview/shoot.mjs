@@ -12,8 +12,8 @@ import { join } from "node:path";
 const out = process.argv[2] ?? "scripts/preview/out";
 const only = process.argv[3] ? process.argv[3].split(",") : null;
 const SCENES = [
-  "panel-empty", "panel-nobackend", "panel-list", "panel-list-open", "panel-runs-on", "panel-problems", "panel-chooser", "panel-chooser-on", "panel-chooser-hover", "panel-chooser-windows", "panel-chooser-narrow", "panel-chooser-custom", "panel-refused", "panel-menu", "panel-release",
-  "desktop-connecting", "desktop-stopped", "desktop-released", "desktop-chooser", "desktops-page", "terminal", "terminal-ended", "terminal-stopped", "settings", "settings-machines-empty", "settings-setup", "settings-setup-off", "settings-kind",
+  "panel-empty", "panel-nobackend", "panel-list", "panel-list-open", "panel-runs-on", "panel-problems", "panel-chooser", "panel-chooser-on", "panel-chooser-filter", "panel-chooser-windows", "panel-chooser-narrow", "panel-chooser-custom", "panel-refused", "panel-menu", "panel-release",
+  "desktop-connecting", "desktop-stopped", "desktop-released", "desktop-chooser", "desktops-page", "terminal", "terminal-ended", "terminal-stopped", "settings", "settings-machines-empty", "settings-machines-add", "settings-setup", "settings-setup-off", "settings-kind",
 ];
 const PORT = 8765;
 const DEBUG = 9222;

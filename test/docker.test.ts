@@ -5,7 +5,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { toConfiguration } from "../scripts/smoke.ts";
-import { containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
+import { daemonOs, containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
 import { gpusOf, parseContainers, parseInfo } from "../src/backends/docker/cli.ts";
 import { parseDockerPart } from "../src/backends/docker/config.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
@@ -211,6 +211,7 @@ test("reads the daemon's facts and its containers", () => {
       version: "29.0.0",
       operatingSystem: "Ubuntu 24.04 LTS",
       osType: "linux",
+      kernelVersion: "",
       arch: "x86_64",
       cpus: 8,
       memoryMiB: 16 * 1024,
@@ -531,6 +532,20 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
   assert.deepEqual([remote.hosts, remote.label], [["docker.example"], "Docker on docker.example"]);
   const report = await backend.doctor(signal());
   assert.deepEqual([backend.hosts, backend.label], [["fake-docker"], "Docker on fake-docker"]);
+  // The host's OS for "Runs on": a local daemon is this machine's, and one over ssh:// the daemon's own words, kept with the name.
+  assert.equal(backend.hostOs, process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux");
+  // A backend over ssh:// asks its daemon once at a first start; the fake daemon's plain kernel reads as Linux.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(remote.hostOs, "linux");
+  assert.deepEqual(
+    [
+      daemonOs({ kernelVersion: "5.15.167.4-microsoft-standard-WSL2", operatingSystem: "Docker Desktop" }),
+      daemonOs({ kernelVersion: "6.6.0", operatingSystem: "Docker Desktop" }),
+      daemonOs({ kernelVersion: "6.6.0", operatingSystem: "OrbStack" }),
+      daemonOs({ kernelVersion: "6.8.0-45-generic", operatingSystem: "Ubuntu 24.04" }),
+    ],
+    ["windows", "macos", "macos", "linux"],
+  );
   // The name is kept, so a backend built again on the same storage, as after a restart, shows it before asking (#265).
   const later = new DockerBackend(dockerConfig(), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
   await new Promise((resolve) => setTimeout(resolve, 150));

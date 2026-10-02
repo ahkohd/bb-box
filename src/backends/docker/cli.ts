@@ -53,6 +53,8 @@ export interface DockerInfo {
   /** For example "Ubuntu 24.04.3 LTS" or "Docker Desktop". */
   readonly operatingSystem: string;
   readonly osType: string;
+  /** The daemon's kernel, which says "microsoft" under WSL2. */
+  readonly kernelVersion: string;
   readonly arch: string;
   readonly cpus: number;
   readonly memoryMiB: number;
@@ -111,6 +113,7 @@ export function parseInfo(text: string): DockerInfo {
     version: typeof info.ServerVersion === "string" ? info.ServerVersion : "",
     operatingSystem: typeof info.OperatingSystem === "string" ? info.OperatingSystem : "",
     osType: typeof info.OSType === "string" ? info.OSType : "",
+    kernelVersion: typeof info.KernelVersion === "string" ? info.KernelVersion : "",
     arch: typeof info.Architecture === "string" ? info.Architecture : "",
     cpus: Number(info.NCPU) || 0,
     memoryMiB: Math.floor((Number(info.MemTotal) || 0) / MiB),
