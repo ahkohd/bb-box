@@ -821,6 +821,8 @@ describe("An SSH host pool of Macs (047)", () => {
     const again = await acquire(backend, "macos");
     await backend.release(again.guest, releaseHooks().hooks);
     assert.equal((await member(backend, "m")).state, "out-of-service");
+    const signin = (await backend.doctor()).checks.find((check) => check.id === "machine.m.signin");
+    assert.deepEqual([signin?.status, signin?.detail], ["warn", "Its reset stopped before signing the next box user in."], "a failed reset signs nobody in");
     clearFlag(host, "fail-reset");
     await backend.returnToService!("m");
     assert.deepEqual([(await member(backend, "m")).state, (await member(backend, "m")).generation], ["free", 2]);
