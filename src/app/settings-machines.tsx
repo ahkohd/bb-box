@@ -84,7 +84,7 @@ export function MachinesSection() {
   };
 
   return (
-    <Section title="Your machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} machine />} plain={!machines.length}>
+    <Section title="Your machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} machine profile={(backend) => rpc.call("provider", { backend })} />} plain={!machines.length}>
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
       {problem ? (
         <p role="alert" className="py-2 text-xs leading-snug text-destructive-text">

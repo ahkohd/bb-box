@@ -4,7 +4,7 @@
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases } from "../backends/kinds.ts";
-import type { Arch, BoxForm, BoxSize, DoctorReport, GuestOs } from "../backends/types.ts";
+import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
@@ -265,6 +265,37 @@ export function kindViews(
 
 export interface BackendView extends BackendStatus {
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
+}
+
+/**
+ * A provider's profile, behind the (i) on its row in the New box form: read
+ * when the row's popover opens, never on every panel load.
+ */
+export interface ProviderProfile {
+  readonly backend: string;
+  /** "Proxmox LXC on pve1", as the row names it. */
+  readonly name: string;
+  /** The driver's description: what the technology is. */
+  readonly technology: string;
+  readonly nature: "virtual" | "real";
+  readonly hosts: readonly string[];
+  /** What the machine its boxes run on runs, or null until known. */
+  readonly hostOs: GuestOs | null;
+  /** The kinds it makes, in acquire order, each with what its boxes are, the usual cold start on it and spares ready. */
+  readonly makes: readonly { readonly id: string; readonly label: string; readonly form: BoxForm | null; readonly typicalReadyMs: number | null; readonly ready: number }[];
+  /** Boxes on it now, of every thread, in any state but gone. */
+  readonly boxes: number;
+  /** Room for one more box of the first kind it makes, at the default size; null when it makes nothing or did not answer. */
+  readonly room: Capacity | null;
+  readonly status: {
+    readonly state: "off" | "active" | "misconfigured";
+    /** The first thing to fix, when its settings are not valid. */
+    readonly problem: string | null;
+    /** The doctor's last verdict, summary and time; null before it has run. */
+    readonly ok: boolean | null;
+    readonly summary: string | null;
+    readonly checkedAt: number | null;
+  };
 }
 
 export interface DoctorView {

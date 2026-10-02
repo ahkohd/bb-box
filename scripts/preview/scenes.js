@@ -312,6 +312,27 @@ function rpc(boxes, options = {}) {
   const find = (ref) => boxes.find((candidate) => candidate.id === ref) ?? null;
   return {
     "machines.list": () => ({ machines: options.machines ?? [], kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol) }),
+    provider: ({ backend }) => ({
+      backend,
+      name: "Proxmox LXC on pve",
+      technology: "Linux containers on a Proxmox VE host, with or without a desktop on its GPU.",
+      nature: "virtual",
+      hosts: ["pve"],
+      hostOs: "linux",
+      makes: [
+        { id: "linux", label: "Linux", form: "LXC", typicalReadyMs: 2200, ready: 1 },
+        { id: "linux-desktop", label: "Linux desktop (GPU)", form: "LXC", typicalReadyMs: 3100, ready: 0 },
+        { id: "linux-desktop-cpu", label: "Linux desktop", form: "LXC", typicalReadyMs: 3100, ready: 0 },
+      ],
+      boxes: 2,
+      room: {
+        ok: true,
+        message: null,
+        warm: { ready: 1, target: 1 },
+        hosts: [{ host: "pve", ok: true, limits: [{ resource: "memory", used: 22 * 1024, total: 64 * 1024, reserve: 4 * 1024, unit: "MiB" }, { resource: "cpu", used: 10, total: 16, reserve: 0, unit: "count" }, { resource: "gpu-desktops", used: 1, total: 1, reserve: 0, unit: "count" }] }],
+      },
+      status: { state: "active", problem: null, ok: true, summary: "Proxmox VE 9.2 on pve", checkedAt: Date.now() - 120_000 },
+    }),
     // Docker on BB machines (042): one hosting boxes, one that could, one with no Docker, one offline.
     "docker.hosts": () => ({
       hosts: options.dockerHosts ?? [
@@ -405,6 +426,20 @@ export const scenes = {
       // Linux has three providers: the Docker machine picked, so the request names it (044).
       pick("radio", "docker-host");
       await wait(200);
+    },
+  },
+  "panel-chooser-profile": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 840,
+    rpc: rpc([]),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      // The (i) on the first provider row opens its profile.
+      click(document.body, "button", "About pve");
+      await wait(400);
     },
   },
   "panel-chooser-filter": {

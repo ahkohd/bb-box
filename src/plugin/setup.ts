@@ -5,6 +5,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
+import { providerName } from "../core/provider-name.ts";
 import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../backends/types.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
@@ -37,7 +38,7 @@ import type { ThreadOnBox } from "./contract.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
-import { boxView, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type KindView } from "./views.ts";
+import { boxView, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type KindView, type ProviderProfile } from "./views.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
@@ -92,6 +93,8 @@ export interface BbBox {
   /** With each kind's sizes from bb-box's settings. */
   kinds(): Promise<KindView[]>;
   backendViews(): BackendView[];
+  /** A provider's profile for the New box form's (i): one capacity call to the provider, made only when asked. */
+  providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
   doctor(signal?: AbortSignal): Promise<DoctorView>;
   /**
    * Takes back an install ID this install had before it lost its storage
@@ -625,6 +628,30 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     kinds: async () => {
       const config = await general();
       return kindViews(backends.kinds(), config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id));
+    },
+    async providerProfile(backendId, signal) {
+      const status = backends.statuses().find((candidate) => candidate.id === backendId);
+      if (!status) throw new Error(`No provider has the ID ${backendId}.`);
+      const config = await general();
+      const views = kindViews(backends.kinds(), config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id));
+      const offers = views.flatMap((kind) => kind.offers.filter((offer) => offer.backend === backendId).map((offer) => ({ kind, offer })));
+      const first = offers[0];
+      const built = backends.get(backendId);
+      const hosts = built?.hosts ?? first?.offer.hosts ?? [];
+      const all = await boxes.all();
+      const state = (await configuration.state()).backends.find((candidate) => candidate.id === backendId);
+      return {
+        backend: backendId,
+        name: first?.offer.name ?? providerName({ label: backends.driverLabel(backendId), hosts, type: status.type }),
+        technology: drivers.find((driver) => driver.type === status.type)?.description ?? status.label,
+        nature: status.nature,
+        hosts,
+        hostOs: built?.hostOs ?? first?.offer.hostOs ?? null,
+        makes: offers.map(({ kind, offer }) => ({ id: kind.id, label: kind.label, form: offer.form, typicalReadyMs: offer.typicalReadyMs, ready: offer.ready })),
+        boxes: all.filter((box) => box.backend === backendId && box.state !== "gone").length,
+        room: first ? await boxes.room(backendId, first.kind.id, signal).catch(() => null) : null,
+        status: { state: status.state, problem: status.problems[0] ?? null, ok: state?.doctor?.report.ok ?? null, summary: state?.doctor?.report.summary ?? null, checkedAt: state?.doctor?.at ?? null },
+      };
     },
     backendViews: () =>
       backends.statuses().map((backend) => ({

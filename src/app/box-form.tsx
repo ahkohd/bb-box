@@ -191,7 +191,8 @@ export function useEscapeCloses(open: boolean, setOpen: (open: boolean) => void)
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || document.querySelector('[role="listbox"][data-state="open"]')) return;
+      // A menu or a provider's profile open: Escape is theirs.
+      if (event.key !== "Escape" || document.querySelector('[role="listbox"][data-state="open"], [data-nested-layer][data-state="open"]')) return;
       event.preventDefault();
       setOpen(false);
     };
@@ -298,24 +299,24 @@ export function OptionCard({
   );
 }
 
-/** A provider row: its name at full strength, its words dim, no mark and no colour (the operator's note of 2 October 2026). */
-export function ProviderRow({ offer, selected, onClick, optionRef }: { offer: OfferView; selected: boolean; onClick: () => void; optionRef?: (element: HTMLButtonElement | null) => void }) {
+/** A provider row: its name at full strength, its words dim, no mark and no colour (the operator's note of 2 October 2026); an (i) at its end opens its profile. */
+export function ProviderRow({ offer, selected, onClick, optionRef, info }: { offer: OfferView; selected: boolean; onClick: () => void; optionRef?: (element: HTMLButtonElement | null) => void; info?: ReactNode }) {
   return (
-    <button
-      ref={optionRef}
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      tabIndex={selected ? 0 : -1}
-      onClick={onClick}
-      className={cn(
-        "flex w-full flex-col items-start rounded-md border px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        selected ? "border-transparent bg-state-active" : "border-input hover:bg-state-hover",
-      )}
-    >
-      <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer)}</span>
-      <OfferWords offer={offer} />
-    </button>
+    <div className={cn("flex items-center rounded-md border", selected ? "border-transparent bg-state-active" : "border-input")}>
+      <button
+        ref={optionRef}
+        type="button"
+        role="radio"
+        aria-checked={selected}
+        tabIndex={selected ? 0 : -1}
+        onClick={onClick}
+        className={cn("flex min-w-0 flex-1 flex-col items-start rounded-md px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring", !selected && "hover:bg-state-hover")}
+      >
+        <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer)}</span>
+        <OfferWords offer={offer} />
+      </button>
+      {info ? <div className="flex shrink-0 items-center pr-1.5">{info}</div> : null}
+    </div>
   );
 }
 
