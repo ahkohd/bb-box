@@ -176,22 +176,26 @@ kinds.
 [test/conformance/suite.ts](../test/conformance/suite.ts) runs the same checks
 against any backend: doctor first, then for each kind acquire, transports, a
 spawned channel, commands with 1 MiB of stdin, streaming, 32 MiB copied each
-way, enrolment, Docker, displays, stop and start (with the box's clock right,
-and connected to BB again within 3 s of being ready), recovery by a new
-instance, repeated release and interrupted acquires. It also checks that two
-installs on one backend leave each other's guests alone, and, given a `reuse`
-hook that makes the backend hand out a reference again, that the old box reads
-as gone and its release leaves the new box alone. The size check measures a
-box as soon as it is ready, after filling any warm pool the run's settings ask
-for, so the box can come from it; the pool stays for the next run, and a run
-with a target of 0 removes it. Steps a kind does not declare are skipped by
-its capabilities; any other skip gives its reason.
+way, enrolment, Docker, displays and their resize, computer use (the driver
+lists the windows, and the OS's editor opens and shows text typed into it as
+the computer tools type it), stop and start (with the box's clock right, and
+connected to BB again within 3 s of being ready), recovery by a new instance,
+repeated release and interrupted acquires. It also checks that two installs on
+one backend leave each other's guests alone, and, given a `reuse` hook that
+makes the backend hand out a reference again, that the old box reads as gone
+and its release leaves the new box alone. The size check measures a box as
+soon as it is ready, after filling any warm pool the run's settings ask for,
+so the box can come from it; the pool stays for the next run, and a run with a
+target of 0 removes it. Steps a kind does not declare are skipped by its
+capabilities; any other skip gives its reason.
 
 [test/fake-backend.ts](../test/fake-backend.ts) is an in-memory backend,
 virtual or real, that passes the suite and backs the core's own tests.
-[test/conformance.test.ts](../test/conformance.test.ts) runs the suite
-against it, against Proxmox LXC with a fake API, against Tart on a fake
-Mac, and against Docker on a fake Docker host.
+[test/conformance.test.ts](../test/conformance.test.ts) runs the suite against
+it, with the virtual one's desktops as on Wayland
+([048](decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md))
+and the real one's as on X11, against Proxmox LXC with a fake API, against
+Tart on a fake Mac, and against Docker on a fake Docker host.
 
 ```sh
 node --test test/conformance.test.ts

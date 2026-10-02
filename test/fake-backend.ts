@@ -8,17 +8,20 @@
 // installs share a host: each records its install ID on its guests and acts
 // only on its own (018). Desktops stream from a local server that sends an RFB
 // greeting. With `resize: "backend"` that server ignores SetDesktopSize and the
-// display's resize sets the size instead, as on a GPU desktop (021).
+// display's resize sets the size instead, as on a GPU desktop (021). With
+// `wayland`, a viewer signs in with Apple's authentication and the fake Cua
+// Driver acts as on Wayland (048).
 //
 // Stopping a guest's command, as at a timeout, kills only its shell, as it
 // kills `ssh` for a real box, so what the script started runs on, as do
 // servers a test starts in a guest. All guests' commands therefore run in one
 // process group, which ends with the test process, however it ends (#310).
 
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
+import { emptyDesktop } from "./fake-cua.ts";
 import { FakeRfb } from "./fake-rfb.ts";
 import { fakeGroup, inGroup } from "./helpers.ts";
 import {
@@ -84,6 +87,8 @@ export interface FakeBackendOptions {
   readonly host?: BackendStorage;
   /** What sets a desktop's size: the stream server's SetDesktopSize (the default), or the display's resize. */
   readonly resize?: "stream" | "backend";
+  /** Its desktops are Wayland's (048): a viewer signs in with Apple's authentication as user box, and Cua takes input only in the foreground. Give it with resize "backend", as wayvnc refuses a viewer's resize. */
+  readonly wayland?: boolean;
   /** The smallest size a viewer may set a desktop to. None by default. */
   readonly minSize?: DisplaySize;
   /**
@@ -209,7 +214,7 @@ export class FakeBackend implements Backend {
 
   constructor(options: FakeBackendOptions) {
     this.#options = options;
-    this.rfb = new FakeRfb({ password: "fakepass", acceptResize: options.resize !== "backend" });
+    this.rfb = new FakeRfb({ password: "fakepass", user: options.wayland ? "box" : undefined, acceptResize: options.resize !== "backend" });
     this.#kinds = options.kinds ?? FAKE_KINDS;
     this.#installId = options.installId ?? "test";
     this.#storage = options.host ?? options.storage;
@@ -314,6 +319,8 @@ export class FakeBackend implements Backend {
       }
       this.#holding.add(box.boxId);
       await mkdir(this.#home(guest.ref), { recursive: true });
+      const driver = this.#kind(box.kind).capabilities.computerUse;
+      if (this.#options.wayland && driver) await writeFile(join(this.#home(guest.ref), driver.socket), JSON.stringify({ ...emptyDesktop(), wayland: true }));
       hooks.timing("make", Math.round(performance.now() - started));
       await this.gate;
       this.#fault("claimed");
@@ -392,7 +399,7 @@ export class FakeBackend implements Backend {
         resizable: display.resizable,
         open: async () => ({
           route: { type: "tcp", host: "127.0.0.1", port: await (this.#vnc ??= this.rfb.listen()) },
-          auth: { type: "vnc-password", password: "fakepass" },
+          auth: this.#options.wayland ? { type: "apple", user: "box", password: "fakepass" } : { type: "vnc-password", password: "fakepass" },
         }),
         ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
         ...(this.#options.minSize ? { minSize: this.#options.minSize } : {}),

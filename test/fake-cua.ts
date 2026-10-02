@@ -18,13 +18,14 @@
 // on the desktop works only in the foreground. Like Cua, it takes pixels of
 // the session's latest image of the desktop, or of the screen before one.
 //
-// App "editor" is like Mousepad: a text area named after its text, inside a
-// tab named after the document, which gains a "*" once edited, as does the
-// title. A URL opens in app "browser", whose window is titled "Untitled"
-// until its page loads; a URL with "slow" in it never does. A second URL goes
-// to the browser window already open, whose title is the URL while it loads,
-// as Chrome's is. Its page gives each word, and each letter, of some text a
-// line of its own, as Chrome does, and has names made only of U+FFFC.
+// App "editor" is like Mousepad, as is app "mousepad", which the conformance
+// suite opens: a text area named after its text, inside a tab named after the
+// document, which gains a "*" once edited, as does the editor's title. A URL
+// opens in app "browser", whose window is titled "Untitled" until its page
+// loads; a URL with "slow" in it never does. A second URL goes to the browser
+// window already open, whose title is the URL while it loads, as Chrome's is.
+// Its page gives each word, and each letter, of some text a line of its own,
+// as Chrome does, and has names made only of U+FFFC.
 //
 // Like Cua, it finds a window's tree by where the window is: of two windows
 // of one app within 20 pixels of each other, a read of either gives the
@@ -32,8 +33,8 @@
 //
 // With wayland, it is like Cua on a Wayland desktop: a click on an element
 // with no action fails, as Cua clicks it through X11, and a click by pixels
-// works only in the foreground. A window with noActions has elements with
-// no actions, as a GTK tab or row has none.
+// and typing work only in the foreground. A window with noActions has
+// elements with no actions, as a GTK tab or row has none.
 
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -168,6 +169,11 @@ function text(message: string, structured?: Record<string, unknown>, isError = f
   return { content: [{ type: "text", text: message }], structuredContent: structured, isError };
 }
 
+/** Whether the window is an editor's, which takes text in the background but on Wayland. */
+function isEditor(window: FakeWindow): boolean {
+  return window.app === "editor" || window.app === "mousepad";
+}
+
 function tree(desktop: FakeDesktop, window: FakeWindow): Node {
   const strip = (node: Node): Node => ({ ...node, actions: [], children: node.children.map(strip) });
   return window.noActions ? strip(shape(desktop, window)) : shape(desktop, window);
@@ -200,7 +206,7 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
     };
   }
   const whole = frame(0, 0, window.width, window.height);
-  if (window.app === "editor") {
+  if (isEditor(window)) {
     const edited = desktop.fields[window.id] ? "*" : "";
     const typed = desktop.fields[window.id] ?? "";
     const area: Node = { key: "document", role: "text", label: typed, value: typed, actions: [], frame: frame(0, 60, window.width, window.height - 60), children: [] };
@@ -588,12 +594,7 @@ export class FakeCua {
         if (!("key" in node)) return node;
         if (node.key !== "field" && node.key !== "document") return text(`${node.role} "${node.label}" does not take text.`, { code: "not_editable" }, true);
       }
-      if (window.app === "editor") {
-        desktop.fields[window.id] = `${desktop.fields[window.id] ?? ""}${String(args.text)}`;
-        window.title = "*Untitled 1 - Editor";
-        return text(`Typed ${String(args.text).length} characters.`, { delivery_mode: String(args.delivery_mode ?? "background") });
-      }
-      if (args.delivery_mode !== "foreground") {
+      if (args.delivery_mode !== "foreground" && (!isEditor(window) || desktop.wayland)) {
         return text('Background delivery is not available for this target; retry with delivery_mode:"foreground".', {
           code: "background_unavailable",
           effect: "none",
@@ -601,7 +602,8 @@ export class FakeCua {
         }, true);
       }
       desktop.fields[window.id] = `${desktop.fields[window.id] ?? ""}${String(args.text)}`;
-      return text(`Typed ${String(args.text).length} characters.`, { delivery_mode: "foreground" });
+      if (window.app === "editor") window.title = "*Untitled 1 - Editor";
+      return text(`Typed ${String(args.text).length} characters.`, { delivery_mode: String(args.delivery_mode ?? "background") });
     });
   }
 
