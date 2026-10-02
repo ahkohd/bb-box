@@ -3,8 +3,8 @@
 
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
-import { kindAliases } from "../backends/kinds.ts";
-import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs } from "../backends/types.ts";
+import { kindAliases, kindInfo } from "../backends/kinds.ts";
+import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs, Windowing } from "../backends/types.ts";
 import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
@@ -130,6 +130,8 @@ export interface KindView {
   readonly os: GuestOs;
   /** x86_64 unless the kind is arm64 (040), which the panel shows as a badge. */
   readonly arch: Arch;
+  /** The windowing system a desktop runs (048); the New box form offers X11 or Wayland when a system has both. */
+  readonly windowing: Windowing;
   /** The features every offer promises, such as "docker". */
   readonly features: readonly string[];
   /** A box of it can become a BB machine, so a thread can run on it. */
@@ -249,6 +251,8 @@ export function kindViews(
       desktop: kind.capabilities.displays.length > 0,
       os: kind.capabilities.os,
       arch: kind.capabilities.arch,
+      // The windowing system is not in a kind's capabilities; it is known by the kind's ID (048).
+      windowing: kindInfo(kind.id).windowing,
       features: kind.requires,
       enrol: kind.capabilities.enrol,
       spares: { target: targets[kind.id] ?? 0, ready: spares[kind.id]?.ready ?? 0, making: spares[kind.id]?.making ?? 0 },

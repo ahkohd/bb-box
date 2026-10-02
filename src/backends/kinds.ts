@@ -5,7 +5,7 @@
 // in: box_acquire, the configuration, stored records and the kind a guest
 // names. What bb-box shows uses the current IDs, and backends offer only kinds.
 
-import type { Arch, GuestOs } from "./types.ts";
+import type { Arch, GuestOs, Windowing } from "./types.ts";
 
 const RENAMED: ReadonlyMap<string, string> = new Map([
   ["linux-headless", "linux"],
@@ -59,15 +59,17 @@ export interface KindInfo {
   readonly os: GuestOs;
   /** x86_64 unless the kind is arm64 (040). */
   readonly arch: Arch;
+  /** The windowing system a desktop runs (048); x11 for every kind but the Wayland desktop, and for kinds without a desktop. */
+  readonly windowing: Windowing;
   /** The features every offer of it promises. None for a Linux kind, whose offers may differ on Docker (041). */
   readonly features: readonly string[];
 }
 
 /** The kinds bb-box knows (027). A backend's own kind may describe itself more closely. */
 export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
-  linux: { label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [] },
-  "linux-desktop": { label: "Linux desktop", description: "A Linux desktop on a GPU, for computer use, browsers and app development.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [] },
-  "linux-desktop-cpu": { label: "Linux desktop", description: "A Linux desktop drawn by the CPU, for computer use and browsers.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: [] },
+  linux: { label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", windowing: "x11", features: [] },
+  "linux-desktop": { label: "Linux desktop", description: "A Linux desktop on a GPU, for computer use, browsers and app development.", gpu: true, desktop: true, os: "linux", arch: "x86_64", windowing: "x11", features: [] },
+  "linux-desktop-cpu": { label: "Linux desktop", description: "A Linux desktop drawn by the CPU, for computer use and browsers.", gpu: false, desktop: true, os: "linux", arch: "x86_64", windowing: "x11", features: [] },
   // Sway, streamed by wayvnc, with Xwayland off (048).
   "linux-desktop-wayland-cpu": {
     label: "Linux desktop on Wayland",
@@ -76,6 +78,7 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
     desktop: true,
     os: "linux",
     arch: "x86_64",
+    windowing: "wayland",
     features: [],
   },
   "linux-arm64": {
@@ -85,6 +88,7 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
     desktop: false,
     os: "linux",
     arch: "arm64",
+    windowing: "x11",
     features: [],
   },
   "linux-arm64-desktop-cpu": {
@@ -94,11 +98,12 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
     desktop: true,
     os: "linux",
     arch: "arm64",
+    windowing: "x11",
     features: [],
   },
-  macos: { label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, os: "macos", arch: "arm64", features: [] },
-  "macos-desktop": { label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, os: "macos", arch: "arm64", features: [] },
-  "windows-desktop": { label: "Windows desktop", description: "A Windows desktop for computer use, browsers and Windows apps.", gpu: false, desktop: true, os: "windows", arch: "x86_64", features: [] },
+  macos: { label: "macOS", description: "A Mac for builds and Apple's tools.", gpu: false, desktop: false, os: "macos", arch: "arm64", windowing: "x11", features: [] },
+  "macos-desktop": { label: "macOS desktop", description: "A macOS desktop for computer use and app development.", gpu: false, desktop: true, os: "macos", arch: "arm64", windowing: "x11", features: [] },
+  "windows-desktop": { label: "Windows desktop", description: "A Windows desktop for computer use, browsers and Windows apps.", gpu: false, desktop: true, os: "windows", arch: "x86_64", windowing: "x11", features: [] },
   "windows-arm64-desktop": {
     label: "Windows desktop on arm64",
     description: "A Windows desktop on arm64, for computer use, browsers and Windows apps. x64 apps run under Windows' emulation, more slowly; x64 drivers do not.",
@@ -106,10 +111,11 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
     desktop: true,
     os: "windows",
     arch: "arm64",
+    windowing: "x11",
     features: [],
   },
 };
 
 export function kindInfo(id: string): KindInfo {
-  return KIND_INFO[id] ?? { label: id, description: "", gpu: false, desktop: false, os: id.startsWith("macos") ? "macos" : id.startsWith("windows") ? "windows" : "linux", arch: id.startsWith("macos") || /-arm64\b/.test(id) ? "arm64" : "x86_64", features: [] };
+  return KIND_INFO[id] ?? { label: id, description: "", gpu: false, desktop: false, os: id.startsWith("macos") ? "macos" : id.startsWith("windows") ? "windows" : "linux", arch: id.startsWith("macos") || /-arm64\b/.test(id) ? "arm64" : "x86_64", windowing: "x11", features: [] };
 }

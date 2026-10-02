@@ -12,7 +12,7 @@ import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
-import { choiceOf, formFilterOf, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
+import { choiceOf, displayChoices, formFilterOf, gpuChoices, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
@@ -245,6 +245,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     desktop,
     os: "linux",
     arch: id.includes("arm64") ? "arm64" : "x86_64",
+    windowing: id.includes("wayland") ? "wayland" : "x11",
     features: id === "linux-docker" ? ["docker"] : [],
     docker: true,
     enrol: true,
@@ -1907,6 +1908,30 @@ test("filters that leave no provider disable Create and say so", async () => {
   expect(submitButton().disabled).toBe(false);
 });
 
+test("the Display choice shows only when a system offers X11 and Wayland, defaults to X11, and Wayland drops the GPU (048)", async () => {
+  const offer = KINDS[1]!.offers[0]!;
+  const x11Cpu: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11", offers: [offer] };
+  const waylandCpu: KindView = { ...KINDS[1]!, id: "linux-desktop-wayland-cpu", label: "Linux desktop on Wayland", gpu: false, windowing: "wayland", offers: [offer] };
+  const { handlers, changes } = server([], { kinds: [KINDS[0]!, KINDS[1]!, x11Cpu, waylandCpu] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  // A server has no windowing, so the Display choice is hidden.
+  const types = await screen.findByRole("radiogroup", { name: "Type" });
+  expect(screen.queryByRole("combobox", { name: "Display" })).toBeNull();
+  // A desktop offers it, X11 by default, with the GPU still a choice and no Wayland note.
+  fireEvent.click(within(types).getByRole("radio", { name: /^Desktop/ }));
+  expect((await screen.findByRole("combobox", { name: "Display" })).textContent).toBe("X11");
+  expect(screen.getByRole("combobox", { name: "GPU" })).toBeTruthy();
+  expect(screen.queryByText("Apps built only for X11 need an X11 desktop.")).toBeNull();
+  // Wayland: the note shows, the GPU choice goes (Wayland is CPU-only), and Create makes the Wayland kind.
+  await choose("Display", "Wayland");
+  expect(screen.getByText("Apps built only for X11 need an X11 desktop.")).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "GPU" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes).toEqual(["acquire linux-desktop-wayland-cpu"]));
+});
+
 test("the form's words: a provider's title, the systems' hosts, the nearest choice and the filters", () => {
   const linux = KINDS[0]!;
   const offer = linux.offers[0]!;
@@ -1923,10 +1948,21 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
     ["macOS", "mac-mini"],
   ]);
   // The nearest choice that exists: the system stays when it can, then the arch, the type and the GPU snap to what there is.
-  expect(nearest(KINDS, { os: "linux", arch: "arm64", desktop: true, gpu: false })).toEqual({ os: "linux", arch: "x86_64", desktop: true, gpu: true });
-  expect(nearest([mac], { os: "windows", arch: "x86_64", desktop: true, gpu: true })).toEqual({ os: "macos", arch: "arm64", desktop: false, gpu: false });
-  expect(choiceOf(KINDS[1]!)).toEqual({ os: "linux", arch: "x86_64", desktop: true, gpu: true });
-  expect(kindFor(KINDS, { os: "linux", arch: "x86_64", desktop: true, gpu: false })?.id).toBe("linux-desktop");
+  expect(nearest(KINDS, { os: "linux", arch: "arm64", desktop: true, gpu: false, windowing: "x11" })).toEqual({ os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" });
+  expect(nearest([mac], { os: "windows", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" })).toEqual({ os: "macos", arch: "arm64", desktop: false, gpu: false, windowing: "x11" });
+  expect(choiceOf(KINDS[1]!)).toEqual({ os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" });
+  expect(kindFor(KINDS, { os: "linux", arch: "x86_64", desktop: true, gpu: false, windowing: "x11" })?.id).toBe("linux-desktop");
+  // The Display choice (048): a backend offering X11 and Wayland CPU desktops shows both; Wayland is CPU-only, so it snaps the GPU off.
+  const waylandCpu: KindView = { ...KINDS[1]!, id: "linux-desktop-wayland-cpu", label: "Linux desktop on Wayland", gpu: false, windowing: "wayland" };
+  const x11Cpu: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
+  const both = [KINDS[0]!, KINDS[1]!, x11Cpu, waylandCpu];
+  expect(displayChoices(both, "linux", "x86_64")).toEqual({ x11: true, wayland: true });
+  expect(displayChoices(KINDS, "linux", "x86_64")).toEqual({ x11: true, wayland: false });
+  expect(gpuChoices(both, "linux", "x86_64", "x11")).toEqual({ none: true, gpu: true });
+  expect(gpuChoices(both, "linux", "x86_64", "wayland")).toEqual({ none: true, gpu: false });
+  expect(nearest(both, { os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "wayland" })).toEqual({ os: "linux", arch: "x86_64", desktop: true, gpu: false, windowing: "wayland" });
+  expect(kindFor(both, { os: "linux", arch: "x86_64", desktop: true, gpu: false, windowing: "wayland" })?.id).toBe("linux-desktop-wayland-cpu");
+  expect(kindFor(both, { os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" })?.id).toBe("linux-desktop");
   // The filters: a Kind chip keeps its form; Runs on keeps the machine's OS and an offer that does not know it yet; Physical ignores Runs on.
   const pool = { ...offer, backend: "ssh-pool", type: "ssh-pool", form: "Physical" as const };
   const docker = { ...offer, backend: "docker:1", type: "docker", form: "Docker" as const, hostOs: null };

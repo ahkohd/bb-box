@@ -190,13 +190,16 @@ root.style.minHeight = "0";
 chrome.innerHTML = scene.chrome ?? "";
 if (!scene.chrome) chrome.remove();
 
+// The cross-thread Boxes page is slot "boxes-page"; the per-thread Box panel is
+// the thread-panel action whose id is "boxes" (BOXES_ACTION), so a "boxes" scene
+// falls through to it. Keeping them apart stops the page from eating panel scenes.
 const slot =
   scene.slot === "settings"
     ? slots.settingsSections[0]
-    : scene.slot === "boxes"
+    : scene.slot === "boxes-page"
       ? slots.navPanels[0]
       : slots.threadPanelActions.find((action) => action.id === scene.slot);
-root.className = slot.layout === "flush" ? "flush" : scene.slot === "boxes" ? "" : "padded";
+root.className = slot.layout === "flush" ? "flush" : scene.slot === "boxes-page" ? "" : "padded";
 const reactRoot = ReactDOMClient.createRoot(root);
 reactRoot.render(h(slot.component, scene.props ?? { threadId: THREAD, params: null }));
 await new Promise((resolve) => setTimeout(resolve, 300));
