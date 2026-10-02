@@ -271,16 +271,17 @@ restored as bb-box stops and starts a box.
 | `--replace` | off | Build an image of that name again. Boxes made from the old build keep it |
 | `--keep` | off | Keep a failed build's directory, to boot and look at |
 
-It needs about 25 GiB beyond the reserve while it runs. Watch Setup with a
-VNC viewer on the Mac, at the address the script prints. Each build is a
+It takes about 20 minutes on an M4 Max, and needs about 25 GiB beyond the
+reserve while it runs; the image keeps about 15 GiB. Watch Setup with a VNC
+viewer on the Mac, at the address the script prints. Each build is a
 directory of the image, `build.<time>`, with a read-only `disk.qcow2` and
 the UEFI variables; `current` links to the one new boxes are made from. A
 failed build leaves its last screen and QEMU's output beside them.
 
 QEMU's clock is UTC. The image reads it as UTC, and Windows' time service
-syncs every 15 minutes, which corrects a box a sleeping Mac has left behind
-(`windows/clock.ps1`). bb-box also sets the clock when it starts a stopped
-box.
+syncs about every 17 minutes, which corrects a box a sleeping Mac has left
+behind (`windows/clock.ps1`). bb-box also sets the clock when it starts a
+stopped box.
 
 ### Permissions for computer use
 
