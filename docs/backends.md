@@ -16,7 +16,7 @@ a whole-machine reset
 
 | Host | Box | Form | Backend | Kinds | Status | Arch | GPU |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Linux | Linux | container | Proxmox LXC | `linux`, `linux-desktop`, `linux-desktop-cpu` | working | x86_64 | `linux-desktop`: an NVIDIA GPU; `linux-desktop-cpu`: none |
+| Linux | Linux | container | Proxmox LXC | `linux`, `linux-desktop`, `linux-desktop-cpu`, `linux-desktop-wayland-cpu` | working; `linux-desktop-wayland-cpu` from [048](decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md) | x86_64 | `linux-desktop`: an NVIDIA GPU; the others: none |
 | Linux | Linux | container | Docker, local or over `ssh://` | `linux`, `linux-desktop`, `linux-desktop-cpu` | working | x86_64 | `linux-desktop`: an NVIDIA GPU through CDI |
 | Linux | Linux | container | Docker on a BB machine, through BB | `linux`, `linux-desktop`, `linux-desktop-cpu` | working, [042](decisions/042-a-docker-host-can-be-a-bb-machine.md) | x86_64 | as above |
 | Linux | Linux | physical | SSH host pool | `linux` | working | x86_64 | none offered |

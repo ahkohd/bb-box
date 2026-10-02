@@ -73,6 +73,8 @@ Docker on devpc"), the words `box_acquire`'s `on` takes (044). The kinds:
   or an SSH host pool
 - `linux-desktop`: a Linux desktop on a GPU; `linux-desktop-cpu`: one drawn
   by the CPU
+- `linux-desktop-wayland-cpu`: a Linux desktop on Wayland (Sway), drawn by
+  the CPU, for apps built for Wayland; X11-only apps do not run there
 - `linux-arm64` and `linux-arm64-desktop-cpu`: the same on arm64, as VMs on
   a Mac with Apple silicon (040)
 - `macos` and `macos-desktop`: macOS VMs on a Mac
@@ -119,7 +121,7 @@ and `bb box kinds` show the ones in use:
 | Kind | small (the default) | medium | large | largest custom size |
 | --- | --- | --- | --- | --- |
 | `linux`, `linux-arm64` | 2 cores, 4 GiB | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB, 256 GiB disk |
-| `linux-desktop`, `linux-desktop-cpu`, `linux-arm64-desktop-cpu`, `windows-desktop`, `windows-arm64-desktop` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB | 32 cores, 64 GiB, 256 GiB disk |
+| `linux-desktop`, `linux-desktop-cpu`, `linux-desktop-wayland-cpu`, `linux-arm64-desktop-cpu`, `windows-desktop`, `windows-arm64-desktop` | 4 cores, 8 GiB | 8 cores, 16 GiB | 16 cores, 32 GiB | 32 cores, 64 GiB, 256 GiB disk |
 | `macos`, `macos-desktop` | 4 cores, 8 GiB | 6 cores, 16 GiB | 8 cores, 32 GiB | 16 cores, 64 GiB, 256 GiB disk |
 
 A preset keeps the kind's own disk. For a custom size, give `cores`,

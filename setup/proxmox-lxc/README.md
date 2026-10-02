@@ -456,6 +456,7 @@ file looks like this, with the field names below:
 | `linux-templates` | `9100` | VMIDs of Linux templates, separated by spaces or commas |
 | `desktop-templates` | `9101 GPU-<uuid>`, then `9102 GPU-<uuid>` on the next line | one line per GPU desktop template: its VMID and its GPU's ID |
 | `desktop-cpu-templates` | `9103` | VMIDs of CPU-only desktop templates |
+| `desktop-wayland-cpu-templates` | `9105` | VMIDs of CPU-only Wayland desktop templates (048) |
 | `desktops-per-gpu` | `0` | the most desktops on one GPU at once; 0 means no limit |
 | `bridge` | `vmbr200` | `BBBOX_BRIDGE` |
 | `subnet` | `10.200.0.0/24` | the subnet of `BBBOX_GATEWAY_CIDR` |
@@ -496,8 +497,9 @@ the document, with the same backend ID, so boxes and guests carry over.
 `bb box config migrated` shows what they were.
 
 Leave a flavour's templates empty to offer none of its kinds. Linux
-templates serve `linux`, GPU desktop templates
-`linux-desktop`, and CPU-only desktop templates `linux-desktop-cpu`.
+templates serve `linux`, GPU desktop templates `linux-desktop`, CPU-only
+desktop templates `linux-desktop-cpu`, and CPU-only Wayland desktop
+templates `linux-desktop-wayland-cpu`.
 
 The GPU's ID can be any name without spaces; templates with the same ID
 share a GPU. Use its UUID, which this command lists next to the PCI address

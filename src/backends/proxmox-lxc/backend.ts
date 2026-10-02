@@ -13,24 +13,24 @@
 // asks for more than the template's (quick only while running), waits for
 // port 22 and then for SSH. Proxmox tasks are polled every 50 ms.
 //
-// Three flavours of template serve three kinds, each with Docker (041): linux
+// Four flavours of template serve four kinds, each with Docker (041): linux
 // boxes are clones of a Linux template, linux-desktop of a GPU desktop
-// template and linux-desktop-cpu of a CPU-only one. A new box is cloned from its flavour's
-// least used template; a GPU desktop goes to the GPU with the fewest
-// desktops. Every guest carries a "template.<vmid>" tag, which is how that
-// use is counted. The warm pool keeps started guests of each flavour, tagged
-// "warm", at their template's size. A warm guest serves only a box with its
-// cores: a running container takes new memory at once, but new cores only
-// when Proxmox next rebalances its CPUs, up to 10 s later, and a new clone is
-// quicker than that wait. Claiming one sets the box's memory and retags it
-// for its box, so a new box is ready as soon as the tags change and any
-// larger disk is applied. It also names the guest after its box inside,
-// since Proxmox gives a running container a new hostname only when it next
-// starts. build.sh tags each template it makes
-// "build.<id>", and a warm guest copies the tag: one whose template now has
-// another, or is away, is retired rather than claimed. Guests of other
-// installs, or with no install, count against capacity but are otherwise
-// left alone.
+// template, linux-desktop-cpu of a CPU-only one, and
+// linux-desktop-wayland-cpu of a CPU-only one with Sway (048). A new box is
+// cloned from its flavour's least used template; a GPU desktop goes to the
+// GPU with the fewest desktops. Every guest carries a "template.<vmid>" tag,
+// which is how that use is counted. The warm pool keeps started guests of
+// each flavour, tagged "warm", at their template's size. A warm guest serves
+// only a box with its cores: a running container takes new memory at once,
+// but new cores only when Proxmox next rebalances its CPUs, up to 10 s later,
+// and a new clone is quicker than that wait. Claiming one sets the box's
+// memory and retags it for its box, so a new box is ready as soon as the tags
+// change and any larger disk is applied. It also names the guest after its
+// box inside, since Proxmox gives a running container a new hostname only
+// when it next starts. build.sh tags each template it makes "build.<id>", and
+// a warm guest copies the tag: one whose template now has another, or is
+// away, is retired rather than claimed. Guests of other installs, or with no
+// install, count against capacity but are otherwise left alone.
 
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
@@ -109,6 +109,10 @@ const DISPLAY_REASON_FILE = "/run/bb-box/display-reason";
 const DISPLAY_AUTH_FILE = "/run/bb-box/Xauthority";
 /** What a program needs to reach the desktop's display as the box user. */
 const DISPLAY_ENV = `DISPLAY=:99 XAUTHORITY=${DISPLAY_AUTH_FILE}`;
+/** The desktop's display service's script. A Wayland desktop's resizes it (048). */
+const DISPLAY_SCRIPT = "/usr/local/libexec/bb-box/display";
+/** The user wayvnc signs in, with the VNC password, on a Wayland desktop (048). */
+const WAYVNC_USER = "box";
 const SSH_KEY = "ssh-key";
 /** The hostname a warm guest has until a box claims it. */
 const WARM_HOSTNAME = "bb-box-warm";
@@ -176,10 +180,36 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
     },
     readyTimeoutMs: READY_TIMEOUT_MS,
   },
+  {
+    id: "linux-desktop-wayland-cpu",
+    flavour: "desktop-wayland-cpu",
+    label: "Linux desktop on Wayland",
+    description:
+      "A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there.",
+    requires: [],
+    capabilities: {
+      os: "linux",
+      arch: "x86_64",
+      gpu: false,
+      features: ["docker"],
+      command: SSH_COMMAND,
+      // wayvnc refuses a viewer's resize, so transports() gives this display
+      // a resize that runs the display script's (048).
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+      computerUse: CUA_DRIVER,
+      enrol: true,
+    },
+    readyTimeoutMs: READY_TIMEOUT_MS,
+  },
 ];
 
 /** How the doctor names each flavour's templates. */
-const FLAVOUR_NAMES: Readonly<Record<LxcFlavour, string>> = { linux: "Linux", desktop: "GPU desktop", "desktop-cpu": "CPU desktop" };
+const FLAVOUR_NAMES: Readonly<Record<LxcFlavour, string>> = {
+  linux: "Linux",
+  desktop: "GPU desktop",
+  "desktop-cpu": "CPU desktop",
+  "desktop-wayland-cpu": "CPU Wayland desktop",
+};
 
 /** A doctor check's stable ID and its name. */
 type Check = readonly [id: string, name: string];
@@ -287,6 +317,14 @@ NAME
 [ -s ${quote(auth)} ] || exit 0
 entries=$(xauth -q -f ${quote(auth)} nlist)
 printf '%s\n' "$entries" | sed 's/^..../ffff/' | xauth -q -f ${quote(auth)} nmerge -`;
+}
+
+/** A size a desktop can take, in whole pixels, or an error. */
+function wholeSize({ width, height }: DisplaySize): DisplaySize {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
+  }
+  return { width, height };
 }
 
 /** Times one step of an acquire. */
@@ -819,6 +857,8 @@ export class ProxmoxLxcBackend implements Backend {
     const offer = OFFERS.find((candidate) => candidate.id === kind);
     const capabilities = offer?.capabilities;
     const command = await this.#command(vmid);
+    // wayvnc offers Apple's sign-in, not a VNC password (048).
+    const wayland = offer?.flavour === "desktop-wayland-cpu";
     const displays = (capabilities?.displays ?? []).map(
       (display): Display => ({
         ...display,
@@ -827,10 +867,11 @@ export class ProxmoxLxcBackend implements Backend {
           const password = await this.#vncPassword(command, signal);
           return {
             route: { type: "tcp", host: access.host, port: VNC_PORT },
-            auth: password ? { type: "vnc-password", password } : { type: "none" },
+            auth: !password ? { type: "none" } : wayland ? { type: "apple", user: WAYVNC_USER, password } : { type: "vnc-password", password },
           };
         },
         ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
+        ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal) } : {}),
         minSize: MIN_DESKTOP,
       }),
     );
@@ -1512,14 +1553,24 @@ export class ProxmoxLxcBackend implements Backend {
    * and an older size that lands after a newer one disconnects its output.
    */
   async #resize(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
-    const { width, height } = size;
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
-      throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
-    }
+    const { width, height } = wholeSize(size);
     const script = `[ "$(cat ${DISPLAY_MODE_FILE} 2>/dev/null)" = cpu ] || ${DISPLAY_ENV} xrandr --fb ${width}x${height}`;
     const result = await command.run(script, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) {
       throw new Error(`xrandr could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    }
+  }
+
+  /**
+   * Sets a Wayland desktop's size with its display script, as the box user:
+   * Sway's output takes the size, and the floating windows are fitted into
+   * it (048). A size Sway cannot take fails with the script's reason.
+   */
+  async #resizeWayland(command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+    const { width, height } = wholeSize(size);
+    const result = await command.run(`${DISPLAY_SCRIPT} resize ${width}x${height}`, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) {
+      throw new Error(`Sway could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
     }
   }
 

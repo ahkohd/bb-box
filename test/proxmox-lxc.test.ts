@@ -116,6 +116,12 @@ test("kinds lists only kinds with a template", () => {
   assert.equal(cpu.capabilities.gpu, false);
   assert.deepEqual(cpu.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "Xtigervnc resizes");
   assert.deepEqual(cpu.capabilities.computerUse, desktop.capabilities.computerUse);
+  const wayland = setup({ "proxmox-lxc-desktop-wayland-cpu-templates": "9004" }).backend.kinds().find((kind) => kind.id === "linux-desktop-wayland-cpu")!;
+  assert.equal(wayland.label, "Linux desktop on Wayland");
+  assert.equal(wayland.capabilities.gpu, false);
+  assert.deepEqual(wayland.capabilities.features, ["docker"]);
+  assert.deepEqual(wayland.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "Sway resizes through the backend (048)");
+  assert.deepEqual(wayland.capabilities.computerUse, desktop.capabilities.computerUse);
 });
 
 test("the node is found when there is only one", async () => {
@@ -877,6 +883,42 @@ test("a GPU desktop is resized with xrandr as the box user, a size X cannot take
   const [stream] = (await backend.transports(cpu, "linux-desktop-cpu")).displays;
   assert.equal(stream!.resize, undefined, "Xtigervnc takes a viewer's SetDesktopSize itself");
   assert.deepEqual(stream!.minSize, { width: 800, height: 600 });
+});
+
+test("a Wayland desktop signs in as box with Apple's sign-in, and its display script resizes it as the box user (048)", async () => {
+  // An ssh that answers the password file and the display script, which the
+  // fake would run on this machine, and records each resize.
+  const dir = tempDir("wayland");
+  const log = join(dir, "log");
+  const refusal = "display: Sway cannot set HEADLESS-1 to 40000x800";
+  const binary = join(dir, "ssh");
+  writeFileSync(
+    binary,
+    `#!/bin/sh
+case "$*" in
+  *vnc-password*) echo hunter2; exit 0;;
+  *"/usr/local/libexec/bb-box/display resize "*) echo "$*" >>"${log}"; case "$*" in *40000x800*) echo "${refusal}" >&2; exit 1;; esac; exit 0;;
+esac
+exec "${FAKE_SSH_BINARY}" "$@"
+`,
+    { mode: 0o755 },
+  );
+  const { backend, proxmox } = setup({ "proxmox-lxc-desktop-wayland-cpu-templates": "9004" }, new MemoryStorage(), { sshBinary: binary });
+  const box = await backend.acquire(identity("linux-desktop-wayland-cpu"), null, hooks().value, signal());
+  assert.ok(proxmox.calls.some((call) => call.path.endsWith("/lxc/9004/clone")), "cloned from the Wayland template");
+  const [display, ...others] = (await backend.transports(box, "linux-desktop-wayland-cpu")).displays;
+  assert.equal(others.length, 0);
+  assert.deepEqual((await display!.open()).auth, { type: "apple", user: "box", password: "hunter2" }, "wayvnc offers no VNC password");
+  assert.deepEqual(display!.minSize, { width: 800, height: 600 });
+
+  await display!.resize!({ width: 1600, height: 900 });
+  assert.match(readFileSync(log, "utf8"), /^.* box@192\.0\.2\.100 -- .*'\/usr\/local\/libexec\/bb-box\/display resize 1600x900'.*\n$/);
+  await assert.rejects(display!.resize!({ width: 40000, height: 800 }), { message: `Sway could not set the desktop to 40000x800: ${refusal}.` });
+  await assert.rejects(display!.resize!({ width: 0.5, height: 800 }), { message: "The desktop cannot be 0.5 by 800 pixels." });
+  assert.equal(readFileSync(log, "utf8").split("\n").length, 3, "an impossible size reaches no box");
+
+  const check = (await backend.doctor()).checks.find((candidate) => candidate.id === "template.9004");
+  assert.deepEqual([check?.name, check?.status], ["CPU Wayland desktop template 9004", "ok"]);
 });
 
 test("the warm pool fills, hands out a ready guest and refills", async () => {
