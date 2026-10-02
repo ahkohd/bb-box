@@ -1330,6 +1330,32 @@ Nothing expires, so a box must never be forgotten.
   when BB shows it disconnected
   ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
 
+## Images
+
+Planned
+([049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)).
+Today each kind has one image per backend, built by the setup scripts.
+
+- **The contract.** Every image has the box user with sudo, bb-box's key
+  where it is reached over SSH, bb-box's boot units, BB's host app, Docker
+  on first use, the desktop and Cua for desktop kinds, nothing of one
+  machine, and its record. The kind's check checks it.
+- **A project's image** is a script run as root on a kind's standard
+  image, one script for every Linux backend. It runs at box start until
+  the image has had two boxes on a backend within 14 days; then bb-box
+  bakes it there. It is built in a box of the base kind, then captured: a
+  template, `docker commit`, or a renamed Tart VM. A project's threads get
+  it by default, and New box and `box_acquire` can choose it.
+- **The record**, `/usr/share/bb-box/image.json`, gives the build's date,
+  contract, apt snapshot, BB app's digest, tools, NVIDIA userspace and the
+  script's digest, with a copy readable without starting the image.
+- **Freshness.** The doctor warns when an image is old, has another BB app
+  or other pins, and fails one with an older contract or another NVIDIA
+  version than the host's. `bb box images refresh`, run nightly by a BB
+  automation, rebuilds stale images one at a time: Linux weekly, Windows
+  and macOS monthly, within each host's disk reserve. A trial box from the
+  new build must pass the checks before it replaces the old one.
+
 ## Configuration
 
 bb-box's configuration is one checked document in its plugin storage
@@ -1380,7 +1406,7 @@ bb-box's configuration is one checked document in its plugin storage
 | The install ID | plugin storage, and on every guest | core | the plugin's storage being lost: the doctor shows the old ID and an operator command restores it |
 | The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; read from BB's daemon in the box by each command, never written to disk or to bb-box's storage |
 | Work in the box: files, containers, running apps | the box's disk | the thread | deleted on release (virtual), or the home recreated (real); not backed up |
-| Templates and images | the provider | operator | built by the setup scripts |
+| Templates and images | the provider | operator | built by the setup scripts; planned (049): rebuilt by bb-box when stale, and project images built by bb-box from a script in the configuration |
 | Who holds each desktop's input | plugin memory, and plugin storage while a person holds it | core | after a restart, the agent's again unless the holder's viewer connects within 60 s |
 
 Push work to Git or copy it out before releasing a box.
@@ -1551,3 +1577,4 @@ Notes:
 | What a stand-in Mac could not show: the reset's sweep with System Integrity Protection on, the console's size with no display, Cua's first capture for a new user, and Xcode with the Simulator's first boot | the live check on a Mac set aside, in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-live-check) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
+| Whether the Proxmox API token can capture and replace templates, whether the guest scripts run again cleanly on a built template, and whether a BB script automation can run `bb box` | the first PRs of [049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md#to-verify-in-the-first-prs) |
