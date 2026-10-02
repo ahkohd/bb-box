@@ -25,7 +25,8 @@
 // user ahead and signs it in at the console, so a free Mac is a warm box.
 // The box's desktop is the console, through Screen Sharing, which the relay
 // signs in to as the box user with a password the helper gives for each
-// connection.
+// connection. The macOS offers have xcode, and ios-simulator, while every
+// Mac serving them had Xcode, and an iOS runtime, at the doctor's last run.
 
 import {
   BackendError,
@@ -42,6 +43,7 @@ import {
   type DoctorCheck,
   type ComputerUse,
   type DoctorReport,
+  type Footprint,
   type Guest,
   type GuestFact,
   type HeldGuest,
@@ -56,7 +58,7 @@ import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../tr
 import type { Arch, Display, DisplayAuth, Route, RunResult, SshAccess } from "../../transports/types.ts";
 import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
-import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, parseDisplay, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker } from "./protocol.ts";
+import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, parseDisplay, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
 
 const SSH_KEY = "ssh-key";
 const RECORD = "machine/";
@@ -105,20 +107,21 @@ function linuxOffer(docker: boolean): BoxKind {
   };
 }
 
-/** A Mac's offers (047): its box user at the console, with the desktop and computer use for macos-desktop. */
-function macOffer(desktop: boolean): BoxKind {
+/** A Mac's offers (047): its box user at the console, with the desktop and computer use for macos-desktop, and Xcode when every Mac has it. */
+function macOffer(desktop: boolean, features: readonly string[]): BoxKind {
+  const tools = features.includes("ios-simulator") ? " It has Xcode and the iOS Simulator." : features.includes("xcode") ? " It has Xcode." : "";
   return {
     id: desktop ? "macos-desktop" : "macos",
     label: desktop ? "macOS desktop" : "macOS",
     description: desktop
-      ? "A Mac of its own, with its desktop shown in the panel and computer use, for Apple's tools and apps."
-      : "A Mac of its own, for builds and Apple's tools. Its desktop is not shown.",
+      ? `A Mac of its own, with its desktop shown in the panel and computer use, for Apple's tools and apps.${tools}`
+      : `A Mac of its own, for builds and Apple's tools. Its desktop is not shown.${tools}`,
     requires: [],
     capabilities: {
       os: "macos",
       arch: ARCH.macos,
       gpu: false,
-      features: [],
+      features,
       command: SSH_COMMAND,
       displays: desktop ? [{ id: "desktop", protocol: "rfb", resizable: false }] : [],
       computerUse: desktop ? MAC_CUA : null,
@@ -187,6 +190,7 @@ type Check = readonly [id: string, name: string];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const MACHINES_CHECK: Check = ["machines", "Machines"];
 const DOCKER_CHECK: Check = ["docker", "Docker"];
+const XCODE_CHECK: Check = ["xcode", "Xcode"];
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
@@ -296,6 +300,11 @@ function macProblem(mac: MacStatus, generation: number): string | null {
   return `Box user ${user} is not signed in at the console. If the Mac has just started, it signs in within a minute or so. If not, check that FileVault is off. ${reset}`;
 }
 
+/** The iOS runtime Xcode has, such as "iOS 26.0", or null without one, when boxes have no iOS Simulator. */
+function iosRuntime(xcode: Xcode | null | undefined): string | null {
+  return xcode?.version ? (xcode.runtimes.find((runtime) => runtime.startsWith("iOS ")) ?? null) : null;
+}
+
 /** Tests as the box user that Cua's socket is in its home: the socket may start with ~/, which only the box user's $HOME expands (047). */
 function socketTest(socket: string): string {
   return `test -S ${socket.startsWith("~/") ? `"$HOME"/${quote(socket.slice(2))}` : quote(socket)}`;
@@ -331,6 +340,12 @@ export class SshPoolBackend implements Backend {
   readonly #machines: ReadonlyMap<string, SshPoolMachine>;
   /** Every Linux machine gives Docker, so the pool's linux boxes have it. */
   readonly #docker: boolean;
+  /**
+   * Each Mac's Xcode at the doctor's last run, which the macOS offers'
+   * features follow (047). Only the doctor asks, as simctl may take seconds.
+   * A Mac not checked since bb-box started has none yet.
+   */
+  readonly #xcode = new Map<string, Xcode | null>();
   /** Machines this process is resetting, which held() leaves to it. */
   readonly #resetting = new Set<string>();
   /** Machines this process is claiming, whose record the claim writes. */
@@ -360,9 +375,21 @@ export class SshPoolBackend implements Backend {
     const listed = new Set(this.#config.machines.flatMap((machine) => machine.kinds));
     return [
       ...(listed.has("linux") ? [linuxOffer(this.#docker)] : []),
-      ...(listed.has("macos") ? [macOffer(false)] : []),
-      ...(listed.has("macos-desktop") ? [macOffer(true)] : []),
+      ...(listed.has("macos") ? [macOffer(false, this.#macFeatures("macos"))] : []),
+      ...(listed.has("macos-desktop") ? [macOffer(true, this.#macFeatures("macos-desktop"))] : []),
     ];
+  }
+
+  /** xcode while every Mac serving `kind` has Xcode, and ios-simulator while each has an iOS runtime too, as the pool's Docker works. */
+  #macFeatures(kind: SshPoolKind): string[] {
+    const xcodes = this.#config.machines.filter((machine) => this.#lists(machine, kind)).map((machine) => this.#xcode.get(machine.name));
+    if (!xcodes.length || !xcodes.every((xcode) => xcode?.version)) return [];
+    return xcodes.every((xcode) => iosRuntime(xcode)) ? ["xcode", "ios-simulator"] : ["xcode"];
+  }
+
+  /** The machines it lends whole, for the doctor's warning when a Mac is also a Tart host (047). One through a jump host is on another network. */
+  footprint(): Footprint {
+    return { machines: this.#config.machines.filter((machine) => !machine.jump).map((machine) => machine.admin.host.toLowerCase()) };
   }
 
   #offer(kind: string): BoxKind {
@@ -807,9 +834,16 @@ export class SshPoolBackend implements Backend {
       fail(MACHINES_CHECK, "The pool has no machines yet.", `Set up a machine with setup.sh, or a Mac with setup-mac.sh, and this public key, then add the line it prints to the machines, like ${EXAMPLE}.`);
     }
     const views = keys?.publicKey ? await this.#survey(signal) : [];
-    // Only the doctor asks for Cua's grants, which take the helper seconds to read.
-    const desktops = views.filter((view) => view.probe.status?.mac && this.#lists(view.machine, "macos-desktop"));
-    const grants = new Map(await Promise.all(desktops.map(async (view) => [view.machine, (await this.#status(view.machine, signal, true)).status?.mac?.grants ?? null] as const)));
+    // Only the doctor asks for Cua's grants and Xcode's runtimes, which may
+    // each take the helper seconds. They are separate calls, made together,
+    // so each stays within a status's time.
+    const macsUp = views.filter((view) => view.probe.status?.mac);
+    const desktops = macsUp.filter((view) => this.#lists(view.machine, "macos-desktop"));
+    const [grants, xcodes] = await Promise.all([
+      Promise.all(desktops.map(async (view) => [view.machine, (await this.#status(view.machine, signal, "grants")).status?.mac?.grants ?? null] as const)).then((entries) => new Map(entries)),
+      Promise.all(macsUp.map(async (view) => [view.machine, await this.#status(view.machine, signal, "xcode")] as const)).then((entries) => new Map(entries)),
+    ]);
+    for (const [machine, probe] of xcodes) this.#xcode.set(machine.name, probe.status?.mac?.xcode ?? null);
     const others = new Map<string, number>();
     for (const machine of this.#config.machines) {
       const name = machine.name;
@@ -820,9 +854,9 @@ export class SshPoolBackend implements Backend {
       const SSH = check("ssh", "SSH"), HELPER = check("helper", "helper"), ARCH_CHECK = check("arch", "architecture");
       const TOOLS = check("tools", "tools"), DOCKER = check("docker", "Docker"), STATE = check("state", "state");
       const FILEVAULT = check("filevault", "FileVault"), SIGNIN = check("signin", "sign-in"), FULL_DISK = check("fulldisk", "Full Disk Access");
-      const SCREEN = check("screensharing", "Screen Sharing"), GRANTS = check("grants", "Cua Driver's grants");
+      const SCREEN = check("screensharing", "Screen Sharing"), GRANTS = check("grants", "Cua Driver's grants"), XCODE = check("xcode", "Xcode");
       const desktop = this.#lists(machine, "macos-desktop");
-      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, ...(desktop ? [SCREEN, GRANTS] : [])] : [];
+      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, XCODE, ...(desktop ? [SCREEN, GRANTS] : [])] : [];
       const after = [ARCH_CHECK, TOOLS, ...(docker ? [DOCKER] : []), ...macChecks, STATE];
       const rest = [HELPER, ...after];
       const view = views.find((other) => other.machine === machine);
@@ -897,7 +931,7 @@ export class SshPoolBackend implements Backend {
         } else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
       if (mac && !status.mac) skip(...macChecks);
-      else if (mac) this.#macChecks(status, machine, grants.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, SCREEN, GRANTS }, { pass, warn, fail });
+      else if (mac) this.#macChecks(status, machine, grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, XCODE, SCREEN, GRANTS }, { pass, warn, fail });
       // An operator's reset names no install.
       const install = status.owner?.install;
       if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
@@ -933,6 +967,8 @@ export class SshPoolBackend implements Backend {
         `To give them Docker, set up a whole-machine reset on ${names} and add reset=machine to ${without.length === 1 ? "its line" : "their lines"}, as the SSH host pool's setup guide says.`,
       );
     }
+    const short = this.#xcodeShort([...xcodes.keys()]);
+    if (short) warn(XCODE_CHECK, short.detail, short.fix);
     if (linux.length && !this.#docker) {
       notes.push("A release removes the box's user, its files and its processes. It does not undo changes made as root, which boxes from this pool cannot make, since none of them has Docker.");
     }
@@ -954,12 +990,45 @@ export class SshPoolBackend implements Backend {
     };
   }
 
-  /** The doctor's checks of what a Mac's boxes need: FileVault off, its box user signed in, Full Disk Access, Screen Sharing and Cua's grants (047). */
+  /**
+   * The doctor's warning when only some of the Macs it checked that serve a
+   * kind have Xcode, or an iOS runtime, so its boxes have neither, or no iOS
+   * Simulator. Macs that did not answer are left out: their SSH check fails.
+   */
+  #xcodeShort(checked: readonly SshPoolMachine[]): { detail: string; fix: string } | null {
+    const found = new Map<string, string[]>();
+    const lacking = new Set<string>();
+    for (const kind of ["macos", "macos-desktop"] as const) {
+      const serving = checked.filter((machine) => this.#lists(machine, kind));
+      const without = (has: (xcode: Xcode | null | undefined) => unknown) => serving.filter((machine) => !has(this.#xcode.get(machine.name))).map((machine) => machine.name);
+      const noXcode = without((xcode) => xcode?.version);
+      const noRuntime = without(iosRuntime);
+      const [names, what] =
+        noXcode.length && noXcode.length < serving.length
+          ? [noXcode, "no Xcode, so the pool's KINDS boxes have neither xcode nor ios-simulator"]
+          : noRuntime.length && noRuntime.length < serving.length
+            ? [noRuntime, "no iOS runtime, so the pool's KINDS boxes have no ios-simulator"]
+            : [[], ""];
+      if (!names.length) continue;
+      for (const name of names) lacking.add(name);
+      const problem = `${names.join(", ")} ${names.length === 1 ? "has" : "have"} ${what}`;
+      found.set(problem, [...(found.get(problem) ?? []), kind]);
+    }
+    if (!found.size) return null;
+    const names = [...lacking].join(", ");
+    return {
+      detail: [...found].map(([problem, kinds]) => `${problem.replace("KINDS", kinds.join(" and "))}.`).join(" "),
+      fix: `On ${names}, install Xcode in /Applications if it is not there, then run setup/ssh-pool/setup-mac.sh with sudo again, which downloads the iOS platform. Or serve those kinds only from Macs with Xcode.`,
+    };
+  }
+
+  /** The doctor's checks of what a Mac's boxes need: FileVault off, its box user signed in, Full Disk Access, Xcode when present, Screen Sharing and Cua's grants (047). */
   #macChecks(
     status: MachineStatus,
     machine: SshPoolMachine,
     grants: MacStatus["grants"],
-    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "SCREEN" | "GRANTS", Check>>,
+    xcodeProbe: Probe | null,
+    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "XCODE" | "SCREEN" | "GRANTS", Check>>,
     report: Readonly<Record<"pass", (check: Check, detail: string) => void> & Record<"warn" | "fail", (check: Check, detail: string, fix: string) => void>>,
   ): void {
     const mac = status.mac!;
@@ -985,6 +1054,20 @@ export class SshPoolBackend implements Backend {
 
     if (mac.fullDisk) pass(ids.FULL_DISK, "The helper has it, so a reset can remove the folders macOS protects.");
     else fail(ids.FULL_DISK, "The helper lacks Full Disk Access, so a reset cannot remove the folders macOS protects, such as ~/Library/Mail, and would put the Mac out of service.", `On ${name}: ${FULL_DISK_FIX}`);
+
+    // Xcode is optional, so a Mac without it passes; the pool's check warns when only some Macs have it.
+    const xcode = xcodeProbe?.status?.mac?.xcode;
+    if (!xcode) {
+      warn(
+        ids.XCODE,
+        `The helper did not say whether the Mac has Xcode.${xcodeProbe?.problem ? ` ${xcodeProbe.problem}` : ""} Until it does, boxes here have neither Xcode nor the iOS Simulator.`,
+        `If the helper is older than this bb-box, run this bb-box's setup/ssh-pool/setup-mac.sh on ${name} with sudo. Then run the doctor again.`,
+      );
+    }
+    else if (!xcode.version) pass(ids.XCODE, "None, so boxes here have neither Xcode nor the iOS Simulator.");
+    else if (!iosRuntime(xcode)) {
+      warn(ids.XCODE, `Xcode ${xcode.version} has no iOS runtime, so boxes here have no iOS Simulator.`, `Run setup/ssh-pool/setup-mac.sh on ${name} with sudo again. It accepts Xcode's licence, runs its first launch and downloads the iOS platform.`);
+    } else pass(ids.XCODE, `Xcode ${xcode.version}, with the Simulator's ${xcode.runtimes.join(", ")}.`);
 
     if (!this.#lists(machine, "macos-desktop")) return;
     if (mac.screenSharing) pass(ids.SCREEN, "On, so macos-desktop boxes show the desktop.");
@@ -1077,9 +1160,10 @@ export class SshPoolBackend implements Backend {
   }
 
   /** The helper's status. Only the doctor asks a Mac for Cua's grants. */
-  async #status(machine: SshPoolMachine, signal?: AbortSignal, grants = false): Promise<Probe> {
+  /** Reads a machine's status. Only the doctor asks a Mac for `grants` or `xcode`, which may each take the helper seconds. */
+  async #status(machine: SshPoolMachine, signal?: AbortSignal, extra: "grants" | "xcode" | null = null): Promise<Probe> {
     try {
-      const result = await this.#helper(machine, ["status", ...(grants ? ["grants"] : [])], null, STATUS_TIMEOUT_MS, signal);
+      const result = await this.#helper(machine, ["status", ...(extra ? [extra] : [])], null, STATUS_TIMEOUT_MS, signal);
       if (result.exitCode === 0) return { status: parseStatus(result.stdout), unreachable: false, problem: null };
       return { status: null, unreachable: result.exitCode === 255 || result.timedOut, problem: said(result) };
     } catch (error) {

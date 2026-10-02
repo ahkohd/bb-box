@@ -7,11 +7,13 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { overlapChecks } from "../src/backends/index.ts";
 import { SshPoolBackend, type SshPoolBackendOptions } from "../src/backends/ssh-pool/backend.ts";
 import { hostKeysFor, parseSshPoolSettings, parseTarget, type SshPoolConfig } from "../src/backends/ssh-pool/config.ts";
-import { CUA_VERSION } from "../src/backends/tart/backend.ts";
+import { CUA_VERSION, TartBackend } from "../src/backends/tart/backend.ts";
 import { BackendError, type AcquireHooks, type Backend, type BackendStorage, type BoxIdentity, type BoxSize, type Capacity, type Guest } from "../src/backends/types.ts";
 import { conformance, identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
+import { FAKE_MAC, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const HELPER = `node ${new URL("./fake-machine.mjs", import.meta.url).pathname}`;
@@ -678,9 +680,9 @@ function helperCalls(host: string): string[] {
     .map((entry) => script(entry.command).split("fake-machine.mjs ")[1]!.trim());
 }
 
-// Two Macs serve both kinds, so two installs can each hold one.
+// Two Macs with Xcode serve both kinds, so two installs can each hold one.
 for (const host of ["192.0.2.95", "192.0.2.96"]) {
-  mac(host);
+  mac(host, { xcode: "26.0" });
   cuaSocket(host);
 }
 await conformance({
@@ -693,6 +695,7 @@ await conformance({
     display: "the fake SSH cannot carry Screen Sharing through ssh -W",
     "desktop-session": "the test machine has no Aqua session",
     "computer-use": "the test machine has no Cua Driver",
+    "ios-simulator": "the fake Mac has no Simulator",
   },
   timeoutMs: 20_000,
 });
@@ -859,26 +862,102 @@ describe("An SSH host pool of Macs (047)", () => {
     const check = (id: string) => doctor.checks.find((other) => other.id === id);
     const status = (name: string) => doctor.checks.filter((other) => other.id.startsWith(`machine.${name}.`)).map((other) => `${other.id.split(".")[2]} ${other.status}`);
     assert.equal(doctor.ok, false);
-    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "screensharing ok", "grants ok", "state ok", "sizes ok"]);
+    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "xcode ok", "screensharing ok", "grants ok", "state ok", "sizes ok"]);
     assert.equal(check("machine.good.arch")?.detail, "macOS 26.0 on arm64.");
     assert.equal(check("machine.good.sizes")?.detail, "good holds macos and macos-desktop boxes at the default sizes.");
     assert.equal(check("machine.good.tools")?.detail, "Everything the helper, enrolment and the thread's GitHub access need, with Node.js 24.21.0.");
-    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "screensharing fail", "grants fail", "state warn", "sizes ok"]);
+    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "xcode ok", "screensharing fail", "grants fail", "state warn", "sizes ok"]);
     assert.match(check("machine.bad.signin")!.detail, /^Box user bbx-0 is at the console, but the automatic login is off/);
     assert.match(check("machine.bad.fulldisk")!.fix!, /^On bad: In System Settings, General, Sharing, select the \(i\) beside Remote Login/);
     assert.equal(check("machine.bad.grants")?.detail, "Cua Driver lacks Screen Recording, so computer use cannot see the desktop.");
     assert.match(check("machine.bad.state")!.detail, /^Out of service: FileVault is on/);
     assert.deepEqual(status("away").filter((line) => /signin|grants/.test(line)), ["signin fail", "grants warn"]);
     assert.equal(check("machine.away.signin")?.detail, "Box user bbx-0 is not signed in at the console.");
-    assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "state ok", "sizes warn"]);
+    assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "xcode ok", "state ok", "sizes warn"]);
     assert.equal(check("machine.headless.tools")?.fix, "On headless: Install Node.js 22.19 or newer with Homebrew: brew install node. BB's installer needs it to enrol a box. Install git and gh with Homebrew: brew install git gh.");
     assert.equal(check("machine.headless.sizes")?.detail, "headless has 8 cores, 6 GiB memory, 200 GiB free disk. It cannot hold a macos box at any of its presets, the smallest 4 cores, 8 GiB memory.");
     assert.equal(check("machine.headless.sizes")?.fix, "Give headless more memory, or make the presets of macos smaller in bb-box's settings, under Kinds.");
     for (const [host, asked] of [["192.0.2.91", 1], ["192.0.2.92", 1], ["192.0.2.93", 1], ["192.0.2.94", 0]] as const) {
       assert.equal(helperCalls(host).filter((call) => call === "status grants").length, asked, host);
+      assert.equal(helperCalls(host).filter((call) => call === "status xcode").length, 1, host);
     }
     assert.match(doctor.notes.join("\n"), /name it in \/var\/db\/bb-box\/owner\./);
     assert.match(doctor.notes.join("\n"), /On a Mac, a release removes the box's user, .* It keeps macOS, apps, Homebrew and Cua Driver's grants\./);
     assert.doesNotMatch(doctor.notes.join("\n"), /none of them has Docker/);
+  });
+
+  it("offers xcode and ios-simulator while every Mac serving the kind has them, and its doctor says which lack them", async () => {
+    mac("192.0.2.70", { xcode: "26.0" });
+    mac("192.0.2.71", { xcode: "26.0", runtimes: "watchOS 26.0" });
+    mac("192.0.2.72");
+    mac("192.0.2.73", { "no-status-xcode": "" });
+    const features = (backend: Backend) => backend.kinds().map((kind) => `${kind.id}: ${kind.capabilities.features.join(" ")}`);
+    const survey = async (backend: Backend) => {
+      await backend.doctor();
+      return features(backend);
+    };
+    const check = async (backend: Backend, id: string) => (await backend.doctor()).checks.find((other) => other.id === id);
+
+    const ready = pool("ready 192.0.2.70 macos,macos-desktop").backend;
+    assert.deepEqual(features(ready), ["macos: ", "macos-desktop: "], "a Mac not checked since bb-box started counts as having no Xcode");
+    await ready.capacity("macos", sizeOf("macos"), []);
+    assert.deepEqual(features(ready), ["macos: ", "macos-desktop: "], "only the doctor asks for Xcode");
+    assert.equal(helperCalls("192.0.2.70").filter((call) => call !== "status").length, 0);
+    assert.deepEqual(await survey(ready), ["macos: xcode ios-simulator", "macos-desktop: xcode ios-simulator"]);
+    assert.match(ready.kinds()[0]!.description, /Its desktop is not shown\. It has Xcode and the iOS Simulator\.$/);
+    assert.equal((await check(ready, "machine.ready.xcode"))?.detail, "Xcode 26.0, with the Simulator's iOS 26.0, watchOS 26.0.");
+    assert.equal(await check(ready, "xcode"), undefined);
+
+    const watch = pool("ready 192.0.2.70 macos,macos-desktop\nwatch 192.0.2.71 macos").backend;
+    assert.deepEqual(await survey(watch), ["macos: xcode", "macos-desktop: xcode ios-simulator"]);
+    assert.match(watch.kinds()[0]!.description, /shown\. It has Xcode\.$/);
+    assert.deepEqual(await check(watch, "machine.watch.xcode"), {
+      id: "machine.watch.xcode",
+      name: "watch: Xcode",
+      status: "warn",
+      detail: "Xcode 26.0 has no iOS runtime, so boxes here have no iOS Simulator.",
+      fix: "Run setup/ssh-pool/setup-mac.sh on watch with sudo again. It accepts Xcode's licence, runs its first launch and downloads the iOS platform.",
+    });
+    assert.equal((await check(watch, "xcode"))?.detail, "watch has no iOS runtime, so the pool's macos boxes have no ios-simulator.");
+
+    const some = pool("ready 192.0.2.70 macos,macos-desktop\nbare 192.0.2.72 macos,macos-desktop\nold 192.0.2.73 macos").backend;
+    assert.deepEqual(await survey(some), ["macos: ", "macos-desktop: "]);
+    const doctor = await some.doctor();
+    const found = (id: string) => doctor.checks.find((other) => other.id === id);
+    assert.deepEqual([found("machine.bare.xcode")?.status, found("machine.bare.xcode")?.detail], ["ok", "None, so boxes here have neither Xcode nor the iOS Simulator."]);
+    assert.deepEqual(found("machine.old.xcode"), {
+      id: "machine.old.xcode",
+      name: "old: Xcode",
+      status: "warn",
+      detail: "The helper did not say whether the Mac has Xcode. usage: machine status [grants]. Until it does, boxes here have neither Xcode nor the iOS Simulator.",
+      fix: "If the helper is older than this bb-box, run this bb-box's setup/ssh-pool/setup-mac.sh on old with sudo. Then run the doctor again.",
+    });
+    assert.deepEqual(found("xcode"), {
+      id: "xcode",
+      name: "Xcode",
+      status: "warn",
+      detail:
+        "bare, old have no Xcode, so the pool's macos boxes have neither xcode nor ios-simulator. " +
+        "bare has no Xcode, so the pool's macos-desktop boxes have neither xcode nor ios-simulator.",
+      fix: "On bare, old, install Xcode in /Applications if it is not there, then run setup/ssh-pool/setup-mac.sh with sudo again, which downloads the iOS platform. Or serve those kinds only from Macs with Xcode.",
+    });
+    const none = pool("bare 192.0.2.72 macos,macos-desktop").backend;
+    await survey(none);
+    assert.equal(await check(none, "xcode"), undefined, "Xcode is optional, so a pool where no Mac has it does not warn");
+  });
+
+  it("warns in the doctor when a Mac it lends is also a Tart host", () => {
+    const tart = new TartBackend(tartConfig(), testContext());
+    const lent = pool(`mini ${FAKE_MAC} macos\nother 192.0.2.30 macos`).backend;
+    const [both, ...rest] = overlapChecks([lent, tart]);
+    assert.deepEqual(rest, []);
+    assert.deepEqual([both?.name, both?.status, both?.detail, both?.fix], [
+      `${lent.label} and ${tart.label}`,
+      "warn",
+      `They both use the machine at ${FAKE_MAC}, so a box of one could take what a box of the other has.`,
+      "List the machine in one of them only.",
+    ]);
+    assert.deepEqual(overlapChecks([pool("other 192.0.2.30 macos").backend, tart]), []);
+    assert.deepEqual(overlapChecks([pool(`mini ${FAKE_MAC} macos via=jump@192.0.2.9`).backend, tart]), [], "a Mac through a jump host is on another network");
   });
 });

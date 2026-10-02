@@ -341,8 +341,17 @@ case $tool in
   date) if [ "${1:-}" = +%s ] && [ -e "$F/clock" ]; then cat "$F/clock"; else exec /bin/date "$@"; fi ;;
   shutdown) ;;
   node) echo v24.9.0 ;;
-  npm | git | gh | brew | pmset | softwareupdate | mdutil | xcode-select | xcodebuild | DevToolsSecurity | open) ;;
-  xcrun) ! flag no-ios-runtime && echo 'iOS 26.0 (26.0 - 23A343) - com.apple.CoreSimulator.SimRuntime.iOS-26-0' ;;
+  npm | git | gh | brew | pmset | softwareupdate | mdutil | xcodebuild | DevToolsSecurity | open) ;;
+  # xcode-select -p chooses the Xcode in /Applications, or the Command Line Tools without one.
+  xcode-select)
+    [ "${1:-}" = -p ] || exit 0
+    if [ -d "$R/Applications/Xcode.app" ]; then echo /Applications/Xcode.app/Contents/Developer; else echo /Library/Developer/CommandLineTools; fi
+    ;;
+  # xcrun simctl list runtimes: iOS's, unless flags/no-ios-runtime, and watchOS's.
+  xcrun)
+    if ! flag no-ios-runtime; then echo 'iOS 26.0 (26.0 - 23A343) - com.apple.CoreSimulator.SimRuntime.iOS-26-0'; fi
+    echo 'watchOS 26.0 (26.0 - 23R342) - com.apple.CoreSimulator.SimRuntime.watchOS-26-0'
+    ;;
   scutil) echo Mac-Mini ;;
   ipconfig) [ "$2" = en0 ] && echo 192.0.2.30 ;;
   # curl -o <file> fetches Cua Driver's archive, from flags/cua.tgz; without -o, Homebrew's installer, from flags/install.sh.

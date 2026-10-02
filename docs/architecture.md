@@ -134,17 +134,17 @@ and `start` and `stop` throw `gone`.
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
 | `windows-arm64-desktop` | a Windows desktop on arm64, no GPU | Tart's Macs, in QEMU (046) |
-| `macos` | macOS, no GPU | Tart; a Mac in an SSH pool later (047) |
-| `macos-desktop` | a macOS desktop, no GPU | Tart; a Mac in an SSH pool later (047) |
+| `macos` | macOS, no GPU | Tart, a Mac in an SSH pool (047) |
+| `macos-desktop` | a macOS desktop, no GPU | Tart, a Mac in an SSH pool (047) |
 
-- An SSH pool offers `linux` only for now. Macs will join it with `macos`
-  and `macos-desktop` ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)).
+- An SSH pool offers `linux` on Linux machines, and `macos` and
+  `macos-desktop` on Macs ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)).
   Docker runs on a local daemon, a host over `ssh://`, such as a Windows PC
   with Docker Engine in WSL2, or a BB machine
   ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)).
-- A macOS kind with the features `xcode` and `ios-simulator` is later:
-  Tart's image has Xcode's command line tools only. A pool's Macs with
-  Xcode will add the features to their offers (047).
+- A pool's macOS offers have the features `xcode` and `ios-simulator`
+  while every Mac serving them has Xcode and an iOS runtime (047). Tart's
+  image has Xcode's command line tools only, so its offers have neither.
 - A kind's ID names its architecture when it is not the OS's usual one:
   `-arm64` follows the OS, and the rest is the x86_64 kind's. An agent
   asking for `linux` never gets arm64, where amd64 images and x86_64

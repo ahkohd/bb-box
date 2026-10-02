@@ -227,8 +227,26 @@ grants() {
   echo "screenrecording=$recording"
 }
 
+# Xcode's version and the Simulator runtimes it can use, such as "iOS 26.0",
+# when xcode-select chooses an Xcode. With only the Command Line Tools or
+# none, xcrun is not run, as it may offer to install them. simctl runs with
+# root's own home, since sudo on macOS keeps the admin user's. Only `status
+# xcode` asks, as the pool's doctor does, since simctl may take seconds.
+xcode() {
+  xcode_version='' xcode_runtimes=''
+  selected=$(xcode-select -p 2>/dev/null)
+  case $selected in
+    *.app/Contents/Developer)
+      xcode_version=$(defaults read "${selected%/Developer}/Info" CFBundleShortVersionString 2>/dev/null)
+      xcode_runtimes=$(within 10 env HOME=/var/root xcrun simctl list runtimes available 2>/dev/null | awk '/^[A-Za-z]+OS [0-9]/ { print $1 " " $2 }' | paste -s -d , -)
+      ;;
+  esac
+  echo "xcode=$xcode_version"
+  echo "runtimes=$xcode_runtimes"
+}
+
 status() {
-  [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = grants ]; } || quit 2 "usage: machine status [grants]"
+  [ $# -eq 0 ] || { [ $# -eq 1 ] && { [ "$1" = grants ] || [ "$1" = xcode ]; }; } || quit 2 "usage: machine status [grants | xcode]"
   current=$(generation)
   echo "helper=$VERSION"
   echo "arch=$(uname -m)"
@@ -279,7 +297,10 @@ status() {
   if fdesetup status 2>/dev/null | grep -qx 'FileVault is Off\.'; then echo filevault=0; else echo filevault=1; fi
   if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then echo screensharing=1; else echo screensharing=0; fi
   if full_disk; then echo fulldisk=1; else echo fulldisk=0; fi
-  [ $# -eq 0 ] || grants
+  case ${1:-} in
+    grants) grants ;;
+    xcode) xcode ;;
+  esac
 }
 
 # Makes box user $1 with UID $2 and a random password, from macOS's home

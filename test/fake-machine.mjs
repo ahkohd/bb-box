@@ -24,6 +24,9 @@
 //   autologin        the automatic login instead of the box user
 //   filevault-on, no-screensharing, no-fulldisk  what status reports instead of off, on and on
 //   grants           Cua's grants for `status grants`, as accessibility,screenrecording, instead of 1,1
+//   xcode            the Xcode version `status xcode` reports instead of no Xcode
+//   runtimes         the Simulator runtimes Xcode has instead of "iOS 26.0,watchOS 26.0" ("" for none)
+//   no-status-xcode  `status xcode` is a usage error, as in an older helper
 //   password         the password display gives instead of a made-up one
 //   display-user     the user display gives instead of the box user
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -57,8 +60,8 @@ const marker = () => (read("owner") !== null ? "owner" : read("resetting") !== n
 const mac = flag("macos") !== null;
 const PASSWORD = "fake-display-password";
 
-/** What machine-mac.sh's status adds, with Cua's grants only for `status grants`. */
-function macLines(grants) {
+/** What machine-mac.sh's status adds, with Cua's grants only for `status grants`, and Xcode only for `status xcode`. */
+function macLines(extra) {
   const user = flag("no-user") === null ? `bbx-${generation() ?? 0}` : "";
   let console = flag("console") ?? user;
   const after = Number(flag("console-after") ?? 0);
@@ -68,7 +71,11 @@ function macLines(grants) {
   }
   const lines = ["os=macos", "macos=26.0", `user=${user}`, `console=${console}`, `autologin=${flag("autologin") ?? user}`];
   lines.push(`filevault=${flag("filevault-on") !== null ? 1 : 0}`, `screensharing=${flag("no-screensharing") !== null ? 0 : 1}`, `fulldisk=${flag("no-fulldisk") !== null ? 0 : 1}`);
-  if (grants) {
+  if (extra === "xcode") {
+    const xcode = flag("xcode") ?? "";
+    lines.push(`xcode=${xcode}`, `runtimes=${xcode ? (flag("runtimes") ?? "iOS 26.0,watchOS 26.0") : ""}`);
+  }
+  if (extra === "grants") {
     const [accessibility, screenRecording] = (flag("grants") ?? "1,1").split(",");
     lines.push(`accessibility=${console === user ? accessibility : ""}`, `screenrecording=${console === user ? screenRecording : ""}`);
   }
@@ -76,7 +83,8 @@ function macLines(grants) {
 }
 
 function status(...args) {
-  if (mac && !(args.length === 0 || (args.length === 1 && args[0] === "grants"))) quit(EXIT.usage, "usage: machine status [grants]");
+  if (mac && flag("no-status-xcode") !== null && args[0] === "xcode") quit(EXIT.usage, "usage: machine status [grants]");
+  if (mac && !(args.length === 0 || (args.length === 1 && ["grants", "xcode"].includes(args[0])))) quit(EXIT.usage, "usage: machine status [grants | xcode]");
   const slow = Number(flag("slow-status") ?? 0);
   if (slow) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, slow);
   const kind = marker();
@@ -85,7 +93,7 @@ function status(...args) {
   lines.push(`hook=${flag("hook") !== null ? 1 : 0}`, `docker=${flag("docker") !== null ? 1 : 0}`, "systemd=0", `cores=${flag("cores") ?? 4}`, `memory=${flag("memory") ?? 7861}`, `disk=${flag("disk") ?? 40}`, `missing=${flag("missing") ?? ""}`);
   if (flag("no-enrolment") === null) lines.push(`node=${flag("node") ?? "v24.21.0"}`, `lacks=${flag("lacks") ?? ""}`);
   lines.push(`dirty=${kind === "none" ? (flag("dirty") ?? "") : ""}`);
-  if (mac) lines.push(...macLines(args[0] === "grants"));
+  if (mac) lines.push(...macLines(args[0]));
   console.log(lines.join("\n"));
 }
 

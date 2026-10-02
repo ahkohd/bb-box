@@ -47,6 +47,7 @@ import {
   type ComputerUse,
   type DoctorCheck,
   type DoctorReport,
+  type Footprint,
   type Guest,
   type HeldGuest,
   type HostCapacity,
@@ -1387,6 +1388,11 @@ export class TartBackend implements Backend {
       }),
     );
     return { command, displays, access: { ssh: access, dockerHost: null } };
+  }
+
+  /** Its hosts, for the doctor's warning when one is also a Mac the SSH host pool lends whole (047). */
+  footprint(): Footprint {
+    return { machines: this.#config.hosts.map((host) => host.address.toLowerCase()) };
   }
 
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {

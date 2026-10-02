@@ -62,9 +62,9 @@ Across the table:
   ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)).
   There is no plan for physical Windows machines yet.
 - **Phone emulators.** The iOS Simulator runs only on Macs: on a physical
-  Mac in an SSH pool (047), or in a Tart image with Xcode, which the image
-  does not have yet. Android emulators are in research (#161), for Linux
-  hosts with KVM, Macs and Windows hosts.
+  Mac with Xcode in an SSH pool (047), or in a Tart image with Xcode, which
+  the image does not have yet. Android emulators are in research (#161),
+  for Linux hosts with KVM, Macs and Windows hosts.
 - **Cloud hosts.** A cloud VM that runs Linux is a Linux host above: the
   Docker backend reaches one over `ssh://` or as a BB machine, and the SSH
   host pool reaches one too. A backend that makes cloud VMs itself is
@@ -365,6 +365,18 @@ node --test test/conformance.test.ts
 - The doctor asks each Mac with `macos-desktop` for Cua Driver's grants
   with `status grants`. A survey runs plain `status`, which does not wait
   for Cua.
+- A Mac's `status xcode` gives the version of the Xcode `xcode-select`
+  chooses, and its Simulator runtimes. Only the doctor asks, as `simctl`
+  may take seconds, in a call made beside `status grants` rather than in
+  it, so each stays within a status's 20 s. The `macos` and
+  `macos-desktop` offers have `xcode` while every Mac serving them had
+  Xcode at the doctor's last run, and `ios-simulator` while each had an
+  iOS runtime too. A Mac not checked since bb-box started counts as having
+  neither. The doctor warns when only some of the Macs serving a kind have
+  them. The conformance suite boots an iOS Simulator device and runs a
+  command in it.
+- `footprint()` gives the pool's machines without a jump host, and Tart's
+  gives its hosts, so the doctor warns when one address is in both (047).
 - A machine without the helper's tools is out of service. Enrolment's
   tools only fail the doctor: Node.js 22.19 or newer with npm for BB's
   installer, and, as a warning, git and gh for the thread's GitHub access.

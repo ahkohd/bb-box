@@ -95,7 +95,7 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
     {
       helper: 1, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
-      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null },
+      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: null },
     },
   );
   const values = fields(result.stdout);
@@ -110,7 +110,24 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
   assert.deepEqual(["accessibility", "screenrecording"].map((key) => fields(granted.stdout).get(key)), ["1", "0"]);
   assert.deepEqual(parseStatus(granted.stdout).mac?.grants, { accessibility: true, screenRecording: false });
   assert.equal(count(mac, cua), 1);
-  assert.deepEqual(mac.helper(["status", "bogus"]), { status: 2, stdout: "", stderr: "usage: machine status [grants]\n" });
+  for (const args of [["bogus"], ["grants", "xcode"]]) {
+    assert.deepEqual(mac.helper(["status", ...args]), { status: 2, stdout: "", stderr: "usage: machine status [grants | xcode]\n" });
+  }
+
+  const tools = mac.helper(["status", "xcode"]);
+  assert.deepEqual(parseStatus(tools.stdout).mac?.xcode, { version: null, runtimes: [] });
+  assert.equal(count(mac, "xcrun"), 0, "with only the Command Line Tools, xcrun is not run, as it may offer to install them");
+  mkdirSync(join(mac.root, "Applications/Xcode.app"), { recursive: true });
+  mkdirSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info"));
+  writeFileSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info/CFBundleShortVersionString"), "26.0\n");
+  assert.equal(fields(mac.helper(["status"]).stdout).has("xcode"), false);
+  assert.equal(count(mac, "xcrun"), 0, "plain status stays fast, as the pool reads it twice for each box it lends");
+  const xcode = mac.helper(["status", "xcode"]);
+  assert.deepEqual(["xcode", "runtimes", "accessibility"].map((key) => fields(xcode.stdout).get(key)), ["26.0", "iOS 26.0,watchOS 26.0", undefined]);
+  assert.deepEqual(parseStatus(xcode.stdout).mac?.xcode, { version: "26.0", runtimes: ["iOS 26.0", "watchOS 26.0"] });
+  assert.equal(count(mac, "xcrun simctl list runtimes available"), 1);
+  mac.flag("no-ios-runtime");
+  assert.deepEqual(parseStatus(mac.helper(["status", "xcode"]).stdout).mac?.xcode, { version: "26.0", runtimes: ["watchOS 26.0"] });
 
   mac.setConsole("root");
   mac.flag("filevault-on");

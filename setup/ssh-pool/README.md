@@ -386,8 +386,16 @@ explains why.
   part of BB Box's settings if your Macs are smaller.
 - A Mac set aside for boxes, not one people use. A box can read whatever
   any user on the Mac can read, and the reset removes users.
+- A Mac that is not also a Tart host, as a box takes the whole Mac. The
+  doctor warns when one address is in both.
 
-Xcode is optional. Boxes do not get the iOS Simulator yet.
+Xcode is optional. Install it in `/Applications` before you run
+`setup-mac.sh`, and boxes on the Mac get Xcode and the iOS Simulator. The
+pool's `macos` and `macos-desktop` offers have the features `xcode` while
+every Mac that serves them has Xcode, and `ios-simulator` while each also
+has an iOS runtime. bb-box checks this only when its doctor runs, as it
+takes a few seconds. After bb-box starts, the offers have neither feature
+until the doctor has run.
 
 ### Set up a Mac
 
@@ -414,7 +422,8 @@ It takes the same options as `setup.sh`, except `--reset-hook`.
   boot
 - keeps the Mac awake, starts it after a power failure, and turns off
   automatic macOS updates and Spotlight indexing
-- prepares Xcode, if it is in `/Applications`
+- prepares Xcode, if it is in `/Applications`: accepts its licence, runs
+  its first launch and downloads the iOS platform
 - starts the Mac's reset generation at 0, in `/var/db/bb-box`, and makes
   the first box user, `bbx-0`, the automatic login
 
@@ -446,6 +455,7 @@ box sizes, the doctor checks that:
 - FileVault is off
 - the box user is signed in at the console, and is the automatic login
 - the helper has Full Disk Access
+- Xcode, if the Mac has it, has an iOS runtime
 - Screen Sharing is on, for `macos-desktop`
 - Cua Driver has Accessibility and Screen Recording, for `macos-desktop`
 
@@ -453,6 +463,10 @@ A Mac with FileVault on, without Full Disk Access, or without its box user
 at the console is out of service, and the doctor says why. A Mac without
 Screen Sharing lends `macos` only. Only the doctor asks Cua Driver for its
 grants, as that takes a moment. Lending a box does not.
+
+The doctor also warns when only some of the Macs that serve a kind have
+Xcode, or an iOS runtime, as that kind's boxes then have neither, or no
+iOS Simulator.
 
 ### How a box gets a Mac
 

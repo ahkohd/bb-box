@@ -447,6 +447,11 @@ export interface Footprint {
   readonly ids?: { readonly scope: string; readonly first: number; readonly last: number };
   /** Addresses its boxes may get, such as those on one node's bridge. */
   readonly addresses?: { readonly scope: string; readonly list: readonly string[] };
+  /**
+   * Machines it lends whole or makes boxes on, by the address bb-box reaches
+   * them at, in lower case, such as a pool's Macs and Tart's hosts (047).
+   */
+  readonly machines?: readonly string[];
 }
 
 export interface DoctorCheck {

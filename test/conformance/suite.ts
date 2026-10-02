@@ -56,7 +56,27 @@ export type ConformanceCheck =
   | "interrupted"
   | "installs"
   /** Measuring a box's cores, memory and disk in the box. */
-  | "size";
+  | "size"
+  /** Booting an iOS Simulator device and running a command in it (047). */
+  | "ios-simulator";
+
+/** A new Simulator device's first boot is slow (047). */
+const SIMULATOR_TIMEOUT_MS = 600_000;
+
+/**
+ * Boots the first available iPhone under an iOS runtime, runs `defaults` in
+ * it and shuts it down, printing what `defaults` read back (047). The box
+ * user's first `simctl` makes Xcode's default devices.
+ */
+const SIMULATOR_SCRIPT = [
+  "set -e",
+  `udid=$(xcrun simctl list devices available | awk '/^-- iOS / { ios = 1; next } /^--/ { ios = 0 } ios && /iPhone/ && match($0, /\\([0-9A-F]+-[0-9A-F-]+\\)/) { print substr($0, RSTART + 1, RLENGTH - 2); exit }')`,
+  '[ -n "$udid" ] || { echo "no iPhone device under an iOS runtime" >&2; exit 1; }',
+  'trap \'xcrun simctl shutdown "$udid" 2>/dev/null\' EXIT',
+  'xcrun simctl bootstatus "$udid" -b >/dev/null',
+  'xcrun simctl spawn "$udid" defaults write bb-box.conformance said -string ok',
+  'xcrun simctl spawn "$udid" defaults read bb-box.conformance said',
+].join("\n");
 
 /** Enrolment in a live BB server. */
 export interface ConformanceBb {
@@ -247,6 +267,9 @@ export function checkKind(kind: BoxKind): void {
   }
   if (computerUse) assert.ok(capabilities.displays.length && command, `${kind.id} offers computer use, so it has a display and commands`);
   if (capabilities.features.includes("docker")) assert.ok(command, `${kind.id} has Docker, so it runs commands`);
+  if (capabilities.features.includes("ios-simulator")) {
+    assert.ok(capabilities.features.includes("xcode") && command?.shell === "sh", `${kind.id} has the iOS Simulator, so it has Xcode and runs sh commands`);
+  }
 }
 
 export function checkCapacity(capacity: Capacity, nature: MachineNature): void {
@@ -307,8 +330,9 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
   const skip = options.skip ?? {};
   const signal = () => AbortSignal.timeout(timeout);
   const backend = await options.create(options.storage, CONFORMANCE_INSTALL);
-  const kinds = backend.kinds().filter((kind) => !options.kinds || options.kinds.includes(kind.id));
   const doctor = await backend.doctor(signal()).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
+  // After the doctor, since a pool's Macs offer xcode only once it has checked them (047).
+  const kinds = backend.kinds().filter((kind) => !options.kinds || options.kinds.includes(kind.id));
   const blocked = doctor instanceof Error ? `doctor threw: ${doctor.message}` : doctor.ok ? false : `doctor found a failure: ${doctor.summary}`;
   /** Guests this run acquired and has not released. */
   const outstanding = new Map<string, Guest>();
@@ -571,6 +595,18 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               const result = await command.run("docker version --format '{{.Server.Version}}'", { timeoutMs: 60_000 });
               assert.equal(result.exitCode, 0, `docker: ${result.stderr}`);
               assert.match(result.stdout.trim(), /^\d+\./);
+            });
+          }
+
+          if (capabilities.features.includes("ios-simulator")) {
+            const limit = Math.max(timeout, SIMULATOR_TIMEOUT_MS);
+            it("boots an iOS Simulator device and runs a command in it", { timeout: limit, skip: skip["ios-simulator"] ?? false }, async () => {
+              const { command } = need();
+              const started = Date.now();
+              const result = await command.run(SIMULATOR_SCRIPT, { timeoutMs: limit });
+              assert.equal(result.exitCode, 0, `the Simulator: ${result.stderr}`);
+              assert.equal(result.stdout.trim(), "ok", "defaults in the Simulator reads back what it wrote");
+              console.log(`# ${options.name} ${kind.id}: an iOS Simulator device booted and ran a command in ${Date.now() - started} ms`);
             });
           }
 
