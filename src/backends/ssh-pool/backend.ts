@@ -391,9 +391,13 @@ export class SshPoolBackend implements Backend {
     return { machines: this.#config.machines.filter((machine) => !machine.jump).map((machine) => machine.admin.host.toLowerCase()) };
   }
 
-  /** Before its first survey the pool cannot tell which Macs have Xcode, so a box keeps the features it has (047). */
-  async asOffered(_guest: Guest, kind: string): Promise<boolean> {
-    return kind === "linux" || this.#surveyed !== null;
+  /**
+   * A Mac kind's features follow the Macs that answered the last survey, so
+   * a Mac box gets them only when its own Mac answered. Before the first
+   * survey, or while its Mac is off, it keeps the features it has (047).
+   */
+  async asOffered(guest: Guest, kind: string): Promise<boolean> {
+    return kind === "linux" || Boolean(this.#surveyed?.some((view) => view.machine.name === guest.ref && view.probe.status?.mac));
   }
 
   #offer(kind: string): BoxKind {

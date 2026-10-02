@@ -901,12 +901,14 @@ describe("An SSH host pool of Macs (047)", () => {
     const check = async (backend: Backend, id: string) => (await backend.doctor()).checks.find((other) => other.id === id);
     const asked = () => helperCalls("192.0.2.70").filter((call) => call === "status xcode").length;
     const both = ["macos: xcode ios-simulator", "macos-desktop: xcode ios-simulator"];
+    /** Whether a box on the Mac `ref` would take the features its kind has now. */
+    const offered = (backend: SshPoolBackend, ref: string, kind = "macos") => backend.asOffered({ ref } as Guest, kind);
 
     const ready = pool("ready 192.0.2.70 macos,macos-desktop").backend;
     assert.deepEqual(ready.kinds().map((kind) => kind.capabilities.features), [[], []]);
-    assert.deepEqual(await Promise.all(["linux", "macos"].map((kind) => ready.asOffered(undefined as never, kind))), [true, false], "before the first survey, a box keeps the features it has");
+    assert.deepEqual(await Promise.all(["linux", "macos"].map((kind) => offered(ready, "ready", kind))), [true, false], "before the first survey, a box keeps the features it has");
     assert.deepEqual(await features(ready), ["macos: xcode", "macos-desktop: xcode"], "plain status gives Xcode's version, and no runtimes until `status xcode` has found them");
-    assert.equal(await ready.asOffered(undefined as never, "macos"), true);
+    assert.deepEqual([await offered(ready, "ready"), await offered(ready, "gone")], [true, false], "a box takes them only when its own Mac answered");
     assert.equal(asked(), 0, "only the doctor and setup-mac.sh ask for Xcode's runtimes");
     assert.equal((await check(ready, "machine.ready.xcode"))?.detail, "Xcode 26.0, with the Simulator's iOS 26.0, watchOS 26.0.");
     assert.deepEqual(await features(ready), both);
@@ -936,10 +938,12 @@ describe("An SSH host pool of Macs (047)", () => {
     fake.down("192.0.2.72");
     try {
       assert.deepEqual(await features(off), both, "a Mac that does not answer does not hide them");
+      assert.deepEqual([await offered(off, "ready"), await offered(off, "bare")], [true, false], "nor gives its box the Xcode it lacks");
     } finally {
       rmSync(join(fake.dir, "down", "192.0.2.72"));
     }
     assert.deepEqual(await features(off), ["macos: ", "macos-desktop: xcode ios-simulator"]);
+    assert.equal(await offered(off, "bare"), true);
 
     const watch = pool("ready 192.0.2.70 macos,macos-desktop\nwatch 192.0.2.71 macos").backend;
     await watch.doctor();
