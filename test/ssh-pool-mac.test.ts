@@ -407,6 +407,26 @@ test("the reset remembers the way that signed the user in, and starts with it", 
   assert.deepEqual(mac.helper(["release", "1"], RELEASE()), { status: 0, stdout: "generation=2\nreleased=yes\n", stderr: "" });
 });
 
+test("on macOS 27 and later, the first reset restarts userspace, as restarting loginwindow alone does not sign the user in", async () => {
+  const mac = lentMac();
+  mac.flag("macos", true, "27.0\n");
+  mac.flag("loginwindow-waits");
+  const kicks = count(mac, "launchctl kickstart");
+  assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: EXIT.restoring, stdout: "signin=userspace\n", stderr: "" });
+  assert.equal(count(mac, "launchctl kickstart"), kicks, "no minute spent on loginwindow alone");
+  await waitForCall(mac, "launchctl reboot userspace");
+  mac.setConsole("bbx-1");
+  assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: 0, stdout: "generation=1\nreleased=yes\n", stderr: "" });
+  assert.equal(mac.file("/var/db/bb-box/signs-in-by"), "userspace\n");
+
+  // A Mac updated to macOS 27 starts with the way it remembers.
+  const updated = lentMac();
+  writeFileSync(join(updated.root, "var/db/bb-box/signs-in-by"), "loginwindow\n");
+  updated.flag("macos", true, "27.0\n");
+  updated.flag("loginwindow-waits");
+  assert.equal(updated.helper(["release", "0"], RELEASE()).stdout, "signin=loginwindow\n");
+});
+
 test("an operator's reset moves a free Mac on to the next user, and leaves alone a Mac a box holds", () => {
   const mac = readyMac();
   assert.deepEqual(mac.helper(["reset"]), { status: 0, stdout: "generation=1\nreleased=yes\n", stderr: "" });

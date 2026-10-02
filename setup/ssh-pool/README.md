@@ -517,8 +517,10 @@ If starting the login window again has not signed the user in within a
 minute, the helper restarts macOS's user space, then, 3 minutes later, the
 Mac. It gives up 8 minutes after that, and the Mac goes out of service. It
 remembers the way that worked, and the next reset starts with it. macOS 27
-does not sign the user in when the login window starts again, so there the
-first reset takes a minute longer, and later ones restart user space.
+does not sign the user in when the login window starts again, so on macOS
+27 and later the helper restarts user space from the first reset. A Mac
+updated to macOS 27 starts with the way it remembers, so its next reset
+takes a minute longer.
 
 Restarting user space or the Mac ends every process on it, SSH sessions
 included. bb-box then asks the helper again, which waits for the sign-in to

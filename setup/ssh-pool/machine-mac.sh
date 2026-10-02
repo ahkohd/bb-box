@@ -45,10 +45,11 @@
 #    the console, then moves the generation on.
 #
 # loginwindow signs a user in only when it starts. The reset restarts
-# loginwindow alone first. If that does not sign the user in within a
-# minute, as on macOS 27, it restarts userspace, then the whole Mac, and
-# until the user is at the console it reports the reset as still running
-# (exit 10). It remembers which way worked.
+# loginwindow alone first, or userspace on macOS 27 and later, where
+# restarting loginwindow alone does not sign the user in. If that does not
+# sign the user in within its time, it tries userspace, then the whole Mac,
+# and until the user is at the console it reports the reset as still running
+# (exit 10). It remembers which way worked, and starts with it next time.
 #
 # The password is for Screen Sharing, which the relay signs in to as the box
 # user: display prints it, and nothing else does. sysadminctl and the
@@ -453,6 +454,20 @@ patience() {
   esac
 }
 
+# The way the reset tries first: the one that signed the last user in. With
+# none yet, restarting loginwindow alone, except on macOS 27 and later, where
+# that does not sign the user in, so restarting userspace.
+first_way() {
+  way=$(cat "$STATE/signs-in-by" 2>/dev/null)
+  case $way in
+    loginwindow | userspace | restart) echo "$way" ;;
+    *)
+      major=$(sw_vers -productVersion 2>/dev/null | cut -d . -f 1)
+      if number "$major" && [ "$major" -ge 27 ]; then echo userspace; else echo loginwindow; fi
+      ;;
+  esac
+}
+
 # Starts loginwindow again by way $2, which signs in box user $1, the
 # automatic login. It leaves alone a person signed in at the console.
 begin_sign_in() {
@@ -484,7 +499,7 @@ sign_in() {
     method=$(field "$STATE/signin" method) since=$(field "$STATE/signin" since)
   fi
   if [ -z "$method" ]; then
-    method=loginwindow
+    method=$(first_way)
   elif number "$since" && [ $(($(now) - since)) -ge "$(patience "$method")" ]; then
     case $method in
       loginwindow) method=userspace ;;
@@ -668,7 +683,7 @@ finish() {
   # loginwindow alone leaves this helper running, so it starts now and signs
   # the user in while step 4 runs. The other ways wait for step 5.
   if [ "$(console)" != "$next_user" ] && [ "$(field "$STATE/signin" user)" != "$next_user" ]; then
-    method=$(cat "$STATE/signs-in-by" 2>/dev/null)
+    method=$(first_way)
     case $method in
       userspace | restart) printf 'user=%s\nmethod=%s\nsince=\n' "$next_user" "$method" | put "$STATE/signin" ;;
       *) begin_sign_in "$next_user" loginwindow ;;
