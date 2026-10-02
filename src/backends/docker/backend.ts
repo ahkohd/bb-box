@@ -721,6 +721,18 @@ export class DockerBackend implements Backend {
         push("docker.daemon", "Docker daemon", "ok", `${facts}.`);
       }
 
+      const limits = ["docker.limits", "CPU and memory limits"] as const;
+      const limitsFix = info.rootless
+        ? `Have systemd delegate the cgroup controllers to the user that runs rootless Docker on ${info.name}: put Delegate=cpu cpuset io memory pids under [Service] in /etc/systemd/system/user@.service.d/delegate.conf, run sudo systemctl daemon-reload, and restart the host.`
+        : `Turn on the kernel's cpu and memory cgroup controllers on ${info.name}. docker info names what is missing in its warnings.`;
+      if (!info.cpuLimit) {
+        push(...limits, "fail", `Docker on ${info.name} cannot limit a container's CPU, so it refuses the CPU limit each box has, and no box starts.${info.memoryLimit ? "" : " Nor can it limit memory."}`, limitsFix);
+      } else if (!info.memoryLimit) {
+        push(...limits, "warn", `Docker on ${info.name} cannot limit a container's memory, so boxes there start without their memory limit, and one box can take all of the host's memory.`, limitsFix);
+      } else {
+        push(...limits, "ok", "Docker limits each box's CPU and memory.");
+      }
+
       for (const image of images) {
         const kinds = DOCKER_KINDS.filter((kind) => this.#config.images[kind] === image).join(", ");
         const id = `image.${image}`;

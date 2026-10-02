@@ -64,6 +64,8 @@ function info() {
       NCPU: host.cpus ?? 16,
       MemTotal: (host.memoryMiB ?? 65536) * MiB,
       SecurityOptions: ["name=seccomp,profile=builtin", "name=cgroupns", ...(host.rootless ? ["name=rootless"] : [])],
+      CpuCfsQuota: host.cpuLimit ?? true,
+      MemoryLimit: host.memoryLimit ?? true,
       DiscoveredDevices: gpus.length ? [{ Source: "cdi", ID: "nvidia.com/gpu=all" }, ...gpus.map((id) => ({ Source: "cdi", ID: id }))] : null,
     }),
   );

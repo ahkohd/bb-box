@@ -61,6 +61,14 @@ export interface DockerInfo {
   readonly cpus: number;
   readonly memoryMiB: number;
   readonly rootless: boolean;
+  /**
+   * Whether the daemon can limit a container's CPU, as each box's --cpus
+   * needs, and its memory. Rootless Docker can only when systemd delegates
+   * the cpu and memory cgroup controllers to its user (#94). True when
+   * docker info does not say.
+   */
+  readonly cpuLimit: boolean;
+  readonly memoryLimit: boolean;
   /** NVIDIA GPUs the daemon lists as CDI devices, one name each, such as nvidia.com/gpu=0. */
   readonly gpus: readonly string[];
 }
@@ -120,6 +128,8 @@ export function parseInfo(text: string): DockerInfo {
     cpus: Number(info.NCPU) || 0,
     memoryMiB: Math.floor((Number(info.MemTotal) || 0) / MiB),
     rootless: security.some((option) => option.includes("name=rootless")),
+    cpuLimit: info.CpuCfsQuota !== false,
+    memoryLimit: info.MemoryLimit !== false,
     gpus: gpusOf(info.DiscoveredDevices),
   };
 }

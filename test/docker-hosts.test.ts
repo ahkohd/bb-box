@@ -35,6 +35,8 @@ const info = (more: Partial<DockerInfo> = {}): DockerInfo => ({
   cpus: 16,
   memoryMiB: 100 * 1024,
   rootless: false,
+  cpuLimit: true,
+  memoryLimit: true,
   gpus: [],
   ...more,
 });
