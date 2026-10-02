@@ -68,6 +68,16 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   linux: { label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [] },
   "linux-desktop": { label: "Linux desktop", description: "A Linux desktop on a GPU, for computer use, browsers and app development.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [] },
   "linux-desktop-cpu": { label: "Linux desktop", description: "A Linux desktop drawn by the CPU, for computer use and browsers.", gpu: false, desktop: true, os: "linux", arch: "x86_64", features: [] },
+  // Sway, streamed by wayvnc, with Xwayland off (048).
+  "linux-desktop-wayland-cpu": {
+    label: "Linux desktop on Wayland",
+    description: "A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there.",
+    gpu: false,
+    desktop: true,
+    os: "linux",
+    arch: "x86_64",
+    features: [],
+  },
   "linux-arm64": {
     label: "Linux on arm64",
     description: "A Linux box on arm64. amd64 container images and x86_64 binaries do not run there.",

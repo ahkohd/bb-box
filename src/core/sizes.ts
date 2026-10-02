@@ -58,6 +58,8 @@ const SHIPPED: Readonly<Record<string, KindSizes>> = {
   linux: LINUX,
   "linux-desktop": DESKTOP,
   "linux-desktop-cpu": DESKTOP,
+  // A Wayland desktop takes the X11 desktops' presets (048).
+  "linux-desktop-wayland-cpu": DESKTOP,
   // Linux on arm64 takes the presets of the x86_64 kinds it follows (040).
   "linux-arm64": LINUX,
   "linux-arm64-desktop-cpu": DESKTOP,
