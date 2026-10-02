@@ -4,12 +4,14 @@
 #   build.sh linux <vmid>
 #       the Linux template: development tools, agent CLIs and Docker.
 #       build.sh headless, its earlier name, does the same
-#   build.sh desktop <vmid> [--gpu <pci-address> | --cpu]
+#   build.sh desktop <vmid> [--gpu <pci-address> | --cpu] [--wayland]
 #       the desktop template: everything in the Linux one, plus XFCE, VNC,
 #       Chrome and Cua Driver, on one NVIDIA GPU (the only one, if --gpu is
 #       left out), or with --cpu on no GPU at all: no device nodes, no NVIDIA
 #       userspace, and the display always on the CPU. A host without an
-#       NVIDIA driver gets a CPU template without --cpu.
+#       NVIDIA driver gets a CPU template without --cpu. With --wayland, the
+#       Wayland desktop (048) instead of XFCE: Sway with floating windows,
+#       Waybar and wayvnc, on the CPU only, so --wayland implies --cpu.
 #   build.sh copy-desktop <from-vmid> <vmid> --gpu <pci-address>
 #       a copy of a desktop template for another GPU, so desktops can spread
 #       across cards
@@ -27,7 +29,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../host/common.sh
 . "$here/../host/common.sh"
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 kind=${1:-}
 shift || usage
 [ "$kind" != headless ] || kind=linux
@@ -35,11 +37,12 @@ case "$kind" in linux | desktop) [ $# -ge 1 ] || usage; from= vmid=$1; shift ;;
   copy-desktop) [ $# -ge 2 ] || usage; from=$1 vmid=$2; shift 2 ;;
   *) usage ;;
 esac
-gpu= keep= cpu= replace=
+gpu= keep= cpu= replace= wayland=
 while [ $# -gt 0 ]; do
   case "$1" in
     --gpu) gpu=${2:?--gpu needs a PCI address}; shift 2 ;;
     --cpu) cpu=1; shift ;;
+    --wayland) wayland=1; shift ;;
     --keep) keep=1; shift ;;
     --replace) replace=1; shift ;;
     *) usage ;;
@@ -49,6 +52,12 @@ done
 [ "$from" != "$vmid" ] || die "copy-desktop needs another VMID for the copy"
 [ -z "$cpu" ] || [ -z "$gpu" ] || die "--gpu and --cpu exclude each other"
 [ -z "$cpu" ] || [ "$kind" = desktop ] || die "--cpu is for desktop templates"
+if [ -n "$wayland" ]; then
+  [ "$kind" = desktop ] || die "--wayland is for desktop templates"
+  # Wayland on NVIDIA needs the host's nvidia-drm with modeset=1 (048).
+  [ -z "$gpu" ] || die "a Wayland desktop is CPU only for now (048): leave out --gpu"
+  cpu=1
+fi
 if [ "$kind" = desktop ] && [ -z "$gpu" ] && [ -z "$cpu" ] && [ ! -d /proc/driver/nvidia/gpus ]; then
   echo "no NVIDIA driver on this host: building a CPU-only desktop template"
   cpu=1
@@ -98,6 +107,12 @@ if in_use "$vmid"; then
   config=$(pct config "$vmid" 2>/dev/null || true)
   grep -q '^template: 1' <<<"$config" && grep -Eq "^description: bb-box $pattern template" <<<"$config" ||
     die "$vmid is not a bb-box $word template; --replace replaces only those"
+  # A Wayland desktop replaces only a Wayland one, and an X11 one only an X11 one.
+  if [ "$kind" = desktop ]; then
+    was_wayland=
+    ! grep -q '^description: bb-box desktop template (Wayland' <<<"$config" || was_wayland=1
+    [ "$was_wayland" = "$wayland" ] || die "$vmid is a desktop template of the other session (X11 or Wayland); --replace replaces only one of the same"
+  fi
   clones=$(linked_clones "$vmid")
   [ -z "$clones" ] || die "boxes are linked clones of template $vmid and need it ($clones); release them first"
   ct=${BBBOX_BUILD_VMID:-$(pvesh get /cluster/nextid)}
@@ -192,6 +207,7 @@ fi
 }
 artifacts=$kind
 [ -z "$cpu" ] || artifacts=desktop-cpu
+[ -z "$wayland" ] || artifacts=desktop-wayland-cpu
 bash "$here/fetch-artifacts.sh" "$cache" "$artifacts"
 rm -rf "$stage"
 install -d -m 0700 "$stage" "$stage/artifacts"
@@ -204,6 +220,7 @@ BOX_USER=box
 BOX_DNS="$BBBOX_DNS"
 BB_URL="$BBBOX_BB_URL"
 DESKTOP_GPU=$desktop_gpu
+DESKTOP_SESSION=${wayland:+wayland}
 EOF
 for f in "$cache"/*; do
   case "${f##*/}" in
@@ -226,6 +243,7 @@ size=16 cores=2 memory=4096
 lines=
 if [ "$kind" = desktop ] && [ -z "$cpu" ]; then lines=$(gpu_lines "$gpu"); fi
 [ -z "$cpu" ] || lines="# cpu only"
+[ -z "$wayland" ] || lines="# Wayland, cpu only"
 pct create "$ct" "$BBBOX_OS_TEMPLATE" --hostname "bb-box-$kind" --pool "$BBBOX_POOL" --unprivileged 1 \
   --features nesting=1 --cores 16 --memory 16384 --swap 1024 --rootfs "$BBBOX_STORAGE:$size" --tags "$build" \
   --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX,gw=$BBBOX_GATEWAY,type=veth" \

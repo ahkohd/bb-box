@@ -2,7 +2,7 @@
 # Downloads every artifact a template build needs into <dir> and checks each
 # against its pinned SHA-256. Files already there and correct are kept.
 #
-# usage: fetch-artifacts.sh <dir> linux|desktop|desktop-cpu [x86_64|arm64]
+# usage: fetch-artifacts.sh <dir> linux|desktop|desktop-cpu|desktop-wayland-cpu [x86_64|arm64]
 # (headless is linux's earlier name). The architecture is the image's, by
 # default x86_64; it picks the tools in pins.json and desktop-pins.tsv.
 set -euo pipefail
@@ -69,6 +69,8 @@ case "$kind" in linux | headless) exit 0 ;; esac
 while IFS=$'\t' read -r name file url sha pin_arch; do
   case "$name" in '' | \#*) continue ;; esac
   [ "$pin_arch" = "$arch" ] || continue
+  # The Wayland desktop streams with wayvnc and has no GPU (048).
+  case "$kind:$name" in desktop-wayland-cpu:tigervnc | desktop-wayland-cpu:virtualgl) continue ;; esac
   [ "$url" = - ] || fetch "$url" "$sha" "$file"
 done <"$here/desktop-pins.tsv"
 [ "$kind" = desktop ] || exit 0
