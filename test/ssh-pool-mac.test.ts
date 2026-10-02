@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -51,7 +51,7 @@ test("init makes the first box user, hidden and in _developer, from the home tem
   const mac = readyMac();
   assert.deepEqual(mac.users(), ["bbx-0", "person"]);
   const user = mac.user("bbx-0")!;
-  assert.deepEqual([user.UniqueID, user.RealName, user.IsHidden, user.NFSHomeDirectory], ["70000", "bb-box box", "1", "/Users/bbx-0"]);
+  assert.deepEqual([user.UniqueID, user.RealName, user.IsHidden, user.NFSHomeDirectory], ["70000", "bb-box bbx-0", "1", "/Users/bbx-0"]);
   assert.deepEqual(mac.members("_developer"), ["bbx-0"]);
   assert.match(mac.file("/Users/bbx-0/.zshenv")!, /path_helper/);
   assert.match(mac.file("/Users/bbx-0/Library/LaunchAgents/com.trycua.cua-driver.plist")!, /<string>serve<\/string>/);
@@ -66,8 +66,10 @@ test("init makes the first box user, hidden and in _developer, from the home tem
   assert.equal(password, readFileSync(join(mac.state, "secrets", "bbx-0"), "utf8"), "the password the user was made with");
   assert.equal(statSync(join(mac.root, "var/db/bb-box/passwords/bbx-0")).mode & 0o777, 0o600);
   assert.equal(statSync(join(mac.root, "var/db/bb-box/passwords")).mode & 0o777, 0o700);
+  assert.ok(!mac.calls().some((line) => line.includes(password.trim())), "the password is in no command's arguments");
   assert.equal(readFileSync(join(mac.state, "defaults", "_Library_Preferences_com.apple.loginwindow", "autoLoginUser"), "utf8"), "bbx-0\n");
-  assert.equal(mac.console(), "bbx-0");
+  assert.equal(statSync(join(mac.root, "etc/kcpassword")).mode & 0o777, 0o600);
+  assert.equal(mac.console(), "bbx-0", "loginwindow read the password in /etc/kcpassword");
   assert.equal(count(mac, "launchctl disable gui/70000/com.apple.backgroundtaskmanagement.agent"), 1);
 
   const again = mac.helper(["init"]);
@@ -230,13 +232,19 @@ test("a release removes the box's user with everything it left, and signs in the
   assert.equal(mac.helper(["init"]).status, 0);
   assert.deepEqual(mac.members("com.apple.access_ssh"), ["bbx-0"], "where Remote Login allows only some users");
   assert.equal(mac.helper(["claim", "0"], CLAIM()).status, 0);
+  // Screen Sharing allowed to all users since bbx-0 joined its group.
+  mkdirSync(join(mac.state, "groups", "com.apple.access_screensharing-disabled"));
+  writeFileSync(join(mac.state, "groups", "com.apple.access_screensharing-disabled", "GroupMembership"), "bbx-0\nperson\n");
 
   // What the box leaves.
   for (const [path, owner] of [
     ["/private/tmp/box-file", 70000],
     ["/Users/Shared/box-folder/inside", 70000],
     ["/private/var/folders/zz/box", 70000],
+    ["/private/var/at/jobs/a0000501c77838", 70000],
+    ["/private/var/at/jobs/a0000601c77839", 501],
     ["/Users/bbx-0/Library/LaunchAgents/box.plist", 70000],
+    ["/Library/Managed Preferences/bbx-0/complete.plist", 0],
     ["/private/tmp/root-file", 0],
   ] as const) {
     mkdirSync(join(mac.root, path, ".."), { recursive: true });
@@ -245,8 +253,6 @@ test("a release removes the box's user with everything it left, and signs in the
   }
   mac.own("/Users/Shared/box-folder", 70000);
   writeFileSync(join(mac.root, "private/var/at/tabs/bbx-0"), "* * * * * true\n");
-  mac.add("at", "7 bbx-0");
-  mac.add("at", "8 person");
   mac.add("ipc", "m 65536 bbx-0");
   mac.add("ipc", "s 131072 70003");
   mac.add("ipc", "q 1 person");
@@ -259,16 +265,25 @@ test("a release removes the box's user with everything it left, and signs in the
 
   assert.deepEqual(mac.users(), ["bbx-1", "person"]);
   assert.equal(mac.user("bbx-1")?.UniqueID, "70001");
-  for (const path of ["/Users/bbx-0", "/private/tmp/box-file", "/Users/Shared/box-folder", "/private/var/folders/zz/box", "/private/var/at/tabs/bbx-0", "/etc/sudoers.d/bbx-0", "/var/db/bb-box/passwords/bbx-0"]) {
+  for (const path of ["/Users/bbx-0", "/private/tmp/box-file", "/Users/Shared/box-folder", "/private/var/folders/zz/box", "/private/var/at/jobs/a0000501c77838", "/Library/Managed Preferences/bbx-0", "/private/var/at/tabs/bbx-0", "/etc/sudoers.d/bbx-0", "/var/db/bb-box/passwords/bbx-0"]) {
     assert.equal(existsSync(join(mac.root, path)), false, path);
   }
   assert.equal(mac.file("/private/tmp/root-file"), "left\n");
   assert.match(mac.file("/var/db/bb-box/passwords/bbx-1")!, /^[A-Za-z0-9]{24}\n$/);
-  assert.deepEqual(mac.lines("at"), ["8 person"]);
+  assert.equal(mac.file("/private/var/at/jobs/a0000601c77839"), "left\n");
   assert.deepEqual(mac.lines("ipc"), ["q 1 person"]);
   assert.deepEqual(mac.lines("processes"), ["403 501 Terminal 1"]);
+  assert.deepEqual(mac.lines("again"), [], "the old user is no longer the automatic login when it is logged out");
   assert.ok(count(mac, "pkill -KILL -u 70000") >= 2, "a process that outlives a kill is killed again");
   assert.deepEqual([mac.members("_developer"), mac.members("com.apple.access_ssh")], [["bbx-1"], ["bbx-1"]]);
+  assert.deepEqual(mac.members("com.apple.access_screensharing-disabled"), ["person"]);
+  assert.ok(count(mac, "dsmemberutil flushcache") >= 1, "the new user meets no cached membership of an earlier one");
+  assert.equal(
+    mac.file("/Users/bbx-1/Library/Preferences/loginwindow.plist"),
+    '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+      '<plist version="1.0"><dict><key>SystemVersionStampAsString</key><string>26.0</string><key>BuildVersionStampAsString</key><string>25A354</string></dict></plist>\n',
+    "a home stamped with the macOS it was made on, so its first sign-in skips Setup Assistant",
+  );
   assert.equal(readFileSync(join(mac.state, "defaults", "_Library_Preferences_com.apple.loginwindow", "autoLoginUser"), "utf8"), "bbx-1\n");
   assert.equal(mac.console(), "bbx-1");
   assert.deepEqual([mac.file("/var/db/bb-box/generation"), mac.file("/var/db/bb-box/resetting"), mac.file("/var/db/bb-box/owner")], ["1\n", null, null]);
@@ -307,6 +322,31 @@ test("a release that cannot remove a file the old user owned fails, naming Full 
   assert.deepEqual(mac.users(), ["bbx-1", "person"]);
 });
 
+test("a process Spotlight starts as the old user during the sweep is ended, and the temporary folders it makes are swept", () => {
+  const mac = lentMac();
+  mac.flag("mds");
+  assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: 0, stdout: "generation=1\nreleased=yes\n", stderr: "" });
+  assert.equal(existsSync(join(mac.data, "private/var/folders/zz/user70000")), false);
+  assert.ok(!mac.lines("processes").some((line) => line.split(" ")[1] === "70000"), "no process of the old user runs");
+});
+
+test("a reset removes what earlier box users left only in a group or in managed preferences", () => {
+  const mac = lentMac();
+  for (const [group, members] of [
+    ["com.apple.access_ssh", "bbx-7\nperson\n"],
+    ["com.apple.access_screensharing-disabled", "bbx-6\nperson\n"],
+  ]) {
+    mkdirSync(join(mac.state, "groups", group));
+    writeFileSync(join(mac.state, "groups", group, "GroupMembership"), members);
+  }
+  mkdirSync(join(mac.root, "Library/Managed Preferences/bbx-5"), { recursive: true });
+  mkdirSync(join(mac.root, "Library/Managed Preferences/person"));
+  assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: 0, stdout: "generation=1\nreleased=yes\n", stderr: "" });
+  assert.deepEqual(mac.members("com.apple.access_ssh"), ["person", "bbx-1"]);
+  assert.deepEqual(mac.members("com.apple.access_screensharing-disabled"), ["person"]);
+  assert.deepEqual(readdirSync(join(mac.root, "Library/Managed Preferences")), ["person"]);
+});
+
 test("while the next user is not signed in, the reset is still running; it restarts userspace, then the Mac, then gives up", async () => {
   const mac = lentMac();
   mac.flag("loginwindow-waits");
@@ -324,6 +364,13 @@ test("while the next user is not signed in, the reset is still running; it resta
   mac.clock(1060);
   assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: EXIT.restoring, stdout: "signin=userspace\n", stderr: "" });
   await waitForCall(mac, "launchctl reboot userspace");
+  // While userspace restarts, the directory does not answer, and the next user seems half made: it is left alone.
+  mac.flag("directory-down");
+  mac.clock(1062);
+  assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: EXIT.restoring, stdout: "signin=userspace\n", stderr: "" });
+  assert.match(mac.file("/var/db/bb-box/passwords/bbx-1")!, /^[A-Za-z0-9]{24}\n$/);
+  assert.match(mac.file("/Users/bbx-1/.zshenv")!, /path_helper/);
+  mac.flag("directory-down", false);
   mac.clock(1240);
   assert.deepEqual(mac.helper(["reset"], "install=inst_a\n"), { status: EXIT.restoring, stdout: "signin=restart\n", stderr: "" });
   await waitForCall(mac, "shutdown -r now");
@@ -394,14 +441,25 @@ test("a person signed in at the console stops the reset, which leaves their sess
   assert.deepEqual(mac.helper(["reset"]), { status: 0, stdout: "generation=1\nreleased=yes\n", stderr: "" });
 });
 
-test("a user sysadminctl did not make, a UID another user has, or FileVault on stops the Mac with the reason", () => {
+test("a user sysadminctl did not make, a directory that does not answer, a UID another user has, or FileVault on stops the Mac with the reason", () => {
   const silent = fakeMacos();
   silent.flag("sysadminctl-fails");
-  assert.deepEqual(silent.helper(["init"]), { status: 1, stdout: "", stderr: "Could not make box user bbx-0.\n" });
+  assert.deepEqual(silent.helper(["init"]), { status: 1, stdout: "", stderr: "sysadminctl did not make bbx-0.\nCould not make box user bbx-0.\n" });
   assert.deepEqual([silent.file("/Users/bbx-0/.zshenv"), silent.file("/var/db/bb-box/passwords/bbx-0")], [null, null]);
   silent.flag("sysadminctl-fails", false);
   assert.equal(silent.helper(["init"]).status, 0);
   assert.equal(silent.user("bbx-0")?.UniqueID, "70000");
+
+  const down = fakeMacos();
+  down.flag("directory-down");
+  assert.equal(down.helper(["init"]).stderr, "The Mac's directory service did not answer.\nCould not make box user bbx-0.\n");
+
+  const named = fakeMacos();
+  writeFileSync(join(named.state, "users", "person", "RealName"), "bb-box bbx-0\n");
+  assert.equal(
+    named.helper(["init"]).stderr,
+    "sysadminctl did not make bbx-0: User with full name 'bb-box bbx-0' already exists.\nCould not make box user bbx-0.\n",
+  );
 
   const taken = fakeMacos();
   mkdirSync(join(taken.state, "users", "someone"));
