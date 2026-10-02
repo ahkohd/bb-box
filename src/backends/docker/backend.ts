@@ -276,7 +276,7 @@ export class DockerBackend implements Backend {
   #info: DockerInfo | null = null;
   /** The host's name as last known, kept in storage so a restart shows it before the daemon or BB has answered again (#265). */
   #knownName: string | null = null;
-  /** The host's OS as last learned from the daemon over ssh://, kept with the name. */
+  /** The host's OS as last learned, from BB for a BB machine or from the daemon over ssh://, kept with the name. */
   #knownOs: GuestOs | null = null;
   /** Containers being acquired, by box ID, until their acquire ends. */
   readonly #placing = new Map<string, Placing>();
@@ -325,7 +325,7 @@ export class DockerBackend implements Backend {
     await this.#context.storage.set(NAME_KEY, name).catch(() => {});
   }
 
-  /** Remembers the host's OS, as the daemon over ssh:// said it, for the next start. */
+  /** Remembers the host's OS, as BB or the daemon over ssh:// said it, for the next start. */
   async #keepOs(os: GuestOs): Promise<void> {
     if (os === this.#knownOs) return;
     this.#knownOs = os;
@@ -334,13 +334,18 @@ export class DockerBackend implements Backend {
 
   /**
    * The OS of the machine the daemon runs on: BB's word for a BB machine
-   * (its host entry knows a Windows PC under WSL), this process's platform
-   * for a local daemon, and the daemon's own words for one over ssh://,
+   * (its host entry knows a Windows PC under WSL), kept so a restart knows
+   * it before the host entry has answered again; this process's platform
+   * for a local daemon; and the daemon's own words for one over ssh://,
    * where a kernel saying "microsoft" is a Windows PC and Docker Desktop
    * or OrbStack on any other kernel is a Mac. Null until known.
    */
   get hostOs(): GuestOs | null {
-    if (this.#config.machine) return this.#context.machines?.platform?.(this.#config.machine) ?? null;
+    if (this.#config.machine) {
+      const live = this.#context.machines?.platform?.(this.#config.machine) ?? null;
+      if (live) void this.#keepOs(live);
+      return live ?? this.#knownOs;
+    }
     if (!this.#config.host) return platformOs(process.platform);
     if (this.#info) {
       const os = daemonOs(this.#info);

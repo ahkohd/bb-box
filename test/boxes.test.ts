@@ -1306,13 +1306,51 @@ test("an acquire may name its provider, by name, ID or host, without case; only 
 
   // A provider that is off is said to be off; one that is full refuses with its words and names the others.
   world.off.add("fake:second");
-  await assert.rejects(acquire("devpc"), /Fake host on devpc is off\. Turn it on in BB Box's settings, or leave "on" out for the first with room\./);
+  await assert.rejects(acquire("devpc"), /Fake host on devpc is off; turn it on in BB Box's settings\. linux also comes from Fake host\. Leave "on" out for the first with room\.$/);
   world.off.delete("fake:second");
   const full = new FakeBackend({ root: tempDir("boxes-full"), storage: scopedStorage(world.kv, "backend/fake:full/"), id: "fake:full", hosts: ["lab2"], maxGuests: 0 }) as unknown as Backend;
   world.others = [other, second, full];
   await assert.rejects(acquire("lab2"), /^(?!.*Fake host on lab2 has no linux).* linux also comes from Fake host, Fake host on devpc\. Leave "on" out for the first with room\.$/);
   // Without on, the first with room is still taken.
   assert.equal((await acquire()).backend, world.backend.id);
+});
+
+test("an acquire may name several providers: the first with room among them in acquire order, strict, a list with a mistake refused whole (044)", async () => {
+  const world = setup();
+  const other = new FakeBackend({ root: tempDir("boxes-list-other"), storage: scopedStorage(world.kv, "backend/fake:second/"), id: "fake:second", hosts: ["devpc"] }) as unknown as Backend;
+  const full = new FakeBackend({ root: tempDir("boxes-list-full"), storage: scopedStorage(world.kv, "backend/fake:full/"), id: "fake:full", hosts: ["lab2"], maxGuests: 0 }) as unknown as Backend;
+  world.others = [other, full];
+  const acquire = (on: readonly string[]) => world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", on });
+
+  // The list narrows and never reorders: the first in acquire order with room takes the box; a name given twice counts once; a full one is passed over.
+  assert.equal((await acquire(["devpc", world.backend.id])).backend, world.backend.id);
+  assert.equal((await acquire(["devpc", "fake:second", "Fake host on devpc"])).backend, "fake:second");
+  assert.equal((await acquire(["lab2", "devpc"])).backend, "fake:second");
+  await world.boxes.idle();
+  const before = (await world.boxes.list(THREAD)).length;
+
+  // A mistake anywhere refuses the whole acquire, and so does an empty list.
+  await assert.rejects(acquire(["devpc", "elsewhere"]), /No provider is called "elsewhere"\. linux comes from: Fake host, Fake host on devpc, Fake host on lab2\. Leave "on" out for the first with room\./);
+  await assert.rejects(acquire([]), /Name a provider in "on", or leave it out for the first with room\. linux comes from: Fake host, Fake host on devpc, Fake host on lab2\.$/);
+  await assert.rejects(acquire([" ", ""]), /Name a provider in "on"/);
+  assert.equal((await world.boxes.list(THREAD)).length, before, "nothing was placed");
+
+  // A listed provider that is off is passed over like a full one; when none has room, each one's reason comes, then the kind's other providers.
+  world.off.add("fake:second");
+  assert.equal((await acquire(["devpc", world.backend.id])).backend, world.backend.id);
+  await assert.rejects(acquire(["lab2", "devpc"]), /(?=.*Fake host on devpc is off; turn it on in BB Box's settings\.).* linux also comes from Fake host\. Leave "on" out for the first with room\.$/);
+  await assert.rejects(acquire(["devpc"]), /Fake host on devpc is off; turn it on in BB Box's settings\. linux also comes from Fake host, Fake host on lab2\. Leave "on" out for the first with room\.$/);
+  world.off.delete("fake:second");
+  await world.boxes.idle();
+
+  // A spare is claimed only from a listed provider: the first provider's spare stays, and the box is placed on the listed one.
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const placed = await acquire(["devpc"]);
+  assert.equal(placed.backend, "fake:second");
+  assert.equal(placed.timings.spare, undefined, "the spare on the first provider was not claimed");
+  await world.boxes.idle();
 });
 
 test("the registry keeps each kind's last cold starts per backend, not claims from a spare, and counts spares ready per backend", async () => {
