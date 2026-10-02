@@ -96,6 +96,17 @@ export function choiceOf(kind: KindView): Choice {
   return { os: kind.os, arch: archOf(kind), desktop: kind.desktop, gpu: kind.gpu };
 }
 
+/** The hosts the providers run on, for the Host menu, in acquire order. A pool, with no host of its own, is under Any host only. */
+export function hostsOf(kinds: readonly KindView[]): string[] {
+  return [...new Set(kinds.flatMap((kind) => kind.offers.flatMap((offer) => offer.hosts)))];
+}
+
+/** The kinds as one host can make them: only the offers on it, and no kind that has none there; every kind for Any host. */
+export function onHost(kinds: readonly KindView[], host: string | null): KindView[] {
+  if (host === null) return [...kinds];
+  return kinds.map((kind) => ({ ...kind, offers: kind.offers.filter((offer) => offer.hosts.includes(host)) })).filter((kind) => kind.offers.length);
+}
+
 export type FormFilter = "all" | "container" | "vm" | "physical";
 export const FORM_FILTERS: readonly { readonly id: FormFilter; readonly label: string; readonly words: string }[] = [
   { id: "all", label: "All", words: "Every provider below" },
