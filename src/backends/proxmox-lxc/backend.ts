@@ -359,6 +359,7 @@ export class ProxmoxLxcBackend implements Backend {
   readonly nature = "virtual" as const;
   readonly label: string;
   readonly hosts: readonly string[];
+  readonly hostOs = "linux" as const;
   readonly #config: LxcConfig;
   readonly #context: BackendContext;
   readonly #options: LxcBackendOptions;

@@ -5,7 +5,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
-import type { BackendDriver, DoctorReport, MachineAccess } from "../backends/types.ts";
+import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../backends/types.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -241,6 +241,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // The Docker API relay (042): a socket per BB machine for the docker CLI, each
   // connection a channel on one WebSocket the machine's worker opens out to this route.
   const machineNames = new Map<string, string>();
+  /** Each BB machine's OS, as bb-box's host entry there last reported it. */
+  const machinePlatforms = new Map<string, GuestOs>();
   const machineStates = new Map<string, { at: number; connected: boolean | null; offline: string | null }>();
   /**
    * Whether BB shows the machine connected and has heard from it lately, from
@@ -299,6 +301,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       await relay.endpoint(hostId);
     },
     name: (hostId) => machineNames.get(hostId) ?? null,
+    platform: (hostId) => machinePlatforms.get(hostId) ?? null,
     connected: machineConnected,
   };
 
@@ -559,6 +562,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],
     async found(hostId, signal) {
       const answer = await host.call("docker", {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+      if (answer.platform) machinePlatforms.set(hostId, answer.platform);
       // A socket that refused BB's daemon is Docker to fix, not a machine without Docker.
       if (answer.refused) throw new Error(answer.reason ?? "Docker's socket refused BB's daemon.");
       return answer.found ? null : `there is no Docker to reach: ${answer.reason ?? "it did not answer"}`;

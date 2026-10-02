@@ -144,7 +144,7 @@ export interface KindView {
   readonly backends: readonly string[];
   /** What its boxes are on those backends, as badges, each once. */
   readonly forms: readonly BoxForm[];
-  /** Each offer, in the order acquire tries them, for the picker's detail pane. */
+  /** Each offer, in the order acquire tries them, for the New box form's provider rows. */
   readonly offers: readonly OfferView[];
   /** Its boxes run a computer-use driver, on every backend that offers it. */
   readonly computerUse: boolean;
@@ -175,6 +175,8 @@ export interface OfferView {
   readonly typicalReadyMs: number | null;
   /** This offer's boxes have Docker (041). */
   readonly docker: boolean;
+  /** The OS of the machine the boxes run on, for "Runs on"; null while the backend does not know it yet, which the form treats as "could be any". */
+  readonly hostOs: GuestOs | null;
 }
 
 /** A kind's spare boxes (032): how many it keeps, and how many are ready or being made. */
@@ -219,6 +221,7 @@ export function kindViews(
       resizable: kind.capabilities.displays.length ? (kind.capabilities.displays[0]!.resizable ?? false) : null,
       typicalReadyMs: typical[key] ?? null,
       docker,
+      hostOs: backend.hostOs ?? null,
     };
     const computerUse = kind.capabilities.computerUse !== null;
     if (existing) {

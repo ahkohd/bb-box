@@ -36,18 +36,19 @@ size ([#58](https://github.com/moonstead/bb-box/issues/58), decision 028).
 ## Names
 
 Kinds follow the operator's decisions of 1 October 2026: a kind is named by
-its OS, and what it has reads as badges or, in the picker, as the row's
-name within its OS group.
+its OS, and what it has reads as badges or, in the New box form, as the
+steps that name it (System, Architecture, Type, and a GPU under
+Resources).
 
-| Kind ID | Box row | Picker row, under its OS | Icon |
+| Kind ID | Box row | New box steps | Icon |
 | --- | --- | --- | --- |
-| `linux` | Linux [LXC] | Terminal | server |
-| `linux-desktop` | Linux [Desktop] [GPU] [LXC] | Desktop, GPU | monitor |
-| `linux-desktop-cpu` | Linux [Desktop] [LXC] | Desktop | monitor |
-| `linux-arm64`, `linux-arm64-desktop-cpu` | Linux [arm64] [VM], Linux [Desktop] [arm64] [VM] | Terminal, arm64; Desktop, arm64 | server, monitor |
-| `macos`, `macos-desktop` | macOS [VM], macOS [Desktop] [VM] | Terminal; Desktop | server, monitor |
-| `windows-desktop` | Windows [Desktop] [VM] | Desktop | monitor |
-| `windows-arm64-desktop` | Windows [Desktop] [arm64] [VM] | Desktop, arm64 | monitor |
+| `linux` | Linux [LXC] | Linux · x86_64 · Server | server |
+| `linux-desktop` | Linux [Desktop] [GPU] [LXC] | Linux · x86_64 · Desktop · 1 GPU | monitor |
+| `linux-desktop-cpu` | Linux [Desktop] [LXC] | Linux · x86_64 · Desktop · no GPU | monitor |
+| `linux-arm64`, `linux-arm64-desktop-cpu` | Linux [arm64] [VM], Linux [Desktop] [arm64] [VM] | Linux · arm64 · Server; Linux · arm64 · Desktop | server, monitor |
+| `macos`, `macos-desktop` | macOS [VM], macOS [Desktop] [VM] | macOS · arm64 · Server; macOS · arm64 · Desktop | server, monitor |
+| `windows-desktop` | Windows [Desktop] [VM] | Windows · x86_64 · Desktop | monitor |
+| `windows-arm64-desktop` | Windows [Desktop] [arm64] [VM] | Windows · arm64 · Desktop | monitor |
 
 `linux-docker` and `linux-arm64-docker` are aliases an agent may ask for,
 never rows (041: every Linux box has Docker). The panel shows the OS and
@@ -73,17 +74,18 @@ New box options and the desktop lists:
 - **What the box is**, one word from its backend's driver: LXC, Container
   (the Docker backend's, so the word Docker means the feature, 041), VM
   or Physical. A kind on offer from several backends shows each once.
-- **Ready now**, in the New box options only, last, on a kind with a spare
-  box ready (032), so a box of it comes at once. A box claimed from a spare
-  needs nothing more: its status line says "Ready in 0.1 s".
 
 In that order. Nothing else is a badge; the backend's name is in the row's
-details. Calm, not stacked.
+details. Calm, not stacked. A spare ready (032) is no badge either: in the
+New box form the provider's row says "1 ready now", in green, so a box of
+it is known to come at once. A box claimed from a spare needs nothing
+more: its status line says "Ready in 0.1 s".
 
-Badges never squeeze a name. In the New box options they sit on a line
-of their own under the label (the operator's annotation of 1 October 2026:
-Linux's four badges had left one letter of its name). In a row the title
-line wraps, so badges go under the name before the name would truncate.
+Badges never squeeze a name. In a row the title line wraps, so badges go
+under the name before the name would truncate. The New box form carries
+no badges: what a card or a row has sits in words on a line of its own
+under its name (the operator's annotation of 1 October 2026: Linux's four
+badges had once left one letter of its name).
 bb-box's own icon is a cube; BB has no cube, monitor, server or terminal glyph, so the
 plugin declares its four as SVGs (`bb.branding.experimental_icons`), drawn
 in the weight of BB's set.
@@ -209,116 +211,125 @@ Anything in the box user's home will be deleted."
 ### New box
 
 The plus opens a popover (a bottom sheet on compact viewports) with one
-small form. On a viewport of 640 px or more it has two columns, a detail
-pane left of the list, as the operator asked (1 October 2026); narrower,
-the pane sits under the list, above Size.
+form of steps that narrow each other, the operator's redesign of
+1 October 2026: the form asks what the person wants, not which of the
+catalogue's kinds they can tell apart. Each step is a row, its label in a
+column of its own left of its options (`text-xs font-medium`), so the
+labels line up; on a viewport under 640 px the label sits above its
+options.
 
 ```
-+--------------------------------+---------------------------------------+
-| [#] Linux desktop on a GPU     | Kind                                  |
-| [P] Proxmox LXC on pve1   |  Linux                                |
-|     · LXC container · 1 ready  |   (o) [=] Terminal        [P][m][D]   |
-|     now · usually about 3 s    |           [LXC] [Physical] [Container]|
-|                                |           [Ready now]                 |
-| System    Linux x86_64 · root  |   ( ) [#] Desktop, GPU        [P] pve |
-|           through sudo         |           [LXC]                       |
-| Has       a desktop on the GPU |   ( ) [#] Desktop          [P][D]     |
-|           · computer use ·     |           [LXC] [Container]           |
-|           follows the panel's  |  macOS                                |
-|           size · Docker        |   ( ) [#] Desktop        [L] 2 Macs   |
-| BB machine yes: Git            |           [VM]                        |
-|           credentials, machine |  Windows                              |
-|           variables, child     |   ( ) [#] Desktop         [P] pve     |
-|           threads              |           [VM]                        |
-| Sizes     Small 4 cores · 8    | Size                                  |
-|           GiB (default) · ...  |  [ Small ] [ Medium ] [ Large ] [ Custom ] |
-|                                |  4 cores · 8 GiB memory · base disk   |
-|                                | [ Create ]                            |
-+--------------------------------+---------------------------------------+
++-------------------------------------------------------------------+
+| System        [ Linux         ] [ macOS      ] [ Windows         ] |
+|               [ pve1, pool    ] [ mac-mini   ] [ pve1            ] |
+| Architecture  [ x86_64        ] [ arm64      ]                     |
+|               [ 64-bit Intel… ] [ Not avail… ]                     |
+| Type          [ [=] Server    ] [ [#] Desktop                    ] |
+|               [     Terminal  ] [     Screen · Terminal · Comp… ] |
+| Provider      Kind     (All) (Container) (VM) (Physical)           |
+|               Runs on  [ Any machine        v ]                    |
+|               (o) First with room                                  |
+|                   Any of the 3 below, in order                     |
+|               ( ) [P] pve1           Container · 1 ready now · ~2 s|
+|               ( ) [|] SSH host pool  Physical · 1 free             |
+|               ( ) [D] docker-host    Container · usually ~1.8 s    |
+| Resources     [ Small ] [ Medium ] [ Large ] [ Custom ]            |
+|               GPU      (None) (1 GPU)                              |
+| Name          [ optional; bb-box picks one                       ] |
+|-------------------------------------------------------------------|
+| Linux · x86_64 · Desktop on first provider with room ·  [ Create ] |
+| 4 cores · 8 GiB · 1 GPU                                            |
+| Access [Terminal] [Desktop] [Computer use]                         |
++-------------------------------------------------------------------+
 ```
 
 The popover has no heading of its own: the button that opens it is named
-"New box", so its first line is "Kind" (the operator's annotation of
-1 October 2026, and a later one the same day took the colons off). "Kind"
-and "Size" are the section labels, in
-`text-xs font-medium text-foreground`, so they stand above their options
-(a second annotation the same day). On a compact viewport the bottom sheet
-still carries the title "New box".
+"New box", so its first line is the System step (the operator's design
+session of 1 October 2026 took the "Add Box" heading off, and gave the
+footer the form's own background, not a band). On a compact viewport the
+bottom sheet still carries the title "New box".
 
-- **Kind** is a list of options grouped by OS (Linux, macOS, Windows, as
-  small group labels), each option named by its tools within the group,
-  "Terminal" or "Desktop", with GPU and arm64 in the name ("Desktop, GPU",
-  "Terminal, arm64"), so a list is never "Linux, Linux, Linux" (the
-  operator's note of 1 October 2026). Under the name, on a line of its own,
-  the badges say what the boxes are (LXC, Container, VM, Physical), "No
-  Docker" for a Linux kind no offer of which has Docker (041), and "Ready
-  now" when a spare is ready (032). At the right, a provider mark per
-  offer: the provider's glyph (Proxmox, Docker, a laptop for a Mac, a plug
-  for a pool machine)
-  and the host's name when the kind has one offer. Options are chosen with
-  a click or the arrow keys; the chosen one is highlighted with a check.
-  The list comes from the kinds on offer, so a new backend's kinds need no
-  panel change. Descriptions stay where agents read them, in `box_list`
-  and the skill.
-- **The detail pane** follows the pointer over an option or the keyboard
-  focus, and shows the chosen kind otherwise, so it is never empty. It
-  gives the kind's full name ("Linux desktop on a GPU"); each offer in
-  acquire order, with the provider and host ("Proxmox LXC on pve1",
-  "Tart on 2 Macs", "SSH host pool"), what the boxes are, spares ready
-  now, free pool machines and the usual cold start ("usually about 3 s",
-  the median of the kind's last five on that backend); "the first with
-  room, in that order" when there are several; then System (OS, arch,
-  root or Administrator), Has (a desktop and how it is drawn, computer
-  use, follows the panel's size, Docker), Lacks when something is missing
-  (Docker on Windows), BB machine (yes with what that gives, or no with
-  what that costs), and Sizes, each fact a row with a dim small label
-  above its words (two columns wrapped into a mess at the pane's width,
-  the operator's note of 1 October 2026). Names read at full strength: the
-  kind's, and each provider's in its brand colour (Proxmox orange, Docker
-  blue, a neutral for a Mac's laptop and a pool machine's plug, shades
-  that read on light and dark); the rest is dim: "or", what the boxes
-  are, the usual start, the sizes; "ready now" is green. Every option
-  describes itself by the pane (`aria-describedby`), so a screen reader
-  hears the details after the name on focus; the pane is not a live
-  region, so hovering says nothing.
+- **System** is a card per OS on offer, Linux, macOS, Windows in that
+  order, with its hosts under the name ("pve1, SSH host pool") or, past
+  two, how many providers have it ("3 providers").
+- **Architecture** is x86_64 and arm64, always both, with "64-bit Intel /
+  AMD" or "64-bit ARM" under them. One no kind of the system has greys out
+  and says "Not available"; a click on it does nothing.
+- **Type** is Server or Desktop, with what each gives under it:
+  "Terminal", or "Screen · Terminal · Computer use". A terminal is access,
+  not a type (the operator's note), so it is a chip in the summary, not a
+  card. A type the system and architecture lack greys out the same way.
+- **The steps narrow each other.** Each shows every option, and the choice
+  is the nearest that exists: picking Windows, which has no server, moves
+  Type to Desktop; picking arm64 where only a server exists moves Type to
+  Server; the GPU follows the same way. Nothing is ever chosen that no kind
+  is. The form maps the steps to today's kind IDs (`src/app/box-form.tsx`,
+  `kindFor`), so the IDs appear nowhere and a new kind needs no panel
+  change. Descriptions stay where agents read them, in `box_list` and the
+  skill.
+- **Provider** is where the box goes (044), under two rows of filters with
+  their labels aligned. **Kind** chips: All, Container (LXC or Docker),
+  VM, Physical; a chip greys out when no provider of the kind makes that
+  form. **Runs on**: a menu of Any machine, a Mac, a Linux machine, a
+  Windows PC, listing the machines the providers run on
+  (`OfferView.hostOs`); Physical hides it, since a pool machine runs on
+  nothing. A provider that does not know its machine's OS yet (a Docker
+  machine whose daemon has not answered) stays under every Runs on choice,
+  so it does not vanish. Then a radiogroup, Provider: "First with room",
+  chosen at first, with "Any of the N below, in order" under it; then one
+  row per provider: its glyph in its brand colour (Proxmox orange, Docker
+  blue, a neutral laptop for a Mac and plug for a pool machine), its name,
+  and its words: what the boxes are, spares "ready now" in green, free
+  machines, and the usual cold start ("usually ~3.1 s", the median of the
+  kind's last five on that backend). A row's name is its host ("pve1"),
+  "2 Macs" or "3 hosts" for several, the backend's label for a pool, and
+  "an unnamed machine" for a Docker machine BB has not named: a row never
+  shows a host ID (the operator's rule). One provider is no choice: its
+  row stands alone, checked, and the request sends no `on`. The chosen
+  row's backend ID goes as `on`; a filter that leaves one provider sends
+  that one too. First with room among several that a filter left sends
+  nothing, and its words say so ("Any provider with room, not only these
+  2"), since 044 takes one provider or none. The choice and the filters
+  are not remembered: another type, or closing the form, puts them back.
+- **Resources** are the kind's presets (028), Small, Medium and Large,
+  each with its cores and memory under it, and Custom with "up to N
+  cores"; the kind's default preset is chosen at first. Custom shows three
+  fields, cores, memory in GiB and disk in GiB, each with "up to" the
+  kind's largest, starting from the preset the person was looking at; a
+  field left empty takes the default preset's value, and an empty disk
+  keeps the base disk. A desktop whose system has both a GPU desktop and
+  a CPU one adds a GPU row, None or 1 GPU. The form sends a preset by
+  name, or the custom fields, and nothing for the default.
+- **Name** appears for Add machine only (036): optional, "bb-box picks
+  one" as its placeholder, checked as the person types.
+- **The summary bar** closes the form, above a hairline on the form's own
+  background: one line that reads the choice back, "Linux · x86_64 ·
+  Desktop on first provider with room · 4 cores · 8 GiB · 1 GPU" (the
+  provider's name when one is chosen or one is left), then **Access**
+  chips, Terminal always, Desktop and Computer use when the box has them,
+  and the one primary button, **Create**, or **Add** for a machine. Enter
+  does the same. The popover closes, and the new row appears with
+  "Starting".
 - **Glyphs** the panel draws itself (`src/app/glyphs.tsx`): the server,
   monitor, terminal, laptop and plug, and the Proxmox and Docker marks,
   are inline SVG with their size reserved, so they show at once and nothing
   moves when they appear (the operator's note of 1 October 2026). The same
   drawings sit in `assets/` for BB's own places, the tab and the settings
   page.
-- **Where the box goes** (044): when the pane shows the chosen kind and
-  the kind has more than one offer, its offers are a choice, a radiogroup
-  named Provider: "First with room · in this order" comes first and is
-  chosen at first, then each offer with its words. The form sends the
-  chosen offer's backend ID as `on`; the first with room sends nothing.
-  Choosing another kind puts the choice back; it is not remembered. A kind
-  under the pointer keeps its offers as plain text. Tab order: kinds, the
-  provider choice when there is one, Size, Name, Create. A refusal shows
-  under the button, as other refusals do. Add machine (036) is the same
-  form, so it has the same choice.
-- **Size** follows decision 028: Small, Medium and Large are the kind's
-  presets, and the kind's default preset is chosen at first; being chosen
-  says so, so nothing calls it the default. The chosen size's words sit
-  under the control as a caption ("2 cores · 4 GiB memory · base disk"), in
-  BB's `text-xs` at 12 px and the subtle foreground, as are the custom
-  fields' labels; the operator asked for the caption at about 12 px
-  (1 October 2026). Custom shows three fields, cores, memory in GiB and
-  disk in GiB, each with "up to" the kind's largest, starting from the
-  preset the person was looking at; a field left empty takes the default
-  preset's value, and an empty disk keeps the base disk. The form sends a
-  preset by name, or the custom fields, and nothing for the default.
-- **Create** is the one primary button. Enter does the same. The popover
-  closes, and the new row appears with "Starting".
-- The form remembers the last kind and size in the browser, keyed by plugin
-  ID, so the next box is two clicks.
+- The form remembers the last kind (as the steps that name it) and size
+  in the browser, keyed by plugin ID, so the next box is two clicks.
 - A refusal (no room, the thread's limit, a size above the largest) shows
-  under the button in destructive text, with the backend's words, and the
-  popover stays open so the person can pick another size or kind.
-- The pane's data comes with each kind (`KindView.offers`,
-  `computerUse`): the registry keeps the last five cold starts of each kind
-  on each backend and counts spares ready per backend, and a real backend
-  gives its free machines from its last survey.
+  under the bar in destructive text, with the backend's words, and the
+  popover stays open so the person can pick another size or provider.
+- Keyboard: each step is a radiogroup; the arrow keys move within it, and
+  Tab moves between the steps, the filters, the provider choice,
+  Resources, Name and Create.
+- The form's data comes with each kind (`KindView.offers`, `computerUse`):
+  the registry keeps the last five cold starts of each kind on each
+  backend and counts spares ready per backend, a real backend gives its
+  free machines from its last survey, and each backend says what its
+  machine runs (`Backend.hostOs`: Linux for a Proxmox node and a pool
+  machine, a Mac for Tart, and for Docker what the machine says).
 
 ### The box this thread runs on
 
@@ -506,7 +517,7 @@ panel."
 | plugin description | Computers for BB threads. The plugin shows as "BB Box"; its ID stays bb-box. |
 | tab titles | Box; the box's name for its desktop |
 | toolbar | New box |
-| chooser | Kind · Size · Small · Medium · Large · Custom · Create |
+| chooser | System · Architecture · Type · Server · Desktop · Not available · Provider · Kind · All · Container · VM · Physical · Runs on · Any machine · First with room · Resources · Small · Medium · Large · Custom · GPU · None · 1 GPU · Access · Create |
 | empty | No boxes yet · A computer for this thread. |
 | not set up | BB Box is not set up yet. Set a backend up in its settings and turn it on. · Open BB Box settings |
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |

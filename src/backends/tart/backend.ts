@@ -465,6 +465,7 @@ export class TartBackend implements Backend {
   readonly id: string;
   readonly label: string;
   readonly hosts: readonly string[];
+  readonly hostOs = "macos" as const;
   readonly nature = "virtual" as const;
   readonly #config: TartConfig;
   readonly #context: BackendContext;
