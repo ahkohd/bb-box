@@ -28,6 +28,43 @@ Check 'git and gh on PATH' {
   if (-not $git -or -not $gh) { throw 'missing' }; "$git; $gh"
 }
 Check 'NO_COLOR set' { if ($env:NO_COLOR -ne '1') { throw "NO_COLOR is '$env:NO_COLOR'" }; 'NO_COLOR=1' }
+Check 'C++ build tools and SDK' {
+  $tools = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
+  $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+  $vs = & $vswhere -products * -requires $tools -latest -property installationVersion
+  if (-not $vs) { throw "no Visual Studio with $tools" }
+  $sdk = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" -Name -ErrorAction SilentlyContinue | Sort-Object | Select-Object -Last 1
+  if (-not $sdk) { throw 'no Windows SDK' }; "Build Tools $vs, SDK $sdk"
+}
+Check 'cargo, rustc and clang on PATH' {
+  $cargo = cargo --version; $rustc = rustc --version; $clang = clang --version | Select-Object -First 1
+  if (-not $cargo -or -not $rustc -or -not $clang) { throw 'missing' }; "$rustc; $clang"
+}
+# A program each way a build makes one: Rust with MSVC's linker, and C with clang.
+Check 'cargo builds and runs a program' {
+  $dir = Join-Path $env:TEMP "bb-box-check-$PID"
+  cargo new --vcs none --quiet $dir 2>&1 | Out-Null
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $out = cargo run --quiet --offline --manifest-path "$dir\Cargo.toml" 2>&1
+  $ms = $sw.ElapsedMilliseconds
+  Remove-Item $dir -Recurse -Force
+  if ("$out" -notmatch 'Hello, world!') { throw "$out" }; "built and ran in $ms ms"
+}
+Check 'clang builds and runs a C program' {
+  $dir = Join-Path $env:TEMP "bb-box-check-c-$PID"
+  New-Item -ItemType Directory -Force $dir | Out-Null
+  Set-Content "$dir\hello.c" '#include <stdio.h>
+int main(void) { puts("hello from clang"); return 0; }'
+  $build = clang "$dir\hello.c" -o "$dir\hello.exe" 2>&1
+  $out = if (Test-Path "$dir\hello.exe") { & "$dir\hello.exe" } else { "$build" }
+  Remove-Item $dir -Recurse -Force
+  if ("$out" -ne 'hello from clang') { throw "$out" }; "$out"
+}
+# The build tools take about 12 GB; a box keeps room for a project's builds.
+Check 'C: has at least 20 GB free' {
+  $free = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+  if ($free -lt 20) { throw "$free GB free" }; "$free GB free"
+}
 Check 'address from the SMBIOS serial' {
   $line = Get-Content C:\bb-box\boot.log -Tail 1
   if ($line -notmatch ' address \d') { throw $line }; $line -replace '^\S+ ', ''

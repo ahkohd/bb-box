@@ -5,10 +5,11 @@
 #
 # Installs Windows 11 unattended from BBBOX_WINDOWS_ISO with the answer file in
 # answer/, in a VM on the box bridge: the VirtIO drivers and the QEMU guest
-# agent, OpenSSH with PowerShell 7 and the plugin's key, Cua Driver, and user
-# box logged on automatically. Then it makes the VM a template, not
-# generalized, and checks a linked clone of it over SSH with check.ps1. About
-# 45 minutes, nearly all of it Windows Setup and OpenSSH from Windows Update.
+# agent, OpenSSH with PowerShell 7 and the plugin's key, Cua Driver, build
+# tools (Visual Studio Build Tools for C++, LLVM and Rust), and user box logged
+# on automatically. Then it makes the VM a template, not generalized, and
+# checks a linked clone of it over SSH with check.ps1. About 50 minutes, nearly
+# all of it Windows Setup, OpenSSH from Windows Update and the build tools.
 #
 # Options: --replace  <vmid> may be a bb-box Windows template already. The new
 #                     one is built and checked in another VM (BBBOX_BUILD_VMID,
@@ -56,6 +57,15 @@ GIT_VERSION=2.56.0
 GIT_SHA256=BFE94E7B419B16EEE9FECBD1253A98E3D4F49BA8F029630549052278FFE286A6
 GH_VERSION=2.101.0
 GH_SHA256=9BA92256A431D254706844EE1991F6F4A9559A3C3646FF7AE7FE23724BFAEF83
+# Build tools: Visual Studio Build Tools' fixed-version bootstrapper, LLVM and
+# rustup (whose stable toolchain is the latest, as on Linux boxes).
+VS_VERSION=18.10.2
+VS_SHA256=5BE7256FA9B1A3C18A481D234ABB45146F82CCC057C77449B94915E1AE3FD70E
+VS_URL=https://download.visualstudio.microsoft.com/download/pr/daabba86-451d-47eb-aae2-c96c177f6868/5be7256fa9b1a3c18a481d234abb45146f82ccc057c77449b94915e1ae3fd70e/vs_BuildTools.exe
+LLVM_VERSION=23.1.2
+LLVM_SHA256=E9D9141524F2C9FE4BF9F37012EFE34F0AA745617BE9E21FFACE9104703C55E5
+RUSTUP_VERSION=1.29.1
+RUSTUP_SHA256=6F4BEF66261261FCB43131BE8720BAB817D403A09EDEC7455C371974B90BDB7E
 
 for tool in genisoimage jq python3 ssh scp; do command -v "$tool" >/dev/null || die "$tool is required"; done
 [ -f "$BBBOX_SSH_KEY.pub" ] || die "no plugin key at $BBBOX_SSH_KEY.pub: run ../proxmox-lxc/host/setup-host.sh"
@@ -155,6 +165,12 @@ json.dump({
             "url": "https://github.com/git-for-windows/git/releases/download/v$GIT_VERSION.windows.1/Git-$GIT_VERSION-64-bit.exe"},
     "gh": {"version": "$GH_VERSION", "sha256": "$GH_SHA256",
            "url": "https://github.com/cli/cli/releases/download/v$GH_VERSION/gh_${GH_VERSION}_windows_amd64.msi"},
+    "vs": {"version": "$VS_VERSION", "sha256": "$VS_SHA256", "url": "$VS_URL",
+           "components": ["Microsoft.VisualStudio.Workload.VCTools"]},
+    "llvm": {"version": "$LLVM_VERSION", "sha256": "$LLVM_SHA256",
+             "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-win64.msi"},
+    "rustup": {"version": "$RUSTUP_VERSION", "sha256": "$RUSTUP_SHA256",
+               "url": "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/x86_64-pc-windows-msvc/rustup-init.exe"},
 }, open(sys.argv[1], "w"), indent=2)
 EOF
 genisoimage -quiet -J -r -V BBBOXANSWER -o "$answer_iso" "$work/answer"
@@ -278,7 +294,7 @@ qm destroy "$check_vm" --purge 1 >/dev/null
 check_vm=
 [ "$checked" = 0 ] || die "the check failed (above)"
 
-description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION."
+description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION."
 # The pool's ACL lets the plugin's token delete guests in it; protection keeps
 # it from deleting templates. Clones inherit the flag, so the plugin clears it
 # on each box (delete=protection) when it configures the box.

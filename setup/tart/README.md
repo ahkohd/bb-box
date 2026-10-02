@@ -250,8 +250,10 @@ image that `prepare-windows-image.sh` builds in QEMU from your own Windows
 Windows unattended with the Proxmox Windows template's answer file and
 first-logon scripts (`../proxmox-qemu`), adapted for arm64, and the arm64
 virtio-win drivers, so a Windows box on a Mac has what one on Proxmox has:
-OpenSSH with PowerShell 7 as its shell, Git, GitHub CLI and Cua Driver,
-with `box` logged on at boot. Then it boots the image once as a box boots,
+OpenSSH with PowerShell 7 as its shell, Git, GitHub CLI, Cua Driver and
+the build tools (Visual Studio Build Tools with the ARM64 C++ tools, LLVM and
+Rust), with `box` logged on at boot. The build tools take about 14 GB, and a
+box keeps about 24 GB free. Then it boots the image once as a box boots,
 and checks a clone of it over SSH (`../proxmox-qemu/check.ps1`), saved and
 restored as bb-box stops and starts a box.
 
@@ -271,8 +273,8 @@ restored as bb-box stops and starts a box.
 | `--replace` | off | Build an image of that name again. Boxes made from the old build keep it |
 | `--keep` | off | Keep a failed build's directory, to boot and look at |
 
-It takes about 20 minutes on an M4 Max, and needs about 25 GiB beyond the
-reserve while it runs; the image keeps about 15 GiB. Watch Setup with a VNC
+It takes about 30 minutes on an M4 Max, and needs about 40 GiB beyond the
+reserve while it runs; the image keeps about 30 GiB. Watch Setup with a VNC
 viewer on the Mac, at the address the script prints. Each build is a
 directory of the image, `build.<time>`, with a read-only `disk.qcow2` and
 the UEFI variables; `current` links to the one new boxes are made from. A

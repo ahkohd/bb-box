@@ -81,6 +81,11 @@ Docker on devpc"), the words `box_acquire`'s `on` takes (044). The kinds:
 - `windows-arm64-desktop`: the same on arm64, as a VM on a Mac with Apple
   silicon (046); x64 apps run under Windows' emulation, more slowly
 
+Windows boxes have build tools: Visual Studio Build Tools (MSVC and the
+Windows SDK), LLVM (`clang`) and Rust (`cargo`, `rustc`, stable MSVC). They
+have no GPU: DirectX apps, GPUI's included, render on WARP, Windows' software
+renderer, smoothly at the box's screen size.
+
 Both Linux desktops are labelled "Linux desktop" in `box_list`, `bb box
 kinds` and `box_status`, with "(GPU)" after the GPU one; the panel names
 every kind by its OS and shows Desktop, GPU, arm64 and the rest as badges.
@@ -191,6 +196,10 @@ with `computer_observe` first, and act on its references. Take an image with
 - Of two windows of one app a few pixels apart, the desktop reads one's tree
   for both. bb-box then moves the window you read a little way, and says so.
   It cannot move a maximised window: un-maximise or close one of the two.
+- On Windows, `computer_windows` lists only windows with a title: give the
+  windows of an app you write one. An app that draws everything itself,
+  such as a GPUI app, has no accessibility tree: `computer_observe` shows
+  only its frame, so drive it with `computer_screenshot` and pixel actions.
 - While a person holds control, every computer tool refuses at once. Wait,
   or call `computer_take_control` once they ask you to continue or have
   clearly finished. Either way, references and images are gone: observe

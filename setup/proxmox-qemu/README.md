@@ -34,15 +34,15 @@ backend, so set that up first ([../proxmox-lxc/README.md](../proxmox-lxc/README.
   Windows works, with a watermark and some personalisation settings locked.
   Set `BBBOX_WINDOWS_KEY` to your own key, or `BBBOX_WINDOWS_EDITION` to the
   edition your ISO and key are for. bb-box never ships Windows images.
-- About 25 GiB free on the box storage, and internet access from the box
-  bridge: the first logon downloads OpenSSH from Windows Update, PowerShell 7
-  and Cua Driver.
+- About 40 GiB free on the box storage, and internet access from the box
+  bridge: the first logon downloads OpenSSH from Windows Update, PowerShell 7,
+  Git, GitHub CLI, Cua Driver and the build tools (about 2 GB).
 
 ## Build it
 
     ./build.sh windows 9104
 
-It takes about 45 minutes, most of it Windows Setup. The VM's console in the
+It takes about 50 minutes, most of it Windows Setup. The VM's console in the
 Proxmox UI shows how far it is. At the end it clones the new template, starts
 the clone at `BBBOX_BUILD_ADDRESS`, and runs `check.ps1` in it over SSH with
 the plugin's key, as the backend will. Then it hibernates the clone and
@@ -77,6 +77,14 @@ place. Boxes cloned from the old one keep running on LVM-thin.
 - Browsers expose their whole page to Cua: at logon the screen-reader flag is
   set, Edge does not keep running in the background, and its link handler
   passes `--force-renderer-accessibility`.
+- Build tools, pinned in `build.sh`: Visual Studio Build Tools (the C++
+  workload, with MSVC and the Windows SDK), LLVM (clang, and libclang for
+  `bindgen`), and Rust through rustup with the stable MSVC toolchain, in
+  `box`'s profile as on Linux boxes. LLVM's `bin` is on the machine's `PATH`
+  and `~\.cargo\bin` on `box`'s, so every new shell, SSH's included, finds
+  `cargo`, `rustc` and `clang`. They take about 12 GB, and a box keeps about
+  28 GB free (the check fails below 20). GPUI and other DirectX apps run on
+  WARP, Windows' software renderer, as a box has no GPU.
 - No Windows Update, no BitLocker device encryption, no hibernation inside
   the guest (Proxmox hibernates boxes from outside).
 

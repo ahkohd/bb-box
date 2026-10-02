@@ -14,10 +14,11 @@
 #
 # It downloads the virtio-win drivers, installs Windows from the ISO with them
 # (Setup, then the first logon, which installs OpenSSH, PowerShell 7, Git,
-# GitHub CLI and Cua Driver), boots it once as a box boots, and checks a clone
+# GitHub CLI, Cua Driver and the build tools: Visual Studio Build Tools for
+# C++, LLVM and Rust), boots it once as a box boots, and checks a clone
 # of it as the backend uses a box, saved and restored. The image is then
 # ~/.bb-box/qemu/images/<name>/build.<time>, with a read-only disk.qcow2 and
-# vars.fd, and the link `current` names it. About 20 minutes, and about 25 GiB
+# vars.fd, and the link `current` names it. About 30 minutes, and about 40 GiB
 # beyond --reserve-gib (50 GiB, as the backend's tart-reserve-disk-gib): the
 # build stops rather than leave less free. --delete-iso deletes the ISO once
 # Setup has copied Windows from it, which gives its space back. --replace
@@ -77,6 +78,15 @@ GIT_VERSION=2.56.0
 GIT_SHA256=C130C04301D06995EF08F1CBD895342844D1FBB3312F5D32CB27CC05B4B394DC
 GH_VERSION=2.101.0
 GH_SHA256=02895F2F9CFC4F5BE0DAADE8314F0F8C1BFC88BF0ED16ADD284B95FA06461DFF
+# Build tools, as ../proxmox-qemu/build.sh pins them, with the ARM64 C++ tools.
+# The bootstrapper is the same; LLVM's clang builds ring, which needs it on arm64.
+VS_VERSION=18.10.2
+VS_SHA256=5BE7256FA9B1A3C18A481D234ABB45146F82CCC057C77449B94915E1AE3FD70E
+VS_URL=https://download.visualstudio.microsoft.com/download/pr/daabba86-451d-47eb-aae2-c96c177f6868/5be7256fa9b1a3c18a481d234abb45146f82ccc057c77449b94915e1ae3fd70e/vs_BuildTools.exe
+LLVM_VERSION=23.1.2
+LLVM_SHA256=72FD68D6DC22723EF55FBB150033BF38C8E860A2B4015DDC59DAD841DB1A30C8
+RUSTUP_VERSION=1.29.1
+RUSTUP_SHA256=01AA49CF9574A8BD0AE52005D7DE2590E8F27181DED6748236E702C92AEF826D
 # The drivers Setup needs for the disk, and Windows for the network and display.
 VIRTIO_VERSION=0.1.302
 VIRTIO_SHA256=303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d
@@ -117,8 +127,8 @@ if [ -e "$images/current" ] && [ "$replace" = 0 ]; then die "$name exists; give 
 kib() { df -k "$images" | awk 'NR == 2 { print $4 }'; }
 floor=$((reserve_gib * 1048576))
 free=$(kib)
-[ "$free" -ge $((floor + 25 * 1048576)) ] ||
-  die "$((free / 1048576)) GiB is free; the build needs 25 GiB beyond the $reserve_gib GiB it leaves free (--reserve-gib)"
+[ "$free" -ge $((floor + 40 * 1048576)) ] ||
+  die "$((free / 1048576)) GiB is free; the build needs 40 GiB beyond the $reserve_gib GiB it leaves free (--reserve-gib)"
 
 build=build.$(date -u +%Y%m%d-%H%M%S)
 d=$images/$build.new
@@ -267,6 +277,12 @@ pin() { printf '"%s": {"version": "%s", "sha256": "%s", "url": "%s"}' "$1" "$2" 
   pin git "$GIT_VERSION" "$GIT_SHA256" "https://github.com/git-for-windows/git/releases/download/v$GIT_VERSION.windows.1/Git-$GIT_VERSION-arm64.exe"
   printf ',\n  '
   pin gh "$GH_VERSION" "$GH_SHA256" "https://github.com/cli/cli/releases/download/v$GH_VERSION/gh_${GH_VERSION}_windows_arm64.msi"
+  printf ',\n  "vs": {"version": "%s", "sha256": "%s", "url": "%s", "components": ["Microsoft.VisualStudio.Workload.VCTools", "Microsoft.VisualStudio.Component.VC.Tools.ARM64"]}' \
+    "$VS_VERSION" "$VS_SHA256" "$VS_URL"
+  printf ',\n  '
+  pin llvm "$LLVM_VERSION" "$LLVM_SHA256" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-woa64.msi"
+  printf ',\n  '
+  pin rustup "$RUSTUP_VERSION" "$RUSTUP_SHA256" "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/aarch64-pc-windows-msvc/rustup-init.exe"
   printf '\n}\n'
 } >"$a/bb-box/build.json"
 hdiutil makehybrid -quiet -iso -joliet -default-volume-name BBBOXANSWER -o "$w/answer.iso" "$a"
@@ -522,9 +538,9 @@ until ended; do sleep 0.1; done
 rm -rf "$c"
 
 # The new build, and `current` names it, in one rename.
-printf 'built=%s\niso=%s\niso-sha256=%s\nedition=%s\nvirtio-win=%s\npwsh=%s\ngit=%s\ngh=%s\ncua=%s\nqemu=%s\nmachine=%s\n%s\n' \
+printf 'built=%s\niso=%s\niso-sha256=%s\nedition=%s\nvirtio-win=%s\npwsh=%s\ngit=%s\ngh=%s\ncua=%s\nvs-buildtools=%s\nllvm=%s\nrustup=%s\nqemu=%s\nmachine=%s\n%s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$iso")" "$iso_sha256" "$edition" "$VIRTIO_VERSION" "$PWSH_VERSION" "$GIT_VERSION" \
-  "$GH_VERSION" "$CUA_VERSION" "$(qemu-system-aarch64 --version | head -n 1)" "$machine" "$(printf '%s\n' "$key" | awk '{ print "key=" $2 }')" \
+  "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$(qemu-system-aarch64 --version | head -n 1)" "$machine" "$(printf '%s\n' "$key" | awk '{ print "key=" $2 }')" \
   >"$d/info"
 mv "$d" "$images/$build"
 d=
