@@ -406,6 +406,9 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   are the ones it was filled with, and it is saved. A box that takes one
   restores it and sets Windows' clock; one that does not restore is
   deleted, and the box gets a clone. Its owner file says `engine=qemu`.
+- A fill, macOS or Windows, needs the default size's memory free on disk
+  beyond the disk reserve, as its suspend or save writes up to that much
+  there. A box needs only the reserve, and what its disk grows by.
 - The tests run the real host scripts against a fake `tart` on a fake Mac
   ([test/fake-tart.mjs](../test/fake-tart.mjs),
   [test/fake-mac.ts](../test/fake-mac.ts)).

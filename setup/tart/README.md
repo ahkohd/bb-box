@@ -368,6 +368,10 @@ While it is made, it takes its memory and 2 GiB more, after each box that
 takes one and after each change of the Windows image's build, QEMU or the
 Mac's macOS, which retire warm VMs. A saved VM takes no memory.
 
+bb-box makes a warm VM, macOS or Windows, only when the Mac has the default
+preset's memory free on disk beyond the disk reserve, for what its suspend
+or save writes. A Mac with less gets no warm VM, and its boxes clone.
+
 ## How the plugin drives a box
 
 - **Sizes.** A box gets the cores and memory of its size. bb-box refuses a
