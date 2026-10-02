@@ -3,7 +3,13 @@
 Status: accepted, 2 October 2026. Extends
 [030](030-a-mac-runs-desktop-commands-through-launchctl-asuser.md): on a
 pool's Mac, the helper writes the desktop sudoers rule for each box's user
-and removes it in the reset.
+and removes it in the reset. Amended while it was built, 2 October 2026: a
+live check on a stand-in Mac, a macOS 27 VM under Tart (#381), measured
+the claim, the display and the reset. The reset now sets the next user as
+the automatic login before it logs the old one out, the helper writes
+`/etc/kcpassword` itself, and on macOS 27 a userspace restart signs the
+next user in. What a real Mac must still confirm is under
+[the live check](#the-live-check).
 
 ## Context
 
@@ -20,7 +26,8 @@ What shapes the design:
 - **Signing in.** loginwindow signs a user in by itself only when it
   starts, from `autoLoginUser` and `/etc/kcpassword`, and only with
   FileVault off. `sysadminctl -autologin set` (macOS 13 and later) writes
-  both. macOS has no other way to start a user's graphical session.
+  both, but on macOS 27 it writes no `kcpassword` and still exits 0. macOS
+  has no other way to start a user's graphical session.
 - **The disk.** The system volume is sealed. What a box changes is on the
   Data volume, and a running Mac cannot roll that back to a snapshot: that
   is done from recoveryOS, where a person signs in.
@@ -103,29 +110,46 @@ Where it fits:
   the display and computer use.
 - The reset makes the next box's user ahead: `bbx-<generation>`, a
   standard user hidden from the login window, in the `_developer` group,
-  with a random password only root on the Mac can read. Its home is made
-  from macOS's template and bb-box's: the login PATH, no sleep and no
-  screen saver, as in Tart's image, and Cua Driver's LaunchAgent.
+  with a random password only root on the Mac can read. The helper gives
+  the password to `sysadminctl` on stdin and writes `/etc/kcpassword`
+  itself, so it is in no command's arguments. Its home is made from
+  macOS's template and bb-box's: the login PATH, no sleep and no screen
+  saver, as in Tart's image, and Cua Driver's LaunchAgent. Its
+  `loginwindow.plist` names the macOS version and build, so its first
+  sign-in does not open Setup Assistant.
 - So a free Mac is a warm box. A claim takes seconds: it writes the
   marker, adds the box's SSH key and 030's sudoers rule for the user, and
   waits for SSH, the user at the console and, for `macos-desktop`, Cua's
   socket. `readyTimeoutMs` is 3 minutes for both kinds.
 - The reset, after the old box's BB machine is removed:
-  1. log the old user out and end its processes;
-  2. make the next user and set it as the automatic login;
-  3. start loginwindow again, which signs the next user in, by the
-     quickest way the live check finds works: restarting loginwindow,
-     `launchctl reboot userspace`, or a full restart. While the Mac
-     restarts, the helper reports the reset as still running, as for the
-     pool's whole-machine reset, and bb-box asks again once it answers;
-  4. remove the old user's crontab, at jobs, System V IPC objects and
-     sudoers rule, and every file it owns on the Data volume, such as in
-     `/private/tmp`, `/Users/Shared` and `/private/var/folders`; then the
-     user with its home;
+  1. make the next user and set it as the automatic login. From then on,
+     whatever signs a user in signs in the next one: while the old user
+     was still the automatic login, macOS signed it in again about 6 s
+     after its logout;
+  2. log the old user out and end its processes;
+  3. start loginwindow again, which signs the next user in. The helper
+     restarts loginwindow, then `launchctl reboot userspace`, then the
+     whole Mac, each when the way before has not signed the user in within
+     its time, and the Mac's next reset starts with the way that worked.
+     On macOS 27 restarting loginwindow signed nobody in within 60 s, so a
+     Mac's first reset takes a minute longer, and later ones restart
+     userspace. A restart ends the helper, so it waits for step 5;
+  4. remove the old user's crontab, at jobs, System V IPC objects, sudoers
+     rule, managed preferences and places in groups, including the
+     `-disabled` group that allowing all users to a service makes, and
+     every file it owns on the Data volume, such as in `/private/tmp`,
+     `/Users/Shared` and `/private/var/folders`; then the user with its
+     home. Spotlight can start the user's processes again during the
+     sweep, so the helper logs it out and sweeps `/private/var/folders`
+     again;
   5. the clean check: no process or file of the old user, and the next
-     user at the console. Then the generation moves on.
-- A reset should take a minute or two, after the release, and a claim
-  seconds, plus enrolment: both to be measured.
+     user at the console. While a restart signs the user in, the helper
+     reports the reset as still running, as for the pool's whole-machine
+     reset, and bb-box asks again once it answers. Then the generation
+     moves on.
+- On the stand-in, a claim took 0.7 to 1.3 s, and a release under a
+  minute. A real Mac's full restart is slower than the VM's. Enrolment is
+  not measured yet.
 - FileVault stays off, for the automatic login. If the Mac restarts while
   a box holds it, the box's user signs in again.
 
@@ -177,15 +201,17 @@ Boxes are not a security boundary between each other or from the Mac.
   password from the helper's `display` command each time, as Tart's
   `open()` reads its VNC password, so it is never in `Guest.data`. The
   viewer still gets security type None from the relay.
-- Screen Sharing lets all users sign in, so each new box user can. Its VNC
-  password option stays off.
+- Screen Sharing lets all users sign in, so each new box user can. On
+  macOS 27 it allows administrators only at first, so a person sets it to
+  all users at setup. Its VNC password option stays off.
 - Not resizable at first: the console has the display's size. A Mac with
   no display may need an HDMI dummy plug for a good size. Resizing through
   the backend ([021](021-desktop-resize-through-the-backend.md)) can come
   later.
-- If the live check finds type 30 gone or not showing the console, the
-  fallbacks, in order: the VNC password with Screen Sharing's
-  `VNCAlwaysStartOnConsole` setting; a VNC server of our own.
+- Type 30 showed the box user's console on macOS 27. If a later macOS
+  drops it or stops showing the console, the fallbacks, in order: the VNC
+  password with Screen Sharing's `VNCAlwaysStartOnConsole` setting; a VNC
+  server of our own.
 
 **Computer use is Cua, granted once per Mac.**
 
@@ -206,11 +232,18 @@ Boxes are not a security boundary between each other or from the Mac.
     15.1 and later, from an MDM server only) turns it off;
   - otherwise a person answers it in the box's viewer, once per box.
 
-  The live check measures when it shows. Whether a reset may carry a
+  The stand-in's check did not capture the screen through Cua, so a real
+  Mac's check measures when it shows. Whether a reset may carry a
   person's answer on to the next box's user is for the operator to decide;
   this decision does not.
-- SSH commands get no grants: setup grants none to `sshd-keygen-wrapper`.
-  Desktop commands run through 030's wrapper.
+- SSH commands get no Accessibility or Screen Recording: setup grants
+  neither to `sshd-keygen-wrapper`. Desktop commands run through 030's
+  wrapper.
+- SSH does need Full Disk Access, which a person gives at setup with
+  Remote Login's "Allow full disk access for remote users". Without it,
+  the reset cannot remove the folders macOS protects in a home, such as
+  `~/Library/Mail`. The helper reads one byte of the system's `TCC.db` to
+  tell whether it has it, and a Mac without it is out of service.
 - The helper's status reports Cua's grants from the signed-in user's
   session, and the doctor shows them.
 
@@ -222,10 +255,15 @@ Boxes are not a security boundary between each other or from the Mac.
   users are in `_developer`, so the debugger and Instruments need no
   password.
 - The pool's macOS offers add the features `xcode` and `ios-simulator`
-  when every Mac serving the kind has them, as the pool's Docker feature
-  works; the doctor warns when only some do. No kind requires them yet
-  ([012](012-offers-may-add-features.md)); one can come when an agent needs
-  the promise.
+  when every Mac serving the kind that answered the last survey has them,
+  as the pool's Docker feature works; the doctor warns when only some do.
+  The doctor's `status xcode` keeps its answer in `/var/db/bb-box/xcode`,
+  and each survey reads it while the Mac's Xcode version is the same. No
+  kind requires them yet ([012](012-offers-may-add-features.md)); one can
+  come when an agent needs the promise.
+- App Store updates are off, so Xcode changes only when the operator
+  updates it and runs `setup-mac.sh` again. On macOS 27 only
+  `com.apple.commerce AutoUpdate` turns them off.
 - Simulator devices are per user, in the home. A box starts with Xcode's
   default devices, and the reset removes them. `xcrun simctl` works over
   SSH. The Simulator's window shows on the desktop, where Cua can drive
@@ -264,16 +302,18 @@ Mac mini with 16 GB fits the small and medium macOS presets. Several
   and PID file in box homes at boot
   ([017](017-boxes-clear-bb-daemon-state-at-boot.md));
 - keeps the Mac awake, starts it after a power failure, and turns off
-  automatic macOS updates, which would restart a box;
+  automatic macOS updates, which would restart a box, automatic App Store
+  updates, which would change Xcode under a box, and Spotlight indexing;
 - checks that FileVault is off and Remote Login is on;
 - makes the first box user and signs it in;
 - prints the machine line and host keys, and the steps for a person: turn
-  on Screen Sharing; turn on Cua Driver under Accessibility and Screen
-  Recording, in panes setup opens; install Xcode if wanted.
+  on Screen Sharing for all users; allow full disk access for remote
+  users; turn on Cua Driver under Accessibility and Screen Recording, in
+  panes setup opens; install Xcode if wanted.
 
 The doctor checks per Mac what it checks for Linux machines, and FileVault,
-the automatic login, the box user at the console, Screen Sharing, Cua's
-grants, and Xcode with its iOS runtime when present.
+the automatic login, the box user at the console, Full Disk Access, Screen
+Sharing, Cua's grants, and Xcode with its iOS runtime when present.
 
 **Tests come first on fakes, then on a Mac set aside.**
 
@@ -302,17 +342,22 @@ grants, and Xcode with its iOS runtime when present.
   sign-in that works and the reset's time; type 30 showing the console;
   when the 30-day confirmation shows for a new user; the file sweep's time
   with Xcode installed; the console's size with no display; and a new
-  Simulator device's first boot.
+  Simulator device's first boot. The stand-in measured the first two;
+  [the live check](#the-live-check) lists what a real Mac must confirm.
 
 ## Consequences
 
 - Agents get a real Mac for builds, Apple's tools and the iOS Simulator,
-  and it is reset without reinstalling macOS, in a minute or two after each
-  release, with a claim in seconds.
-- A person spends a few minutes on each Mac at setup, for Screen Sharing
-  and Cua's grants. Without MDM, a person may also answer the 30-day
-  confirmation once per box, if the live check finds it shows, until the
-  operator decides otherwise.
+  and it is reset without reinstalling macOS, in under a minute after each
+  release on the stand-in, with a claim in about a second.
+- On macOS 27 each reset restarts the Mac's userspace. That ends every
+  SSH session on the Mac, including an operator's `machine reset`, which
+  they then run again, and would stop any VM on it: one more reason a
+  pool's Mac is not also a Tart host.
+- A person spends a few minutes on each Mac at setup, for Screen Sharing,
+  Full Disk Access and Cua's grants. Without MDM, a person may also answer
+  the 30-day confirmation once per box, if the live check finds it shows,
+  until the operator decides otherwise.
 - `brew install` does not work in a Mac box.
 - The interface gains `DisplayAuth` `apple`; the helper a `display`
   command; and core's Cua socket a leading `~/`. Nothing else changes.
@@ -320,6 +365,87 @@ grants, and Xcode with its iOS runtime when present.
   removed with the user.
 - The pool's guide, settings text and doctor gain Macs, and its `hostOs`
   may be null.
+
+## The live check
+
+No Mac was set aside yet, so a stand-in ran step 6 of the plan first
+(#381): a macOS 27.0 VM under Tart, with 4 cores, 8 GiB of memory and a
+41 GiB disk. `setup-mac.sh`, the person's steps, the pool backend, its
+doctor and the conformance suite ran against it. The runner ran inside the
+VM and reached the helper through the VM's own SSH, also as the jump host,
+so its load is in the timings: the load average was 18 to 129 during
+resets.
+
+| What | Time |
+| --- | --- |
+| `setup-mac.sh`, with Homebrew already in the image | 35 s |
+| `machine status` | 0.25 to 0.35 s |
+| `machine status grants` | 0.43 to 0.69 s |
+| `machine status xcode`, with no Xcode | about 0.2 s |
+| the doctor, 14 checks | 0.49 to 0.72 s; 0.83 to 1.08 s through the jump host |
+| capacity | 0.27 s; 0.44 s through the jump host |
+| acquiring `macos-desktop` | 0.71 to 1.29 s, of which the claim 0.33 to 0.55 s and SSH 0.24 to 0.32 s |
+| the display's sign-in: `display`, `ssh -W` and type 30 | 2.42 to 3.41 s |
+| the first full frame, 2048 by 1536 | 3.4 to 3.95 s |
+| Cua as the box user: opening, then `list_windows` | 0.11 to 0.20 s, then 0.03 to 0.04 s |
+| `sysadminctl -addUser`, with the password on stdin | 1.40 s |
+| a release: the old user logged out | 2 s in |
+| a release: the sweep | 21 to 37 s |
+| a release: userspace restarting | 20 to 25 s in |
+| the next user's Dock, after `launchctl reboot userspace` | 7 to 10 s; 16 to 22 s without the version stamp |
+| bb-box's next call, once the user is signed in | 0.66 to 0.87 s |
+| a full restart of the VM, to the next user at the console | about 25 s |
+| restarting loginwindow, to the next user at the console | never, within 60 s |
+
+The conformance suite passed for `macos-desktop`. Acquiring took 1,285 ms,
+copying 32 MiB in and out 453 ms, and opening TextEdit 2,167 ms. It skipped
+enrolment, as there was no BB server, resizing, and stopping and starting.
+
+It also found:
+
+- Plain `status` takes well under a second, so a claim's wait and each
+  survey still ask the helper rather than test the console themselves.
+- Type 30 showed the box user's desktop, and Cua's socket was ready at
+  each claim, as the reset had signed the user in.
+- With Full Disk Access, the sweep removed `~/Library/Containers` and
+  `~/Library/Mail` with the rest: 339 entries.
+- A file the reset cannot remove, made with `chflags schg`, which only
+  root can set, failed the release at 25.4 s. The Mac went out of service
+  with the file's name as the reason, the console stayed at the login
+  window, and the old user did not come back. Once the flag was cleared,
+  returning the Mac to service reset it and signed the next user in. The
+  doctor now says when a reset stopped before signing anyone in.
+- A user made again with an earlier user's name and ID met that user's
+  cached groups, and Screen Sharing refused it. The helper flushes the
+  directory service's cache after the group joins.
+- While userspace restarts, the directory service does not answer, so the
+  helper makes no user then.
+- `atq` names no job's owner. A user's at jobs are files it owns in
+  `/private/var/at/jobs`, so the sweep removes them.
+- For the pool as a whole: a jump host's key needs `command="false"`
+  before `restrict,port-forwarding,`, as `restrict` alone still lets the
+  key run commands.
+
+A Mac set aside, as under the hardware above, must still confirm:
+
+- the sweep without Full Disk Access, and whether reading one byte of
+  `TCC.db` tells whether SSH has it. Tart's image has System Integrity
+  Protection off, so root removed the protected folders and read `TCC.db`
+  without Full Disk Access;
+- that Full Disk Access for remote users is off on a new Mac, and the
+  person's step that turns it on;
+- the console's size with no display, with and without an HDMI dummy
+  plug;
+- whether Cua's first screen capture as a new user asks for the 30-day
+  confirmation, as `list_windows` captures nothing;
+- Xcode, which the VM had no room for, with 1.4 GiB free: the sweep's
+  time with it, and a new Simulator device's first boot, which decides
+  whether the reset boots one ahead;
+- a release whose SSH the userspace restart cuts from outside the Mac,
+  tested only on the fake Mac, as the runner was inside the VM;
+- a full restart's time on real hardware;
+- the timings without a runner on the same Mac, and enrolment, with a BB
+  server.
 
 ## Plan
 
@@ -337,6 +463,8 @@ Small PRs, in this order:
 5. Xcode and the Simulator: the features, the doctor's checks, and a
    conformance check that boots a device for offers with `ios-simulator`.
 6. The live check on a Mac set aside, then an amendment with what it
-   measured.
+   measured. A stand-in ran it first (#381); a Mac set aside runs it again
+   for what the stand-in could not check, as under
+   [the live check](#the-live-check).
 
 2 and 3 can be built at once. Nothing before 6 needs a Mac.

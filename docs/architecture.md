@@ -1374,9 +1374,10 @@ Push work to Git or copy it out before releasing a box.
 
 How each backend fits the interface. Proxmox LXC, Proxmox QEMU (Windows),
 Docker, the SSH host pool and Tart, with Windows on a Mac, are built.
-Physical Macs, as SSH pool machines (047), are built and wait for the live
-check on a Mac. Clouds are planned, and the later-backends research fills in
-the details.
+Physical Macs, as SSH pool machines (047), are built and passed the live
+check on a stand-in Mac, a macOS VM; a Mac set aside must still confirm
+what the VM could not show. Clouds are planned, and the later-backends
+research fills in the details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | SSH host pool, Macs (047) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1446,14 +1447,16 @@ Notes:
   since a box with Docker is root on the machine. The machine holds the
   truth: a marker names the install and box, and the reset generation
   moves on with each reset. Desktops and rootless Docker are not
-  built yet. Macs will join the pool with a helper of their own (047).
+  built yet. Macs join the pool with a helper of their own (047).
 - **Physical Macs** (047) have one console session, and a box takes the
   whole Mac. Its user, new for each box, is signed in at the console before
-  the claim, so a claim takes seconds. The reset removes the old user and
-  what it left, and starts loginwindow again so the automatic login signs
-  the next user in, which needs FileVault off. Cua's grants are per Mac: a
-  person gives them once at setup, or MDM gives Accessibility, and they
-  hold through every reset.
+  the claim, so a claim takes about a second. The reset sets the next user
+  as the automatic login, removes the old user and what it left, and
+  starts loginwindow again so the automatic login signs the next user in,
+  which needs FileVault off. On macOS 27 only a userspace restart does
+  that, which ends every SSH session on the Mac. Cua's grants, and Full
+  Disk Access for the reset's SSH, are per Mac: a person gives them once
+  at setup, or MDM gives Accessibility, and they hold through every reset.
 - **Tart** images are prepared ahead on each Mac by the setup's scripts,
   from Cirrus Labs' images pulled with `tart pull`: for macOS, Cua's
   permissions written offline into the image's TCC database, automatic
@@ -1530,6 +1533,6 @@ Notes:
 | Question | Where it is answered |
 | --- | --- |
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
-| How a Mac's reset signs the next user in, and how long it takes; until then its `readyTimeoutMs` is an estimate | the live check in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md) |
+| What a stand-in Mac could not show: the reset's sweep with System Integrity Protection on, the console's size with no display, Cua's first capture for a new user, and Xcode with the Simulator's first boot | the live check on a Mac set aside, in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-live-check) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
