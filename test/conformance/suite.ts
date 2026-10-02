@@ -581,7 +581,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               const display = (await backend.transports(guest, kind.id)).displays.find((other) => other.id === capability.id);
               assert.ok(display, `the box has the ${capability.id} display`);
               const { route, auth } = await display.open(signal());
-              assert.ok(["none", "vnc-password"].includes(auth.type), "the display's auth is known");
+              assert.ok(["none", "vnc-password", "apple"].includes(auth.type), "the display's auth is known");
               const channel = await openRoute(route, signal());
               try {
                 assert.match(await greeting(channel, 12, 10_000), /^RFB \d{3}\.\d{3}\n$/);

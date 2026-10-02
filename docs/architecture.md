@@ -1371,8 +1371,9 @@ Push work to Git or copy it out before releasing a box.
 
 How each backend fits the interface. Proxmox LXC, Proxmox QEMU (Windows),
 Docker, the SSH host pool and Tart, with Windows on a Mac, are built.
-Physical Macs, as SSH pool machines (047), and clouds are planned, and the
-later-backends research fills in the details.
+Physical Macs, as SSH pool machines (047), are built and wait for the live
+check on a Mac. Clouds are planned, and the later-backends research fills in
+the details.
 
 | | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | SSH host pool, Macs (047) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |

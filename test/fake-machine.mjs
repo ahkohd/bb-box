@@ -2,7 +2,9 @@
 // A stand-in for the SSH pool's helper, setup/ssh-pool/machine.sh, in tests.
 // It speaks the same protocol, keeping its state in $HOME/.bb-box-state, so
 // with test/fake-ssh.mjs each fake host is a pool machine. It makes no users.
-// Files in .bb-box-state/flags/ change what it does:
+// With the macos flag it stands in for machine-mac.sh: status says what a
+// Mac's does, display gives the box's sign-in, and there is no `machine`
+// mode. Files in .bb-box-state/flags/ change what it does:
 //
 //   helper           the helper version status reports instead of 1
 //   arch, missing    what status reports instead of x86_64 and nothing missing
@@ -15,6 +17,15 @@
 //   fail-reset       the reset fails after marking the machine resetting
 //   cut-reset        as fail-reset, but as if the connection dropped, once
 //   slow-status      how many milliseconds status waits before it answers
+//   macos            a Mac: status adds os=macos and the rest, as below
+//   no-user          the Mac's box user for this generation is not made
+//   console          who is at the Mac's console instead of the box user ("" for nobody)
+//   console-after    how many more times status says root is at the console
+//   autologin        the automatic login instead of the box user
+//   filevault-on, no-screensharing, no-fulldisk  what status reports instead of off, on and on
+//   grants           Cua's grants for `status grants`, as accessibility,screenrecording, instead of 1,1
+//   password         the password display gives instead of a made-up one
+//   display-user     the user display gives instead of the box user
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -43,17 +54,51 @@ const input = () => {
   return values;
 };
 const marker = () => (read("owner") !== null ? "owner" : read("resetting") !== null ? "resetting" : "none");
+const mac = flag("macos") !== null;
+const PASSWORD = "fake-display-password";
 
-function status() {
+/** What machine-mac.sh's status adds, with Cua's grants only for `status grants`. */
+function macLines(grants) {
+  const user = flag("no-user") === null ? `bbx-${generation() ?? 0}` : "";
+  let console = flag("console") ?? user;
+  const after = Number(flag("console-after") ?? 0);
+  if (after > 0) {
+    writeFileSync(join(flags, "console-after"), String(after - 1));
+    console = "root";
+  }
+  const lines = ["os=macos", "macos=26.0", `user=${user}`, `console=${console}`, `autologin=${flag("autologin") ?? user}`];
+  lines.push(`filevault=${flag("filevault-on") !== null ? 1 : 0}`, `screensharing=${flag("no-screensharing") !== null ? 0 : 1}`, `fulldisk=${flag("no-fulldisk") !== null ? 0 : 1}`);
+  if (grants) {
+    const [accessibility, screenRecording] = (flag("grants") ?? "1,1").split(",");
+    lines.push(`accessibility=${console === user ? accessibility : ""}`, `screenrecording=${console === user ? screenRecording : ""}`);
+  }
+  return lines;
+}
+
+function status(...args) {
+  if (mac && !(args.length === 0 || (args.length === 1 && args[0] === "grants"))) quit(EXIT.usage, "usage: machine status [grants]");
   const slow = Number(flag("slow-status") ?? 0);
   if (slow) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, slow);
   const kind = marker();
-  const lines = [`helper=${flag("helper") ?? 1}`, `arch=${flag("arch") ?? "x86_64"}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
+  const lines = [`helper=${flag("helper") ?? 1}`, `arch=${flag("arch") ?? (mac ? "arm64" : "x86_64")}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
   if (kind !== "none") lines.push(...read(kind).trim().split("\n").map((line) => `marker.${line}`));
   lines.push(`hook=${flag("hook") !== null ? 1 : 0}`, `docker=${flag("docker") !== null ? 1 : 0}`, "systemd=0", `cores=${flag("cores") ?? 4}`, `memory=${flag("memory") ?? 7861}`, `disk=${flag("disk") ?? 40}`, `missing=${flag("missing") ?? ""}`);
   if (flag("no-enrolment") === null) lines.push(`node=${flag("node") ?? "v24.21.0"}`, `lacks=${flag("lacks") ?? ""}`);
   lines.push(`dirty=${kind === "none" ? (flag("dirty") ?? "") : ""}`);
+  if (mac) lines.push(...macLines(args[0] === "grants"));
   console.log(lines.join("\n"));
+}
+
+/** machine-mac.sh's display: the box user's sign-in, only for the box that holds the Mac. */
+function display(expected) {
+  if (!mac) quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
+  if (!/^\d+$/.test(expected ?? "")) quit(EXIT.usage, "usage: machine display <generation>");
+  const values = input();
+  const text = read("owner");
+  if (text === null || field(text, "install") !== values.install || field(text, "box") !== values.box || field(text, "generation") !== expected) {
+    quit(EXIT.notOurs, "The Mac is not this box's.");
+  }
+  console.log(`user=${flag("display-user") ?? field(text, "user")}\npassword=${flag("password") ?? PASSWORD}`);
 }
 
 function claim(expected, extra) {
@@ -65,6 +110,7 @@ function claim(expected, extra) {
   if (current === null) quit(EXIT.dirty, "The machine has no reset generation.");
   if (String(current) !== expected) quit(EXIT.moved, `The machine is at reset generation ${current}, not ${expected}.`);
   if (flag("dirty")) quit(EXIT.dirty, `An earlier box left ${flag("dirty")}.`);
+  if (extra === "docker" && mac) quit(EXIT.usage, "Boxes on a Mac have no Docker.");
   if (extra === "docker" && flag("hook") === null) quit(EXIT.dirty, "Docker is offered only where reset-machine restores the whole machine.");
   const user = `bbx-${current}`;
   const text = ["install", "box", "thread", "name", "kind", "created"].map((name) => `${name}=${values[name] ?? ""}`);
@@ -88,7 +134,8 @@ function finish(kind, mode) {
     quit(255, "Connection to the machine closed.");
   }
   if (flag("fail-reset") !== null) quit(EXIT.failed, `reset-machine exited with 1: ${flag("fail-reset") || "the disk is full"}`);
-  if (mode === "machine") {
+  // A Mac's reset says it is running until the next box user is at the console.
+  if (mode === "machine" || mac) {
     const steps = Number(flag("restore-steps") ?? 0);
     if (steps > 0) {
       writeFileSync(join(flags, "restore-steps"), String(steps - 1));
@@ -102,7 +149,7 @@ function finish(kind, mode) {
 }
 
 function release(expected, mode) {
-  if (!/^\d+$/.test(expected ?? "")) quit(EXIT.usage, "usage: machine release <generation> [machine]");
+  if (!/^\d+$/.test(expected ?? "") || (mac && mode !== undefined)) quit(EXIT.usage, `usage: machine release <generation>${mac ? "" : " [machine]"}`);
   const values = input();
   const kind = marker();
   if (kind === "none") {
@@ -119,6 +166,7 @@ function release(expected, mode) {
 }
 
 function reset(mode) {
+  if (mac && mode !== undefined) quit(EXIT.usage, "usage: machine reset");
   const values = input();
   let kind = marker();
   if (kind === "owner") quit(EXIT.notOurs, "A box holds the machine. Release the box first.");
@@ -131,7 +179,8 @@ function reset(mode) {
 }
 
 const [verb, ...args] = process.argv.slice(2);
-if (verb === "status") status();
+if (verb === "status") status(...args);
+else if (verb === "display") display(...args);
 else if (verb === "claim") claim(...args);
 else if (verb === "release") release(...args);
 else if (verb === "reset") reset(...args);

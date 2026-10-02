@@ -5,14 +5,14 @@ import { SSH_POOL_FIELDS, SSH_POOL_KINDS, SSH_POOL_SETTINGS, parseSshPoolPart, r
 export const sshPoolDriver: BackendDriver<SshPoolConfig> = {
   type: "ssh-pool",
   label: "SSH host pool",
-  description: "Your own machines, reached over SSH and reset between boxes.",
+  description: "Your own Linux machines and Macs, reached over SSH and reset between boxes.",
   nature: "real",
   form: "Physical",
   kinds: SSH_POOL_KINDS,
   fields: SSH_POOL_FIELDS,
   setup: {
     guide: "setup/ssh-pool/README.md",
-    scripts: ["setup/ssh-pool/setup.sh", "setup/ssh-pool/machine.sh"],
+    scripts: ["setup/ssh-pool/setup.sh", "setup/ssh-pool/machine.sh", "setup/ssh-pool/setup-mac.sh", "setup/ssh-pool/machine-mac.sh"],
   },
   parse: parseSshPoolPart,
   create: (config, context) => new SshPoolBackend(config, context),

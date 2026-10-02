@@ -1,6 +1,6 @@
-// How bb-box talks to its helper on a pool machine, setup/ssh-pool/machine.sh.
-// The admin user runs it through sudo. Input and output are name=value
-// lines, and the exit code says what happened.
+// How bb-box talks to its helper on a pool machine, setup/ssh-pool/machine.sh,
+// or machine-mac.sh on a Mac (047). The admin user runs it through sudo.
+// Input and output are name=value lines, and the exit code says what happened.
 
 import type { BoxIdentity } from "../types.ts";
 
@@ -51,7 +51,7 @@ export interface MachineStatus {
   readonly hook: boolean;
   readonly docker: boolean;
   readonly systemd: boolean;
-  /** Online cores, memory in MiB and free disk under /home in GiB, or null when the machine did not say. */
+  /** Online cores, memory in MiB and free disk under /home, or /Users on a Mac, in GiB, or null when the machine did not say. */
   readonly cores: number | null;
   readonly memoryMiB: number | null;
   readonly diskGiB: number | null;
@@ -61,6 +61,33 @@ export interface MachineStatus {
   readonly enrolment: Enrolment | null;
   /** The first thing an earlier box left, or null when the machine is clean. */
   readonly dirty: string | null;
+  /** What a Mac's helper adds, or null on Linux. */
+  readonly mac: MacStatus | null;
+}
+
+/** A Mac's own status (047). */
+export interface MacStatus {
+  /** macOS's version, such as 26.0. */
+  readonly version: string;
+  /** The box user for this generation, once a reset has made it. */
+  readonly user: string | null;
+  /** Who is at the console: a box user, a person, or root at the login window. */
+  readonly console: string | null;
+  /** The user loginwindow signs in when it starts. */
+  readonly autologin: string | null;
+  /** FileVault is on, or the Mac did not say it is off. loginwindow then cannot sign a box user in. */
+  readonly fileVault: boolean;
+  readonly screenSharing: boolean;
+  /** The helper has Full Disk Access, which the reset needs to remove a box's protected folders. */
+  readonly fullDisk: boolean;
+  /** Cua Driver's grants in the box user's session, given only by `status grants`. */
+  readonly grants: CuaGrants | null;
+}
+
+/** Each grant, or null when no box user is at the console or Cua did not say. */
+export interface CuaGrants {
+  readonly accessibility: boolean | null;
+  readonly screenRecording: boolean | null;
 }
 
 /** What BB's installer and a box's GitHub access need, beyond the helper's tools. */
@@ -89,6 +116,10 @@ function whole(value: string | undefined): number | null {
 
 function words(value: string | undefined): string[] {
   return (value ?? "").split(/\s+/).filter(Boolean);
+}
+
+function granted(value: string | undefined): boolean | null {
+  return value === "1" ? true : value === "0" ? false : null;
 }
 
 export function parseStatus(stdout: string): MachineStatus {
@@ -124,7 +155,32 @@ export function parseStatus(stdout: string): MachineStatus {
     missing: words(values.get("missing")),
     enrolment: values.has("node") ? { node: values.get("node")?.replace(/^v/, "") || null, lacks: words(values.get("lacks")) } : null,
     dirty: values.get("dirty") || null,
+    mac:
+      values.get("os") === "macos"
+        ? {
+            version: values.get("macos") ?? "",
+            user: values.get("user") || null,
+            console: values.get("console") || null,
+            autologin: values.get("autologin") || null,
+            fileVault: values.get("filevault") !== "0",
+            screenSharing: values.get("screensharing") === "1",
+            fullDisk: values.get("fulldisk") === "1",
+            grants: values.has("accessibility") ? { accessibility: granted(values.get("accessibility")), screenRecording: granted(values.get("screenrecording")) } : null,
+          }
+        : null,
   };
+}
+
+/**
+ * The box user's name and password from a Mac's `machine display`, for
+ * Screen Sharing, or null when the output has neither. The password goes
+ * only into the display's sign-in, so nothing may quote this output.
+ */
+export function parseDisplay(stdout: string): { readonly user: string; readonly password: string } | null {
+  const values = fields(stdout);
+  const user = values.get("user") ?? "";
+  const password = values.get("password") ?? "";
+  return user && password ? { user, password } : null;
 }
 
 /** A value on one input line: the helper reads to the end of the line, so line breaks are dropped. */
