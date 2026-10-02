@@ -2,7 +2,10 @@
 
 Status: accepted, 1 October 2026. Extended by
 [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
-Windows runs desktop commands through a one-off scheduled task.
+Windows runs desktop commands through a one-off scheduled task. Extended
+by [047](047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md):
+on a pool's Mac, the helper writes the sudoers rule for each box's user
+and the reset removes it.
 
 ## Context
 

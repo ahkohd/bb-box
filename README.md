@@ -81,7 +81,7 @@ a desktop box has a terminal too.
 | SSH host pool | real | Linux terminal, on Linux machines you own | working |
 | [Tart](https://tart.run), on your Macs with Apple silicon | virtual | macOS terminal and desktop; Linux terminal and desktop on arm64; Windows desktop on arm64 | working |
 | Proxmox QEMU | virtual | Windows desktop | working, not yet a BB machine |
-| macOS (physical Mac) | real | macOS desktop, iOS Simulator | planned |
+| SSH host pool, Macs | real | macOS terminal and desktop, iOS Simulator, on Macs you own | planned |
 | Physical pool | real | Linux or Windows machines you own | possible |
 | Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
 
@@ -193,7 +193,8 @@ Working today, on every backend above that says so:
 - A terminal in every box from the panel, and a BB machine can host Docker
   boxes with nothing installed but Docker.
 
-Next: Windows boxes as BB machines (a BB request), and a physical Mac backend.
+Next: Windows boxes as BB machines (a BB request), and physical Macs in the
+SSH host pool.
 
 ## Install
 

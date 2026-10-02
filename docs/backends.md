@@ -23,7 +23,7 @@ a whole-machine reset
 | Linux | Windows | VM | Proxmox QEMU | `windows-desktop` | working, [039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md) | x86_64 | none: Windows draws on the CPU; a whole card passed through later |
 | Linux | macOS | - | - | - | not possible: macOS runs only on Apple hardware | - | - |
 | Mac | macOS | VM | Tart | `macos`, `macos-desktop` | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
-| Mac | macOS | physical | physical Mac | `macos`, `macos-desktop` | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
+| Mac | macOS | physical | SSH host pool | `macos`, `macos-desktop` | planned, [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md) | arm64 | the Mac's own, offered as `gpu: false` |
 | Mac | Linux | VM | Tart | `linux-arm64`, `linux-arm64-desktop-cpu` | working, [040](decisions/040-linux-on-arm64-has-kinds-of-its-own.md) | arm64 | none offered |
 | Mac | Windows | VM | Tart, through QEMU with HVF | `windows-arm64-desktop` | working, [046](decisions/046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md) | arm64 | none: Windows draws on the CPU |
 | Windows | Linux | container | Docker, in one WSL2 distribution, over `ssh://` | `linux`, `linux-desktop-cpu` | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | none; CUDA through `/dev/dxg` to research |
@@ -58,12 +58,13 @@ Across the table:
   cannot until BB's host app runs on Windows
   ([BB request 1](bb-requests.md#1-bbs-host-app-on-windows)).
 - **Physical machines.** Linux machines join through the SSH host pool, and
-  Macs through #47, planned as the same driver with a reset per OS. There is
-  no plan for physical Windows machines yet.
+  Macs will too, with a helper of their own
+  ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)).
+  There is no plan for physical Windows machines yet.
 - **Phone emulators.** The iOS Simulator runs only on Macs: on a physical
-  Mac (#47), or in a Tart image with Xcode, which the image does not have
-  yet. Android emulators are in research (#161), for Linux hosts with KVM,
-  Macs and Windows hosts.
+  Mac in an SSH pool (047), or in a Tart image with Xcode, which the image
+  does not have yet. Android emulators are in research (#161), for Linux
+  hosts with KVM, Macs and Windows hosts.
 - **Cloud hosts.** A cloud VM that runs Linux is a Linux host above: the
   Docker backend reaches one over `ssh://` or as a BB machine, and the SSH
   host pool reaches one too. A backend that makes cloud VMs itself is

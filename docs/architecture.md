@@ -134,15 +134,17 @@ and `start` and `stop` throw `gone`.
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
 | `windows-arm64-desktop` | a Windows desktop on arm64, no GPU | Tart's Macs, in QEMU (046) |
-| `macos` | macOS, no GPU | Tart; a physical Mac later (#47) |
-| `macos-desktop` | a macOS desktop, no GPU | Tart; a physical Mac later (#47) |
+| `macos` | macOS, no GPU | Tart; a Mac in an SSH pool later (047) |
+| `macos-desktop` | a macOS desktop, no GPU | Tart; a Mac in an SSH pool later (047) |
 
-- An SSH pool offers `linux` only, as its machines have no desktop yet.
+- An SSH pool offers `linux` only for now. Macs will join it with `macos`
+  and `macos-desktop` ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)).
   Docker runs on a local daemon, a host over `ssh://`, such as a Windows PC
   with Docker Engine in WSL2, or a BB machine
   ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)).
 - A macOS kind with the features `xcode` and `ios-simulator` is later:
-  Tart's image has Xcode's command line tools only.
+  Tart's image has Xcode's command line tools only. A pool's Macs with
+  Xcode will add the features to their offers (047).
 - A kind's ID names its architecture when it is not the OS's usual one:
   `-arm64` follows the OS, and the rest is the x86_64 kind's. An agent
   asking for `linux` never gets arm64, where amd64 images and x86_64
@@ -278,9 +280,10 @@ held for 250 ms: the last frame of a pane opening is not lost.
   answers VNC authentication (security type 2) with the password, then offers
   the viewer RFB 3.8 with security type None only. Passwords and tickets never
   reach the browser; BB has already authenticated the viewer.
-- macOS Screen Sharing offers VNC authentication only when "VNC viewers may
-  control screen with password" is on; otherwise it offers only Apple's own
-  type 30, which the relay cannot answer. Mac setup turns the option on.
+- macOS Screen Sharing, which a pool's Macs will use (047), gives a client
+  with only the VNC password a session of its own at the login window. So
+  the relay will sign in as the box's user with Apple's own type 30, which
+  shows that user's console, and Screen Sharing's VNC password stays off.
 - Windows uses RFB through Proxmox's console: nothing to install in the
   guest, the same noVNC client, and it shows the console session the agent
   uses. `vncproxy` returns a one-time ticket, which authorises the WebSocket,
@@ -1345,18 +1348,18 @@ Push work to Git or copy it out before releasing a box.
 ## Backends
 
 How each backend fits the interface. Proxmox LXC, Proxmox QEMU (Windows),
-Docker, the SSH host pool and Tart are built. Windows on a Mac, physical
-Macs and clouds are planned, and the later-backends research fills in the
-details.
+Docker, the SSH host pool and Tart, with Windows on a Mac, are built.
+Physical Macs, as SSH pool machines (047), and clouds are planned, and the
+later-backends research fills in the details.
 
-| | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | macOS (physical Mac) | Apple Virtualization framework (Tart) |
+| | Proxmox LXC | Proxmox QEMU (Windows) | Docker | SSH host pool | SSH host pool, Macs (047) | Apple Virtualization framework (Tart) |
 | --- | --- | --- | --- | --- | --- | --- |
 | Nature | virtual | virtual | virtual | real | real | virtual |
-| Acquire | linked clone, start | resume a hibernated warm VM, or a linked clone of a template that is not generalized, start | create and start a container from the kind's image | claim a machine | claim a Mac, prepare the box user | `tart clone` (copy on write), `tart run` headless |
-| Release | delete | delete | remove the container | remove the box user and what it left, or restore the whole machine | reset the box user | `tart delete` |
+| Acquire | linked clone, start | resume a hibernated warm VM, or a linked clone of a template that is not generalized, start | create and start a container from the kind's image | claim a machine | claim a Mac, its box user already signed in | `tart clone` (copy on write), `tart run` headless |
+| Release | delete | delete | remove the container | remove the box user and what it left, or restore the whole machine | remove the box user and what it left, and sign the next one in | `tart delete` |
 | Command | SSH | OpenSSH for Windows with PowerShell 7 | `docker exec` | SSH | SSH | SSH through the Mac host |
-| Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | none yet; RFB through SSH later | RFB (Screen Sharing) through SSH | RFB through the Mac host |
-| Ownership record | tags | tags | labels set at creation, and the container name `bbbox-<box ID>` | marker file on the machine, with a reset generation | marker file and plugin storage | an owner file per VM on the Mac, written before the clone with noclobber and removed last. A warm VM's says `filling`, then `warm`, and a claim rewrites it with the box's fields, so warm VMs are claimed in it rather than renamed, since `tart rename` does not check whether a VM is running |
+| Display route | RFB over TCP | RFB through Proxmox's console WebSocket | RFB through `docker exec` and `socat` | none yet; RFB through SSH later | RFB (Screen Sharing) through SSH, signed in as the box user | RFB through the Mac host |
+| Ownership record | tags | tags | labels set at creation, and the container name `bbbox-<box ID>` | marker file on the machine, with a reset generation | marker file on the Mac, with a reset generation | an owner file per VM on the Mac, written before the clone with noclobber and removed last. A warm VM's says `filling`, then `warm`, and a claim rewrites it with the box's fields, so warm VMs are claimed in it rather than renamed, since `tart rename` does not check whether a VM is running |
 | Capacity limits | memory, disk, guests (the ID range), GPU | memory, disk (a hibernated VM's memory is on disk), guests (the ID range) | memory, guests (a container budget), desktops per GPU | machines | machines | guests (two macOS VMs per Mac), memory, disk |
 | Stop and start | yes | yes | yes | no | no | yes |
 | Enrol | yes | not until BB's host app runs on Windows | yes, without systemd | yes | yes | yes |
@@ -1416,14 +1419,14 @@ Notes:
   since a box with Docker is root on the machine. The machine holds the
   truth: a marker names the install and box, and the reset generation
   moves on with each reset. Desktops and rootless Docker are not
-  built yet. The physical Mac backend may turn out to be the same driver
-  with macOS machines and a desktop kind.
-- **Physical Macs** have one console session. The box user must be logged in
-  at the console for the desktop and computer use. macOS logs a user in
-  automatically only at boot, so a reset recreates the box user's home and
-  reboots, about 1 to 2 minutes on Apple silicon. Cua's Accessibility grant
-  can come from an MDM profile, but Screen Recording needs one approval by a
-  person when the Mac joins the pool.
+  built yet. Macs will join the pool with a helper of their own (047).
+- **Physical Macs** (047) have one console session, and a box takes the
+  whole Mac. Its user, new for each box, is signed in at the console before
+  the claim, so a claim takes seconds. The reset removes the old user and
+  what it left, and starts loginwindow again so the automatic login signs
+  the next user in, which needs FileVault off. Cua's grants are per Mac: a
+  person gives them once at setup, or MDM gives Accessibility, and they
+  hold through every reset.
 - **Tart** images are prepared ahead on each Mac by the setup's scripts,
   from Cirrus Labs' images pulled with `tart pull`: for macOS, Cua's
   permissions written offline into the image's TCC database, automatic
@@ -1500,6 +1503,6 @@ Notes:
 | Question | Where it is answered |
 | --- | --- |
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
-| A physical Mac's reset; until then its `readyTimeoutMs` is an estimate | [later backends](research/later-backends.md) |
+| How a Mac's reset signs the next user in, and how long it takes; until then its `readyTimeoutMs` is an estimate | the live check in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
