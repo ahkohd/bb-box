@@ -463,17 +463,23 @@ export class ProxmoxLxcBackend implements Backend {
       { resource: "guests", used: used.size, total: last - first + 1, reserve: 0, unit: "count" },
     ];
     const memoryMiB = size?.memoryMiB ?? template.memoryMiB;
-    // The memory a box needs: all of it for a new guest, what it grows by for a warm one.
-    const memory = (need: number, grown: boolean): string[] =>
-      need > 0 && memoryFree - need < reserve.memoryMiB
-        ? [
-            `${api.node} has ${formatMiB(memoryFree)} of memory free. ` +
-              (grown
-                ? `A warm ${kind} box given ${formatMiB(memoryMiB)} needs ${formatMiB(need)} more, and ${formatMiB(reserve.memoryMiB)} is kept free. `
-                : `A ${kind} box with ${formatMiB(memoryMiB)} memory needs it all, and ${formatMiB(reserve.memoryMiB)} is kept free. `) +
-              "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings.",
-          ]
-        : [];
+    // The memory a box needs: all of it for a new guest, what it grows by for a warm one. A refusal
+    // leads with what binds: the box when it needs more than is free, otherwise the memory kept free.
+    const memory = (need: number, grown: boolean): string[] => {
+      if (need <= 0 || memoryFree - need >= reserve.memoryMiB) return [];
+      const box = grown ? `a warm ${kind} box given ${formatMiB(memoryMiB)}` : `a ${kind} box with ${formatMiB(memoryMiB)} memory`;
+      if (need > memoryFree) {
+        const needs = grown ? `the ${formatMiB(need)} more ${box} needs` : `${box} needs`;
+        return [`${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${needs}. Release a box or ask for less memory.`];
+      }
+      return [
+        `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, ` +
+          `so ${box}${grown ? `, which needs ${formatMiB(need)} more,` : ""} does not fit. ` +
+          (grown || memoryFree > reserve.memoryMiB
+            ? "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings."
+            : "Release a box, or lower the memory kept free in bb-box's settings."),
+      ];
+    };
     // What any box of the size needs, new or warm.
     const sized: string[] = [];
     if (size && node.cpus !== null && size.cores > node.cpus) {
@@ -481,9 +487,12 @@ export class ProxmoxLxcBackend implements Backend {
     }
     const grow = size?.diskGiB != null ? Math.max(0, size.diskGiB - (template.diskGiB ?? 0)) : 0;
     if (grow > 0 && diskFree - grow * 1024 < reserve.diskGiB * 1024) {
+      const storageFree = `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free`;
       sized.push(
-        `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free. A ${size!.diskGiB} GiB disk needs ${Math.ceil(grow)} GiB more than the template's, ` +
-          `and ${reserve.diskGiB} GiB is kept free. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.`,
+        grow * 1024 > diskFree
+          ? `${storageFree}, less than the ${Math.ceil(grow)} GiB a ${size!.diskGiB} GiB disk adds to the template's. Ask for a smaller disk or release boxes.`
+          : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so a ${size!.diskGiB} GiB disk, ${Math.ceil(grow)} GiB more than the template's, does not fit. ` +
+            "Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.",
       );
     }
     // What only a new guest needs.

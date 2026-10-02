@@ -546,12 +546,12 @@ test("capacity keeps the memory and disk reserves, and counts a larger disk agai
 
   const big = await backend.capacity(KIND, sized({ diskGiB: 700 }), [], signal());
   assert.equal(big.ok, false);
-  assert.match(big.message!, /^The local-lvm storage on pve has 600 GiB free\. A 700 GiB disk needs 636 GiB more than the template's, and 50 GiB is kept free\./);
+  assert.match(big.message!, /^The local-lvm storage on pve has 600 GiB free, less than the 636 GiB a 700 GiB disk adds to the template's\. Ask for a smaller disk or release boxes\./);
 
   proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
   const low = await backend.capacity(KIND, sized(), [{ kind: KIND, size: sized() }], signal());
   assert.equal(low.ok, false);
-  assert.match(low.message!, /^pve has 2 GiB of memory free\. A windows-desktop box with 8 GiB memory needs it all/);
+  assert.match(low.message!, /^pve has 2 GiB of memory free, less than a windows-desktop box with 8 GiB memory needs\. Release a box or ask for less memory\./);
 });
 
 test("release deletes the VM, and held lists this install's VMs with their owners", async () => {

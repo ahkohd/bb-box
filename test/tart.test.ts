@@ -426,7 +426,7 @@ test("a box has the cores and memory it asks for, read from its config; capacity
   };
   // The fake Mac has 16 cores and 128 GiB, and 16 GiB is kept free.
   assert.match(await refused({ ...SMALL, cores: 32 }), /mac1 has 16 cores, fewer than the 32 asked for/);
-  assert.match(await refused({ ...SMALL, memoryMiB: 120 * 1024 }), /a box with 120 GiB would leave less than the 16 GiB kept free/);
+  assert.match(await refused({ ...SMALL, memoryMiB: 120 * 1024 }), /has [\d.]+ GiB of memory free and keeps 16 GiB free, so a box with 120 GiB does not fit/);
   assert.match(await refused({ ...SMALL, diskGiB: 32 }), /keeps its image's disk/);
   const big: BoxSize = { cores: 8, memoryMiB: 64 * 1024, diskGiB: null };
   assert.equal((await backend.capacity("macos", big, [])).ok, true);

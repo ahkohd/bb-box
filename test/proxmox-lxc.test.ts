@@ -148,7 +148,7 @@ test("capacity keeps the memory and disk reserves", async () => {
   proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
   const pending = await backend.capacity("linux", sized("linux"), waiting("linux"), signal());
   assert.equal(pending.ok, false);
-  assert.match(pending.message!, /pve has 6 GiB of memory free\. A linux box with 4 GiB memory needs it all, and 4 GiB is kept free/);
+  assert.match(pending.message!, /pve has 6 GiB of memory free and keeps 4 GiB free, so a linux box with 4 GiB memory does not fit/);
   assert.match(pending.message!, /ask for less memory, or lower the memory kept free in bb-box's settings/);
 
   proxmox.memory = { total: 64 * GiB, available: 48 * GiB };
@@ -157,6 +157,19 @@ test("capacity keeps the memory and disk reserves", async () => {
   assert.equal(disk.ok, false);
   assert.equal(disk.hosts[0]!.ok, false);
   assert.match(disk.message!, /local-lvm storage on pve has 20 GiB free, less than the 50 GiB kept free/);
+});
+
+test("a refusal for memory leads with what binds: the room kept free, or the box when it needs more than is free", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-reserve-memory-mib": 16 * 1024 });
+  proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
+  const kept = await backend.capacity("linux", sized("linux"), waiting(), signal());
+  assert.equal(
+    kept.message,
+    "pve has 10 GiB of memory free and keeps 16 GiB free, so a linux box with 4 GiB memory does not fit. " +
+      "Release a box, or lower the memory kept free in bb-box's settings.",
+  );
+  const box = await backend.capacity("linux", { cores: 2, memoryMiB: 12 * 1024, diskGiB: null }, waiting(), signal());
+  assert.equal(box.message, "pve has 10 GiB of memory free, less than a linux box with 12 GiB memory needs. Release a box or ask for less memory.");
 });
 
 test("capacity refuses when the VMID range is full", async () => {
@@ -176,13 +189,15 @@ test("capacity refuses more cores than the node has, more memory than is free an
 
   const memory = await backend.capacity("linux", { cores: 2, memoryMiB: 48 * 1024, diskGiB: null }, waiting(), signal());
   assert.equal(memory.ok, false);
-  assert.match(memory.message!, /pve has 48 GiB of memory free\. A linux box with 48 GiB memory needs it all, and 4 GiB is kept free/);
+  assert.match(memory.message!, /pve has 48 GiB of memory free and keeps 4 GiB free, so a linux box with 48 GiB memory does not fit/);
 
   proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 100 * GiB });
   assert.equal((await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: 50 }, waiting(), signal())).ok, true, "42 GiB more leaves 58 GiB free");
   const disk = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: 60 }, waiting(), signal());
   assert.equal(disk.ok, false);
-  assert.match(disk.message!, /^The local-lvm storage on pve has 100 GiB free\. A 60 GiB disk needs 52 GiB more than the template's, and 50 GiB is kept free\. Ask for a smaller disk/);
+  assert.match(disk.message!, /^The local-lvm storage on pve has 100 GiB free and keeps 50 GiB free, so a 60 GiB disk, 52 GiB more than the template's, does not fit\. Ask for a smaller disk/);
+  const huge = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: 120 }, waiting(), signal());
+  assert.match(huge.message!, /^The local-lvm storage on pve has 100 GiB free, less than the 112 GiB a 120 GiB disk adds to the template's\. Ask for a smaller disk or release boxes\./);
 });
 
 test("pending boxes count with the memory of their own size (028)", async () => {
@@ -1047,10 +1062,12 @@ test("a warm guest needs only the memory a claim adds (028)", async () => {
   // A box with other cores is a new guest, as the warm one cannot serve it.
   const four = await backend.capacity("linux", { cores: 4, memoryMiB: 8192, diskGiB: null }, waiting(), signal());
   assert.equal(four.ok, false);
-  assert.match(four.message!, /^pve has 9 GiB of memory free\. A linux box with 8 GiB memory needs it all, and 4 GiB is kept free\./);
+  assert.match(four.message!, /^pve has 9 GiB of memory free and keeps 4 GiB free, so a linux box with 8 GiB memory does not fit\./);
   const more = await backend.capacity("linux", { cores: 2, memoryMiB: 10 * 1024, diskGiB: null }, waiting(), signal());
   assert.equal(more.ok, false);
-  assert.match(more.message!, /^pve has 9 GiB of memory free\. A warm linux box given 10 GiB needs 6 GiB more, and 4 GiB is kept free\./);
+  assert.match(more.message!, /^pve has 9 GiB of memory free and keeps 4 GiB free, so a warm linux box given 10 GiB, which needs 6 GiB more, does not fit\./);
+  const most = await backend.capacity("linux", { cores: 2, memoryMiB: 14 * 1024, diskGiB: null }, waiting(), signal());
+  assert.match(most.message!, /^pve has 9 GiB of memory free, less than the 10 GiB more a warm linux box given 14 GiB needs\. Release a box or ask for less memory\./);
 
   // A warm guest has no more cores or disk room than a new one.
   proxmox.memory = { total: 64 * GiB, available: 32 * GiB };
@@ -1058,7 +1075,7 @@ test("a warm guest needs only the memory a claim adds (028)", async () => {
   assert.equal(cores.message, "pve has 16 CPU threads, fewer than the 32 cores asked for. Ask for at most 16 cores.");
   proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 100 * GiB });
   const disk = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: 60 }, waiting(), signal());
-  assert.match(disk.message!, /^The local-lvm storage on pve has 100 GiB free\. A 60 GiB disk needs 52 GiB more than the template's/);
+  assert.match(disk.message!, /^The local-lvm storage on pve has 100 GiB free and keeps 50 GiB free, so a 60 GiB disk, 52 GiB more than the template's, does not fit/);
 });
 
 test("an acquire that holds a warm guest needs no other, and counts only the memory it adds (#122)", async () => {
