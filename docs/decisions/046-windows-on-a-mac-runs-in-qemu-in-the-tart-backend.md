@@ -4,7 +4,9 @@ Status: accepted, 1 October 2026. Extends
 [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
 the same Windows guest, built for arm64 and run by QEMU on a Mac; and
 [040](040-linux-on-arm64-has-kinds-of-its-own.md): its kind is
-`windows-arm64-desktop`, by 040's rule.
+`windows-arm64-desktop`, by 040's rule. Amended while it was built: the
+image's C: is not its disk's last partition, as Windows Setup puts WinRE in
+a partition after it, so extending C: first moves WinRE onto C: (#341).
 
 ## Context
 
@@ -145,8 +147,10 @@ the host user, as `prepare-image.sh` does.
 - An overlay needs its base. An old build is deleted only when no VM's
   overlay uses it, and nothing runs the base itself.
 - A box can have a larger disk than the image's: its overlay gets that
-  size, and the box extends C: as on Proxmox, since the image's C: is its
-  disk's last partition.
+  size, and the box extends C: as on Proxmox. Windows 11 26H2 Setup puts
+  WinRE in a recovery partition of about 0.9 GiB after C:, on both
+  backends' images, so the extend first moves WinRE onto C:
+  (`C:\Recovery`) and removes that partition (#341).
 
 **Stop, start and warm VMs.**
 
