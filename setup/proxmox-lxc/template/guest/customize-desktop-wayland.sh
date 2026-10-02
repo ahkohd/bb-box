@@ -197,6 +197,8 @@ cat >/etc/systemd/system/bb-box-vnc.service <<EOF
 Description=bb-box: wayvnc on port 5900 for the Wayland desktop
 After=bb-box-display.service
 BindsTo=bb-box-display.service
+# display resize ends it to take a new size with no viewer; it always comes back.
+StartLimitIntervalSec=0
 
 [Service]
 User=$user
@@ -208,7 +210,7 @@ ExecStartPre=/usr/local/libexec/bb-box/display vnc-config
 # 60 frames a second: wayvnc's default of 30 halves what a viewer sees.
 ExecStart=/usr/bin/wayvnc -f 60 -o HEADLESS-1 -C /run/bb-box/wayvnc.conf 0.0.0.0 5900
 Restart=always
-RestartSec=1
+RestartSec=100ms
 
 [Install]
 WantedBy=multi-user.target

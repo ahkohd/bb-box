@@ -4,7 +4,9 @@
 // foreground, and waits for it in the tree. Closes the app it opened. Prints
 // {app, title, pid, bounds, elements, ms, typedMs} as JSON and exits 1 below
 // --min elements or when the typed text does not show.
-// usage: node cua-launch-probe.mjs --socket <path> (--app <name> | --url <url>) [--min 1] [--type <text>]
+// With --title, the new window's title must match the pattern, as an app's
+// own window does and a dialog in front of it does not.
+// usage: node cua-launch-probe.mjs --socket <path> (--app <name> | --url <url>) [--min 1] [--type <text>] [--title <regex>]
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 
@@ -17,6 +19,7 @@ const app = arg("--app", null);
 const url = arg("--url", null);
 const min = Number(arg("--min", "1"));
 const text = arg("--type", null);
+const title = arg("--title", null);
 
 const driver = spawn("cua-driver", ["mcp", ...(socketPath ? ["--socket", socketPath] : [])], { stdio: ["pipe", "pipe", "ignore"] });
 const pending = new Map();
@@ -66,6 +69,7 @@ try {
   }
   if (!window) throw new Error("no new window with a process and bounds within 20 s");
   opened.add(window.pid);
+  if (title && !new RegExp(title).test(window.title ?? "")) throw new Error(`the new window is "${window.title}", not one titled like /${title}/`);
   // The tree fills in as the app finishes drawing.
   let elements = 0;
   for (let i = 0; i < 20 && elements < min; i++) {

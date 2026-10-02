@@ -3,8 +3,9 @@
 // authentication (type 30), which wayvnc offers; with neither, type None.
 // Prints {types, width, height, signInMs, firstFrameMs} as JSON. With --hold
 // it then stays connected, following the screen's changes and size, until it
-// is stopped, as a person's viewer through the relay does.
-// usage: node rfb-probe.mjs [--user <user> --password-file <file>] [--port 5900] [--hold]
+// is stopped, as a person's viewer through the relay does. With --init-only
+// it reads only ServerInit's size, as the relay's desktopSize() does (021).
+// usage: node rfb-probe.mjs [--user <user> --password-file <file>] [--port 5900] [--hold | --init-only]
 import { createCipheriv, createDiffieHellman, createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -18,6 +19,7 @@ const passwordFile = arg("--password-file", null);
 const password = passwordFile ? readFileSync(passwordFile, "utf8").trim() : null;
 const port = Number(arg("--port", "5900"));
 const hold = process.argv.includes("--hold");
+const initOnly = process.argv.includes("--init-only");
 
 const socket = net.connect(port, "127.0.0.1");
 let buffer = Buffer.alloc(0);
@@ -89,6 +91,11 @@ let width = init.readUInt16BE(0);
 let height = init.readUInt16BE(2);
 const bytesPerPixel = init[4] / 8;
 await read(init.readUInt32BE(20)); // the desktop's name
+if (initOnly) {
+  console.log(JSON.stringify({ types, width, height, signInMs }));
+  socket.destroy();
+  process.exit(0);
+}
 // SetEncodings: Raw, and the desktop-size pseudo-encodings, without which
 // wayvnc closes a viewer when the screen's size changes.
 const encodings = Buffer.alloc(4 + 3 * 4);
