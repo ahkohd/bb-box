@@ -61,7 +61,7 @@ export function KindRow({ model, open, onToggle, onSwitch, switching, children }
             <KindBadges desktop={info.desktop} gpu={info.gpu} noDocker={lacksDocker(info)} arm64={isArm64Badge(info.os, info.arch)} forms={forms} />
           </p>
           <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-            <StatusDot tone={!sizes.enabled ? "off" : offering.length ? "ok" : "warn"} className="mt-[0.3rem]" />
+            <StatusDot tone={!sizes.enabled ? "off" : offering.length ? "ok" : "warn"} />
             <Meta
               items={[
                 !sizes.enabled ? "Off" : offering.length ? `From ${offering.map((backend) => backend.label).join(" and ")}` : <span className="text-warning-text">Not offered: no backend has it</span>,

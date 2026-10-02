@@ -115,7 +115,7 @@ export function BackendRow({
             {boxes ? <Chip>{boxes === 1 ? "1 box" : `${boxes} boxes`}</Chip> : null}
           </p>
           <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-            <StatusDot tone={tone} className="mt-[0.3rem]" />
+            <StatusDot tone={tone} />
             <Meta
               items={[
                 <span key="state" className={cn(tone === "warn" && "text-warning-text")}>

@@ -116,13 +116,13 @@ export function DockerHostsSection() {
             <div className="min-w-0">
               <span className="min-w-0 truncate text-sm font-medium text-foreground">{host.name}</span>
               <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-                <StatusDot tone={state.tone} className="mt-[0.3rem]" />
+                <StatusDot tone={state.tone} />
                 <Meta items={[state.text, ...dockerFacts(host)]} />
               </div>
               {host.problem && host.connected ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{host.problem}</p> : null}
               {build ? (
                 <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-                  <StatusDot tone={build.tone} className="mt-[0.3rem]" />
+                  <StatusDot tone={build.tone} />
                   <span className={cn("min-w-0 break-words", build.tone === "bad" && "text-destructive-text")}>{build.text}</span>
                 </div>
               ) : null}

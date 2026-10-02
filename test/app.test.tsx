@@ -350,11 +350,13 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[] } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[] } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
   const changes: string[] = [];
+  /** The providers whose profiles the form asked for, in order. */
+  const asked: string[] = [];
   const result = (found: BoxView | null): BoxResult => (options.failWith ? { box: null, error: options.failWith } : { box: found, error: null });
   const change = (method: string, ref: string, next: (found: BoxView) => BoxView | null): BoxResult => {
     changes.push(`${method} ${ref}`);
@@ -402,7 +404,11 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
     },
     kinds: () => options.kinds ?? KINDS,
     provider: ({ backend }) => {
-      changes.push(`provider ${backend}`);
+      asked.push(backend);
+      if (options.profileFailsOnce?.has(backend)) {
+        options.profileFailsOnce.delete(backend);
+        throw new Error("The provider did not answer.");
+      }
       return { ...PROFILE, backend, status: { ...PROFILE.status, checkedAt: Date.now() - 120_000 } };
     },
     thread: ({ box: ref, prompt }) => {
@@ -459,7 +465,7 @@ function server(initial: BoxView[], options: { kinds?: KindView[]; failWith?: st
       return { result: { ok: true, state: configState(options.config ?? {}), problems: [] }, hosts: dockerHosts };
     },
   };
-  return { handlers, changes };
+  return { handlers, changes, asked };
 }
 
 let applied: ConfigDocument | null = null;
@@ -730,14 +736,16 @@ test("one Escape closes the form whatever was used last: a card, a menu, a field
   await waitFor(() => expect(isOpen()).toBe(false));
 });
 
-test("the (i) on a provider row opens its profile, asked once while the form is open, in plain rows; Escape closes the profile first", async () => {
-  const { handlers, changes } = server([], { kinds: [POOLED, KINDS[1]!] });
+test("the (i) on a provider row opens its profile, fetched for every provider once the form opens and kept, in plain rows; Escape closes the profile first", async () => {
+  const { handlers, changes, asked } = server([], { kinds: [POOLED, KINDS[1]!], profileFailsOnce: new Set(["ssh-pool"]) });
   const slot = panel(handlers);
   await slot.findByText("No boxes yet");
+  // Nothing is asked while the form is closed; once it opens, every listed provider's profile is fetched in the background.
+  expect(asked).toEqual([]);
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   await screen.findByRole("radiogroup", { name: "Provider" });
-  expect(changes).toEqual([]);
-  // Nothing is asked until the (i) opens; then the profile comes once.
+  await waitFor(() => expect(asked).toEqual(["fake", "ssh-pool"]));
+  // The (i) opens filled, with no asking.
   fireEvent.click(screen.getByRole("button", { name: "About pve" }));
   expect(await screen.findByText("Fake host on pve")).toBeTruthy();
   expect(screen.getByText("Linux containers on a test host.")).toBeTruthy();
@@ -749,7 +757,7 @@ test("the (i) on a provider row opens its profile, asked once while the form is 
     "Linux ~2.2 s (1 ready now) · Linux desktop (GPU) ~3.1 s",
     "Ready · Proxmox VE 9.2 on pve · 2 boxes on it · checked 2 minutes ago",
   ]);
-  expect(changes).toEqual(["provider fake"]);
+  expect(asked).toEqual(["fake", "ssh-pool"]);
   // The (i) does not choose the row; it keeps its place in the card, shown on hover, focus or while its profile is open.
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
   const holder = screen.getByRole("button", { name: "About pve" }).parentElement!;
@@ -764,12 +772,13 @@ test("the (i) on a provider row opens its profile, asked once while the form is 
   expect(screen.getByRole("radiogroup", { name: "System" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "About pve" }));
   expect(await screen.findByText("Linux containers on a test host.")).toBeTruthy();
-  expect(changes).toEqual(["provider fake"]);
-  // The pool's (i) asks for the pool.
+  expect(asked).toEqual(["fake", "ssh-pool"]);
+  // The pool's profile failed in the background; opening its (i) asks again, and the profile comes.
   fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull());
   fireEvent.click(screen.getByRole("button", { name: "About SSH host pool" }));
-  await waitFor(() => expect(changes).toEqual(["provider fake", "provider ssh-pool"]));
+  await waitFor(() => expect(asked).toEqual(["fake", "ssh-pool", "ssh-pool"]));
+  expect(await screen.findByText("Fake host on pve")).toBeTruthy();
   fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await waitFor(() => expect(screen.queryByText("Fake host on pve")).toBeNull());
 
@@ -785,7 +794,14 @@ test("the (i) on a provider row opens its profile, asked once while the form is 
   fireEvent.pointerLeave(screen.getByRole("button", { name: "About pve" }));
   await new Promise((resolve) => setTimeout(resolve, 450));
   expect(screen.getByText("Linux containers on a test host.")).toBeTruthy();
-  expect(changes).toEqual(["provider fake", "provider ssh-pool"]);
+  expect(asked).toEqual(["fake", "ssh-pool", "ssh-pool"]);
+  // Closed and opened again, the form fetches afresh: the profiles live with the open form.
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull());
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("radiogroup", { name: "System" })).toBeNull());
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await waitFor(() => expect(asked).toEqual(["fake", "ssh-pool", "ssh-pool", "fake", "ssh-pool"]));
 });
 
 test("the profile's words: limits, room, where it runs, what it makes, the usual start and the status", () => {

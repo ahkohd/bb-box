@@ -5,14 +5,15 @@
 // the browser, keyed by plugin ID.
 
 import { experimental_Icon as Icon, experimental_usePluginId } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { KindView, ProviderProfile, SizeView } from "../plugin/views.ts";
-import { ProviderInfo } from "./provider-profile.tsx";
+import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
+import { message } from "./common.tsx";
 import type { GuestOs } from "../backends/types.ts";
 import { archAvailable, ARCHS, choiceOf, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
@@ -136,6 +137,36 @@ export function NewBox({
   const [on, setOn] = useState<string | null>(null);
   const sizeOptions = useRef<(HTMLButtonElement | null)[]>([]);
   const providerOptions = useRef<(HTMLButtonElement | null)[]>([]);
+  // Every listed provider's profile, fetched in the background once the form has painted, all at once, and kept for the form's life, so the (i) opens filled (the operator's note of 2 October 2026). Nothing is fetched while the form is closed.
+  const [profiles, setProfiles] = useState<ReadonlyMap<string, Loaded>>(() => new Map());
+  const profilesNow = useRef(profiles);
+  profilesNow.current = profiles;
+  const inFlight = useRef(new Set<string>());
+  const loadProfile = useCallback(
+    (backend: string) => {
+      if (!profile || inFlight.current.has(backend) || profilesNow.current.get(backend)?.profile) return;
+      inFlight.current.add(backend);
+      setProfiles((current) => new Map(current).set(backend, { profile: null, error: null, loading: true }));
+      profile(backend)
+        .then(
+          (found) => setProfiles((current) => new Map(current).set(backend, { profile: found, error: null, loading: false })),
+          (error: unknown) => setProfiles((current) => new Map(current).set(backend, { profile: null, error: message(error), loading: false })),
+        )
+        .finally(() => inFlight.current.delete(backend));
+    },
+    [profile],
+  );
+  const listed = kinds.flatMap((kind) => kind.offers.map((offer) => offer.backend)).join("\n");
+  useEffect(() => {
+    if (!open) {
+      setProfiles(new Map());
+      return;
+    }
+    const after = setTimeout(() => {
+      for (const backend of new Set(listed.split("\n").filter(Boolean))) loadProfile(backend);
+    }, 0);
+    return () => clearTimeout(after);
+  }, [open, listed, loadProfile]);
 
   // Every step shows what exists; a choice snaps to the nearest that does.
   const picked = nearest(kinds, wanted);
@@ -347,8 +378,8 @@ export function NewBox({
             </FormSection>
           ) : null}
           <FormSection title="Provider" description="Where the box goes: the first with room for it, in this order, unless you choose one.">
-            {/* The filters: a row of their own under the description, at the row's right edge, "Filter" at the menus' text size, wrapping right-aligned on a narrow pane (the operator's notes of 2 October 2026). */}
-            <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-2" role="group" aria-label="Filter">
+            {/* The filters: a row of their own under the description, at the left, "Filter" at the menus' text size, wrapping on a narrow pane (the operator's notes of 2 October 2026). */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-2" role="group" aria-label="Filter">
               <span className="text-xs text-muted-foreground">Filter</span>
               <MenuSelect
                 label="Kind"
@@ -399,7 +430,7 @@ export function NewBox({
                   optionRef={(element) => {
                     providerOptions.current[index + (choiceless ? 0 : 1)] = element;
                   }}
-                  info={profile ? <ProviderInfo offer={offer} profile={profile} /> : undefined}
+                  info={profile ? <ProviderInfo offer={offer} loaded={profiles.get(offer.backend)} load={() => loadProfile(offer.backend)} /> : undefined}
                 />
               ))}
             </div>

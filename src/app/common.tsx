@@ -100,21 +100,30 @@ export function forThread(threadId: string) {
 
 export type Tone = "ok" | "busy" | "off" | "bad" | "warn";
 
-/** BB's status dot: a filled dot in the tone's colour, a ring for off, a spinner for busy. */
+/**
+ * BB's status dot: a filled dot in the tone's colour, a ring for off, a
+ * spinner for busy, in a box the height of one line of the text beside it
+ * (leading-snug), so the dot and the spinner both centre on the status
+ * line's first line (the operator's note of 2 October 2026: the spinner
+ * had sat low and off-centre against "Starting").
+ */
 export function StatusDot({ tone, className }: { tone: Tone; className?: string }) {
-  if (tone === "busy") return <Icon name="Loading" className={cn("size-3 shrink-0 animate-spin text-muted-foreground", className)} aria-hidden />;
   return (
-    <span
-      aria-hidden
-      className={cn(
-        "size-1.5 shrink-0 rounded-full",
-        tone === "ok" && "bg-success",
-        tone === "warn" && "bg-warning",
-        tone === "bad" && "bg-destructive",
-        tone === "off" && "border border-muted-foreground",
-        className,
+    <span aria-hidden className={cn("inline-flex h-[1.375em] shrink-0 items-center", className)}>
+      {tone === "busy" ? (
+        <Icon name="Loading" className="size-3 animate-spin text-muted-foreground" />
+      ) : (
+        <span
+          className={cn(
+            "size-1.5 rounded-full",
+            tone === "ok" && "bg-success",
+            tone === "warn" && "bg-warning",
+            tone === "bad" && "bg-destructive",
+            tone === "off" && "border border-muted-foreground",
+          )}
+        />
       )}
-    />
+    </span>
   );
 }
 
