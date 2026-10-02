@@ -2,15 +2,19 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUILD_FREE_GB, DockerImages, type DockerImagesDeps } from "../src/plugin/docker-images.ts";
+import { BUILD_FREE_GB, DockerImages, bbAppDigest, outdated, type DockerImagesDeps } from "../src/plugin/docker-images.ts";
 import { tempDir } from "./helpers.ts";
 
 function world(more: Partial<DockerImagesDeps> & { staleImages?: string[]; exit?: number | null; lines?: string[] } = {}) {
-  const runs: { targets: readonly string[]; host: string | undefined }[] = [];
+  const runs: { args: readonly string[]; host: string | undefined }[] = [];
+  /** The digest of BB's app each stale check was given. */
+  const apps: (string | null)[] = [];
   const changes: string[] = [];
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
@@ -18,18 +22,21 @@ function world(more: Partial<DockerImagesDeps> & { staleImages?: string[]; exit?
     script: "/plugin/setup/docker/build.sh",
     images: () => ["bbbox/linux:1", "bbbox/linux-desktop:1"],
     host: async (hostId) => `unix:///tmp/relay/${hostId}.sock`,
-    stale: async (_hostId, image) => (more.staleImages ?? []).includes(image),
+    stale: async (_hostId, image, app) => {
+      apps.push(app);
+      return (more.staleImages ?? []).includes(image);
+    },
     changed: (hostId) => changes.push(hostId),
     logError: () => {},
-    run: async (_script, targets, env, onLine) => {
-      runs.push({ targets, host: env.DOCKER_HOST });
+    run: async (_script, args, env, onLine) => {
+      runs.push({ args, host: env.DOCKER_HOST });
       for (const line of more.lines ?? ["#5 [linux 2/9] RUN apt-get install", "\u001b[1mbuilt bbbox/linux:1\u001b[0m"]) onLine(line);
       await held;
       return more.exit === undefined ? 0 : more.exit;
     },
     ...more,
   });
-  return { images, runs, changes, release };
+  return { images, runs, apps, changes, release };
 }
 
 test("a machine with every image it needs builds nothing, and one that lacks one builds it through its relay", async () => {
@@ -48,9 +55,70 @@ test("a machine with every image it needs builds nothing, and one that lacks one
   lacking.release();
   const done = await first;
   assert.equal(await second, done, "one build at a time per machine");
-  assert.deepEqual(lacking.runs, [{ targets: ["linux"], host: "unix:///tmp/relay/host_a.sock" }]);
+  assert.deepEqual(lacking.runs, [{ args: ["linux"], host: "unix:///tmp/relay/host_a.sock" }]);
   assert.deepEqual([done.state, done.targets, done.detail], ["built", ["linux"], null]);
   assert.ok(lacking.changes.length >= 3, "each step reaches the settings page");
+});
+
+test("with BB's URL, the images have BB's app, and one with another build of it is built again (#95)", async () => {
+  const digest = "a".repeat(64);
+  const asked: string[] = [];
+  const url = "https://bb.example.com";
+  const current = world({
+    appUrl: () => url,
+    appDigest: async (from) => (asked.push(from), digest),
+    stale: async (_hostId, image, app) => image === "bbbox/linux:1" && app === digest,
+  });
+  current.release();
+  const built = await current.images.ensure("host_a");
+  assert.deepEqual(asked, [url]);
+  assert.deepEqual([built.state, built.targets], ["built", ["linux"]]);
+  assert.deepEqual(current.runs, [{ args: ["--bb-url", url, "linux"], host: "unix:///tmp/relay/host_a.sock" }]);
+
+  const errors: string[] = [];
+  for (const appDigest of [async () => null, async () => Promise.reject(new Error("fetch failed"))]) {
+    const silent = world({ appUrl: () => url, appDigest, staleImages: ["bbbox/linux:1"], logError: (operation) => errors.push(operation) });
+    silent.release();
+    await silent.images.ensure("host_a");
+    assert.deepEqual(silent.apps, [null, null], "a server that gives no digest: BB's app does not count");
+    assert.deepEqual(silent.runs.map((each) => each.args), [["linux"]], "and the images are built without it");
+  }
+  assert.deepEqual(errors, ["BB's app digest"]);
+
+  const unasked: string[] = [];
+  const none = world({ appDigest: async (from) => (unasked.push(from), digest), staleImages: ["bbbox/linux:1"] });
+  none.release();
+  await none.images.ensure("host_a");
+  assert.deepEqual([unasked, none.apps, none.runs.map((each) => each.args)], [[], [null, null], [["linux"]]], "BB with no URL");
+});
+
+test("an image is outdated from another layout, or with another build of BB's app when BB gives one (#95)", () => {
+  const app = "b".repeat(64);
+  assert.equal(outdated({ "bbbox.image-version": "1", "bbbox.bb-app": app }, app), false);
+  assert.equal(outdated({ "bbbox.image-version": "1", "bbbox.bb-app": "c".repeat(64) }, app), true);
+  assert.equal(outdated({ "bbbox.image-version": "1", "bbbox.bb-app": "" }, app), true, "built without BB's app");
+  assert.equal(outdated({ "bbbox.image-version": "1", "bbbox.bb-app": "" }, null), false, "BB gives no digest");
+  assert.equal(outdated({ "bbbox.image-version": "0", "bbbox.bb-app": app }, app), true);
+});
+
+test("BB's app digest comes from the header of a HEAD request, as build.sh reads it (#95)", async () => {
+  const digest = "d".repeat(64);
+  const seen: string[] = [];
+  const server = createServer((request, response) => {
+    seen.push(`${request.method} ${request.url}`);
+    if (request.url === "/install/bb-app.tgz") response.setHeader("x-bb-artifact-sha256", digest);
+    response.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    assert.equal(await bbAppDigest(`${url}/`), digest);
+    assert.equal(await bbAppDigest(`${url}/other`), null, "none in the answer");
+    assert.deepEqual(seen, ["HEAD /install/bb-app.tgz", "HEAD /other/install/bb-app.tgz"]);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
 });
 
 test("a build that fails says why from its last lines, an install with no build.sh says so, and an image bb-box does not build is named", async () => {
@@ -91,8 +159,12 @@ const BUILD_SCRIPT = fileURLToPath(new URL("../setup/docker/build.sh", import.me
 const LINUX_FREE_GB = 10;
 const DESKTOP_FREE_GB = 18;
 
-/** Runs build.sh with a docker that says `freeGB` is free, or fails its check with `error`, and builds nothing. */
-function buildWith(freeGB: number, targets: readonly string[] = [], error?: string) {
+/**
+ * Runs build.sh with a docker that says `freeGB` is free, or fails its check
+ * with `error`, and builds nothing, and a curl that gives `digest` as BB's
+ * app's, gives none ("none"), or fails ("fail").
+ */
+function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none") {
   const dir = tempDir("docker-build");
   const bin = join(dir, "bin");
   mkdirSync(bin);
@@ -109,14 +181,28 @@ echo "overlay           65871716 2899792 $FAKE_FREE_KB       5% /"
 `,
   );
   chmodSync(join(bin, "docker"), 0o755);
-  const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), ...(error ? { FAKE_ERROR: error } : {}) };
-  const result = spawnSync("bash", [BUILD_SCRIPT, ...targets], { encoding: "utf8", env });
+  writeFileSync(
+    join(bin, "curl"),
+    `#!/bin/sh
+printf '%s\\n' "$*" >>'${log}.curl'
+[ "$FAKE_DIGEST" != fail ] || exit 22
+printf 'HTTP/2 200 \\r\\n'
+[ "$FAKE_DIGEST" = none ] || printf 'x-bb-artifact-sha256: %s\\r\\n' "$FAKE_DIGEST"
+printf 'content-length: 1191955\\r\\n\\r\\n'
+`,
+  );
+  chmodSync(join(bin, "curl"), 0o755);
+  const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), FAKE_DIGEST: digest, ...(error ? { FAKE_ERROR: error } : {}) };
+  const result = spawnSync("bash", [BUILD_SCRIPT, ...args], { encoding: "utf8", env });
   const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+  const builds = calls.filter((call) => call.startsWith("build "));
   return {
     status: result.status,
     stderr: result.stderr,
     checks: calls.filter((call) => call.startsWith("run ")),
-    built: calls.filter((call) => call.startsWith("build ")).map((call) => / --target (\w+) /.exec(call)?.[1]),
+    builds,
+    built: builds.map((call) => / --target (\w+) /.exec(call)?.[1]),
+    curls: existsSync(`${log}.curl`) ? readFileSync(`${log}.curl`, "utf8").split("\n").filter(Boolean) : [],
   };
 }
 
@@ -141,4 +227,23 @@ test("build.sh does not start with less disk free than the build needs, and says
   const unseen = buildWith(1, [], "Unable to find image 'ubuntu:24.04' locally");
   assert.deepEqual([unseen.status, unseen.built], [0, ["linux", "desktop"]], "a check that cannot run does not stop the build");
   assert.equal(unseen.stderr, "build.sh could not see how much disk the Docker host has free, so it builds anyway: Unable to find image 'ubuntu:24.04' locally\n");
+});
+
+test("build.sh with BB's URL passes on the digest of BB's app that the server gives, and stops when it gives none (#95)", () => {
+  const digest = "e".repeat(64);
+  const url = "https://bb.example.com/";
+  const app = buildWith(BUILD_FREE_GB, ["--bb-url", url, "linux"], undefined, digest);
+  assert.equal(app.status, 0, app.stderr);
+  assert.deepEqual(app.curls, ["-fsSI --max-time 30 https://bb.example.com/install/bb-app.tgz"]);
+  assert.equal(app.builds.length, 1);
+  assert.ok(app.builds[0]!.includes(` --build-arg BB_URL=${url} --build-arg BB_APP_SHA256=${digest} `), app.builds[0]);
+
+  const none = buildWith(BUILD_FREE_GB, ["linux"], undefined, digest);
+  assert.deepEqual(none.curls, [], "no URL, no request");
+  assert.ok(none.builds[0]!.includes(" --build-arg BB_URL= --build-arg BB_APP_SHA256= "), none.builds[0]);
+
+  const down = buildWith(BUILD_FREE_GB, ["--bb-url", url], undefined, "fail");
+  assert.deepEqual([down.status, down.stderr, down.built, down.checks], [1, `build.sh could not reach BB's server at ${url} for its app.\n`, [], []]);
+  const silent = buildWith(BUILD_FREE_GB, ["--bb-url", url]);
+  assert.deepEqual([silent.status, silent.stderr, silent.built], [1, `BB's server at ${url} gave no digest for its app.\n`, []]);
 });

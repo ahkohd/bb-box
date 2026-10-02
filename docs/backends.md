@@ -442,6 +442,10 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   machine's name, and builds there any image it lacks;
   `bb box docker-build <machine>` builds them again. Building both needs
   about 25 GB free on the machine, and `build.sh` does not start with less.
+  When BB has a public URL (`BB_APP_URL`), the images have BB's host app
+  from it, so a box enrols without downloading it, and an image with an
+  older build of the app is built again: only its last layer, the app's
+  (#95).
 - On a Windows PC, BB's host app can run in a WSL 2 distribution with
   Docker Desktop's WSL integration, and the relay reaches Desktop's socket
   there (#233). Desktop runs only while someone is signed in, and stops the

@@ -99,7 +99,10 @@ setup/docker/build.sh
 
 `build.sh linux` or `build.sh desktop` builds one. `--bb-url
 https://bb.example.com` puts BB's host app in the images, so a box enrols
-without downloading it. To build on a Docker host over SSH, run it with
+without downloading it. The app is the images' last layer, and its build
+argument is the digest that BB's server gives for it, so after BB's app
+changes, running `build.sh` again installs the new app and keeps the rest
+cached. To build on a Docker host over SSH, run it with
 `DOCKER_HOST=ssh://user@host`, or with that host's Docker context in use.
 
 Before it builds, `build.sh` checks that the Docker host has the disk free
