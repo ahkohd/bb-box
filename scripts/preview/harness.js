@@ -193,10 +193,10 @@ if (!scene.chrome) chrome.remove();
 const slot =
   scene.slot === "settings"
     ? slots.settingsSections[0]
-    : scene.slot === "desktops"
+    : scene.slot === "boxes"
       ? slots.navPanels[0]
       : slots.threadPanelActions.find((action) => action.id === scene.slot);
-root.className = slot.layout === "flush" ? "flush" : scene.slot === "desktops" ? "" : "padded";
+root.className = slot.layout === "flush" ? "flush" : scene.slot === "boxes" ? "" : "padded";
 const reactRoot = ReactDOMClient.createRoot(root);
 reactRoot.render(h(slot.component, scene.props ?? { threadId: THREAD, params: null }));
 await new Promise((resolve) => setTimeout(resolve, 300));

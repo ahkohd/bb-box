@@ -1,6 +1,6 @@
 // The desktop viewer: noVNC over the plugin's relay (007), with the control
 // bar for taking and handing back input (008). It shows in a thread panel
-// tab of its own for each box, and on the Desktops page for a browser tab.
+// tab of its own for each box, and on the Boxes page for a browser tab.
 
 import RFB from "@novnc/novnc";
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
@@ -8,13 +8,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { BoxResult, Contract, DesktopEntry, DesktopState, PanelState } from "../plugin/contract.ts";
+import type { BoxResult, BoxEntry, Contract, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
-import { BoxTerminal } from "./terminal.tsx";
-import { MonitorGlyph } from "./glyphs.tsx";
+import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
+import { MonitorGlyph, ServerGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
@@ -38,7 +38,7 @@ class Viewer extends RFB {
   }
 }
 
-/** Where the Desktops page shows one box, for a new browser tab. */
+/** Where the Boxes page shows one box, for a new browser tab. */
 export function pageHref(pluginId: string, threadId: string, boxId: string): string {
   return `/plugins/${encodeURIComponent(pluginId)}/${DESKTOP_PAGE}/${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
 }
@@ -491,23 +491,20 @@ export function useOpenDesktop(): (box: BoxView) => void {
   };
 }
 
-/** The thread panel tab for one box's desktop. Opened bare, it lists the thread's desktops. */
+/** The thread panel tab for one box's desktop. Opened bare from its launcher row, it opens the thread's desktop, picks among several, or offers the Box panel. */
 export function DesktopPanel({ threadId, params }: { threadId: string; params: unknown }) {
   const boxId = parseParams(params);
   if (boxId) return <DesktopViewer key={boxId} threadId={threadId} boxId={boxId} newTab />;
   return <DesktopChooser threadId={threadId} />;
 }
 
-/** A desktop box as a row: name, kind, state and who has control, with one "Open" button. */
-function DesktopRow({ box, meta, onOpen, actions }: { box: BoxView; meta?: string | null; onOpen: () => void; actions?: React.ReactNode }) {
-  const pluginId = experimental_usePluginId();
+/** A box as a row: its glyph, name, kind, state (and who has control, for a desktop), with its actions. */
+export function BoxLine({ box, meta, actions }: { box: BoxView; meta?: string | null; actions?: React.ReactNode }) {
   const status = statusOf(box, Date.now());
-  const control = box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null;
+  const control = box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null;
   return (
     <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
-      <span className="flex size-6 items-center justify-center text-muted-foreground">
-        <MonitorGlyph />
-      </span>
+      <span className="flex size-6 items-center justify-center text-muted-foreground">{box.desktop ? <MonitorGlyph /> : <ServerGlyph />}</span>
       <div className="min-w-0">
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
@@ -519,31 +516,49 @@ function DesktopRow({ box, meta, onOpen, actions }: { box: BoxView; meta?: strin
           <Meta items={[status.items[0]?.text, ...status.items.slice(1).map((item) => item.text), control, meta]} />
         </div>
       </div>
-      <span className="flex shrink-0 items-center gap-1">
-        <Button type="button" variant="outline" size="sm" className="h-7" onClick={onOpen}>
-          Open
-        </Button>
-        {actions}
-      </span>
+      <span className="flex shrink-0 items-center gap-1">{actions}</span>
     </div>
   );
 }
 
+/**
+ * The bare Desktop launcher tab, made a real shortcut (Task A): one desktop opens
+ * straight away, several offer a chooser, and none sends you to the Box panel. The
+ * SDK 0.5.29 has no way to hide the launcher row (see docs/bb-requests.md #14), so
+ * the shortcut lives here rather than in the action's run().
+ */
 function DesktopChooser({ threadId }: { threadId: string }) {
   const rpc = useRpc<Contract>();
+  const navigate = useBbNavigate();
   const open = useOpenDesktop();
   const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
   const desktops = state?.boxes.filter((box) => box.desktop) ?? [];
   useNow(desktops.some((box) => box.state === "acquiring" || box.state === "starting"), 1000);
+  if (desktops.length === 1) return <DesktopViewer key={desktops[0]!.id} threadId={threadId} boxId={desktops[0]!.id} newTab />;
   return (
     <div className="p-4">
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-      {state && !desktops.length ? <EmptyPanel title="No desktop boxes">This thread has no desktop box. Make one in the Box panel.</EmptyPanel> : null}
+      {state && !desktops.length ? (
+        <EmptyPanel title="No desktop box">
+          <p className="mt-1">This thread has no desktop box.</p>
+          <Button type="button" variant="outline" size="sm" className="mt-3 h-7" onClick={() => navigate.openThreadPanel({ actionId: BOXES_ACTION, title: "Box" })}>
+            Open the Box panel
+          </Button>
+        </EmptyPanel>
+      ) : null}
       {desktops.length ? (
         <div className="rounded-lg border border-border bg-card px-4 py-1">
           <div className="divide-y divide-border">
             {desktops.map((box) => (
-              <DesktopRow key={box.id} box={box} onOpen={() => open(box)} />
+              <BoxLine
+                key={box.id}
+                box={box}
+                actions={
+                  <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => open(box)}>
+                    Open
+                  </Button>
+                }
+              />
             ))}
           </div>
         </div>
@@ -552,8 +567,8 @@ function DesktopChooser({ threadId }: { threadId: string }) {
   );
 }
 
-/** The Desktops page: every desktop box, or one box's desktop at <threadId>/<boxId>. */
-export function DesktopsPage({ subPath }: { subPath: string }) {
+/** The Boxes page: every box across threads and your machines, or one box's desktop or terminal at <threadId>/<boxId>. */
+export function BoxesPage({ subPath }: { subPath: string }) {
   const navigate = useBbNavigate();
   const [threadId, boxId, ...rest] = subPath.split("/").map((part) => {
     try {
@@ -562,20 +577,20 @@ export function DesktopsPage({ subPath }: { subPath: string }) {
       return "";
     }
   });
-  // A view opened from the settings page goes back there: a machine with no desktop is not on the list here.
+  // A view opened from the settings page goes back there: a machine of yours is not on the Boxes list the same way.
   const fromSettings = rest.at(-1) === "from-settings";
   const parts = fromSettings ? rest.slice(0, -1) : rest;
-  const back = fromSettings ? { label: "Back to settings", go: () => void navigate.openUrl(SETTINGS_PATH) } : { label: "Back to desktops", go: () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" }) };
+  const back = fromSettings ? { label: "Back to settings", go: () => void navigate.openUrl(SETTINGS_PATH) } : { label: "Back to boxes", go: () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" }) };
   if (threadId && boxId && parts.length === 1 && parts[0] === "terminal") {
     return <BoxTerminal key={`${threadId}/${boxId}/terminal`} threadId={threadId} boxId={boxId} onBack={back} />;
   }
   if (threadId && boxId && !parts.length) {
     return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} onBack={back} />;
   }
-  return <DesktopList />;
+  return <BoxList />;
 }
 
-/** The titles of the threads that have desktops, fetched once each; a thread that cannot be read shows its ID. */
+/** The titles of the threads whose boxes the page lists, fetched once each; a thread that cannot be read shows its ID. */
 export function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
   const sdk = useSdk();
   const [titles, setTitles] = useState<Record<string, string>>({});
@@ -602,30 +617,45 @@ export function useThreadTitles(threadIds: readonly string[]): Record<string, st
   return titles;
 }
 
-/** Where the Desktops page shows one box's desktop, or its terminal; from settings, the back arrow returns there. */
+/** Where the Boxes page shows one box's desktop, or its terminal; from settings, the back arrow returns there. */
 export function desktopSubPath(threadId: string, boxId: string, view: "desktop" | "terminal" = "desktop", from?: "settings"): string {
   const base = `${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
   return [base, ...(view === "terminal" ? ["terminal"] : []), ...(from === "settings" ? ["from-settings"] : [])].join("/");
 }
 
-function DesktopList() {
+function BoxList() {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
-  const { value: desktops, error } = useLive<DesktopEntry[]>("desktops", () => rpc.call("desktops"), () => true);
-  const yours = desktops?.filter((entry) => entry.owner === "yours") ?? [];
-  const threads = desktops?.filter((entry) => entry.owner !== "yours") ?? [];
+  const pluginId = experimental_usePluginId();
+  const { value: all, error } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
+  const entries = all ?? [];
+  const yours = entries.filter((entry) => entry.owner === "yours");
+  const threads = entries.filter((entry) => entry.owner !== "yours");
   const titles = useThreadTitles([...new Set(threads.map((entry) => entry.threadId))]);
-  const card = (entries: readonly DesktopEntry[], own: boolean) => (
+  useNow(
+    entries.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting"),
+    1000,
+  );
+  // A row's actions: open a desktop, a terminal, a desktop in a browser tab, and the owning thread.
+  const actions = (threadId: string, box: BoxView, own: boolean) => (
+    <>
+      {box.desktop && box.state === "ready" ? (
+        <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id) })} />
+      ) : null}
+      {canOpenTerminal(box) ? (
+        <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id, "terminal") })} />
+      ) : null}
+      {box.desktop && box.state === "ready" ? (
+        <IconButton label="Open desktop in a browser tab" icon="ExternalLink" onClick={() => void navigate.openUrl(pageHref(pluginId, threadId, box.id))} />
+      ) : null}
+      {own ? null : <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />}
+    </>
+  );
+  const card = (list: readonly BoxEntry[], own: boolean) => (
     <div className="rounded-lg border border-border bg-card px-4 py-1">
       <div className="divide-y divide-border">
-        {entries.map(({ threadId, box }) => (
-          <DesktopRow
-            key={box.id}
-            box={box}
-            meta={own ? null : (titles[threadId] ?? null)}
-            onOpen={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id) })}
-            actions={own ? undefined : <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />}
-          />
+        {list.map(({ threadId, box }) => (
+          <BoxLine key={box.id} box={box} meta={own ? null : (titles[threadId] ?? null)} actions={actions(threadId, box, own)} />
         ))}
       </div>
     </div>
@@ -634,7 +664,7 @@ function DesktopList() {
     <div className="h-full overflow-y-auto p-4 md:p-5">
       <div className="mx-auto w-full max-w-3xl space-y-4">
         {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-        {desktops && !desktops.length ? <EmptyPanel title="No desktops">No thread has a desktop box. Make one from a thread's Box panel.</EmptyPanel> : null}
+        {all && !entries.length ? <EmptyPanel title="No boxes">No thread has a box, and you have no machines. Make one from a thread's Box panel.</EmptyPanel> : null}
         {yours.length ? (
           <div className="space-y-2">
             <h3 className="text-xs font-medium text-foreground">Your machines</h3>

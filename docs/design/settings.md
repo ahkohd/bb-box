@@ -67,12 +67,12 @@ Boxes of your own, kept as BB machines.
   none is working).
 - Quick actions: Open desktop (desktop kinds, when ready), Open terminal
   (when ready), Stop or Start; the menu adds Copy address and "Remove…".
-  Open desktop and Open terminal go to the Desktops page, which shows one
+  Open desktop and Open terminal go to the Boxes page, which shows one
   box's desktop at `operator/<box>` and its terminal at
   `operator/<box>/terminal`, since a settings page has no thread panel to
   open a tab in. Opened from here the route ends in `from-settings`, and
   the view's back arrow returns to the settings page rather than the
-  Desktops list, where a machine without a desktop is not.
+  Boxes list.
 - Remove asks ("Remove build-1?", what is deleted). Remove and Stop ask
   again when a thread is working on the machine, naming the threads, as
   the panel's Release does (034): "Stop build-1 anyway?" with "Stop

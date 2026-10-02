@@ -1756,7 +1756,7 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { desktopPath: string };
   assert.equal(state.desktopPath, "/api/v1/plugins/bb-box/http/desktop");
   assert.deepEqual(
-    ((await harness.behavior.callRpc("desktops", null)) as { threadId: string; box: { id: string } }[]).map((entry) => [entry.threadId, entry.box.id]),
+    ((await harness.behavior.callRpc("allBoxes", null)) as { threadId: string; box: { id: string } }[]).map((entry) => [entry.threadId, entry.box.id]),
     [[THREAD, box.id]],
   );
 
@@ -2014,7 +2014,11 @@ test("a box without a desktop has no desktop to control", async (t) => {
   const box = await only(app);
   const result = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer: "viewer-one-0001" })) as { error: string };
   assert.equal(result.error, `Box ${box.name} has no desktop.`);
-  assert.deepEqual(await harness.behavior.callRpc("desktops", null), []);
+  assert.deepEqual(
+    ((await harness.behavior.callRpc("allBoxes", null)) as { threadId: string; box: { id: string } }[]).map((entry) => [entry.threadId, entry.box.id]),
+    [[THREAD, box.id]],
+    "the Boxes page lists a server box too, not only desktops",
+  );
 });
 
 test("bb box lists kinds and boxes, and acquires and releases for the thread it runs in", async (t) => {

@@ -15,7 +15,7 @@ import { SETTLE_MS } from "../src/app/desktop.tsx";
 import { choiceOf, formFilterOf, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
-type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
+type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
@@ -377,7 +377,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? null, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
-    desktops: () => boxes.filter((candidate) => candidate.desktop).map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
+    allBoxes: () => boxes.map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
     // Your machines (036): `options.machines` to start with, kept as the tests add, stop, start and remove them.
     "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol) }),
     "machines.add": ({ kind, name }) => {
@@ -582,13 +582,13 @@ function openMenu(trigger: HTMLElement) {
   return screen.findByRole("menu");
 }
 
-test("the app registers the Boxes panel, a desktop tab, the Desktops page and the Backends settings section", () => {
+test("the app registers the Boxes panel, a desktop tab, the Boxes page and the Backends settings section", () => {
   expect(app.threadPanelActions.map((action) => [action.id, action.title])).toEqual([
     ["boxes", "Box"],
     ["desktop", "Desktop"],
     ["terminal", "Terminal"],
   ]);
-  expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["desktops", "Desktops", "desktop"]]);
+  expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["boxes", "Boxes", "desktop"]]);
   expect(app.settingsSections.map((section) => section.id)).toEqual(["configuration"]);
 });
 
@@ -1482,35 +1482,49 @@ test("a desktop tab says when its box is not running or gone, and starts a stopp
   expect(await gone.findByText("This box has been released.")).toBeTruthy();
 });
 
-test("a desktop tab opened bare lists the thread's desktops", async () => {
+test("the Desktop tab opened bare opens the thread's one desktop, lists several, and offers the Box panel with none", async () => {
   const action = app.threadPanelActions.find((candidate) => candidate.id === "desktop");
-  const slot = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([box(), desktopBox()]).handlers, pluginId: "bb-box" });
-  expect(await slot.findByText("bold-heron")).toBeTruthy();
-  expect(slot.queryByText("calm-otter")).toBeNull();
-  fireEvent.click(slot.getByRole("button", { name: "Open" }));
-  expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "bold-heron", params: { box: "box_2" } } }]);
+  // One desktop (next to a server): the desktop opens straight away, a shortcut, not a chooser.
+  const one = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([box(), desktopBox()]).handlers, pluginId: "bb-box" });
+  expect(await one.findByText("Connecting to the desktop…")).toBeTruthy();
+  cleanup();
+
+  // Two desktops: a chooser with an Open button each.
+  const many = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([desktopBox(), desktopBox({ id: "box_9", name: "wild-cove" })]).handlers, pluginId: "bb-box" });
+  expect(await many.findByText("bold-heron")).toBeTruthy();
+  expect(many.getByText("wild-cove")).toBeTruthy();
+  fireEvent.click(many.getAllByRole("button", { name: "Open" })[0]!);
+  expect(many.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "bold-heron", params: { box: "box_2" } } }]);
+  cleanup();
+
+  // No desktop: a button to the Box panel.
+  const none = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([box()]).handlers, pluginId: "bb-box" });
+  expect(await none.findByText("No desktop box")).toBeTruthy();
+  fireEvent.click(none.getByRole("button", { name: "Open the Box panel" }));
+  expect(none.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "boxes", title: "Box" } }]);
 });
 
-test("the Desktops page lists every desktop box with its thread, and shows one for a browser tab", async () => {
-  const { handlers } = server([desktopBox()]);
+test("the Boxes page lists every box with its thread, servers as well as desktops, and shows one desktop for a browser tab", async () => {
+  const { handlers } = server([box(), desktopBox()]);
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
   expect(await list.findByText("bold-heron")).toBeTruthy();
-  expect(list.getByText("Linux")).toBeTruthy();
+  expect(list.getByText("calm-otter")).toBeTruthy(); // a server box, not only desktops
   expect(list.getByText("Desktop")).toBeTruthy();
   expect(list.getByText("The agent has control")).toBeTruthy();
-  expect(await list.findByText("UI thread")).toBeTruthy();
-  fireEvent.click(list.getByRole("button", { name: "Open" }));
-  fireEvent.click(list.getByRole("button", { name: "Open thread" }));
-  expect(list.inspection.navigateCalls).toEqual([
-    { method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_2" } },
-    { method: "toThread", threadId: THREAD },
-  ]);
+  await waitFor(() => expect(list.getAllByText("UI thread")).toHaveLength(2));
+
+  fireEvent.click(list.getByRole("button", { name: "Open desktop" }));
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_2" } });
+  fireEvent.click(list.getAllByRole("button", { name: "Open terminal" })[0]!);
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_1/terminal" } });
+  fireEvent.click(list.getAllByRole("button", { name: "Open thread" })[0]!);
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: THREAD });
   cleanup();
 
   const one = renderSlot(page!, { subPath: "thr_panel/box_2" }, { rpc: handlers, pluginId: "bb-box" });
   expect(await one.findByText("Connecting to the desktop…")).toBeTruthy();
-  fireEvent.click(one.getByRole("button", { name: "Back to desktops" }));
+  fireEvent.click(one.getByRole("button", { name: "Back to boxes" }));
   expect(one.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "desktop", options: { subPath: "" } }]);
 });
 
@@ -1528,6 +1542,29 @@ test("a row opens a box's terminal tab, named after the box", async () => {
   const stopped = panel(server([box({ state: "stopped" })]).handlers);
   await stopped.findByText("calm-otter");
   expect(stopped.queryByRole("button", { name: "Open terminal" })).toBeNull();
+});
+
+test("the Terminal tab opened bare opens the thread's one terminal, lists several, and offers the Box panel with none", async () => {
+  const action = app.threadPanelActions.find((candidate) => candidate.id === "terminal");
+  // One box with a terminal: its terminal opens straight away, a shortcut, not a chooser.
+  const one = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([box()]).handlers, pluginId: "bb-box" });
+  expect(await one.findByText("Connecting…")).toBeTruthy();
+  await waitFor(() => expect(new URL(FakeSocket.made.at(-1)!.url).searchParams.get("box")).toBe("box_1"));
+  cleanup();
+
+  // Two boxes with a terminal: a chooser with an Open button each.
+  const many = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([box(), box({ id: "box_6", name: "swift-fox" })]).handlers, pluginId: "bb-box" });
+  expect(await many.findByText("calm-otter")).toBeTruthy();
+  expect(many.getByText("swift-fox")).toBeTruthy();
+  fireEvent.click(many.getAllByRole("button", { name: "Open" })[0]!);
+  expect(many.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "terminal", title: "Terminal: calm-otter", params: { box: "box_1" } } }]);
+  cleanup();
+
+  // No box with a terminal: a button to the Box panel.
+  const none = renderSlot(action!, { threadId: THREAD, params: null }, { rpc: server([box({ terminal: false })]).handlers, pluginId: "bb-box" });
+  expect(await none.findByText("No box with a terminal")).toBeTruthy();
+  fireEvent.click(none.getByRole("button", { name: "Open the Box panel" }));
+  expect(none.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "boxes", title: "Box" } }]);
 });
 
 test("the terminal tab streams the shell over the plugin's socket, sends what is typed and the size, and offers a new shell when it ends", async () => {
@@ -1675,14 +1712,14 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   expect(slot.getByText("Starting")).toBeTruthy();
 });
 
-test("the Desktops page lists your machines first, without Open thread, and shows a machine's terminal", async () => {
+test("the Boxes page lists your machines first, without Open thread, and shows a machine's terminal", async () => {
   const { handlers } = server([desktopBox()], { machines: [machine()] });
   const mine = { threadId: "operator", box: desktopBox({ id: "box_m1", name: "build-1" }), owner: "yours" as const };
-  const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, desktops: () => [...(handlers.desktops as () => DesktopEntryLike[])(), mine] };
+  const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, allBoxes: () => [...(handlers.allBoxes as () => BoxEntryLike[])(), mine] };
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
   expect(await list.findByText("Your machines")).toBeTruthy();
-  const rows = list.getAllByRole("button", { name: "Open" });
+  const rows = list.getAllByRole("button", { name: "Open desktop" });
   expect(rows).toHaveLength(2);
   expect(list.getAllByRole("button", { name: "Open thread" })).toHaveLength(1);
   const names = list.getAllByText(/build-1|bold-heron/).map((node) => node.textContent);
