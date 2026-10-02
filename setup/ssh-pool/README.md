@@ -12,6 +12,7 @@ your machine, and can read what any user there can read.
 | --- | --- |
 | `setup.sh` | Sets up a machine: run it once on each machine, as root |
 | `machine.sh` | bb-box's helper, which `setup.sh` installs on the machine |
+| `setup-mac.sh`, `machine-mac.sh`, `mac-home/` | A Mac's setup, helper and box users' home template ([047](../../docs/decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)). The pool does not lend Macs yet |
 | `test/` | A pool of Docker containers for testing the backend on one computer |
 
 ## How it works
