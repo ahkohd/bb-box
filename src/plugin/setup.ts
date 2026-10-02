@@ -29,7 +29,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { abortable } from "../core/abortable.ts";
-import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord } from "./docker-hosts.ts";
+import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
 import { DockerImages } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
@@ -241,8 +241,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // The Docker API relay (042): a socket per BB machine for the docker CLI, each
   // connection a channel on one WebSocket the machine's worker opens out to this route.
   const machineNames = new Map<string, string>();
-  /** Each BB machine's OS, as bb-box's host entry there last reported it. */
-  const machinePlatforms = new Map<string, GuestOs>();
+  // Each BB machine's OS, as bb-box's host entry there last reported it, kept across restarts.
+  const machinePlatforms = new MachinePlatforms(kv);
+  await machinePlatforms.load();
   const machineStates = new Map<string, { at: number; connected: boolean | null; offline: string | null }>();
   /**
    * Whether BB shows the machine connected and has heard from it lately, from
@@ -301,7 +302,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       await relay.endpoint(hostId);
     },
     name: (hostId) => machineNames.get(hostId) ?? null,
-    platform: (hostId) => machinePlatforms.get(hostId) ?? null,
+    platform: (hostId) => machinePlatforms.get(hostId),
     connected: machineConnected,
   };
 
@@ -562,7 +563,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],
     async found(hostId, signal) {
       const answer = await host.call("docker", {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
-      if (answer.platform) machinePlatforms.set(hostId, answer.platform);
+      // A machine's OS newly known: panels with the form open learn it for "Runs on".
+      if (answer.platform && (await machinePlatforms.learn(hostId, answer.platform))) notify(null);
       // A socket that refused BB's daemon is Docker to fix, not a machine without Docker.
       if (answer.refused) throw new Error(answer.reason ?? "Docker's socket refused BB's daemon.");
       return answer.found ? null : `there is no Docker to reach: ${answer.reason ?? "it did not answer"}`;

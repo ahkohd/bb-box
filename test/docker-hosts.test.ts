@@ -11,7 +11,8 @@ import type { DockerInfo } from "../src/backends/docker/cli.ts";
 import { DRIVERS } from "../src/backends/index.ts";
 import { checkDocument, emptyDocument, type ConfigDocument } from "../src/core/document.ts";
 import { hostEntry } from "../src/host/entry.ts";
-import { DockerHosts, SILENT_MS, machineHosts, machineOffline, withDockerHost, type MachineRecord } from "../src/plugin/docker-hosts.ts";
+import { DockerHosts, MachinePlatforms, SILENT_MS, machineHosts, machineOffline, withDockerHost, type MachineRecord } from "../src/plugin/docker-hosts.ts";
+import { MemoryStorage } from "./helpers.ts";
 import { tempDir } from "./helpers.ts";
 import { machinePlatform } from "../src/host/relay.ts";
 
@@ -193,4 +194,21 @@ test("a Docker socket that refuses BB's daemon is Docker to fix, and the host en
     reason: `${username} may not use Docker's socket ${socket}. Add ${username} to its group, usually docker, then restart ${username}'s services so BB's daemon has the group: sudo systemctl restart user@${uid}.service.`,
     refused: true, platform: machinePlatform()
   });
+});
+
+test("a BB machine's OS is kept in storage at the host entry's answer, so a restart knows it before the entry has answered again", async () => {
+  const kv = new MemoryStorage();
+  const platforms = new MachinePlatforms(kv);
+  await platforms.load();
+  assert.equal(platforms.get("host_m1"), null, "unknown until the host entry answers");
+  assert.equal(await platforms.learn("host_m1", "windows"), true, "news, so panels are told");
+  assert.equal(await platforms.learn("host_m1", "windows"), false, "the same again is not");
+  assert.equal(platforms.get("host_m1"), "windows");
+  // After a restart the kept OS stands until the host entry answers again, and its word wins when it changes.
+  const restarted = new MachinePlatforms(kv);
+  await restarted.load();
+  assert.equal(restarted.get("host_m1"), "windows");
+  assert.equal(await restarted.learn("host_m1", "linux"), true);
+  assert.equal(restarted.get("host_m1"), "linux");
+  assert.equal(restarted.get("host_m2"), null);
 });
