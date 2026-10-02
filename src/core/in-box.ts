@@ -4,6 +4,7 @@
 
 import { posix } from "node:path";
 import { DESKTOP_EXITS, desktopScript } from "../transports/powershell.ts";
+import { LOADS_ENV } from "../transports/process.ts";
 import type { GuestOs } from "../transports/types.ts";
 
 export { DESKTOP_EXITS };
@@ -12,7 +13,8 @@ export { DESKTOP_EXITS };
  * The thread's environment for commands in the box, relative to the box
  * user's home. bb-box writes it, readable by the box user only, before every
  * command it runs, and sources it. An enrolled box's ~/.bashrc, or ~/.zshenv
- * on macOS, sources it too, so the thread's own SSH commands get it.
+ * on macOS, sources it too, so the thread's own SSH commands get it, but not
+ * in the shells of bb-box's own commands, which start with LOADS_ENV.
  */
 export function envFile(os: GuestOs): string {
   return os === "windows" ? ".config/bb-box/env.ps1" : ".config/bb-box/env";
@@ -78,7 +80,7 @@ function macDesktop(script: string): string {
     `if ! sudo -n ${wrapper} /usr/bin/true </dev/null >/dev/null 2>&1; then ` +
     `printf 'bb-box: sudo does not let %s run commands in the desktop session. Mac setup adds this rule as /etc/sudoers.d/bb-box-desktop:\\n%s ALL=(root) NOPASSWD: /bin/launchctl asuser %s /usr/bin/sudo -n -u %s -- *\\n' "$bb_user" "$bb_user" "$bb_uid" "$bb_user" >&2; ` +
     `exit ${DESKTOP_EXITS.refused}; fi; ` +
-    `exec sudo -n ${wrapper} "\${SHELL:-/bin/sh}" -c ${sh(script)}`
+    `exec sudo -n ${wrapper} "\${SHELL:-/bin/sh}" -c ${sh(LOADS_ENV + script)}`
   );
 }
 
@@ -122,15 +124,20 @@ alarm 0;
 if ($timed) { kill "KILL", -$pid; exit(($s & 127) == 9 ? 137 : 124) }
 exit(($s & 127) ? 128 + ($s & 127) : $s >> 8);`;
 
-/** Runs `script` under MAC_TIMEOUT, or as it is on a Mac without Perl. */
+/**
+ * Runs `script` under MAC_TIMEOUT, or as it is on a Mac without Perl, in a
+ * shell that has the env file's variables already.
+ */
 function macTimeout(script: string, timeoutMs: number): string {
-  const shell = `"\${SHELL:-/bin/sh}" -c ${sh(script)}`;
+  const shell = `"\${SHELL:-/bin/sh}" -c ${sh(LOADS_ENV + script)}`;
   return `if [ -x /usr/bin/perl ]; then exec /usr/bin/perl -e ${sh(MAC_TIMEOUT)} ${Math.ceil(timeoutMs / 1000)} ${shell}; else exec ${shell}; fi`;
 }
 
 /**
  * Wraps `script` so it runs with the thread's environment, in `cwd` when
- * given. The whole script runs in `cwd`, or none of it does.
+ * given. The whole script runs in `cwd`, or none of it does. On Linux and
+ * macOS, each shell it starts begins with LOADS_ENV, so the box's shell
+ * startup file leaves loading the env file to it: once per command.
  */
 export function command(os: GuestOs, script: string, options: CommandOptions = {}): string {
   if (os === "windows") {
@@ -154,15 +161,15 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
   if (os === "macos") {
     // Killing the local ssh leaves the command running in the box, as on Linux.
     const run = options.timeoutMs === undefined ? script : macTimeout(script, options.timeoutMs);
-    return options.session === "desktop" ? `${write}${macDesktop(`${env}${cd}${run}`)}` : `${write}${env}${cd}${run}`;
+    return LOADS_ENV + (options.session === "desktop" ? `${write}${macDesktop(`${env}${cd}${run}`)}` : `${write}${env}${cd}${run}`);
   }
   const desktop = options.session === "desktop" ? LINUX_DESKTOP : "";
-  if (options.timeoutMs === undefined) return `${write}${env}${desktop}${cd}${script}`;
+  if (options.timeoutMs === undefined) return `${LOADS_ENV}${write}${env}${desktop}${cd}${script}`;
   // Killing the local ssh leaves the command running in the box. GNU timeout
   // gives the script its own process group and stops all of it.
-  const shell = `"\${SHELL:-/bin/sh}" -c ${sh(script)}`;
+  const shell = `"\${SHELL:-/bin/sh}" -c ${sh(LOADS_ENV + script)}`;
   const timeout = `timeout -k 5 ${options.timeoutMs / 1000} ${shell}`;
-  return `${write}${env}${desktop}${cd}if command -v timeout >/dev/null 2>&1; then exec ${timeout}; else exec ${shell}; fi`;
+  return `${LOADS_ENV}${write}${env}${desktop}${cd}if command -v timeout >/dev/null 2>&1; then exec ${timeout}; else exec ${shell}; fi`;
 }
 
 /**
@@ -299,30 +306,47 @@ export function envScript(os: GuestOs, variables: Readonly<Record<string, string
   return header + defaults + names.map((name) => `export ${name}=${sh(variables[name]!)}`).join("\n") + "\n" + loader;
 }
 
-/** The line an enrolled box's shell startup file starts with, above anything that returns early. */
+/** Sources the env file, unless the shell's command loads it (#100). */
+const HOOK_LINE =
+  `case "\${BASH_EXECUTION_STRING-}\${ZSH_EXECUTION_STRING-}" in ${sh(LOADS_ENV)}*) ;; ` +
+  `*) if [ -r "$HOME/${envFile("linux")}" ]; then . "$HOME/${envFile("linux")}"; fi ;; esac`;
+
+/**
+ * The lines an enrolled box's shell startup file starts with, above anything
+ * that returns early.
+ */
 const SHELL_HOOK = `# Added by bb-box: the thread's environment and access, for SSH commands too.
-if [ -r "$HOME/${envFile("linux")}" ]; then . "$HOME/${envFile("linux")}"; fi
+${HOOK_LINE}
 `;
 
 /**
+ * Prints the startup file without the hook before #100, which loaded the env
+ * file in every shell: its two lines and the blank line after them.
+ */
+const DROP_OLD_HOOK =
+  `awk -v a=${sh("# Added by bb-box: the thread's environment and access, for SSH commands too.")} ` +
+  `-v b=${sh(`if [ -r "$HOME/${envFile("linux")}" ]; then . "$HOME/${envFile("linux")}"; fi`)} ` +
+  `'$0 == a { next } $0 == b { gap = 1; next } gap && $0 == "" { gap = 0; next } { gap = 0; print }'`;
+
+/**
  * Run once a Linux or macOS box is a BB machine, after the env file is
- * written: the shell's startup file sources the env file first, git asks gh
- * for GitHub credentials, so both use GH_TOKEN, and git fetches GitHub's SSH
- * URLs over HTTPS, as on the thread's machine. Each rewrite replaces only
- * its own entry: an empty one would match every URL. That file is ~/.bashrc,
- * or ~/.zshenv on macOS, since an SSH command there runs a zsh that is not a
- * login shell, which reads only ~/.zshenv. Prints how long it took in the
- * box, in milliseconds, for the enrolment's log, when the box's date can
- * tell. Null for Windows.
+ * written: the shell's startup file sources the env file first, in place of
+ * an older hook, git asks gh for GitHub credentials, so both use GH_TOKEN,
+ * and git fetches GitHub's SSH URLs over HTTPS, as on the thread's machine.
+ * Each rewrite replaces only its own entry: an empty one would match every
+ * URL. That file is ~/.bashrc, or ~/.zshenv on macOS, since an SSH command
+ * there runs a zsh that is not a login shell, which reads only ~/.zshenv.
+ * Prints how long it took in the box, in milliseconds, for the enrolment's
+ * log, when the box's date can tell. Null for Windows.
  */
 export function accessSetup(os: GuestOs): string | null {
   if (os === "windows") return null;
   // cp -p gives the new file the old one's mode, which writing it keeps.
   return String.raw`started=$(date +%s%N)
 f="$HOME/${os === "macos" ? ".zshenv" : ".bashrc"}"
-if ! grep -qsF ${sh(envFile(os))} "$f"; then
+if ! grep -qsxF ${sh(HOOK_LINE)} "$f"; then
   { [ ! -e "$f" ] || cp -p "$f" "$f.bb-box"; } &&
-    { printf '%s\n' ${sh(SHELL_HOOK)} && { [ ! -e "$f" ] || cat "$f"; }; } > "$f.bb-box" && mv -f "$f.bb-box" "$f"
+    { printf '%s\n' ${sh(SHELL_HOOK)} && { [ ! -e "$f" ] || ${DROP_OLD_HOOK} "$f"; }; } > "$f.bb-box" && mv -f "$f.bb-box" "$f"
 fi
 code=0
 if command -v git >/dev/null 2>&1; then
