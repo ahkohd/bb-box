@@ -311,29 +311,28 @@ node --test test/conformance.test.ts
   lines on stdin, prints `key=value` lines, and holds a lock on the machine
   while it acts.
 - Ownership lives on the machine, in `/var/lib/bb-box`, or `/var/db/bb-box`
-  on a Mac: the reset
-  generation, and an `owner` marker naming the install, box, thread, kind,
-  generation and box user, written before the box user is made. A release
-  first renames it to `resetting`, so `held()` returns a machine being
-  reset with no owner, and the next release finishes it. Plugin storage
-  keeps only what the machine cannot say: that it is out of service and
-  why, the generation last seen, and the box on a machine that does not
-  answer.
+  on a Mac: the reset generation, and an `owner` marker naming the install,
+  box, thread, kind, generation and box user, written before the box user is
+  made. A release first renames it to `resetting`, so `held()` returns a
+  machine being reset with no owner, and the next release finishes it.
+  Plugin storage keeps only what the machine cannot say: that it is out of
+  service and why, the generation last seen, and the box on a machine that
+  does not answer.
 - `Guest.data` keeps the machine's generation and the box user. Every
   method checks the marker names this install, box and generation before
   acting, so an old box's release leaves the next box alone.
 - Capacity is one `machines` limit: the machines serving the kind, and how
   many are not free at the size. A machine has a size when it has at least
   its cores, 90% of its memory and, for a disk, that much free under
-  `/home`, or `/Users` on a Mac. Its cores and memory are those a process may use, as the
-  conformance suite measures: its CPU set, capped by its cgroup's CPU
-  quota, and its memory, capped by its cgroup's memory limit. Acquire
-  claims the smallest such machine, then one without a whole-machine
+  `/home`, or `/Users` on a Mac. Its cores and memory are those a process
+  may use, as the conformance suite measures: its CPU set, capped by its
+  cgroup's CPU quota, and its memory, capped by its cgroup's memory limit.
+  Acquire claims the smallest such machine, then one without a whole-machine
   reset, then the one free longest, then the first listed. Capacity first
-  gives each acquire that has not claimed the machine its claim would
-  take, so a small box waiting to claim does not stop a large one.
-  `Guest.size` is the machine's cores and memory, with `diskGiB` null.
-  There is no warm pool.
+  gives each acquire that has not claimed the machine its claim would take,
+  so a small box waiting to claim does not stop a large one. `Guest.size` is
+  the machine's cores and memory, with `diskGiB` null. There is no warm
+  pool.
 - `restores` is `machine` only when every machine has a whole-machine
   reset (`reset=machine`). Then the pool's one offer, `linux`, has Docker
   (041), and the doctor checks each machine has Docker. Otherwise its

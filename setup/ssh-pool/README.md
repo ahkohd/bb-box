@@ -1,8 +1,8 @@
 # SSH host pool backend
 
 This backend lends Linux machines and Macs you already have, reached over
-SSH. A box has a whole machine to itself. When the box is released, bb-box resets the
-machine and lends it again.
+SSH. A box has a whole machine to itself. When the box is released, bb-box
+resets the machine and lends it again.
 
 It suits spare desktops, build servers and virtual machines you run
 yourself. It is not a security boundary: a box runs as an ordinary user on
@@ -355,11 +355,12 @@ the machine when it answers again. Its power shows as unknown meanwhile.
 - **Sizes.** Every machine is lent whole. bb-box claims the smallest free
   machine of at least the size a box asks for: as many cores, 90% of the
   memory or more (the kernel keeps some of it), and, when the size names a
-  disk, that much free under `/home`, or `/Users` on a Mac. It counts the cores and memory a
-  process may use, so on a machine that is a container with a CPU or
-  memory limit, it counts the limit, not the host's. The doctor shows each
-  machine's cores, memory and free disk. If your machines are smaller than
-  the presets, change them in the kinds part of BB Box's settings.
+  disk, that much free under `/home`, or `/Users` on a Mac. It counts the
+  cores and memory a process may use, so on a machine that is a container
+  with a CPU or memory limit, it counts the limit, not the host's. The
+  doctor shows each machine's cores, memory and free disk. If your machines
+  are smaller than the presets, change them in the kinds part of BB Box's
+  settings.
 - **Desktops.** On a Linux machine, the pool lends terminal boxes only. A
   Mac lends its desktop as `macos-desktop`.
 
@@ -431,10 +432,10 @@ person at the Mac or on Screen Sharing:
 3. Turn on CuaDriver under Accessibility and under Screen Recording, in
    Privacy and Security.
 
-If someone was signed in when you ran it, sign them out or restart the Mac,
-so that it signs in `bbx-0`. Then add the line and host keys to bb-box, as
-for a Linux machine. Leave out `macos-desktop` if boxes should not get the
-Mac's desktop.
+If someone was signed in when you ran it, restart the Mac, so that it signs
+in `bbx-0`. Then add the line and host keys to bb-box, as for a Linux
+machine. Leave out `macos-desktop` if boxes should not get the Mac's
+desktop.
 
 ### What the doctor checks on a Mac
 
@@ -491,8 +492,12 @@ minute, the helper restarts macOS's user space, then, 3 minutes later, the
 Mac. It gives up 8 minutes after that, and the Mac goes out of service. It
 remembers the way that worked, and the next reset starts with it.
 
-A person signed in at the console stops the reset. Their session is left
-alone, and the Mac goes out of service until they sign out.
+A person signed in at the console stops the reset, and the Mac goes out of
+service. Their session is left alone. Sign them out, then run
+`machine reset` as in [A Mac out of service](#a-mac-out-of-service).
+Signing them out is not enough: the automatic login runs only when the
+login window starts, and bb-box lends the Mac again only at a later reset
+generation.
 
 A Mac's reset keeps macOS, its settings and apps, Homebrew, and Cua
 Driver's grants. It removes the box's user and home, with its keychain,

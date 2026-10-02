@@ -1,28 +1,31 @@
 // The SSH host pool backend. It lends Linux machines and Macs the operator
 // already has, reached over SSH, one box per machine. bb-box logs in as its
-// admin user on each machine and runs only its helper, setup/ssh-pool/machine.sh
-// or machine-mac.sh on a Mac, as root through sudo. The helper claims the machine for a box by making a
-// new user for it, bbx-<generation>, whose SSH the box's commands use, and
-// releases it by removing that user and everything the user left. The reset
-// generation counts completed resets: a claim names the generation it
-// expects, so a machine is never lent twice without a reset between.
+// admin user on each machine and runs only its helper as root through sudo:
+// setup/ssh-pool/machine.sh, or machine-mac.sh on a Mac. The helper claims
+// the machine for a box by making a new user for it, bbx-<generation>, whose
+// SSH the box's commands use, and releases it by removing that user and
+// everything the user left. The reset generation counts completed resets: a
+// claim names the generation it expects, so a machine is never lent twice
+// without a reset between.
 //
 // The truth is on the machine (016, 018). The helper's markers in
-// /var/lib/bb-box, or /var/db/bb-box on a Mac, say which install and box hold it, or that it is being
-// reset, and every method reads them before it acts. bb-box's storage keeps
-// only what the machine cannot say: that a machine is out of service and
-// why, the generation it last saw, and the box on a machine that does not
-// answer. A new instance on empty storage finds every box from the markers.
+// /var/lib/bb-box, or /var/db/bb-box on a Mac, say which install and box
+// hold it, or that it is being reset, and every method reads them before it
+// acts. bb-box's storage keeps only what the machine cannot say: that a
+// machine is out of service and why, the generation it last saw, and the
+// box on a machine that does not answer. A new instance on empty storage
+// finds every box from the markers.
 //
 // A reset that fails puts the machine out of service. It comes back when
 // returnToService resets it again, or when the operator runs the helper's
 // reset on the machine, which bb-box sees as a clean machine at a later
 // generation.
 //
-// A Mac (047) has no whole-machine reset. Its reset makes the next box's user
-// ahead and signs it in at the console, so a free Mac is a warm box. The box's
-// desktop is the console, through Screen Sharing, which the relay signs in to
-// as the box user with a password the helper gives for each connection.
+// A Mac (047) has no whole-machine reset. Its reset makes the next box's
+// user ahead and signs it in at the console, so a free Mac is a warm box.
+// The box's desktop is the console, through Screen Sharing, which the relay
+// signs in to as the box user with a password the helper gives for each
+// connection.
 
 import {
   BackendError,
