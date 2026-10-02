@@ -25,7 +25,7 @@ a whole-machine reset
 | Mac | macOS | VM | Tart | `macos`, `macos-desktop` | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
 | Mac | macOS | physical | physical Mac | `macos`, `macos-desktop` | planned, #47 | arm64 | the Mac's own, offered as `gpu: false` |
 | Mac | Linux | VM | Tart | `linux-arm64`, `linux-arm64-desktop-cpu` | working, [040](decisions/040-linux-on-arm64-has-kinds-of-its-own.md) | arm64 | none offered |
-| Mac | Windows | VM | Tart, through QEMU with HVF | `windows-arm64-desktop` | in progress, #207, [046](decisions/046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md) | arm64 | none: Windows draws on the CPU |
+| Mac | Windows | VM | Tart, through QEMU with HVF | `windows-arm64-desktop` | working, [046](decisions/046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md) | arm64 | none: Windows draws on the CPU |
 | Windows | Linux | container | Docker, in one WSL2 distribution, over `ssh://` | `linux`, `linux-desktop-cpu` | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | none; CUDA through `/dev/dxg` to research |
 | Windows | Linux | VM | Hyper-V | `linux`, `linux-desktop-cpu` | not planned: Docker in WSL2 covers it, #158 | x86_64 | to research |
 | Windows | Linux | WSL2 distribution | WSL2 | `linux` | not planned: distributions share one VM and network, #158 | x86_64 | to research |
