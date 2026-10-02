@@ -32,6 +32,7 @@ test("each kind ships three presets, small by default, and a largest size twice 
   assert.deepEqual(defaultSize(desktop), { cores: 4, memoryMiB: 8 * GiB, diskGiB: null });
   assert.deepEqual(desktop.largest, { cores: 32, memoryMiB: 64 * GiB, diskGiB: 256 });
   assert.deepEqual(kindSizes("linux-desktop-cpu"), desktop);
+  assert.deepEqual(kindSizes("linux-desktop-wayland-cpu"), desktop);
   const macos = kindSizes("macos");
   assert.deepEqual(macos.presets, {
     small: { cores: 4, memoryMiB: 8 * GiB, diskGiB: null },
