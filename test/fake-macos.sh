@@ -347,8 +347,9 @@ case $tool in
     [ "${1:-}" = -p ] || exit 0
     if [ -d "$R/Applications/Xcode.app" ]; then echo /Applications/Xcode.app/Contents/Developer; else echo /Library/Developer/CommandLineTools; fi
     ;;
-  # xcrun simctl list runtimes: iOS's, unless flags/no-ios-runtime, and watchOS's.
+  # xcrun simctl list runtimes: iOS's, unless flags/no-ios-runtime, and watchOS's. It fails with flags/simctl-fails.
   xcrun)
+    if flag simctl-fails; then exit 1; fi
     if ! flag no-ios-runtime; then echo 'iOS 26.0 (26.0 - 23A343) - com.apple.CoreSimulator.SimRuntime.iOS-26-0'; fi
     echo 'watchOS 26.0 (26.0 - 23R342) - com.apple.CoreSimulator.SimRuntime.watchOS-26-0'
     ;;

@@ -4,7 +4,9 @@
 # input, output and exit codes of the Linux helper, machine.sh, and one more,
 # display. setup-mac.sh installs it as /usr/local/libexec/bb-box/machine.
 #
-#   machine status [grants]       grants: also Cua Driver's grants, which take seconds
+#   machine status [grants | xcode]
+#                                 grants: also Cua Driver's grants, which take seconds
+#                                 xcode: finds Xcode's Simulator runtimes again, which takes seconds
 #   machine claim <generation>    stdin: install, box, thread, name, kind, created, key
 #   machine release <generation>  stdin: install, and box unless the box is not known
 #   machine reset                 stdin: install, or nothing when an operator runs it
@@ -20,6 +22,7 @@
 #   passwords/   each box user's password, which only root can read
 #   signin       how the reset is signing the next user in, and since when
 #   signs-in-by  the way that signed the last user in, which the next reset tries first
+#   xcode        Xcode's version and Simulator runtimes, as `status xcode` last found them
 #
 # Each box gets a new standard user, bbx-<generation>, whose UID is 70000
 # plus the generation modulo 10000. It is hidden from the login window and in
@@ -227,20 +230,40 @@ grants() {
   echo "screenrecording=$recording"
 }
 
-# Xcode's version and the Simulator runtimes it can use, such as "iOS 26.0",
-# when xcode-select chooses an Xcode. With only the Command Line Tools or
-# none, xcrun is not run, as it may offer to install them. simctl runs with
-# root's own home, since sudo on macOS keeps the admin user's. Only `status
-# xcode` asks, as the pool's doctor does, since simctl may take seconds.
-xcode() {
-  xcode_version='' xcode_runtimes=''
+# The version of the Xcode xcode-select chooses, from its Info.plist, or
+# nothing with only the Command Line Tools or none.
+selected_xcode() {
   selected=$(xcode-select -p 2>/dev/null)
   case $selected in
-    *.app/Contents/Developer)
-      xcode_version=$(defaults read "${selected%/Developer}/Info" CFBundleShortVersionString 2>/dev/null)
-      xcode_runtimes=$(within 10 env HOME=/var/root xcrun simctl list runtimes available 2>/dev/null | awk '/^[A-Za-z]+OS [0-9]/ { print $1 " " $2 }' | paste -s -d , -)
-      ;;
+    *.app/Contents/Developer) defaults read "${selected%/Developer}/Info" CFBundleShortVersionString 2>/dev/null ;;
   esac
+}
+
+# Xcode's version and the Simulator runtimes it can use, such as "iOS 26.0",
+# found again and kept in $STATE/xcode. Only `status xcode` finds them, as
+# the pool's doctor and setup-mac.sh ask, since simctl may take seconds. A
+# failure keeps the file. With only the Command Line Tools or none, xcrun is
+# not run, as it may offer to install them. simctl runs with root's own
+# home, since sudo on macOS keeps the admin user's.
+xcode() {
+  xcode_version=$(selected_xcode) xcode_runtimes=''
+  if [ -n "$xcode_version" ]; then
+    listed=$(within 10 env HOME=/var/root xcrun simctl list runtimes available 2>/dev/null) ||
+      quit 1 "xcrun simctl did not list the Simulator's runtimes within 10 seconds. If Xcode's licence is not accepted, run setup-mac.sh again."
+    xcode_runtimes=$(printf '%s\n' "$listed" | awk '/^[A-Za-z]+OS [0-9]/ { print $1 " " $2 }' | paste -s -d , -)
+  fi
+  printf 'xcode=%s\nruntimes=%s\n' "$xcode_version" "$xcode_runtimes" | put "$STATE/xcode"
+  echo "xcode=$xcode_version"
+  echo "runtimes=$xcode_runtimes"
+}
+
+# What plain status says of Xcode: its version, read again, and the runtimes
+# in $STATE/xcode while they were found for that version.
+known_xcode() {
+  xcode_version=$(selected_xcode) xcode_runtimes=''
+  if [ -n "$xcode_version" ] && grep -qxF "xcode=$xcode_version" "$STATE/xcode" 2>/dev/null; then
+    xcode_runtimes=$(sed -n 's/^runtimes=//p' "$STATE/xcode")
+  fi
   echo "xcode=$xcode_version"
   echo "runtimes=$xcode_runtimes"
 }
@@ -285,8 +308,8 @@ status() {
   if [ "$marker" = none ]; then echo "dirty=$(dirt "$PREFIX$current" | head -n 1)"; else echo dirty=; fi
   # The Mac's own: the box user it has for this generation, who is at the
   # console and signs in when loginwindow starts, which needs FileVault off,
-  # Screen Sharing, which the box's display uses, and Full Disk Access,
-  # which the reset needs.
+  # Screen Sharing, which the box's display uses, Full Disk Access, which
+  # the reset needs, and Xcode.
   echo os=macos
   echo "macos=$(sw_vers -productVersion 2>/dev/null)"
   user=''
@@ -298,9 +321,10 @@ status() {
   if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then echo screensharing=1; else echo screensharing=0; fi
   if full_disk; then echo fulldisk=1; else echo fulldisk=0; fi
   case ${1:-} in
-    grants) grants ;;
     xcode) xcode ;;
+    *) known_xcode ;;
   esac
+  [ "${1:-}" != grants ] || grants
 }
 
 # Makes box user $1 with UID $2 and a random password, from macOS's home

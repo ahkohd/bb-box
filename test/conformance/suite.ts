@@ -331,7 +331,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
   const signal = () => AbortSignal.timeout(timeout);
   const backend = await options.create(options.storage, CONFORMANCE_INSTALL);
   const doctor = await backend.doctor(signal()).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
-  // After the doctor, since a pool's Macs offer xcode only once it has checked them (047).
+  // After the doctor, as a pool's Macs offer xcode only once a survey has found it (047).
   const kinds = backend.kinds().filter((kind) => !options.kinds || options.kinds.includes(kind.id));
   const blocked = doctor instanceof Error ? `doctor threw: ${doctor.message}` : doctor.ok ? false : `doctor found a failure: ${doctor.summary}`;
   /** Guests this run acquired and has not released. */

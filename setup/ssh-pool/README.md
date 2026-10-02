@@ -393,9 +393,12 @@ Xcode is optional. Install it in `/Applications` before you run
 `setup-mac.sh`, and boxes on the Mac get Xcode and the iOS Simulator. The
 pool's `macos` and `macos-desktop` offers have the features `xcode` while
 every Mac that serves them has Xcode, and `ios-simulator` while each also
-has an iOS runtime. bb-box checks this only when its doctor runs, as it
-takes a few seconds. After bb-box starts, the offers have neither feature
-until the doctor has run.
+has an iOS runtime. Listing the runtimes takes a few seconds, so only
+`setup-mac.sh` and the doctor list them. The helper keeps what they found
+in `/var/db/bb-box/xcode`, and the pool reads it each time it looks at the
+Macs. Only the Macs that answered count, so one that is switched off does
+not hide the features. After you install or update Xcode, run
+`setup-mac.sh` again.
 
 ### Set up a Mac
 
@@ -423,7 +426,8 @@ It takes the same options as `setup.sh`, except `--reset-hook`.
 - keeps the Mac awake, starts it after a power failure, and turns off
   automatic macOS updates and Spotlight indexing
 - prepares Xcode, if it is in `/Applications`: accepts its licence, runs
-  its first launch and downloads the iOS platform
+  its first launch and downloads the iOS platform, then notes its version
+  and Simulator runtimes for the pool
 - starts the Mac's reset generation at 0, in `/var/db/bb-box`, and makes
   the first box user, `bbx-0`, the automatic login
 

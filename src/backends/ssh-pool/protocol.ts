@@ -82,7 +82,10 @@ export interface MacStatus {
   readonly fullDisk: boolean;
   /** Cua Driver's grants in the box user's session, given only by `status grants`. */
   readonly grants: CuaGrants | null;
-  /** Xcode and its Simulator runtimes, given only by `status xcode`. */
+  /**
+   * Xcode and its Simulator runtimes. `status xcode` finds them again; plain
+   * status gives the runtimes it last found. Null from a helper too old to say.
+   */
   readonly xcode: Xcode | null;
 }
 

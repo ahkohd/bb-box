@@ -365,16 +365,24 @@ node --test test/conformance.test.ts
 - The doctor asks each Mac with `macos-desktop` for Cua Driver's grants
   with `status grants`. A survey runs plain `status`, which does not wait
   for Cua.
-- A Mac's `status xcode` gives the version of the Xcode `xcode-select`
-  chooses, and its Simulator runtimes. Only the doctor asks, as `simctl`
-  may take seconds, in a call made beside `status grants` rather than in
-  it, so each stays within a status's 20 s. The `macos` and
-  `macos-desktop` offers have `xcode` while every Mac serving them had
-  Xcode at the doctor's last run, and `ios-simulator` while each had an
-  iOS runtime too. A Mac not checked since bb-box started counts as having
-  neither. The doctor warns when only some of the Macs serving a kind have
-  them. The conformance suite boots an iOS Simulator device and runs a
-  command in it.
+- A Mac's `status xcode` lists the Simulator runtimes of the Xcode
+  `xcode-select` chooses, and writes its version and them to
+  `/var/db/bb-box/xcode`. Only the doctor and `setup-mac.sh` ask, as
+  `simctl` may take seconds. The doctor's call is made beside
+  `status grants` rather than in it, so each stays within a status's 20 s.
+  A failed call keeps the file. Plain `status` gives the version, which
+  `xcode-select` and `defaults` find at once, and the file's runtimes
+  while the file is for that version.
+- The `macos` and `macos-desktop` offers have `xcode` while every Mac
+  serving them that answered the last survey has Xcode, and
+  `ios-simulator` while each has an iOS runtime too. One Mac switched off,
+  or slow to answer, does not hide them. Before the first survey after a
+  restart the offers have neither, so `asOffered` keeps a Mac box's
+  capabilities until then. The core's capacity check surveys before it
+  matches features, so the first claim after a restart sees them. The
+  doctor warns when only some of the Macs serving a kind have them. The
+  conformance suite boots an iOS Simulator device and runs a command in
+  it.
 - `footprint()` gives the pool's machines without a jump host, and Tart's
   gives its hosts, so the doctor warns when one address is in both (047).
 - A machine without the helper's tools is out of service. Enrolment's

@@ -681,8 +681,11 @@ function helperCalls(host: string): string[] {
 }
 
 // Two Macs with Xcode serve both kinds, so two installs can each hold one.
+// Each has the runtimes setup-mac.sh's `status xcode` noted, so the offers
+// have ios-simulator from the first survey.
 for (const host of ["192.0.2.95", "192.0.2.96"]) {
   mac(host, { xcode: "26.0" });
+  write(host, "xcode", "xcode=26.0\nruntimes=iOS 26.0,watchOS 26.0\n");
   cuaSocket(host);
 }
 await conformance({
@@ -886,30 +889,61 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.doesNotMatch(doctor.notes.join("\n"), /none of them has Docker/);
   });
 
-  it("offers xcode and ios-simulator while every Mac serving the kind has them, and its doctor says which lack them", async () => {
+  it("offers xcode and ios-simulator while every Mac serving the kind that answered the last survey has them, and its doctor says which lack them", async () => {
     mac("192.0.2.70", { xcode: "26.0" });
     mac("192.0.2.71", { xcode: "26.0", runtimes: "watchOS 26.0" });
     mac("192.0.2.72");
     mac("192.0.2.73", { "no-status-xcode": "" });
-    const features = (backend: Backend) => backend.kinds().map((kind) => `${kind.id}: ${kind.capabilities.features.join(" ")}`);
-    const survey = async (backend: Backend) => {
-      await backend.doctor();
-      return features(backend);
+    const features = async (backend: Backend) => {
+      await backend.capacity("macos", sizeOf("macos"), []);
+      return backend.kinds().map((kind) => `${kind.id}: ${kind.capabilities.features.join(" ")}`);
     };
     const check = async (backend: Backend, id: string) => (await backend.doctor()).checks.find((other) => other.id === id);
+    const asked = () => helperCalls("192.0.2.70").filter((call) => call === "status xcode").length;
+    const both = ["macos: xcode ios-simulator", "macos-desktop: xcode ios-simulator"];
 
     const ready = pool("ready 192.0.2.70 macos,macos-desktop").backend;
-    assert.deepEqual(features(ready), ["macos: ", "macos-desktop: "], "a Mac not checked since bb-box started counts as having no Xcode");
-    await ready.capacity("macos", sizeOf("macos"), []);
-    assert.deepEqual(features(ready), ["macos: ", "macos-desktop: "], "only the doctor asks for Xcode");
-    assert.equal(helperCalls("192.0.2.70").filter((call) => call !== "status").length, 0);
-    assert.deepEqual(await survey(ready), ["macos: xcode ios-simulator", "macos-desktop: xcode ios-simulator"]);
-    assert.match(ready.kinds()[0]!.description, /Its desktop is not shown\. It has Xcode and the iOS Simulator\.$/);
+    assert.deepEqual(ready.kinds().map((kind) => kind.capabilities.features), [[], []]);
+    assert.deepEqual(await Promise.all(["linux", "macos"].map((kind) => ready.asOffered(undefined as never, kind))), [true, false], "before the first survey, a box keeps the features it has");
+    assert.deepEqual(await features(ready), ["macos: xcode", "macos-desktop: xcode"], "plain status gives Xcode's version, and no runtimes until `status xcode` has found them");
+    assert.equal(await ready.asOffered(undefined as never, "macos"), true);
+    assert.equal(asked(), 0, "only the doctor and setup-mac.sh ask for Xcode's runtimes");
     assert.equal((await check(ready, "machine.ready.xcode"))?.detail, "Xcode 26.0, with the Simulator's iOS 26.0, watchOS 26.0.");
+    assert.deepEqual(await features(ready), both);
+    assert.match(ready.kinds()[0]!.description, /Its desktop is not shown\. It has Xcode and the iOS Simulator\.$/);
     assert.equal(await check(ready, "xcode"), undefined);
 
+    const restarted = pool("ready 192.0.2.70 macos,macos-desktop").backend;
+    const before = asked();
+    assert.deepEqual(await features(restarted), both, "after a restart, the first survey gives them back");
+    assert.equal(asked(), before);
+    setFlag("192.0.2.70", "simctl-fails");
+    try {
+      assert.deepEqual(await check(restarted, "machine.ready.xcode"), {
+        id: "machine.ready.xcode",
+        name: "ready: Xcode",
+        status: "warn",
+        detail: "The helper did not say whether the Mac has Xcode. xcrun simctl did not list the Simulator's runtimes within 10 seconds. The offers keep what it found before.",
+        fix: "Run this bb-box's setup/ssh-pool/setup-mac.sh on ready with sudo, which updates the helper and prepares Xcode. Then run the doctor again.",
+      });
+      assert.equal(await check(restarted, "xcode"), undefined);
+      assert.deepEqual(await features(restarted), both, "a failed call keeps what the Mac found before");
+    } finally {
+      clearFlag("192.0.2.70", "simctl-fails");
+    }
+
+    const off = pool("ready 192.0.2.70 macos,macos-desktop\nbare 192.0.2.72 macos").backend;
+    fake.down("192.0.2.72");
+    try {
+      assert.deepEqual(await features(off), both, "a Mac that does not answer does not hide them");
+    } finally {
+      rmSync(join(fake.dir, "down", "192.0.2.72"));
+    }
+    assert.deepEqual(await features(off), ["macos: ", "macos-desktop: xcode ios-simulator"]);
+
     const watch = pool("ready 192.0.2.70 macos,macos-desktop\nwatch 192.0.2.71 macos").backend;
-    assert.deepEqual(await survey(watch), ["macos: xcode", "macos-desktop: xcode ios-simulator"]);
+    await watch.doctor();
+    assert.deepEqual(await features(watch), ["macos: xcode", "macos-desktop: xcode ios-simulator"]);
     assert.match(watch.kinds()[0]!.description, /shown\. It has Xcode\.$/);
     assert.deepEqual(await check(watch, "machine.watch.xcode"), {
       id: "machine.watch.xcode",
@@ -921,8 +955,8 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.equal((await check(watch, "xcode"))?.detail, "watch has no iOS runtime, so the pool's macos boxes have no ios-simulator.");
 
     const some = pool("ready 192.0.2.70 macos,macos-desktop\nbare 192.0.2.72 macos,macos-desktop\nold 192.0.2.73 macos").backend;
-    assert.deepEqual(await survey(some), ["macos: ", "macos-desktop: "]);
     const doctor = await some.doctor();
+    assert.deepEqual(await features(some), ["macos: ", "macos-desktop: "]);
     const found = (id: string) => doctor.checks.find((other) => other.id === id);
     assert.deepEqual([found("machine.bare.xcode")?.status, found("machine.bare.xcode")?.detail], ["ok", "None, so boxes here have neither Xcode nor the iOS Simulator."]);
     assert.deepEqual(found("machine.old.xcode"), {
@@ -930,7 +964,7 @@ describe("An SSH host pool of Macs (047)", () => {
       name: "old: Xcode",
       status: "warn",
       detail: "The helper did not say whether the Mac has Xcode. usage: machine status [grants]. Until it does, boxes here have neither Xcode nor the iOS Simulator.",
-      fix: "If the helper is older than this bb-box, run this bb-box's setup/ssh-pool/setup-mac.sh on old with sudo. Then run the doctor again.",
+      fix: "Run this bb-box's setup/ssh-pool/setup-mac.sh on old with sudo, which updates the helper and prepares Xcode. Then run the doctor again.",
     });
     assert.deepEqual(found("xcode"), {
       id: "xcode",
@@ -942,7 +976,6 @@ describe("An SSH host pool of Macs (047)", () => {
       fix: "On bare, old, install Xcode in /Applications if it is not there, then run setup/ssh-pool/setup-mac.sh with sudo again, which downloads the iOS platform. Or serve those kinds only from Macs with Xcode.",
     });
     const none = pool("bare 192.0.2.72 macos,macos-desktop").backend;
-    await survey(none);
     assert.equal(await check(none, "xcode"), undefined, "Xcode is optional, so a pool where no Mac has it does not warn");
   });
 

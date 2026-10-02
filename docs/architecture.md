@@ -143,8 +143,9 @@ and `start` and `stop` throw `gone`.
   with Docker Engine in WSL2, or a BB machine
   ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)).
 - A pool's macOS offers have the features `xcode` and `ios-simulator`
-  while every Mac serving them has Xcode and an iOS runtime (047). Tart's
-  image has Xcode's command line tools only, so its offers have neither.
+  while every Mac serving them that answered the last survey has Xcode and
+  an iOS runtime (047). Tart's image has Xcode's command line tools only,
+  so its offers have neither.
 - A kind's ID names its architecture when it is not the OS's usual one:
   `-arm64` follows the OS, and the rest is the x86_64 kind's. An agent
   asking for `linux` never gets arm64, where amd64 images and x86_64
