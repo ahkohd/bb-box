@@ -23,7 +23,7 @@ a whole-machine reset
 | Linux | Windows | VM | Proxmox QEMU | `windows-desktop` | working, [039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md) | x86_64 | none: Windows draws on the CPU; a whole card passed through later |
 | Linux | macOS | - | - | - | not possible: macOS runs only on Apple hardware | - | - |
 | Mac | macOS | VM | Tart | `macos`, `macos-desktop` | working | arm64 | Tart's paravirtualised GPU, offered as `gpu: false` |
-| Mac | macOS | physical | SSH host pool | `macos`, `macos-desktop` | planned, [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md) | arm64 | the Mac's own, offered as `gpu: false` |
+| Mac | macOS | physical | SSH host pool | `macos`, `macos-desktop` | built, not yet checked on a real Mac, [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md) | arm64 | the Mac's own, offered as `gpu: false` |
 | Mac | Linux | VM | Tart | `linux-arm64`, `linux-arm64-desktop-cpu` | working, [040](decisions/040-linux-on-arm64-has-kinds-of-its-own.md) | arm64 | none offered |
 | Mac | Windows | VM | Tart, through QEMU with HVF | `windows-arm64-desktop` | working, [046](decisions/046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md) | arm64 | none: Windows draws on the CPU |
 | Windows | Linux | container | Docker, in one WSL2 distribution, over `ssh://` | `linux`, `linux-desktop-cpu` | tested in #158; set up by [setup/docker-wsl](../setup/docker-wsl/README.md) | x86_64 | none; CUDA through `/dev/dxg` to research |
@@ -57,8 +57,8 @@ Across the table:
 - **Enrolment.** Linux and macOS boxes can become BB machines. Windows boxes
   cannot until BB's host app runs on Windows
   ([BB request 1](bb-requests.md#1-bbs-host-app-on-windows)).
-- **Physical machines.** Linux machines join through the SSH host pool, and
-  Macs will too, with a helper of their own
+- **Physical machines.** Linux machines and Macs join through the SSH host
+  pool, Macs with a helper of their own
   ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)).
   There is no plan for physical Windows machines yet.
 - **Phone emulators.** The iOS Simulator runs only on Macs: on a physical
@@ -303,35 +303,36 @@ node --test test/conformance.test.ts
 
 - Real. Code in [src/backends/ssh-pool/](../src/backends/ssh-pool/). The
   machine side is `setup/ssh-pool/`: `setup.sh`, and the helper
-  `machine.sh`, the only thing bb-box runs on a machine as root. Its guide
+  `machine.sh`, the only thing bb-box runs on a machine as root. A Mac has
+  `setup-mac.sh` and `machine-mac.sh`, with the same commands. Its guide
   lists the settings.
 - bb-box logs in as the admin user, whose key is limited with `restrict`
   and whose sudo rule allows only the helper. The helper reads `key=value`
   lines on stdin, prints `key=value` lines, and holds a lock on the machine
   while it acts.
-- Ownership lives on the machine, in `/var/lib/bb-box`: the reset
-  generation, and an `owner` marker naming the install, box, thread, kind,
-  generation and box user, written before the box user is made. A release
-  first renames it to `resetting`, so `held()` returns a machine being
-  reset with no owner, and the next release finishes it. Plugin storage
-  keeps only what the machine cannot say: that it is out of service and
-  why, the generation last seen, and the box on a machine that does not
-  answer.
+- Ownership lives on the machine, in `/var/lib/bb-box`, or `/var/db/bb-box`
+  on a Mac: the reset generation, and an `owner` marker naming the install,
+  box, thread, kind, generation and box user, written before the box user is
+  made. A release first renames it to `resetting`, so `held()` returns a
+  machine being reset with no owner, and the next release finishes it.
+  Plugin storage keeps only what the machine cannot say: that it is out of
+  service and why, the generation last seen, and the box on a machine that
+  does not answer.
 - `Guest.data` keeps the machine's generation and the box user. Every
   method checks the marker names this install, box and generation before
   acting, so an old box's release leaves the next box alone.
 - Capacity is one `machines` limit: the machines serving the kind, and how
   many are not free at the size. A machine has a size when it has at least
   its cores, 90% of its memory and, for a disk, that much free under
-  `/home`. Its cores and memory are those a process may use, as the
-  conformance suite measures: its CPU set, capped by its cgroup's CPU
-  quota, and its memory, capped by its cgroup's memory limit. Acquire
-  claims the smallest such machine, then one without a whole-machine
+  `/home`, or `/Users` on a Mac. Its cores and memory are those a process
+  may use, as the conformance suite measures: its CPU set, capped by its
+  cgroup's CPU quota, and its memory, capped by its cgroup's memory limit.
+  Acquire claims the smallest such machine, then one without a whole-machine
   reset, then the one free longest, then the first listed. Capacity first
-  gives each acquire that has not claimed the machine its claim would
-  take, so a small box waiting to claim does not stop a large one.
-  `Guest.size` is the machine's cores and memory, with `diskGiB` null.
-  There is no warm pool.
+  gives each acquire that has not claimed the machine its claim would take,
+  so a small box waiting to claim does not stop a large one. `Guest.size` is
+  the machine's cores and memory, with `diskGiB` null. There is no warm
+  pool.
 - `restores` is `machine` only when every machine has a whole-machine
   reset (`reset=machine`). Then the pool's one offer, `linux`, has Docker
   (041), and the doctor checks each machine has Docker. Otherwise its
@@ -343,6 +344,24 @@ node --test test/conformance.test.ts
   operator can also run the helper's `reset` on the machine, which bb-box
   sees as a clean machine at a later generation. Neither resets a machine
   a box holds.
+- A Mac's line lists `macos` or `macos-desktop`, never with `linux`, and
+  never with `reset=machine`, so the pool never asks a Mac's helper for a
+  whole-machine reset. `hostOs` is `macos` when every machine is a Mac,
+  and null when the pool mixes Linux machines and Macs. Its box user is
+  signed in at the console, so a claim waits up to 3 minutes for that and,
+  for `macos-desktop`, for Cua Driver's socket, tested as the box user in
+  its own home. A Mac without FileVault off, Full Disk Access for the
+  helper or its box user at the console is out of service with the reason.
+  One without Screen Sharing lends only `macos`.
+- A `macos-desktop` box's display is Screen Sharing at `127.0.0.1:5900`,
+  reached with `ssh -W` as the box user. Each connection asks the helper's
+  `display` for the box user's password over the admin's SSH, and passes
+  it only in `DisplayAuth` `apple`. It is never in a command line, an
+  environment variable, `Guest.data`, plugin storage, an error or the
+  doctor's output, and the box's reset removes the user it signs in.
+- The doctor asks each Mac with `macos-desktop` for Cua Driver's grants
+  with `status grants`. A survey runs plain `status`, which does not wait
+  for Cua.
 - A machine without the helper's tools is out of service. Enrolment's
   tools only fail the doctor: Node.js 22.19 or newer with npm for BB's
   installer, and, as a warning, git and gh for the thread's GitHub access.

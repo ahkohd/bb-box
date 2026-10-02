@@ -82,10 +82,11 @@ test("init makes the first box user, hidden and in _developer, from the home tem
   assert.equal(count(personal, "launchctl kickstart"), 0);
 });
 
-test("status gives the pool the Linux helper's keys, and the Mac's user, console, automatic login and Cua's grants", () => {
+test("status gives the pool the Linux helper's keys, and the Mac's user, console and automatic login, with Cua's grants only when asked", () => {
   const mac = readyMac();
   mac.flag("screensharing");
   writeFileSync(join(mac.root, "usr/local/bin/cua-driver"), `#!/bin/sh\necho '{"accessibility": true, "screen_recording": false}'\n`, { mode: 0o755 });
+  const cua = "launchctl asuser 70000 /usr/bin/sudo -n -H -u bbx-0 -- /usr/local/bin/cua-driver permissions status --json";
   const result = mac.helper(["status"]);
   assert.equal(result.status, 0, result.stderr);
   const status = parseStatus(result.stdout);
@@ -94,19 +95,27 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
     {
       helper: 1, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
+      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null },
     },
   );
   const values = fields(result.stdout);
   assert.deepEqual(
-    ["os", "macos", "user", "console", "autologin", "filevault", "screensharing", "fulldisk", "accessibility", "screenrecording"].map((key) => values.get(key)),
-    ["macos", "26.0", "bbx-0", "bbx-0", "bbx-0", "0", "1", "1", "1", "0"],
+    ["os", "macos", "user", "console", "autologin", "filevault", "screensharing", "fulldisk"].map((key) => values.get(key)),
+    ["macos", "26.0", "bbx-0", "bbx-0", "bbx-0", "0", "1", "1"],
   );
-  assert.equal(count(mac, "launchctl asuser 70000 /usr/bin/sudo -n -H -u bbx-0 -- /usr/local/bin/cua-driver permissions status --json"), 1);
+  assert.equal(values.has("accessibility"), false, "the pool reads every Mac's status twice for each box it lends, so it does not wait for Cua");
+  assert.equal(count(mac, cua), 0);
+  const granted = mac.helper(["status", "grants"]);
+  assert.equal(granted.status, 0, granted.stderr);
+  assert.deepEqual(["accessibility", "screenrecording"].map((key) => fields(granted.stdout).get(key)), ["1", "0"]);
+  assert.deepEqual(parseStatus(granted.stdout).mac?.grants, { accessibility: true, screenRecording: false });
+  assert.equal(count(mac, cua), 1);
+  assert.deepEqual(mac.helper(["status", "bogus"]), { status: 2, stdout: "", stderr: "usage: machine status [grants]\n" });
 
   mac.setConsole("root");
   mac.flag("filevault-on");
   rmSync(join(mac.root, TCC));
-  const away = fields(mac.helper(["status"]).stdout);
+  const away = fields(mac.helper(["status", "grants"]).stdout);
   assert.deepEqual(
     ["console", "filevault", "fulldisk", "accessibility", "screenrecording"].map((key) => away.get(key)),
     ["root", "1", "0", "", ""],

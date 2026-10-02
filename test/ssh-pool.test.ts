@@ -1,13 +1,15 @@
 // The SSH host pool backend on fake SSH, with test/fake-machine.mjs as each
-// machine's helper: its settings, the conformance suite, and what the pool
-// does when a reset fails, is cut short or leaves a machine dirty.
+// machine's helper: its settings, the conformance suite, what the pool does
+// when a reset fails, is cut short or leaves a machine dirty, and its Macs.
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { SshPoolBackend } from "../src/backends/ssh-pool/backend.ts";
+import { SshPoolBackend, type SshPoolBackendOptions } from "../src/backends/ssh-pool/backend.ts";
 import { hostKeysFor, parseSshPoolSettings, parseTarget, type SshPoolConfig } from "../src/backends/ssh-pool/config.ts";
+import { CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { BackendError, type AcquireHooks, type Backend, type BackendStorage, type BoxIdentity, type BoxSize, type Capacity, type Guest } from "../src/backends/types.ts";
 import { conformance, identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
 import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
@@ -61,7 +63,7 @@ function problems(values: Record<string, unknown>): string {
 }
 
 const sleeps: number[] = [];
-function pool(lines: string, storage: BackendStorage = new MemoryStorage(), installId = "test") {
+function pool(lines: string, storage: BackendStorage = new MemoryStorage(), installId = "test", options: SshPoolBackendOptions = {}) {
   const context = testContext(storage, installId);
   const backend = new SshPoolBackend(config(lines), context, {
     sshBinary: FAKE_SSH_BINARY,
@@ -71,6 +73,7 @@ function pool(lines: string, storage: BackendStorage = new MemoryStorage(), inst
     },
     readyTimeoutMs: 0,
     resetPollMs: 1,
+    ...options,
   });
   return { backend, context, storage };
 }
@@ -92,7 +95,7 @@ describe("an SSH host pool with no machines yet", () => {
     const doctor = await backend.doctor();
     assert.equal(doctor.ok, false);
     assert.equal(doctor.checks.find((check) => check.id === "machines")?.status, "fail");
-    assert.ok(doctor.notes.some((note) => /^Give setup\/ssh-pool\/setup\.sh this public key with --key, .*: ssh-ed25519 /.test(note)));
+    assert.ok(doctor.notes.some((note) => /^Give setup\/ssh-pool\/setup\.sh, or setup-mac\.sh on a Mac, this public key with --key, .*: ssh-ed25519 /.test(note)));
     assert.deepEqual(backend.kinds(), []);
   });
 });
@@ -105,6 +108,7 @@ describe("SSH host pool settings", () => {
       admin: { host: "192.0.2.21", port: 22, user: "bbbox-admin" },
       jump: null,
       kinds: ["linux"],
+      os: "linux",
       docker: false,
       reset: "home",
       labels: [],
@@ -114,6 +118,7 @@ describe("SSH host pool settings", () => {
       admin: { host: "192.0.2.22", port: 2222, user: "ops" },
       jump: { host: "192.0.2.9", port: 22, user: "jump" },
       kinds: ["linux"],
+      os: "linux",
       docker: true,
       reset: "machine",
       labels: ["fast", "big"],
@@ -627,5 +632,236 @@ describe("SSH host pool", () => {
     await mine.release(guest, releaseHooks().hooks);
     await mine.dispose();
     await other.dispose();
+  });
+});
+
+/** A fake Mac at `host`, set up as setup-mac.sh leaves one, with its box user at the console. */
+function mac(host: string, flags: Record<string, string> = {}): void {
+  machine(host, { macos: "", cores: "8", memory: "16384", disk: "200", ...flags });
+}
+
+/** Makes Cua Driver's socket in the box user's home on `host`, as its LaunchAgent does in the box user's session. */
+function cuaSocket(host: string): void {
+  const dir = join(fake.home(host), "Library", "Caches", "cua-driver");
+  mkdirSync(dir, { recursive: true });
+  rmSync(join(dir, "cua-driver.sock"), { force: true });
+  // Bound by its name in its directory, as the whole path may be too long for a socket.
+  const made = spawnSync(process.execPath, ["-e", "require('node:net').createServer().listen('cua-driver.sock', () => process.exit(0))"], { cwd: dir });
+  assert.equal(made.status, 0, String(made.stderr));
+}
+
+/** The script inside a command the pool ran over SSH, without the wrapping that marks its end. */
+function script(command: string): string {
+  const quoted = /-c '((?:[^']|'\\'')*)'/.exec(command);
+  return quoted ? quoted[1]!.replaceAll("'\\''", "'") : command;
+}
+
+/** The helper commands the pool ran on `host`, such as "status" or "release 0". */
+function helperCalls(host: string): string[] {
+  return fake
+    .log()
+    .filter((entry) => entry.target.endsWith(`@${host}`) && entry.command.includes("fake-machine.mjs "))
+    .map((entry) => script(entry.command).split("fake-machine.mjs ")[1]!.trim());
+}
+
+// Two Macs serve both kinds, so two installs can each hold one.
+for (const host of ["192.0.2.95", "192.0.2.96"]) {
+  mac(host);
+  cuaSocket(host);
+}
+await conformance({
+  name: "SSH host pool of Macs on fakes",
+  storage: new MemoryStorage(),
+  create: (storage, installId) => pool("cm1 192.0.2.95 macos,macos-desktop\ncm2 192.0.2.96 macos,macos-desktop", storage, installId).backend,
+  skip: {
+    arch: "the fake SSH runs commands on the test machine",
+    size: "the fake SSH runs commands on the test machine",
+    display: "the fake SSH cannot carry Screen Sharing through ssh -W",
+    "desktop-session": "the test machine has no Aqua session",
+    "computer-use": "the test machine has no Cua Driver",
+  },
+  timeoutMs: 20_000,
+});
+
+describe("An SSH host pool of Macs (047)", () => {
+  it("parses a Mac's line, and refuses one that mixes Linux and macOS kinds or asks for a whole-machine reset", () => {
+    const parsed = config("mac-mini bbbox-admin@192.0.2.80 macos,macos-desktop").machines[0]!;
+    assert.deepEqual([parsed.os, parsed.kinds, parsed.docker, parsed.reset], ["macos", ["macos", "macos-desktop"], false, "home"]);
+    assert.match(problems(settings("m 192.0.2.80 linux,macos")), /Machine m lists Linux and macOS kinds\. List linux on a Linux machine, and macos or macos-desktop on a Mac\./);
+    assert.match(problems(settings("m 192.0.2.80 macos reset=machine")), /Machine m is a Mac, which has no whole-machine reset\. Remove reset=machine/);
+    assert.match(problems(settings("m 192.0.2.80 macos-docker")), /cannot serve kind "macos-docker": .*, and macos and macos-desktop on a Mac\./);
+  });
+
+  it("offers the kinds its lines list, says which OS its machines run, and gives Docker by its Linux machines alone", () => {
+    const macs = pool("m1 192.0.2.80 macos,macos-desktop\nm2 192.0.2.81 macos").backend;
+    assert.deepEqual(macs.kinds().map((kind) => kind.id), ["macos", "macos-desktop"]);
+    assert.equal(macs.hostOs, "macos");
+    assert.equal(macs.restores, "home");
+    const [headless, desktop] = macs.kinds();
+    assert.deepEqual([headless!.capabilities.os, headless!.capabilities.arch, headless!.capabilities.displays, headless!.capabilities.computerUse], ["macos", "arm64", [], null]);
+    assert.deepEqual(desktop!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: false }]);
+    assert.deepEqual(desktop!.capabilities.computerUse, { driver: "cua", version: CUA_VERSION, socket: "~/Library/Caches/cua-driver/cua-driver.sock" });
+    assert.equal(desktop!.capabilities.command?.admin, false, "a box user is a standard user");
+    assert.equal(desktop!.readyTimeoutMs, 3 * 60_000);
+    assert.equal(pool("l1 192.0.2.41 linux").backend.hostOs, "linux");
+    const mixed = pool("w1 192.0.2.42 linux reset=machine\nm1 192.0.2.80 macos").backend;
+    assert.equal(mixed.hostOs, null, "its machines run Linux and macOS");
+    assert.deepEqual(mixed.kinds().map((kind) => kind.id), ["linux", "macos"]);
+    assert.deepEqual(mixed.kinds()[0]!.capabilities.features, ["docker"], "a Mac has no whole-machine reset, but takes no Docker from the linux boxes");
+  });
+
+  it("lends a Mac once its box user is at the console and, for macos-desktop, Cua Driver's socket is in the box user's home", async () => {
+    const host = "192.0.2.82";
+    mac(host);
+    rmSync(join(fake.home(host), "Library"), { recursive: true, force: true });
+    const polls: number[] = [];
+    const { backend } = pool("m 192.0.2.82 macos-desktop", new MemoryStorage(), "test", {
+      readyTimeoutMs: 60_000,
+      sleep: async (ms) => {
+        polls.push(ms);
+        // Cua's LaunchAgent makes its socket a moment after the box user signs in.
+        if (polls.length === 3) cuaSocket(host);
+      },
+    });
+    // The claim takes the Mac while its box user is still signing in.
+    const signingIn = (times: number): AcquireHooks => {
+      const recording = recordingHooks();
+      return {
+        ...recording.hooks,
+        claim: async (guest) => {
+          setFlag(host, "console-after", String(times));
+          await recording.hooks.claim(guest);
+        },
+      };
+    };
+    const guest = await backend.acquire(identity("macos-desktop"), null, signingIn(2), AbortSignal.timeout(20_000));
+    assert.deepEqual(polls, [1000, 1000, 1000], "twice for the console, then once for the socket");
+    const tests = fake.log().filter((entry) => entry.target.endsWith(`@${host}`) && script(entry.command).startsWith("test -S "));
+    assert.deepEqual(
+      tests.map((entry) => [entry.target, script(entry.command)]),
+      Array(2).fill(["bbx-0@192.0.2.82", `test -S "$HOME"/'Library/Caches/cua-driver/cua-driver.sock'`]),
+      "the box user tests the socket in its own home",
+    );
+    await backend.release(guest, releaseHooks().hooks);
+
+    rmSync(join(fake.home(host), "Library"), { recursive: true, force: true });
+    const quick = pool("m 192.0.2.82 macos-desktop").backend;
+    await assert.rejects(acquire(quick, "macos-desktop"), /^Error: Cua Driver's socket did not appear in box user bbx-1's session on m within 0 s\. Check that setup-mac\.sh installed Cua Driver there\.$/);
+    assert.equal((await member(quick, "m")).state, "free", "the failed acquire released the Mac");
+    cuaSocket(host);
+    await assert.rejects(
+      quick.acquire(identity("macos-desktop"), null, signingIn(1), AbortSignal.timeout(20_000)),
+      /^Error: Box user bbx-2 was not signed in at m's console within 0 s\. Check that FileVault is off and nobody else is signed in there/,
+    );
+  });
+
+  it("shows the desktop through Screen Sharing over SSH as the box user, with the sign-in the helper gives at each open, and puts it nowhere else", async () => {
+    const host = "192.0.2.83";
+    mac(host, { password: "pw-0f3c9a" });
+    cuaSocket(host);
+    const storage = new MemoryStorage();
+    const { backend } = pool("m 192.0.2.83 macos-desktop", storage);
+    const { guest } = await acquire(backend, "macos-desktop");
+    const { displays } = await backend.transports(guest, "macos-desktop");
+    assert.deepEqual(
+      displays.map((display) => [display.id, display.label, display.protocol, display.resizable]),
+      [["desktop", "Desktop", "rfb", false]],
+    );
+    const display = displays[0]!;
+    const first = await display.open();
+    const second = await display.open();
+    assert.deepEqual(first.auth, { type: "apple", user: "bbx-0", password: "pw-0f3c9a" });
+    assert.deepEqual(second, first);
+    assert.equal(first.route.type, "command");
+    assert.deepEqual(first.route.type === "command" ? first.route.argv.slice(-4) : [], ["ExitOnForwardFailure=yes", "-W", "127.0.0.1:5900", "bbx-0@192.0.2.83"]);
+    assert.equal(helperCalls(host).filter((call) => call === "display 0").length, 2, "the helper gives the sign-in for each connection");
+    assert.deepEqual((await backend.transports(guest, "macos")).displays, [], "a macos box has no desktop");
+
+    setFlag(host, "display-user", "bbx-9");
+    await assert.rejects(display.open(), (error: Error) => /did not give box user bbx-0's sign-in/.test(error.message) && !error.message.includes("pw-0f3c9a"));
+    clearFlag(host, "display-user");
+    const doctor = await backend.doctor();
+    const everywhere = JSON.stringify([guest, [...storage.values], fake.log(), doctor, await backend.members!()]);
+    assert.equal(everywhere.includes("pw-0f3c9a"), false, "the password is in the sign-in alone");
+
+    await backend.release(guest, releaseHooks().hooks);
+    await assert.rejects(display.open(), (error: unknown) => error instanceof BackendError && error.code === "gone" && !error.message.includes("pw-0f3c9a"));
+  });
+
+  it("waits while a Mac's reset signs the next box user in, and never asks a Mac for a whole-machine reset", async () => {
+    const host = "192.0.2.84";
+    mac(host, { "restore-steps": "2" });
+    const { backend } = pool("m 192.0.2.84 macos");
+    const { guest } = await acquire(backend, "macos");
+    await backend.release(guest, releaseHooks().hooks);
+    assert.deepEqual([(await member(backend, "m")).state, (await member(backend, "m")).generation], ["free", 1]);
+    assert.deepEqual(helperCalls(host).filter((call) => call.startsWith("release")), ["release 0", "release 0", "release 0"]);
+
+    setFlag(host, "fail-reset", "the next box user did not sign in");
+    const again = await acquire(backend, "macos");
+    await backend.release(again.guest, releaseHooks().hooks);
+    assert.equal((await member(backend, "m")).state, "out-of-service");
+    clearFlag(host, "fail-reset");
+    await backend.returnToService!("m");
+    assert.deepEqual([(await member(backend, "m")).state, (await member(backend, "m")).generation], ["free", 2]);
+    const calls = helperCalls(host);
+    assert.ok(calls.includes("reset"), calls.join("; "));
+    assert.ok(calls.every((call) => !/\b(machine|docker)\b/.test(call)), calls.join("; "));
+  });
+
+  it("does not lend a Mac its box user cannot use, and says why", async () => {
+    mac("192.0.2.85", { "filevault-on": "" });
+    mac("192.0.2.86", { "no-fulldisk": "" });
+    mac("192.0.2.87", { console: "alex" });
+    mac("192.0.2.88", { console: "" });
+    mac("192.0.2.89", { "no-screensharing": "" });
+    machine("192.0.2.90");
+    const lines = ["fv 192.0.2.85", "fd 192.0.2.86", "person 192.0.2.87", "nobody 192.0.2.88", "dark 192.0.2.89", "penguin 192.0.2.90"];
+    const { backend } = pool(lines.map((line) => `${line} macos,macos-desktop`).join("\n"));
+    const reason = async (name: string) => (await member(backend, name)).reason ?? "";
+    assert.match(await reason("fv"), /^FileVault is on, so the Mac cannot sign its box user in\./);
+    assert.match(await reason("fd"), /^The helper lacks Full Disk Access, which the Mac's reset needs\. .*Allow full disk access for remote users\.$/);
+    assert.match(await reason("person"), /^alex is signed in at the console, so box user bbx-0 cannot be\. Sign them out\./);
+    assert.match(await reason("nobody"), /^Box user bbx-0 is not signed in at the console\. If the Mac has just started/);
+    assert.equal(await reason("penguin"), "It runs Linux, but its line lists macos, macos-desktop.");
+    assert.equal((await member(backend, "dark")).state, "free", "a Mac without Screen Sharing still lends macos");
+    const capacity = await backend.capacity("macos-desktop", sizeOf("macos-desktop"), []);
+    assert.equal(capacity.ok, false);
+    assert.match(capacity.message!, /dark: Screen Sharing is off\./);
+    const { guest } = await acquire(backend, "macos");
+    assert.equal(guest.ref, "dark");
+    await backend.release(guest, releaseHooks().hooks);
+  });
+
+  it("checks in its doctor what a Mac's boxes need, and only the doctor asks for Cua Driver's grants", async () => {
+    mac("192.0.2.91");
+    mac("192.0.2.92", { "filevault-on": "", "no-fulldisk": "", "no-screensharing": "", grants: "1,0", autologin: "" });
+    mac("192.0.2.93", { console: "" });
+    mac("192.0.2.94", { node: "", lacks: "gh" });
+    const { backend } = pool("good 192.0.2.91 macos,macos-desktop\nbad 192.0.2.92 macos-desktop\naway 192.0.2.93 macos-desktop\nheadless 192.0.2.94 macos");
+    await backend.capacity("macos-desktop", sizeOf("macos-desktop"), []);
+    assert.equal(helperCalls("192.0.2.91").filter((call) => call !== "status").length, 0, "a survey does not wait for Cua");
+    const doctor = await backend.doctor();
+    const check = (id: string) => doctor.checks.find((other) => other.id === id);
+    const status = (name: string) => doctor.checks.filter((other) => other.id.startsWith(`machine.${name}.`)).map((other) => `${other.id.split(".")[2]} ${other.status}`);
+    assert.equal(doctor.ok, false);
+    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "screensharing ok", "grants ok", "state ok"]);
+    assert.equal(check("machine.good.arch")?.detail, "macOS 26.0 on arm64.");
+    assert.equal(check("machine.good.tools")?.detail, "Everything the helper, enrolment and the thread's GitHub access need, with Node.js 24.21.0.");
+    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "screensharing fail", "grants fail", "state warn"]);
+    assert.match(check("machine.bad.signin")!.detail, /^Box user bbx-0 is at the console, but the automatic login is off/);
+    assert.match(check("machine.bad.fulldisk")!.fix!, /^On bad: In System Settings, General, Sharing, select the \(i\) beside Remote Login/);
+    assert.equal(check("machine.bad.grants")?.detail, "Cua Driver lacks Screen Recording, so computer use cannot see the desktop.");
+    assert.match(check("machine.bad.state")!.detail, /^Out of service: FileVault is on/);
+    assert.deepEqual(status("away").filter((line) => /signin|grants/.test(line)), ["signin fail", "grants warn"]);
+    assert.equal(check("machine.away.signin")?.detail, "Box user bbx-0 is not signed in at the console.");
+    assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "state ok"]);
+    assert.equal(check("machine.headless.tools")?.fix, "On headless: Install Node.js 22.19 or newer with Homebrew: brew install node. BB's installer needs it to enrol a box. Install git and gh with Homebrew: brew install git gh.");
+    for (const [host, asked] of [["192.0.2.91", 1], ["192.0.2.92", 1], ["192.0.2.93", 1], ["192.0.2.94", 0]] as const) {
+      assert.equal(helperCalls(host).filter((call) => call === "status grants").length, asked, host);
+    }
+    assert.match(doctor.notes.join("\n"), /name it in \/var\/db\/bb-box\/owner\./);
+    assert.match(doctor.notes.join("\n"), /On a Mac, a release removes the box's user, .* It keeps macOS, apps, Homebrew and Cua Driver's grants\./);
+    assert.doesNotMatch(doctor.notes.join("\n"), /none of them has Docker/);
   });
 });

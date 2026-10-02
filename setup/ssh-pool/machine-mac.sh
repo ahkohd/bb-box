@@ -4,7 +4,7 @@
 # input, output and exit codes of the Linux helper, machine.sh, and one more,
 # display. setup-mac.sh installs it as /usr/local/libexec/bb-box/machine.
 #
-#   machine status
+#   machine status [grants]       grants: also Cua Driver's grants, which take seconds
 #   machine claim <generation>    stdin: install, box, thread, name, kind, created, key
 #   machine release <generation>  stdin: install, and box unless the box is not known
 #   machine reset                 stdin: install, or nothing when an operator runs it
@@ -206,7 +206,8 @@ remove_ipc() {
 # Cua Driver's Accessibility and Screen Recording grants, as Cua reports them
 # in the session of the box user at the console: 1 or 0 each, or empty when
 # no box user is there or Cua did not answer. Cua runs with the box user's
-# HOME, where its socket is.
+# HOME, where its socket is. Only `status grants` asks, as the pool's doctor
+# does, since the pool reads every Mac's status twice for each box it lends.
 grants() {
   accessibility='' recording=''
   user=$(console)
@@ -227,6 +228,7 @@ grants() {
 }
 
 status() {
+  [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = grants ]; } || quit 2 "usage: machine status [grants]"
   current=$(generation)
   echo "helper=$VERSION"
   echo "arch=$(uname -m)"
@@ -277,7 +279,7 @@ status() {
   if fdesetup status 2>/dev/null | grep -qx 'FileVault is Off\.'; then echo filevault=0; else echo filevault=1; fi
   if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then echo screensharing=1; else echo screensharing=0; fi
   if full_disk; then echo fulldisk=1; else echo fulldisk=0; fi
-  grants
+  [ $# -eq 0 ] || grants
 }
 
 # Makes box user $1 with UID $2 and a random password, from macOS's home
@@ -655,12 +657,12 @@ command -v perl >/dev/null 2>&1 || quit 1 "perl is missing, and the helper locks
 verb=${1:-}
 [ $# -eq 0 ] || shift
 case $verb in
-  status) status ;;
+  status) status "$@" ;;
   claim) claim "$@" ;;
   release) release "$@" ;;
   reset) reset "$@" ;;
   display) display "$@" ;;
   init) init ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: machine status | claim | release | reset | display | init | version" ;;
+  *) quit 2 "usage: machine status [grants] | claim | release | reset | display | init | version" ;;
 esac
