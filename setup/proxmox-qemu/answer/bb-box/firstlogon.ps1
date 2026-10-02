@@ -103,6 +103,45 @@ Remove-Item $msi -Force
 # Plain output for agents' commands, as the backend's command prelude asks too.
 [Environment]::SetEnvironmentVariable('NO_COLOR', '1', 'Machine')
 
+Step "Visual Studio Build Tools $($build.vs.version): $($build.vs.components -join ', ')"
+# The C++ build tools and the Windows SDK, which Rust's MSVC toolchain links
+# with. A fixed-version bootstrapper installs that version's components.
+$exe = 'C:\bb-box\vs_BuildTools.exe'
+Get-Pinned $build.vs.url $build.vs.sha256 $exe
+$arguments = @('--quiet', '--wait', '--norestart', '--nocache') + ($build.vs.components | ForEach-Object { '--add', $_ }) + '--includeRecommended'
+$vs = Start-Process $exe -Wait -PassThru -ArgumentList $arguments
+# 3010: installed, and Windows wants a restart, which comes at the end.
+if ($vs.ExitCode -notin 0, 3010) { throw "Visual Studio Build Tools exited with $($vs.ExitCode); see %TEMP%\dd_*.log" }
+Remove-Item $exe -Force
+
+Step "LLVM $($build.llvm.version)"
+# clang for crates that build C with it (ring on arm64), and libclang for bindgen.
+$msi = 'C:\bb-box\llvm.msi'
+Get-Pinned $build.llvm.url $build.llvm.sha256 $msi
+$llvm = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/i `"$msi`" /qn /norestart"
+if ($llvm.ExitCode -notin 0, 3010) { throw "LLVM's installer exited with $($llvm.ExitCode)" }
+Remove-Item $msi -Force
+$dir = 'C:\Program Files\LLVM\bin'
+if (-not (Test-Path "$dir\clang.exe")) { throw "LLVM did not install $dir\clang.exe" }
+$path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+if ($path -notlike "*$dir*") { [Environment]::SetEnvironmentVariable('Path', "$path;$dir", 'Machine') }
+
+Step "Rust: rustup $($build.rustup.version) and the stable MSVC toolchain, for box"
+# In box's profile, as on Linux boxes. rustup adds ~\.cargo\bin to box's own
+# PATH, which new shells, SSH's included, read. Projects' rust-toolchain.toml
+# files pull their own toolchains on first use.
+$exe = 'C:\bb-box\rustup-init.exe'
+Get-Pinned $build.rustup.url $build.rustup.sha256 $exe
+for ($try = 1; $try -le 3; $try++) {
+  & $exe -y -q --profile minimal --default-toolchain stable -c rustfmt -c clippy 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) { break }
+  if ($try -eq 3) { throw "rustup could not install the stable toolchain (exit $LASTEXITCODE)" }
+  Step "rustup failed (exit $LASTEXITCODE, try $try); trying again"
+  Start-Sleep -Seconds 10
+}
+Remove-Item $exe -Force
+if ([Environment]::GetEnvironmentVariable('Path', 'User') -notlike '*\.cargo\bin*') { throw "rustup did not put ~\.cargo\bin on box's PATH" }
+
 Step 'UTF-8 as the system code page'
 foreach ($name in 'ACP', 'OEMCP', 'MACCP') { Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage' -Name $name -Value '65001' }
 
