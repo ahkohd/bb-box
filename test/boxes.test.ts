@@ -1518,6 +1518,30 @@ test("a claim takes only a ready, enrolled spare of the kind and size whose BB m
   assert.deepEqual((await world.boxes.list(THREAD)).map((box) => box.name).sort(), [box.name, spare.name].sort());
 });
 
+test("a stopped spare a thread started on becomes yours, still stopped, and reconnects when it starts, rather than going as failed (036, #156)", async () => {
+  let picker: string | null = null;
+  const world = setup({}, { spareThread: async () => picker, claimed: async () => true });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  assert.equal(spare?.enrol.state, "enrolled");
+  await world.boxes.stop(SPARES, spare.name);
+
+  picker = "thr_picker";
+  await world.boxes.keepSpares();
+  const [yours] = await world.boxes.list(OPERATOR);
+  assert.deepEqual([yours?.id, yours?.state, yours?.enrol.state], [spare.id, "stopped", "enrolled"]);
+  await until(async () => (await world.boxes.list(SPARES)).some((other) => other.id !== spare.id));
+  await world.boxes.idle();
+  assert.deepEqual(world.reconnected, [], "its daemon cannot start while it is stopped");
+
+  await world.boxes.start(OPERATOR, yours!.name);
+  await until(async () => world.reconnected.length === 1);
+  assert.deepEqual(world.reconnected, [spare.enrol.hostId]);
+  assert.deepEqual(world.errors, []);
+});
+
 test("a spare released by hand is replaced at once, not at the next sweep (#129)", async () => {
   const world = setup();
   world.general = { ...world.general, spares: { linux: 1 } };

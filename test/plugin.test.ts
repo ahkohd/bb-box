@@ -1326,6 +1326,26 @@ test("a thread found on a spare makes it yours at once, not at the next sweep (0
   await until("yours", async () => (await app.boxes.find(spare.id))?.threadId === OPERATOR);
 });
 
+test("a spare is yours as soon as BB says a thread on its machine is working, not at the next upkeep (036, #155)", async (t) => {
+  const { harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const { kinds: _, ...rest } = app.configuration.exported();
+  assert.ok(((await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { linux: { spares: 1 } } }, revision: rest.revision })) as { ok: boolean }).ok);
+  const spare = await until("a spare", async () => (await app.boxes.list(SPARES)).find((box) => box.enrol.state === "enrolled"));
+  await app.boxes.idle();
+  world.workspaceHost = spare.enrol.hostId!;
+  world.onHost.set(spare.enrol.hostId!, [{ id: "thr_picker", title: null, status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  // BB creates the thread before its environment, so its machine is not known yet.
+  const created = makeThreadResponse({ id: "thr_picker", projectId: PROJECT, environmentId: null });
+  world.threads.set("thr_picker", created);
+  await harness.behavior.emitThreadEvent("thread.created", { thread: created });
+  const working = makeThreadResponse({ id: "thr_picker", projectId: PROJECT, environmentId: "env_picker", status: "active" });
+  world.threads.set("thr_picker", working);
+  await harness.behavior.emitThreadEvent("thread.active", { thread: working });
+  await until("yours", async () => (await app.boxes.find(spare.id))?.threadId === OPERATOR);
+  await until("a new spare", async () => (await app.boxes.list(SPARES)).some((box) => box.id !== spare.id));
+});
+
 test("a spare a thread started on reads as becoming yours until it is, and is not released from the thread (036)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
