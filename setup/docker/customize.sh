@@ -2,9 +2,10 @@
 # bb-box: makes a Docker box image from inside, as
 # setup/proxmox-lxc/template/build.sh does in its build CT: stages a build
 # directory, runs the template's guest scripts with BOX_RUNTIME=docker, then
-# finalize.sh. Run by the Dockerfile, with the template's directory at
-# /mnt/template, the fetched artifacts at /mnt/artifacts and the fetch
-# stage's CA certificates at /mnt/ca-certificates.crt, all read-only.
+# finalize.sh. BB's app goes in a layer of its own (see the Dockerfile). Run
+# by the Dockerfile, with the template's directory at /mnt/template, the
+# fetched artifacts at /mnt/artifacts and the fetch stage's CA certificates
+# at /mnt/ca-certificates.crt, all read-only.
 #
 # usage: customize.sh linux|desktop
 set -euo pipefail
@@ -35,7 +36,6 @@ ln -s /mnt/artifacts "$build/artifacts"
 # Container Toolkit brings from the host when the box starts.
 cat >"$build/build.env" <<END
 BOX_USER=box
-BB_URL="${BB_URL:-}"
 DESKTOP_GPU=none
 BOX_RUNTIME=docker
 END

@@ -236,7 +236,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         }),
         "docker-build": cliCommand({
           summary:
-            "Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout, through bb-box's relay (042). Waits for the build. " +
+            "Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout or with another build of BB's app, through bb-box's relay (042). Waits for the build. " +
             `Building both needs about ${BUILD_FREE_GB} GB free there; with less, it does not start.`,
           positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list. It must be turned on under Docker on BB machines.", required: true }],
           run: ({ positionals }) =>

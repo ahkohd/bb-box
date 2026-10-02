@@ -23,8 +23,7 @@ import { registerDesktop, type Desktops } from "./desktop.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, type RetiredTerminals } from "./holder.ts";
-import { DockerCli, LABELS, type DockerInfo } from "../backends/docker/cli.ts";
-import { IMAGE_VERSION } from "../backends/docker/config.ts";
+import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
 import { dockerDriver } from "../backends/docker/index.ts";
 import { backendPart } from "../core/document.ts";
 import { existsSync } from "node:fs";
@@ -32,7 +31,7 @@ import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { abortable } from "../core/abortable.ts";
 import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
-import { DockerImages } from "./docker-images.ts";
+import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { ThreadOnBox } from "./contract.ts";
@@ -571,12 +570,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       await machines.ready(hostId);
       return relay.address(hostId);
     },
-    async stale(hostId, image) {
+    async stale(hostId, image, app) {
       const result = await new DockerCli(relay.address(hostId)).run(["image", "inspect", "--format", "{{json .Config.Labels}}", image], { timeoutMs: 30_000 });
       if (result.exitCode !== 0) return true;
       const labels = (JSON.parse(result.stdout || "null") as Record<string, unknown> | null) ?? {};
-      return labels[LABELS.imageVersion] !== IMAGE_VERSION;
+      return outdated(labels, app);
     },
+    appUrl: () => bb.server.experimental_appUrl,
+    appDigest: bbAppDigest,
     changed: () => notify(null),
     logError,
     log: (message) => bb.log.info(message),

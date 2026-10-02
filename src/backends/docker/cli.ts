@@ -45,6 +45,8 @@ export const LABELS = {
   gpu: "bbbox.gpu",
   /** On an image setup/docker/build.sh made: its layout version. */
   imageVersion: "bbbox.image-version",
+  /** On an image setup/docker/build.sh made: the digest of BB's app in it, or empty for none. */
+  bbApp: "bbbox.bb-app",
 } as const;
 
 export interface DockerInfo {

@@ -15,34 +15,59 @@ RUN apt-get update -q && apt-get install -y -q --no-install-recommends ca-certif
   && rm -rf /var/lib/apt/lists/*
 COPY proxmox-lxc/host/common.sh /src/host/
 COPY proxmox-lxc/template/fetch-artifacts.sh proxmox-lxc/template/pins.json proxmox-lxc/template/desktop-pins.tsv /src/template/
-# BB's server URL, to pre-install BB's host app, so a box enrols without
-# downloading it. Empty: boxes download it when they enrol.
-ARG BB_URL=
-RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL="$BB_URL" bash /src/template/fetch-artifacts.sh /artifacts linux
+RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts linux
 
 FROM fetch AS fetch-desktop
 RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-cpu
 
-# Each image is one layer from Ubuntu's: customize.sh runs the guest scripts
-# and finalize.sh together, so what finalize.sh removes takes no room.
-FROM ${UBUNTU} AS linux
+# BB's host app from BB's server, to pre-install it, so a box enrols without
+# downloading it. Empty BB_URL: boxes download it when they enrol.
+# BB_APP_SHA256 is the app's digest on the server, which build.sh reads: a new
+# build of BB's app changes it, so the build fetches and installs the new app,
+# and what comes before stays cached (#95).
+FROM fetch AS app
 ARG BB_URL=
+ARG BB_APP_SHA256=
+RUN mkdir /app && if [ -n "$BB_URL" ]; then \
+      curl -fsS -D /app/bb-app.headers -o /app/bb-app.tgz "${BB_URL%/}/install/bb-app.tgz" && \
+      { echo "$BB_APP_SHA256  /app/bb-app.tgz" | sha256sum -c --quiet - || { \
+        echo "BB's app on $BB_URL is not the build $BB_APP_SHA256 that build.sh read: build again" >&2; exit 1; }; }; \
+    fi
+
+# Each image is one layer from Ubuntu's, then one with BB's app: customize.sh
+# runs the guest scripts and finalize.sh together, so what finalize.sh removes
+# takes no room. The app's layer comes last, as it changes with each build of
+# BB's app, and bbbox.bb-app says which build it has, for the plugin to see.
+FROM ${UBUNTU} AS linux
 RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch,source=/artifacts,target=/mnt/artifacts \
     --mount=type=bind,from=fetch,source=/etc/ssl/certs/ca-certificates.crt,target=/mnt/ca-certificates.crt \
-    BB_URL="$BB_URL" bash /mnt/customize.sh linux
+    bash /mnt/customize.sh linux
+ARG BB_URL=
+ARG BB_APP_SHA256=
+RUN --mount=type=bind,source=proxmox-lxc/template/guest/install-bb-app.sh,target=/mnt/install-bb-app.sh \
+    --mount=type=bind,from=app,source=/app,target=/mnt/app \
+    if [ -n "$BB_URL" ]; then \
+      bash /mnt/install-bb-app.sh box "$BB_URL" /mnt/app && rm -rf /home/box/.npm /home/box/.cache /tmp/*; \
+    fi
 COPY --chmod=0755 docker/start /usr/local/sbin/bb-box-start
-LABEL bbbox.image-version="1"
+LABEL bbbox.image-version="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]
 
 FROM ${UBUNTU} AS desktop
-ARG BB_URL=
 RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch-desktop,source=/artifacts,target=/mnt/artifacts \
     --mount=type=bind,from=fetch,source=/etc/ssl/certs/ca-certificates.crt,target=/mnt/ca-certificates.crt \
-    BB_URL="$BB_URL" bash /mnt/customize.sh desktop
+    bash /mnt/customize.sh desktop
+ARG BB_URL=
+ARG BB_APP_SHA256=
+RUN --mount=type=bind,source=proxmox-lxc/template/guest/install-bb-app.sh,target=/mnt/install-bb-app.sh \
+    --mount=type=bind,from=app,source=/app,target=/mnt/app \
+    if [ -n "$BB_URL" ]; then \
+      bash /mnt/install-bb-app.sh box "$BB_URL" /mnt/app && rm -rf /home/box/.npm /home/box/.cache /tmp/*; \
+    fi
 COPY --chmod=0755 docker/start /usr/local/sbin/bb-box-start
-LABEL bbbox.image-version="1"
+LABEL bbbox.image-version="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]

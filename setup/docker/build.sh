@@ -28,6 +28,19 @@ while [ $# -gt 0 ]; do
 done
 [ ${#targets[@]} -gt 0 ] || targets=(linux desktop)
 
+# The digest of BB's app on the server, which the build fetches. It keys the
+# images' layer with the app, so a build installs the app again only once
+# BB's app has changed (#95).
+app_sha256=
+if [ -n "$bb_url" ]; then
+  headers=$(curl -fsSI --max-time 30 "${bb_url%/}/install/bb-app.tgz") || {
+    echo "build.sh could not reach BB's server at $bb_url for its app." >&2
+    exit 1
+  }
+  app_sha256=$(sed -n 's/^x-bb-artifact-sha256: *\([a-f0-9]\{64\}\).*/\1/Ip' <<<"$headers" | tail -1)
+  [ -n "$app_sha256" ] || { echo "BB's server at $bb_url gave no digest for its app." >&2; exit 1; }
+fi
+
 # A build needs this much of the Docker host's disk free, in GB. From an
 # empty cache, on Docker 29 with its containerd image store, the linux image
 # took about 6 GB, the desktop 12 and both 17: the images and Docker's build
@@ -56,6 +69,6 @@ for target in "${targets[@]}"; do
   [ "$target" = linux ] || image=bbbox/linux-desktop:$version
   # The guest scripts install x86_64 builds of their tools.
   docker build --platform linux/amd64 --target "$target" --build-arg BB_URL="$bb_url" \
-    -t "$image" -f "$here/Dockerfile" "$here/.."
+    --build-arg BB_APP_SHA256="$app_sha256" -t "$image" -f "$here/Dockerfile" "$here/.."
   echo "built $image"
 done
