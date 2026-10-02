@@ -306,7 +306,8 @@ export function NewBox({
           </Tooltip>
         </TooltipProvider>
       )}
-      <PopoverContent align="end" className="w-80 p-4 sm:w-[560px] sm:p-5" mobileTitle={machine ? "Add machine" : "New box"}>
+      {/* The form may be taller than the window: it takes the height the popover has and scrolls inside, so a short window scrolls the form rather than losing its bottom. */}
+      <PopoverContent align="end" className="max-h-[var(--radix-popover-content-available-height)] w-80 overflow-y-auto p-4 sm:w-[560px] sm:p-5" mobileTitle={machine ? "Add machine" : "New box"}>
         <form
           className="space-y-5"
           onSubmit={(event) => {
