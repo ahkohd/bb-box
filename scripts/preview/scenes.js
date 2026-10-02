@@ -293,9 +293,9 @@ function configState(options = {}) {
     drivers: DRIVERS,
     backends: [
       tokenSet
-        ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", form: "LXC", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 } }
-        : { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC", form: "LXC", state: "misconfigured", problems: [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }], boxes: 0, kinds: [], doctor: null },
-      { id: "tart", type: "tart", label: "Tart", form: "VM", state: "off", problems: [], boxes: 0, kinds: [], doctor: null },
+        ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", form: "LXC", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 }, warmShort: options.warmShort ?? [] }
+        : { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC", form: "LXC", state: "misconfigured", problems: [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }], boxes: 0, kinds: [], doctor: null, warmShort: [] },
+      { id: "tart", type: "tart", label: "Tart", form: "VM", state: "off", problems: [], boxes: 0, kinds: [], doctor: null, warmShort: [] },
     ],
     problems: tokenSet ? [] : [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }],
     migrated: { at: now - 3 * 3600_000, version: "0.2.0" },
@@ -609,6 +609,28 @@ export const scenes = {
     rpc: rpc([]),
     after: async (root) => {
       [...root.querySelectorAll("button")].filter((b) => b.textContent.trim() === "Edit")[2]?.click();
+      await wait(300);
+    },
+  },
+  // A kind whose warm pool on a backend is short for want of room (#356): its note shows under that backend's warm count.
+  "settings-kind-short": {
+    slot: "settings",
+    width: 860,
+    props: {},
+    rpc: rpc([], {
+      config: {
+        warmShort: [
+          {
+            kinds: ["linux-desktop"],
+            count: 1,
+            have: 0,
+            reason: "pve has 2.0 GiB of memory free. A linux-desktop box with 4.0 GiB memory needs it all, and 4.0 GiB is kept free. Release boxes on pve, or lower the warm count.",
+          },
+        ],
+      },
+    }),
+    after: async (root) => {
+      [...root.querySelectorAll("button")].filter((b) => b.textContent.trim() === "Edit")[1]?.click();
       await wait(300);
     },
   },
