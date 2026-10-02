@@ -371,6 +371,25 @@ test("a Windows box's disk may grow by what the Mac has free beyond the disk kep
   assert.match((await backend.capacity("macos", disk(66), [], signal())).message!, /a Tart box keeps its image's disk/);
 });
 
+test("a Windows fill needs its memory free on disk beyond the disk kept free, for its save; a box does not", async () => {
+  const { mac, qemu, context } = setup({}, {}, WARM);
+  const { bavail, bsize } = statfsSync(mac);
+  const free = Math.floor((Number(bavail) * Number(bsize)) / 2 ** 30);
+  assert.ok(free > 12, "the test needs 13 GiB of disk free");
+  const reserving = (gib: number) => {
+    const backend = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": gib }), context, FAKES);
+    made.push(backend);
+    return backend;
+  };
+  // 4 GiB above what is kept free, less than the 8 GiB a small VM saves.
+  const short = reserving(free - 4);
+  await short.maintain();
+  assert.deepEqual(warmVms(qemu), []);
+  assert.equal((await short.capacity(KIND, SMALL, [], signal())).ok, true, "a box still fits");
+  await reserving(free - 12).maintain();
+  assert.equal(warmVms(qemu).length, 1);
+});
+
 test("a VM whose QEMU does not say what virt stands for runs on virt", async () => {
   const { backend, mac, qemu } = setup();
   writeFileSync(join(mac, ".fake-qemu-virt"), "");

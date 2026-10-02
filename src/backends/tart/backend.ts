@@ -565,7 +565,9 @@ export class TartBackend implements Backend {
    * count against the Mac's two macOS VMs, and a Windows VM's QEMU takes
    * memory of its own. A Windows box may ask for a disk larger than the
    * image's, and the Mac must have what it grew by beyond the disk reserve,
-   * as on Proxmox, though the overlay takes only what Windows writes.
+   * as on Proxmox, though the overlay takes only what Windows writes. A warm
+   * VM (`saved`) is suspended or saved once filled, which writes its memory
+   * to disk, so the Mac must have that beyond the disk reserve too.
    */
   #room(
     host: TartHost,
@@ -574,6 +576,7 @@ export class TartBackend implements Backend {
     unplaced: Unplaced = NONE_UNPLACED,
     yielding: ReadonlySet<string> = new Set(),
     os: GuestOs = "macos",
+    saved = false,
   ): { capacity: HostCapacity; why: string | null } {
     if (state instanceof Error) return { capacity: { host: host.name, ok: false, limits: [] }, why: `${host.name} did not answer: ${state.message}` };
     // Every running VM takes memory; only macOS VMs count against Apple's two.
@@ -626,6 +629,8 @@ export class TartBackend implements Backend {
       why =
         `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free. A ${size.diskGiB} GiB disk needs ${grow} GiB more than the Windows image's, ` +
         `and ${formatMiB(diskReserveMiB)} is kept free. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings`;
+    } else if (saved && state.disk.freeMiB - grow * MiB_PER_GiB - size.memoryMiB < diskReserveMiB) {
+      why = `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, and a warm VM saved with its ${formatMiB(size.memoryMiB)} of memory would leave less than the ${formatMiB(diskReserveMiB)} kept free`;
     }
     return { capacity: { host: host.name, ok: why === null, limits }, why };
   }
@@ -1222,7 +1227,7 @@ export class TartBackend implements Backend {
       const states = await this.#states(signal);
       for (const host of this.#on()) {
         const state = states.get(host.name)!;
-        if (state instanceof Error || !this.#room(host, state, pool.size, NONE_UNPLACED, new Set(), pool.os).capacity.ok) continue;
+        if (state instanceof Error || !this.#room(host, state, pool.size, NONE_UNPLACED, new Set(), pool.os, true).capacity.ok) continue;
         this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(pool.kinds[0]!, pool.size), macos: !windows });
         return { host, state };
       }

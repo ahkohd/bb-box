@@ -3,7 +3,7 @@
 // retired when their image, Tart or macOS changes.
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
@@ -28,12 +28,11 @@ function setup(warm: Record<string, number> = { macos: 1 }) {
   const vmsDir = join(mac, ".tart", "vms");
   // The image's disk, whose file is its build.
   writeFileSync(join(vmsDir, FAKE_IMAGE, "disk.img"), "image");
-  const config = tartConfig();
   const contexts: ReturnType<typeof testContext>[] = [];
-  const make = (installId = "test", counts = warm) => {
+  const make = (installId = "test", counts = warm, values: Record<string, unknown> = {}) => {
     const context = testContext(new MemoryStorage(), installId, { warm: counts });
     contexts.push(context);
-    const backend = new TartBackend(config, context, { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 });
+    const backend = new TartBackend(tartConfig(values), context, { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 });
     made.push(backend);
     return backend;
   };
@@ -101,6 +100,20 @@ test("maintain fills a pool with suspended clones at the default size, which hel
   assert.equal(capacity.hosts[0]!.limits.find((limit) => limit.resource === "guests")!.used, 0, "a suspended VM holds no slot");
   await backend.maintain();
   assert.equal(warmVms().length, 2, "a full pool stays as it is");
+});
+
+test("a fill needs its memory free on disk beyond the disk kept free, for its suspend; a box does not", async () => {
+  const { mac, make, warmVms } = setup();
+  const { bavail, bsize } = statfsSync(mac);
+  const free = Math.floor((Number(bavail) * Number(bsize)) / 2 ** 30);
+  assert.ok(free > 12, "the test needs 13 GiB of disk free");
+  // 4 GiB above what is kept free, less than the 8 GiB a small VM suspends.
+  const short = make("test", { macos: 1 }, { "tart-reserve-disk-gib": free - 4 });
+  await short.maintain();
+  assert.deepEqual(warmVms(), []);
+  assert.equal((await short.capacity("macos", SMALL, [])).ok, true, "a box still fits");
+  await make("test", { macos: 1 }, { "tart-reserve-disk-gib": free - 12 }).maintain();
+  assert.equal(warmVms().length, 1);
 });
 
 test("a box at the default size takes a warm VM, and the pool fills again", async () => {
