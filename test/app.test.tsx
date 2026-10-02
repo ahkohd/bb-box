@@ -694,7 +694,7 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
   expect(screen.queryByText("GPU")).toBeNull();
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
   // Desktop opens on the CPU desktop; the GPU is a resource, a sub-label and menu under the presets, and 1 GPU names the GPU kind.
-  expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["System", "Architecture", "Type", "Provider", "Resources"]);
+  expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["System", "Architecture", "Type", "Resources", "Provider"]);
   expect(screen.getByText("GPU").tagName).toBe("P");
   expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("None");
   expect(await optionsOf("GPU")).toEqual(["None", "1 GPU"]);
@@ -750,8 +750,14 @@ test("the (i) on a provider row opens its profile, asked once while the form is 
     "Ready · Proxmox VE 9.2 on pve · 2 boxes on it · checked 2 minutes ago",
   ]);
   expect(changes).toEqual(["provider fake"]);
-  // The (i) does not choose the row.
+  // The (i) does not choose the row; it keeps its place in the card, shown on hover, focus or while its profile is open.
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+  const holder = screen.getByRole("button", { name: "About pve" }).parentElement!;
+  expect(holder.getAttribute("data-testid")).toBe("provider-info");
+  expect(holder.className).toMatch(/\bopacity-0\b/);
+  expect(holder.className).toMatch(/group-hover:opacity-100/);
+  expect(holder.className).toMatch(/group-focus-within:opacity-100/);
+  expect(holder.className).toMatch(/has-\[\[data-state=open\]\]:opacity-100/);
   // Escape closes the profile and leaves the form; opening the profile again asks nothing more.
   fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
   await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull());
@@ -764,6 +770,22 @@ test("the (i) on a provider row opens its profile, asked once while the form is 
   await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull());
   fireEvent.click(screen.getByRole("button", { name: "About SSH host pool" }));
   await waitFor(() => expect(changes).toEqual(["provider fake", "provider ssh-pool"]));
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByText("Fake host on pve")).toBeNull());
+
+  // The pointer resting on the (i) opens the profile as a preview after a moment; leaving closes it; a click keeps it.
+  fireEvent.pointerEnter(screen.getByRole("button", { name: "About pve" }));
+  expect(screen.queryByText("Linux containers on a test host.")).toBeNull();
+  await waitFor(() => expect(screen.getByText("Linux containers on a test host.")).toBeTruthy(), { timeout: 1500 });
+  fireEvent.pointerLeave(screen.getByRole("button", { name: "About pve" }));
+  await waitFor(() => expect(screen.queryByText("Linux containers on a test host.")).toBeNull(), { timeout: 1500 });
+  fireEvent.pointerEnter(screen.getByRole("button", { name: "About pve" }));
+  await waitFor(() => expect(screen.getByText("Linux containers on a test host.")).toBeTruthy(), { timeout: 1500 });
+  fireEvent.click(screen.getByRole("button", { name: "About pve" }));
+  fireEvent.pointerLeave(screen.getByRole("button", { name: "About pve" }));
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  expect(screen.getByText("Linux containers on a test host.")).toBeTruthy();
+  expect(changes).toEqual(["provider fake", "provider ssh-pool"]);
 });
 
 test("the profile's words: limits, room, where it runs, what it makes, the usual start and the status", () => {

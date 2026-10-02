@@ -432,7 +432,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 840,
+    height: 980,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");

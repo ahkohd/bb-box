@@ -303,7 +303,50 @@ export function NewBox({
               <OptionCard title="Desktop" words="Screen · Terminal · Computer use" glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
             </div>
           </FormSection>
-          <FormSection title="Provider" description="Where the box goes: the first with room, in this order, unless you choose one.">
+          {kind ? (
+            <FormSection title="Resources" description={`Configure the box's cores, memory${gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
+              <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
+                {choices.map((candidate, position) => {
+                  const own = presets.find((item) => item.name === candidate) ?? null;
+                  return (
+                    <OptionCard
+                      key={candidate}
+                      optionRef={(element) => {
+                        sizeOptions.current[position] = element;
+                      }}
+                      title={PRESET_LABELS[candidate] ?? (candidate === CUSTOM ? "Custom" : candidate)}
+                      words={own ? `${own.cores} cores · ${own.memoryGiB} GiB` : largest ? `up to ${largest.cores} cores` : null}
+                      selected={candidate === size}
+                      onClick={() => chooseSize(candidate)}
+                    />
+                  );
+                })}
+              </div>
+              {!preset ? (
+                <div className="grid grid-cols-3 gap-3">
+                  {field("cores", "Cores", largest?.cores ?? null)}
+                  {field("memoryGiB", "Memory, GiB", largest?.memoryGiB ?? null)}
+                  {field("diskGiB", "Disk, GiB", largest?.diskGiB ?? null)}
+                </div>
+              ) : null}
+              {gpuChoice ? (
+                // A GPU is a resource: a dim sub-label of its own line under the presets, then the menu (the operator's note of 2 October 2026).
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">GPU</p>
+                  <MenuSelect
+                    label="GPU"
+                    value={picked.gpu ? "1" : "0"}
+                    options={[
+                      { value: "0", label: "None" },
+                      { value: "1", label: "1 GPU" },
+                    ]}
+                    onChange={(value) => pick({ gpu: value === "1" })}
+                  />
+                </div>
+              ) : null}
+            </FormSection>
+          ) : null}
+          <FormSection title="Provider" description="Where the box goes: the first with room for it, in this order, unless you choose one.">
             {/* The filters: a row of their own under the description, at the row's right edge, "Filter" at the menus' text size, wrapping right-aligned on a narrow pane (the operator's notes of 2 October 2026). */}
             <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-2" role="group" aria-label="Filter">
               <span className="text-xs text-muted-foreground">Filter</span>
@@ -361,49 +404,6 @@ export function NewBox({
               ))}
             </div>
           </FormSection>
-          {kind ? (
-            <FormSection title="Resources" description={`Configure the box's cores, memory${gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
-              <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
-                {choices.map((candidate, position) => {
-                  const own = presets.find((item) => item.name === candidate) ?? null;
-                  return (
-                    <OptionCard
-                      key={candidate}
-                      optionRef={(element) => {
-                        sizeOptions.current[position] = element;
-                      }}
-                      title={PRESET_LABELS[candidate] ?? (candidate === CUSTOM ? "Custom" : candidate)}
-                      words={own ? `${own.cores} cores · ${own.memoryGiB} GiB` : largest ? `up to ${largest.cores} cores` : null}
-                      selected={candidate === size}
-                      onClick={() => chooseSize(candidate)}
-                    />
-                  );
-                })}
-              </div>
-              {!preset ? (
-                <div className="grid grid-cols-3 gap-3">
-                  {field("cores", "Cores", largest?.cores ?? null)}
-                  {field("memoryGiB", "Memory, GiB", largest?.memoryGiB ?? null)}
-                  {field("diskGiB", "Disk, GiB", largest?.diskGiB ?? null)}
-                </div>
-              ) : null}
-              {gpuChoice ? (
-                // A GPU is a resource: a dim sub-label of its own line under the presets, then the menu (the operator's note of 2 October 2026).
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">GPU</p>
-                  <MenuSelect
-                    label="GPU"
-                    value={picked.gpu ? "1" : "0"}
-                    options={[
-                      { value: "0", label: "None" },
-                      { value: "1", label: "1 GPU" },
-                    ]}
-                    onChange={(value) => pick({ gpu: value === "1" })}
-                  />
-                </div>
-              ) : null}
-            </FormSection>
-          ) : null}
           {machine ? (
             <FormSection title="Name" description="Optional; bb-box picks one when it is left empty.">
               <Input
