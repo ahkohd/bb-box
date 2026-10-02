@@ -191,10 +191,11 @@ After that it lends the one free longest, then the first listed.
 bb-box reaches the jump host with the same key, as the user in `via=`, and
 asks it to forward to the machine. The admin user cannot forward, so use
 another user on the jump host. In its `authorized_keys`, you can limit the
-key to forwarding to your machines:
+key to forwarding to your machines. `restrict` alone still lets the key run
+commands there, so add `command="false"`:
 
 ```text
-restrict,port-forwarding,permitopen="build-1:22",permitopen="build-2:22" ssh-ed25519 AAAA... bb-box
+command="false",restrict,port-forwarding,permitopen="build-1:22",permitopen="build-2:22" ssh-ed25519 AAAA... bb-box
 ```
 
 Add the jump host's keys to the host keys setting too. Name the machine by
