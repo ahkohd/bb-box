@@ -6,7 +6,7 @@
 // offers; nothing here names a kind ID or a host ID, and nothing carries a
 // provider's mark or colour.
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { GuestOs } from "../backends/types.ts";
 import type { KindView, OfferView } from "../plugin/views.ts";
 import { cn } from "@/lib/utils";
@@ -181,19 +181,35 @@ export function OfferWords({ offer }: { offer: OfferView }) {
 }
 
 /**
- * One section, as the settings page has them: its title, with a filter or
- * two at the right of the title row when it has them (they wrap under the
- * title on a narrow pane), a dim line under it where useful, then its
- * options at full width.
+ * One Escape closes the form whatever was used last. A menu just closed
+ * keeps its layer while its closing animation plays, and Radix gives that
+ * layer the Escape, so the first Escape after a menu did nothing (the
+ * operator's live form, 2 October 2026). While a menu is open, Escape is
+ * the menu's, as before.
  */
-export function FormSection({ title, description, action, children }: { title: string; description?: string; action?: ReactNode; children: ReactNode }) {
+export function useEscapeCloses(open: boolean, setOpen: (open: boolean) => void): void {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || document.querySelector('[role="listbox"][data-state="open"]')) return;
+      event.preventDefault();
+      setOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => document.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [open, setOpen]);
+}
+
+/**
+ * One section, as the settings page has them: its title, a dim line under
+ * it where useful, then its parts at full width, each with the same clear
+ * space between them (a filter row, then a list; or the options).
+ */
+export function FormSection({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <section className="space-y-2.5">
+    <section className="space-y-3">
       <div>
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <h3 className="text-xs font-medium text-foreground">{title}</h3>
-          {action}
-        </div>
+        <h3 className="text-xs font-medium text-foreground">{title}</h3>
         {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
       </div>
       {children}
@@ -202,12 +218,11 @@ export function FormSection({ title, description, action, children }: { title: s
 }
 
 /**
- * A small menu. A filter sits on its section's title row, compact, with
- * its label inside the trigger ("Kind: All"), since it narrows the list
- * rather than choosing from it (the operator's note of 2 October 2026); a
- * choice that is a section's only control, the GPU, has the section's
- * title for its label. An option no provider has is there, but cannot be
- * chosen.
+ * A small menu. A filter is compact, with its label inside the trigger
+ * ("Kind: All"), since it narrows the list rather than choosing from it
+ * (the operator's note of 2 October 2026); a choice that is a section's
+ * only control, the GPU, has the section's title for its label. An option
+ * no provider has is there, but cannot be chosen.
  */
 export function MenuSelect({
   label,
