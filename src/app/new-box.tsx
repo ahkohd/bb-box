@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import type { KindView, SizeView } from "../plugin/views.ts";
 import type { GuestOs } from "../backends/types.ts";
-import { archAvailable, ARCHS, choiceOf, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, LabelledSelect, nearest, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
+import { archAvailable, ARCHS, choiceOf, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -296,29 +296,49 @@ export function NewBox({
               <OptionCard title="Desktop" words="Screen · Terminal · Computer use" glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
             </div>
           </FormSection>
-          <FormSection title="Provider" description="Where the box goes: the first with room, in this order, unless you choose one.">
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              <LabelledSelect
-                label="Kind"
-                value={filter}
-                options={kindOptions}
-                onChange={(value) => {
-                  setFilter(value as FormFilter);
-                  setOn(null);
-                }}
+          {picked.desktop && gpus.none && gpus.gpu ? (
+            <FormSection title="GPU" description="One of the host's GPUs for the desktop, or none, and the CPU draws it.">
+              <MenuSelect
+                label="GPU"
+                value={picked.gpu ? "1" : "0"}
+                options={[
+                  { value: "0", label: "None" },
+                  { value: "1", label: "1 GPU" },
+                ]}
+                onChange={(value) => pick({ gpu: value === "1" })}
               />
-              {filter !== "physical" ? (
-                <LabelledSelect
-                  label="Runs on"
-                  value={effectiveRunsOn}
-                  options={runsOnChoiceList}
+            </FormSection>
+          ) : null}
+          <FormSection
+            title="Provider"
+            description="Where the box goes: the first with room, in this order, unless you choose one."
+            action={
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <MenuSelect
+                  label="Kind"
+                  labelInside
+                  value={filter}
+                  options={kindOptions}
                   onChange={(value) => {
-                    setRunsOn(value as RunsOn);
+                    setFilter(value as FormFilter);
                     setOn(null);
                   }}
                 />
-              ) : null}
-            </div>
+                {filter !== "physical" ? (
+                  <MenuSelect
+                    label="Runs on"
+                    labelInside
+                    value={effectiveRunsOn}
+                    options={runsOnChoiceList}
+                    onChange={(value) => {
+                      setRunsOn(value as RunsOn);
+                      setOn(null);
+                    }}
+                  />
+                ) : null}
+              </div>
+            }
+          >
             <div role="radiogroup" aria-label="Provider" className="space-y-2" onKeyDown={(event) => arrows(event, providerValues.length, providerIndex, (position) => { setOn(providerValues[position] ?? null); providerOptions.current[position]?.focus(); })}>
               {!choiceless && shown.length ? (
                 <button
@@ -374,17 +394,6 @@ export function NewBox({
                   {field("memoryGiB", "Memory, GiB", largest?.memoryGiB ?? null)}
                   {field("diskGiB", "Disk, GiB", largest?.diskGiB ?? null)}
                 </div>
-              ) : null}
-              {picked.desktop && gpus.none && gpus.gpu ? (
-                <LabelledSelect
-                  label="GPU"
-                  value={picked.gpu ? "1" : "0"}
-                  options={[
-                    { value: "0", label: "None" },
-                    { value: "1", label: "1 GPU" },
-                  ]}
-                  onChange={(value) => pick({ gpu: value === "1" })}
-                />
               ) : null}
             </FormSection>
           ) : null}

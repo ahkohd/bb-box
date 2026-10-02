@@ -386,7 +386,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 760,
+    height: 780,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -397,7 +397,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 760,
+    height: 780,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -411,7 +411,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 720,
+    height: 740,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -427,7 +427,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 680,
+    height: 700,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -441,7 +441,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 568,
-    height: 900,
+    height: 940,
     viewport: 600,
     rpc: rpc([]),
     after: async (root) => {
@@ -453,7 +453,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 820,
+    height: 900,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -467,7 +467,7 @@ export const scenes = {
   "panel-refused": {
     slot: "boxes",
     chrome: boxesChrome,
-    height: 800,
+    height: 880,
     rpc: rpc([], { refuse: "pve has 10 GiB of memory free. A Linux desktop box needs 8 GiB and 4 GiB is kept free. Release a box you no longer need, or pick another kind." }),
     after: async (root) => {
       click(root, "button", "New box");
@@ -530,7 +530,7 @@ export const scenes = {
   "settings-machines-add": {
     slot: "settings",
     width: 860,
-    height: 820,
+    height: 840,
     props: {},
     rpc: rpc([]),
     after: async (root) => {
