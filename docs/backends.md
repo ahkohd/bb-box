@@ -52,6 +52,8 @@ Across the table:
   (`docker:devpc`) or by its one host's name (`devpc`). Then only that one
   is tried, and a full or offline provider is refused rather than passed
   over ([044](decisions/044-a-box-can-be-asked-for-on-one-provider.md)).
+  A list of providers is to come: the first with room among them takes
+  the box, and none outside it is tried.
 - **Enrolment.** Linux and macOS boxes can become BB machines. Windows boxes
   cannot until BB's host app runs on Windows
   ([BB request 1](bb-requests.md#1-bbs-host-app-on-windows)).
