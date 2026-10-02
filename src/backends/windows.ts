@@ -15,11 +15,23 @@ const RESIZE_TIMEOUT_MS = 15_000;
 const CLOCK_TIMEOUT_MS = 30_000;
 
 /**
- * Extends C: to the end of its disk. In bb-box's Windows images C: is the
- * disk's last partition, so it can. Windows refuses a resize by less than 1 MB.
+ * Extends C: to the end of its disk. Windows Setup puts WinRE in a partition
+ * of its own after C:, which stands between C: and the space a larger disk
+ * adds, so WinRE moves onto C: and its partition goes, but only when space
+ * follows it. Windows refuses a resize by less than 1 MB.
  */
 const EXTEND_C = String.raw`try {
   Update-HostStorageCache
+  $c = Get-Partition -DriveLetter C -ErrorAction Stop
+  $disk = Get-Disk -Number $c.DiskNumber -ErrorAction Stop
+  $after = @(Get-Partition -DiskNumber $c.DiskNumber | Where-Object Offset -gt $c.Offset)
+  if ($after.Count -eq 1 -and $after[0].Type -eq 'Recovery' -and $disk.Size - $after[0].Offset - $after[0].Size -gt 1MB) {
+    $out = reagentc.exe /disable 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "reagentc /disable failed: $out" }
+    Remove-Partition -DiskNumber $c.DiskNumber -PartitionNumber $after[0].PartitionNumber -Confirm:$false -ErrorAction Stop
+    $out = reagentc.exe /enable 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "reagentc /enable failed: $out" }
+  }
   $max = (Get-PartitionSupportedSize -DriveLetter C -ErrorAction Stop).SizeMax
   $size = (Get-Partition -DriveLetter C -ErrorAction Stop).Size
   if ($max - $size -gt 1MB) { Resize-Partition -DriveLetter C -Size $max -ErrorAction Stop }

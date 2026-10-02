@@ -402,7 +402,9 @@ test("a larger disk grows before the box starts, and C: is extended over it", as
   assert.equal(guest.size?.diskGiB, 100, "the size is read back from the VM");
   assert.equal(typeof hook.timings.resize, "number");
   assert.equal(typeof hook.timings.extend, "number");
-  assert.match(readFileSync(join(ssh.home("192.0.2.150"), "extended"), "utf8"), /Resize-Partition -DriveLetter C -Size \$max/);
+  const extend = readFileSync(join(ssh.home("192.0.2.150"), "extended"), "utf8");
+  assert.match(extend, /Resize-Partition -DriveLetter C -Size \$max/);
+  assert.match(extend, /reagentc\.exe \/disable.*Remove-Partition .*reagentc\.exe \/enable/s, "WinRE's partition after C: moves onto C: first");
 });
 
 test("a disk no larger than the template's is kept, and C: is left alone", async () => {
