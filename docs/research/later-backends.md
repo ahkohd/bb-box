@@ -335,6 +335,14 @@ The rest of this section is the plan as it was.
 
 ## Physical Mac (real; later)
 
+Decided in
+[047](../decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md),
+which changes this sketch in three ways: the reset makes a new user per
+box rather than a new home, and signs it in before the claim; Screen
+Sharing is signed in to as the box's user, with its VNC password off; and
+the box user's console is reached without a full restart where the live
+check finds a quicker way. The sketch is kept as it was.
+
 The SSH host pool driver with macOS machines, a macOS reset script and a
 desktop kind. A separate driver is not needed.
 

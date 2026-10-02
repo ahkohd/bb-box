@@ -51,3 +51,4 @@ that changes gets a new record that supersedes the old one.
 | [044](044-a-box-can-be-asked-for-on-one-provider.md) | A box can be asked for on one provider |
 | [045](045-a-persons-control-lasts-through-a-restart-of-the-plugin.md) | A person's control lasts through a restart of the plugin |
 | [046](046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md) | Windows on a Mac runs in QEMU, in the Tart backend |
+| [047](047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md) | A physical Mac is an SSH pool machine, lent with a new user at its console |
