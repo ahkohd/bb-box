@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { Capacity, Limit } from "../backends/types.ts";
 import type { OfferView, ProviderProfile } from "../plugin/views.ts";
 import { providerTitle, RUNS_ON_WORDS } from "./box-form.tsx";
-import { message, relativeTime, seconds } from "./common.tsx";
+import { relativeTime, seconds } from "./common.tsx";
 
 const GIB = 1024;
 const RESOURCE_WORDS: Record<Limit["resource"], string> = {
@@ -89,25 +89,27 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-type Loaded = { readonly profile: ProviderProfile | null; readonly error: string | null; readonly loading: boolean };
+/** A provider's profile as the form holds it: on its way, here, or failed. */
+export type Loaded = { readonly profile: ProviderProfile | null; readonly error: string | null; readonly loading: boolean };
 
 /** The pointer resting on the (i) opens the profile after this long, and leaving the (i) or the profile closes it after a short grace, so the pointer can move into it. */
 export const HOVER_OPEN_MS = 300;
 export const HOVER_CLOSE_MS = 250;
 
 /**
- * The (i) at the end of a provider row, and its popover: asked once per
- * open form, kept while the form stays open. The pointer resting on the
- * (i) opens it as a preview, which leaving closes; a click or the keyboard
- * opens it and keeps it until Escape or a click away, for touch and screen
- * readers (the operator's note of 2 October 2026).
+ * The (i) at the end of a provider row, and its popover. The form fetches
+ * every listed provider's profile in the background once it has painted
+ * and keeps them while it stays open, so the popover opens filled; one
+ * still on its way says "Looking…", and one that failed is asked again
+ * when its (i) opens (the operator's note of 2 October 2026). The pointer
+ * resting on the (i) opens it as a preview, which leaving closes; a click
+ * or the keyboard opens it and keeps it until Escape or a click away, for
+ * touch and screen readers.
  */
-export function ProviderInfo({ offer, profile, now = () => Date.now() }: { offer: OfferView; profile: (backend: string) => Promise<ProviderProfile>; now?: () => number }) {
+export function ProviderInfo({ offer, loaded, load: ask, now = () => Date.now() }: { offer: OfferView; loaded: Loaded | undefined; load: () => void; now?: () => number }) {
   const [open, setOpen] = useState(false);
-  const [loaded, setLoaded] = useState<Loaded>({ profile: null, error: null, loading: false });
   /** Opened, or kept, by a click or the keyboard: the pointer leaving does not close it. */
   const pinned = useRef(false);
-  const asked = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const title = providerTitle(offer);
   const clear = () => {
@@ -116,16 +118,7 @@ export function ProviderInfo({ offer, profile, now = () => Date.now() }: { offer
   };
   useEffect(() => clear, []);
   const load = () => {
-    if (asked.current) return;
-    asked.current = true;
-    setLoaded({ profile: null, error: null, loading: true });
-    profile(offer.backend).then(
-      (found) => setLoaded({ profile: found, error: null, loading: false }),
-      (error: unknown) => {
-        asked.current = false;
-        setLoaded({ profile: null, error: message(error), loading: false });
-      },
-    );
+    if (!loaded?.profile && !loaded?.loading) ask();
   };
   const hoverIn = (event: ReactPointerEvent) => {
     if (event.pointerType === "touch") return;
@@ -177,11 +170,11 @@ export function ProviderInfo({ offer, profile, now = () => Date.now() }: { offer
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-4 sm:w-96" data-nested-layer="" mobileTitle={title} onPointerEnter={clear} onPointerLeave={hoverOut}>
-        {loaded.error ? (
+        {loaded?.error && !loaded.loading ? (
           <p role="alert" className="text-xs leading-snug text-destructive-text">
             {loaded.error}
           </p>
-        ) : !loaded.profile ? (
+        ) : !loaded?.profile ? (
           <p className="text-xs text-muted-foreground">Looking…</p>
         ) : (
           <div className="space-y-3">

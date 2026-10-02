@@ -501,7 +501,7 @@ function DesktopRow({ box, meta, onOpen, actions }: { box: BoxView; meta?: strin
           <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
         </span>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-          <StatusDot tone={status.tone} className="mt-[0.3rem]" />
+          <StatusDot tone={status.tone} />
           <Meta items={[status.items[0]?.text, ...status.items.slice(1).map((item) => item.text), control, meta]} />
         </div>
       </div>
