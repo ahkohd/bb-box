@@ -647,7 +647,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         nature: status.nature,
         hosts,
         hostOs: built?.hostOs ?? first?.offer.hostOs ?? null,
-        makes: offers.map(({ kind, offer }) => ({ id: kind.id, label: kind.label, form: offer.form, typicalReadyMs: offer.typicalReadyMs, ready: offer.ready })),
+        // The GPU desktop is named as box_list names it, so two Linux desktops read apart.
+        makes: offers.map(({ kind, offer }) => ({ id: kind.id, label: `${kind.label}${kind.gpu ? " (GPU)" : ""}`, form: offer.form, typicalReadyMs: offer.typicalReadyMs, ready: offer.ready })),
         boxes: all.filter((box) => box.backend === backendId && box.state !== "gone").length,
         room: first ? await boxes.room(backendId, first.kind.id, signal).catch(() => null) : null,
         status: { state: status.state, problem: status.problems[0] ?? null, ok: state?.doctor?.report.ok ?? null, summary: state?.doctor?.report.summary ?? null, checkedAt: state?.doctor?.at ?? null },
