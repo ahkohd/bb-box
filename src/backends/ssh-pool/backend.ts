@@ -388,7 +388,12 @@ export class SshPoolBackend implements Backend {
 
   /** The machines it lends whole, for the doctor's warning when a Mac is also a Tart host (047). One through a jump host is on another network. */
   footprint(): Footprint {
-    return { machines: this.#config.machines.filter((machine) => !machine.jump).map((machine) => machine.admin.host.toLowerCase()) };
+    const machines = this.#config.machines.filter((machine) => !machine.jump);
+    const note = "On macOS 27 and later, each reset of a Mac restarts its user space, which stops every Tart VM on it and ends every SSH session.";
+    return {
+      machines: machines.map((machine) => machine.admin.host.toLowerCase()),
+      ...(machines.some((machine) => machine.os === "macos") ? { machinesNote: note } : {}),
+    };
   }
 
   /**

@@ -387,8 +387,10 @@ explains why.
   part of BB Box's settings if your Macs are smaller.
 - A Mac set aside for boxes, not one people use. A box can read whatever
   any user on the Mac can read, and the reset removes users.
-- A Mac that is not also a Tart host, as a box takes the whole Mac. The
-  doctor warns when one address is in both.
+- A Mac that is not also a Tart host, as a box takes the whole Mac. On
+  macOS 27 and later, every reset restarts the Mac's user space, which
+  stops every Tart VM on it and ends every SSH session. The doctor warns
+  when one address is in both.
 
 Xcode is optional. Install it in `/Applications` before you run
 `setup-mac.sh`, and boxes on the Mac get Xcode and the iOS Simulator. The

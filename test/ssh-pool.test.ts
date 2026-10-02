@@ -993,9 +993,15 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.deepEqual([both?.name, both?.status, both?.detail, both?.fix], [
       `${lent.label} and ${tart.label}`,
       "warn",
-      `They both use the machine at ${FAKE_MAC}, so a box of one could take what a box of the other has.`,
+      `They both use the machine at ${FAKE_MAC}, so a box of one could take what a box of the other has. ` +
+        "On macOS 27 and later, each reset of a Mac restarts its user space, which stops every Tart VM on it and ends every SSH session.",
       "List the machine in one of them only.",
     ]);
+    assert.equal(
+      overlapChecks([pool(`box ${FAKE_MAC} linux`).backend, tart])[0]?.detail,
+      `They both use the machine at ${FAKE_MAC}, so a box of one could take what a box of the other has.`,
+      "a Linux machine's reset restarts nothing on a Mac",
+    );
     assert.deepEqual(overlapChecks([pool("other 192.0.2.30 macos").backend, tart]), []);
     assert.deepEqual(overlapChecks([pool(`mini ${FAKE_MAC} macos via=jump@192.0.2.9`).backend, tart]), [], "a Mac through a jump host is on another network");
   });
