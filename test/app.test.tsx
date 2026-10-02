@@ -277,7 +277,8 @@ async function choose(label: string, option: string): Promise<void> {
   const item = (await screen.findAllByRole("option")).find((candidate) => candidate.textContent === option);
   if (!item) throw new Error(`No option "${option}" under ${label}`);
   fireEvent.click(item);
-  await waitFor(() => expect(screen.getByRole("combobox", { name: label }).textContent).toBe(option));
+  // A filter's trigger carries its label ("Kind: All"); the GPU's carries the value alone.
+  await waitFor(() => expect(screen.getByRole("combobox", { name: label }).textContent?.endsWith(option)).toBe(true));
 }
 
 /** The menu's options, with "disabled" after one that cannot be chosen, and the menu closed again. */
@@ -663,8 +664,11 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   await screen.findByRole("radiogroup", { name: "Type" });
   expect(screen.queryByRole("combobox", { name: "GPU" })).toBeNull();
+  expect(screen.queryByRole("heading", { level: 3, name: "GPU" })).toBeNull();
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
-  // Desktop opens on the CPU desktop; 1 GPU names the GPU kind.
+  // Desktop opens on the CPU desktop; the GPU is a section of its own, before Provider, and 1 GPU names the GPU kind.
+  expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["System", "Architecture", "Type", "GPU", "Provider", "Resources"]);
+  expect(screen.getByText("One of the host's GPUs for the desktop, or none, and the CPU draws it.")).toBeTruthy();
   expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("None");
   expect(await optionsOf("GPU")).toEqual(["None", "1 GPU"]);
   await choose("GPU", "1 GPU");
@@ -1574,9 +1578,9 @@ test("the steps narrow each other: a system with no server snaps to Desktop, the
   const types = screen.getByRole("radiogroup", { name: "Type" });
   expect(within(types).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["ServerNot available:false", "DesktopScreen · Terminal · Computer use:true"]);
   // The Kind menu keeps an option no provider makes, but it cannot be chosen; Runs on lists the machines the providers run on.
-  expect(screen.getByRole("combobox", { name: "Kind" }).textContent).toBe("All");
+  expect(screen.getByRole("combobox", { name: "Kind" }).textContent).toBe("Kind:All");
   expect(await optionsOf("Kind")).toEqual(["All", "Container:disabled", "VM", "Physical:disabled"]);
-  expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("Any machine");
+  expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("Runs on:Any machine");
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pve1VM · usually ~30.0 s"]);
   expect(screen.queryByRole("combobox", { name: "GPU" })).toBeNull();
 
@@ -1648,8 +1652,8 @@ test("Runs on keeps the providers on that machine, and one that does not know it
 
   // Reopened, the filters are back; Container on a Mac leaves the Docker machine, which the request then names alone.
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  expect((await screen.findByRole("combobox", { name: "Runs on" })).textContent).toBe("Any machine");
-  expect(screen.getByRole("combobox", { name: "Kind" }).textContent).toBe("All");
+  expect((await screen.findByRole("combobox", { name: "Runs on" })).textContent).toBe("Runs on:Any machine");
+  expect(screen.getByRole("combobox", { name: "Kind" }).textContent).toBe("Kind:All");
   await choose("Runs on", "a Mac");
   await choose("Kind", "Container");
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomThe one below", "an unnamed machineContainer"]);

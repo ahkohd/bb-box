@@ -231,10 +231,13 @@ inside, so the form breathes and a preset's words are never cut off.
 | Type                                                              |
 | [ [=] Server                   ] [ [#] Desktop                 ]  |
 | [     Terminal                 ] [     Screen · Terminal · Co… ]  |
-| Provider                                                          |
+| GPU                                                               |
+| One of the host's GPUs for the desktop, or none, and the CPU      |
+| draws it.                                                         |
+| [ None            v ]                                             |
+| Provider          [ Kind: All  v ] [ Runs on: Any machine  v ]    |
 | Where the box goes: the first with room, in this order, unless    |
 | you choose one.                                                   |
-| Kind [ All           v ]   Runs on [ Any machine      v ]         |
 | [ First with room                                              ]  |
 | [ Any of the 3 below, in order                                 ]  |
 | [ pve1                                                         ]  |
@@ -248,7 +251,6 @@ inside, so the form breathes and a preset's words are never cut off.
 | disk.                                                             |
 | [ Small      ] [ Medium     ] [ Large      ] [ Custom         ]   |
 | [ 2 cores ·… ] [ 4 cores ·… ] [ 8 cores ·… ] [ up to 16 cores ]   |
-| GPU [ None            v ]                                         |
 | Name                                                              |
 | Optional; bb-box picks one when it is left empty.                 |
 | [                                                              ]  |
@@ -275,6 +277,12 @@ bottom sheet still carries the title "New box".
   card of its own. A type the system and architecture lack greys out the
   same way. These are the only glyphs in the form, the server and the
   monitor (`src/app/glyphs.tsx`), drawn in the weight of BB's set.
+- **GPU** is a section of its own, after Type and before Provider, since
+  it names the kind and so the providers that follow (the operator's note
+  of 2 October 2026: it had sat under Resources). It shows only where a
+  desktop's system has both a GPU desktop and a CPU one: a dim line, "One
+  of the host's GPUs for the desktop, or none, and the CPU draws it.",
+  then one menu, None or 1 GPU (more counts can join it later).
 - **The sections narrow each other.** Each shows every option, and the
   choice is the nearest that exists: picking Windows, which has no server,
   moves Type to Desktop; picking arm64 where only a server exists moves
@@ -283,10 +291,12 @@ bottom sheet still carries the title "New box".
   (`src/app/box-form.tsx`, `kindFor`), so the IDs appear nowhere and a new
   kind needs no panel change. Descriptions stay where agents read them, in
   `box_list` and the skill.
-- **Provider** is where the box goes (044), under two menus side by side
-  (stacked when the pane is narrow), each with its dim label before it,
-  as the operator asked on 2 October 2026 (chips had read as a second
-  kind of control). **Kind**: All, Container (LXC or Docker), VM,
+- **Provider** is where the box goes (044). Two compact menus sit at the
+  right of the section's title row, their labels inside the trigger
+  ("Kind: All", "Runs on: Any machine"), since they filter the list
+  rather than choose from it; on a narrow pane they wrap under the title
+  (the operator's notes of 2 October 2026: chips had read as a second
+  kind of control, and the menus had sat in the list's way). **Kind**: All, Container (LXC or Docker), VM,
   Physical; an option no provider of the kind makes is there but cannot
   be chosen. **Runs on**: Any machine, a Mac, a Linux machine, a Windows
   PC, listing the machines the providers run on (`OfferView.hostOs`);
@@ -317,10 +327,8 @@ bottom sheet still carries the title "New box".
   fields, cores, memory in GiB and disk in GiB, each with "up to" the
   kind's largest, starting from the preset the person was looking at; a
   field left empty takes the default preset's value, and an empty disk
-  keeps the base disk. A desktop whose system has both a GPU desktop and
-  a CPU one adds a GPU menu, None or 1 GPU (more counts can join it
-  later). The form sends a preset by name, or the custom fields, and
-  nothing for the default.
+  keeps the base disk. The form sends a preset by name, or the custom
+  fields, and nothing for the default.
 - **Name** appears for Add machine only (036): optional, as its
   description says, checked as the person types, with what is wrong under
   the field.

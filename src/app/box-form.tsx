@@ -180,12 +180,20 @@ export function OfferWords({ offer }: { offer: OfferView }) {
   );
 }
 
-/** One section, as the settings page has them: its title, a dim line under it where useful, then its options at full width. */
-export function FormSection({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+/**
+ * One section, as the settings page has them: its title, with a filter or
+ * two at the right of the title row when it has them (they wrap under the
+ * title on a narrow pane), a dim line under it where useful, then its
+ * options at full width.
+ */
+export function FormSection({ title, description, action, children }: { title: string; description?: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="space-y-2.5">
       <div>
-        <h3 className="text-xs font-medium text-foreground">{title}</h3>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <h3 className="text-xs font-medium text-foreground">{title}</h3>
+          {action}
+        </div>
         {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground/75">{description}</p> : null}
       </div>
       {children}
@@ -193,34 +201,41 @@ export function FormSection({ title, description, children }: { title: string; d
   );
 }
 
-/** A small menu with its label before it: Kind, Runs on and GPU. An option no provider has is there, but cannot be chosen. */
-export function LabelledSelect({
+/**
+ * A small menu. A filter sits on its section's title row, compact, with
+ * its label inside the trigger ("Kind: All"), since it narrows the list
+ * rather than choosing from it (the operator's note of 2 October 2026); a
+ * choice that is a section's only control, the GPU, has the section's
+ * title for its label. An option no provider has is there, but cannot be
+ * chosen.
+ */
+export function MenuSelect({
   label,
+  labelInside = false,
   value,
   options,
   onChange,
 }: {
   label: string;
+  labelInside?: boolean;
   value: string;
   options: readonly { readonly value: string; readonly label: string; readonly disabled?: boolean }[];
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-2xs text-muted-foreground">
-      <span>{label}</span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-7 w-40 text-xs" aria-label={label}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </label>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={cn("h-7 text-xs", labelInside ? "w-auto gap-1.5 px-2" : "w-40")} aria-label={label}>
+        {labelInside ? <span className="text-muted-foreground">{label}:</span> : null}
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
