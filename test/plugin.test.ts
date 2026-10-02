@@ -2293,6 +2293,22 @@ test("a click on an element the desktop cannot click as an element goes to the e
   assert.deepEqual(lastCall(file, "click")?.args, { pid: 5001, window_id: wide, x: 784, y: 39, button: "right", count: 1, delivery_mode: "foreground" });
 });
 
+test("an element's frame in its window's own pixels, as a GTK 3 app on Wayland gives it, is put on the screen (048)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.wayland = true;
+    desktop.windows[0]!.noActions = true;
+    desktop.windows[0]!.ownFrames = true;
+  });
+  await tool("computer_screenshot", { box: box.name, window: 100 });
+  const deleteThree = refOf(text(await tool("computer_observe", { box: box.name, window: 100 })), 'push button "Delete Task 3"');
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", ref: deleteThree })), new RegExp(`^Clicked ${deleteThree} \\(push button 'Delete Task 3'\\) at its centre,`));
+  // Its frame, (700, 125) and 90 by 30 in the window, is where it is drawn.
+  assert.deepEqual(lastCall(file, "click")?.args, { pid: 5000, window_id: 100, x: 745, y: 140, button: "left", count: 1, delivery_mode: "foreground" });
+  assert.deepEqual(readDesktop(file).tasks["100"], ["Task 1", "Task 2"]);
+});
+
 test("computer_launch opens apps and URLs and says which windows opened", async (t) => {
   const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 500, pageWaitMs: 1_500 } });
   t.after(() => harness.lifecycle.dispose());

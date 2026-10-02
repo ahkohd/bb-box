@@ -513,6 +513,31 @@ function rectOf(value: unknown): Rect | null {
   return x === undefined || y === undefined || width === undefined || height === undefined ? null : { x, y, width, height };
 }
 
+/**
+ * A window's element frames on the screen. Cua gives them in the screen's
+ * pixels, but in the window's own for a GTK 3 app on Wayland, which does not
+ * know where its window is, and says "window" for both (048). The reading
+ * that puts more of the frames inside the window holds for a frame that both
+ * readings, or neither, put there.
+ */
+function screenFrames<K>(frames: ReadonlyMap<K, Rect | null>, window: Rect): Map<K, Rect | null> {
+  const slack = 2;
+  const within = (frame: Rect) =>
+    frame.x >= window.x - slack && frame.y >= window.y - slack && frame.x + frame.width <= window.x + window.width + slack && frame.y + frame.height <= window.y + window.height + slack;
+  const moved = (frame: Rect): Rect => ({ ...frame, x: frame.x + window.x, y: frame.y + window.y });
+  let own = 0;
+  let screen = 0;
+  for (const frame of frames.values()) {
+    if (frame && within(moved(frame))) own++;
+    if (frame && within(frame)) screen++;
+  }
+  const placed = (frame: Rect) => {
+    const asOwn = within(moved(frame));
+    return asOwn === within(frame) ? (own > screen ? moved(frame) : frame) : asOwn ? moved(frame) : frame;
+  };
+  return new Map([...frames].map(([key, frame]) => [key, frame && placed(frame)]));
+}
+
 function inside(rect: Rect, point: Point): boolean {
   return point.x >= rect.x && point.y >= rect.y && point.x < rect.x + rect.width && point.y < rect.y + rect.height;
 }
@@ -1518,6 +1543,7 @@ export class Computer {
         taken.add(ref);
       }
     }
+    const frames = screenFrames(new Map([...byIndex].map(([index, entry]) => [index, rectOf(entry.frame)])), updated);
     const elements: Element[] = [];
     const byRef = new Map<string, Element>();
     const elementAt = new Map<number, Element>();
@@ -1537,7 +1563,7 @@ export class Computer {
         fingerprint,
         unique,
         place: counts.get(`p${place}`) === 1 ? place : null,
-        frame: rectOf(entry.frame),
+        frame: frames.get(index) ?? null,
       };
       elements.push(element);
       byRef.set(ref, element);
