@@ -16,6 +16,10 @@
 // in tmp/ in the host's home, then runs the script, less its PowerShell exit
 // check, with `sh -c`. When $FAKE_SSH_DIR/powershell/<host> exists, a sh
 // script that stands in for PowerShell, it runs that with the script as $1.
+//
+// The command runs in the test process's group of fakes, through the command
+// line $FAKE_GROUP holds, so what it starts ends with the test process,
+// though a timeout kills only this (#320).
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -80,7 +84,8 @@ if (existsSync(join(root, "windows", host))) {
 }
 const powershell = join(root, "powershell", host);
 const shell = existsSync(powershell) ? [powershell] : ["-c"];
-const result = spawnSync("sh", [...shell, script.replaceAll("/run/bb-box/", `${run}/`)], {
+const [binary, ...argv] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "sh", ...shell, script.replaceAll("/run/bb-box/", `${run}/`)];
+const result = spawnSync(binary, argv, {
   cwd: home,
   env: { PATH: process.env.PATH, HOME: home, USER: target.split("@")[0] },
   stdio: "inherit",

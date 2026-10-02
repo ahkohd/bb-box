@@ -2,9 +2,10 @@
 // for documentation.
 
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseLxcSettings, type LxcConfig } from "../src/backends/proxmox-lxc/config.ts";
@@ -45,6 +46,45 @@ export function tempDir(prefix: string): string {
   return dir;
 }
 
+/**
+ * Perl, as the macOS timeout wrapper uses, since a shell cannot change its
+ * process group. LEAD starts a group and keeps it until its input closes, as
+ * it does when the test process ends, then kills the group. JOIN runs a
+ * command line in a group, once its leader has started it.
+ */
+const LEAD = `setpgrp(0, 0) or die "setpgrp: $!\\n"; <STDIN>; kill "KILL", -$$`;
+const JOIN =
+  `my $group = shift; for (1 .. 100) { last if setpgrp(0, $group); select undef, undef, undef, 0.01 } ` +
+  `getpgrp == $group or die "setpgid: $!\\n"; exec @ARGV or exit 127`;
+
+/** The group's leader, held so that its input stays open. */
+let leader: ChildProcess | undefined;
+
+/**
+ * The process group that fakes run commands in, or null without Perl. It
+ * ends with the test process, however it ends, so what a command starts ends
+ * then too, though stopping the command, as at a timeout, kills only the
+ * fake, as it kills `ssh` for a real box (#310). Once it starts, $FAKE_GROUP
+ * holds the command line that joins it, as JSON, for the fake ssh and the
+ * fake docker, which run in processes of their own (#320).
+ */
+export function fakeGroup(): number | null {
+  if (!leader) {
+    leader = spawn("perl", ["-e", LEAD], { stdio: ["pipe", "ignore", "inherit"] });
+    leader.once("error", () => {});
+    // The test process need not wait for it.
+    leader.unref();
+    (leader.stdin as Socket).unref();
+    if (leader.pid !== undefined) process.env.FAKE_GROUP = JSON.stringify(inGroup(leader.pid, []));
+  }
+  return leader.pid ?? null;
+}
+
+/** `argv` run in process group `group`. */
+export function inGroup(group: number, argv: readonly string[]): [string, ...string[]] {
+  return ["perl", "-e", JOIN, String(group), ...argv];
+}
+
 export const FAKE_SSH_BINARY = new URL("./fake-ssh.mjs", import.meta.url).pathname;
 
 /** SSH access to a fresh box at `host`, as user box. */
@@ -57,6 +97,7 @@ export function at(host: string): SshAccess {
 export function fakeSsh(options: { share?: boolean } = {}) {
   const dir = tempDir("fake-ssh");
   process.env.FAKE_SSH_DIR = dir;
+  fakeGroup();
   mkdirSync(join(dir, "down"));
   mkdirSync(join(dir, "up-after"));
   mkdirSync(join(dir, "shared"));

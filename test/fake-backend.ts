@@ -15,13 +15,12 @@
 // servers a test starts in a guest. All guests' commands therefore run in one
 // process group, which ends with the test process, however it ends (#310).
 
-import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
-import type { Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
 import { FakeRfb } from "./fake-rfb.ts";
+import { fakeGroup, inGroup } from "./helpers.ts";
 import {
   type GuestOs,
   BackendError,
@@ -575,36 +574,6 @@ export class FakeBackend implements Backend {
   }
 }
 
-/**
- * Perl, as the macOS timeout wrapper uses, since a shell cannot change its
- * process group. LEAD starts a group and keeps it until its input closes, as
- * it does when the test process ends, then kills the group. JOIN runs a
- * command line in a group.
- */
-const LEAD = `setpgrp(0, 0) or die "setpgrp: $!\\n"; $| = 1; print "\\n"; <STDIN>; kill "KILL", -$$`;
-const JOIN = `setpgrp(0, shift) or die "setpgid: $!\\n"; exec @ARGV or exit 127`;
-
-/** The group's leader, held so that its input stays open. */
-let leader: ChildProcess | undefined;
-let group: Promise<number | null> | undefined;
-
-/** The process group all guests' commands run in, or null without Perl. */
-function fakeGroup(): Promise<number | null> {
-  group ??= new Promise((resolve) => {
-    const lead = spawn("perl", ["-e", LEAD], { stdio: ["pipe", "pipe", "inherit"] });
-    leader = lead;
-    lead.once("error", () => resolve(null));
-    lead.stdout.once("data", () => {
-      lead.stdout.destroy();
-      resolve(lead.pid!);
-    });
-    // The test process need not wait for it.
-    lead.unref();
-    (lead.stdin as Socket).unref();
-  });
-  return group;
-}
-
 /** Runs scripts in the guest's directory with sh. A stopped guest does not answer. */
 export class FakeTransport implements CommandTransport {
   readonly #home: string;
@@ -612,15 +581,16 @@ export class FakeTransport implements CommandTransport {
   readonly #power: () => Promise<PowerState | null>;
   /** Aborted when the guest is deleted. */
   readonly #gone: AbortSignal;
-  /** The group its commands run in, known once a call finds the guest answers. */
-  #group: number | null = null;
 
   constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal, shell?: string) {
     this.#home = home;
     const env = { PATH: process.env.PATH, HOME: home, ...(shell ? { SHELL: shell } : {}) };
     const sh = (script: string) => ["sh", "-c", script] as const;
     this.#line = new CommandLine({
-      argv: (script) => (this.#group === null ? sh(script) : ["perl", "-e", JOIN, String(this.#group), ...sh(script)]),
+      argv: (script) => {
+        const group = fakeGroup();
+        return group === null ? sh(script) : inGroup(group, sh(script));
+      },
       cwd: home,
       env,
     });
@@ -638,7 +608,6 @@ export class FakeTransport implements CommandTransport {
 
   async #answer(): Promise<void> {
     if (!(await this.probe())) throw new TransportError("unreachable", "The fake box is not running.");
-    this.#group = await fakeGroup();
   }
 
   async run(script: string, options?: RunOptions): Promise<RunResult> {
