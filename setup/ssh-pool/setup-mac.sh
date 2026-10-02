@@ -17,7 +17,9 @@
 #   then Git, GitHub CLI and Node.js with it, and Cua Driver
 # - clears BB's daemon lock and PID file in box homes at boot (017)
 # - keeps the Mac awake, starts it after a power failure, and turns off
-#   automatic macOS updates, which would restart a box, and Spotlight indexing
+#   automatic macOS updates, which would restart a box, automatic App Store
+#   updates, which would change Xcode under the pool's offers, and Spotlight
+#   indexing
 # - with Xcode in /Applications, accepts its licence, runs its first launch,
 #   downloads the iOS platform and lets developers debug without a password
 # - has the helper note Xcode's version and Simulator runtimes, which the
@@ -181,6 +183,10 @@ chmod 0644 "$daemon"
 # Awake and quiet: a box's desktop is watched remotely, and an update would restart it.
 pmset -a sleep 0 displaysleep 0 disksleep 0 autorestart 1 >/dev/null
 defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false
+# Nor App Store apps, such as Xcode, which a person updates and then runs this again.
+# System Settings' Install application updates from the App Store has used each key.
+defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallAppUpdates -bool false
+defaults write /Library/Preferences/com.apple.commerce AutoUpdate -bool false
 softwareupdate --schedule off >/dev/null 2>&1 || :
 mdutil -a -i off >/dev/null 2>&1 || :
 

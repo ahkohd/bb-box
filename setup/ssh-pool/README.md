@@ -397,8 +397,13 @@ has an iOS runtime. Listing the runtimes takes a few seconds, so only
 `setup-mac.sh` and the doctor list them. The helper keeps what they found
 in `/var/db/bb-box/xcode`, and the pool reads it each time it looks at the
 Macs. Only the Macs that answered count, so one that is switched off does
-not hide the features. After you install or update Xcode, run
-`setup-mac.sh` again.
+not hide the features.
+
+`setup-mac.sh` turns off automatic App Store updates, so Xcode changes only
+when you update it. Update Xcode by hand, from the App Store or Apple's
+developer site, then run `setup-mac.sh` again. It accepts the new licence,
+runs the first launch and notes the new runtimes. Until then, the kinds the
+Mac serves offer Xcode but not the iOS Simulator.
 
 ### Set up a Mac
 
@@ -424,7 +429,7 @@ It takes the same options as `setup.sh`, except `--reset-hook`.
 - adds a launch daemon that clears BB's lock and PID files in box homes at
   boot
 - keeps the Mac awake, starts it after a power failure, and turns off
-  automatic macOS updates and Spotlight indexing
+  automatic macOS and App Store updates, and Spotlight indexing
 - prepares Xcode, if it is in `/Applications`: accepts its licence, runs
   its first launch and downloads the iOS platform, then notes its version
   and Simulator runtimes for the pool

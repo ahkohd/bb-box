@@ -458,7 +458,13 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(count(mac, "sudo -u person -H env NONINTERACTIVE=1 /bin/bash -c mkdir"), 1, "Homebrew's installer, as the person who ran sudo");
   assert.equal(count(mac, "brew install git gh node"), 1);
   assert.equal(count(mac, "pmset -a sleep 0 displaysleep 0 disksleep 0 autorestart 1"), 1);
-  assert.equal(count(mac, "defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false"), 1);
+  for (const call of [
+    "defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false",
+    "defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallAppUpdates -bool false",
+    "defaults write /Library/Preferences/com.apple.commerce AutoUpdate -bool false",
+  ]) {
+    assert.equal(count(mac, call), 1, call);
+  }
   assert.deepEqual([mac.console(), mac.user("bbx-0")?.UniqueID], ["bbx-0", "70000"]);
   assert.equal(mac.file("/var/db/bb-box/xcode"), "xcode=\nruntimes=\n");
 

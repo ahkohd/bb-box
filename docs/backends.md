@@ -376,13 +376,13 @@ node --test test/conformance.test.ts
 - The `macos` and `macos-desktop` offers have `xcode` while every Mac
   serving them that answered the last survey has Xcode, and
   `ios-simulator` while each has an iOS runtime too. One Mac switched off,
-  or slow to answer, does not hide them. Before the first survey after a
-  restart the offers have neither, so `asOffered` keeps a Mac box's
-  capabilities until then. The core's capacity check surveys before it
-  matches features, so the first claim after a restart sees them. The
-  doctor warns when only some of the Macs serving a kind have them. The
-  conformance suite boots an iOS Simulator device and runs a command in
-  it.
+  or slow to answer, does not hide them. `asOffered` is true for a Mac box
+  only when its own Mac answered the last survey, so a box keeps its
+  capabilities before the first survey after a restart, and while its Mac
+  is off. The core's capacity check surveys before it matches features,
+  so the first claim after a restart sees them. The doctor warns when only
+  some of the Macs serving a kind have them. The conformance suite boots an
+  iOS Simulator device and runs a command in it.
 - `footprint()` gives the pool's machines without a jump host, and Tart's
   gives its hosts, so the doctor warns when one address is in both (047).
 - A machine without the helper's tools is out of service. Enrolment's

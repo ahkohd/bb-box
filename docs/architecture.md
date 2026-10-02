@@ -212,7 +212,9 @@ guest's size, address and facts stay as they were made.
   its template's build began. With no build tag on the template, the box
   keeps what it has.
 - Docker, Tart and SSH pool kinds have capabilities fixed in code, not set
-  per image, so an older box gets what a new one would.
+  per image, so an older box gets what a new one would. A pool's Mac box
+  does only while its own Mac answered the last survey, as a Mac kind's
+  Xcode features follow the Macs that did (047).
 
 The command capability:
 
