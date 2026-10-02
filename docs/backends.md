@@ -399,6 +399,13 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   given to another. A VM that keeps no name gets one only when the Mac's
   ARP table, just after bb-box reached the address, gives the MAC address in
   the VM's config.
+- Windows boxes have a warm pool too (046): clones at the kind's default
+  size, booted to the desktop with the display helper compiled, then saved
+  by QEMU as a stop saves a box. A VM serves the kind while the Windows
+  image's build, the default size, QEMU's version and the Mac's macOS build
+  are the ones it was filled with, and it is saved. A box that takes one
+  restores it and sets Windows' clock; one that does not restore is
+  deleted, and the box gets a clone. Its owner file says `engine=qemu`.
 - The tests run the real host scripts against a fake `tart` on a fake Mac
   ([test/fake-tart.mjs](../test/fake-tart.mjs),
   [test/fake-mac.ts](../test/fake-mac.ts)).

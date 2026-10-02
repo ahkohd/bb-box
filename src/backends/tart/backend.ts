@@ -23,8 +23,8 @@
 // - Windows boxes (046) are VMs QEMU runs on Apple's Hypervisor framework
 //   (qemu.ts). Each has two ports on the Mac's loopback, for SSH and QEMU's
 //   VNC server, reached through the Mac. Stop saves its memory to a file and
-//   start restores it. A running one counts its memory and QEMU's own, but
-//   not against the two macOS VMs.
+//   start restores it, as a box that takes a warm VM does. A running one
+//   counts its memory and QEMU's own, but not against the two macOS VMs.
 
 import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
@@ -95,6 +95,7 @@ import {
   qemuStartScript,
   qemuStateBody,
   qemuStopScript,
+  qemuWarmScript,
   type QemuState,
   type QemuVm,
 } from "./qemu.ts";
@@ -178,19 +179,21 @@ const WARM_PREFIX = "bb-box-warm-";
  */
 interface WarmPool {
   readonly image: string;
+  /** macOS, whose VMs Tart runs, or Windows, whose VMs QEMU runs (046). */
+  readonly os: GuestOs;
   readonly size: BoxSize;
   readonly kinds: readonly string[];
   /** The sum of the kinds' warm counts (029). */
   readonly target: number;
 }
 
-/** A warm VM bb-box is filling, until it is suspended or a box takes it over. */
+/** A warm VM bb-box is filling, until it is suspended or saved, or a box takes it over. */
 interface Fill {
   readonly host: string;
   readonly size: BoxSize;
   readonly kinds: readonly string[];
   readonly abort: AbortController;
-  /** The VM's address once it is ready; rejects when the fill fails. */
+  /** The VM's address once it is ready, or "" for a Windows VM, reached at its port; rejects when the fill fails. */
   readonly ready: Promise<string>;
   /** Settles when the fill has ended, whichever way. */
   readonly done: Promise<void>;
@@ -218,6 +221,15 @@ function sameSize(a: BoxSize, b: BoxSize): boolean {
 /** A VM bb-box filled or held for a warm pool, which is no box's. */
 function warmState(fields: Readonly<Record<string, string>>): "warm" | "filling" | null {
   return fields.state === "warm" || fields.state === "filling" ? fields.state : null;
+}
+
+/** A warm VM's size and whether it is saved: from QEMU for a Windows VM, whose owner file names the engine, else from Tart. */
+function warmOf(state: MacState, vm: string, fields: Readonly<Record<string, string>>): { readonly size: BoxSize | null; readonly suspended: boolean } {
+  if (fields.engine === "qemu") {
+    const made = state.qemu.vms.get(vm);
+    return { size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB } : null, suspended: made?.power === "suspended" };
+  }
+  return { size: sizeOf(state.configs.get(vm)), suspended: state.vms.find((candidate) => candidate.name === vm)?.state === "suspended" };
 }
 
 /** A Tart error that a VM's saved state did not restore. */
@@ -782,11 +794,12 @@ export class TartBackend implements Backend {
   }
 
   /**
-   * Acquires a Windows box (046): claims its VM, bb-box-<box ID>, makes its
-   * overlay and ports, starts QEMU, and waits for SSH through the Mac. A disk
-   * larger than the image's has C: extended over it then. Then it waits for
-   * Windows' desktop, as a box is ready only once Cua can drive it. The VM
-   * keeps the clock its image set, so it is set only after a restore.
+   * Acquires a Windows box (046). A clone claims its VM, bb-box-<box ID>,
+   * makes its overlay and ports, starts QEMU, and waits for SSH through the
+   * Mac. A disk larger than the image's has C: extended over it then. Then
+   * it waits for Windows' desktop, as a box is ready only once Cua can drive
+   * it. A clone keeps the clock its image set; a warm VM, or one held before
+   * a restart, restores, and its clock is set. A fill taken over runs on.
    */
   async #acquireWindows(
     box: BoxIdentity,
@@ -797,55 +810,110 @@ export class TartBackend implements Backend {
     step: Step,
     signal: AbortSignal,
   ): Promise<Guest> {
-    const vm = vmName(box.boxId);
-    // A restarted acquire goes on with the VM it claimed.
-    let host = previous?.ref === vm ? this.#hostNamed(previous.host) : null;
-    if (host) this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(box.kind, box.size), macos: false });
-    else host = (await step("place", () => this.#placeBox(box, signal))).host;
-    const on = host;
-    const guest = (made: QemuVm | null): Guest => ({
-      ref: vm,
-      host: on.name,
-      address: null,
-      size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB } : null,
-      data: made ? { box: box.boxId, os: "windows", ssh: made.ssh, vnc: made.vnc } : { box: box.boxId, os: "windows" },
-    });
-    let owned = false;
-    let made: QemuVm | null = null;
-    try {
-      await hooks.claim(guest(null));
-      const claimed = (await this.#run(on, claimScript(vm, this.#owner(box)), { signal })).stdout.trim();
-      if (claimed !== "claimed") {
-        const fields = parseFields(claimed);
-        if (fields.install !== this.#context.installId || fields.box !== box.boxId) {
-          throw new Error(`VM ${vm} on ${on.name} belongs to another box, so bb-box left it alone.`);
+    const owner = this.#owner(box);
+    // A restarted acquire goes on with the VM it claimed or held.
+    let placement: Exclude<Placement, { how: "wait" }> | null = await this.#previous(box, previous, signal);
+    if (placement) this.#placing.set(placement.vm, { host: placement.host.name, vm: placement.vm, memoryMiB: footprint(box.kind, box.size), macos: false });
+    let started = false;
+    const starting = async () => {
+      if (!started) await hooks.starting();
+      started = true;
+    };
+    // A warm VM that fails to restore gives way to a clone, once.
+    for (let attempt = 0; ; attempt++) {
+      placement ??= await step("place", () => this.#placeBox(box, signal));
+      const { host, vm } = placement;
+      const guest = (made: QemuVm | null): Guest => ({
+        ref: vm,
+        host: host.name,
+        address: null,
+        size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB } : null,
+        data: made ? { box: box.boxId, os: "windows", ssh: made.ssh, vnc: made.vnc } : { box: box.boxId, os: "windows" },
+      });
+      let owned = placement.how === "resume";
+      let made: QemuVm | null = null;
+      try {
+        if (placement.how === "clone") {
+          await hooks.claim(guest(null));
+          const claimed = (await this.#run(host, claimScript(vm, owner), { signal })).stdout.trim();
+          if (claimed !== "claimed") {
+            const fields = parseFields(claimed);
+            if (fields.install !== this.#context.installId || fields.box !== box.boxId) {
+              throw new Error(`VM ${vm} on ${host.name} belongs to another box, so bb-box left it alone.`);
+            }
+          }
+          owned = true;
+          const clone = await step("clone", () => this.#run(host, qemuCloneScript(image, vm, box.size.cores, box.size.memoryMiB, box.size.diskGiB), { timeoutMs: 120_000, signal }));
+          made = parseQemuVm(clone.stdout);
+          if (!made) throw new Error(`QEMU's VM ${vm} on ${host.name} has no whole config: ${clone.stdout.trim() || "nothing"}`);
+          const ports = made;
+          await starting();
+          await step("start", () => this.#start(host, vm, "windows", deadline, signal));
+          const access = this.#windows(await this.#mac(host), ports.ssh);
+          await step("ssh", () => this.#waitReady(host, vm, access, "windows", deadline, signal));
+          // A restarted acquire extends again, which leaves a C: that fills its disk as it is.
+          if (made.diskGiB !== null) {
+            const { ssh } = await this.#keys();
+            await step("extend", () => extendC(new SshTransport(ssh, access, "windows"), signal));
+          }
+          await step("desktop", () => this.#windowsDesktop(host, vm, access, deadline, signal));
+          this.#compileDisplay(vm, access);
+        } else if (placement.how === "adopt") {
+          const fill = placement.fill;
+          await hooks.claim(guest(null));
+          const held = (await this.#run(host, holdScript(vm, this.#context.installId, "filling", owner), { signal })).stdout.trim();
+          if (held !== "held") throw new Error(`The warm VM ${vm} on ${host.name} being made was no longer there to take over.`);
+          owned = true;
+          await starting();
+          // Ready once its desktop is up and its display helper compiled.
+          await step("warm", () => fill.ready);
+          this.#kick();
+          made = await this.#made(host, vm, signal);
+        } else {
+          if (placement.how === "warm") {
+            const member = await step("warm", () =>
+              this.#warm.claim(box.kind, box, {
+                fits: (candidate) => candidate.ref === vm,
+                before: async () => hooks.claim(guest(null)),
+                signal,
+              }),
+            );
+            if (!member) throw new Error(`The warm VM ${vm} on ${host.name} was taken or retired first.`);
+            this.#kick();
+          }
+          owned = true;
+          made = await this.#made(host, vm, signal);
+          const ports = made;
+          await starting();
+          await step("start", () => this.#start(host, vm, "windows", deadline, signal, false));
+          const { ssh } = await this.#keys();
+          const access = this.#windows(await this.#mac(host), ports.ssh);
+          await step("ssh", () => this.#waitReady(host, vm, access, "windows", deadline, signal));
+          // A restore leaves Windows' clock at the time it was saved.
+          await step("clock", () => setClock(new SshTransport(ssh, access, "windows"), signal));
+          // A VM filled by an older bb-box has an older helper.
+          this.#compileDisplay(vm, access);
         }
+        // Claimed again, so the box's record has the ports and size as it becomes ready.
+        await hooks.claim(guest(made));
+        return guest(made);
+      } catch (error) {
+        if (owned) await this.#delete(host, vm, "windows", box.boxId, undefined, made?.ssh).catch((cause) => this.#context.logError("release after a failed acquire", cause));
+        const retry = placement.how !== "clone" && attempt === 0 && !signal.aborted && Date.now() < deadline;
+        if (!retry) throw error;
+        this.#context.logError("acquire", new Error(`Box ${box.name} could not use VM ${vm} (${message(error)}), so bb-box clones a VM for it.`));
+      } finally {
+        this.#placing.delete(placement.vm);
       }
-      owned = true;
-      const clone = await step("clone", () => this.#run(on, qemuCloneScript(image, vm, box.size.cores, box.size.memoryMiB, box.size.diskGiB), { timeoutMs: 120_000, signal }));
-      made = parseQemuVm(clone.stdout);
-      if (!made) throw new Error(`QEMU's VM ${vm} on ${on.name} has no whole config: ${clone.stdout.trim() || "nothing"}`);
-      const ports = made;
-      await hooks.starting();
-      await step("start", () => this.#start(on, vm, "windows", deadline, signal));
-      const access = this.#windows(await this.#mac(on), ports.ssh);
-      await step("ssh", () => this.#waitReady(on, vm, access, "windows", deadline, signal));
-      // A restarted acquire extends again, which leaves a C: that fills its disk as it is.
-      if (made.diskGiB !== null) {
-        const { ssh } = await this.#keys();
-        await step("extend", () => extendC(new SshTransport(ssh, access, "windows"), signal));
-      }
-      await step("desktop", () => this.#windowsDesktop(on, vm, access, deadline, signal));
-      this.#compileDisplay(vm, access);
-      // Claimed again, so the box's record has the ports and size as it becomes ready.
-      await hooks.claim(guest(made));
-      return guest(made);
-    } catch (error) {
-      if (owned) await this.#delete(on, vm, "windows", box.boxId, undefined, made?.ssh).catch((cause) => this.#context.logError("release after a failed acquire", cause));
-      throw error;
-    } finally {
-      this.#placing.delete(vm);
+      placement = null;
     }
+  }
+
+  /** A Windows VM's config on its Mac. */
+  async #made(host: TartHost, vm: string, signal?: AbortSignal): Promise<QemuVm> {
+    const made = (await this.#state(host, signal)).qemu.vms.get(vm);
+    if (!made) throw new Error(`QEMU's VM ${vm} on ${host.name} is not there.`);
+    return made;
   }
 
   /**
@@ -990,8 +1058,9 @@ export class TartBackend implements Backend {
     return held;
   }
 
-  // The warm pool: suspended clones at a kind's default size (028), which hold
-  // no VM slot and no memory, only disk, until a box takes one and resumes it.
+  // The warm pool: clones at a kind's default size (028), suspended by Tart or,
+  // for Windows, saved by QEMU (046), which hold no VM slot and no memory,
+  // only disk, until a box takes one and resumes or restores it.
 
   /** Retires warm VMs that serve no pool now, or beyond their pool's count, then fills what is missing. */
   maintain(signal?: AbortSignal): Promise<void> {
@@ -1012,20 +1081,22 @@ export class TartBackend implements Backend {
 
   /**
    * The warm pools the configuration asks for now: kinds with an image, on,
-   * whose default size Tart can make, grouped by image and default size.
+   * whose default size has the image's disk, grouped by image, guest OS and
+   * default size.
    */
   #pools(): WarmPool[] {
     const pools: WarmPool[] = [];
     for (const kind of this.#kinds) {
       const settings = this.#context.kind(kind.id);
       const image = this.#config.kinds[kind.id as TartKind].image;
-      // Warm VMs are suspended, which Tart cannot do to a Linux VM (040).
-      if (kind.capabilities.os !== "macos") continue;
+      const os = guestOsOf(kind.id);
+      // Warm VMs are saved: Tart cannot suspend a Linux VM (040); QEMU saves a Windows one (046).
+      if (os === "linux") continue;
       if (!settings.enabled || !image || settings.defaultSize.diskGiB !== null) continue;
       const size = settings.defaultSize;
-      const index = pools.findIndex((pool) => pool.image === image && sameSize(pool.size, size));
+      const index = pools.findIndex((pool) => pool.image === image && pool.os === os && sameSize(pool.size, size));
       const target = this.#context.warm(kind.id);
-      if (index < 0) pools.push({ image, size, kinds: [kind.id], target });
+      if (index < 0) pools.push({ image, os, size, kinds: [kind.id], target });
       else pools[index] = { ...pools[index]!, kinds: [...pools[index]!.kinds, kind.id], target: pools[index]!.target + target };
     }
     return pools;
@@ -1034,23 +1105,31 @@ export class TartBackend implements Backend {
   /**
    * The kinds a warm VM serves now: those whose image is the VM's, at the
    * build the VM was cloned from, and whose default size is the VM's. A VM
-   * saved under another Tart or macOS build serves none, as its state may
-   * not restore.
+   * saved under another macOS build, or another version of the engine that
+   * saved it, Tart or QEMU, serves none, as its state may not restore.
    */
-  #servedBy(state: HostState, fields: Readonly<Record<string, string>>, size: BoxSize | null): string[] {
-    if (!size || fields.tart !== state.version || fields.macos !== state.macosBuild) return [];
+  #servedBy(state: MacState, fields: Readonly<Record<string, string>>, size: BoxSize | null): string[] {
+    const windows = fields.engine === "qemu";
+    if (!size || fields.macos !== state.macosBuild || (windows ? fields.qemu !== state.qemu.version : fields.tart !== state.version)) return [];
+    const build = windows ? (state.qemu.image?.build ?? "") : null;
     return this.#pools()
-      .filter((pool) => pool.image === fields.image && (state.builds.get(pool.image) ?? "") === (fields.build ?? "") && sameSize(pool.size, size))
+      .filter(
+        (pool) =>
+          (pool.os === "windows") === windows &&
+          pool.image === fields.image &&
+          (build ?? state.builds.get(pool.image) ?? "") === (fields.build ?? "") &&
+          sameSize(pool.size, size),
+      )
       .flatMap((pool) => pool.kinds);
   }
 
-  /** This install's free warm VMs on a Mac: suspended, marked warm, serving a kind now. */
-  #freeWarm(state: HostState): FreeWarm[] {
+  /** This install's free warm VMs on a Mac: saved, marked warm, serving a kind now. */
+  #freeWarm(state: MacState): FreeWarm[] {
     const free: FreeWarm[] = [];
     for (const [vm, fields] of state.owners) {
       if (fields.install !== this.#context.installId || warmState(fields) !== "warm") continue;
-      if (state.vms.find((candidate) => candidate.name === vm)?.state !== "suspended") continue;
-      const size = sizeOf(state.configs.get(vm));
+      const { size, suspended } = warmOf(state, vm, fields);
+      if (!suspended) continue;
       const kinds = this.#servedBy(state, fields, size);
       if (size && kinds.length) free.push({ vm, size, kinds });
     }
@@ -1087,31 +1166,30 @@ export class TartBackend implements Backend {
     const retired = await this.#warm.exclusive(async () => {
       const states = await this.#states(signal);
       const kept = new Map<WarmPool, number>();
-      const out: { host: TartHost; vm: string }[] = [];
+      const out: { host: TartHost; vm: string; os: GuestOs }[] = [];
       for (const host of this.#on()) {
         const state = states.get(host.name)!;
         if (state instanceof Error) continue;
         for (const [vm, fields] of state.owners) {
           if (fields.install !== this.#context.installId || warmState(fields) !== "warm") continue;
-          const size = sizeOf(state.configs.get(vm));
+          // Only a saved warm VM can be claimed: one that someone ran or
+          // stopped since is retired. One being claimed no longer says warm.
+          const { size, suspended } = warmOf(state, vm, fields);
           const kinds = this.#servedBy(state, fields, size);
           const pool = pools.find((candidate) => kinds.length && candidate.kinds.includes(kinds[0]!));
           const count = pool ? (kept.get(pool) ?? 0) : 0;
-          // Only a suspended warm VM can be claimed: one that someone ran or
-          // stopped since is retired. One being claimed no longer says warm.
-          const suspended = state.vms.find((candidate) => candidate.name === vm)?.state === "suspended";
           if (pool && suspended && count < pool.target) {
             kept.set(pool, count + 1);
             continue;
           }
-          out.push({ host, vm });
+          out.push({ host, vm, os: fields.engine === "qemu" ? "windows" : "macos" });
         }
       }
       return out;
     });
-    for (const { host, vm } of retired) {
-      // Its owner file names no box, so a box that held it meanwhile keeps it. Warm VMs are macOS.
-      await this.#delete(host, vm, "macos", null, signal).catch((error) => this.#context.logError("retire a warm VM", error));
+    for (const { host, vm, os } of retired) {
+      // Its owner file names no box, so a box that held it meanwhile keeps it.
+      await this.#delete(host, vm, os, null, signal).catch((error) => this.#context.logError("retire a warm VM", error));
     }
 
     for (const pool of pools) {
@@ -1132,18 +1210,20 @@ export class TartBackend implements Backend {
 
   /**
    * Makes one warm VM of a pool: clones it, boots it to the logged-in
-   * desktop, and suspends it. It takes a VM slot and its memory until then,
-   * so it is placed as a box is, and an acquire that needs the slot takes it
+   * desktop, and suspends it, or for Windows compiles the display helper
+   * and saves it. It takes its memory, and a macOS VM a VM slot, until then,
+   * so it is placed as a box is, and an acquire that needs the room takes it
    * over or stops it. Resolves false when no Mac has room.
    */
   async #fill(pool: WarmPool, signal: AbortSignal): Promise<boolean> {
     const vm = `${WARM_PREFIX}${randomBytes(6).toString("hex")}`;
+    const windows = pool.os === "windows";
     const placed = await this.#chain(async () => {
       const states = await this.#states(signal);
       for (const host of this.#on()) {
         const state = states.get(host.name)!;
-        if (state instanceof Error || !this.#room(host, state, pool.size).capacity.ok) continue;
-        this.#placing.set(vm, { host: host.name, vm, memoryMiB: pool.size.memoryMiB, macos: true });
+        if (state instanceof Error || !this.#room(host, state, pool.size, NONE_UNPLACED, new Set(), pool.os).capacity.ok) continue;
+        this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(pool.kinds[0]!, pool.size), macos: !windows });
         return { host, state };
       }
       return null;
@@ -1165,37 +1245,55 @@ export class TartBackend implements Backend {
     };
     fill.ready.catch(() => undefined);
     this.#filling.set(vm, fill);
-    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? (windows ? WINDOWS_READY_TIMEOUT_MS : READY_TIMEOUT_MS));
+    // A Windows VM's SSH port on the Mac, once it is made.
+    let port: number | null = null;
     try {
       const owner = ownerText({
         install: this.#context.installId,
         state: "filling",
         image: pool.image,
-        build: state.builds.get(pool.image) ?? "",
-        tart: state.version,
-        macos: state.macosBuild,
+        ...(windows
+          ? { build: state.qemu.image?.build ?? "", qemu: state.qemu.version, macos: state.macosBuild, engine: "qemu" }
+          : { build: state.builds.get(pool.image) ?? "", tart: state.version, macos: state.macosBuild }),
       });
       const claimed = (await this.#run(host, claimScript(vm, owner), { signal: fillSignal })).stdout.trim();
       if (claimed !== "claimed") throw new Error(`Warm VM ${vm} on ${host.name} is already there.`);
-      await this.#run(host, cloneScript(pool.image, vm, pool.size.cores, pool.size.memoryMiB), { timeoutMs: 10 * 60_000, signal: fillSignal });
-      await this.#start(host, vm, "macos", deadline, fillSignal, false);
-      const address = await this.#address(host, vm, deadline, fillSignal);
-      await this.#waitReady(host, vm, this.#vm(await this.#mac(host), address), "macos", deadline, fillSignal);
-      await this.#identify(host, address, vm, "macos", fillSignal);
-      const { ssh } = await this.#keys();
-      const desktop = await new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos").run(desktopScript(), {
-        timeoutMs: 240_000,
-        signal: fillSignal,
-        maxOutputBytes: 4096,
-      });
-      if (desktop.exitCode !== 0) throw new Error(`Warm VM ${vm} on ${host.name}: ${desktop.stderr.trim() || `exit code ${desktop.exitCode}`}`);
+      let address = "";
+      if (windows) {
+        const clone = await this.#run(host, qemuCloneScript(pool.image, vm, pool.size.cores, pool.size.memoryMiB), { timeoutMs: 120_000, signal: fillSignal });
+        const made = parseQemuVm(clone.stdout);
+        if (!made) throw new Error(`QEMU's VM ${vm} on ${host.name} has no whole config: ${clone.stdout.trim() || "nothing"}`);
+        port = made.ssh;
+        await this.#start(host, vm, "windows", deadline, fillSignal, false);
+        const access = this.#windows(await this.#mac(host), made.ssh);
+        await this.#waitReady(host, vm, access, "windows", deadline, fillSignal);
+        await this.#windowsDesktop(host, vm, access, deadline, fillSignal);
+        // Before the save, so a box that takes the VM resizes its desktop at once.
+        const { ssh } = await this.#keys();
+        await compileDisplay(new SshTransport(ssh, access, "windows"), fillSignal);
+      } else {
+        await this.#run(host, cloneScript(pool.image, vm, pool.size.cores, pool.size.memoryMiB), { timeoutMs: 10 * 60_000, signal: fillSignal });
+        await this.#start(host, vm, "macos", deadline, fillSignal, false);
+        address = await this.#address(host, vm, deadline, fillSignal);
+        await this.#waitReady(host, vm, this.#vm(await this.#mac(host), address), "macos", deadline, fillSignal);
+        await this.#identify(host, address, vm, "macos", fillSignal);
+        const { ssh } = await this.#keys();
+        const desktop = await new SshTransport(ssh, this.#vm(await this.#mac(host), address), "macos").run(desktopScript(), {
+          timeoutMs: 240_000,
+          signal: fillSignal,
+          maxOutputBytes: 4096,
+        });
+        if (desktop.exitCode !== 0) throw new Error(`Warm VM ${vm} on ${host.name}: ${desktop.stderr.trim() || `exit code ${desktop.exitCode}`}`);
+      }
       ready.resolve(address);
-      // In the chain, so an acquire that takes the VM over and this suspend never cross.
+      // In the chain, so an acquire that takes the VM over and this save never cross.
       const adopted = await this.#chain(async () => {
         if (fill.adopted) return true;
         fillSignal.throwIfAborted();
-        await this.#forget(host, vm, "macos");
-        const result = (await this.#run(host, warmScript(vm, this.#context.installId), { timeoutMs: 120_000, signal: fillSignal })).stdout.trim();
+        await this.#forget(host, vm, pool.os, port);
+        const script = windows ? qemuWarmScript : warmScript;
+        const result = (await this.#run(host, script(vm, this.#context.installId), { timeoutMs: windows ? 240_000 : 120_000, signal: fillSignal })).stdout.trim();
         if (result !== "warm") throw new Error(`Warm VM ${vm} on ${host.name} was no longer being filled.`);
         return false;
       });
@@ -1205,7 +1303,7 @@ export class TartBackend implements Backend {
       ready.reject(error);
       if (!fill.adopted) {
         this.#placing.delete(vm);
-        await this.#delete(host, vm, "macos", null).catch((cause) => this.#context.logError("release a warm VM that failed", cause));
+        await this.#delete(host, vm, pool.os, null, undefined, port).catch((cause) => this.#context.logError("release a warm VM that failed", cause));
       }
       // Stopped for an acquire that needed the slot: no room for another now.
       if (abort.signal.aborted) return false;

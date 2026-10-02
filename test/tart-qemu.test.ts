@@ -1,12 +1,13 @@
-// The Tart backend's Windows boxes, whose VMs QEMU runs (046): on a fake Mac
-// with fake QEMU (fake-qemu.mjs), and a fake Windows guest that the fake ssh
-// reaches at its port on the Mac's loopback.
+// The Tart backend's Windows boxes, whose VMs QEMU runs (046), and their warm
+// pool: on a fake Mac with fake QEMU (fake-qemu.mjs), and a fake Windows
+// guest that the fake ssh reaches at its port on the Mac's loopback.
 
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
+import { ownerText } from "../src/backends/tart/host.ts";
 import { parseQemuState } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE } from "../src/backends/windows.ts";
@@ -36,7 +37,7 @@ after(async () => {
   }
 });
 
-function setup(values: Record<string, unknown> = {}, options: TartBackendOptions = {}) {
+function setup(values: Record<string, unknown> = {}, options: TartBackendOptions = {}, warm: Record<string, number> = {}) {
   const ssh = fakeSsh();
   const mac = ssh.home(MAC);
   macs.push(mac);
@@ -46,8 +47,9 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
   const build = addWindowsImage(mac);
   ssh.windows(GUEST);
   // A stand-in for PowerShell that keeps the clock script, counts the
-  // extensions of C: and the looks at the desktop, which is up at the third
-  // unless ~/no-desktop is there, and runs the rest in sh.
+  // extensions of C:, the looks at the desktop, which is up at the third
+  // unless ~/no-desktop is there, and the display helper's compiles, and runs
+  // the rest in sh.
   ssh.powershell(
     GUEST,
     [
@@ -55,20 +57,28 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
       `  *Set-Date*) printf "%s" "$1" > "$HOME/clock"; exit 0;;`,
       `  *Resize-Partition*) echo extended >> "$HOME/extend"; exit 0;;`,
       `  *"Get-Process explorer"*) n=$(cat "$HOME/desktop" 2>/dev/null || echo 0); echo $((n + 1)) > "$HOME/desktop"; [ ! -f "$HOME/no-desktop" ] && [ "$n" -ge 2 ];;`,
+      `  *Add-Type*) echo compiled >> "$HOME/compiled"; exit 0;;`,
       `  *) exec sh -c "$1";;`,
       `esac`,
       ``,
     ].join("\n"),
   );
-  const context = testContext(new MemoryStorage());
-  const backend = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": 0, ...values }), context, { ...FAKES, ...options });
-  made.push(backend);
+  const config = tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": 0, ...values });
+  /** A backend on the Mac: another install's, or this one's after a restart. */
+  const make = (installId = "test", counts = warm) => {
+    const context = testContext(new MemoryStorage(), installId, { warm: counts });
+    const backend = new TartBackend(config, context, { ...FAKES, ...options });
+    made.push(backend);
+    return { context, backend };
+  };
+  const { context, backend } = make();
   return {
     ssh,
     mac,
     build,
     context,
     backend,
+    make,
     qemu: join(mac, ".bb-box", "qemu"),
     owners: join(mac, ".bb-box", "tart", "owners"),
     firmware: join(mac, ".nix-profile", "share", "qemu", "edk2-aarch64-code.fd"),
@@ -84,6 +94,7 @@ function identity(size = SMALL): BoxIdentity {
 function hooks() {
   const events: string[] = [];
   const claimed: Guest[] = [];
+  const timings: Record<string, number> = {};
   const value: AcquireHooks = {
     claim: async (guest) => {
       events.push("claim");
@@ -92,9 +103,11 @@ function hooks() {
     starting: async () => {
       events.push("starting");
     },
-    timing: () => {},
+    timing: (step, ms) => {
+      timings[step] = ms;
+    },
   };
-  return { hooks: value, events, claimed };
+  return { hooks: value, events, claimed, timings };
 }
 
 const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
@@ -562,4 +575,205 @@ test("a Mac that serves only Windows boxes needs no Tart", async () => {
   assert.equal(report.summary, "QEMU 11.1.0 on mac1");
   assert.equal(report.checks.find((check) => check.id === "host.mac1")?.detail, "macOS 27.0 on Apple silicon.");
   await backend.release(guest, releasing, signal());
+});
+
+// The warm pool's Windows VMs: filled at the default size, saved by QEMU.
+
+/** The warm VMs on the Mac. */
+function warmVms(qemu: string): string[] {
+  const vms = join(qemu, "vms");
+  return existsSync(vms) ? readdirSync(vms).filter((name) => name.startsWith("bb-box-warm-")) : [];
+}
+
+/** Whether QEMU saved the VM to a file and quit. */
+function saved(qemu: string, vm: string): boolean {
+  const pid = join(qemu, "vms", vm, "pid");
+  return existsSync(join(qemu, "vms", vm, "state")) && !(existsSync(pid) && alive(Number(readFileSync(pid, "utf8"))));
+}
+
+async function until(check: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (!check()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+const WARM = { [KIND]: 1 };
+
+test("maintain fills a Windows pool with VMs QEMU saved at the default size, the display helper compiled first, which held() and capacity count as warm", async () => {
+  const { backend, mac, qemu, owners, ssh } = setup({}, {}, WARM);
+  await backend.maintain();
+  const [warm, ...more] = warmVms(qemu);
+  assert.ok(warm && !more.length);
+  assert.ok(saved(qemu, warm), "saved, and QEMU quit");
+  assert.deepEqual(
+    qmp(mac).map((command) => command.execute),
+    ["qmp_capabilities", "stop", "migrate-set-parameters", "migrate", "query-migrate", "quit"],
+  );
+  const owner = readFileSync(join(owners, warm), "utf8");
+  for (const line of ["state=warm", "engine=qemu", `image=${FAKE_WINDOWS_IMAGE}`, "build=1", "qemu=11.1.0", "macos=27A1"]) {
+    assert.match(owner, new RegExp(`^${line}$`, "m"));
+  }
+  assert.doesNotMatch(owner, /^box=/m);
+  assert.equal(readFileSync(join(ssh.home(GUEST), "compiled"), "utf8"), "compiled\n", "the display helper, before the save");
+  assert.deepEqual(await backend.held(signal()), [], "warm VMs are no box's, so the sweep keeps them");
+  const capacity = await backend.capacity(KIND, SMALL, [], signal());
+  assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
+  assert.equal(capacity.hosts[0]!.limits.find((limit) => limit.resource === "memory")!.used, 0, "a saved VM takes no memory");
+  await backend.maintain();
+  assert.deepEqual(warmVms(qemu), [warm], "a full pool stays as it is");
+});
+
+test("a Windows box at the default size takes a warm VM, which QEMU restores, has its clock set, and the pool fills again", async () => {
+  const { backend, mac, qemu, owners, ssh, context } = setup({}, {}, WARM);
+  await backend.maintain();
+  const [warm] = warmVms(qemu);
+  rmSync(join(ssh.home(GUEST), "clock"), { force: true });
+  const box = identity();
+  const recorded = hooks();
+  const guest = await backend.acquire(box, null, recorded.hooks, signal());
+  assert.equal(guest.ref, warm);
+  assert.deepEqual(guest.size, SMALL);
+  const made = config(qemu, warm!);
+  assert.deepEqual(guest.data, { box: box.boxId, os: "windows", ssh: Number(made.ssh), vnc: Number(made.vnc) });
+  assert.ok("warm" in recorded.timings && "clock" in recorded.timings && !("clone" in recorded.timings), JSON.stringify(recorded.timings));
+  const owner = readFileSync(join(owners, warm!), "utf8");
+  assert.match(owner, new RegExp(`^box=${box.boxId}$`, "m"));
+  assert.match(owner, /^engine=qemu$/m);
+  assert.doesNotMatch(owner, /^state=/m);
+  const own = runs(mac).filter((args) => args[args.indexOf("-name") + 1] === warm);
+  assert.deepEqual(own.at(-1)!.slice(-2), ["-incoming", "defer"], "restored");
+  assert.equal(await backend.power(guest, signal()), "running");
+  assert.match(readFileSync(join(ssh.home(GUEST), "clock"), "utf8"), /Set-Date/);
+  assert.equal((await backend.held(signal())).find((held) => held.ref === warm)?.owner?.boxId, box.boxId);
+  await backend.maintain();
+  const [next, ...more] = warmVms(qemu).filter((vm) => vm !== warm);
+  assert.ok(next && !more.length && saved(qemu, next), "the pool fills again");
+  assert.deepEqual(context.errors, []);
+  await backend.release(guest, releasing, signal());
+});
+
+test("a Windows box at another size clones, and leaves the warm VM", async () => {
+  const { backend, qemu } = setup({}, {}, WARM);
+  await backend.maintain();
+  const [warm] = warmVms(qemu);
+  const box = identity(sized(6));
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.equal(guest.ref, `bb-box-${box.boxId}`);
+  assert.ok(saved(qemu, warm!));
+  await backend.release(guest, releasing, signal());
+});
+
+test("a Windows warm VM that does not restore gives way to a clone, and goes", async () => {
+  const { backend, qemu, context } = setup({}, {}, WARM);
+  await backend.maintain();
+  const [warm] = warmVms(qemu);
+  writeFileSync(join(qemu, "vms", warm!, "state"), "corrupt");
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.equal(guest.ref, `bb-box-${box.boxId}`);
+  assert.ok(!existsSync(join(qemu, "vms", warm!)), "the warm VM that failed is deleted");
+  assert.ok(context.errors.some((error) => /could not use VM [\s\S]*failed to restore/.test(error)), context.errors.join("\n"));
+  await backend.maintain();
+  await backend.release(guest, releasing, signal());
+});
+
+test("a restarted acquire resumes the Windows warm VM it held", async () => {
+  const { backend, qemu, owners, make } = setup({}, {}, WARM);
+  await backend.maintain();
+  const [warm] = warmVms(qemu);
+  // Held before the restart: the owner file names the box.
+  const box = identity();
+  writeFileSync(
+    join(owners, warm!),
+    ownerText({ install: "test", kind: box.kind, box: box.boxId, thread: box.threadId, name: box.name, created: box.createdAt, engine: "qemu" }),
+  );
+  const recorded = hooks();
+  const { backend: restarted } = make();
+  const guest = await restarted.acquire(box, { ref: warm!, host: "mac1", address: null, size: null, data: { box: box.boxId, os: "windows" } }, recorded.hooks, signal());
+  assert.equal(guest.ref, warm);
+  assert.ok(!("place" in recorded.timings) && !("warm" in recorded.timings) && "clock" in recorded.timings, JSON.stringify(recorded.timings));
+  assert.equal(await restarted.power(guest, signal()), "running");
+  await restarted.release(guest, releasing, signal());
+});
+
+test("an acquire that meets a Windows fill holding the last memory takes it over at the fill's size, and stops it at any other", async () => {
+  for (const size of [SMALL, sized(6)]) {
+    const { ssh, backend, qemu, owners } = setup({}, {}, WARM);
+    // A box of 100 GiB runs, so a fill takes the last memory.
+    const running = await backend.acquire(identity(sized(100)), null, hooks().hooks, signal());
+    // The fill's VM does not answer until the acquire has made its choice.
+    ssh.down(GUEST);
+    const up = () => rmSync(join(ssh.dir, "down", GUEST), { force: true });
+    const filling = backend.maintain().catch((error: unknown) => error);
+    await until(() => warmVms(qemu).length === 1 && existsSync(join(qemu, "vms", warmVms(qemu)[0]!, "pid")), "the fill to wait for its VM");
+    const [fill] = warmVms(qemu);
+    assert.equal((await backend.capacity(KIND, size, [], signal())).ok, true, "the fill gives its memory to a box (#145)");
+    const box = identity(size);
+    const recorded = hooks();
+    const acquiring = backend.acquire(box, null, recorded.hooks, signal());
+    let settled = false;
+    void acquiring.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    if (size === SMALL) {
+      await until(() => recorded.claimed.length > 0, "the acquire to take the fill over");
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      assert.equal(settled, false, "the box waits for the fill's VM to be ready");
+      up();
+      const guest = await acquiring;
+      assert.equal(guest.ref, fill, "the box takes the fill's VM over");
+      assert.match(readFileSync(join(owners, fill!), "utf8"), new RegExp(`^box=${box.boxId}$`, "m"));
+      assert.equal(await backend.power(guest, signal()), "running", "and it is never saved");
+      assert.ok(!existsSync(join(qemu, "vms", fill!, "state")));
+      await backend.release(guest, releasing, signal());
+    } else {
+      await until(() => !warmVms(qemu).includes(fill!), "the fill to be stopped");
+      up();
+      const guest = await acquiring;
+      assert.equal(guest.ref, `bb-box-${box.boxId}`, "a box of another size clones");
+      await backend.release(guest, releasing, signal());
+    }
+    assert.equal(await filling, undefined);
+    await backend.release(running, releasing, signal());
+  }
+});
+
+test("Windows warm VMs are retired and replaced when the image is built again, QEMU or macOS is updated, or the saved state is gone", async () => {
+  const { backend, mac, qemu, owners } = setup({}, {}, WARM);
+  await backend.maintain();
+  let [warm] = warmVms(qemu);
+  const retires = async (what: string, change: () => void) => {
+    change();
+    await backend.maintain();
+    const [next, ...more] = warmVms(qemu);
+    assert.ok(next && next !== warm && !more.length && !existsSync(join(qemu, "vms", warm!)), what);
+    warm = next;
+  };
+  await retires("an image built again", () => addWindowsImage(mac, "2"));
+  assert.match(readFileSync(join(owners, warm!), "utf8"), /^build=2$/m);
+  await retires("an update of QEMU", () => writeFileSync(join(mac, ".fake-qemu-version"), "11.2.0\n"));
+  assert.match(readFileSync(join(owners, warm!), "utf8"), /^qemu=11\.2\.0$/m);
+  await retires("an update of macOS", () => writeFileSync(join(mac, ".fake-macos-build"), "27A2\n"));
+  await retires("a saved state that is gone", () => rmSync(join(qemu, "vms", warm!, "state")));
+});
+
+test("a Windows fill cut short by a restart is listed with no owner, so the sweep releases it", async () => {
+  const { backend, qemu, owners } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const pid = Number(readFileSync(join(qemu, "vms", guest.ref, "pid"), "utf8"));
+  // As a fill leaves its VM: running, its owner file naming no box.
+  writeFileSync(
+    join(owners, guest.ref),
+    ownerText({ install: "test", state: "filling", image: FAKE_WINDOWS_IMAGE, build: "1", qemu: "11.1.0", macos: "27A1", engine: "qemu" }),
+  );
+  const held = (await backend.held(signal())).find((other) => other.ref === guest.ref);
+  assert.ok(held, "the leftover fill is listed");
+  assert.equal(held.owner, null);
+  assert.deepEqual(held.data, { os: "windows" });
+  await backend.release(held, releasing, signal());
+  assert.ok(!existsSync(join(qemu, "vms", guest.ref)) && !existsSync(join(owners, guest.ref)));
+  assert.equal(alive(pid), false);
 });
