@@ -1657,8 +1657,10 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   expect(await slot.findByText(/Add a box as a BB machine of your own/)).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Add machine" }));
   expect(await screen.findByText("Of the kinds whose boxes join BB.")).toBeTruthy();
-  expect(screen.getByText("Optional; bb-box picks one when it is left empty.")).toBeTruthy();
   const name = screen.getByRole("textbox", { name: "Name" });
+  expect(name.getAttribute("placeholder")).toBe("Optional: bb-box picks a name like calm-tundra");
+  expect(name.getAttribute("aria-describedby")).toBe("new-machine-name-hint");
+  expect(screen.getByText("Optional. If left empty, bb-box picks a name.")).toBeTruthy();
   fireEvent.change(name, { target: { value: "Build 1" } });
   expect(screen.getByText("Lowercase letters, digits and hyphens, starting with a letter, up to 32 characters.")).toBeTruthy();
   expect(submitButton().disabled).toBe(true);

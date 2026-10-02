@@ -437,10 +437,12 @@ export function NewBox({
             </div>
           </FormSection>
           {machine ? (
-            <FormSection title="Name" description="Optional; bb-box picks one when it is left empty.">
+            <FormSection title="Name">
               <Input
                 id="new-machine-name"
                 aria-label="Name"
+                aria-describedby="new-machine-name-hint"
+                placeholder="Optional: bb-box picks a name like calm-tundra"
                 className="h-7 px-2 text-xs"
                 value={name}
                 autoCapitalize="off"
@@ -452,6 +454,9 @@ export function NewBox({
                   setProblem(null);
                 }}
               />
+              <span id="new-machine-name-hint" className="sr-only">
+                Optional. If left empty, bb-box picks a name.
+              </span>
               {nameWrong ? (
                 <p role="alert" className="text-2xs leading-snug text-destructive-text">
                   {nameWrong}
