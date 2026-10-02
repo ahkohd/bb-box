@@ -114,7 +114,7 @@ test("a fill needs its memory free on disk beyond the disk kept free, for its su
   // Why, for the log, the doctor and the settings (#356).
   const [pool, ...more] = contexts[0]!.short.at(-1)!;
   assert.deepEqual([pool!.kinds, pool!.count, pool!.have, more], [["macos"], 1, 0, []]);
-  assert.match(pool!.reason, /^mac1 has [\d.]+ GiB of disk free, and a warm VM saved with its 8 GiB of memory would leave less than the [\d.]+ GiB kept free\.$/);
+  assert.match(pool!.reason, /^mac1 has [\d.]+ GiB of disk free and keeps [\d.]+ GiB free, so a warm VM saved with its 8 GiB of memory does not fit\.$/);
   assert.equal((await short.capacity("macos", SMALL, [])).ok, true, "a box still fits");
   await make("test", { macos: 1 }, { "tart-reserve-disk-gib": free - 12 }).maintain();
   assert.equal(warmVms().length, 1);

@@ -455,7 +455,7 @@ test("counts every install's containers and the memory limits of running ones", 
 
   const big = await backend.capacity("linux", { cores: 4, memoryMiB: 12289, diskGiB: null }, [], signal());
   assert.equal(big.ok, false);
-  assert.match(big.message!, /has 16 GiB of memory free, and a box with 12 GiB would leave less than the 4 GiB kept free/);
+  assert.match(big.message!, /has 16 GiB of memory free and keeps 4 GiB free, so a box with 12 GiB does not fit/);
   const cores = await backend.capacity("linux", { cores: 8, memoryMiB: 4096, diskGiB: null }, [], signal());
   assert.match(cores.message!, /has 4 cores, fewer than the 8 asked for/);
   const disk = await backend.capacity("linux", { ...SMALL, diskGiB: 32 }, [], signal());

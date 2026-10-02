@@ -347,10 +347,16 @@ export class ProxmoxQemuBackend implements Backend {
       { resource: "guests", used: used.size, total: last - first + 1, reserve: 0, unit: "count" },
     ];
     const problems: string[] = [];
+    // A refusal leads with what binds: the box when it needs more than is free, otherwise what is kept free.
     if (memoryFree - size.memoryMiB < reserve.memoryMiB) {
+      const box = `a ${kind} box with ${formatMiB(size.memoryMiB)} memory`;
       problems.push(
-        `${api.node} has ${formatMiB(memoryFree)} of memory free. A ${kind} box with ${formatMiB(size.memoryMiB)} memory needs it all, ` +
-          `and ${formatMiB(reserve.memoryMiB)} is kept free. Release a box, ask for less memory, or lower the memory kept free in bb-box's settings.`,
+        size.memoryMiB > memoryFree
+          ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Release a box or ask for less memory.`
+          : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so ${box} does not fit. ` +
+            (memoryFree > reserve.memoryMiB
+              ? "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings."
+              : "Release a box, or lower the memory kept free in bb-box's settings."),
       );
     }
     if (node.cpus !== null && size.cores > node.cpus) {
@@ -358,9 +364,12 @@ export class ProxmoxQemuBackend implements Backend {
     }
     const grow = size.diskGiB !== null && !fromPool ? Math.max(0, size.diskGiB - (template.diskGiB ?? 0)) : 0;
     if (grow > 0 && diskFree - grow * 1024 < reserve.diskGiB * 1024) {
+      const storageFree = `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free`;
       problems.push(
-        `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free. A ${size.diskGiB} GiB disk needs ${Math.ceil(grow)} GiB more than the template's, ` +
-          `and ${reserve.diskGiB} GiB is kept free. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.`,
+        grow * 1024 > diskFree
+          ? `${storageFree}, less than the ${Math.ceil(grow)} GiB a ${size.diskGiB} GiB disk adds to the template's. Ask for a smaller disk or release boxes.`
+          : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so a ${size.diskGiB} GiB disk, ${Math.ceil(grow)} GiB more than the template's, does not fit. ` +
+            "Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.",
       );
     }
     if (diskFree < reserve.diskGiB * 1024 && !fromPool) {

@@ -511,7 +511,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     height: 940,
-    rpc: rpc([], { refuse: "pve has 10 GiB of memory free. A Linux desktop box needs 8 GiB and 4 GiB is kept free. Release a box you no longer need, or pick another kind." }),
+    rpc: rpc([], { refuse: "pve has 10 GiB of memory free and keeps 4 GiB free, so a linux-desktop box with 8 GiB memory does not fit. Release a box, ask for less memory, or lower the memory kept free in bb-box's settings." }),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
@@ -624,7 +624,7 @@ export const scenes = {
             kinds: ["linux-desktop"],
             count: 1,
             have: 0,
-            reason: "pve has 2.0 GiB of memory free. A linux-desktop box with 4.0 GiB memory needs it all, and 4.0 GiB is kept free. Release boxes on pve, or lower the warm count.",
+            reason: "pve has 182.9 GiB of memory free and keeps 256 GiB free, so a linux-desktop box with 8 GiB memory does not fit. Release a box, or lower the memory kept free in bb-box's settings.",
           },
         ],
       },

@@ -621,18 +621,31 @@ export class TartBackend implements Backend {
         `${host.name} runs ${macos.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}. ` +
         "Release or stop a macOS box, or stop another VM there";
     } else if (memoryFree - needed < reserve.memoryMiB) {
-      const box = os === "windows" ? `${formatMiB(size.memoryMiB)}, and ${formatMiB(QEMU_OVERHEAD_MIB)} for QEMU,` : formatMiB(size.memoryMiB);
+      // Leads with what binds: the box when it needs more than is free, otherwise the memory kept free.
+      const box = `a box with ${os === "windows" ? `${formatMiB(size.memoryMiB)}, and ${formatMiB(QEMU_OVERHEAD_MIB)} for QEMU,` : formatMiB(size.memoryMiB)}`;
       why =
-        `${host.name} has ${formatMiB(Math.max(0, memoryFree))} of memory free, and a box with ${box} would leave less than the ${formatMiB(reserve.memoryMiB)} kept free. ` +
-        "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings";
+        needed > memoryFree
+          ? `${host.name} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Ask for less memory or release a box`
+          : `${host.name} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so ${box} does not fit. ` +
+            (memoryFree > reserve.memoryMiB
+              ? "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings"
+              : "Release a box, or lower the memory kept free in bb-box's settings");
     } else if (state.disk.freeMiB < diskReserveMiB) {
       why = `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than the ${formatMiB(diskReserveMiB)} kept free. Release boxes or free some space`;
     } else if (state.disk.freeMiB - grow * MiB_PER_GiB < diskReserveMiB) {
       why =
-        `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free. A ${size.diskGiB} GiB disk needs ${grow} GiB more than the Windows image's, ` +
-        `and ${formatMiB(diskReserveMiB)} is kept free. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings`;
+        grow * MiB_PER_GiB > state.disk.freeMiB
+          ? `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than the ${grow} GiB a ${size.diskGiB} GiB disk adds to the Windows image's. ` +
+            "Ask for a smaller disk or release boxes"
+          : `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free and keeps ${formatMiB(diskReserveMiB)} free, ` +
+            `so a ${size.diskGiB} GiB disk, ${grow} GiB more than the Windows image's, does not fit. ` +
+            "Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings";
     } else if (saved && state.disk.freeMiB - grow * MiB_PER_GiB - size.memoryMiB < diskReserveMiB) {
-      why = `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, and a warm VM saved with its ${formatMiB(size.memoryMiB)} of memory would leave less than the ${formatMiB(diskReserveMiB)} kept free`;
+      const vm = `a warm VM saved with its ${formatMiB(size.memoryMiB)} of memory`;
+      why =
+        grow * MiB_PER_GiB + size.memoryMiB > state.disk.freeMiB
+          ? `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than ${vm} needs`
+          : `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free and keeps ${formatMiB(diskReserveMiB)} free, so ${vm} does not fit`;
     }
     return { capacity: { host: host.name, ok: why === null, limits }, why };
   }

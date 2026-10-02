@@ -366,7 +366,7 @@ test("a Windows box's disk may grow by what the Mac has free beyond the disk kep
   assert.equal(refused.ok, false);
   assert.match(
     refused.message!,
-    new RegExp(`mac1 has [\\d.]+ GiB of disk free\\. A 72 GiB disk needs 8 GiB more than the Windows image's, and ${reserve} GiB is kept free\\. Ask for a smaller disk`),
+    new RegExp(`mac1 has [\\d.]+ GiB of disk free and keeps ${reserve} GiB free, so a 72 GiB disk, 8 GiB more than the Windows image's, does not fit\\. Ask for a smaller disk`),
   );
   assert.match((await backend.capacity("macos", disk(66), [], signal())).message!, /a Tart box keeps its image's disk/);
 });
@@ -534,7 +534,7 @@ test("a running Windows VM counts its memory and 2 GiB for QEMU, and not against
   assert.equal(memory(fits, "guests"), 0);
   const full = await backend.capacity(KIND, sized(101), [], signal());
   assert.equal(full.ok, false);
-  assert.match(full.message!, /mac1 has 118 GiB of memory free, and a box with 101 GiB, and 2 GiB for QEMU, would leave less than the 16 GiB kept free/);
+  assert.match(full.message!, /mac1 has 118 GiB of memory free and keeps 16 GiB free, so a box with 101 GiB, and 2 GiB for QEMU, does not fit/);
 
   await backend.stop(guest, signal());
   assert.equal(memory(await backend.capacity(KIND, sized(101), [], signal())), 0, "a saved VM takes no memory");

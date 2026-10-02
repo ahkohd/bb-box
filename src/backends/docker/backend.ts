@@ -491,9 +491,15 @@ export class DockerBackend implements Backend {
         `${host} has ${guests} of the ${this.#config.boxes} bb-box containers it may have, counting stopped boxes and other installs' boxes. ` +
         "Release a box, or raise the most boxes in bb-box's settings";
     } else if (memoryFree - size.memoryMiB < reserve) {
+      // Leads with what binds: the box when it needs more than is free, otherwise the memory kept free.
+      const box = `a box with ${formatMiB(size.memoryMiB)}`;
       why =
-        `${host} has ${formatMiB(Math.max(0, memoryFree))} of memory free, and a box with ${formatMiB(size.memoryMiB)} would leave less than the ${formatMiB(reserve)} kept free. ` +
-        "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings";
+        size.memoryMiB > memoryFree
+          ? `${host} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Ask for less memory or release a box`
+          : `${host} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve)} free, so ${box} does not fit. ` +
+            (memoryFree > reserve
+              ? "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings"
+              : "Release a box, or lower the memory kept free in bb-box's settings");
     } else if (kind === "linux-desktop" && !gpus.length) {
       why = `${host} lists no NVIDIA GPU as a CDI device. Install the NVIDIA Container Toolkit and generate its CDI spec (setup/docker/README.md), or ask for a linux-desktop-cpu box`;
     } else if (kind === "linux-desktop" && !free) {
