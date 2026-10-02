@@ -349,9 +349,9 @@ function rpc(boxes, options = {}) {
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
     state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null }),
     desktop: ({ box: ref }) => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
-    desktops: () => [
-      ...(options.machines ?? []).filter((entry) => entry.box.desktop).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
-      ...boxes.filter((candidate) => candidate.desktop).map((candidate) => ({ threadId: THREAD, box: candidate, owner: "thread" })),
+    allBoxes: () => [
+      ...(options.machines ?? []).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
+      ...boxes.map((candidate) => ({ threadId: THREAD, box: candidate, owner: "thread" })),
     ],
     acquire: () => ({ box: null, error: options.refuse ?? null }),
     release: ({ box: ref }) => ({ box: find(ref), error: null }),
@@ -567,7 +567,9 @@ export const scenes = {
   "desktop-stopped": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([{ ...desktop, state: "stopped" }]) },
   "desktop-released": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([]) },
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
-  "desktops-page": { slot: "desktops", width: 900, props: { subPath: "" }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
+  "boxes-page": { slot: "boxes", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
+  "boxes-page-empty": { slot: "boxes", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
+  "boxes-page-starting": { slot: "boxes", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([], { machines: MACHINES }) },
   "settings-machines-empty": { slot: "settings", width: 860, height: 420, props: {}, rpc: rpc([]) },
   "settings-machines-add": {

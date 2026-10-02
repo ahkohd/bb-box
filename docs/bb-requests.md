@@ -20,6 +20,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | draft | a box has its thread's project variables only while a thread of the project runs on it |
 | [Make a plugin's host call quick](#12-make-a-plugins-host-call-quick) | draft | each call to bb-box's host entry takes about 0.4 s, so it cannot carry commands |
 | [Mark a machine offline when it stops checking in](#13-mark-a-machine-offline-when-it-stops-checking-in) | draft | a machine that goes with no word, such as a PC that restarts, shows as connected for about 16 minutes, so bb-box judges it by when BB last heard from it |
+| [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | draft | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
 
 ## 1. BB's host app on Windows
 
@@ -541,6 +542,38 @@ BB and its plugins take a machine that has gone as connected.
 
 **Until then.** bb-box takes a machine that BB shows connected, but has not
 heard from for 60 s, as offline.
+
+## 14. Panel actions without a launcher row
+
+**What bb-box needs.** A thread panel action that a panel can open, but that
+BB draws no launcher row for: a tab a plugin reaches by code, not one a
+person starts cold from the panel's launcher. bb-box has three thread panel
+actions: Box, Desktop and Terminal. Box is the one to start from; Desktop
+and Terminal only make sense for a particular box, opened from a row in Box.
+As launcher rows of their own they invite a cold start with no box chosen.
+
+**What BB does now.**
+
+- `app.slots.threadPanelAction({ id, title, component })` registers an action,
+  and every registered action is a launcher row. `PluginThreadPanelActionRegistration`
+  has no field to hide the row (checked against plugin SDK 219 in BB 0.44.0).
+- A panel opens another with `navigate.openThreadPanel({ actionId, title, params })`,
+  so an action can be opened by code whether or not a person could start it
+  from the launcher.
+- A panel action's component gets `{ threadId, openPanel }` and no RPC, so a
+  bare tab cannot itself read the thread's boxes to decide what to show.
+
+**What we ask.** A `launcher: false` (or `hidden: true`) field on
+`threadPanelAction`, so an action registers and opens by code but shows no
+launcher row. Desktop and Terminal would set it; Box would not.
+
+**Until then.** Desktop and Terminal keep their launcher rows, and each is a
+shortcut rather than a cold start. Opened bare, Desktop opens the thread's
+one desktop box straight away, offers a chooser when there are several, and
+when there is none shows "No desktop box" with a button to the Box panel;
+Terminal does the same for the thread's boxes with a terminal. The logic
+lives in each tab's component, since a panel action gets no RPC in its
+context and `run()` none either.
 
 ## Checked, no request needed
 

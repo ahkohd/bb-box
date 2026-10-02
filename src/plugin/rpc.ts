@@ -77,10 +77,10 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         await app.desktops.control.handBack(box.id);
         return box;
       }),
-    async desktops() {
+    async allBoxes() {
       const all = await boxes.all();
       return all
-        .filter((box) => box.capabilities.displays.length > 0 && box.state !== "releasing" && (ownedByThread(box.threadId) || box.threadId === OPERATOR))
+        .filter((box) => box.state !== "releasing" && (ownedByThread(box.threadId) || box.threadId === OPERATOR))
         .sort((a, b) => a.createdAt - b.createdAt)
         .map((box) => ({ threadId: box.threadId, box: app.view(box), owner: box.threadId === OPERATOR ? ("yours" as const) : ("thread" as const) }));
     },

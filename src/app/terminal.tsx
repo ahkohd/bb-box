@@ -12,10 +12,11 @@ import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, use
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Contract, DesktopState } from "../plugin/contract.ts";
+import type { Contract, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { forThread, IconButton, message, Notice, StatusDot, useLive, type Tone } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, message, Notice, StatusDot, useLive, useNow, type Tone } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
+import { BoxLine } from "./desktop.tsx";
 import { XTERM_CSS } from "./xterm-css.ts";
 import { TerminalGlyph } from "./glyphs.tsx";
 
@@ -249,14 +250,63 @@ export class TerminalClient implements Kept {
   }
 }
 
-/** The thread panel tab for one box's terminal. */
+/** The thread panel tab for one box's terminal. Opened bare from its launcher row, it opens the thread's box, picks among several, or offers the Box panel. */
 export function TerminalPanel({ threadId, params }: { threadId: string; params: unknown }) {
   const boxId = parseParams(params);
-  if (!boxId) return <Notice>This tab names no box.</Notice>;
-  return <BoxTerminal key={boxId} threadId={threadId} boxId={boxId} />;
+  if (boxId) return <BoxTerminal key={boxId} threadId={threadId} boxId={boxId} />;
+  return <TerminalChooser threadId={threadId} />;
 }
 
-/** One box's terminal; `onBack` adds a back arrow, for the Desktops page. */
+/**
+ * The bare Terminal launcher tab, made a real shortcut (Task A): one box with a
+ * terminal opens straight away, several offer a chooser, and none sends you to the
+ * Box panel. As with the desktop, the SDK 0.5.29 has no way to hide the launcher
+ * row (docs/bb-requests.md #14), so the shortcut lives here, not in the action's run().
+ */
+function TerminalChooser({ threadId }: { threadId: string }) {
+  const rpc = useRpc<Contract>();
+  const navigate = useBbNavigate();
+  const open = useOpenTerminal();
+  const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
+  const boxes = state?.boxes.filter((box) => box.terminal) ?? [];
+  useNow(
+    boxes.some((box) => box.state === "acquiring" || box.state === "starting"),
+    1000,
+  );
+  if (boxes.length === 1) return <BoxTerminal key={boxes[0]!.id} threadId={threadId} boxId={boxes[0]!.id} />;
+  return (
+    <div className="p-4">
+      {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
+      {state && !boxes.length ? (
+        <EmptyPanel title="No box with a terminal">
+          <p className="mt-1">This thread has no box with a terminal.</p>
+          <Button type="button" variant="outline" size="sm" className="mt-3 h-7" onClick={() => navigate.openThreadPanel({ actionId: BOXES_ACTION, title: "Box" })}>
+            Open the Box panel
+          </Button>
+        </EmptyPanel>
+      ) : null}
+      {boxes.length ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-1">
+          <div className="divide-y divide-border">
+            {boxes.map((box) => (
+              <BoxLine
+                key={box.id}
+                box={box}
+                actions={
+                  <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => open(box)}>
+                    Open
+                  </Button>
+                }
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** One box's terminal; `onBack` adds a back arrow, for the Boxes page. */
 export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; boxId: string; onBack?: { label: string; go: () => void } }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();

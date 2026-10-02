@@ -5,7 +5,7 @@
 // session. A tab claims its session on mount, puts the session's element in
 // its own, and gives it back on unmount, where it rests hidden for ten
 // minutes before it is closed. A session that ends while hidden is dropped
-// at once. One box can show in two places at once (the Desktops page and a
+// at once. One box can show in two places at once (the Boxes page and a
 // thread's panel, or two threads' panels); the second place gets a session
 // of its own rather than taking the first's.
 

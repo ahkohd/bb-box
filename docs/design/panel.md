@@ -1,7 +1,7 @@
 # Design: the Box panel and the desktop
 
 How bb-box looks and reads in BB: the Box panel in a thread, the desktop
-tab, and the Desktops page. The settings page is in
+tab, and the Boxes page. The settings page is in
 [settings.md](settings.md). Mockups are in [mockups](mockups/): the HTML
 renders every screen in BB's dark and light themes, and the PNGs beside it
 are its output.
@@ -448,7 +448,7 @@ titled after the box.
   text-xs`): the monitor glyph, the box's name, then the state in muted
   text with a status dot. On the right the one action that matters now,
   and a menu with the rest ("Open in a browser tab", "Reconnect", "Open
-  thread" on the Desktops page).
+  thread" on the Boxes page).
 - **Control** (decisions 008 and 020):
 
   | Who | Text | Action |
@@ -564,7 +564,7 @@ back is instant (1 October 2026). The app bundle keeps them
   the agent, unless the person comes back first or someone else took it
   meanwhile. The server's control model is unchanged; this is 008's rule
   applied on the client.
-- **Two places at once**: a box can show on the Desktops page and in a
+- **Two places at once**: a box can show on the Boxes page and in a
   thread's panel, or in two threads' panels. A second place gets a session
   of its own; it never takes the first's element.
 - **What a hidden desktop costs**: its stream keeps flowing from the box's
@@ -575,18 +575,26 @@ back is instant (1 October 2026). The app bundle keeps them
   idle clock starts only when the socket closes, so a hidden shell can
   live up to twenty minutes in all.
 
-## The Desktops page
+## The Boxes page
 
-The sidebar entry lists every desktop box, as rows: glyph, name, the OS
-and badges, then the state, who has control, and the thread's title, with
-"Open" and an "Open thread" action. Your machines (036) come first, under
-"Your machines", titled by machine name and without "Open thread"; the
-threads' desktops follow under "Threads". Opening shows the same viewer
-with a back arrow in the toolbar, at `<thread>/<box>`; a box's terminal
-shows the same way at `<thread>/<box>/terminal`, which is how the settings
-page opens a machine's terminal, since it has no thread panel to open a
-tab in. Empty: "No thread has a desktop box. Make one from a thread's Box
-panel."
+The sidebar entry, "Boxes", lists every box across threads, servers as
+well as desktops, as rows: glyph (a monitor for a desktop, a server for
+the rest), name, the OS and badges, then the state, who has control for a
+desktop, and the thread's title. Its icon is BB's branding cube, which
+suits a page of boxes; the plugin names no icon of its own, since none
+would resolve (the plugin's id is not "bb-box"), so BB draws the cube.
+
+Each row carries the actions the box can take, as quick icon buttons:
+"Open desktop" for a ready desktop box, "Open terminal" once the box has
+one, "Open desktop in a browser tab" where a desktop exists, and "Open
+thread" for a thread's box. Your machines (036) come first, under "Your
+machines", titled by machine name and without "Open thread"; the threads'
+boxes follow under "Threads". Opening a desktop shows the same viewer with
+a back arrow in the toolbar, at `<thread>/<box>`; a box's terminal shows
+the same way at `<thread>/<box>/terminal`, which is how the settings page
+opens a machine's terminal, since it has no thread panel to open a tab in.
+Empty: "No boxes" — "No thread has a box, and you have no machines. Make
+one from a thread's Box panel."
 
 ## Copy
 

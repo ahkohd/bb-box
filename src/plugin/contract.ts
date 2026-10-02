@@ -31,8 +31,8 @@ export interface DesktopState {
   readonly terminalPath: string;
 }
 
-/** A desktop box in any thread, or one of your machines, for the Desktops page. */
-export interface DesktopEntry {
+/** A box in any thread, or one of your machines, for the Boxes page. */
+export interface BoxEntry {
   readonly threadId: string;
   readonly box: BoxView;
   /** "yours" for one of your machines (036). */
@@ -100,7 +100,8 @@ export const contract = defineRpcContract({
   desktop: { input: oneBox, output: z.custom<DesktopState>() },
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },
-  desktops: { input: z.null(), output: z.custom<DesktopEntry[]>() },
+  /** Every box across threads, servers as well as desktops, and your machines (036), for the Boxes page. */
+  allBoxes: { input: z.null(), output: z.custom<BoxEntry[]>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
   "machines.list": { input: z.null(), output: z.custom<{ machines: MachineEntry[]; kinds: KindView[] }>() },
   /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */
