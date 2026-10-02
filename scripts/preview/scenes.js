@@ -99,6 +99,7 @@ function kind(id, label, description, cores, desktop, gpu, spares = { target: 0,
     desktop,
     os: id.startsWith("macos") ? "macos" : "linux",
     arch: id.startsWith("macos") || id.includes("arm64") ? "arm64" : "x86_64",
+    windowing: id.includes("wayland") ? "wayland" : "x11",
     features: [],
     docker: !id.startsWith("macos"),
     enrol: true,
@@ -148,6 +149,16 @@ export const KINDS = [
     docker: false,
     forms: ["VM"],
     offers: [offer("proxmox-qemu", "Proxmox QEMU", ["pve"], "VM", { typicalReadyMs: 29000, resizable: true, docker: false })],
+  },
+];
+
+// A backend offering both an X11 CPU desktop and a Wayland one, so the New box form shows the Display choice (048).
+const WAYLAND_KINDS = [
+  ...KINDS,
+  {
+    ...kind("linux-desktop-wayland-cpu", "Linux desktop on Wayland", "A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there.", 4, true, false),
+    forms: ["LXC"],
+    offers: [offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { typicalReadyMs: 3200, resizable: true })],
   },
 ];
 
@@ -466,6 +477,24 @@ export const scenes = {
       await wait(300);
     },
   },
+  "panel-chooser-display": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 860,
+    rpc: rpc([], { kinds: WAYLAND_KINDS }),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      // A desktop shows the Display choice; Wayland drops the GPU and notes that X11-only apps need X11.
+      pick("radio", "Desktop");
+      await wait(200);
+      document.querySelector('[role="combobox"][aria-label="Display"]')?.click();
+      await wait(300);
+      [...document.querySelectorAll('[role="option"]')].find((option) => option.textContent.trim() === "Wayland")?.click();
+      await wait(300);
+    },
+  },
   "panel-chooser-windows": {
     slot: "boxes",
     chrome: boxesChrome,
@@ -567,9 +596,9 @@ export const scenes = {
   "desktop-stopped": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([{ ...desktop, state: "stopped" }]) },
   "desktop-released": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([]) },
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
-  "boxes-page": { slot: "boxes", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
-  "boxes-page-empty": { slot: "boxes", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
-  "boxes-page-starting": { slot: "boxes", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
+  "boxes-page": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
+  "boxes-page-empty": { slot: "boxes-page", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
+  "boxes-page-starting": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([], { machines: MACHINES }) },
   "settings-machines-empty": { slot: "settings", width: 860, height: 420, props: {}, rpc: rpc([]) },
   "settings-machines-add": {

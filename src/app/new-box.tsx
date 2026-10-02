@@ -14,8 +14,8 @@ import { cn } from "@/lib/utils";
 import type { KindView, ProviderProfile, SizeView } from "../plugin/views.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
-import type { GuestOs } from "../backends/types.ts";
-import { archAvailable, ARCHS, choiceOf, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
+import type { GuestOs, Windowing } from "../backends/types.ts";
+import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
@@ -120,7 +120,7 @@ export function NewBox({
   // The steps that pick the kind (the operator's redesign of 1 October 2026): the OS, the architecture, a desktop or not, a GPU.
   const [wanted, setWanted] = useState<Choice>(() => {
     const remembered = kinds.find((kind) => kind.id === last.kind);
-    return remembered ? choiceOf(remembered) : { os: "linux", arch: "x86_64", desktop: false, gpu: false };
+    return remembered ? choiceOf(remembered) : { os: "linux", arch: "x86_64", desktop: false, gpu: false, windowing: "x11" };
   });
   const [choice, setChoice] = useState<Choice2 | null>(last.size ?? null);
   /** The preset last chosen, which Custom starts from. */
@@ -172,9 +172,12 @@ export function NewBox({
   const picked = nearest(kinds, wanted);
   const kind = kindFor(kinds, picked);
   const systems = systemsOf(kinds);
-  const gpus = gpuChoices(kinds, picked.os, picked.arch);
+  const gpus = gpuChoices(kinds, picked.os, picked.arch, picked.windowing);
   /** A desktop whose system has a GPU desktop and a CPU one: the GPU is a choice. */
   const gpuChoice = picked.desktop && gpus.none && gpus.gpu;
+  const displays = displayChoices(kinds, picked.os, picked.arch);
+  /** A desktop whose system has both an X11 desktop and a Wayland one: the windowing is a choice (048). */
+  const displayChoice = picked.desktop && displays.x11 && displays.wayland;
   const offers = kind?.offers ?? [];
   const runsOnChoices = runsOnOptions(offers);
   const effectiveRunsOn: RunsOn = runsOnChoices.includes(runsOn as GuestOs) ? runsOn : "any";
@@ -335,6 +338,23 @@ export function NewBox({
               <OptionCard title="Desktop" words="Screen · Terminal · Computer use" glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
             </div>
           </FormSection>
+          {displayChoice ? (
+            // The windowing system, shown only when a system has both; X11 by default, so today's boxes are unchanged (048).
+            <FormSection title="Display">
+              <div className="space-y-1.5">
+                <MenuSelect
+                  label="Display"
+                  value={picked.windowing}
+                  options={[
+                    { value: "x11", label: "X11" },
+                    { value: "wayland", label: "Wayland" },
+                  ]}
+                  onChange={(value) => pick({ windowing: value as Windowing })}
+                />
+                {picked.windowing === "wayland" ? <p className="text-2xs leading-snug text-muted-foreground">Apps built only for X11 need an X11 desktop.</p> : null}
+              </div>
+            </FormSection>
+          ) : null}
           {kind ? (
             <FormSection title="Resources" description={`Configure the box's cores, memory${gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
               <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
