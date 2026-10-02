@@ -12,7 +12,7 @@ import type { BackendView, BoxView, DoctorView, KindView } from "../src/plugin/v
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
-import { accessWords, choiceOf, formFilterOf, kindFor, nearest, offersShown, providerGlyph, providerTitle, runsOnOptions, summaryWords, systemsOf } from "../src/app/box-form.tsx";
+import { choiceOf, formFilterOf, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type DesktopEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
@@ -267,6 +267,31 @@ function kindView(id: string, label: string, description: string, cores: number,
     computerUse: desktop,
   };
 }
+
+// jsdom has no scrollIntoView, which a menu calls on its chosen item.
+Element.prototype.scrollIntoView = () => {};
+
+/** Opens the labelled menu with the keyboard and picks the option. */
+async function choose(label: string, option: string): Promise<void> {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: label }), { key: "ArrowDown" });
+  const item = (await screen.findAllByRole("option")).find((candidate) => candidate.textContent === option);
+  if (!item) throw new Error(`No option "${option}" under ${label}`);
+  fireEvent.click(item);
+  // A filter's trigger carries its label ("Kind: All"); the GPU's carries the value alone.
+  await waitFor(() => expect(screen.getByRole("combobox", { name: label }).textContent?.endsWith(option)).toBe(true));
+}
+
+/** The menu's options, with "disabled" after one that cannot be chosen, and the menu closed again. */
+async function optionsOf(label: string): Promise<string[]> {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: label }), { key: "ArrowDown" });
+  const items = (await screen.findAllByRole("option")).map((candidate) => `${candidate.textContent}${candidate.getAttribute("aria-disabled") ? ":disabled" : ""}`);
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("option")).toBeNull());
+  return items;
+}
+
+/** The form's one button: Create box, or Add machine (the settings page has a button of that name that opens the form too). */
+const submitButton = () => document.querySelector('form button[type="submit"]') as HTMLButtonElement;
 
 const KINDS: KindView[] = [
   kindView("linux", "Linux", "For builds, servers, Docker and the agent's own work.", 2, false),
@@ -607,19 +632,14 @@ test("the panel makes a box by steps, System, Architecture, Type and Resources, 
   // A terminal is access, not a type (the operator's note): Server and Desktop are the types, with what each gives under it.
   const types = screen.getByRole("radiogroup", { name: "Type" });
   expect(within(types).getAllByRole("radio").map((option) => option.textContent)).toEqual(["ServerTerminal", "DesktopScreen · Terminal · Computer use"]);
-  expect(screen.getByText("Linux · x86_64 · Server on pve · 2 cores · 4 GiB")).toBeTruthy();
-  expect(screen.getByText("Access").parentElement!.textContent).toBe("AccessTerminal");
   fireEvent.click(within(types).getByRole("radio", { name: /^Desktop/ }));
-  expect(screen.getByText("Linux · x86_64 · Desktop on pve · 4 cores · 8 GiB · 1 GPU")).toBeTruthy();
-  expect(screen.getByText("Access").parentElement!.textContent).toBe("AccessTerminalDesktopComputer use");
   // One provider is no choice: its row stands alone, checked, named by its host and never by an ID.
   const providers = screen.getByRole("radiogroup", { name: "Provider" });
   expect(within(providers).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["pveContainer · usually ~3.1 s:true"]);
   const sizes = screen.getByRole("radiogroup", { name: "Size" });
   expect(within(sizes).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["Small4 cores · 8 GiB:true", "Medium8 cores · 16 GiB:false", "Large16 cores · 32 GiB:false", "Customup to 32 cores:false"]);
   fireEvent.click(within(sizes).getByRole("radio", { name: /^Large/ }));
-  expect(screen.getByText("Linux · x86_64 · Desktop on pve · 16 cores · 32 GiB · 1 GPU")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
 
   expect(await slot.findByText("new-box")).toBeTruthy();
   expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}']);
@@ -632,8 +652,28 @@ test("the panel makes a box by steps, System, Architecture, Type and Resources, 
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   expect(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }).getAttribute("aria-checked")).toBe("true");
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Small/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}', "acquire linux-desktop"]));
+});
+
+test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from a menu", async () => {
+  const cpu: KindView = { ...kindView("linux-desktop-cpu", "Linux desktop", "A desktop on the CPU.", 4, true), gpu: false };
+  const { handlers, changes } = server([], { kinds: [...KINDS, cpu] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("radiogroup", { name: "Type" });
+  expect(screen.queryByRole("combobox", { name: "GPU" })).toBeNull();
+  expect(screen.queryByRole("heading", { level: 3, name: "GPU" })).toBeNull();
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  // Desktop opens on the CPU desktop; the GPU is a section of its own, before Provider, and 1 GPU names the GPU kind.
+  expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["System", "Architecture", "Type", "GPU", "Provider", "Resources"]);
+  expect(screen.getByText("One of the host's GPUs for the desktop, or none, and the CPU draws it.")).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("None");
+  expect(await optionsOf("GPU")).toEqual(["None", "1 GPU"]);
+  await choose("GPU", "1 GPU");
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes).toEqual(["acquire linux-desktop"]));
 });
 
 test("a provider row says how many spares it has ready now (#121)", async () => {
@@ -673,7 +713,7 @@ test("a custom size starts from the preset in view, sends only its filled fields
   expect(screen.getByText("up to 256")).toBeTruthy();
 
   fireEvent.change(cores, { target: { value: "six" } });
-  expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(submitButton().disabled).toBe(true);
   fireEvent.change(cores, { target: { value: "6" } });
   fireEvent.change(memory, { target: { value: "12" } });
 
@@ -685,7 +725,7 @@ test("a custom size starts from the preset in view, sends only its filled fields
   fireEvent.click(within(types).getByRole("radio", { name: /^Server/ }));
   expect([(screen.getByLabelText(/^Cores/) as HTMLInputElement).value, (screen.getByLabelText(/^Memory, GiB/) as HTMLInputElement).value]).toEqual(["6", "12"]);
 
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux {"cores":6,"memoryGiB":12}']));
   expect(JSON.parse(window.localStorage.getItem("bb-box:new-box") ?? "{}")).toEqual({ kind: "linux", size: "custom", custom: { linux: { cores: "6", memoryGiB: "12", diskGiB: "" } } });
 });
@@ -695,7 +735,7 @@ test("a refused box stays in the form with the reason", async () => {
   const slot = panel(handlers);
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create box" }));
   expect((await screen.findByRole("alert")).textContent).toBe("pve has no memory left. Release a box you no longer need.");
   expect(screen.getByRole("radiogroup", { name: "System" })).toBeTruthy();
 });
@@ -1438,16 +1478,17 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   expect(await slot.findByText(/Add a box as a BB machine of your own/)).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Add machine" }));
   expect(await screen.findByText("Of the kinds whose boxes join BB.")).toBeTruthy();
+  expect(screen.getByText("Optional; bb-box picks one when it is left empty.")).toBeTruthy();
   const name = screen.getByRole("textbox", { name: "Name" });
-  expect(name.getAttribute("placeholder")).toBe("optional; bb-box picks one");
   fireEvent.change(name, { target: { value: "Build 1" } });
   expect(screen.getByText("Lowercase letters, digits and hyphens, starting with a letter, up to 32 characters.")).toBeTruthy();
-  expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(submitButton().disabled).toBe(true);
   fireEvent.change(name, { target: { value: "build-" } });
   expect(screen.getByText("A name cannot end with a hyphen.")).toBeTruthy();
   fireEvent.change(name, { target: { value: "build-1" } });
   expect(screen.queryByRole("alert")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  expect(submitButton().textContent).toBe("Add machine");
+  fireEvent.click(submitButton());
   await waitFor(() => expect(changes).toEqual(["machines.add linux build-1"]));
   expect(await slot.findByText("build-1")).toBeTruthy();
   expect(slot.getByText("Starting")).toBeTruthy();
@@ -1510,8 +1551,8 @@ test("an arm64 kind carries an arm64 badge, and macOS, always arm64, does not (0
   const types = screen.getByRole("radiogroup", { name: "Type" });
   expect(within(types).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-disabled")}`)).toEqual(["ServerTerminal:null", "DesktopNot available:true"]);
   fireEvent.click(within(types).getByRole("radio", { name: /^Desktop/ }));
-  expect(screen.getByText("Linux · arm64 · Server on pve · 2 cores · 4 GiB")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(within(types).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux-arm64"]));
 });
 
@@ -1536,24 +1577,21 @@ test("the steps narrow each other: a system with no server snaps to Desktop, the
   fireEvent.click(within(systems).getByRole("radio", { name: /^Windows/ }));
   const types = screen.getByRole("radiogroup", { name: "Type" });
   expect(within(types).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["ServerNot available:false", "DesktopScreen · Terminal · Computer use:true"]);
-  // Kind chips grey out when no provider makes that form; Runs on lists the machines the providers run on.
-  const chips = screen.getByRole("group", { name: "Kind" });
-  expect(within(chips).getAllByRole("button").map((chip) => `${chip.textContent}:${chip.getAttribute("aria-pressed")}:${chip.getAttribute("aria-disabled")}`)).toEqual(["All:true:null", "Container:false:true", "VM:false:null", "Physical:false:true"]);
-  expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("Any machine");
+  // The Kind menu keeps an option no provider makes, but it cannot be chosen; Runs on lists the machines the providers run on.
+  expect(screen.getByRole("combobox", { name: "Kind" }).textContent).toBe("Kind:All");
+  expect(await optionsOf("Kind")).toEqual(["All", "Container:disabled", "VM", "Physical:disabled"]);
+  expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("Runs on:Any machine");
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pve1VM · usually ~30.0 s"]);
-  expect(screen.getByText("Windows · x86_64 · Desktop on pve1 · 4 cores · 8 GiB")).toBeTruthy();
-  expect(screen.getByText("Access").parentElement!.textContent).toBe("AccessTerminalDesktopComputer use");
-  expect(screen.queryByText("1 GPU")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "GPU" })).toBeNull();
 
-  // Back on Linux, Physical keeps the pool only, hides Runs on, and the request names the one provider left (044 takes one).
+  // Back on Linux, Physical keeps the pool only, hides Runs on, and the request names the one provider left.
   fireEvent.click(within(systems).getByRole("radio", { name: /^Linux/ }));
   fireEvent.click(within(types).getByRole("radio", { name: /^Server/ }));
-  fireEvent.click(within(chips).getByRole("button", { name: "Physical" }));
+  await choose("Kind", "Physical");
   expect(screen.queryByRole("combobox", { name: "Runs on" })).toBeNull();
   const providers = screen.getByRole("radiogroup", { name: "Provider" });
   expect(within(providers).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}`)).toEqual(["First with roomThe one below:true", "SSH host poolPhysical · 1 free:false"]);
-  expect(screen.getByText("Linux · x86_64 · Server on SSH host pool · 2 cores · 4 GiB")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux on ssh-pool"]));
 });
 
@@ -1568,10 +1606,9 @@ test("the providers are a choice, First with room first, which goes with the req
     "pveContainer · usually ~2.2 s:false",
     "SSH host poolPhysical · 1 free:false",
   ]);
-  expect(screen.getByText("Linux · x86_64 · Server on first provider with room · 2 cores · 4 GiB")).toBeTruthy();
   fireEvent.click(within(providers).getByRole("radio", { name: /^SSH host pool/ }));
-  expect(screen.getByText("Linux · x86_64 · Server on SSH host pool · 2 cores · 4 GiB")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(within(providers).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["false", "false", "true"]);
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux on ssh-pool"]));
 
   // The choice is not remembered: the form opens on First with room again, and another type puts it back too.
@@ -1597,8 +1634,6 @@ test("Runs on keeps the providers on that machine, and one that does not know it
       { backend: "docker:host_1", name: "Docker", type: "docker", label: "Docker", hosts: [], form: "Docker", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: null, docker: true, hostOs: null },
     ],
   };
-  // jsdom has no scrollIntoView, which the menu calls on its chosen item.
-  Element.prototype.scrollIntoView = () => {};
   const { handlers, changes } = server([], { kinds: [mixed, KINDS[1]!] });
   const slot = panel(handlers);
   await slot.findByText("No boxes yet");
@@ -1607,28 +1642,22 @@ test("Runs on keeps the providers on that machine, and one that does not know it
   expect(within(providers).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomAny of the 3 below, in order", "pveContainer · usually ~2.2 s", "mac-miniVM · usually ~26.0 s", "an unnamed machineContainer"]);
   expect(screen.queryByText(/host_1/)).toBeNull();
   // The menu lists the machines the providers run on, Macs first; the one that does not know yet adds none.
-  const runsOn = screen.getByRole("combobox", { name: "Runs on" });
-  fireEvent.keyDown(runsOn, { key: "ArrowDown" });
-  const options = await screen.findAllByRole("option");
-  expect(options.map((option) => option.textContent)).toEqual(["Any machine", "a Mac", "a Linux machine"]);
-  fireEvent.click(options[1]!);
-  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("a Mac"));
+  expect(await optionsOf("Runs on")).toEqual(["Any machine", "a Mac", "a Linux machine"]);
+  await choose("Runs on", "a Mac");
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomAny of the 2 below, in order", "mac-miniVM · usually ~26.0 s", "an unnamed machineContainer"]);
   // First with room among the providers the filters left sends them as a list, so the box never lands outside the filter (044).
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux on tart,docker:host_1"]));
   await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
 
   // Reopened, the filters are back; Container on a Mac leaves the Docker machine, which the request then names alone.
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  expect((await screen.findByRole("combobox", { name: "Runs on" })).textContent).toBe("Any machine");
-  fireEvent.keyDown(screen.getByRole("combobox", { name: "Runs on" }), { key: "ArrowDown" });
-  fireEvent.click((await screen.findAllByRole("option"))[1]!);
-  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("a Mac"));
-  fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Container" }));
+  expect((await screen.findByRole("combobox", { name: "Runs on" })).textContent).toBe("Runs on:Any machine");
+  expect(screen.getByRole("combobox", { name: "Kind" }).textContent).toBe("Kind:All");
+  await choose("Runs on", "a Mac");
+  await choose("Kind", "Container");
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomThe one below", "an unnamed machineContainer"]);
-  expect(screen.getByText("Linux · x86_64 · Server on an unnamed machine · 2 cores · 4 GiB")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux on tart,docker:host_1", "acquire linux on docker:host_1"]));
 });
 
@@ -1639,26 +1668,27 @@ test("filters that leave no provider disable Create and say so", async () => {
     forms: ["LXC", "VM"],
     offers: [KINDS[0]!.offers[0]!, { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos" }],
   };
-  Element.prototype.scrollIntoView = () => {};
   const { handlers, changes } = server([], { kinds: [pair, KINDS[1]!] });
   const slot = panel(handlers);
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
-  fireEvent.click(within(await screen.findByRole("group", { name: "Kind" })).getByRole("button", { name: "Container" }));
-  fireEvent.keyDown(screen.getByRole("combobox", { name: "Runs on" }), { key: "ArrowDown" });
-  fireEvent.click((await screen.findAllByRole("option"))[1]!);
-  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs on" }).textContent).toBe("a Mac"));
-  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomNo provider matches these filters"]);
-  expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await screen.findByRole("combobox", { name: "Kind" });
+  await choose("Kind", "Container");
+  await choose("Runs on", "a Mac");
+  expect(within(screen.getByRole("radiogroup", { name: "Provider" })).queryAllByRole("radio")).toEqual([]);
+  expect(screen.getByText("No provider matches these filters.")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(submitButton().disabled).toBe(true);
+  fireEvent.click(submitButton());
   expect(changes).toEqual([]);
-  // All brings the Mac back, and Create with it.
-  fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "All" }));
+  // All brings the Mac back, and Create box with it.
+  await choose("Kind", "All");
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["First with roomThe one below", "mac-miniVM · usually ~26.0 s"]);
-  expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.queryByText("No provider matches these filters.")).toBeNull();
+  expect(submitButton().disabled).toBe(false);
 });
 
-test("the form's words: a provider's title, the systems' hosts, the nearest choice, the filters, the summary and the access", () => {
+test("the form's words: a provider's title, the systems' hosts, the nearest choice and the filters", () => {
   const linux = KINDS[0]!;
   const offer = linux.offers[0]!;
   expect(providerTitle(offer)).toBe("pve");
@@ -1687,16 +1717,11 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   expect(offersShown([offer, pool, docker, tart], "all", "macos").map((shown) => shown.backend)).toEqual(["docker:1", "tart"]);
   expect(offersShown([offer, pool, docker, tart], "container", "any").map((shown) => shown.backend)).toEqual(["fake", "docker:1"]);
   expect(offersShown([offer, pool, docker, tart], "physical", "macos").map((shown) => shown.backend)).toEqual(["ssh-pool"]);
-  expect(summaryWords({ os: "linux", arch: "x86_64", desktop: true, gpu: true }, KINDS[1]!, null, { cores: 4, memoryGiB: 8 })).toBe("Linux · x86_64 · Desktop on first provider with room · 4 cores · 8 GiB · 1 GPU");
-  expect(summaryWords({ os: "macos", arch: "arm64", desktop: false, gpu: false }, mac, mac.offers[0]!, null)).toBe("macOS · arm64 · Server on mac-mini");
-  expect(accessWords(KINDS[1]!, choiceOf(KINDS[1]!))).toEqual(["Terminal", "Desktop", "Computer use"]);
-  expect(accessWords(linux, choiceOf(linux))).toEqual(["Terminal"]);
   // The name the server made, which `on` takes too (044).
   expect(providerName({ type: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
   expect(providerName({ type: "tart", label: "Tart (VMs on a Mac)", hosts: ["mac-mini"] })).toBe("Tart on mac-mini");
   expect(providerName({ type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
   expect(providerKeys("docker:devpc", { type: "docker", label: "Docker", hosts: ["devpc"] })).toEqual(["docker on devpc", "docker:devpc", "devpc"]);
-  expect(["proxmox-lxc", "proxmox-qemu", "docker", "tart", "ssh-pool", "fake"].map((type) => providerGlyph({ ...offer, type }))).toEqual(["proxmox", "proxmox", "docker", "laptop", "plug", "server"]);
   // The badge: a Linux kind or box without Docker, not one whose offers differ, nor another OS (041).
   expect([lacksDocker({ os: "linux", docker: false }), lacksDocker({ os: "linux", docker: null }), lacksDocker({ os: "linux", docker: true }), lacksDocker({ os: "windows", docker: false })]).toEqual([true, false, false, false]);
 });

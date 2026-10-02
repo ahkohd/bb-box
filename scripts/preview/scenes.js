@@ -386,7 +386,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 600,
+    height: 780,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -397,7 +397,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 600,
+    height: 780,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -411,21 +411,23 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 480,
+    height: 740,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
-      // The Physical chip keeps the pool only and hides Runs on.
-      [...document.querySelectorAll('[role="group"][aria-labelledby="new-box-kind-filter"] button')].find((chip) => chip.textContent.trim() === "Physical")?.click();
-      await wait(200);
+      // Kind: Physical keeps the pool only and hides Runs on.
+      document.querySelector('[role="combobox"][aria-label="Kind"]')?.click();
+      await wait(300);
+      [...document.querySelectorAll('[role="option"]')].find((option) => option.textContent.trim() === "Physical")?.click();
+      await wait(300);
     },
   },
   "panel-chooser-windows": {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 470,
+    height: 700,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -439,7 +441,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 568,
-    height: 760,
+    height: 940,
     viewport: 600,
     rpc: rpc([]),
     after: async (root) => {
@@ -451,7 +453,7 @@ export const scenes = {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
-    height: 640,
+    height: 900,
     rpc: rpc([]),
     after: async (root) => {
       click(root, "button", "New box");
@@ -465,14 +467,14 @@ export const scenes = {
   "panel-refused": {
     slot: "boxes",
     chrome: boxesChrome,
-    height: 620,
+    height: 880,
     rpc: rpc([], { refuse: "pve has 10 GiB of memory free. A Linux desktop box needs 8 GiB and 4 GiB is kept free. Release a box you no longer need, or pick another kind." }),
     after: async (root) => {
       click(root, "button", "New box");
       await wait(300);
       pick("radio", "Desktop");
       pick("radio", "Large");
-      click(document.body, "button", "Create");
+      click(document.body, "button", "Create box");
       await wait(300);
     },
   },
@@ -528,7 +530,7 @@ export const scenes = {
   "settings-machines-add": {
     slot: "settings",
     width: 860,
-    height: 640,
+    height: 840,
     props: {},
     rpc: rpc([]),
     after: async (root) => {

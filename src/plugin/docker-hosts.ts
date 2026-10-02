@@ -12,6 +12,7 @@
 // host is bb:<machine ID>, last in acquire order; off removes it, or, while
 // it still has boxes, turns it off so it takes no new ones.
 
+import type { BackendStorage, GuestOs } from "../backends/types.ts";
 import type { BackendConfig, ConfigDocument } from "../core/document.ts";
 import type { DockerInfo } from "../backends/docker/cli.ts";
 import type { ImageBuild } from "./docker-images.ts";
@@ -198,4 +199,38 @@ export function withDockerHost(document: ConfigDocument, machine: { readonly id:
   if (!existing) return document;
   if (boxes > 0) return { ...document, backends: document.backends.map((backend) => (backend === existing ? { ...backend, enabled: false } : backend)) };
   return { ...document, backends: document.backends.filter((backend) => backend !== existing) };
+}
+
+const PLATFORMS_KEY = "machine-platforms";
+
+/**
+ * Each BB machine's OS, as bb-box's host entry there last reported it, kept
+ * in storage so a restart knows a Windows PC before the entry has answered
+ * again (the "Runs on" filter had lacked it for a minute after each deploy).
+ */
+export class MachinePlatforms {
+  readonly #kv: BackendStorage;
+  readonly #known = new Map<string, GuestOs>();
+
+  constructor(kv: BackendStorage) {
+    this.#kv = kv;
+  }
+
+  /** Reads what the last run kept. */
+  async load(): Promise<void> {
+    const kept = await this.#kv.get<Record<string, GuestOs>>(PLATFORMS_KEY).catch(() => null);
+    for (const [hostId, os] of Object.entries(kept ?? {})) this.#known.set(hostId, os);
+  }
+
+  get(hostId: string): GuestOs | null {
+    return this.#known.get(hostId) ?? null;
+  }
+
+  /** Records what the host entry said, and says whether that is news, so panels can be told. */
+  async learn(hostId: string, os: GuestOs): Promise<boolean> {
+    if (this.#known.get(hostId) === os) return false;
+    this.#known.set(hostId, os);
+    await this.#kv.set(PLATFORMS_KEY, Object.fromEntries(this.#known)).catch(() => {});
+    return true;
+  }
 }
