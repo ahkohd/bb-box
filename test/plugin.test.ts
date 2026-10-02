@@ -2245,6 +2245,50 @@ test("pixels count only against the agent's latest image of the window or the de
   assert.match(observed, /\n\nImage 1568x78 of window 4000x200, scale 0\.392; x and y are image pixels\./);
 });
 
+test("a click on an element the desktop cannot click as an element goes to the element's centre (048)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.wayland = true;
+    desktop.windows[0]!.noActions = true;
+  });
+  /** The clicks and reads sent since call `from`. */
+  const sent = (from: number) =>
+    readDesktop(file)
+      .calls.slice(from)
+      .filter(({ tool }) => tool === "click" || tool === "get_window_state")
+      .map(({ tool, args }) => (tool === "click" ? `click ${args.x === undefined ? "element" : `(${String(args.x)}, ${String(args.y)})`} ${String(args.delivery_mode)}` : `read${args.include_screenshot ? " with image" : ""}`));
+
+  // With no image of the window in this session, bb-box reads it with one first.
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const deleteThree = refOf(tree, 'push button "Delete Task 3"');
+  const deleteTwo = refOf(tree, 'push button "Delete Task 2"');
+  let from = readDesktop(file).calls.length;
+  const clicked = text(await tool("computer_act", { box: box.name, action: "click", ref: deleteThree }));
+  assert.match(
+    clicked,
+    new RegExp(`^Clicked ${deleteThree} \\(push button 'Delete Task 3'\\) at its centre, with the real pointer \\(the desktop's focus may have moved\\)\\. The desktop could not click it as an element, so bb-box clicked where it is drawn\\.`),
+  );
+  assert.match(clicked, /- \[e\d+\] list item "Task 3"/);
+  assert.deepEqual(readDesktop(file).tasks["100"], ["Task 1", "Task 2"]);
+  // Its frame, (800, 225) on the screen and 90 by 30, is (745, 140) in the window at (100, 100).
+  assert.deepEqual(sent(from).slice(0, 4), ["click element background", "read with image", "click (745, 140) background", "click (745, 140) foreground"]);
+
+  // With an image of the window in this session, it clicks at once.
+  await tool("computer_screenshot", { box: box.name, window: 100 });
+  from = readDesktop(file).calls.length;
+  assert.match(text(await tool("computer_act", { box: box.name, action: "double_click", ref: deleteTwo })), new RegExp(`^Double-clicked ${deleteTwo} \\(push button 'Delete Task 2'\\) at its centre,`));
+  assert.deepEqual(sent(from).slice(0, 3), ["click element background", "click (745, 100) background", "click (745, 100) foreground"]);
+  assert.deepEqual(lastCall(file, "click")?.args, { pid: 5000, window_id: 100, x: 745, y: 100, button: "left", count: 2, delivery_mode: "foreground" });
+
+  // The pixels are those of Cua's image of the window, which is smaller than a wide window.
+  const launched = text(await tool("computer_launch", { box: box.name, app: "wide" }));
+  const wide = Number(/window (\d+): wide/.exec(launched)?.[1]);
+  const whole = refOf(text(await tool("computer_observe", { box: box.name, window: wide })), 'frame "wide"');
+  assert.match(text(await tool("computer_act", { box: box.name, action: "right_click", ref: whole })), new RegExp(`^Right-clicked ${whole} \\(frame 'wide'\\) at its centre,`));
+  assert.deepEqual(lastCall(file, "click")?.args, { pid: 5001, window_id: wide, x: 784, y: 39, button: "right", count: 1, delivery_mode: "foreground" });
+});
+
 test("computer_launch opens apps and URLs and says which windows opened", async (t) => {
   const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 500, pageWaitMs: 1_500 } });
   t.after(() => harness.lifecycle.dispose());
