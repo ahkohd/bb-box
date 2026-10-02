@@ -123,9 +123,9 @@ from the default preset. A size above the largest is refused. A backend that
 cannot make a size says so, and bb-box tries the next backend that offers
 the kind. `box_status` shows the size the box has, read from its guest. The
 SSH host pool lends the smallest free machine of at least the size, so its
-box may have more. A Tart macOS box keeps its image's disk, so Tart refuses
-a `disk_gib` for now. A Docker box shares its host's disk, so Docker refuses
-one too.
+box may have more. A Tart macOS or Linux box keeps its image's disk, so
+Tart refuses it a `disk_gib` for now. A Docker box shares its host's disk,
+so Docker refuses one too.
 
 `bb box acquire <kind>` takes `--size`, `--cores`, `--memory-gib` and
 `--disk-gib`.

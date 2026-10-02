@@ -13,8 +13,9 @@
 //   the file for a moment, and is paused; a file that holds "corrupt" does
 //   not load, and QEMU exits, as it does. It ends on quit, on SIGTERM, when
 //   its pid file goes, or after two minutes, so no test leaves one running.
-// - `qemu-img create -f qcow2 -F qcow2 -b <base> <file>` writes an overlay that
-//   names its base.
+// - `qemu-img create -f qcow2 -F qcow2 -b <base> <file> [<n>G]` writes an
+//   overlay that names its base, and its size when given. `qemu-img info -U
+//   <file>` says a disk is that size, or 64 GiB.
 // - `nc -U <socket>` joins its input and output to a Unix socket; `nc -z
 //   <host> <port>` says whether something listens there.
 //
@@ -128,11 +129,17 @@ function qemu() {
 
 function qemuImg() {
   const [command, ...rest] = args;
+  // The arguments that are neither an option nor its value.
+  const [file, size] = rest.filter((arg, i) => !arg.startsWith("-") && !["-f", "-F", "-b"].includes(rest[i - 1]));
+  if (command === "info" && file) {
+    if (!existsSync(file)) fail(`qemu-img: Could not open '${file}': No such file or directory`);
+    const gib = Number(/^size (\d+)G$/m.exec(readFileSync(file, "utf8"))?.[1] ?? 64);
+    return console.log(`image: ${file}\nfile format: qcow2\nvirtual size: ${gib} GiB (${gib * 2 ** 30} bytes)\ndisk size: 196 KiB`);
+  }
   const base = option("-b");
-  const file = rest[rest.length - 1];
-  if (command !== "create" || !base || !file) fail(`fake qemu-img does not know ${args.join(" ")}`);
+  if (command !== "create" || !base || !file || (size && !/^\d+G$/.test(size))) fail(`fake qemu-img does not know ${args.join(" ")}`);
   if (!existsSync(base)) fail(`qemu-img: ${file}: Could not open backing file: Could not open '${base}': No such file or directory`);
-  writeFileSync(file, `overlay on ${base}\n`);
+  writeFileSync(file, `overlay on ${base}\n${size ? `size ${size}\n` : ""}`);
 }
 
 function nc() {

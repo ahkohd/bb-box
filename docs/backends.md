@@ -371,9 +371,14 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   most two (Linux VMs do not count, as the framework does not count them);
   `memory`, less a reserve and every running VM's; and `disk`. A
   box gets its size's cores and memory with `tart set`, and may not have
-  more cores than the Mac. It keeps its image's disk, so a disk size is
-  refused for now. `Guest.size` comes from the VM's
+  more cores than the Mac. A macOS or Linux box keeps its image's disk, so
+  a disk size is refused for now. `Guest.size` comes from the VM's
   config.json, with `diskGiB` null.
+- A Windows box (046) may have a disk larger than the image's. What it
+  grows by must be free beyond the disk reserve, as on Proxmox, though its
+  overlay takes only what Windows writes. The overlay is made at that size,
+  the acquire extends C: over it once SSH answers, and the VM's config
+  keeps the size for `Guest.size`, whose `diskGiB` is null for the image's.
 - Linux boxes on arm64 (040) are clones of a second image, which runs the
   Linux template's guest scripts. They work as user `box`, run with no VNC
   server, and stop by shutting down, since Tart cannot resume a Linux VM;

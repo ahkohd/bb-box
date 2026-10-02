@@ -364,10 +364,13 @@ A suspended VM takes no slot and no memory.
 
 - **Sizes.** A box gets the cores and memory of its size. bb-box refuses a
   size with more cores than the Mac has, or more memory than the Mac has
-  left after its running VMs and the reserve. A box keeps its image's disk:
-  growing a macOS VM's disk needs its recovery partition removed and its
-  APFS container grown inside the guest, so bb-box refuses a disk size for
-  now. The box's size, as status shows it, comes from the VM's config.
+  left after its running VMs and the reserve. A macOS or Linux box keeps its
+  image's disk: growing a macOS VM's disk needs its recovery partition
+  removed and its APFS container grown inside the guest, so bb-box refuses
+  a disk size for now. A Windows box may have a larger disk than the
+  image's, if the Mac has what it grows by free beyond the reserve, and
+  Windows extends C: over it; the disk takes only what Windows writes. The
+  box's size, as status shows it, comes from the VM's config.
 
 - **Acquire.** The box's VM is named `bb-box-<box ID>`. bb-box writes its
   owner file, `~/.bb-box/tart/owners/<VM>`, first, naming this install, the
