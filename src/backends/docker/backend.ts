@@ -178,6 +178,16 @@ function ownerOf(labels: Readonly<Record<string, string>>): BoxOwner | null {
   };
 }
 
+/** An image's labels, from `docker image inspect --format '{{json .Config.Labels}}'`. */
+function imageLabels(text: string): Record<string, unknown> {
+  try {
+    return (JSON.parse(text) as Record<string, unknown> | null) ?? {};
+  } catch {
+    // An image without labels prints null.
+    return {};
+  }
+}
+
 function dataOf(container: ContainerInfo): Record<string, string> {
   const box = container.labels[LABELS.box];
   const gpu = container.labels[LABELS.gpu];
@@ -187,9 +197,11 @@ function dataOf(container: ContainerInfo): Record<string, string> {
 /**
  * The kinds a config offers: those with an image. A box has Docker when the
  * setting is on and the host is not rootless Docker, which cannot run the
- * privileged containers it needs (041).
+ * privileged containers it needs (041). A GPU desktop has it only when its
+ * image can point Xorg at the GPU placed (`gpuDocker`), as an image built
+ * before #283 cannot.
  */
-export function dockerKinds(config: DockerConfig, rootless = false): BoxKind[] {
+export function dockerKinds(config: DockerConfig, rootless = false, gpuDocker = true): BoxKind[] {
   const docker = config.docker && !rootless ? ["docker"] : [];
   const kinds: Record<DockerKind, BoxKind> = {
     linux: {
@@ -218,7 +230,7 @@ export function dockerKinds(config: DockerConfig, rootless = false): BoxKind[] {
         os: "linux",
         arch: "x86_64",
         gpu: true,
-        features: docker,
+        features: gpuDocker ? docker : [],
         command: DOCKER_COMMAND,
         // As in a Proxmox LXC box, x0vncserver on the GPU refuses a viewer's
         // resize, so transports() gives this display a resize that runs xrandr (021).
@@ -268,9 +280,13 @@ export class DockerBackend implements Backend {
   readonly #kinds: BoxKind[];
   /** The kinds on a rootless Docker host, which has no Docker to give boxes. */
   readonly #rootlessKinds: BoxKind[];
+  /** The kinds when the desktop image cannot point Xorg at the GPU placed, so a GPU desktop has no Docker (#283). */
+  readonly #oldDesktopKinds: BoxKind[];
   readonly #cli: DockerCli;
   /** The daemon's facts, as it last gave them. */
   #info: DockerInfo | null = null;
+  /** Whether the desktop image's start points Xorg at the GPU placed, from its labels as last seen; null until bb-box has looked (#283). */
+  #gpuBusId: boolean | null = null;
   /** The host's name as last known, kept in storage so a restart shows it before the daemon or BB has answered again (#265). */
   #knownName: string | null = null;
   /** The host's OS as last learned, from BB for a BB machine or from the daemon over ssh://, kept with the name. */
@@ -287,6 +303,7 @@ export class DockerBackend implements Backend {
     this.#options = options;
     this.#kinds = dockerKinds(config);
     this.#rootlessKinds = dockerKinds(config, true);
+    this.#oldDesktopKinds = dockerKinds(config, false, false);
     const machine = config.machine;
     const machines = context.machines;
     this.#cli = machine
@@ -378,14 +395,28 @@ export class DockerBackend implements Backend {
     return this.#config.host ? [hostWords(this.#config.host)] : [];
   }
 
-  /** The kinds, with Docker until the daemon has said it is rootless. */
+  /** The kinds, with Docker until the daemon has said it is rootless, and a GPU desktop's until its image has said it is too old. */
   kinds(): BoxKind[] {
-    return this.#info?.rootless ? this.#rootlessKinds : this.#kinds;
+    if (this.#info?.rootless) return this.#rootlessKinds;
+    return this.#gpuBusId === false ? this.#oldDesktopKinds : this.#kinds;
   }
 
-  /** Whether a box of `kind` is a privileged container with its own Docker daemon (041). */
+  /**
+   * Whether a box of `kind` is a privileged container with its own Docker
+   * daemon (041). A privileged GPU desktop sees every GPU on the host, so it
+   * is one only when its image's start can point Xorg at the GPU placed (#283).
+   */
   #privileged(kind: string): boolean {
-    return this.#config.docker && !this.#info?.rootless;
+    return this.#config.docker && !this.#info?.rootless && (kind !== "linux-desktop" || this.#gpuBusId === true);
+  }
+
+  /** Reads from the desktop image's labels whether its start points Xorg at the GPU placed, keeping what was known when it cannot (#283). */
+  async #readGpuBusId(signal?: AbortSignal): Promise<void> {
+    const image = this.#config.images["linux-desktop"];
+    if (!image || !this.#config.docker) return;
+    const result = await this.#cli.run(["image", "inspect", "--format", "{{json .Config.Labels}}", image], { timeoutMs: 30_000, signal }).catch(() => null);
+    if (result?.exitCode !== 0) return;
+    this.#gpuBusId = imageLabels(result.stdout)[LABELS.gpuBusId] === "1";
   }
 
   #kind(id: string): BoxKind {
@@ -418,7 +449,7 @@ export class DockerBackend implements Backend {
     }
     let state: HostState;
     try {
-      state = await this.#state(signal);
+      [state] = await Promise.all([this.#state(signal), kind === "linux-desktop" ? this.#readGpuBusId(signal) : null]);
     } catch (error) {
       if (signal?.aborted) throw error;
       return {
@@ -740,14 +771,19 @@ export class DockerBackend implements Backend {
           push(id, name, "fail", `${info.name} has no image ${image}, which ${kinds} boxes run. bb-box never pulls images.`, this.#buildFix("Build it with setup/docker/build.sh, or pull or load it on the Docker host."));
           continue;
         }
-        let labels: Record<string, unknown> = {};
-        try {
-          labels = (JSON.parse(result.stdout) as Record<string, unknown> | null) ?? {};
-        } catch {
-          // An image without labels prints null.
-        }
+        const labels = imageLabels(result.stdout);
+        const gpuDesktops = image === this.#config.images["linux-desktop"];
+        if (gpuDesktops) this.#gpuBusId = labels[LABELS.gpuBusId] === "1";
         const built = labels[LABELS.imageVersion];
-        if (built === IMAGE_VERSION) {
+        if (built === IMAGE_VERSION && gpuDesktops && !this.#gpuBusId && this.#config.docker && !info.rootless) {
+          push(
+            id,
+            name,
+            "warn",
+            "Built before GPU desktops could have Docker, so they have none: its start cannot point Xorg at the GPU placed in a privileged container (#283).",
+            this.#buildFix("Build it again with this bb-box's setup/docker/build.sh to give GPU desktops Docker."),
+          );
+        } else if (built === IMAGE_VERSION) {
           push(id, name, "ok", `For ${kinds} boxes, built by setup/docker/build.sh (layout ${IMAGE_VERSION}).`);
         } else {
           push(
@@ -923,6 +959,7 @@ export class DockerBackend implements Backend {
       [LABELS.created]: String(box.createdAt),
       ...(gpu ? { [LABELS.gpu]: gpu } : {}),
     };
+    if (box.kind === "linux-desktop" && gpu) await this.#readGpuBusId(signal);
     const privileged = this.#privileged(box.kind);
     const extra = [
       // Docker's own data on a volume, since overlayfs cannot hold overlayfs.

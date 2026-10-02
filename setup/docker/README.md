@@ -243,7 +243,10 @@ every GPU on the host: its start script asks `nvidia-smi` for the PCI bus ID
 of the GPU placed, and gives it to Xorg as its `BusID` and to the display,
 which reads that GPU's free memory (#283). When the GPU cannot be found or
 cannot drive the display, the desktop falls back to the CPU, as on Proxmox
-LXC, and the reason is in the container's log.
+LXC, and the reason is in the container's log. A desktop image built before
+this lacks the `bbbox.gpu-bus-id` label. A GPU desktop on such an image stays
+unprivileged and says No Docker, and the doctor warns, until the image is
+built again.
 
 GPU desktops have not yet been tested on a Docker host with a GPU.
 

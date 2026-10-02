@@ -499,8 +499,11 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   GPU desktop sees every GPU on the host, so `BBBOX_GPU_ID` names the one
   placed, and the start script's `gpu-bus-id` writes its PCI bus ID as
   Xorg's `BusID`, or leaves the display on the CPU when it cannot find it
-  (#283). On rootless Docker, `kinds()` drops `docker` once the daemon has
-  said so ([041](decisions/041-every-linux-box-has-docker.md)).
+  (#283). A GPU desktop is privileged only when its image has the label
+  `bbbox.gpu-bus-id`, as an image built before #283 has not. `kinds()`
+  drops a GPU desktop's `docker` once the image has said so, and drops
+  every `docker` on rootless Docker once the daemon has said so
+  ([041](decisions/041-every-linux-box-has-docker.md)).
 - The tests run against a fake `docker` CLI whose daemon state is a
   directory, and whose `docker exec` runs commands on the test machine
   ([test/fake-docker.mjs](../test/fake-docker.mjs),

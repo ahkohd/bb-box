@@ -332,6 +332,38 @@ test("gives each box its own Docker daemon, privileged, unless the setting is of
   assert.ok(indexed.fake.inspect(second.ref).Config.Env.includes("BBBOX_GPU_ID=1"));
 });
 
+test("a GPU desktop on a desktop image built before gpu-bus-id stays unprivileged, without Docker, until the image is built again (#283)", async () => {
+  const { fake, backend } = setup({ "gpu-desktops": true }, { gpus: [GPU_A] });
+  const desktop = (labels: Record<string, string>) =>
+    writeFileSync(join(fake.root, "images.json"), JSON.stringify({ "bbbox/linux:1": { "bbbox.image-version": "1" }, "bbbox/linux-desktop:1": labels }));
+  desktop({ "bbbox.image-version": "1" });
+  // Until bb-box has seen the image, the setting decides.
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
+  assert.equal((await backend.capacity("linux-desktop", SMALL, [], signal())).ok, true);
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], []]);
+  const size = { cores: 4, memoryMiB: 8192, diskGiB: null };
+  const old = fake.inspect((await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal())).ref);
+  assert.equal(old.HostConfig.Privileged, false);
+  assert.deepEqual(old.HostConfig.Devices, [GPU_A]);
+  assert.ok(old.Config.Env.includes("BBBOX_GPU=1"));
+  assert.ok(!old.Config.Env.some((pair: string) => pair.startsWith("BBBOX_DOCKERD=") || pair.startsWith("BBBOX_GPU_ID=")));
+  // A CPU desktop on the same image has Docker still.
+  assert.equal(fake.inspect((await backend.acquire(identity("linux-desktop-cpu", size), null, hooks().hooks, signal())).ref).HostConfig.Privileged, true);
+  const report = await backend.doctor(signal());
+  const image = report.checks.find((check) => check.id === "image.bbbox/linux-desktop:1")!;
+  assert.equal(image.status, "warn");
+  assert.match(image.detail, /^Built before GPU desktops could have Docker, so they have none/);
+  assert.match(image.fix!, /setup\/docker\/build\.sh to give GPU desktops Docker/);
+
+  // Built again, the image has the label, and the next GPU desktop has Docker.
+  desktop({ "bbbox.image-version": "1", "bbbox.gpu-bus-id": "1" });
+  const fresh = fake.inspect((await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal())).ref);
+  assert.equal(fresh.HostConfig.Privileged, true);
+  assert.ok(fresh.Config.Env.includes(`BBBOX_GPU_ID=${uuidOf(GPU_A)}`));
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
+  assert.equal((await backend.doctor(signal())).checks.find((check) => check.id === "image.bbbox/linux-desktop:1")!.status, "ok");
+});
+
 const GPU_BUS_ID = new URL("../setup/docker/gpu-bus-id", import.meta.url).pathname;
 /** The Device section of the desktop's Xorg configuration, as setup/proxmox-lxc/template/guest/customize-desktop.sh writes it. */
 const XORG_DEVICE = `Section "Device"

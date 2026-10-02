@@ -10,6 +10,7 @@ was at first never privileged, so it had no Docker. A privileged container
 sees every GPU on the host, and Xorg would take the first, not the one
 bb-box placed. Amended 2 October 2026 (#283): a GPU desktop is privileged
 too, and its start script points Xorg at the GPU placed, by its PCI bus ID.
+On an image built before then, which cannot, it stays unprivileged.
 
 ## Context
 
