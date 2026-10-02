@@ -68,8 +68,8 @@ function rewrite(from: string, to: string, root: string, bin: string): void {
 }
 
 /**
- * A fresh fake Mac: Apple silicon, FileVault off, Remote Login on, nobody at
- * the console, a person's account `person` (UID 501), and the groups every
+ * A fresh fake Mac: Apple silicon, FileVault off, Remote Login on with Full
+ * Disk Access, nobody at the console, a person's account `person` (UID 501), and the groups every
  * Mac has. `template` installs bb-box's home template, as setup would.
  */
 export function fakeMacos(options: { template?: boolean } = {}): FakeMacos {
@@ -82,10 +82,13 @@ export function fakeMacos(options: { template?: boolean } = {}): FakeMacos {
 
   for (const path of [
     "Users/Shared", "private/tmp", "private/var/db", "private/var/folders", "private/var/at/tabs", "private/etc/sudoers.d", "private/etc/ssh",
-    "Library/LaunchDaemons", "Library/Preferences", "Applications", "opt", "usr/local/bin", "usr/local/share",
+    "Library/LaunchDaemons", "Library/Preferences", "Library/Application Support/com.apple.TCC", "Applications", "opt", "usr/local/bin",
+    "usr/local/share",
   ]) {
     mkdirSync(join(data, path), { recursive: true });
   }
+  // The privacy database, which the helper reads only with Full Disk Access.
+  writeFileSync(join(data, "Library/Application Support/com.apple.TCC/TCC.db"), "SQLite format 3\0");
   for (const name of FIRMLINKS) symlinkSync(join("System", "Volumes", "Data", name), join(root, name));
   for (const name of ["var", "tmp", "etc"]) symlinkSync(join("private", name), join(root, name));
 

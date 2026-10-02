@@ -33,6 +33,9 @@
 # 3. It starts loginwindow again, which signs the next user in.
 # 4. It removes the old users' crontabs, at jobs, System V IPC objects, sudo
 #    rules and every file they own on the Data volume, then the users.
+#    Some folders a user's first sign-in makes, such as ~/Library/Mail, are
+#    protected: root removes them only with Full Disk Access, which SSH
+#    sessions have when Remote Login allows it.
 # 5. It checks that nothing of theirs is left and that the next user is at
 #    the console, then moves the generation on.
 #
@@ -66,6 +69,8 @@ TEMPLATE=$ROOT/usr/local/share/bb-box/home
 # The Data volume, where everything a box can write is. /Users, /private and the like are firmlinks to it.
 DATA=$ROOT/System/Volumes/Data
 LOGINWINDOW=/Library/Preferences/com.apple.loginwindow
+# Only a process with Full Disk Access can read it.
+TCC="/Library/Application Support/com.apple.TCC/TCC.db"
 CUA=/usr/local/bin/cua-driver
 PREFIX=bbx-
 ID_BASE=70000
@@ -92,6 +97,8 @@ put() { cat >"$1.new.$$" && mv -f "$1.new.$$" "$1"; }
 boot_id() { sysctl -n kern.bootsessionuuid 2>/dev/null || echo unknown; }
 # A user's attribute in the local directory, such as its UniqueID.
 attribute() { dscl . -read "/Users/$1" "$2" 2>/dev/null | sed -n "s/^$2: //p" | head -n 1; }
+# Whether this helper has Full Disk Access.
+full_disk() { head -c 1 "$ROOT$TCC" >/dev/null 2>&1; }
 # The user at the console: root at the login window.
 console() { stat -f %Su /dev/console 2>/dev/null; }
 box_users() { dscl . -list /Users 2>/dev/null | grep "^$PREFIX"; }
@@ -258,7 +265,8 @@ status() {
   if [ "$marker" = none ]; then echo "dirty=$(dirt "$PREFIX$current" | head -n 1)"; else echo dirty=; fi
   # The Mac's own: the box user it has for this generation, who is at the
   # console and signs in when loginwindow starts, which needs FileVault off,
-  # and Screen Sharing, which the box's display uses.
+  # Screen Sharing, which the box's display uses, and Full Disk Access,
+  # which the reset needs.
   echo os=macos
   echo "macos=$(sw_vers -productVersion 2>/dev/null)"
   user=''
@@ -268,6 +276,7 @@ status() {
   echo "autologin=$(defaults read "$LOGINWINDOW" autoLoginUser 2>/dev/null)"
   if fdesetup status 2>/dev/null | grep -qx 'FileVault is Off\.'; then echo filevault=0; else echo filevault=1; fi
   if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then echo screensharing=1; else echo screensharing=0; fi
+  if full_disk; then echo fulldisk=1; else echo fulldisk=0; fi
   grants
 }
 
@@ -429,7 +438,10 @@ remove_user() {
   for group in $JOINS; do dseditgroup -o edit -d "$user" -t user "$group" >/dev/null 2>&1; done
   if number "$uid"; then
     left=$(sweep "$uid" | head -n 1)
-    [ -z "$left" ] || fail "Could not remove ${left#"$DATA"}, which $user owned."
+    if [ -n "$left" ]; then
+      full_disk || fail "Could not remove ${left#"$DATA"}, which $user owned. The helper has no Full Disk Access: on the Mac, in System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users."
+      fail "Could not remove ${left#"$DATA"}, which $user owned."
+    fi
   fi
   if dscl . -read "/Users/$user" >/dev/null 2>&1; then
     sysadminctl -deleteUser "$user" >/dev/null 2>&1

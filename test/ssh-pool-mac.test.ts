@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,8 @@ const CLAIM = (box = "box_a", install = "inst_a") =>
   `install=${install}\nbox=${box}\nthread=thr_a\nname=mac-box\nkind=macos-desktop\ncreated=1790000000000\nkey=${KEY}\n`;
 const RELEASE = (box = "box_a", install = "inst_a") => `install=${install}\nbox=${box}\n`;
 const NOT_READY = "Box user bbx-0 is not ready. Reset the Mac: sudo /usr/local/libexec/bb-box/machine reset\n";
+/** The privacy database: the helper has Full Disk Access when it can read it. */
+const TCC = "Library/Application Support/com.apple.TCC/TCC.db";
 
 /** A fake Mac set up with its first box user, bbx-0, signed in. */
 function readyMac(): FakeMacos {
@@ -96,17 +98,18 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
   );
   const values = fields(result.stdout);
   assert.deepEqual(
-    ["os", "macos", "user", "console", "autologin", "filevault", "screensharing", "accessibility", "screenrecording"].map((key) => values.get(key)),
-    ["macos", "26.0", "bbx-0", "bbx-0", "bbx-0", "0", "1", "1", "0"],
+    ["os", "macos", "user", "console", "autologin", "filevault", "screensharing", "fulldisk", "accessibility", "screenrecording"].map((key) => values.get(key)),
+    ["macos", "26.0", "bbx-0", "bbx-0", "bbx-0", "0", "1", "1", "1", "0"],
   );
   assert.equal(count(mac, "launchctl asuser 70000 /usr/bin/sudo -n -H -u bbx-0 -- /usr/local/bin/cua-driver permissions status --json"), 1);
 
   mac.setConsole("root");
   mac.flag("filevault-on");
+  rmSync(join(mac.root, TCC));
   const away = fields(mac.helper(["status"]).stdout);
   assert.deepEqual(
-    ["console", "filevault", "accessibility", "screenrecording"].map((key) => away.get(key)),
-    ["root", "1", "", ""],
+    ["console", "filevault", "fulldisk", "accessibility", "screenrecording"].map((key) => away.get(key)),
+    ["root", "1", "0", "", ""],
     "Cua's grants come only from a box user's session",
   );
 
@@ -241,7 +244,7 @@ test("a release removes the box's user with everything it left, and signs in the
   assert.equal(mac.helper(["release", "0"], RELEASE()).status, EXIT.notOurs);
 });
 
-test("a release that cannot remove a file the old user owned fails, and the next reset finishes", { skip: process.getuid?.() === 0 && "root removes any file" }, () => {
+test("a release that cannot remove a file the old user owned fails, naming Full Disk Access when the helper lacks it, and the next reset finishes", { skip: process.getuid?.() === 0 && "root removes any file" }, () => {
   const mac = lentMac();
   mkdirSync(join(mac.root, "private/var/locked"));
   writeFileSync(join(mac.root, "private/var/locked/file"), "left\n");
@@ -252,6 +255,14 @@ test("a release that cannot remove a file the old user owned fails, and the next
     assert.deepEqual([failed.status, failed.stderr], [1, "Could not remove /private/var/locked/file, which bbx-0 owned.\n"]);
     assert.equal(mac.file("/var/db/bb-box/resetting")?.includes("generation=0"), true);
     assert.equal(mac.user("bbx-0")?.UniqueID, "70000", "the user stays until its files are gone");
+
+    rmSync(join(mac.root, TCC));
+    assert.deepEqual(mac.helper(["reset"], "install=inst_a\n"), {
+      status: 1,
+      stdout: "",
+      stderr:
+        "Could not remove /private/var/locked/file, which bbx-0 owned. The helper has no Full Disk Access: on the Mac, in System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users.\n",
+    });
   } finally {
     chmodSync(join(mac.root, "private/var/locked"), 0o755);
   }
@@ -392,7 +403,8 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.ok(result.stdout.includes("\n  mac-mini bbbox-admin@192.0.2.30 macos,macos-desktop\n"), result.stdout);
   assert.ok(result.stdout.includes("\n  192.0.2.30 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMacHostKeyForTests\n"));
   assert.ok(result.stdout.includes("\n1. Turn on Screen Sharing in System Settings, General, Sharing, if it is off."));
-  assert.ok(result.stdout.includes("\n3. If boxes need Xcode or the iOS Simulator, install Xcode in /Applications, then run setup-mac.sh again.\n"));
+  assert.ok(result.stdout.includes("\n2. In System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users."));
+  assert.ok(result.stdout.includes("\n4. If boxes need Xcode or the iOS Simulator, install Xcode in /Applications, then run setup-mac.sh again.\n"));
   assert.ok(!result.stdout.includes("Restart the Mac"), "nobody was at the console, so the first box user is signed in");
   assert.ok(!result.stdout.includes("Check these"), result.stdout);
 
@@ -418,7 +430,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   const again = mac.setup(["--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box", "--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherInstall bb-box", "--name", "studio"]);
   assert.equal(again.status, 0, again.stderr);
   assert.ok(again.stdout.includes("\n  studio bbbox-admin@192.0.2.30 macos,macos-desktop\n"));
-  assert.ok(again.stdout.includes("\n3. Restart the Mac, so that it signs in the first box user, bbx-0.\n"), again.stdout);
+  assert.ok(again.stdout.includes("\n4. Restart the Mac, so that it signs in the first box user, bbx-0.\n"), again.stdout);
   assert.equal(mac.file("/private/var/bbbox-admin/.ssh/authorized_keys")!.split("\n").length, 3);
   assert.equal(count(mac, "sysadminctl -addUser bbbox-admin"), 1);
   assert.equal(count(mac, "sudo -u person -H env NONINTERACTIVE=1"), 1, "Homebrew is installed once");

@@ -23,7 +23,8 @@
 # - starts the Mac's reset generation at 0 and makes the first box user,
 #   bbx-0, the automatic login
 # - prints the line for bb-box's machines setting, the host keys, and the
-#   steps for a person at the Mac
+#   steps for a person at the Mac: Screen Sharing, Full Disk Access for
+#   SSH, Cua Driver's grants, and Xcode
 #
 # Running it again updates the helper, the template, Cua Driver and the keys,
 # and keeps the reset generation. It replaces the keys, so give every
@@ -248,8 +249,9 @@ echo
 echo "Then, at the Mac or through Screen Sharing:"
 echo
 echo "1. Turn on Screen Sharing in System Settings, General, Sharing, if it is off. Under its options, allow all users, and leave the VNC password off."
-echo "2. Turn on CuaDriver under Accessibility and under Screen Recording, in System Settings, Privacy and Security."
-step=3
+echo "2. In System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users. Without it, the reset cannot remove the protected folders a box's user has, such as ~/Library/Mail."
+echo "3. Turn on CuaDriver under Accessibility and under Screen Recording, in System Settings, Privacy and Security."
+step=4
 if [ "$xcode" = no ]; then
   echo "$step. If boxes need Xcode or the iOS Simulator, install Xcode in /Applications, then run setup-mac.sh again."
   step=$((step + 1))
