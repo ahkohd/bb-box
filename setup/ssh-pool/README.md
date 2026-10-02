@@ -358,9 +358,10 @@ the machine when it answers again. Its power shows as unknown meanwhile.
   disk, that much free under `/home`, or `/Users` on a Mac. It counts the
   cores and memory a process may use, so on a machine that is a container
   with a CPU or memory limit, it counts the limit, not the host's. The
-  doctor shows each machine's cores, memory and free disk. If your machines
-  are smaller than the presets, change them in the kinds part of BB Box's
-  settings.
+  doctor shows each machine's cores, memory and free disk, and warns about
+  a machine too small for a kind's default size, saying which presets it
+  holds. If your machines are smaller than the presets, change them in the
+  kinds part of BB Box's settings.
 - **Desktops.** On a Linux machine, the pool lends terminal boxes only. A
   Mac lends its desktop as `macos-desktop`.
 
@@ -439,8 +440,8 @@ desktop.
 
 ### What the doctor checks on a Mac
 
-Besides SSH, the helper, the architecture, the tools and the state, the
-doctor checks that:
+Besides SSH, the helper, the architecture, the tools, the state and the
+box sizes, the doctor checks that:
 
 - FileVault is off
 - the box user is signed in at the console, and is the automatic login

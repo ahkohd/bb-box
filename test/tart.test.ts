@@ -405,6 +405,9 @@ test("doctor says what is missing on the Mac", async () => {
   assert.equal(image.status, "fail");
   assert.match(image.fix!, /prepare-image\.sh/);
   assert.ok(report.notes.some((note) => /authorized_keys: ssh-ed25519 /.test(note)));
+  const sizes = report.checks.find((check) => check.id === "sizes.mac1")!;
+  assert.deepEqual([sizes.name, sizes.status], ["Box sizes on mac1", "ok"]);
+  assert.equal(sizes.detail, "mac1 holds macos and macos-desktop boxes at the default sizes.");
   ssh.down(MAC);
   const down = await make().doctor();
   assert.equal(down.checks.find((check) => check.id === "host.mac1")!.status, "fail");

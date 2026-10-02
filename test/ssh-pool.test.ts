@@ -272,10 +272,10 @@ describe("SSH host pool", () => {
   });
 
   it("claims the smallest free machine of at least the size, counting 90% of the memory as all of it (028)", async () => {
-    // MemTotal leaves out what the kernel keeps: 7861 MiB is an 8 GiB machine, 3500 MiB is less than 4 GiB.
+    // MemTotal leaves out what the kernel keeps: 7861 MiB is an 8 GiB machine, 2900 MiB is less than 4 GiB.
     machine("192.0.2.46", { cores: "16", memory: "64000", disk: "500" });
     machine("192.0.2.47", { cores: "4", memory: "7861", disk: "40" });
-    machine("192.0.2.48", { cores: "2", memory: "3500", disk: "40" });
+    machine("192.0.2.48", { cores: "2", memory: "2900", disk: "40" });
     const { backend } = pool("large 192.0.2.46 linux\nmedium 192.0.2.47 linux\ntiny 192.0.2.48 linux");
     const size = (cores: number, memoryGiB: number, diskGiB: number | null = null): BoxSize => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB });
     const small = await acquire(backend, "linux", size(2, 4));
@@ -291,6 +291,20 @@ describe("SSH host pool", () => {
     assert.equal((await backend.capacity("linux", size(8, 4), [])).ok, false, "no free machine has 8 cores");
     assert.equal((await backend.capacity("linux", size(1, 3), [])).ok, true, "tiny serves a box of 3 GiB");
     await backend.release(disked.guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
+  it("the doctor warns about a machine that holds no preset of its kinds, counting 90% of the memory as all of it (#74)", async () => {
+    machine("192.0.2.47", { cores: "4", memory: "7861", disk: "40" });
+    machine("192.0.2.48", { cores: "2", memory: "2900", disk: "40" });
+    const { backend } = pool("medium 192.0.2.47 linux\ntiny 192.0.2.48 linux");
+    const doctor = await backend.doctor();
+    const sizes = (name: string) => doctor.checks.find((check) => check.id === `machine.${name}.sizes`)!;
+    assert.deepEqual([sizes("medium").name, sizes("medium").status, sizes("medium").detail], ["medium: box sizes", "ok", "medium holds linux boxes at the default size."]);
+    assert.equal(sizes("tiny").status, "warn");
+    assert.equal(sizes("tiny").detail, "tiny has 2 cores, 2.8 GiB memory, 40 GiB free disk. It cannot hold a linux box at any of its presets, the smallest 2 cores, 4 GiB memory.");
+    assert.match(sizes("tiny").fix!, /^Give tiny more memory, or make the presets of linux smaller/);
+    assert.equal(doctor.ok, true, "a warning");
     await backend.dispose();
   });
 
@@ -837,7 +851,7 @@ describe("An SSH host pool of Macs (047)", () => {
     mac("192.0.2.91");
     mac("192.0.2.92", { "filevault-on": "", "no-fulldisk": "", "no-screensharing": "", grants: "1,0", autologin: "" });
     mac("192.0.2.93", { console: "" });
-    mac("192.0.2.94", { node: "", lacks: "gh" });
+    mac("192.0.2.94", { node: "", lacks: "gh", memory: "6144" });
     const { backend } = pool("good 192.0.2.91 macos,macos-desktop\nbad 192.0.2.92 macos-desktop\naway 192.0.2.93 macos-desktop\nheadless 192.0.2.94 macos");
     await backend.capacity("macos-desktop", sizeOf("macos-desktop"), []);
     assert.equal(helperCalls("192.0.2.91").filter((call) => call !== "status").length, 0, "a survey does not wait for Cua");
@@ -845,18 +859,21 @@ describe("An SSH host pool of Macs (047)", () => {
     const check = (id: string) => doctor.checks.find((other) => other.id === id);
     const status = (name: string) => doctor.checks.filter((other) => other.id.startsWith(`machine.${name}.`)).map((other) => `${other.id.split(".")[2]} ${other.status}`);
     assert.equal(doctor.ok, false);
-    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "screensharing ok", "grants ok", "state ok"]);
+    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "screensharing ok", "grants ok", "state ok", "sizes ok"]);
     assert.equal(check("machine.good.arch")?.detail, "macOS 26.0 on arm64.");
+    assert.equal(check("machine.good.sizes")?.detail, "good holds macos and macos-desktop boxes at the default sizes.");
     assert.equal(check("machine.good.tools")?.detail, "Everything the helper, enrolment and the thread's GitHub access need, with Node.js 24.21.0.");
-    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "screensharing fail", "grants fail", "state warn"]);
+    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "screensharing fail", "grants fail", "state warn", "sizes ok"]);
     assert.match(check("machine.bad.signin")!.detail, /^Box user bbx-0 is at the console, but the automatic login is off/);
     assert.match(check("machine.bad.fulldisk")!.fix!, /^On bad: In System Settings, General, Sharing, select the \(i\) beside Remote Login/);
     assert.equal(check("machine.bad.grants")?.detail, "Cua Driver lacks Screen Recording, so computer use cannot see the desktop.");
     assert.match(check("machine.bad.state")!.detail, /^Out of service: FileVault is on/);
     assert.deepEqual(status("away").filter((line) => /signin|grants/.test(line)), ["signin fail", "grants warn"]);
     assert.equal(check("machine.away.signin")?.detail, "Box user bbx-0 is not signed in at the console.");
-    assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "state ok"]);
+    assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "state ok", "sizes warn"]);
     assert.equal(check("machine.headless.tools")?.fix, "On headless: Install Node.js 22.19 or newer with Homebrew: brew install node. BB's installer needs it to enrol a box. Install git and gh with Homebrew: brew install git gh.");
+    assert.equal(check("machine.headless.sizes")?.detail, "headless has 8 cores, 6 GiB memory, 200 GiB free disk. It cannot hold a macos box at any of its presets, the smallest 4 cores, 8 GiB memory.");
+    assert.equal(check("machine.headless.sizes")?.fix, "Give headless more memory, or make the presets of macos smaller in bb-box's settings, under Kinds.");
     for (const [host, asked] of [["192.0.2.91", 1], ["192.0.2.92", 1], ["192.0.2.93", 1], ["192.0.2.94", 0]] as const) {
       assert.equal(helperCalls(host).filter((call) => call === "status grants").length, asked, host);
     }
