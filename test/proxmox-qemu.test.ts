@@ -325,9 +325,9 @@ test("the desktop resizes to the viewer's size, else to the listed mode that bes
   assert.match(task, /\$bbClock\.ElapsedMilliseconds -ge 15000\)/, "that ends if it hangs");
   const run = Buffer.from(/FromBase64String\(''([A-Za-z0-9+\/=]+)''\)/.exec(task)![1]!, "base64").toString("utf8");
   assert.match(run, /ChangeDisplaySettingsEx\(null, ref mode, IntPtr\.Zero, 1, IntPtr\.Zero\)/, "keeps the mode for the next logon");
-  assert.match(run, /DateTime\.UtcNow\.AddSeconds\(2\)/, "waits a moment for the driver to take the size");
+  assert.match(run, /DateTime\.UtcNow\.AddSeconds\(seconds\)/, "waits a moment for the driver to take the size");
   assert.ok(run.startsWith(compiled), "loads the same file, compiling it if it is missing");
-  assert.match(run, /\n\$bbRefused = \$bbDisplay::Fit\(1500, 900\)\n/);
+  assert.match(run, /\n\$bbRefused = \$bbDisplay::Fit\(1500, 900, 2\)\n/, "for up to 2 s");
 
   writeFileSync(join(home, "exit"), `echo "Windows refused 1500x900 and the modes it lists, with -2." >&2; exit 1\n`);
   await assert.rejects(desktop!.resize!({ width: 1500, height: 900 }), { message: "Windows could not set the desktop to 1500x900: Windows refused 1500x900 and the modes it lists, with -2." });

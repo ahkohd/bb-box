@@ -379,6 +379,12 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   overlay takes only what Windows writes. The overlay is made at that size,
   the acquire extends C: over it once SSH answers, and the VM's config
   keeps the size for `Guest.size`, whose `diskGiB` is null for the image's.
+- A Windows box's desktop resizes as a Proxmox one's does (021), through
+  a desktop command, with the code compiled in the background during the
+  acquire. Its driver takes a viewer's size only at its next boot, so the
+  command tries that size once, not for 2 s, then sets the smallest listed
+  mode that covers the viewer, which the viewer scales down. The listed
+  modes run from 640x480 to 5120x2160, and the smallest is 800x600.
 - Linux boxes on arm64 (040) are clones of a second image, which runs the
   Linux template's guest scripts. They work as user `box`, run with no VNC
   server, and stop by shutting down, since Tart cannot resume a Linux VM;

@@ -44,11 +44,11 @@ const EXTEND_C = String.raw`try {
  * BbDisplay.Fit sets the desktop to `width` by `height`. QEMU passes a
  * viewer's size on to the display driver, which then takes it beside the
  * modes Windows lists, though Windows does not switch to it. That can take a
- * moment, so it tries for up to `seconds`, at least once. Else it sets the smallest listed mode
- * that covers the size, which the viewer scales down and so stays sharp, else
- * the largest. The list can hold an earlier viewer's size that the driver no
- * longer takes, so it tries them in turn. Each keeps the colour depth, and the
- * mode is kept for the user's next logon.
+ * moment, so it tries for up to `seconds`, at least once. Else it sets the
+ * smallest listed mode that covers the size, which the viewer scales down and
+ * so stays sharp, else the largest. The list can hold an earlier viewer's size
+ * that the driver no longer takes, so it tries them in turn. Each keeps the
+ * colour depth, and the mode is kept for the user's next logon.
  */
 const DISPLAY_SOURCE = String.raw`using System;
 using System.Collections.Generic;

@@ -437,6 +437,11 @@ password; the browser never sees it.
   desktop and the agent's session would lose the console. Its full frames
   also take 0.9 to 1.6 s against 0.3 s.
 
+A Windows box's desktop is served by QEMU's VNC server instead, which
+listens on the Mac's loopback only and so has no password. It does resize:
+bb-box sets the listed mode that best covers the viewer, which the viewer
+scales down, from 800x600 up.
+
 ## Troubleshooting
 
 - **`tart` not found.** SSH sessions on a Mac get a short PATH. bb-box looks
