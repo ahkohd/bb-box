@@ -31,7 +31,7 @@ import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import { MIN_DESKTOP, TransportError, type Display, type GuestOs, type RunResult, type SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, TransportError, type Display, type DisplaySize, type GuestOs, type RunResult, type SshAccess } from "../../transports/types.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -56,7 +56,7 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { ReadyPool } from "../pool.ts";
-import { CUA_PIPE, desktopUp, setClock } from "../windows.ts";
+import { CUA_PIPE, compileDisplay, desktopUp, setClock, setMode } from "../windows.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
   claimScript,
@@ -336,8 +336,8 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         gpu: false,
         features: [],
         command: WINDOWS_COMMAND,
-        // QEMU's VNC server, at the mode Windows boots at.
-        displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
+        // QEMU's VNC server, at the listed mode that best covers the viewer.
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
         computerUse: WINDOWS_CUA,
         enrol: false,
       },
@@ -481,6 +481,8 @@ export class TartBackend implements Backend {
   #placement: Promise<unknown> = Promise.resolve();
   /** Warm VMs this instance is filling, by VM. */
   readonly #filling = new Map<string, Fill>();
+  /** Display helpers compiling for new Windows boxes, by VM, which a resize waits for. */
+  readonly #compiling = new Map<string, Promise<void>>();
   readonly #warm: ReadyPool<BoxIdentity>;
   readonly #stopping = new AbortController();
   #maintaining: Promise<void> | null = null;
@@ -821,6 +823,7 @@ export class TartBackend implements Backend {
       const access = this.#windows(await this.#mac(on), ports.ssh);
       await step("ssh", () => this.#waitReady(on, vm, access, "windows", deadline, signal));
       await step("desktop", () => this.#windowsDesktop(on, vm, access, deadline, signal));
+      this.#compileDisplay(vm, access);
       // Claimed again, so the box's record has the ports and size as it becomes ready.
       await hooks.claim(guest(made));
       return guest(made);
@@ -1208,15 +1211,18 @@ export class TartBackend implements Backend {
     if (guestOsOf(kind) === "windows") {
       const ports = await this.#ports(host, guest);
       const access = this.#windows(mac, ports.ssh);
+      const command = new SshTransport(ssh, access, "windows");
       const displays = (capabilities?.displays ?? []).map(
         (display): Display => ({
           ...display,
           label: "Desktop",
           // QEMU's VNC server listens on the Mac's loopback only, so it asks for no password.
           open: async () => ({ route: ssh.route(mac, ports.vnc), auth: { type: "none" } }),
+          resize: (size, signal) => this.#resizeWindows(guest.ref, command, size, signal),
+          minSize: MIN_DESKTOP,
         }),
       );
-      return { command: new SshTransport(ssh, access, "windows"), displays, access: { ssh: access, dockerHost: null } };
+      return { command, displays, access: { ssh: access, dockerHost: null } };
     }
     let address: string | null = this.#addresses.get(guest.ref) ?? null;
     if (!address) {
@@ -1568,6 +1574,29 @@ export class TartBackend implements Backend {
           `or Cua's daemon did not listen on ${CUA_PIPE}. Check that the image signs the box user in.`,
       );
     }
+  }
+
+  /**
+   * Compiles the display helper in the background while the box is new, so
+   * its first resize is as quick as the rest. A failure is left to the first
+   * resize, which compiles it again.
+   */
+  #compileDisplay(vm: string, access: SshAccess): void {
+    const compiling = this.#keys()
+      .then(({ ssh }) => compileDisplay(new SshTransport(ssh, access, "windows")))
+      .catch(() => undefined)
+      .finally(() => this.#compiling.delete(vm));
+    this.#compiling.set(vm, compiling);
+  }
+
+  /**
+   * Sets a Windows desktop to the listed mode that best covers `size` (021).
+   * The display driver takes a viewer's size only at its next boot (046), so
+   * the size itself is tried just once.
+   */
+  async #resizeWindows(vm: string, command: SshTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+    await this.#compiling.get(vm);
+    await setMode(command, size, signal, 0);
   }
 
   async #vnc(host: TartHost, vm: string, signal?: AbortSignal): Promise<{ port: number; password: string }> {
