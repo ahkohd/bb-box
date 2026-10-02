@@ -2674,7 +2674,7 @@ test("a computer-use session closes when idle, opens again when needed, and goes
 test("a provider's profile for the form's (i): its technology, hosts, kinds, room, usual start and status, with one capacity call", async (t) => {
   const { harness, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
   t.after(() => harness.lifecycle.dispose());
-  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { kinds: { id: string; offers: { backend: string; name: string }[] }[] };
+  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { kinds: { id: string; gpu: boolean; offers: { backend: string; name: string }[] }[] };
   const offer = state.kinds.find((kind) => kind.id === "linux")!.offers[0]!;
   const profile = (await harness.behavior.callRpc("provider", { backend: offer.backend })) as {
     backend: string;
@@ -2693,6 +2693,8 @@ test("a provider's profile for the form's (i): its technology, hosts, kinds, roo
   assert.ok(profile.technology.length > 0, "the driver's description");
   assert.ok(["virtual", "real"].includes(profile.nature));
   assert.ok(profile.makes.some((kind) => kind.id === "linux"), "makes linux");
+  // A GPU desktop is named as box_list names it, so two Linux desktops read apart.
+  for (const kind of profile.makes) assert.equal(kind.label.endsWith(" (GPU)"), state.kinds.find((candidate) => candidate.id === kind.id)!.gpu, kind.id);
   assert.equal(profile.boxes, 0);
   assert.ok(profile.room && profile.room.ok, "room for one more, as the fake backend says");
   assert.equal(profile.status.state, "active");
