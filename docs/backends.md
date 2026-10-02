@@ -62,9 +62,9 @@ Across the table:
   ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)).
   There is no plan for physical Windows machines yet.
 - **Phone emulators.** The iOS Simulator runs only on Macs: on a physical
-  Mac in an SSH pool (047), or in a Tart image with Xcode, which the image
-  does not have yet. Android emulators are in research (#161), for Linux
-  hosts with KVM, Macs and Windows hosts.
+  Mac with Xcode in an SSH pool (047), or in a Tart image with Xcode, which
+  the image does not have yet. Android emulators are in research (#161),
+  for Linux hosts with KVM, Macs and Windows hosts.
 - **Cloud hosts.** A cloud VM that runs Linux is a Linux host above: the
   Docker backend reaches one over `ssh://` or as a BB machine, and the SSH
   host pool reaches one too. A backend that makes cloud VMs itself is
@@ -365,6 +365,26 @@ node --test test/conformance.test.ts
 - The doctor asks each Mac with `macos-desktop` for Cua Driver's grants
   with `status grants`. A survey runs plain `status`, which does not wait
   for Cua.
+- A Mac's `status xcode` lists the Simulator runtimes of the Xcode
+  `xcode-select` chooses, and writes its version and them to
+  `/var/db/bb-box/xcode`. Only the doctor and `setup-mac.sh` ask, as
+  `simctl` may take seconds. The doctor's call is made beside
+  `status grants` rather than in it, so each stays within a status's 20 s.
+  A failed call keeps the file. Plain `status` gives the version, which
+  `xcode-select` and `defaults` find at once, and the file's runtimes
+  while the file is for that version.
+- The `macos` and `macos-desktop` offers have `xcode` while every Mac
+  serving them that answered the last survey has Xcode, and
+  `ios-simulator` while each has an iOS runtime too. One Mac switched off,
+  or slow to answer, does not hide them. Before the first survey after a
+  restart the offers have neither, so `asOffered` keeps a Mac box's
+  capabilities until then. The core's capacity check surveys before it
+  matches features, so the first claim after a restart sees them. The
+  doctor warns when only some of the Macs serving a kind have them. The
+  conformance suite boots an iOS Simulator device and runs a command in
+  it.
+- `footprint()` gives the pool's machines without a jump host, and Tart's
+  gives its hosts, so the doctor warns when one address is in both (047).
 - A machine without the helper's tools is out of service. Enrolment's
   tools only fail the doctor: Node.js 22.19 or newer with npm for BB's
   installer, and, as a warning, git and gh for the thread's GitHub access.

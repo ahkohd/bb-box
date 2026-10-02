@@ -82,6 +82,19 @@ export interface MacStatus {
   readonly fullDisk: boolean;
   /** Cua Driver's grants in the box user's session, given only by `status grants`. */
   readonly grants: CuaGrants | null;
+  /**
+   * Xcode and its Simulator runtimes. `status xcode` finds them again; plain
+   * status gives the runtimes it last found. Null from a helper too old to say.
+   */
+  readonly xcode: Xcode | null;
+}
+
+/** The Xcode xcode-select chooses on a Mac (047). */
+export interface Xcode {
+  /** Its version, such as 26.0, or null when the Mac has no Xcode. */
+  readonly version: string | null;
+  /** The Simulator runtimes it can use, such as "iOS 26.0". */
+  readonly runtimes: readonly string[];
 }
 
 /** Each grant, or null when no box user is at the console or Cua did not say. */
@@ -116,6 +129,11 @@ function whole(value: string | undefined): number | null {
 
 function words(value: string | undefined): string[] {
   return (value ?? "").split(/\s+/).filter(Boolean);
+}
+
+/** A comma-separated list, whose items may have spaces. */
+function listed(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function granted(value: string | undefined): boolean | null {
@@ -166,6 +184,7 @@ export function parseStatus(stdout: string): MachineStatus {
             screenSharing: values.get("screensharing") === "1",
             fullDisk: values.get("fulldisk") === "1",
             grants: values.has("accessibility") ? { accessibility: granted(values.get("accessibility")), screenRecording: granted(values.get("screenrecording")) } : null,
+            xcode: values.has("xcode") ? { version: values.get("xcode") || null, runtimes: listed(values.get("runtimes")) } : null,
           }
         : null,
   };

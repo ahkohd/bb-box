@@ -110,7 +110,9 @@ const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
 /**
  * Warnings for backends whose boxes would take the same guest IDs or
  * addresses in one scope, such as Proxmox QEMU and Proxmox LXC on one
- * cluster and bridge (#194). None when nothing overlaps.
+ * cluster and bridge (#194), or the same machine, such as a Mac that is both
+ * a Tart host and lent whole by the SSH host pool (047). None when nothing
+ * overlaps.
  */
 export function overlapChecks(backends: readonly Pick<Backend, "id" | "label" | "footprint">[]): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
@@ -129,13 +131,23 @@ export function overlapChecks(backends: readonly Pick<Backend, "id" | "label" | 
         const shared = addresses[0].list.filter((address) => theirs.has(address));
         if (shared.length) problems.push(`both give boxes ${shared.length === 1 ? `address ${shared[0]}` : `${shared.length} addresses, from ${shared[0]} to ${shared.at(-1)}`}`);
       }
+      const fixes = problems.length ? ["Give them ranges that do not overlap, in their settings."] : [];
+      const machines = [a.footprint.machines, b.footprint.machines];
+      if (machines[0] && machines[1]) {
+        const theirs = new Set(machines[1]);
+        const shared = [...new Set(machines[0].filter((machine) => theirs.has(machine)))];
+        if (shared.length) {
+          problems.push(`both use the ${shared.length === 1 ? "machine" : "machines"} at ${shared.join(", ")}`);
+          fixes.push(`List ${shared.length === 1 ? "the machine" : "each machine"} in one of them only.`);
+        }
+      }
       if (!problems.length) continue;
       checks.push({
         id: `overlap.${a.backend.id}.${b.backend.id}`,
         name: `${a.backend.label} and ${b.backend.label}`,
         status: "warn",
         detail: `They ${problems.join(", and ")}, so a box of one could take what a box of the other has.`,
-        fix: "Give them ranges that do not overlap, in their settings.",
+        fix: fixes.join(" "),
       });
     }
   }

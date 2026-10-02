@@ -20,6 +20,8 @@
 #   automatic macOS updates, which would restart a box, and Spotlight indexing
 # - with Xcode in /Applications, accepts its licence, runs its first launch,
 #   downloads the iOS platform and lets developers debug without a password
+# - has the helper note Xcode's version and Simulator runtimes, which the
+#   pool's offers follow
 # - starts the Mac's reset generation at 0 and makes the first box user,
 #   bbx-0, the automatic login
 # - prints the line for bb-box's machines setting, the host keys, and the
@@ -202,7 +204,8 @@ if [ -d "$ROOT/Applications/Xcode.app" ]; then
 fi
 
 "$ROOT$LIBEXEC/machine" init >/dev/null || die "The helper could not make the first box user. Fix what it says above, then run setup-mac.sh again."
-status=$("$ROOT$LIBEXEC/machine" status)
+# `status xcode` notes Xcode's runtimes, which plain status, and so the pool, reads.
+status=$("$ROOT$LIBEXEC/machine" status xcode) || warn "The helper could not list Xcode's Simulator runtimes. Check that sudo xcrun simctl list runtimes works, then run setup-mac.sh again."
 value() { printf '%s\n' "$status" | sed -n "s/^$1=//p" | head -n 1; }
 generation=$(value generation)
 

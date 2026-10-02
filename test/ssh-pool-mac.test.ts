@@ -95,7 +95,7 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
     {
       helper: 1, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
-      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null },
+      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] } },
     },
   );
   const values = fields(result.stdout);
@@ -110,7 +110,35 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
   assert.deepEqual(["accessibility", "screenrecording"].map((key) => fields(granted.stdout).get(key)), ["1", "0"]);
   assert.deepEqual(parseStatus(granted.stdout).mac?.grants, { accessibility: true, screenRecording: false });
   assert.equal(count(mac, cua), 1);
-  assert.deepEqual(mac.helper(["status", "bogus"]), { status: 2, stdout: "", stderr: "usage: machine status [grants]\n" });
+  for (const args of [["bogus"], ["grants", "xcode"]]) {
+    assert.deepEqual(mac.helper(["status", ...args]), { status: 2, stdout: "", stderr: "usage: machine status [grants | xcode]\n" });
+  }
+
+  const xcodeOf = (args: readonly string[]) => parseStatus(mac.helper(["status", ...args]).stdout).mac?.xcode;
+  assert.deepEqual(xcodeOf(["xcode"]), { version: null, runtimes: [] });
+  assert.equal(count(mac, "xcrun"), 0, "with only the Command Line Tools, xcrun is not run, as it may offer to install them");
+  assert.equal(mac.file("/var/db/bb-box/xcode"), "xcode=\nruntimes=\n");
+  mkdirSync(join(mac.root, "Applications/Xcode.app"), { recursive: true });
+  mkdirSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info"));
+  const version = join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info/CFBundleShortVersionString");
+  writeFileSync(version, "26.0\n");
+  assert.deepEqual(xcodeOf([]), { version: "26.0", runtimes: [] }, "plain status reads Xcode's version, and the runtimes only from what `status xcode` found");
+  const xcode = mac.helper(["status", "xcode"]);
+  assert.deepEqual(["xcode", "runtimes", "accessibility"].map((key) => fields(xcode.stdout).get(key)), ["26.0", "iOS 26.0,watchOS 26.0", undefined]);
+  assert.deepEqual(parseStatus(xcode.stdout).mac?.xcode, { version: "26.0", runtimes: ["iOS 26.0", "watchOS 26.0"] });
+  assert.equal(mac.file("/var/db/bb-box/xcode"), "xcode=26.0\nruntimes=iOS 26.0,watchOS 26.0\n");
+  for (const args of [[], ["grants"]]) assert.deepEqual(xcodeOf(args), { version: "26.0", runtimes: ["iOS 26.0", "watchOS 26.0"] });
+  assert.equal(count(mac, "xcrun simctl list runtimes available"), 1, "plain status stays fast, as the pool reads it twice for each box it lends");
+  mac.flag("simctl-fails");
+  const failed = mac.helper(["status", "xcode"]);
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /^xcrun simctl did not list the Simulator's runtimes within 10 seconds\./);
+  assert.deepEqual(xcodeOf([]), { version: "26.0", runtimes: ["iOS 26.0", "watchOS 26.0"] }, "a failure keeps what it found before");
+  mac.flag("simctl-fails", false);
+  mac.flag("no-ios-runtime");
+  assert.deepEqual(xcodeOf(["xcode"]), { version: "26.0", runtimes: ["watchOS 26.0"] });
+  writeFileSync(version, "26.1\n");
+  assert.deepEqual(xcodeOf([]), { version: "26.1", runtimes: [] }, "what it found for another Xcode does not count");
 
   mac.setConsole("root");
   mac.flag("filevault-on");
@@ -432,9 +460,12 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(count(mac, "pmset -a sleep 0 displaysleep 0 disksleep 0 autorestart 1"), 1);
   assert.equal(count(mac, "defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false"), 1);
   assert.deepEqual([mac.console(), mac.user("bbx-0")?.UniqueID], ["bbx-0", "70000"]);
+  assert.equal(mac.file("/var/db/bb-box/xcode"), "xcode=\nruntimes=\n");
 
   // Again, with Xcode, another install's key, and a person at the console.
   mkdirSync(join(mac.root, "Applications/Xcode.app"));
+  mkdirSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info"), { recursive: true });
+  writeFileSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info/CFBundleShortVersionString"), "26.0\n");
   mac.setConsole("person");
   const again = mac.setup(["--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box", "--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherInstall bb-box", "--name", "studio"]);
   assert.equal(again.status, 0, again.stderr);
@@ -446,6 +477,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(count(mac, "curl -fsSL --retry 3 -o"), 1, "Cua Driver is downloaded once");
   for (const call of ["xcodebuild -license accept", "xcodebuild -runFirstLaunch", "DevToolsSecurity -enable"]) assert.equal(count(mac, call), 1, call);
   assert.equal(count(mac, "xcodebuild -downloadPlatform iOS"), 0, "the iOS runtime is there");
+  assert.equal(mac.file("/var/db/bb-box/xcode"), "xcode=26.0\nruntimes=iOS 26.0,watchOS 26.0\n", "what the pool's offers follow");
   assert.equal(count(mac, "sudo -u person open x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"), 1);
   assert.equal(mac.file("/var/db/bb-box/generation"), "0\n");
 });
