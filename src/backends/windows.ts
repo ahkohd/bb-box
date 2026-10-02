@@ -44,11 +44,11 @@ const EXTEND_C = String.raw`try {
  * BbDisplay.Fit sets the desktop to `width` by `height`. QEMU passes a
  * viewer's size on to the display driver, which then takes it beside the
  * modes Windows lists, though Windows does not switch to it. That can take a
- * moment, so it tries for up to 2 s. Else it sets the smallest listed mode
- * that covers the size, which the viewer scales down and so stays sharp, else
- * the largest. The list can hold an earlier viewer's size that the driver no
- * longer takes, so it tries them in turn. Each keeps the colour depth, and the
- * mode is kept for the user's next logon.
+ * moment, so it tries for up to `seconds`, at least once. Else it sets the
+ * smallest listed mode that covers the size, which the viewer scales down and
+ * so stays sharp, else the largest. The list can hold an earlier viewer's size
+ * that the driver no longer takes, so it tries them in turn. Each keeps the
+ * colour depth, and the mode is kept for the user's next logon.
  */
 const DISPLAY_SOURCE = String.raw`using System;
 using System.Collections.Generic;
@@ -75,12 +75,12 @@ public static class BbDisplay {
     mode.Fields = 0x80000 | 0x100000; // DM_PELSWIDTH | DM_PELSHEIGHT
     return ChangeDisplaySettingsEx(null, ref mode, IntPtr.Zero, 1, IntPtr.Zero); // CDS_UPDATEREGISTRY
   }
-  public static string Fit(int width, int height) {
+  public static string Fit(int width, int height, int seconds) {
     var current = new Mode();
     current.Size = (short)Marshal.SizeOf(typeof(Mode));
     if (!EnumDisplaySettings(null, -1, ref current)) return "Windows gave no mode for the display.";
     if (current.Width == width && current.Height == height) return null;
-    for (var deadline = DateTime.UtcNow.AddSeconds(2); ; Thread.Sleep(250)) {
+    for (var deadline = DateTime.UtcNow.AddSeconds(seconds); ; Thread.Sleep(250)) {
       if (Set(current, width, height) == 0) return null;
       if (DateTime.UtcNow > deadline) break;
     }
@@ -135,9 +135,9 @@ $bbDisplay = [Reflection.Assembly]::LoadFile($bbDll).GetType('BbDisplay')`;
  * covers it. It runs in the box user's desktop session, as the session SSH
  * gives has another display.
  */
-function modeScript(width: number, height: number): string {
+function modeScript(width: number, height: number, seconds: number): string {
   return `${DISPLAY_HELPER}
-$bbRefused = $bbDisplay::Fit(${width}, ${height})
+$bbRefused = $bbDisplay::Fit(${width}, ${height}, ${seconds})
 if ($bbRefused) { [Console]::Error.WriteLine($bbRefused); exit 1 }`;
 }
 
@@ -178,14 +178,15 @@ export async function compileDisplay(command: CommandTransport, signal?: AbortSi
 /**
  * Sets the desktop to `size`, or to the listed mode that best covers it,
  * through Windows itself (021), as the display driver does not switch to
- * a viewer's size.
+ * a viewer's size. `seconds` is how long the driver may take to offer the
+ * size; with 0 it is tried once.
  */
-export async function setMode(command: CommandTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+export async function setMode(command: CommandTransport, size: DisplaySize, signal?: AbortSignal, seconds = 2): Promise<void> {
   const { width, height } = size;
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
     throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
   }
-  const result = await command.run(desktopScript(modeScript(width, height), RESIZE_TIMEOUT_MS), { timeoutMs: RESIZE_TIMEOUT_MS + 5_000, signal, maxOutputBytes: 4096 });
+  const result = await command.run(desktopScript(modeScript(width, height, seconds), RESIZE_TIMEOUT_MS), { timeoutMs: RESIZE_TIMEOUT_MS + 5_000, signal, maxOutputBytes: 4096 });
   if (result.exitCode !== 0) {
     throw new Error(`Windows could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}.`}`);
   }

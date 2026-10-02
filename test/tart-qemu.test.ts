@@ -149,7 +149,7 @@ test("offers windows-arm64-desktop only with a Windows image, as a Windows deskt
     gpu: false,
     features: [],
     command: { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true },
-    displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
+    displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
     computerUse: { driver: "cua", version: "0.30.4", socket: CUA_PIPE },
     enrol: false,
   });
@@ -274,6 +274,36 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   assert.equal(existsSync(join(qemu, "vms", vm)), false);
   assert.equal(existsSync(join(owners, vm)), false);
   assert.equal(await backend.power(guest, signal()), null);
+});
+
+test("the desktop resizes to the listed mode that best covers the viewer, set by Windows in the box user's session, with one try at the viewer's size", async () => {
+  const { backend, ssh } = setup();
+  const home = ssh.home(GUEST);
+  // A stand-in for PowerShell that keeps each desktop command, and exits as $HOME/exit says.
+  // It compiles the display helper slowly, and a desktop command fails if that has not finished.
+  ssh.powershell(
+    GUEST,
+    `case "$1" in\n  *Schedule.Service*) [ -f "$HOME/compiled" ] || exit 9; printf "%s" "$1" > "$HOME/resize"; [ -f "$HOME/exit" ] && . "$HOME/exit"; exit 0;;\n  *Add-Type*) sleep 0.5; printf "%s" "$1" > "$HOME/compiled";;\n  *"Get-Process explorer"*) exit 0;;\n  *) exec sh -c "$1";;\nesac\n`,
+  );
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const { displays } = await backend.transports(guest, KIND);
+  assert.deepEqual(
+    displays.map(({ open: _, resize: __, ...display }) => display),
+    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, minSize: { width: 800, height: 600 } }],
+  );
+
+  // The acquire compiles the helper, and the first resize waits for it.
+  await displays[0]!.resize!({ width: 1500, height: 900 });
+  const compiled = readFileSync(join(home, "compiled"), "utf8");
+  const task = readFileSync(join(home, "resize"), "utf8");
+  assert.match(task, /\$bbTask\.Principal\.LogonType = 3\n/, "a task in the box user's session");
+  const run = Buffer.from(/FromBase64String\(''([A-Za-z0-9+\/=]+)''\)/.exec(task)![1]!, "base64").toString("utf8");
+  assert.ok(run.startsWith(compiled), "loads the file the acquire compiled");
+  assert.match(run, /\n\$bbRefused = \$bbDisplay::Fit\(1500, 900, 0\)\n/, "the driver takes a viewer's size only at its next boot");
+
+  writeFileSync(join(home, "exit"), `echo "Windows refused 1500x900 and the modes it lists, with -2." >&2; exit 1\n`);
+  await assert.rejects(displays[0]!.resize!({ width: 1500, height: 900 }), { message: "Windows could not set the desktop to 1500x900: Windows refused 1500x900 and the modes it lists, with -2." });
+  await backend.release(guest, releasing, signal());
 });
 
 test("a Windows box with a disk larger than the image's has an overlay of that size, and Windows extends C: over it", async () => {
