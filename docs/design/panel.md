@@ -244,7 +244,7 @@ words are never cut off.
 | Where the box goes: the first with room for it, in this order,    |
 | unless you choose one.                                            |
 |                                                                   |
-|               Filter [ Kind: All  v ] [ Runs on: Any machine  v ] |
+| Filter [ Kind: All  v ] [ Runs on: Any machine  v ]               |
 |                                                                   |
 | [ First with room                                              ]  |
 | [ Any of the 3 below, in order                                 ]  |
@@ -309,13 +309,14 @@ bottom sheet still carries the title "New box".
   of its own holds a dim "Filter", at the menus' text size, and two
   compact menus, their labels inside the trigger ("Kind: All", "Runs on:
   Any machine"), since they filter the list rather than choose from it,
-  the three together at the row's right edge; on a narrow pane they wrap,
-  still right-aligned. The row sits the section's usual space below the
-  description and above the list (the operator's notes of 2 October
-  2026: chips had read as a second kind of control, the menus had then
-  sat on the title row, too tight, and a left-aligned row in a small
-  size read as a third kind of thing). The GPU sub-label under
-  Resources is the same dim label at the same size. **Kind**: All, Container (LXC or Docker), VM,
+  the three together at the left; on a narrow pane they wrap. The row
+  sits the section's usual space below the description and above the
+  list (the operator's notes of 2 October 2026: chips had read as a
+  second kind of control, the menus had then sat on the title row, too
+  tight, a left-aligned row in a small size read as a third kind of
+  thing, and a right-aligned one, once the label had the menus' size,
+  sat apart from the list it filters). The GPU sub-label under Resources
+  is the same dim label at the same size. **Kind**: All, Container (LXC or Docker), VM,
   Physical; an option no provider of the kind makes is there but cannot
   be chosen. **Runs on**: Any machine, a Mac, a Linux machine, a Windows
   PC, listing the machines the providers run on (`OfferView.hostOs`);
@@ -350,9 +351,14 @@ bottom sheet still carries the title "New box".
   provider's own words when none is left), Usually (the kind's last cold
   starts on it, with spares ready now) and Status (Ready, Needs attention
   or Needs setting up, the doctor's summary, boxes on it, when it was
-  checked). The profile is read when the (i) opens, with one capacity
-  call to the provider, kept while the form stays open, and never on a
-  panel load (the operator's artboard). One provider is no choice: its row stands alone, checked, and
+  checked). The form reads every listed provider's profile in the
+  background once it has painted, all at once, each with one capacity
+  call to the provider, and keeps them while it stays open, so the (i)
+  opens filled (the operator's note of 2 October 2026: it had read
+  "Looking…" on hover); one still on its way says "Looking…", and one
+  that failed is asked again when its (i) opens. Nothing is read while
+  the form is closed, and never on a panel load (the operator's
+  artboard). One provider is no choice: its row stands alone, checked, and
   the request sends no `on`. The chosen row's backend ID goes as `on`; a
   filter that leaves one provider sends that one too. First with room
   among several that a filter left sends them as a list, and the first

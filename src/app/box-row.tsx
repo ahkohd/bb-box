@@ -141,7 +141,7 @@ export function BoxRow({
           </span>
         </button>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-          <StatusDot tone={status.tone} className="mt-[0.3rem]" />
+          <StatusDot tone={status.tone} />
           <Meta
             items={status.items.map((item, index) => (
               <span key={index} className={cn(item.tone === "fg" && "text-foreground", item.tone === "warn" && "text-warning-text", item.tone === "danger" && "text-destructive-text")}>

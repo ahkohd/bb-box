@@ -396,6 +396,14 @@ export const scenes = {
   "panel-nobackend": { slot: "boxes", chrome: boxesChrome, rpc: rpc([], { kinds: [] }) },
   "panel-list": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting, desktop, stopped]) },
   "panel-runs-on": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },
+  "panel-list-narrow": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 568,
+    height: 520,
+    viewport: 600,
+    rpc: rpc([starting, desktop, stopped, failed]),
+  },
   "panel-list-open": {
     slot: "boxes",
     chrome: boxesChrome,
