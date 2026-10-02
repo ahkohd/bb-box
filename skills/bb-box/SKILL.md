@@ -250,7 +250,8 @@ remove them in BB Box's settings, or with `bb box machines`, `bb box machines
 add <kind> [--name <name>]` and `bb box machines remove <name>`. Any kind that
 can become a BB machine works, desktops included. A machine a thread is
 working on is removed only when you confirm, or with `--force`. A spare box
-that someone starts a thread on from BB's picker becomes one of your machines.
+that someone starts a thread on from BB's picker becomes one of your machines
+as soon as the thread starts working, even a spare that has stopped.
 
 ## A thread on its own box
 

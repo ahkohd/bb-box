@@ -2,7 +2,9 @@
 
 Status: accepted, 1 October 2026. Extends
 [032](032-spare-boxes-are-enrolled-ahead.md): a spare that a thread starts
-on through BB's picker becomes yours.
+on through BB's picker becomes yours. Amended since: a spare becomes yours
+when BB says a thread on its machine is working (#155), and a stopped one
+does too (#156).
 
 ## Context
 
@@ -49,9 +51,12 @@ removing or stopping one a thread is working on.
 - The Desktops page lists your machines' desktops under "Your machines".
 
 **Spare guard.** A spare whose machine gets a thread through BB's picker
-becomes yours. A claim skips it, and the next spare upkeep moves it to
-you, with the "(spare)" dropped from its machine's name, and makes a new
-spare. A thread counts while it is neither archived nor deleted.
+becomes yours. A claim skips it, and the spare upkeep moves it to you, with
+the "(spare)" dropped from its machine's name, and makes a new spare. The
+upkeep runs when BB says a thread on a spare's machine was created or is
+working, as well as at each sweep. A stopped spare with a thread becomes
+yours too, still stopped, and reconnects when you start it. A thread counts
+while it is neither archived nor deleted.
 
 ## Consequences
 
