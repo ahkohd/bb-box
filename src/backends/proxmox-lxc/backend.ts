@@ -79,6 +79,7 @@ import {
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
+import { judgeImage, recordInDescription, type PinSet } from "../images.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -105,6 +106,10 @@ const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 /** The desktop's display service writes the path it took, gpu or cpu, and why. */
 const DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
 const DISPLAY_REASON_FILE = "/run/bb-box/display-reason";
+/** The host's NVIDIA driver, as a container sees it: the host's kernel module. */
+const NVIDIA_VERSION_FILE = "/sys/module/nvidia/version";
+/** The host's NVIDIA driver as a box last saw it, {version, seen}, for the doctor (049). */
+const NVIDIA_KEY = "nvidia-host";
 /** The cookie a desktop's display :99 writes at each start. */
 const DISPLAY_AUTH_FILE = "/run/bb-box/Xauthority";
 /** What a program needs to reach the desktop's display as the box user. */
@@ -367,6 +372,20 @@ interface DisplayMode {
   readonly reason: string;
 }
 
+interface HostNvidia {
+  readonly version: string;
+  /** When a box first saw this version, as an ISO 8601 time. */
+  readonly seen: string;
+}
+
+/** How to rebuild each flavour's template, as root on the Proxmox host. */
+const REBUILD: Readonly<Record<LxcFlavour, (vmid: number) => string>> = {
+  linux: (vmid) => `linux ${vmid}`,
+  desktop: (vmid) => `desktop ${vmid} --gpu <its GPU's PCI address>`,
+  "desktop-cpu": (vmid) => `desktop ${vmid} --cpu`,
+  "desktop-wayland-cpu": (vmid) => `desktop ${vmid} --wayland`,
+};
+
 const NO_GPUS: ReadonlySet<string> = new Set();
 
 const DISPLAY_MODE_WORDS: Readonly<Record<string, string>> = { gpu: "GPU", cpu: "CPU" };
@@ -427,6 +446,8 @@ export class ProxmoxLxcBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Where the next VMID search starts, so a deleted box's VMID and address are not reused at once. */
   #nextVmid: number | null = null;
+  /** The host's NVIDIA driver as a box last saw it; undefined until read from storage. */
+  #nvidia: HostNvidia | null | undefined;
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
 
   constructor(config: LxcConfig, context: BackendContext, options: LxcBackendOptions = {}) {
@@ -957,6 +978,15 @@ export class ProxmoxLxcBackend implements Backend {
         fail(POOL, message(error), audit(error, `Give the token Pool.Audit on /pool/${pool}.`));
       }
 
+      // What images are judged by (049), read while the templates are.
+      const images = this.#context.images;
+      const facts = Promise.all([
+        images?.pins("linux") ?? null,
+        images?.pins("linux-desktop") ?? null,
+        images?.bbApp(signal) ?? null,
+        this.#hostNvidia(),
+      ]).catch(() => [null, null, null, null] as const);
+      const pinSet = (flavour: LxcFlavour): PinSet => (flavour === "linux" ? "linux" : "linux-desktop");
       for (const listed of templates) {
         const template = listed.template.vmid;
         const name = templateCheck(listed);
@@ -977,6 +1007,13 @@ export class ProxmoxLxcBackend implements Backend {
             } else {
               this.#templates.set(template, templateInfo(storage, config));
               pass(name, `CT template ${template} on ${storage}, ${Math.floor((disk as { available: number }).available / GiB)} GiB free.`);
+              const [linuxPins, desktopPins, bbApp, nvidia] = await facts;
+              const judged = judgeImage(
+                recordInDescription(String(config.description ?? "")),
+                { os: "linux", pins: pinSet(listed.flavour) === "linux" ? linuxPins : desktopPins, bbApp, hostNvidia: nvidia },
+                `Rebuild it with the setup guide's template/build.sh, as root on ${node}: build.sh ${REBUILD[listed.flavour](template)} --replace.`,
+              );
+              checks.push({ id: `${name[0]}.image`, name: `Image of ${name[1]}`, ...judged });
             }
           }
         } catch (error) {
@@ -1520,13 +1557,16 @@ export class ProxmoxLxcBackend implements Backend {
     const command = await this.#command(vmid);
     const sleep = this.#options.sleep ?? pause;
     for (;;) {
-      const result = await command.run(`cat ${DISPLAY_MODE_FILE} 2>/dev/null && cat ${DISPLAY_REASON_FILE} 2>/dev/null; :`, {
-        timeoutMs: 15_000,
-        signal,
-        maxOutputBytes: 4096,
-      });
-      const [mode = "", reason = ""] = result.stdout.split("\n").map((line) => line.trim());
-      if (mode) return { mode, reason };
+      // With the host's NVIDIA driver, which the doctor compares with GPU templates' (049).
+      const result = await command.run(
+        `cat ${DISPLAY_MODE_FILE} 2>/dev/null && { cat ${DISPLAY_REASON_FILE} 2>/dev/null || echo; cat ${NVIDIA_VERSION_FILE} 2>/dev/null; }; :`,
+        { timeoutMs: 15_000, signal, maxOutputBytes: 4096 },
+      );
+      const [mode = "", reason = "", nvidia = ""] = result.stdout.split("\n").map((line) => line.trim());
+      if (mode) {
+        if (nvidia) await this.#sawNvidia(nvidia);
+        return { mode, reason };
+      }
       if (Date.now() >= deadline) {
         throw new Error(
           `The ${kind} box's desktop did not start: ${DISPLAY_MODE_FILE} is missing after ${Math.round(timeoutMs / 1000)} s. ` +
@@ -1534,6 +1574,23 @@ export class ProxmoxLxcBackend implements Backend {
         );
       }
       await sleep(200, signal);
+    }
+  }
+
+  /** The host's NVIDIA driver as a box last saw it, or null when none has. */
+  async #hostNvidia(): Promise<HostNvidia | null> {
+    if (this.#nvidia === undefined) this.#nvidia = (await this.#context.storage.get<HostNvidia>(NVIDIA_KEY)) ?? null;
+    return this.#nvidia;
+  }
+
+  /** Keeps the host's NVIDIA driver a box saw, when it is another than the last. */
+  async #sawNvidia(version: string): Promise<void> {
+    try {
+      if ((await this.#hostNvidia())?.version === version) return;
+      this.#nvidia = { version, seen: new Date().toISOString() };
+      await this.#context.storage.set(NVIDIA_KEY, this.#nvidia);
+    } catch (error) {
+      this.#context.logError("record the host's NVIDIA driver", error);
     }
   }
 

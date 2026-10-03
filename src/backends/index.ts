@@ -13,6 +13,7 @@ import { tartDriver } from "./tart/index.ts";
 import { backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
 import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall } from "./types.ts";
+import type { ImageFacts } from "./images.ts";
 import { WarmShortfalls } from "./warm.ts";
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver];
@@ -218,6 +219,7 @@ export class Backends {
   #secrets: Secrets = {};
   #statuses: BackendStatus[] = [];
   readonly #machines: MachineAccess | undefined;
+  readonly #images: ImageFacts | undefined;
 
   constructor(options: {
     storage: BackendStorage;
@@ -231,8 +233,11 @@ export class Backends {
     drivers?: readonly BackendDriver<any>[];
     /** BB machines backends reach through bb-box (042). */
     machines?: MachineAccess;
+    /** What the doctor judges images by (049). */
+    images?: ImageFacts;
   }) {
     this.#machines = options.machines;
+    this.#images = options.images;
     this.#drivers = options.drivers ?? DRIVERS;
     this.#storage = options.storage;
     this.#installId = options.installId;
@@ -263,6 +268,7 @@ export class Backends {
       installId: this.#installId,
       logError: this.#logError,
       ...(this.#machines ? { machines: this.#machines } : {}),
+      ...(this.#images ? { images: this.#images } : {}),
       warm: (kind) => {
         const document = this.#document;
         const backend = document?.backends.find((candidate) => candidate.id === id);

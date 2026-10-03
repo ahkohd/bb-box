@@ -8,6 +8,7 @@ import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index
 import { providerName } from "../core/provider-name.ts";
 import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../backends/types.ts";
 import { warmChecks } from "../backends/warm.ts";
+import { pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -311,6 +312,18 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     connected: machineConnected,
   };
 
+  // What the doctor judges images by (049): the pins in the plugin's own
+  // setup files, which the bundle, dist/server.js, has one up, and BB's app
+  // on BB's server now.
+  const pins = fileURLToPath(new URL("../setup/proxmox-lxc/template/", import.meta.url));
+  const images: ImageFacts = {
+    pins: (set) => pinsDigest(pins, set),
+    async bbApp() {
+      const url = bb.server.experimental_appUrl;
+      return url ? bbAppDigest(url).catch(() => null) : null;
+    },
+  };
+
   const backends = new Backends({
     storage: kv,
     installId: await loadInstallId(kv),
@@ -319,6 +332,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     changed: () => notify(null),
     drivers,
     machines,
+    images,
   });
   const configuration = await Configuration.load({
     kv,

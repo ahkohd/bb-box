@@ -1254,7 +1254,10 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["proxmox.sizes", "Box sizes", "ok"],
       ["proxmox.pool", "Resource pool", "ok"],
       ["template.9000", "Linux template 9000", "ok"],
+      // Built before images had records (049).
+      ["template.9000.image", "Image of Linux template 9000", "warn"],
       ["template.9001", "GPU desktop template 9001 (GPU gpu-a)", "ok"],
+      ["template.9001.image", "Image of GPU desktop template 9001 (GPU gpu-a)", "warn"],
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
       ["ssh.key", "SSH key", "ok"],
@@ -1264,6 +1267,54 @@ test("doctor passes on a complete setup and shows the generated public key", asy
   const stored = await storage.get<{ privateKey: string; publicKey: string }>("ssh-key");
   assert.ok(stored?.privateKey.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"));
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE KEY/);
+});
+
+test("doctor judges each template's image by its record, and desktops tell it the host's NVIDIA driver (049)", async () => {
+  const { proxmox, context, make, ssh, storage } = setup();
+  const day = 24 * 60 * 60 * 1000;
+  const [linuxPins, desktopPins, app] = ["l", "d", "a"].map((letter) => letter.repeat(64));
+  const images = { pins: async (set: string) => (set === "linux" ? linuxPins! : desktopPins!), bbApp: async () => app! };
+  const linux = {
+    contract: 1,
+    image: "standard",
+    kind: "linux",
+    arch: "x86_64",
+    build: "build.20261003-021500-3f9c",
+    built: new Date(Date.now() - day / 2).toISOString(),
+    os: "Ubuntu 24.04.3 LTS",
+    pins: linuxPins,
+    bbApp: app,
+    tools: { node: "24.21.0" },
+    nvidia: null,
+    sizeGiB: 3.3,
+  };
+  const desktop = { ...linux, kind: "linux-desktop", built: new Date(Date.now() - 20 * day).toISOString(), pins: desktopPins, bbApp: "b".repeat(64), nvidia: "580.95.05" };
+  proxmox.guests.get(9000)!.config.description = `bb-box linux template, built 2026-10-03. See /usr/share/bb-box/template-release inside.\n${JSON.stringify(linux)}`;
+  proxmox.guests.get(9001)!.config.description = `bb-box desktop template (GPU 0000:01:00.0), built 2026-09-13.\n${JSON.stringify(desktop)}\n`;
+  const backend = make({ ...context, images });
+  const image = async (vmid: number, on = backend) => (await on.doctor()).checks.find((check) => check.id === `template.${vmid}.image`)!;
+
+  const fresh = await image(9000);
+  assert.deepEqual([fresh.status, fresh.fix], ["ok", null]);
+  assert.match(fresh.detail, /^Standard image build\.20261003-021500-3f9c, built \d+ \w+ \(today\): Ubuntu 24\.04\.3 LTS, node 24\.21\.0, 3\.3 GiB\.$/);
+  const stale = await image(9001);
+  assert.equal(stale.status, "warn");
+  assert.match(stale.detail, /It is 20 days old, more than 14, .* another build of BB's app than BB's server gives/);
+  assert.equal(stale.fix, "Rebuild it with the setup guide's template/build.sh, as root on pve: build.sh desktop 9001 --gpu <its GPU's PCI address> --replace.");
+
+  // A desktop box sees the host's driver, newer than the template's userspace.
+  const version = join(ssh.dir, "home", "192.0.2.100", "sys", "module", "nvidia");
+  mkdirSync(version, { recursive: true });
+  writeFileSync(join(version, "version"), "590.44.01\n");
+  await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.equal((await storage.get<{ version: string }>("nvidia-host"))?.version, "590.44.01");
+  for (const on of [backend, make({ ...context, images })]) {
+    const gpu = await image(9001, on);
+    assert.equal(gpu.status, "fail");
+    assert.match(gpu.detail, /It has NVIDIA userspace 580\.95\.05, but the host has driver 590\.44\.01, as a box saw on \d+ \w+, so its desktops start without the GPU\./);
+    assert.equal((await image(9000, on)).status, "ok", "a Linux template has no NVIDIA userspace");
+  }
+  assert.deepEqual(context.errors, []);
 });
 
 test("doctor warns about a kind the node cannot hold at any preset (#74)", async () => {

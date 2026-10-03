@@ -236,6 +236,27 @@ Everything a build downloads is checked against a pinned SHA-256 and kept in
 To update a tool, change its pins (URL and SHA-256, for each architecture)
 and rebuild.
 
+Each build writes the image's record, `/usr/share/bb-box/image.json`
+([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)):
+the contract it keeps, its kind, build ID and time, the OS and apt snapshot,
+the SHA-256 of the pins it was built with, the digest of BB's app in it,
+each tool's version, the NVIDIA userspace's version on a GPU desktop, and
+its size. `build.sh` copies the record to the second line of the template's
+description, where bb-box's doctor reads it without starting the template.
+`copy-desktop` copies its source's. For each template, the doctor's
+"Image of" check:
+
+- fails when the image keeps an older contract than bb-box needs, or when
+  its NVIDIA userspace is not the host's driver, as the last desktop box
+  saw it, since its desktops then start without the GPU;
+- warns when it has no record (built before records), is more than 14 days
+  old, has another build of BB's app than BB's server gives, or was built
+  with other pins than the plugin's own `template/` files.
+
+Its fix is the `build.sh` command that rebuilds it with `--replace`.
+`/usr/share/bb-box/template-release` and the packages list stay, for
+people.
+
 ### What is in a box
 
 Both templates:
