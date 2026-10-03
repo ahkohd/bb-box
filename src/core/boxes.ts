@@ -40,6 +40,8 @@ import {
 } from "../backends/types.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
+import type { ImageConfig } from "./document.ts";
+import { quote } from "../transports/process.ts";
 import { command, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
 import { chooseSize, defaultSize, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
@@ -62,6 +64,22 @@ export type BoxState =
 /** "box" is acquired by a tool or the panel; "machine" is a thread's own BB machine. */
 export type BoxRole = "box" | "machine";
 export type EnrolState = "off" | "enrolling" | "enrolled" | "failed";
+
+/** A box's project's image (049): its name, and its script's run at start. */
+export interface BoxImage {
+  readonly name: string;
+  readonly state: "pending" | "running" | "done" | "failed";
+  /** How long its script and check took, once done. */
+  readonly seconds?: number;
+}
+
+/** How long an image's script may run at start (049), and its check. */
+const IMAGE_SCRIPT_MS = 30 * 60_000;
+const IMAGE_CHECK_MS = 10 * 60_000;
+/** Lines of a failed script's output an acquire's error gives (049). */
+const IMAGE_LINES = 20;
+/** Where an image's files go in the box while they run. */
+const IMAGE_DIR = ".bb-box-image";
 
 export interface BoxRecord {
   readonly id: string;
@@ -104,6 +122,8 @@ export interface BoxRecord {
   /** Milliseconds per acquire step, "total" from request to ready, and "release.<step>" after a failed release. */
   readonly timings: Readonly<Record<string, number>>;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
+  /** Its project's image (049), whose script runs as root as the box starts, before it is handed over. */
+  readonly image?: BoxImage | null;
   /** The last time the box's guest stopped without bb-box's request (#406). A stop bb-box makes forgets it. */
   readonly unrequestedStop?: UnrequestedStop | null;
 }
@@ -195,6 +215,8 @@ export interface BoxesDeps {
     on?(): Backend[];
   };
   general(): Promise<GeneralConfig>;
+  /** The image a project's boxes of a kind get (049), from the configuration, or null. */
+  image?(projectId: string | null, kind: string): { readonly name: string; readonly image: ImageConfig } | null;
   /** Tells panels and tools that a thread's boxes changed. */
   notify(threadId: string): void;
   /** A box's record was written, or deleted when `deleted` is true. */
@@ -596,8 +618,10 @@ export class Boxes {
     const owned = role === "box" && ownedByThread(input.threadId);
     const claimsSpare = role === "box" && input.threadId !== SPARES;
     const general = await this.#deps.general();
+    // The project's image for the kind (049), whose script runs as the box starts. Such a box is made, not a spare, for now.
+    const image = role === "box" && !yours ? (this.#deps.image?.(input.projectId, wanted) ?? null) : null;
     // Spares left over from a kind that keeps none now are released, not claimed.
-    const claims = claimsSpare && (general.spares[wanted] ?? 0) > 0;
+    const claims = claimsSpare && !image && (general.spares[wanted] ?? 0) > 0;
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
     const { box, claimed } = await this.#admission.run(() =>
@@ -638,6 +662,7 @@ export class Boxes {
           resetAt: null,
           timings: {},
           enrol: { state: "off", hostId: null, error: null },
+          ...(image ? { image: { name: image.name, state: "pending" as const } } : {}),
         };
         await this.#deps.kv.set(indexKey(box.id), box.threadId);
         return { box: await this.#write(box), claimed: null };
@@ -1151,6 +1176,22 @@ export class Boxes {
       if (next?.state === "failed") this.#deps.logError("acquire", error);
       return;
     }
+    // The project's image's script (049), as root, before the box is handed over. A failure releases the box.
+    if (box.image && box.image.state !== "done") {
+      try {
+        await this.#runImage(box, guest, backend, timings, signal);
+      } catch (error) {
+        await this.update(box, (current) => ({ image: current.image ? { ...current.image, state: "failed" as const } : null }));
+        await backend.release(guest, QUIET).catch((cause) => this.#deps.logError("release", cause));
+        const next = await this.update(box, (current) => {
+          if (current.state === "releasing" || this.#disposed) return { guest: null };
+          return { state: "failed", guest: null, error: describeError(error, `Running ${box.image!.name}'s script`), timings: { ...timings } };
+        });
+        if (next?.state === "failed") this.#deps.logError("acquire", error);
+        return;
+      }
+      box = (await this.#read(box.threadId, box.id)) ?? box;
+    }
     const now = this.#now();
     const next = await this.update(box, (current) =>
       current.state === "releasing"
@@ -1165,6 +1206,45 @@ export class Boxes {
     // A release waiting behind this task releases the guest next.
     if (next.state !== "ready") return;
     await this.#enrol(next);
+  }
+
+  /**
+   * Runs the box's project's image's script as root, with BB_BOX_IMAGE,
+   * BB_BOX_KIND, BB_BOX_BACKEND and BB_BOX_ARCH, then its check as the box
+   * user (049). Throws with the output's last lines when either fails. An
+   * image removed since the box was asked for runs nothing.
+   */
+  async #runImage(box: BoxRecord, guest: Guest, backend: Backend, timings: Record<string, number>, signal: AbortSignal): Promise<void> {
+    const found = this.#deps.image?.(box.projectId, box.kind);
+    if (!found || found.name !== box.image?.name) {
+      await this.update(box, () => ({ image: null }));
+      return;
+    }
+    const { name, image } = found;
+    const started = this.#now();
+    await this.update(box, (current) => ({ image: { name, state: "running" as const } }));
+    const command = (await backend.transports(guest, box.kind)).command;
+    if (!command) throw new BoxError("unsupported", `A ${box.kindLabel} box takes no commands, so it cannot run ${name}'s script.`);
+    const text = new TextEncoder();
+    await command.writeFile(`${IMAGE_DIR}/setup.sh`, text.encode(image.script), { mode: "0700", signal });
+    if (image.check) await command.writeFile(`${IMAGE_DIR}/check.sh`, text.encode(image.check), { mode: "0700", signal });
+    const env = Object.entries({ BB_BOX_IMAGE: name, BB_BOX_KIND: box.kind, BB_BOX_BACKEND: backend.id, BB_BOX_ARCH: box.capabilities.arch })
+      .map(([key, value]) => `${key}=${quote(value)}`)
+      .join(" ");
+    const failed = (what: string, ran: RunResult, limitMs: number) => {
+      const lines = ran.stdout.trimEnd().split("\n").slice(-IMAGE_LINES).join("\n");
+      return new Error(`${name}'s ${what} ${ran.timedOut ? `ran out of time after ${limitMs / 60_000} minutes` : `exited with ${ran.exitCode}`}. Its last lines:\n${lines}`);
+    };
+    const ran = await command.run(`sudo -n env ${env} bash "$HOME/${IMAGE_DIR}/setup.sh" 2>&1`, { timeoutMs: IMAGE_SCRIPT_MS, signal, maxOutputBytes: 256 * 1024 });
+    if (ran.exitCode !== 0) throw failed("script", ran, IMAGE_SCRIPT_MS);
+    if (image.check) {
+      const checked = await command.run(`env ${env} bash "$HOME/${IMAGE_DIR}/check.sh" 2>&1`, { timeoutMs: IMAGE_CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
+      if (checked.exitCode !== 0) throw failed("check", checked, IMAGE_CHECK_MS);
+    }
+    await command.run(`rm -rf "$HOME/${IMAGE_DIR}"`, { timeoutMs: 30_000, signal }).catch(() => undefined);
+    const ms = this.#now() - started;
+    timings.image = ms;
+    await this.update(box, () => ({ image: { name, state: "done" as const, seconds: Math.round(ms / 1000) } }));
   }
 
   /** Starts enrolling a ready box as a BB machine, when it can enrol. */

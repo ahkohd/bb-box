@@ -232,8 +232,12 @@ images. Have a BB script automation run the job, in a project of yours:
 ```sh
 bb automation create --project <project> --name "bb-box images" \
   --cron "0 2 * * *" --timezone <zone> \
-  --script "bb box images refresh" --timeout 4h
+  --script "bb box images refresh" --timeout 900000
 ```
+
+A BB automation waits at most 15 minutes (`--timeout` in milliseconds),
+while a run may take hours. When the automation's call ends, the run goes
+on inside the plugin, and `bb box images list` shows what it did.
 
 `bb box images refresh` takes the images that are due one at a time, most
 needed first. The order is:
