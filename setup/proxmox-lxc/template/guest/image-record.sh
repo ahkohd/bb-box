@@ -6,8 +6,9 @@
 #
 # The contract is what bb-box needs of an image. The pins' SHA-256 is of
 # pins.json, apt-snapshot and, for a desktop, desktop-pins.tsv, in that order,
-# as bb-box computes it from its own copy. build.env, or the environment,
-# may give BUILD_ID, DESKTOP_GPU and DESKTOP_SESSION.
+# as bb-box computes it from its own copy. Pins bb-box resolved to newer
+# versions (049) give the repository's in pins.json's `pinned`. build.env,
+# or the environment, may give BUILD_ID, DESKTOP_GPU and DESKTOP_SESSION.
 #
 # usage: image-record.sh <build-dir> <kind> [<out-dir>]
 set -euo pipefail
@@ -23,9 +24,11 @@ settings() { (. "$build/build.env" 2>/dev/null || true; eval "echo \"\${$1:-}\""
 image_kind=linux
 [ "$arch" = x86_64 ] || image_kind=linux-arm64
 pin_files=("$build/pins.json" "$build/apt-snapshot")
+pin_set=linux
 tools=$(jq -c --arg arch "$arch" '[.tools[] | select(.arch == $arch) | {(.name): .version}] | add // {}' "$build/pins.json")
 if [ "$kind" != linux ]; then
   pin_files+=("$build/desktop-pins.tsv")
+  pin_set=linux-desktop
   if [ "$(settings DESKTOP_SESSION)" = wayland ]; then image_kind=linux-desktop-wayland-cpu
   # Docker's X desktop image serves GPU desktops too, with the host's NVIDIA
   # userspace.
@@ -38,13 +41,15 @@ if [ "$kind" != linux ]; then
 fi
 nvidia=$(sed -n 's/^nvidia=//p' "$out/template-release" | head -1)
 case $nvidia in "" | none) nvidia= ;; esac
+pins=$(jq -r --arg set "$pin_set" '.pinned[$set] // empty' "$build/pins.json")
+[ -n "$pins" ] || pins=$(cat "${pin_files[@]}" | sha256sum | cut -d' ' -f1)
 build_id=$(settings BUILD_ID)
 [ -n "$build_id" ] || build_id=build.$(date -u +%Y%m%d-%H%M%S)-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')
 
 jq -cn --arg kind "$image_kind" --arg arch "$arch" --arg build "$build_id" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg os "$(. /etc/os-release && echo "$PRETTY_NAME")" \
   --arg snapshot "$(sed -n 's/^apt_snapshot=//p' "$out/template-release" | grep -v '^none$' || true)" \
-  --arg pins "$(cat "${pin_files[@]}" | sha256sum | cut -d' ' -f1)" \
+  --arg pins "$pins" \
   --arg app "$(cat /home/*/.bb-machines/*/host-artifact.sha256 2>/dev/null | head -1 || true)" \
   --arg nvidia "$nvidia" --argjson tools "$tools" \
   '{contract: 1, image: "standard", kind: $kind, arch: $arch, build: $build, built: $built, base: null, os: $os,

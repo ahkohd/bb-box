@@ -236,6 +236,21 @@ Everything a build downloads is checked against a pinned SHA-256 and kept in
 To update a tool, change its pins (URL and SHA-256, for each architecture)
 and rebuild.
 
+A rebuild bb-box runs itself
+([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md))
+takes these from upstream instead of the pins:
+
+- **The tools that follow upstream.** It takes the latest stable Claude Code (its latest channel), Codex, pi, gh and Chrome. Each comes with the SHA-256 its upstream publishes: Claude Code's release manifest, the GitHub release asset's digest, or Google's stable Packages index.
+- **The apt snapshot.** It takes the day's snapshot.
+
+A tool keeps its pin when its upstream cannot be read or has nothing newer,
+so a build never goes back past the pins. Node, the other tools, Cua
+Driver, the desktop stack and NVIDIA's userspace stay pinned, and change
+with bb-box releases. The image's record keeps the SHA-256 of the
+repository's pins, so its doctor check still says the image was built with
+this bb-box's pins. `bb box images versions` shows what a rebuild would take
+now; `--pinned` shows the pins alone, as a build with `--pinned` takes them.
+
 Each build writes the image's record, `/usr/share/bb-box/image.json`
 ([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)):
 the contract it keeps, its kind, build ID and time, the OS and apt snapshot,
