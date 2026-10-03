@@ -4,10 +4,12 @@
 // as the box user. Releasing a box removes its machine first. After bb-box
 // starts a stopped box, or when the sweep finds a ready box's machine
 // disconnected, bootstrap runs again with the same key to start BB's daemon
-// (017). A box the sweep restores from its guest enrols again with the same
-// key once it runs and answers, and BB gives back the machine it still has
-// for it (025, 026). A spare's machine is named "<name> (spare)" until an
-// acquire claims the box, which gives it the box's name (032).
+// (017), on a Mac after unloading the daemon's LaunchAgent if launchd loaded
+// it at login and the bootstrap fails for that (#416). A box the sweep
+// restores from its guest enrols again with the same key once it runs and
+// answers, and BB gives back the machine it still has for it (025, 026). A
+// spare's machine is named "<name> (spare)" until an acquire claims the box,
+// which gives it the box's name (032).
 //
 // Plugins can read the names of BB's machine variables but not their values;
 // BB gives the values, and GH_TOKEN, to its daemon in the box. Commands in a
@@ -37,10 +39,36 @@ import { z } from "zod";
 import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from "../core/boxes.ts";
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
+import { quote } from "../transports/process.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 
 export const MACHINE_PROVIDER_ID = "bb-box";
+
+/** What BB's bootstrap says on a Mac where launchd has its daemon's LaunchAgent loaded already (#416). */
+const LOADED = /Bootstrap failed: 5: Input\/output error/;
+
+/**
+ * Unloads BB's daemon's LaunchAgent for machine `hostId` in the box user's
+ * session, and waits up to 10 s for it to go, as `launchctl bootstrap` fails
+ * the same way while it is going (#416). In /bin/sh, as the box user's zsh
+ * fails a glob that matches nothing.
+ */
+export function unloadMacDaemon(hostId: string): string {
+  return `/bin/sh -c ${quote(String.raw`uid=$(id -u)
+for p in "$HOME"/Library/LaunchAgents/app.getbb.host-daemon.*-${hostId}.plist; do
+  [ -f "$p" ] || continue
+  l=$(basename "$p" .plist)
+  launchctl print "gui/$uid/$l" >/dev/null 2>&1 || continue
+  launchctl bootout "gui/$uid/$l" >/dev/null 2>&1
+  i=0
+  while launchctl print "gui/$uid/$l" >/dev/null 2>&1; do
+    i=$((i + 1)); [ "$i" -lt 100 ] || exit 1
+    sleep 0.1
+  done
+done
+`)}`;
+}
 
 /** The parts of BB's host API enrolment uses. */
 export interface HostApi {
@@ -307,6 +335,24 @@ export class Enrolment {
     };
   }
 
+  /**
+   * BB's bootstrap of a machine BB has already, to start its daemon again.
+   * After a Mac boots, launchd has the daemon's LaunchAgent loaded already,
+   * from the login, and BB's `launchctl bootstrap` fails for it: bb-box
+   * unloads it then and runs the bootstrap once more (#416).
+   */
+  async #bootstrapAgain(box: BoxRecord, hostId: string, transport: CommandTransport, request: Parameters<EnrolmentDeps["bootstrap"]>[0]): Promise<void> {
+    try {
+      await this.#deps.bootstrap(request);
+    } catch (error) {
+      if (box.capabilities.os !== "macos" || !LOADED.test(error instanceof Error ? error.message : String(error))) throw error;
+      this.#deps.log?.(`BB's daemon in box ${box.name} was loaded already, as after a boot: unloading it, and running BB's bootstrap again.`);
+      const unloaded = await transport.run(unloadMacDaemon(hostId), { timeoutMs: 30_000, signal: request.signal });
+      if (unloaded.exitCode !== 0) throw error;
+      await this.#deps.bootstrap(request);
+    }
+  }
+
   async #transport(box: BoxRecord): Promise<CommandTransport> {
     const { command } = await this.#deps.boxes.transports(box);
     if (!command) throw new Error(`bb-box cannot run commands in box ${box.name}.`);
@@ -350,7 +396,7 @@ export class Enrolment {
         // again, so bootstrap with the same key starts the daemon.
         if (host.lifecycle.phase === "active" && host.status !== "connected") {
           const transport = await this.#transport(current);
-          await this.#deps.bootstrap({ key: box.id, executor: executor(transport, phases), report: QUIET, signal: AbortSignal.timeout(this.#timeoutMs) });
+          await this.#bootstrapAgain(current, host.id, transport, { key: box.id, executor: executor(transport, phases), report: QUIET, signal: AbortSignal.timeout(this.#timeoutMs) });
           phases.mark("bootstrapped");
         }
       }
@@ -549,7 +595,7 @@ export class Enrolment {
       try {
         // A thread's own box joined BB under the thread's key; any other under its own ID.
         const key = box.role === "machine" ? box.threadId : box.id;
-        await this.#deps.bootstrap({ key, executor: executor(transport), report: QUIET, signal });
+        await this.#bootstrapAgain(box, hostId, transport, { key, executor: executor(transport), report: QUIET, signal });
       } catch (error) {
         await this.#deps.boxes.update(box, (current) =>
           current.enrol.hostId !== hostId ? {} : { enrol: { ...current.enrol, error: describeError(error, "Reconnecting the box's BB machine") } },
