@@ -301,18 +301,19 @@ held for 250 ms: the last frame of a pane opening is not lost.
   user's console, and Screen Sharing's VNC password stays off. Type 30 is
   Diffie-Hellman in the server's group, whose shared secret's MD5 is the
   AES-128 key for the user and password, as noVNC does it. On macOS 27,
-  Screen Sharing ignored the viewer's keyboard and pointer this way: a
-  blocker, with its fallbacks in 047's live check.
+  Screen Sharing ignores the viewer's keyboard and pointer this way, so
+  they go through the box instead (below).
 - macOS 27's Screen Sharing shows the desktop to a viewer that is not Apple's
   but ignores its keys and pointer (#406). So a display's `open()` may give an
   `input` of its own: the relay opens it at the controlling viewer's first
   input and sends it that viewer's keys, pointer and clipboard instead of the
-  stream server, and the releases of what it held as it goes. For a Mac's own
-  desktop it would be a JXA script in the user's desktop session that posts
-  each event with CGEventPost, keys by their position on a US keyboard (core's
-  `MacInput`, for 047). It reports the box's clipboard as it changes, which
-  the viewer with control fetches over RPC, since the relay cannot put a
-  message into the server's stream without parsing it.
+  stream server, and the releases of what it held as it goes. For a pool's
+  Mac it is a JXA script in the box user's desktop session that posts each
+  event with CGEventPost, keys by their position on a US keyboard (core's
+  `MacInput`, 047), which needs SSH allowed Accessibility once per Mac. It
+  reports the box's clipboard as it changes, which the viewer with control
+  fetches over RPC, since the relay cannot put a message into the server's
+  stream without parsing it.
 - wayvnc, which streams a Wayland desktop (048), offers no VNC password,
   so the relay signs in there with type 30 too, as the user `box`.
 - Windows uses RFB through Proxmox's console: nothing to install in the
@@ -1587,9 +1588,10 @@ Notes:
   as the automatic login, removes the old user and what it left, and
   starts loginwindow again so the automatic login signs the next user in,
   which needs FileVault off. On macOS 27 only a userspace restart does
-  that, which ends every SSH session on the Mac. Cua's grants, and Full
-  Disk Access for the reset's SSH, are per Mac: a person gives them once
-  at setup, or MDM gives Accessibility, and they hold through every reset.
+  that, which ends every SSH session on the Mac. Cua's grants, Full Disk
+  Access for the reset's SSH and Accessibility for the viewer's input over
+  SSH are per Mac: a person gives them once at setup, or MDM gives
+  Accessibility, and they hold through every reset.
 - **Tart** images are prepared ahead on each Mac by the setup's scripts,
   from Cirrus Labs' images pulled with `tart pull`: for macOS, Cua's
   permissions written offline into the image's TCC database, automatic
@@ -1669,7 +1671,7 @@ Notes:
 | Question | Where it is answered |
 | --- | --- |
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
-| Whether a viewer can type and click through a Mac's Screen Sharing (a blocker); what a stand-in Mac could not show: the reset's sweep with System Integrity Protection on, the console's size with no display, Cua's first capture for a new user, and Xcode with the Simulator's first boot | the live check on a Mac set aside, in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-live-check) |
+| What a stand-in Mac could not show: that a person's Accessibility step lets the input helper post events with System Integrity Protection on, the reset's sweep with System Integrity Protection on, the console's size with no display, Cua's first capture for a new user, and Xcode with the Simulator's first boot | the live check on a Mac set aside, in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-live-check) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
 | Whether the Proxmox API token can capture and replace templates, whether the guest scripts run again cleanly on a built template, and whether a BB script automation can run `bb box` | the first PRs of [049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md#to-verify-in-the-first-prs) |
