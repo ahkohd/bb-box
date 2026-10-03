@@ -24,6 +24,16 @@ function Filled({ className, children, ...rest }: Props) {
   );
 }
 
+/** A box: the plugin's cube (assets/icon.svg), leading every box row; the type reads in the badges (the operator's note of 3 October 2026). */
+export function BoxGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z" />
+      <path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5" />
+    </Stroked>
+  );
+}
+
 /** A box without a desktop: a server. */
 export function ServerGlyph(props: Props) {
   return (

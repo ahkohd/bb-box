@@ -23,7 +23,7 @@ import { Badge, IconButton, isArm64Badge, KindBadges, lacksDocker, Meta, osName,
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
-import { MonitorGlyph, ServerGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh";
 
@@ -123,7 +123,7 @@ export function BoxRow({
       }}
     >
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-        {box.desktop ? <MonitorGlyph /> : <ServerGlyph />}
+        <BoxGlyph />
       </span>
       <div className="min-w-0">
         <button

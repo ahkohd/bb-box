@@ -14,7 +14,7 @@ import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadg
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
-import { MonitorGlyph, ServerGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
@@ -504,7 +504,7 @@ export function BoxLine({ box, meta, actions }: { box: BoxView; meta?: string | 
   const control = box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null;
   return (
     <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
-      <span className="flex size-6 items-center justify-center text-muted-foreground">{box.desktop ? <MonitorGlyph /> : <ServerGlyph />}</span>
+      <span className="flex size-6 items-center justify-center text-muted-foreground"><BoxGlyph /></span>
       <div className="min-w-0">
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="truncate text-sm font-medium text-foreground">{box.name}</span>

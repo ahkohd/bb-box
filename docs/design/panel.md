@@ -41,15 +41,21 @@ steps that name it (System, Architecture, Type with a Display under it
 where a desktop's system offers both windowings, and a GPU under
 Resources).
 
-| Kind ID | Box row | New box steps | Icon |
-| --- | --- | --- | --- |
-| `linux` | Linux [LXC] | Linux · x86_64 · Server | server |
-| `linux-desktop` | Linux [Desktop] [GPU] [LXC] | Linux · x86_64 · Desktop · 1 GPU | monitor |
-| `linux-desktop-cpu` | Linux [Desktop] [LXC] | Linux · x86_64 · Desktop · no GPU | monitor |
-| `linux-arm64`, `linux-arm64-desktop-cpu` | Linux [arm64] [VM], Linux [Desktop] [arm64] [VM] | Linux · arm64 · Server; Linux · arm64 · Desktop | server, monitor |
-| `macos`, `macos-desktop` | macOS [VM], macOS [Desktop] [VM] | macOS · arm64 · Server; macOS · arm64 · Desktop | server, monitor |
-| `windows-desktop` | Windows [Desktop] [VM] | Windows · x86_64 · Desktop | monitor |
-| `windows-arm64-desktop` | Windows [Desktop] [arm64] [VM] | Windows · arm64 · Desktop | monitor |
+| Kind ID | Box row | New box steps |
+| --- | --- | --- |
+| `linux` | Linux [LXC] | Linux · x86_64 · Server |
+| `linux-desktop` | Linux [Desktop] [GPU] [LXC] | Linux · x86_64 · Desktop · 1 GPU |
+| `linux-desktop-cpu` | Linux [Desktop] [LXC] | Linux · x86_64 · Desktop · no GPU |
+| `linux-arm64`, `linux-arm64-desktop-cpu` | Linux [arm64] [VM], Linux [Desktop] [arm64] [VM] | Linux · arm64 · Server; Linux · arm64 · Desktop |
+| `macos`, `macos-desktop` | macOS [VM], macOS [Desktop] [VM] | macOS · arm64 · Server; macOS · arm64 · Desktop |
+| `windows-desktop` | Windows [Desktop] [VM] | Windows · x86_64 · Desktop |
+| `windows-arm64-desktop` | Windows [Desktop] [arm64] [VM] | Windows · arm64 · Desktop |
+
+Every box row leads with the same glyph, the plugin's cube (the
+operator's note of 3 October 2026): the Desktop badge already says the
+type, so the glyph does not repeat it. The server and monitor glyphs stay
+for the New box Type cards, the Open desktop action and the desktop
+view's toolbar, where they name a type or a place rather than a box.
 
 `linux-docker` and `linux-arm64-docker` are aliases an agent may ask for,
 never rows (041: every Linux box has Docker). The panel shows the OS and
@@ -103,17 +109,17 @@ tab (1 October 2026): one tab, one place for the thread's boxes.
 +------------------------------------------------------------+
 | 3 boxes                                                [+] |   toolbar
 +------------------------------------------------------------+
-| [=] quiet-fern  Linux [LXC]                            ...  |   row
+| [o] quiet-fern  Linux [LXC]                            ...  |   row
 |     (spinner) Starting · 1.4 s · 2 cores · 4 GiB · 16 GiB   |
 |------------------------------------------------------------|
-| [#] bold-heron  Linux desktop [GPU] [LXC]        [#] [>_] ... |
+| [o] bold-heron  Linux desktop [GPU] [LXC]        [#] [>_] ... |
 |     (green) Ready in 2.2 s · BB machine in 5.3 s ·          |
 |     4 cores · 8 GiB · 32 GiB · You have control             |
 |     Address     10.200.0.14                                 |   details, when open
 |     Backend     Proxmox LXC on pve                          |
 |     ...                                                     |
 |------------------------------------------------------------|
-| [=] calm-otter  Linux [Physical]                [>] ...     |
+| [o] calm-otter  Linux [Physical]                [>] ...     |
 |     (ring) Stopped · 8 cores · 16 GiB · 64 GiB              |
 +------------------------------------------------------------+
 ```
@@ -125,7 +131,7 @@ tab (1 October 2026): one tab, one place for the thread's boxes.
 - **List**: BB's list panel (`rounded-lg border bg-card px-4`), one row per
   box, divided by hairlines, newest last so a new box appears where the eye
   is after pressing the button.
-- **Row**: BB's resource row. A leading glyph (server or monitor), the name
+- **Row**: BB's resource row. The box glyph, the cube, on every row, the name
   in `text-sm font-medium`, the kind label beside it in muted `text-xs`, its
   badges (wrapping under the name when the row is narrow), and a status line
   below in muted `text-xs`. Trailing: the row's quick actions
@@ -591,8 +597,8 @@ back is instant (1 October 2026). The app bundle keeps them
 ## The Boxes page
 
 The sidebar entry, "Boxes", lists every box across threads, servers as
-well as desktops, as rows: glyph (a monitor for a desktop, a server for
-the rest), name, the OS and badges, then the state, who has control for a
+well as desktops, as rows: the box glyph (the cube, on every row), name,
+the OS and badges, then the state, who has control for a
 desktop, and the thread's title. Its icon is BB's branding cube, which
 suits a page of boxes; the plugin names no icon of its own, since none
 would resolve (the plugin's id is not "bb-box"), so BB draws the cube.
