@@ -21,7 +21,10 @@
 //
 // App "editor" is like Mousepad, as is app "mousepad", which the conformance
 // suite opens: a text area named after its text, inside a tab named after the
-// document, which gains a "*" once edited, as does the editor's title. A URL
+// document, which gains a "*" once edited, as does the editor's title. Both
+// are single-instance: launched again while open, they show a new document
+// in the window they have and fail as Cua does when it hands a launch to a
+// running app over D-Bus and no new window appears. A URL
 // opens in app "browser", whose window is titled "Untitled" until its page
 // loads; a URL with "slow" in it never does. A second URL goes to the browser
 // window already open, whose title is the URL while it loads, as Chrome's is.
@@ -407,9 +410,28 @@ export class FakeCua {
         return this.#apps();
       case "set_window_frame":
         return this.#move(args);
+      case "bring_to_front":
+        return this.#front(args);
+      case "kill_app":
+        return this.#kill(args);
       default:
         return text(`Unknown tool ${tool}.`, { code: "unknown_tool" }, true);
     }
+  }
+
+  #front(args: Args): Result {
+    const desktop = this.#load();
+    const window = this.#window(desktop, args);
+    if (!("id" in window)) return window;
+    return text(`Brought window ${window.id} to the front.`, { platform: "linux", session: desktop.wayland ? "wayland" : "x11", window_id: window.id });
+  }
+
+  #kill(args: Args): Result {
+    return this.#change((desktop) => {
+      if (!desktop.windows.some((window) => window.pid === args.pid)) return text(`No process ${String(args.pid)}.`, { code: "no_such_process" }, true);
+      desktop.windows = desktop.windows.filter((window) => window.pid !== args.pid);
+      return text(`Killed ${String(args.pid)}.`, { pid: args.pid, killed: true });
+    });
   }
 
   #move(args: Args): Result {
@@ -688,6 +710,22 @@ export class FakeCua {
         const own: FakeWindow = { id: desktop.nextWindow++, pid, app: "TextEdit", title: "Untitled", x: 0, y: 0, width: 640, height: 480, onScreen: true };
         desktop.windows.push(helper, own);
         return text("Launched TextEdit.", { pid, running: true, windows: [this.#windowJson(helper), this.#windowJson(own)] });
+      }
+      const running = (name === "editor" || name === "mousepad") && desktop.windows.find((window) => window.app === name);
+      if (running) {
+        const shown = Number(/^Untitled (\d+)/.exec(running.title)?.[1] ?? 1);
+        if (name === "editor") running.title = `Untitled ${shown + 1} - Editor`;
+        desktop.fields[running.id] = "";
+        return text(`'${name}' was handed off for D-Bus activation but no new window appeared within 8s; the launch could not be confirmed.`, {
+          code: "launch_handoff_timeout",
+          effect: "refused",
+          handoff: "dbus_activation",
+          launcher_pid: desktop.nextPid++,
+          name,
+          pid: null,
+          running: null,
+          waited_secs: 8,
+        }, true);
       }
       // Other apps open their window a little later, as a slow app does.
       const pid = desktop.nextPid++;

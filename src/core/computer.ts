@@ -466,6 +466,14 @@ function cannotInject(result: McpResult): boolean {
   return !!result.isError && /\bcannot inject input\b/i.test(rawText(result));
 }
 
+/**
+ * Cua handed the launch to the app's running instance, as D-Bus activation
+ * does for a single-instance app on Linux, and no new window appeared.
+ */
+function handedOff(result: McpResult): boolean {
+  return !!result.isError && (obj(result.structuredContent).code === "launch_handoff_timeout" || /\bhanded off\b/i.test(rawText(result)));
+}
+
 /** The window Cua's agent cursor is drawn in on Windows. It covers the screen above the desktop, and is not an app's. */
 const CURSOR_OVERLAY = /^Cua\.AgentCursorOverlay\b/;
 
@@ -638,6 +646,13 @@ export function launchArgs(os: GuestOs, input: { app?: string; url?: string }): 
   const args: Json = path ? { launch_path: app } : { name: app };
   if (os === "windows" && WINDOWS_CHROMIUM.test(app.trim())) args.additional_arguments = ["--force-renderer-accessibility"];
   return args;
+}
+
+/** True when a window is the app a launch named, by name or path: mousepad, Mousepad or /usr/bin/mousepad, or an app ID such as org.xfce.mousepad. */
+function sameApp(windowApp: string, app: string): boolean {
+  const name = app.trim().replace(/^.*[\\/]/, "").replace(/\.(desktop|exe|app)$/i, "").toLowerCase();
+  const own = windowApp.trim().toLowerCase();
+  return !!name && (own === name || own.endsWith(`.${name}`));
 }
 
 /** Apps the launch refusal leaves out: settings panels and session actions, by their IDs and programs. */
@@ -935,6 +950,10 @@ export class Computer {
       const before = await this.#listWindows(use);
       const args = launchArgs(box.capabilities.os, input);
       const { result } = await this.#call(use, "launch_app", args, { readOnly: false });
+      if (input.app !== undefined && handedOff(result)) {
+        const open = await this.#alreadyOpen(use, input.app, before);
+        if (open) return open;
+      }
       if (result.isError) {
         const reason = sentence(explain(result).replace(/^failed to launch:\s*/i, ""));
         if (input.app === undefined) throw new ComputerError("refused", `bb-box could not open ${what}: ${reason}`, "Check the URL.");
@@ -1315,6 +1334,26 @@ export class Computer {
     const y = Math.round(((frame.y + frame.height / 2 - window.y) * screenshot.height) / window.height);
     const { result, foreground } = await this.#deliver(use, "click", { pid: window.pid, window_id: window.id, x, y, ...args }, true);
     return { result, foreground, snapshot };
+  }
+
+  /**
+   * The window of an app that was already open, when opening it again only
+   * handed the launch to it. A single-instance app, such as Mousepad, may
+   * show a new document in its window and open none. bb-box brings that
+   * window to the front, as a new window would be. Null when the app had no
+   * window before.
+   */
+  async #alreadyOpen(use: Use, app: string, before: ReadonlyMap<number, WindowInfo>): Promise<ComputerResult | null> {
+    const own = [...(await this.#listWindows(use)).values()].filter((window) => before.has(window.id) && sameApp(window.app, app) && window.width > 1 && window.height > 1);
+    const window = own.find((candidate) => candidate.onScreen) ?? own[0];
+    if (!window) return null;
+    // Bringing a window to the front again does no harm, so a lost connection may retry it.
+    const { result } = await this.#call(use, "bring_to_front", { pid: window.pid, window_id: window.id }, { readOnly: true });
+    const lines = [`${app} was already open, and opening it again opened no new window. ${result.isError ? "Its window" : "bb-box brought its window to the front"}:\n- ${windowLine(window)}`];
+    if (result.isError) lines.push(`bb-box could not bring it to the front: ${sentence(explain(result))}`);
+    const was = before.get(window.id)!.title;
+    if (was !== window.title) lines.push(`Its title was "${was}" before, so it may show a new document.`);
+    return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${window.id} to read it.`] };
   }
 
   /** The names of the apps installed in the box, as Cua lists them, without settings panels or session actions; none when it cannot. */

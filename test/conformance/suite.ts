@@ -725,16 +725,35 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
                 const windows = async () => {
                   const listed = await session.call("list_windows", {}, { timeoutMs: 20_000 });
                   assert.ok(!listed.isError, listed.content.map((part) => part.text ?? "").join(" "));
-                  const all = (listed.structuredContent?.windows ?? []) as { window_id?: number; width?: number; height?: number; bounds?: { width?: number; height?: number } }[];
-                  return all.filter((window) => (window.bounds?.width ?? window.width ?? 0) > 1 && (window.bounds?.height ?? window.height ?? 0) > 1).map((window) => window.window_id);
+                  const all = (listed.structuredContent?.windows ?? []) as { window_id?: number; pid?: number; width?: number; height?: number; bounds?: { width?: number; height?: number } }[];
+                  return all.filter((window) => (window.bounds?.width ?? window.width ?? 0) > 1 && (window.bounds?.height ?? window.height ?? 0) > 1);
                 };
-                const before = new Set(await windows());
+                const before = await windows();
                 const launched = await session.call("launch_app", { name: editor! }, { timeoutMs: 30_000 });
                 assert.ok(!launched.isError, `the driver could not open ${editor}: ${launched.content.map((part) => part.text ?? "").join(" ")}`);
                 const deadline = Date.now() + WINDOW_WAIT_MS;
-                while (!(await windows()).some((id) => !before.has(id))) {
+                const isNew = (window: { window_id?: number }) => !before.some((old) => old.window_id === window.window_id);
+                let opened = (await windows()).filter(isNew);
+                while (!opened.length) {
                   if (Date.now() > deadline) assert.fail(`${editor} opened, but no new window appeared within ${WINDOW_WAIT_MS / 1000} s`);
                   await new Promise((resolve) => setTimeout(resolve, 500));
+                  opened = (await windows()).filter(isNew);
+                }
+                // The next check opens the app again, which a single-instance
+                // app, such as Mousepad, would hand to this one. Its process
+                // goes, unless it had windows before. Closing it is only
+                // tidying, so a driver that cannot says so and no more.
+                const pids = new Set<number>();
+                for (const pid of new Set(opened.map((window) => window.pid))) {
+                  if (pid === undefined || before.some((old) => old.pid === pid)) continue;
+                  const killed = await session.call("kill_app", { pid }, { timeoutMs: 20_000 });
+                  if (killed.isError) console.log(`# ${options.name} ${kind.id}: the driver could not close ${editor}: ${killed.content.map((part) => part.text ?? "").join(" ")}`);
+                  else pids.add(pid);
+                }
+                const gone = Date.now() + 5_000;
+                while ((await windows()).some((window) => window.pid !== undefined && pids.has(window.pid))) {
+                  if (Date.now() > gone) assert.fail(`${editor}'s window is still open 5 s after the driver closed it`);
+                  await new Promise((resolve) => setTimeout(resolve, 250));
                 }
               } finally {
                 await session.close();

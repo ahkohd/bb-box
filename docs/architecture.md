@@ -1263,6 +1263,12 @@ A box is a resource of its thread and gets what the thread's own machine has.
   so the plugin waits up to 10 s for a title that is not. A page with no
   title of its own, such as a JSON response, keeps its address, so the
   plugin then says the page may still be loading or has no title.
+- **An app already open** that allows one instance, such as Mousepad, takes
+  a second launch over D-Bus and may show a new document in its window
+  instead of opening one. Cua then fails the launch, as no new window
+  appeared. When the app had a window before, the plugin brings that window
+  to the front with Cua's `bring_to_front` and returns it, saying the app
+  was already open, and that its title changed when it did.
 - **Two windows of one app** within about 20 pixels of each other, as Chrome
   places a new window 10 pixels from the last, get one tree from Cua: it
   finds a window's tree by where the window is, and takes the app's first
