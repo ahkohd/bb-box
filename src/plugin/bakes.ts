@@ -367,7 +367,7 @@ export class ImageBakes {
    * build and its boxes go after, whatever happened. It waits for any bake
    * going on, and stops when `signal` aborts.
    */
-  try(input: TryInput, signal?: AbortSignal): Promise<TryResult> {
+  async try(input: TryInput, signal?: AbortSignal): Promise<TryResult> {
     const backend = this.#tryBackend(input);
     return this.exclusive(() => this.#try(input, backend, signal));
   }
