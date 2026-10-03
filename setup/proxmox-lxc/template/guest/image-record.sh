@@ -35,7 +35,10 @@ if [ "$kind" != linux ]; then
   elif [ "$(settings DESKTOP_GPU)" = none ] && [ "$(settings BOX_RUNTIME)" != docker ]; then image_kind=$image_kind-desktop-cpu
   else image_kind=linux-desktop; fi
   version_of() { awk -F'\t' -v n="$1" -v a="$arch" '$1 == n && $5 == a { print $2 }' "$build/desktop-pins.tsv" | sed -n "$2"; }
-  tools=$(jq -c --arg chrome "$(version_of chrome 's/^google-chrome-stable_\([0-9.]*\)-.*/\1/p')" \
+  # Chrome as installed: a refresh keeps one newer than the pin.
+  chrome=$(dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed \([0-9.]*\)-.*/\1/p' || true)
+  [ -n "$chrome" ] || chrome=$(version_of chrome 's/^google-chrome-stable_\([0-9.]*\)-.*/\1/p')
+  tools=$(jq -c --arg chrome "$chrome" \
     --arg cua "$(version_of cua-driver 's/^cua-driver-rs-\([0-9.]*\)-.*/\1/p')" \
     '. + ({"chrome": $chrome, "cua-driver": $cua} | with_entries(select(.value != "")))' <<<"$tools")
 fi

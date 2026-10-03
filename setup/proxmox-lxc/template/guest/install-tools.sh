@@ -3,7 +3,9 @@
 # Each archive or executable was downloaded into <artifact-dir> under its URL's
 # file name and is checked against its pinned SHA-256 again here. Each tool is
 # unpacked into its own directory, <prefix>/<name>-<version>, owned by root,
-# and only its declared commands are linked into <bindir>.
+# and only its declared commands are linked into <bindir>. Run again on a
+# built image, as a refresh does (049), it keeps a version that is there,
+# moves its links to the new version, and removes the tool's other versions.
 #
 # usage: install-tools.sh <pins.json> <artifact-dir> [<prefix>] [<bindir>]
 # It installs the entries for the image's architecture (x86_64 or arm64).
@@ -46,20 +48,24 @@ for index in $(seq 0 $((count - 1))); do
   echo "$sha  $file" | sha256sum -c --quiet - || die "$name artifact does not match its pinned SHA-256"
 
   dest=$prefix/$name-$version
-  [ ! -e "$dest" ] && [ ! -e "$dest.partial" ] || die "$dest already exists"
-  mkdir -m 0755 "$dest.partial"
-  case "$url" in
-    *.tar.gz | *.tgz) tar -xzf "$file" -C "$dest.partial" --strip-components="$strip" --no-same-owner --no-same-permissions ;;
-    *.tar.xz) tar -xJf "$file" -C "$dest.partial" --strip-components="$strip" --no-same-owner --no-same-permissions ;;
-    *)
-      target=$(jq -er .file <<<"$entry")
-      [[ "$target" =~ ^[A-Za-z0-9._-]+$ ]] || die "$name has an invalid file name"
-      install -m 0755 "$file" "$dest.partial/$target"
-      ;;
-  esac
-  if [ "$(id -u)" = 0 ]; then chown -R root:root "$dest.partial"; fi
-  chmod -R go-w "$dest.partial"
-  mv "$dest.partial" "$dest"
+  rm -rf "$dest.partial"
+  if [ -d "$dest" ]; then
+    echo "keeping $name $version in $dest"
+  else
+    mkdir -m 0755 "$dest.partial"
+    case "$url" in
+      *.tar.gz | *.tgz) tar -xzf "$file" -C "$dest.partial" --strip-components="$strip" --no-same-owner --no-same-permissions ;;
+      *.tar.xz) tar -xJf "$file" -C "$dest.partial" --strip-components="$strip" --no-same-owner --no-same-permissions ;;
+      *)
+        target=$(jq -er .file <<<"$entry")
+        [[ "$target" =~ ^[A-Za-z0-9._-]+$ ]] || die "$name has an invalid file name"
+        install -m 0755 "$file" "$dest.partial/$target"
+        ;;
+    esac
+    if [ "$(id -u)" = 0 ]; then chown -R root:root "$dest.partial"; fi
+    chmod -R go-w "$dest.partial"
+    mv "$dest.partial" "$dest"
+  fi
 
   while IFS=$'\t' read -r command path; do
     [[ "$command" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || die "$name has an invalid command name"
@@ -67,10 +73,16 @@ for index in $(seq 0 $((count - 1))); do
     case "$real" in "$dest"/*) ;; *) die "$name link $command leaves $dest" ;; esac
     [ -f "$real" ] && [ -x "$real" ] || die "$name $path is not an executable file"
     link=$bindir/$command
-    if [ -e "$link" ] || [ -L "$link" ]; then
+    # A link of an earlier install moves; anything else there stays, and stops the install.
+    if [ -L "$link" ] && case "$(readlink "$link")" in "$prefix"/*) true ;; *) false ;; esac; then
+      rm -f "$link"
+    elif [ -e "$link" ] || [ -L "$link" ]; then
       die "$link already exists"
     fi
     ln -s "$dest/$path" "$link"
   done < <(jq -r '.links | to_entries[] | "\(.key)\t\(.value)"' <<<"$entry")
+  for old in "$prefix/$name"-[0-9]*; do
+    [ "$old" = "$dest" ] || [ ! -d "$old" ] || { rm -rf "$old"; echo "removed $old"; }
+  done
   echo "installed $name $version in $dest"
 done
