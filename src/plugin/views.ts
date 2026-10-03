@@ -397,9 +397,17 @@ export function imageWords(image: BoxImage): string {
     running: "running its script",
     done: `its script ran as the box started${image.seconds !== undefined ? `, in ${image.seconds} s` : ""}`,
     failed: "its script failed",
-    baked: `baked${image.build ? `, build ${image.build}` : ""}`,
+    baked: `built ${builtOn(image.build)}`,
   };
   return `${image.name}, ${what[image.state]}`;
+}
+
+/** A build's day from its ID, build.20261003-021500-3f9c: "3 October", or "ahead" when it has none. */
+function builtOn(build: string | null | undefined): string {
+  const match = /^build\.(\d{4})(\d{2})(\d{2})-/.exec(build ?? "");
+  if (!match) return "ahead";
+  const day = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return `${day.getUTCDate()} ${day.toLocaleString("en-GB", { month: "long", timeZone: "UTC" })}`;
 }
 
 export function boxDetail(box: BoxRecord, control?: ControlView): string {
@@ -457,6 +465,39 @@ export function imageLine(view: ImageView): string {
   const built = record ? `${record.build}, ${age === 0 ? "built today" : `${age} days old`}` : "no record";
   const last = view.last ? `; last rebuild ${new Date(view.last.at).toISOString().slice(0, 10)} ${view.last.ok ? "passed" : view.last.waiting ? `waited: ${view.last.reason}` : `failed: ${view.last.reason}`}` : "";
   return `${view.name} (${view.build.kind}): ${built}; ${view.due ? `due, as ${view.due}` : "not due"}${last}.`;
+}
+
+/**
+ * A project's image, for a choice of image (049): New box, BB's new-thread
+ * inputs, and box_list. A box can also choose "standard", bb-box's own
+ * image, which is in no list.
+ */
+export interface ImageOptionView {
+  readonly name: string;
+  /** The kinds it covers: a choice shows where one of them is chosen. */
+  readonly kinds: readonly string[];
+  readonly projects: readonly { readonly id: string; readonly name: string }[];
+  /** One of its projects is the thread's: its boxes of these kinds get it unless they choose another. */
+  readonly mine: boolean;
+  /** Where it is built ahead, so a box there starts from the build; elsewhere its script runs as the box starts. */
+  readonly builds: readonly { readonly kind: string; readonly backend: string; readonly build: string | null; /** ISO 8601. */ readonly built: string }[];
+}
+
+/**
+ * A kind's images, for box_list (049): this project's first, the default,
+ * then standard, then others with their projects; nothing when no image
+ * covers the kind.
+ */
+export function imagesText(images: readonly ImageOptionView[], kind: string): string {
+  const covering = images.filter((image) => image.kinds.includes(kind));
+  if (!covering.length) return "";
+  const words = (image: ImageOptionView) => {
+    const built = image.builds.filter((build) => build.kind === kind).map((build) => build.backend);
+    return `${image.name}${image.mine ? " (this project's, the default)" : ` (${image.projects.map((project) => project.name).join(", ")})`}${built.length ? `, built ahead on ${built.join(", ")}` : ""}`;
+  };
+  const mine = covering.filter((image) => image.mine);
+  const others = covering.filter((image) => !image.mine);
+  return ` Images: ${[...mine.map(words), mine.length ? "standard" : "standard (the default)", ...others.map(words)].join("; ")}.`;
 }
 
 /** A draft of a project image's script (049): the files it used, what it left to the agent, the script and the check. */

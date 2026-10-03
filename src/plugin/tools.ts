@@ -11,7 +11,7 @@ import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, next, tryText, type KindView } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -172,8 +172,13 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         .union([z.string().min(1), z.array(z.string().min(1))])
         .optional()
         .describe("Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room."),
+      image: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('The image the box starts from, from box_list: a project\'s image by name, or "standard" for bb-box\'s own. Leave it out for this project\'s image for the kind, or the standard one.'),
     }),
-    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on }, { threadId, projectId, signal }) {
+    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image }, { threadId, projectId, signal }) {
       try {
         const box = await boxes.acquire({
           threadId: thread(threadId),
@@ -181,6 +186,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           kind: kind ?? (await app.general()).defaultKind,
           size: { preset: size, cores, memoryGiB: memory_gib, diskGiB: disk_gib },
           ...(on !== undefined ? { on } : {}),
+          ...(image !== undefined ? { image } : {}),
         });
         if (wait === false) {
           const asked = boxSize(box);
@@ -213,7 +219,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     async execute(_params, { threadId }) {
       try {
         const id = thread(threadId);
-        const [list, kinds, machine] = await Promise.all([boxes.list(id), app.kinds(), app.runsOn(id)]);
+        const [list, kinds, machine, images] = await Promise.all([boxes.list(id), app.kinds(), app.runsOn(id), app.projectOf(id).catch(() => null).then((project) => app.imageOptions(project))]);
         const lines: string[] = [];
         // The box this thread runs on comes first, unless it is the thread's own and listed below (036).
         if (machine && !list.some((box) => box.id === machine.id)) {
@@ -222,7 +228,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")} On: ${kind.offers.map((offer) => offer.name).join(", ")}.`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")} On: ${kind.offers.map((offer) => offer.name).join(", ")}.${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. Ask the user to set one up in BB Box's settings in BB.",
         );
         const hints = list.length

@@ -221,8 +221,8 @@ export interface BoxesDeps {
     on?(): Backend[];
   };
   general(): Promise<GeneralConfig>;
-  /** The image a project's boxes of a kind get (049), from the configuration, or null. */
-  image?(projectId: string | null, kind: string): { readonly name: string; readonly image: ImageConfig } | null;
+  /** The image a project's boxes of a kind get (049), or image `name` when it covers the kind, from the configuration, or null. */
+  image?(projectId: string | null, kind: string, name?: string): { readonly name: string; readonly image: ImageConfig } | null;
   /** A current baked build of an image for a kind on a backend whose images start boxes from builds (049), or null. */
   baked?(name: string, backend: string, kind: string): Promise<{ readonly ref: string; readonly build: string | null } | null>;
   /**
@@ -598,7 +598,17 @@ export class Boxes {
    * backend has said the box fits; the box is ready when its command
    * transport answers.
    */
-  async acquire(input: { threadId: string; projectId: string | null; kind: string; size?: SizeRequest; role?: BoxRole; name?: string; on?: string | readonly string[] }): Promise<BoxRecord> {
+  async acquire(input: {
+    threadId: string;
+    projectId: string | null;
+    kind: string;
+    size?: SizeRequest;
+    role?: BoxRole;
+    name?: string;
+    on?: string | readonly string[];
+    /** An image's name, or "standard" (049). The project's image for the kind when left out. */
+    image?: string;
+  }): Promise<BoxRecord> {
     const requested = this.#now();
     const { kind: wanted, features } = kindRequest(input.kind);
     const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
@@ -634,8 +644,12 @@ export class Boxes {
     const owned = role === "box" && ownedByThread(input.threadId);
     const claimsSpare = role === "box" && input.threadId !== SPARES;
     const general = await this.#deps.general();
-    // The project's image for the kind (049), whose script runs as the box starts. Such a box is made, not a spare, for now.
-    const image = role === "box" && !yours ? (this.#deps.image?.(input.projectId, wanted) ?? null) : null;
+    // The image chosen, or the project's for the kind (049): a thread's own box too, not one of your machines unless chosen. Such a box is made, not a spare, for now.
+    const image =
+      input.image === "standard" ? null : input.image !== undefined ? (this.#deps.image?.(input.projectId, wanted, input.image) ?? null) : yours ? null : (this.#deps.image?.(input.projectId, wanted) ?? null);
+    if (input.image !== undefined && input.image !== "standard" && !image) {
+      throw new BoxError("not_found", `There is no image ${input.image} for ${wanted} boxes. box_list names each kind's images; "standard" is bb-box's own.`);
+    }
     // Spares left over from a kind that keeps none now are released, not claimed.
     const claims = claimsSpare && !image && (general.spares[wanted] ?? 0) > 0;
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
@@ -1235,7 +1249,7 @@ export class Boxes {
    * image removed since the box was asked for runs nothing.
    */
   async #runImage(box: BoxRecord, guest: Guest, backend: Backend, timings: Record<string, number>, signal: AbortSignal): Promise<void> {
-    const found = this.#deps.image?.(box.projectId, box.kind);
+    const found = box.image ? this.#deps.image?.(box.projectId, box.kind, box.image.name) : null;
     if (!found || found.name !== box.image?.name) {
       await this.update(box, () => ({ image: null }));
       return;

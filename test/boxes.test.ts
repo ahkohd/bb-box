@@ -187,6 +187,32 @@ test("an image's script at start finds bb-box's own commands first on its PATH, 
   assert.equal((await command!.run("test -e .bb-box-image")).exitCode, 1, "its files go once it ran");
 });
 
+test("a box can choose its image, another project's or the standard one, and a thread's own box gets its project's (049)", async () => {
+  const images: Record<string, { kinds: string[]; script: string; projects: string[] }> = {
+    mine: { kinds: ["linux"], script: 'echo mine > "$HOME/which"\n', projects: ["prj"] },
+    theirs: { kinds: ["linux"], script: 'echo theirs > "$HOME/which"\n', projects: ["prj_other"] },
+  };
+  const world = setup({}, {
+    image: (projectId, kind, name) => {
+      if (name !== undefined) return images[name]?.kinds.includes(kind) ? { name, image: images[name]! } : null;
+      const found = Object.entries(images).find(([, image]) => !!projectId && image.projects.includes(projectId) && image.kinds.includes(kind));
+      return found ? { name: found[0], image: found[1] } : null;
+    },
+  });
+  const which = async (box: BoxRecord) => (await (await world.backend.transports(box.guest!, "linux")).command!.run("cat which 2>/dev/null || echo none")).stdout.trim();
+
+  const theirs = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", image: "theirs" }));
+  assert.deepEqual([theirs.state, theirs.image?.name, await which(theirs)], ["ready", "theirs", "theirs"], theirs.error ?? "");
+  const standard = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", image: "standard" }));
+  assert.deepEqual([standard.image, await which(standard)], [undefined, "none"]);
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", image: "nope" }), /There is no image nope for linux boxes\. box_list names each kind's images; "standard" is bb-box's own\./);
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux-desktop", image: "mine" }), /There is no image mine for linux-desktop boxes/);
+
+  // A thread on a box of its own (033) gets its project's image as any box does.
+  const own = await ready(world.boxes, await world.boxes.acquire({ threadId: "thr_two", projectId: "prj", kind: "linux", role: "machine" }));
+  assert.deepEqual([own.image?.name, await which(own)], ["mine", "mine"]);
+});
+
 test("acquire records the box at once and it becomes ready in the background", async () => {
   const world = setup();
   const box = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });

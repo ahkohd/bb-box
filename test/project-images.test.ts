@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DRIVERS } from "../src/backends/index.ts";
 import { checkDocument, emptyDocument, readDraft, type ConfigDocument, type ImageConfig } from "../src/core/document.ts";
-import { projectImage, withImage } from "../src/core/project-images.ts";
+import { imageChoices, namedImage, projectImage, withImage } from "../src/core/project-images.ts";
+import { imagesText, imageWords, type ImageOptionView } from "../src/plugin/views.ts";
 
 const IMAGE: ImageConfig = { kinds: ["linux", "linux-desktop-cpu"], script: "#!/bin/bash\napt-get install -y tailscale\n", check: "tailscale version\n", bake: "auto", projects: ["prj_one"], source: { script: ".bb/box-setup.sh", check: ".bb/box-check.sh" }, updated: "2026-10-03T10:00:00.000Z" };
 const problemsOf = (document: ConfigDocument) => checkDocument(document, {}, DRIVERS).filter((problem) => problem.path.startsWith("images"));
@@ -57,4 +58,25 @@ test("a project's boxes of a kind get its image, and an image is set and removed
   const removed = withImage(document, "rust-tailscale", null);
   assert.equal(removed.images, undefined);
   assert.equal(projectImage(removed, "prj_one", "linux"), null);
+});
+
+test("a box's choice of image: the project's first, the default, then standard, then other projects'; by name whichever project it is of (049)", () => {
+  const document = withImage(withImage(withImage(emptyDocument(), "rust-tailscale", IMAGE), "zebra", { ...IMAGE, projects: ["prj_two"] }), "alpha", { ...IMAGE, kinds: ["linux"], projects: ["prj_three"] });
+  assert.deepEqual(imageChoices(document, "prj_one", "linux"), [{ name: "rust-tailscale", mine: true }, { name: "standard", mine: false }, { name: "alpha", mine: false }, { name: "zebra", mine: false }]);
+  assert.deepEqual(imageChoices(document, "prj_one", "linux-desktop-cpu").map((choice) => choice.name), ["rust-tailscale", "standard", "zebra"]);
+  assert.deepEqual(imageChoices(document, "prj_nine", "linux").map((choice) => choice.name), ["standard", "alpha", "rust-tailscale", "zebra"]);
+  assert.deepEqual(imageChoices(document, "prj_one", "linux-desktop"), [], "no image covers it: no choice");
+  assert.equal(namedImage(document, "zebra", "linux")?.name, "zebra");
+  assert.equal(namedImage(document, "alpha", "linux-desktop-cpu"), null);
+  assert.equal(namedImage(document, "nope", "linux"), null);
+});
+
+test("box_list's images per kind, and a box's image in its details (049)", () => {
+  const option = (name: string, mine: boolean, changes: Partial<ImageOptionView> = {}): ImageOptionView => ({ name, kinds: ["linux"], projects: [{ id: "prj_x", name: "Tailcontrol" }], mine, builds: [], ...changes });
+  const images = [option("rust-tailscale", true, { builds: [{ kind: "linux", backend: "proxmox-lxc", build: "build.20261003-021500-3f9c", built: "2026-10-03T02:15:00.000Z" }] }), option("other", false)];
+  assert.equal(imagesText(images, "linux"), " Images: rust-tailscale (this project's, the default), built ahead on proxmox-lxc; standard; other (Tailcontrol).");
+  assert.equal(imagesText([option("other", false)], "linux"), " Images: standard (the default); other (Tailcontrol).");
+  assert.equal(imagesText(images, "macos"), "");
+  assert.equal(imageWords({ name: "rust-tailscale", state: "baked", build: "build.20261002-021500-3f9c", from: "9123" }), "rust-tailscale, built 2 October");
+  assert.equal(imageWords({ name: "rust-tailscale", state: "done", seconds: 22 }), "rust-tailscale, its script ran as the box started, in 22 s");
 });
