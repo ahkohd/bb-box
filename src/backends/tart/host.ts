@@ -697,6 +697,57 @@ echo stopped
  * run's output and, last, the owner file. Prints "gone" when the file names
  * another box, which leaves everything alone.
  */
+/**
+ * Captures an image box as a build (049): stops it, renames it, and writes
+ * its record beside it, in images/<name>.json, and its owner file, which
+ * names its image. Prints "captured".
+ */
+export function captureScript(vm: string, to: string, record: string, owner: string): string {
+  return script(String.raw`vm=${quote(vm)}; to=${quote(to)}
+if [ "$(state "$vm")" = running ]; then tart stop "$vm" --timeout 60 >/dev/null 2>&1; fi
+settled "$vm" 600 || { echo "$vm is still running a minute after tart stop." >&2; exit 1; }
+tart rename "$vm" "$to" || exit 1
+mkdir -p "$d/images"
+printf '%s
+' ${quote(record)} > "$d/images/$to.json"
+printf '%s' ${quote(owner)} > "$d/owners/$to"
+rm -f "$d/owners/$vm" "$d/run/$vm.out" "$d/run/$vm.out.last" "$d/run/$vm.exit" "$d/run/$vm.exit.last"
+echo captured
+`);
+}
+
+/**
+ * Puts a build in an image's place (049): the image is renamed aside, the
+ * build takes its name, with its record and the prepare script's notes
+ * beside it, and the old image goes. Boxes are copies on write and do not
+ * need it. Should the build not take the name, the image gets its own back.
+ * Prints "replaced".
+ */
+export function replaceScript(from: string, to: string): string {
+  return script(String.raw`from=${quote(from)}; to=${quote(to)}; old="$to-replaced-$$"
+[ "$(state "$from")" = stopped ] || { echo "$from is not a stopped VM." >&2; exit 1; }
+if [ -n "$(state "$to")" ]; then tart rename "$to" "$old" || exit 1; fi
+if ! tart rename "$from" "$to"; then
+  [ -z "$(state "$old")" ] || tart rename "$old" "$to"
+  exit 1
+fi
+mkdir -p "$d/images"
+[ ! -f "$d/images/$from.json" ] || mv -f "$d/images/$from.json" "$d/images/$to.json"
+[ ! -f "$d/images/$from" ] || mv -f "$d/images/$from" "$d/images/$to"
+rm -f "$d/owners/$from"
+[ -z "$(state "$old")" ] || tart delete "$old" || echo "$old could not be deleted." >&2
+echo replaced
+`);
+}
+
+/** Removes an image's notes beside it, images/<vm> and images/<vm>.json, once its VM has gone. */
+export function forgetImageScript(vm: string): string {
+  return script(String.raw`vm=${quote(vm)}
+[ -n "$(state "$vm")" ] || rm -f "$d/images/$vm" "$d/images/$vm.json"
+echo forgotten
+`);
+}
+
 export function deleteScript(vm: string, installId: string, boxId: string | null): string {
   return script(String.raw`vm=${quote(vm)}
 if [ -f "$d/owners/$vm" ] && ! mine "$vm" ${quote(installId)} ${quote(boxId ?? "")}; then echo gone; exit 0; fi

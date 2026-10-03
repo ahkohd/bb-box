@@ -16,7 +16,7 @@
 // - `sw_vers -buildVersion` says 27A1, or what the Mac's ~/.fake-macos-build holds.
 // - `sysctl` says the Mac has 16 cores, 128 GiB and the Hypervisor framework,
 //   unless the Mac's ~/.fake-no-hvf exists, and started in November 2023.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [tool, ...args] = process.argv.slice(2);
@@ -125,6 +125,13 @@ function tart() {
       if (!running(name)) fail(`VM "${name}" is not running`);
       if (command === "suspend") writeFileSync(join(dir(name), "state.vzvmsave"), "");
       rmSync(join(dir(name), "running"), { force: true });
+      return;
+    }
+    case "rename": {
+      const [from, to] = rest;
+      if (!existsSync(join(vms, from))) fail(`the specified VM "${from}" does not exist`);
+      if (existsSync(join(vms, to))) fail(`VM "${to}" already exists`);
+      renameSync(join(vms, from), join(vms, to));
       return;
     }
     case "delete": {

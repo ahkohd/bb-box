@@ -107,6 +107,7 @@ await conformance({
     "computer-use": "the fake VM has no computer-use driver",
     "desktop-session": "the fake SSH runs commands on the test machine, which has no launchctl",
     size: "the fake SSH runs commands on the test machine",
+    images: "the fake SSH runs commands on the test machine, without root",
   },
   timeoutMs: 20_000,
 });
@@ -126,6 +127,7 @@ await conformance({
     "computer-use": "the fake VM has no computer-use driver",
     "desktop-session": "the fake SSH runs commands on the test machine, which has no launchctl",
     size: "the fake SSH runs commands on the test machine",
+    images: "the fake SSH runs commands on the test machine, without root",
   },
   timeoutMs: 20_000,
 });

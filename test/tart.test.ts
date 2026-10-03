@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, hostnameOf, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
@@ -519,6 +519,93 @@ test("a new instance on empty storage finds this install's VMs and their owners,
   assert.ok(doctor.notes.some((note) => /1 of install other/.test(note)));
   await fresh.release(guest, releasing);
   await other.release(theirs, releasing);
+});
+
+test("image operations on a Mac: an image box, its capture with its record beside it, a build by the prepare script, and the image's name moved to it (049)", async () => {
+  const { mac, context } = setup();
+  const record = (build: string, kind = "macos") => JSON.stringify({ contract: 1, image: "standard", kind, arch: "arm64", build, built: new Date().toISOString(), os: "macOS 27.0", tools: { "cua-driver": "0.30.4" } });
+  // An ssh that answers a box's record, as finalizing leaves it in a macOS image, and otherwise runs as the fake does.
+  const dir = join(mac, "..", `image-ops-${counter++}`);
+  mkdirSync(dir, { recursive: true });
+  const binary = join(dir, "ssh");
+  writeFileSync(binary, `#!/bin/sh\ncase "$*" in *"cat /usr/local/share/bb-box/image.json"*) echo '${record("build.20261003-030000-abcd")}'; exit 0;; esac\nexec "${FAKE_SSH_BINARY}" "$@"\n`, { mode: 0o755 });
+  const backend = new TartBackend(tartConfig({}), context, { ...FAKES, sshBinary: binary });
+  made.push(backend);
+  const images = backend.images;
+
+  const listed = await images.list();
+  const standard = listed.builds.find((build) => build.ref === "mac1/bb-box-macos")!;
+  assert.deepEqual([listed.builds.length, standard.image, standard.kind, standard.current, standard.record?.kind], [1, "standard", "macos", true, "macos"], "macOS kinds share their image");
+  assert.deepEqual(listed.boxes, []);
+
+  // An image box: a clone at the kind's default size, with an owner file that marks it, which no sweep takes.
+  const box = await images.box(standard, "a small image", signal());
+  const vm = box.ref.slice("mac1/".length);
+  assert.match(vm, /^bb-box-image-[0-9a-f]{12}$/);
+  const owner = readFileSync(join(mac, ".bb-box", "tart", "owners", vm), "utf8");
+  assert.match(owner, /^install=test\nkind=macos\nimage-box=a small image\n/);
+  assert.equal((await box.command.run("echo in the box")).stdout, "in the box\n");
+  assert.deepEqual(await backend.held(), [], "an image box is no box's");
+  assert.deepEqual((await images.list()).boxes, [box.ref]);
+
+  // Its capture: stopped, renamed, its record beside it, and an owner file that names its image.
+  const captured = await images.capture(box, standard, "small", signal());
+  assert.deepEqual([captured.ref, captured.build, captured.current], ["mac1/bb-box-img-small-20261003-030000-abcd", "build.20261003-030000-abcd", false]);
+  assert.ok(existsSync(join(mac, ".tart", "vms", "bb-box-img-small-20261003-030000-abcd")));
+  assert.ok(!existsSync(join(mac, ".tart", "vms", vm)), "the box is the build now");
+  assert.equal(JSON.parse(readFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-img-small-20261003-030000-abcd.json"), "utf8")).build, "build.20261003-030000-abcd");
+  assert.match(readFileSync(join(mac, ".bb-box", "tart", "owners", "bb-box-img-small-20261003-030000-abcd"), "utf8"), /^install=test\nkind=macos\nimage-build=small\n/);
+  assert.deepEqual(await backend.held(), [], "a captured build is no box's");
+  assert.ok((await images.list()).builds.some((build) => build.ref === captured.ref && build.image === "small" && !build.current));
+
+  // A trial box of it, then both removed; what is not an image's stays.
+  const trial = await images.box(captured, "trial", signal());
+  await images.remove(trial.ref, signal());
+  await images.remove(captured.ref, signal());
+  assert.ok(!existsSync(join(mac, ".tart", "vms", "bb-box-img-small-20261003-030000-abcd")));
+  assert.ok(!existsSync(join(mac, ".bb-box", "tart", "images", "bb-box-img-small-20261003-030000-abcd.json")));
+  await assert.rejects(images.remove("mac1/bb-box-macos", signal()), /bb-box-macos on mac1 is not an image box or build of this install's/);
+  assert.deepEqual((await images.list()).boxes, []);
+
+  // A new build by the prepare script, from a copy of setup/ on the Mac, as the user bb-box logs in as.
+  const setupDir = join(dir, "setup");
+  mkdirSync(join(setupDir, "tart"), { recursive: true });
+  mkdirSync(join(setupDir, "proxmox-lxc"), { recursive: true });
+  writeFileSync(
+    join(setupDir, "tart", "prepare-image.sh"),
+    [
+      "#!/bin/sh",
+      "set -eu",
+      'printf "%s\\n" "$@" > "$HOME/prepare-args"',
+      'while [ $# -gt 0 ]; do case $1 in --name) name=$2; shift 2 ;; *) shift ;; esac; done',
+      'export PATH="$HOME/.nix-profile/bin:$PATH"',
+      'tart clone bb-box-macos "$name"',
+      'mkdir -p "$HOME/.bb-box/tart/images"',
+      `printf '%s\\n' '${record("build.20261003-090000-ef01")}' > "$HOME/.bb-box/tart/images/$name.json"`,
+      'echo "done: $name is ready to clone"',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const lines: string[] = [];
+  const built = await images.build!(standard, setupDir, { bbUrl: "https://bb.example.com", log: (line) => lines.push(line), signal: signal() });
+  assert.match(built.ref, /^mac1\/bb-box-img-refresh-[0-9a-z]+$/);
+  assert.deepEqual([built.build, built.current], ["build.20261003-090000-ef01", false]);
+  const args = readFileSync(join(mac, "prepare-args"), "utf8").trim().split("\n");
+  assert.deepEqual(args.filter((arg) => arg.startsWith("--")), ["--key", "--name", "--bb-url"]);
+  assert.match(args[args.indexOf("--key") + 1]!, /^ssh-ed25519 \S+ bb-box$/);
+  assert.deepEqual(lines, [`done: ${built.ref.slice(5)} is ready to clone`]);
+  assert.deepEqual(readdirSync(join(mac, ".bb-box", "tart")).filter((name) => name.startsWith("setup-")), [], "the copy of setup/ goes");
+  assert.deepEqual(await backend.held(), []);
+
+  // The replace: the build takes the image's name, with its record, and the old image goes.
+  const replaced = await images.replace(built, standard, signal());
+  assert.deepEqual([replaced.ref, replaced.current, replaced.build], ["mac1/bb-box-macos", true, "build.20261003-090000-ef01"]);
+  assert.ok(!existsSync(join(mac, ".tart", "vms", built.ref.slice(5))));
+  assert.deepEqual(readdirSync(join(mac, ".tart", "vms")).filter((name) => name.startsWith("bb-box-macos")), ["bb-box-macos"], "the old image is gone");
+  assert.equal(JSON.parse(readFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-macos.json"), "utf8")).build, "build.20261003-090000-ef01");
+  assert.equal((await images.list()).builds.find((build) => build.ref === "mac1/bb-box-macos")?.build, "build.20261003-090000-ef01");
+  assert.match(images.check!("macos"), /cua-driver/);
+  assert.equal(images.check!("linux-arm64"), "bb-box-check-headless");
 });
 
 test("the doctor judges each Tart image by the record beside it (049)", async () => {
