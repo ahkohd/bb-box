@@ -381,6 +381,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktopClipboard: () => null,
+    images: () => [],
     allBoxes: () => boxes.map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
     // Your machines (036): `options.machines` to start with, kept as the tests add, stop, start and remove them.
     "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol) }),
