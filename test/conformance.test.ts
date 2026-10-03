@@ -87,6 +87,7 @@ await conformance({
     display: "the fake Proxmox has no desktop to stream",
     "computer-use": "the fake SSH host has no computer-use driver",
     size: "the fake SSH runs commands on the test machine",
+    images: "the fake SSH runs commands on the test machine, without root",
   },
   timeoutMs: 20_000,
 });

@@ -60,6 +60,7 @@ import {
   type AcquireHooks,
   type Backend,
   type BackendContext,
+  type BackendImages,
   type Footprint,
   type BoxIdentity,
   type BoxKind,
@@ -72,6 +73,8 @@ import {
   type DoctorReport,
   type Guest,
   type HeldGuest,
+  type ImageBox,
+  type ImageBuild,
   type Limit,
   type PoolMember,
   type PowerState,
@@ -79,7 +82,7 @@ import {
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { judgeImage, recordInDescription, type PinSet } from "../images.ts";
+import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -121,6 +124,13 @@ const WAYVNC_USER = "box";
 const SSH_KEY = "ssh-key";
 /** The hostname a warm guest has until a box claims it. */
 const WARM_HOSTNAME = "bb-box-warm";
+/** The tag and hostname of a box bb-box builds or tries an image in (049), which no sweep releases. */
+const IMAGE_BOX = "image-box";
+const IMAGE_HOSTNAME = "bb-box-image";
+/** The tag that names a captured build's image (049), such as image.standard. */
+const IMAGE_TAG = "image.";
+/** The tag that names a captured build's kind. */
+const KIND_TAG = "kind.";
 /** Where the next VMID search starts. */
 const NEXT_VMID = "next-vmid";
 /** Clone, start and SSH answering take a few seconds; this leaves room for a busy host. */
@@ -449,6 +459,21 @@ export class ProxmoxLxcBackend implements Backend {
   /** The host's NVIDIA driver as a box last saw it; undefined until read from storage. */
   #nvidia: HostNvidia | null | undefined;
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
+  /** Image boxes (049) from before their clone until their capture or removal, which no sweep counts. */
+  readonly #imageBoxes = new Set<number>();
+
+  /**
+   * Image operations (049): a box from a template, its capture as a template
+   * with the image's record in its description, and a template replaced in
+   * place under its VMID, as build.sh --replace does.
+   */
+  readonly images: BackendImages = {
+    list: (signal) => this.#imageList(signal),
+    box: (build, label, signal) => this.#imageBox(build, label, signal),
+    capture: (box, from, image, signal) => this.#capture(box, from, image, signal),
+    replace: (build, current, signal) => this.#replaceTemplate(build, current, signal),
+    remove: (ref, signal) => this.#removeImage(ref, signal),
+  };
 
   constructor(config: LxcConfig, context: BackendContext, options: LxcBackendOptions = {}) {
     this.id = context.id;
@@ -823,6 +848,9 @@ export class ProxmoxLxcBackend implements Backend {
     for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
       if (guest.type !== "lxc" || guest.template || !this.#inRange(guest.vmid)) continue;
       if (this.#reserved.has(guest.vmid) || this.#filling.has(guest.vmid) || guest.tags.includes(WARM)) continue;
+      // Image boxes and captured builds (049) are no box's: their build removes them. A
+      // build is a template, but the listing says so only after Proxmox's next status pass.
+      if (this.#imageBoxes.has(guest.vmid) || guest.tags.includes(IMAGE_BOX) || guest.tags.some((tag) => tag.startsWith(IMAGE_TAG))) continue;
       let install = installFromTags(guest.tags);
       let owner = ownerFromTags(guest.tags, guest.name || null);
       const labelled = guest.tags.includes(FILLING) || guest.tags.includes(RETIRED);
@@ -1492,6 +1520,145 @@ export class ProxmoxLxcBackend implements Backend {
         this.#reserved.delete(vmid);
       }
     }
+  }
+
+  /** The configured templates, as standard images, and this install's captured builds and image boxes. */
+  async #imageList(signal?: AbortSignal): Promise<{ builds: ImageBuild[]; boxes: string[] }> {
+    const api = await this.client();
+    const install = installTag(this.#context.installId);
+    const builds: ImageBuild[] = [];
+    for (const flavour of LXC_FLAVOURS) {
+      for (const { vmid } of this.#config.flavours[flavour].templates) {
+        const config = await api.config(vmid, signal).catch(() => null);
+        if (config && isTemplate(config)) builds.push(this.#imageBuild(vmid, FLAVOUR_KINDS[flavour][0]!, "standard", config, true));
+      }
+    }
+    const boxes: string[] = [];
+    for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
+      if (guest.type !== "lxc" || !this.#inRange(guest.vmid) || !guest.tags.includes(install)) continue;
+      const image = guest.tags.find((tag) => tag.startsWith(IMAGE_TAG))?.slice(IMAGE_TAG.length);
+      const kind = guest.tags.find((tag) => tag.startsWith(KIND_TAG))?.slice(KIND_TAG.length);
+      if (image && kind) {
+        // From its config: the listing says it is a template only after Proxmox's next status pass.
+        const config = await this.#guestConfig(api, guest.vmid, signal);
+        if (config && isTemplate(config)) builds.push(this.#imageBuild(guest.vmid, kind, image, config, false));
+      } else if (guest.tags.includes(IMAGE_BOX)) {
+        boxes.push(String(guest.vmid));
+      }
+    }
+    return { builds, boxes };
+  }
+
+  #imageBuild(vmid: number, kind: string, image: string, config: Record<string, unknown>, current: boolean): ImageBuild {
+    const build = buildFromTags(parseTags(config.tags));
+    return { ref: String(vmid), image, kind, build: build ? `${BUILD}${build}` : null, record: recordInDescription(String(config.description ?? "")), current };
+  }
+
+  /** A clone of a build's template, started as a box of its kind is, tagged so that no sweep takes it. */
+  async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
+    const api = await this.client();
+    const template = Number(build.ref);
+    const offer = this.#offer(build.kind);
+    let vmid: number | null = null;
+    try {
+      const guests = await api.listPool(this.#config.proxmox.pool, signal);
+      const description = `bb-box image box: ${label}\ninstall ${this.#context.installId}`;
+      vmid = await this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal);
+      await api.configure(vmid, this.#settings(null, vmid), signal);
+      await api.configure(vmid, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
+      await api.start(vmid, signal);
+      await this.#waitReady(vmid, build.kind, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
+      return { ref: String(vmid), command: await this.#command(vmid) };
+    } catch (error) {
+      if (vmid !== null) {
+        await this.#forget(vmid);
+        await api.destroy(vmid).catch((cause) => this.#context.logError("remove an image box", cause));
+        this.#imageBoxes.delete(vmid);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Shuts a build box down and makes it a template, configured as `from`
+   * (its network without an address, and its hostname), with its record in
+   * the description's second line and the image, kind and build in its tags.
+   */
+  async #capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
+    const api = await this.client();
+    const vmid = Number(box.ref);
+    const read = await box.command.run("cat /usr/share/bb-box/image.json", { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
+    const record = read.exitCode === 0 ? recordFromJson(read.stdout.trim()) : null;
+    if (!record) throw new Error(`Image box ${vmid} has no image record in /usr/share/bb-box/image.json, which finalizing writes.`);
+    const source = await api.config(Number(from.ref), signal);
+    const build = record.build.startsWith(BUILD) ? record.build : `${BUILD}${record.build}`;
+    await this.#forget(vmid);
+    await api.shutdown(vmid, 60, signal);
+    await api.configure(
+      vmid,
+      {
+        hostname: typeof source.hostname === "string" ? source.hostname : IMAGE_HOSTNAME,
+        ...(typeof source.net0 === "string" ? { net0: source.net0 } : {}),
+        onboot: false,
+        description: `bb-box ${image} image of ${from.kind}, built ${new Date().toISOString().slice(0, 10)} from template ${from.ref}.\n${JSON.stringify(record)}`,
+        tags: [TAG, installTag(this.#context.installId), `${IMAGE_TAG}${image}`, `${KIND_TAG}${from.kind}`, templateTag(Number(from.ref)), build],
+      },
+      signal,
+    );
+    await api.makeTemplate(vmid, signal);
+    await api.configure(vmid, { protection: true }, signal);
+    this.#imageBoxes.delete(vmid);
+    return { ref: String(vmid), image, kind: from.kind, build, record, current: false };
+  }
+
+  /**
+   * Puts a captured build in a configured template's place under its VMID:
+   * the old template goes, the build is cloned into its VMID (linked on
+   * LVM-thin, where the clone needs nothing of its origin, else a full copy
+   * on the template's storage), made a template with the old one's tags but
+   * the new build's ID, and the build goes. Acquires wait for the template
+   * meanwhile, and warm guests of the old build are retired.
+   */
+  async #replaceTemplate(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
+    if (!current.current || build.current) throw new Error(`Template ${current.ref} is not a configured template, or ${build.ref} is one.`);
+    const api = await this.client();
+    const [source, target] = [Number(build.ref), Number(current.ref)];
+    const old = await api.config(target, signal);
+    const storage = String(old.rootfs ?? "").split(":")[0] ?? "";
+    const thin = (await api.storageStatus(storage, signal)).type === "lvmthin";
+    const hostname = typeof old.hostname === "string" ? old.hostname : `bb-box-${target}`;
+    const first = String(old.description ?? `bb-box ${current.kind} template.`).split("\n")[0]!;
+    const today = new Date().toISOString().slice(0, 10);
+    const line = /, (built|refreshed) \d{4}-\d{2}-\d{2}/.test(first) ? first.replace(/, (built|refreshed) \d{4}-\d{2}-\d{2}/, `, refreshed ${today}`) : first;
+    const description = `${line}${build.record ? `\n${JSON.stringify(build.record)}` : ""}`;
+    const tags = [...parseTags(old.tags).filter((tag) => !tag.startsWith(BUILD)), ...(build.build ? [build.build] : [])];
+    // Templates are protected against deletion: the token may clear it in the pool.
+    await api.configure(target, { delete: ["protection"] }, signal);
+    await api.destroy(target, signal);
+    this.#templates.delete(target);
+    const pool = this.#config.proxmox.pool;
+    if (thin) await api.cloneLinked({ template: source, vmid: target, hostname, pool, description }, signal);
+    else await api.cloneFull({ template: source, vmid: target, hostname, storage, pool, description }, signal);
+    await api.makeTemplate(target, signal);
+    await api.configure(target, { description, tags, protection: true }, signal);
+    await api.configure(source, { delete: ["protection"] }, signal);
+    await api.destroy(source, signal);
+    return { ...build, ref: String(target), image: "standard", current: true };
+  }
+
+  /** Removes an image box or a captured build of this install's, and nothing else. */
+  async #removeImage(ref: string, signal?: AbortSignal): Promise<void> {
+    const vmid = Number(ref);
+    const api = await this.client();
+    const config = await this.#guestConfig(api, vmid, signal);
+    if (!config) return;
+    const tags = parseTags(config.tags);
+    const configured = LXC_FLAVOURS.some((flavour) => this.#config.flavours[flavour].templates.some((template) => template.vmid === vmid));
+    const ours = tags.includes(installTag(this.#context.installId)) && (tags.includes(IMAGE_BOX) || tags.some((tag) => tag.startsWith(IMAGE_TAG)));
+    if (configured || !ours || !this.#inRange(vmid)) throw new Error(`CT ${vmid} is not an image box or build of this install's, so bb-box leaves it.`);
+    await this.#forget(vmid);
+    await api.destroy(vmid, signal);
+    this.#imageBoxes.delete(vmid);
   }
 
   async #command(vmid: number): Promise<SshTransport> {

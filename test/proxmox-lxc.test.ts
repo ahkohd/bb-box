@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { ProxmoxLxcBackend, displayReason, warmNameScript, nameScript, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
-import { installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
+import { installFromDescription, ownerFromDescription, ownerFromTags, templateFromTags } from "../src/backends/proxmox/owner.ts";
+import { parseImageRecord, recordInDescription } from "../src/backends/images.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { quote } from "../src/transports/process.ts";
@@ -1315,6 +1316,96 @@ test("doctor judges each template's image by its record, and desktops tell it th
     assert.equal((await image(9000, on)).status, "ok", "a Linux template has no NVIDIA userspace");
   }
   assert.deepEqual(context.errors, []);
+});
+
+test("image operations: a box from a template, its capture as a template with its record, a trial box, and the template replaced in place (049)", async () => {
+  // An ssh that answers the build box's record, as finalizing leaves it, and otherwise runs as the fake does.
+  const dir = tempDir("image-ops");
+  const record = { contract: 1, image: "standard", kind: "linux", arch: "x86_64", build: "build.20261003-021500-3f9c", built: "2026-10-03T02:15:00Z", os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } };
+  const binary = join(dir, "ssh");
+  writeFileSync(binary, `#!/bin/sh\ncase "$*" in *"cat /usr/share/bb-box/image.json"*) echo '${JSON.stringify(record)}'; exit 0;; esac\nexec "${FAKE_SSH_BINARY}" "$@"\n`, { mode: 0o755 });
+  const { backend, proxmox } = setup({}, new MemoryStorage(), { sshBinary: binary });
+  proxmox.guests.get(9000)!.config.tags = "build.20260926-060000-a1b2";
+  proxmox.guests.get(9000)!.config.description = "bb-box linux template, built 2026-09-26. See /usr/share/bb-box/template-release inside.";
+  proxmox.guests.get(9000)!.config.net0 = "name=eth0,bridge=vmbr1,ip=manual,type=veth";
+  proxmox.guests.get(9000)!.config.hostname = "bb-box-linux";
+  const images = backend.images;
+
+  const listed = await images.list();
+  const standard = listed.builds.find((build) => build.ref === "9000")!;
+  assert.deepEqual(
+    [standard.image, standard.kind, standard.build, standard.record, standard.current],
+    ["standard", "linux", "build.20260926-060000-a1b2", null, true],
+  );
+  assert.deepEqual(listed.boxes, []);
+
+  // The build box: a clone at a box's VMID and address, which no sweep takes.
+  const box = await images.box(standard, "refresh of 9000", signal());
+  assert.equal(box.ref, "7000");
+  const guest = proxmox.guests.get(7000)!;
+  assert.deepEqual([guest.status, parseTags(guest.config.tags)], ["running", ["bb-box", "install.test", "image-box", "template.9000"]]);
+  assert.match(guest.config.net0!, /ip=192\.0\.2\.100\//);
+  assert.equal((await box.command.run("echo in the box")).stdout, "in the box\n");
+  assert.deepEqual(await backend.held(), [], "not a box's guest");
+  assert.deepEqual((await images.list()).boxes, ["7000"]);
+
+  // The capture: stopped, a template configured as the one it came from, with the record and the build's tags.
+  const captured = await images.capture(box, standard, "standard", signal());
+  assert.deepEqual([captured.ref, captured.build, captured.current, captured.record?.build], ["7000", "build.20261003-021500-3f9c", false, "build.20261003-021500-3f9c"]);
+  assert.deepEqual([guest.template, guest.status, guest.config.protection, guest.config.net0, guest.config.hostname], [true, "stopped", "1", "name=eth0,bridge=vmbr1,ip=manual,type=veth", "bb-box-linux"]);
+  assert.deepEqual(parseTags(guest.config.tags), ["bb-box", "install.test", "image.standard", "kind.linux", "template.9000", "build.20261003-021500-3f9c"]);
+  assert.deepEqual(recordInDescription(guest.config.description!), parseImageRecord(record));
+  assert.deepEqual(await backend.held(), [], "a captured build is no box's, though the listing does not yet say it is a template");
+  const builds = (await images.list()).builds;
+  assert.deepEqual(builds.map((build) => [build.ref, build.image, build.current]), [["9000", "standard", true], ["9001", "standard", true], ["7000", "standard", false]]);
+
+  // A trial box from the build, then removed; what is not an image's stays.
+  const trial = await images.box(captured, "trial of build.20261003-021500-3f9c", signal());
+  assert.equal(trial.ref, "7001");
+  assert.equal(proxmox.guests.get(7001)!.config.rootfs!.split(",")[0], "local-lvm:base-7000-disk-0/vm-7001-disk-0");
+  await images.remove(trial.ref, signal());
+  assert.equal(proxmox.guests.has(7001), false);
+  await assert.rejects(images.remove("9000", signal()), /CT 9000 is not an image box or build of this install's/);
+
+  // The replace: 9000 goes, the build is cloned into its VMID and made a template, and the build goes.
+  proxmox.statusPass();
+  const before = proxmox.calls.length;
+  const replaced = await images.replace(captured, standard, signal());
+  assert.deepEqual([replaced.ref, replaced.current, replaced.build], ["9000", true, "build.20261003-021500-3f9c"]);
+  assert.equal(proxmox.guests.has(7000), false);
+  const template = proxmox.guests.get(9000)!;
+  assert.deepEqual([template.template, template.config.protection, template.config.hostname], [true, "1", "bb-box-linux"]);
+  assert.deepEqual(parseTags(template.config.tags), ["build.20261003-021500-3f9c"]);
+  assert.match(template.config.description!, /^bb-box linux template, refreshed \d{4}-\d{2}-\d{2}\. See \/usr\/share\/bb-box\/template-release inside\.\n\{"contract":1,/);
+  assert.equal(template.config.rootfs!.split(",")[0], "local-lvm:base-7000-disk-0/base-9000-disk-0", "a linked clone on LVM-thin");
+  assert.deepEqual(
+    proxmox.calls
+      .slice(before)
+      .filter((call) => /\/lxc\/(9000|7000)(\/(clone|template))?$/.test(call.path) && call.method !== "GET")
+      .map((call) => `${call.method} ${call.path.replace(/^\/nodes\/pve/, "")}`),
+    ["DELETE /lxc/9000", "POST /lxc/7000/clone", "POST /lxc/9000/template", "DELETE /lxc/7000"],
+  );
+  const after = (await images.list()).builds.find((build) => build.ref === "9000")!;
+  assert.deepEqual([after.build, after.record?.build], ["build.20261003-021500-3f9c", "build.20261003-021500-3f9c"]);
+  // A box from the replaced template, as any.
+  const box2 = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(templateFromTags(parseTags(proxmox.guests.get(Number(box2.ref))!.config.tags)), 9000);
+});
+
+test("image operations replace a template on storage other than LVM-thin with a full copy, as a linked clone there needs its origin (049)", async () => {
+  const dir = tempDir("image-ops-full");
+  const binary = join(dir, "ssh");
+  writeFileSync(binary, `#!/bin/sh\ncase "$*" in *"cat /usr/share/bb-box/image.json"*) echo '{"contract":1,"kind":"linux","build":"build.x","built":"2026-10-03T00:00:00Z"}'; exit 0;; esac\nexec "${FAKE_SSH_BINARY}" "$@"\n`, { mode: 0o755 });
+  const { backend, proxmox } = setup({}, new MemoryStorage(), { sshBinary: binary });
+  proxmox.storageTypes.set("local-lvm", "lvm");
+  const standard = (await backend.images.list()).builds.find((build) => build.ref === "9000")!;
+  const box = await backend.images.box(standard, "refresh", signal());
+  const captured = await backend.images.capture(box, standard, "standard", signal());
+  await backend.images.replace(captured, standard, signal());
+  const clone = proxmox.calls.find((call) => call.path.endsWith("/lxc/7000/clone"))!;
+  assert.deepEqual([clone.params.full, clone.params.storage, clone.params.newid], ["1", "local-lvm", "9000"]);
+  assert.equal(proxmox.guests.get(9000)!.config.rootfs!.split(",")[0], "local-lvm:base-9000-disk-0");
+  assert.equal(proxmox.guests.has(7000), false);
 });
 
 test("doctor warns about a kind the node cannot hold at any preset (#74)", async () => {
