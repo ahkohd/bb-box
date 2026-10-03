@@ -42,15 +42,17 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async state({ threadId }) {
       const [list, kinds, machine, project] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId), app.projectOf(threadId).catch(() => null)]);
       const imageOffer = !!project && !Object.values(app.configuration.exported().images ?? {}).some((image) => image.projects.includes(project));
+      const images = await app.imageOptions(project).catch(() => []);
       const yours = machine !== null && (machine.threadId === OPERATOR || machine.threadId === SPARES);
       const runsOn =
         machine && !list.some((box) => box.id === machine.id)
           ? { box: app.view(machine), owner: yours ? ("yours" as const) : ("thread" as const), threadId: yours ? null : machine.threadId }
           : null;
-      return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer };
+      return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer, images };
     },
-    acquire: ({ threadId, kind, size, on }) =>
-      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}) })),
+    acquire: ({ threadId, kind, size, on, image }) =>
+      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}) })),
+    images: async ({ threadId, projectId }) => app.imageOptions(projectId ?? (threadId ? await app.projectOf(threadId).catch(() => null) : null)),
     release: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Releasing the box", () => boxes.release(threadId, box, "released in BB Box's panel"))),
     stop: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Stopping the box", () => boxes.stop(threadId, box))),
     start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box)),

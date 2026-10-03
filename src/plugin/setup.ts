@@ -12,7 +12,7 @@ import { pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { ImageBakes } from "./bakes.ts";
 import { ImageJobs } from "./images.ts";
-import { projectImage, withImage } from "../core/project-images.ts";
+import { namedImage, projectImage, withImage } from "../core/project-images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -44,7 +44,7 @@ import type { ThreadOnBox } from "./contract.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
-import { boxView, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type KindView, type ProviderProfile } from "./views.ts";
+import { boxView, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type ProviderProfile } from "./views.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
@@ -105,6 +105,8 @@ export interface BbBox {
   control(box: BoxRecord): ControlView;
   /** With each kind's sizes from bb-box's settings. */
   kinds(): Promise<KindView[]>;
+  /** The projects' images a box can choose (049), marked as `project`'s or not, with their projects' names and builds. */
+  imageOptions(project: string | null): Promise<ImageOptionView[]>;
   backendViews(): BackendView[];
   /** A provider's profile for the New box form's (i): one capacity call to the provider, made only when asked. */
   providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
@@ -435,6 +437,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   let desktops: Desktops | undefined;
   let terminals: Terminals | undefined;
   let computer: Computer | undefined;
+  // Projects' names, for a choice of image (049): asked of BB at most once a minute, as the panel polls.
+  const projectNames = new Refreshing<Map<string, string>>({
+    freshMs: 60_000,
+    load: async () => new Map(((await bb.sdk.projects.list({ includePersonal: true })) as { id: string; name: string }[]).map((one) => [one.id, one.name])),
+    onError: (error) => logError("project names", error),
+  });
   // Projects' images, baked where their boxes start (049).
   const imageBakes = new ImageBakes({
     backends: () => backends.on(),
@@ -448,7 +456,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     backends,
     general,
     // A project's image for a kind (049), from the configuration as it is now.
-    image: (projectId, kind) => projectImage(configuration.document, projectId, kind),
+    image: (projectId, kind, name) => (name === undefined ? projectImage(configuration.document, projectId, kind) : namedImage(configuration.document, name, kind)),
     baked: (name, backend, kind) => imageBakes.current(name, backend, kind),
     imageReady: (box) => imageBakes.ready(box),
     // As the bundle's setup files have it; a build installs the same in the image.
@@ -724,6 +732,22 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     general,
     view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id)),
     control: (box) => control.view(box.id),
+    async imageOptions(project) {
+      const images = Object.entries(configuration.document.images ?? {});
+      if (!images.length) return [];
+      const names = await projectNames.get("all").catch(() => new Map<string, string>());
+      const options: ImageOptionView[] = [];
+      for (const [name, image] of images) {
+        options.push({
+          name,
+          kinds: image.kinds,
+          projects: image.projects.map((id) => ({ id, name: names.get(id) ?? id })),
+          mine: !!project && image.projects.includes(project),
+          builds: await imageBakes.builds(name),
+        });
+      }
+      return options.sort((a, b) => Number(b.mine) - Number(a.mine) || a.name.localeCompare(b.name));
+    },
     kinds: async () => {
       const config = await general();
       return kindViews(backends.kinds(), config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id));

@@ -16,6 +16,8 @@ export const NEW_BOX_PROVIDER_ID = "bb-box-new";
 export const newBoxInputs = z.object({
   kind: z.string().min(1),
   size: z.enum(PRESETS).optional(),
+  /** An image's name, or "standard" (049); the project's image for the kind when left out. */
+  image: z.string().min(1).optional(),
 });
 
 export type NewBoxInputs = z.infer<typeof newBoxInputs>;
@@ -83,7 +85,7 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
         if (!box) {
           await releaseFailed(boxes, thread.id);
           report.step("Making a box");
-          box = await boxes.acquire({ threadId: thread.id, projectId: thread.projectId, kind: inputs.kind, size: { preset: inputs.size }, role: "machine" });
+          box = await boxes.acquire({ threadId: thread.id, projectId: thread.projectId, kind: inputs.kind, size: { preset: inputs.size }, role: "machine", ...(inputs.image ? { image: inputs.image } : {}) });
         }
         await checkpoint({ boxId: box.id });
         box = (await boxes.settled(box)) ?? box;

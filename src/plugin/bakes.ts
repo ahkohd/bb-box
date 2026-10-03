@@ -563,6 +563,18 @@ export class ImageBakes {
     return lines;
   }
 
+  /** An image's current builds, by kind and backend, for a choice of image (049). */
+  async builds(name: string): Promise<{ kind: string; backend: string; build: string | null; built: string }[]> {
+    const found: { kind: string; backend: string; build: string | null; built: string }[] = [];
+    for (const entry of await this.#deps.storage.list(`${BAKE}${name}/`)) {
+      if (entry.endsWith("/failed")) continue;
+      const { backend, kind } = parts(entry);
+      const bake = await this.#deps.storage.get<Bake>(entry);
+      if (bake && (await this.current(name, backend, kind))) found.push({ kind, backend, build: bake.build, built: new Date(bake.at).toISOString() });
+    }
+    return found;
+  }
+
   /** An image's builds and failed bakes, for bb box image list: a line each. */
   async lines(name: string): Promise<string[]> {
     const lines: string[] = [];

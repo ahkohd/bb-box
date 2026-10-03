@@ -4,7 +4,7 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
-import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "./views.ts";
+import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, ProviderProfile } from "./views.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 
@@ -23,6 +23,8 @@ export interface PanelState {
   readonly runsOn: { readonly box: BoxView; readonly owner: "yours" | "thread"; /** The thread that holds it, when another thread's. */ readonly threadId: string | null } | null;
   /** The thread's project has no box image (049), so New box offers to ask an agent to make one. */
   readonly imageOffer: boolean;
+  /** The projects' images a box of the thread can choose (049), the project's own marked `mine`. "standard" is a choice too. */
+  readonly images: readonly ImageOptionView[];
 }
 
 /** One box's desktop or terminal, for its tab. */
@@ -92,8 +94,13 @@ const providers = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]
 
 export const contract = defineRpcContract({
   state: { input: thread, output: z.custom<PanelState>() },
-  /** `on` names the provider to use, or several for the first with room among them in acquire order (044): each by its name as the form gives it, its backend ID or its one host; without it, the first with room anywhere. */
-  acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional(), on: providers.optional() }), output: boxResult },
+  /**
+   * `on` names the provider to use, or several for the first with room among them in acquire order (044): each by its name as the form gives it, its backend ID or its one host; without it, the first with room anywhere.
+   * `image` is an image's name or "standard" (049); without it, the thread's project's image for the kind.
+   */
+  acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional(), on: providers.optional(), image: z.string().min(1).optional() }), output: boxResult },
+  /** The projects' images a box can choose (049), marked as the thread's or the project's own, for BB's new-thread inputs, where there is no thread yet. */
+  images: { input: z.object({ threadId: z.string().min(1).optional(), projectId: z.string().min(1).optional() }), output: z.custom<ImageOptionView[]>() },
   /** Without `force`, a box a thread is working on is left alone, and the answer names the threads. */
   release: { input: forceable, output: boxResult },
   stop: { input: forceable, output: boxResult },

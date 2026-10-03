@@ -152,13 +152,20 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         acquire: cliCommand({
           summary: "Acquire a box for a thread and wait until it answers.",
           positionals: [{ name: "kind", description: "The kind of box, from bb box kinds.", required: true }],
-          options: { ...threadOption, ...jsonOption, ...sizeOptions, ...onOption, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
+          options: {
+            ...threadOption,
+            ...jsonOption,
+            ...sizeOptions,
+            ...onOption,
+            image: { type: "string", description: 'The image to start from: a project\'s image, from bb box image list, or "standard". The thread\'s project\'s image for the kind by default.' },
+            "no-wait": { type: "boolean", description: "Return once the box is recorded." },
+          },
           run: ({ positionals, options }, ctx) =>
             guard("Acquiring a box", async () => {
               const threadId = threadOf(options.thread, ctx);
               const projectId = ctx.projectId ?? (await app.projectOf(threadId));
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}) });
+              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}) });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
               return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };
