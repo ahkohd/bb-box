@@ -23,6 +23,7 @@
 import { quote } from "../../transports/process.ts";
 import { recordFromJson, type ImageRecord } from "../images.ts";
 import type { StopReason } from "../types.ts";
+import { VNC_HOLDER_PY } from "./vnc-holder.ts";
 
 /** Where `tart` may be on a Mac: Homebrew on Apple silicon and Intel, Nix. */
 const PATHS = ["/opt/homebrew/bin", "/usr/local/bin", "$HOME/.nix-profile/bin", "/run/current-system/sw/bin", "/nix/var/nix/profiles/default/bin"];
@@ -427,10 +428,14 @@ echo @config; tr -d '\n' < "$home/vms/$vm/config.json"; echo
  * resumes. A Linux VM runs with neither, since Tart cannot resume one (040),
  * and has started when Tart lists it running. Prints "running" or "started";
  * when Tart exits first, exits 3 with its output, such as the system's limit
- * on VMs. The last run's output and exit are kept.
+ * on VMs. The last run's output and exit are kept. A macOS VM's VNC holder
+ * starts with its run, so it makes the run's first and only connection to
+ * Tart's VNC server (#406).
  */
 export function startScript(vm: string, waitSeconds: number): string {
   return script(String.raw`vm=${quote(vm)}; out="$d/run/$vm.out"; x="$d/run/$vm.exit"
+${HOLD}
+started() { [ "$(os_of "$vm")" = linux ] || hold || :; echo started; }
 case "$(state "$vm")" in
   running) echo running; exit 0 ;;
   "") echo "There is no VM $vm." >&2; exit 1 ;;
@@ -446,9 +451,9 @@ fi
 detach "$out" "$x" "$@" || { echo "tart run did not start for $vm." >&2; exit 1; }
 i=0
 while [ "$i" -lt ${waitSeconds * 10} ]; do
-  if up; then echo started; exit 0; fi
+  if up; then started; exit 0; fi
   if ! kill -0 "$pid" 2>/dev/null; then
-    up && { echo started; exit 0; }
+    up && { started; exit 0; }
     cat "$out" >&2; exit 3
   fi
   sleep 0.1; i=$((i + 1))
@@ -460,6 +465,55 @@ echo "Tart did not start $vm within ${waitSeconds} s." >&2; cat "$out" >&2; exit
 /** The VM's address on the Mac's NAT, waiting up to `waitSeconds` for its DHCP lease. */
 export function ipScript(vm: string, waitSeconds: number): string {
   return script(`tart ip ${quote(vm)} --wait ${waitSeconds}\n`);
+}
+
+/**
+ * Defines `hold`, which starts the VM $vm's VNC holder (vnc-holder.ts) for
+ * its current run unless one was started, and sets $run to the run's
+ * directory, where the holder keeps its status. A run is known by Tart's VNC
+ * port, which each run has anew, and only the first caller to make the run's
+ * directory starts a holder, so a run has at most one, however often it is
+ * asked. Returns 1 when Tart's VNC server is not running, and 2 when the
+ * Mac has no python3, before it takes the run, so a later call tries again.
+ */
+const HOLD = String.raw`hold() {
+  port=$(grep -o 'vnc://[^ ]*' "$d/run/$vm.out" 2>/dev/null | tail -n 1 | sed -n 's#.*:\([0-9][0-9]*\)/*$#\1#p')
+  [ -n "$port" ] || return 1
+  xcode-select -p >/dev/null 2>&1 || return 2
+  run="$d/run/$vm.holder-$port"
+  mkdir "$run" 2>/dev/null || return 0
+  for old in "$d/run/$vm.holder-"*; do [ "$old" = "$run" ] || rm -rf "$old"; done
+  cat > "$run/holder.py" <<'BBBOX_HOLDER'
+${VNC_HOLDER_PY}BBBOX_HOLDER
+  nohup /usr/bin/python3 "$run/holder.py" "$d/run/$vm.out" "$d/run/$vm.vnc" "$run/status" > "$run/log" 2>&1 < /dev/null &
+}`;
+
+/**
+ * Starts the VM's VNC holder for its current run unless one was started, as
+ * for a run that began before holders, and waits until it serves viewers:
+ * prints "ready <width>x<height>". Exits 4 with the reason when the run's
+ * holder has ended, 5 when the Mac has no python3, and 1 when Tart's VNC
+ * server is not running.
+ */
+export function holderScript(vm: string): string {
+  return script(String.raw`vm=${quote(vm)}
+${HOLD}
+hold
+case $? in
+  1) echo "Tart's VNC server for $vm is not running: the VM may be stopped." >&2; exit 1 ;;
+  2) echo "The Mac has no python3 for bb-box's VNC holder: install Xcode's command line tools there (xcode-select --install)." >&2; exit 5 ;;
+esac
+i=0
+while [ "$i" -lt 150 ]; do
+  s=$(cat "$run/status" 2>/dev/null)
+  case "$s" in
+    ready*) echo "$s"; exit 0 ;;
+    ended*) echo "$s" | sed 's/^ended //' >&2; exit 4 ;;
+  esac
+  sleep 0.1; i=$((i + 1))
+done
+echo "bb-box's VNC holder for $vm did not start within 15 s." >&2; tail -n 5 "$run/log" >&2; exit 1
+`);
 }
 
 /** The URL of Tart's VNC server for the VM's current run, with its password. */
@@ -651,7 +705,8 @@ if [ -n "$(state "$vm")" ]; then
   settled "$vm" 300 || exit 1
   tart delete "$vm" || exit 1
 fi
-rm -f "$d/run/$vm.out" "$d/run/$vm.out.last" "$d/run/$vm.exit" "$d/run/$vm.exit.last"
+rm -f "$d/run/$vm.out" "$d/run/$vm.out.last" "$d/run/$vm.exit" "$d/run/$vm.exit.last" "$d/run/$vm.vnc"
+rm -rf "$d/run/$vm.holder-"*
 rm -f "$d/owners/$vm"
 echo deleted
 `);

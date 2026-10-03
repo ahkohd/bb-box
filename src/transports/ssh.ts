@@ -314,6 +314,11 @@ export class Ssh {
   }
 
   /** A route to `port` inside the box, carried by `ssh -W`. */
+  /** A route to what a command on the host serves on its stdin and stdout, such as a unix socket through `nc -U`. */
+  commandRoute(access: SshAccess, command: string): Route {
+    return { type: "command", argv: [this.binary, ...this.args(access, command)] };
+  }
+
   route(access: SshAccess, port: number): Route {
     return {
       type: "command",

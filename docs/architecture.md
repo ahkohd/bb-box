@@ -303,16 +303,16 @@ held for 250 ms: the last frame of a pane opening is not lost.
   AES-128 key for the user and password, as noVNC does it. On macOS 27,
   Screen Sharing ignored the viewer's keyboard and pointer this way: a
   blocker, with its fallbacks in 047's live check.
-- macOS 27's Screen Sharing shows the desktop to a viewer that is not
-  Apple's but ignores its keys and pointer (#406). So a display's `open()`
-  may give an `input` of its own: the relay opens it at the controlling
-  viewer's first input and sends it that viewer's keys, pointer and
-  clipboard instead of the stream server, and the releases of what it held
-  as it goes. For a Tart macOS desktop it is a JXA script in the VM user's
-  desktop session that posts each event with CGEventPost, keys by their
-  position on a US keyboard. It reports the box's clipboard as it changes,
-  which the viewer with control fetches over RPC, since the relay cannot
-  put a message into the server's stream without parsing it.
+- macOS 27's Screen Sharing shows the desktop to a viewer that is not Apple's
+  but ignores its keys and pointer (#406). So a display's `open()` may give an
+  `input` of its own: the relay opens it at the controlling viewer's first
+  input and sends it that viewer's keys, pointer and clipboard instead of the
+  stream server, and the releases of what it held as it goes. For a Mac's own
+  desktop it would be a JXA script in the user's desktop session that posts
+  each event with CGEventPost, keys by their position on a US keyboard (core's
+  `MacInput`, for 047). It reports the box's clipboard as it changes, which
+  the viewer with control fetches over RPC, since the relay cannot put a
+  message into the server's stream without parsing it.
 - wayvnc, which streams a Wayland desktop (048), offers no VNC password,
   so the relay signs in there with type 30 too, as the user `box`.
 - Windows uses RFB through Proxmox's console: nothing to install in the
@@ -1615,15 +1615,14 @@ Notes:
     the host user can read, and `open()` reads the file each time. The
     password never goes in `Guest.data`. A launchd job would load only in the
     GUI session of a host user logged in at the Mac.
-  - A macOS desktop is the VM's own Screen Sharing, signed in with type 30
-    as the VM user, whose password is a secret setting. Its input goes to
-    the display's own channel (#406, below). Tart's VNC server (the
-    Virtualization framework's) is the fallback, when Screen Sharing does
-    not answer: it listens on every interface of the Mac, ignores
-    SetDesktopSize, ends the VM when a client asks for an update without
-    the DesktopSize pseudo-encoding, and crashes the VM on a second VNC
-    connection in a run, so it serves one viewer per run
-    ([setup guide](../setup/tart/README.md#the-desktops-vnc-server)).
+  - A macOS desktop is Tart's VNC server (the Virtualization framework's),
+    which shows the whole virtual display. It crashes the VM on a second VNC
+    connection in a run, so a holder on the Mac, started with the run, makes
+    the run's only connection and serves every viewer on a unix socket,
+    reached with `nc -U` over SSH (#406). It also listens on every interface
+    of the Mac, ignores SetDesktopSize, and ends the VM when a client asks for
+    an update without the DesktopSize pseudo-encoding ([setup
+    guide](../setup/tart/README.md#the-desktops-vnc-server)).
   - A suspended VM holds no slot and no memory, so `stop` suspends (macOS 14
     or later on the host), and `start` resumes in about 4 s.
   - Tart runs Linux VMs too, as the arm64 kinds
