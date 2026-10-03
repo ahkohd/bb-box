@@ -932,6 +932,11 @@ test("releasing a box asks first", async () => {
   const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Release calm-otter?")).toBeTruthy();
   expect(within(dialog).getByText("Its disk and everything on it will be deleted. Copy out anything you want to keep first.")).toBeTruthy();
+  // It moves as BB's own dialogs do: a fade and a slight scale from the centre, no shadcn diagonal slide, none under reduced motion.
+  expect(dialog.className).toContain("data-[state=open]:zoom-in-95");
+  expect(dialog.className).toContain("duration-200");
+  expect(dialog.className).not.toMatch(/slide-in-from|slide-out-to/);
+  expect(dialog.className).toContain("motion-reduce:data-[state=open]:animate-none");
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(changes).toEqual([]);
