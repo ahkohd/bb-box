@@ -221,6 +221,37 @@ Save and turn on. `bb box doctor` runs the same checks from a terminal, and
 Box panel, agents get the `box_` tools, and `skills/bb-box/SKILL.md`
 describes both.
 
+### Rebuilding images each night
+
+bb-box rebuilds the standard images itself, each night, so that new boxes
+have this week's agent CLIs, gh and Chrome
+([049](docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)).
+It covers Proxmox LXC templates, Docker images, and Tart's Linux and macOS
+images. Have a BB script automation run the job, in a project of yours:
+
+```sh
+bb automation create --project <project> --name "bb-box images" \
+  --cron "0 2 * * *" --timezone <zone> \
+  --script "bb box images refresh" --timeout 4h
+```
+
+`bb box images refresh` takes the images that are due one at a time, most
+needed first. The order is:
+
+1. those that fail the doctor;
+2. those past their interval, a week for Linux and a month for macOS;
+3. those with another build of BB's app;
+4. those built with other pins.
+
+Each one is built with the latest Claude Code, Codex, pi, gh and Chrome. It replaces the image only when a trial box of the new build passes its checks. A run starts no image after 4 hours (`--hours`), and ends with a line per image. A failure keeps the old image, and the image is not tried again until something it is built from changes. An image whose host lacks room waits for the next night.
+
+Other commands:
+
+- `bb box images list` shows each image's age, why it is due, and what its last rebuild did, with `--output <image>` for its last lines.
+- `bb box images build <image>` rebuilds one now, and `--try` checks a new build without replacing.
+- `bb box images versions` shows what a rebuild would take.
+- `bb box doctor`'s "Nightly rebuilds" check warns when no run has ended for 8 days.
+
 ## Upgrade
 
 Do not remove bb-box to upgrade it: `bb plugin remove` deletes its

@@ -10,6 +10,7 @@ import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../bac
 import { warmChecks } from "../backends/warm.ts";
 import { pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
+import { ImageJobs } from "./images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -90,6 +91,8 @@ export interface BbBox {
   dockerCheck(machine: string, signal?: AbortSignal): Promise<{ hostId: string; name: string; endpoint: string; info: DockerInfo; firstMs: number; againMs: number }>;
   /** What a rebuild of the standard Linux images would take now (049): upstream's latest of the tools that follow it, or with `pinned` the pins alone. */
   imageVersions(options: { pinned?: boolean; signal?: AbortSignal }): Promise<Versions>;
+  /** The nightly rebuilds of the standard images (049). */
+  readonly imageJobs: ImageJobs;
   general(): Promise<GeneralConfig>;
   view(box: BoxRecord): BoxView;
   /** Who controls a box's desktop. */
@@ -505,6 +508,16 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const control = desktop.control;
 
   // Disposed in reverse: boxes first, so acquires stop before their backends.
+  // The nightly rebuilds (049): bb box images refresh starts a run here.
+  const imageJobs = new ImageJobs({
+    backends: () => backends.on(),
+    setup: pins,
+    bbUrl: () => bb.server.experimental_appUrl,
+    facts: images,
+    storage: kv,
+    log: (line) => bb.log.info(line),
+  });
+  bb.onDispose(() => imageJobs.stop());
   bb.onDispose(() => backends.dispose());
   bb.onDispose(() => boxes.dispose());
   bb.onDispose(() => desktop.dispose());
@@ -648,6 +661,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return result;
     },
     imageVersions: ({ pinned, signal }) => resolveVersions(pins, { pinned: !!pinned, ...(signal ? { signal } : {}) }),
+    imageJobs,
     async dockerCheck(machine, signal) {
       const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];
       const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);
@@ -756,6 +770,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Kinds",
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
+        });
+      }
+      const imageChecks = await imageJobs.checks(signal);
+      if (imageChecks.length) {
+        sections.push({
+          title: "Images",
+          report: { ok: true, summary: "bb-box rebuilds the standard images each night.", checks: imageChecks, notes: [] },
         });
       }
       const small = presetMemoryChecks((await general()).sizes);
