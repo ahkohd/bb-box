@@ -301,6 +301,16 @@ held for 250 ms: the last frame of a pane opening is not lost.
   user's console, and Screen Sharing's VNC password stays off. Type 30 is
   Diffie-Hellman in the server's group, whose shared secret's MD5 is the
   AES-128 key for the user and password, as noVNC does it.
+- macOS 27's Screen Sharing shows the desktop to a viewer that is not
+  Apple's but ignores its keys and pointer (#406). So a display's `open()`
+  may give an `input` of its own: the relay opens it at the controlling
+  viewer's first input and sends it that viewer's keys, pointer and
+  clipboard instead of the stream server, and the releases of what it held
+  as it goes. For a Tart macOS desktop it is a JXA script in the VM user's
+  desktop session that posts each event with CGEventPost, keys by their
+  position on a US keyboard. It reports the box's clipboard as it changes,
+  which the viewer with control fetches over RPC, since the relay cannot
+  put a message into the server's stream without parsing it.
 - wayvnc, which streams a Wayland desktop (048), offers no VNC password,
   so the relay signs in there with type 30 too, as the user `box`.
 - Windows uses RFB through Proxmox's console: nothing to install in the
@@ -1600,11 +1610,14 @@ Notes:
     the host user can read, and `open()` reads the file each time. The
     password never goes in `Guest.data`. A launchd job would load only in the
     GUI session of a host user logged in at the Mac.
-  - Tart's VNC server (the Virtualization framework's) listens on every
-    interface of the Mac, ignores SetDesktopSize, and ends the VM when a
-    client asks for an update without the DesktopSize pseudo-encoding. The
-    guest's own Screen Sharing gives a VNC client a separate session at the
-    login window, not the logged-in desktop, so it does not fit
+  - A macOS desktop is the VM's own Screen Sharing, signed in with type 30
+    as the VM user, whose password is a secret setting. Its input goes to
+    the display's own channel (#406, below). Tart's VNC server (the
+    Virtualization framework's) is the fallback, when Screen Sharing does
+    not answer: it listens on every interface of the Mac, ignores
+    SetDesktopSize, ends the VM when a client asks for an update without
+    the DesktopSize pseudo-encoding, and crashes the VM on a second VNC
+    connection in a run, so it serves one viewer per run
     ([setup guide](../setup/tart/README.md#the-desktops-vnc-server)).
   - A suspended VM holds no slot and no memory, so `stop` suspends (macOS 14
     or later on the host), and `start` resumes in about 4 s.

@@ -26,8 +26,9 @@ A Windows box does not, as on Proxmox.
 The bb-box plugin, on the BB server, reaches each Mac over SSH as a host user
 of its own and runs `tart` there. The VMs sit on the Mac's own NAT, which
 only the Mac reaches, so bb-box reaches them through the Mac: commands over
-SSH with the Mac as the jump host, and a macOS desktop through Tart's VNC
-server. A Linux desktop has its own VNC server in the VM, reached over SSH.
+SSH with the Mac as the jump host, and a macOS desktop through the VM's own
+Screen Sharing, also over SSH. A Linux desktop has its own VNC server in the
+VM, reached over SSH.
 
 Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
 2.30.0, boxes of the small preset (4 cores, 8 GiB):
@@ -331,6 +332,7 @@ keeps its boxes and takes no new ones. The backend's own fields:
 | `linux-desktop-image` | empty | The Tart VM `linux-arm64-desktop-cpu` boxes are cloned from, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
 | `windows-image` | empty | The image in `~/.bb-box/qemu/images` that `windows-arm64-desktop` boxes are made from, such as `bb-box-windows`. Empty, the default, turns them off |
 | `vm-user` | `admin` | The macOS images' user. Linux boxes work as `box` |
+| `vm-password` | empty | A secret: the `vm-user`'s password, which signs in to a macOS desktop's Screen Sharing. Empty is the password of Tart's images |
 | `vms-per-host` | 2 | At most 2 |
 | `reserve-memory-mib`, `reserve-disk-gib` | 16384, 50 | A new box is refused when the Mac would have less. With 16 GiB kept free, a 16 GiB Mac takes no box and a 32 GiB Mac takes two 8 GiB boxes, so lower it on a small Mac you do not use yourself |
 
@@ -428,31 +430,55 @@ or save writes. A Mac with less gets no warm VM, and its boxes clone.
 
 ### The desktop's VNC server
 
-`--vnc-experimental` serves the VM's screen from the Virtualization
+A macOS desktop is the VM's own Screen Sharing, on port 5900 in the VM. A
+viewer's connection goes `ssh -W 127.0.0.1:5900` to the VM through the Mac,
+and bb-box's relay signs in with Apple's authentication (type 30) as the VM
+user, which shows that user's logged-in desktop. The password is the
+`vm-password` setting, a secret, by default that of Tart's images. Measured on
+macOS 27: about 2.6 s from connecting to the first picture, mostly the
+sign-in, then up to 57 updates a second; 20 reconnects in a row and two
+viewers at once were fine, and the agent's session kept the console (#406).
+
+- **Input goes another way.** Screen Sharing on macOS 27 shows the desktop to
+  a viewer that is not Apple's, but ignores its keys and pointer, however it
+  is set up. So the relay sends the keys, pointer, buttons, wheel and
+  clipboard of the viewer with control to a small JXA script that bb-box runs
+  in the VM user's desktop session, which posts each as a real event
+  (CGEventPost). Tart's images already let `osascript` post events, so nothing
+  is installed. An event takes about 0.4 ms in the VM, plus the SSH
+  connection's own latency.
+- **Keys go by position on a US keyboard.** bb-box maps each key the viewer
+  sends to the key that types it on a US keyboard, and the VM's own keyboard
+  layout then decides what it types. Characters with no key there, such as `é`
+  or `€`, are dropped; paste them instead.
+- **The clipboard.** The viewer's clipboard goes to the VM when its tab gets
+  the focus, as Latin-1 text, which is all a VNC client sends. The VM's comes
+  back to the tab with control within a few seconds of changing, as UTF-8.
+
+Tart's own VNC server is the fallback, when the VM's Screen Sharing does not
+answer. `--vnc-experimental` serves the VM's screen from the Virtualization
 framework, from boot, with nothing installed in the VM. Each run has a new
 port and a password of four random words, which Tart prints to the run's
-output file, readable only by the host user. A viewer's connection goes
-`ssh -W 127.0.0.1:<port>` to the Mac, and bb-box's relay answers the VNC
-password; the browser never sees it.
+output file, readable only by the host user. A viewer's connection goes `ssh
+-W 127.0.0.1:<port>` to the Mac, and bb-box's relay answers the VNC password;
+the browser never sees it.
 
+- **One connection per run.** The VM crashes (SIGTRAP, an assertion in
+  `-[_VZVNCServer _setupVirtualMachineAccessor]`) on a second VNC connection
+  in a run, even after the first has closed. So bb-box lets Tart's server show
+  a run's desktop once, and refuses a second viewer with a message to turn
+  Screen Sharing on or stop and start the box.
 - **What listens where.** Tart prints `127.0.0.1:<port>`, but the server
   listens on every interface of the Mac. While a desktop box runs, anyone on
   the Mac's networks who has that run's password can reach its desktop. To
   close it, either turn on the macOS firewall and block incoming connections
-  to `tart` (System Settings > Network > Firewall > Options), or keep the
-  Mac on a network you trust.
-- **No resizing.** The server ignores a viewer's request for another size;
-  the desktop is 2048x1536 pixels (1024x768 points at 2x).
+  to `tart` (System Settings > Network > Firewall > Options), or keep the Mac
+  on a network you trust.
+- **No resizing.** The server ignores a viewer's request for another size; the
+  desktop is 2048x1536 pixels (1024x768 points at 2x).
 - **A client must advertise DesktopSize.** The server ends the VM when a
-  client asks for a framebuffer update without the DesktopSize
-  pseudo-encoding (-223). noVNC and bb-box's relay advertise it.
-- **Screen Sharing was tried instead.** The guest's own Screen Sharing would
-  listen only on the VM's NAT address, which only the Mac reaches. With its
-  legacy VNC password turned on, bb-box's relay can answer it. But a VNC
-  connection gets a separate session at the login window, not the logged-in
-  desktop, and moves the console to it, so you would not see the agent's
-  desktop and the agent's session would lose the console. Its full frames
-  also take 0.9 to 1.6 s against 0.3 s.
+  client asks for a framebuffer update without the DesktopSize pseudo-encoding
+  (-223). noVNC and bb-box's relay advertise it.
 
 A Windows box's desktop is served by QEMU's VNC server instead, which
 listens on the Mac's loopback only and so has no password. It does resize:

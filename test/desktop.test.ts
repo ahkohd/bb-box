@@ -19,7 +19,7 @@ import {
   vncResponse,
   type Screen,
 } from "../src/core/rfb.ts";
-import type { DisplayAuth } from "../src/transports/types.ts";
+import type { DisplayAuth, DisplayInput, DisplayInputEvents, DisplayOpened } from "../src/transports/types.ts";
 import { FakeRfb, until } from "./fake-rfb.ts";
 
 const bytes = (...values: number[]) => Uint8Array.of(...values);
@@ -105,7 +105,7 @@ async function failure(reader: StreamReader): Promise<string> {
   return new TextDecoder().decode(await reader.read(length));
 }
 
-function relayTo(server: FakeRfb, options: Partial<RelayOptions> & { password?: string; auth?: DisplayAuth } = {}) {
+function relayTo(server: FakeRfb, options: Partial<RelayOptions> & { password?: string; auth?: DisplayAuth; displayInput?: DisplayOpened["input"] } = {}) {
   const viewer = fakeViewer();
   let control = false;
   const ends: string[] = [];
@@ -113,6 +113,7 @@ function relayTo(server: FakeRfb, options: Partial<RelayOptions> & { password?: 
   const open: OpenDisplay = async () => ({
     channel: server.channel(),
     auth: options.auth ?? (options.password === undefined ? { type: "none" } : { type: "vnc-password", password: options.password }),
+    input: options.displayInput,
   });
   const relay = new RfbRelay({
     viewer,
@@ -181,6 +182,66 @@ test("the relay answers the box's VNC password and passes only the holder's inpu
   );
   assert.deepEqual(relay.ends, ["viewer"]);
   await until("the box's side to close", () => box!.closed);
+});
+
+test("a display with an input of its own gets the holder's keys, pointer and clipboard instead of the stream server, and the releases at the end (#406)", async () => {
+  const server = new FakeRfb();
+  const calls: string[] = [];
+  let events: DisplayInputEvents | null = null;
+  let closed = false;
+  const input: DisplayInput = {
+    key: async (down, keysym) => (calls.push(`key ${down} ${keysym}`), true),
+    pointer: async (mask, x, y) => void calls.push(`pointer ${mask} ${x} ${y}`),
+    clipboard: async (value) => void calls.push(`clipboard ${value}`),
+    size: async (width, height) => void calls.push(`size ${width}x${height}`),
+    ping: async () => undefined,
+    close: async () => void (closed = true),
+  };
+  const clipboards: string[] = [];
+  const relay = relayTo(server, {
+    displayInput: async (given) => ((events = given), input),
+    onClipboard: (value) => clipboards.push(value),
+  });
+  await relay.init();
+  const [box] = server.connections;
+  const held = [keyEvent(true, 0x61), pointerEvent(1, 5, 5), cutText(text("pasted"))].reduce(concat);
+  await relay.relay.receive(held);
+  assert.deepEqual(calls, [], "a watcher's input reaches neither, and opens no input");
+
+  relay.give(true);
+  await relay.relay.receive(concat(held, UPDATE_REQUEST));
+  await until("the holder's input", () => calls.length >= 4);
+  assert.deepEqual(calls, ["size 1280x800", "key true 97", "pointer 1 5 5", "clipboard pasted"], "the input learns the desktop's size first");
+  await until("the update request", () => box!.received.byteLength >= UPDATE_REQUEST.byteLength);
+  assert.equal(hex(box!.received), hex(UPDATE_REQUEST), "only the update request goes to the stream server");
+
+  events!.onClipboard!("from the box");
+  assert.deepEqual(clipboards, ["from the box"]);
+
+  await relay.relay.close();
+  assert.deepEqual(calls.slice(4), ["key false 97", "pointer 0 5 5"], "closing lets go of what the viewer held down, through the input");
+  assert.ok(closed, "and closes the input");
+  assert.equal(hex(box!.received), hex(UPDATE_REQUEST));
+});
+
+test("an input that cannot open is reported, and the desktop still streams (#406)", async () => {
+  const server = new FakeRfb();
+  const problems: string[] = [];
+  const relay = relayTo(server, {
+    displayInput: async () => {
+      throw new Error("the helper did not start");
+    },
+    onInputError: (error) => problems.push(error.message),
+  });
+  await relay.init();
+  relay.give(true);
+  await relay.relay.receive([keyEvent(true, 0x61), keyEvent(false, 0x61), UPDATE_REQUEST].reduce(concat));
+  const [box] = server.connections;
+  await until("the update request", () => box!.received.byteLength >= UPDATE_REQUEST.byteLength);
+  assert.equal(hex(box!.received), hex(UPDATE_REQUEST), "the keys go nowhere rather than to a server that ignores them");
+  assert.deepEqual(problems, ["the helper did not start"], "reported once");
+  assert.equal(hex(await relay.viewer.reader.read(4)), "00000000", "the stream goes on");
+  await relay.relay.close();
 });
 
 test("a resize below the display's smallest size is raised to it, in each dimension", async () => {

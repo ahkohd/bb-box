@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, hostnameOf, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
@@ -17,7 +18,8 @@ after(async () => {
   for (const backend of made) await backend.dispose();
 });
 
-const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 };
+// Port 1 is closed on the test machine, so a macOS VM's Screen Sharing does not answer unless a test listens for it.
+const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, screenSharingPort: 1 };
 
 function setup(values: Record<string, unknown> = {}) {
   const ssh = fakeSsh();
@@ -128,6 +130,34 @@ test("reads Tart's pretty-printed listing and its VNC URL", () => {
   assert.equal(state.disk.freeMiB, Math.floor(150000000 / 1024));
   assert.deepEqual(parseVnc("vnc://:open-sesame-word-four@127.0.0.1:61234\n"), { port: 61234, password: "open-sesame-word-four" });
   assert.equal(parseVnc(""), null);
+});
+
+test("a macOS desktop shows the VM's own Screen Sharing, signed in as the VM user, with input of its own; without it, Tart's VNC serves one connection per run (#406)", async (t) => {
+  const listener = createServer((socket) => socket.end());
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => void listener.close());
+  const port = (listener.address() as AddressInfo).port;
+  const values = { "tart-vm-password": "s3cret" };
+  const { context, backend } = setup(values);
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+
+  const sharing = new TartBackend(tartConfig(values), context, { ...FAKES, screenSharingPort: port });
+  made.push(sharing);
+  const [display] = (await sharing.transports(guest, "macos-desktop")).displays;
+  const opened = await display!.open(signal());
+  assert.deepEqual(opened.auth, { type: "apple", user: "admin", password: "s3cret" });
+  const argv = opened.route.type === "command" ? opened.route.argv : [];
+  assert.deepEqual(argv.slice(-3), ["-W", `127.0.0.1:${port}`, `admin@${guest.address}`], "to the VM's own Screen Sharing, through the Mac");
+  assert.equal(typeof opened.input, "function", "Screen Sharing ignores a viewer's input, so the display has its own");
+  assert.deepEqual((await display!.open(signal())).auth.type, "apple", "as often as viewers connect");
+
+  // With Screen Sharing off, Tart's VNC server, which ends the VM on a second connection in its run.
+  const [fallback] = (await backend.transports(guest, "macos-desktop")).displays;
+  const first = await fallback!.open(signal());
+  assert.equal(first.auth.type, "vnc-password");
+  assert.equal(first.input, undefined, "Tart's VNC server takes the viewer's input itself");
+  await assert.rejects(fallback!.open(signal()), /takes one connection per run: a second would end the VM\. Turn Screen Sharing on in the VM, or stop and start the box/);
+  assert.equal(tartConfig({}).ssh.vmPassword, "admin", "the password of Tart's images, unless one is set");
 });
 
 test("acquire claims the VM before it writes anything, then clones, starts and reaches it through the Mac", async () => {
