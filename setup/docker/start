@@ -11,7 +11,9 @@
 #   in an LXC box (041). A box with containers starts it at once, so their
 #   restart policies work.
 # - In a desktop box, starts the display, the XFCE session and Cua Driver as
-#   the box user, and starts each again when it exits, as their units do.
+#   the box user, and starts each again when it exits, as their units do. In
+#   a Wayland desktop box (048), Sway is the display and the session, and
+#   Cua Driver and wayvnc start each time it is up and stop with it.
 # - Then writes /run/bb-box/ready, which bb-box waits for, once Docker's
 #   socket is the docker group's. /run is a tmpfs, so the file is new at each
 #   start.
@@ -90,39 +92,75 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
   [ ! -r /etc/bb-box/desktop.env ] || . /etc/bb-box/desktop.env
   set +a
   display_env=(DISPLAY_MODE="${DISPLAY_MODE:-cpu}" DISPLAY_GEOMETRY="${DISPLAY_GEOMETRY:-1920x1080}" VNC_AUTH="${VNC_AUTH:-password}")
-  # The NVIDIA Container Toolkit brings the host driver's own userspace, so it
-  # always matches; the display still takes the CPU when the GPU is full.
-  if [ "${BBBOX_GPU:-0}" = 1 ] && [ -r /sys/module/nvidia/version ]; then
-    cat /sys/module/nvidia/version >/usr/share/bb-box/nvidia-version
-    display_env[0]=DISPLAY_MODE=auto
-    # A box with Docker is privileged and sees every GPU on the host, so
-    # BBBOX_GPU_ID names the one placed, for Xorg and the display (#283).
-    # The display takes the CPU when that GPU cannot be found.
-    if [ -n "${BBBOX_GPU_ID:-}" ]; then
-      if bus=$(/usr/local/libexec/bb-box/gpu-bus-id "$BBBOX_GPU_ID"); then
-        display_env+=(GPU_BUS_ID="$bus")
-      else
-        display_env[0]=DISPLAY_MODE=cpu
-        log "the display takes the CPU, as Xorg cannot be pointed at GPU $BBBOX_GPU_ID"
+  bus_env=(XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus")
+  if [ -r /etc/bb-box/sway.conf ]; then
+    # The Wayland desktop (048), on the CPU. Sway's display script writes
+    # display.env once Sway is up: WAYLAND_DISPLAY, SWAYSOCK and the session's
+    # XDG_ variables, which Cua Driver and wayvnc take.
+    keep as_box env "${bus_env[@]}" dbus-daemon --session --address="unix:path=/run/user/$uid/bus" --nofork --nopidfile &
+    in_session() { as_box env "${bus_env[@]}" sh -c 'set -a; . /run/bb-box/display.env; set +a; exec "$@"' sh "$@"; }
+    # wayvnc, again 100 ms after it exits: display resize ends it to take a
+    # new size when no viewer is connected, and waits for the next one.
+    stream() {
+      while :; do
+        in_session env "VNC_AUTH=${VNC_AUTH:-password}" sh -c '/usr/local/libexec/bb-box/display vnc-config &&
+          exec wayvnc -f 60 -o HEADLESS-1 -C /run/bb-box/wayvnc.conf 0.0.0.0 5900'
+        sleep 0.1
+      done
+    }
+    # Sway, and with it Cua Driver and wayvnc, which stop when it exits, as
+    # their units do in an LXC box.
+    wayland() {
+      local sway cua= vnc=
+      as_box env "${display_env[@]}" "${bus_env[@]}" /usr/local/libexec/bb-box/display &
+      sway=$!
+      if as_box /usr/local/libexec/bb-box/display wait; then
+        in_session env CUA_DRIVER_RS_ENABLE_WAYLAND=1 CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
+          CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve &
+        cua=$!
+        stream &
+        vnc=$!
+      fi
+      wait "$sway"
+      kill $vnc $cua 2>/dev/null
+      pkill -u "$user" -x wayvnc
+    }
+    keep wayland &
+  else
+    # The NVIDIA Container Toolkit brings the host driver's own userspace, so
+    # it always matches; the display still takes the CPU when the GPU is full.
+    if [ "${BBBOX_GPU:-0}" = 1 ] && [ -r /sys/module/nvidia/version ]; then
+      cat /sys/module/nvidia/version >/usr/share/bb-box/nvidia-version
+      display_env[0]=DISPLAY_MODE=auto
+      # A box with Docker is privileged and sees every GPU on the host, so
+      # BBBOX_GPU_ID names the one placed, for Xorg and the display (#283).
+      # The display takes the CPU when that GPU cannot be found.
+      if [ -n "${BBBOX_GPU_ID:-}" ]; then
+        if bus=$(/usr/local/libexec/bb-box/gpu-bus-id "$BBBOX_GPU_ID"); then
+          display_env+=(GPU_BUS_ID="$bus")
+        else
+          display_env[0]=DISPLAY_MODE=cpu
+          log "the display takes the CPU, as Xorg cannot be pointed at GPU $BBBOX_GPU_ID"
+        fi
       fi
     fi
+    keep as_box env "${display_env[@]}" /usr/local/libexec/bb-box/display &
+    session_env=(DISPLAY=:99 XAUTHORITY="$run/Xauthority" XDG_RUNTIME_DIR="/run/user/$uid"
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" XDG_SESSION_TYPE=x11
+      XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce)
+    # The session's D-Bus, which user@1000.service gives an LXC box.
+    keep as_box env "${session_env[@]}" dbus-daemon --session --address="unix:path=/run/user/$uid/bus" --nofork --nopidfile &
+    # The session, and Cua Driver with it, each time the display is up.
+    session() {
+      as_box /usr/local/libexec/bb-box/display wait || return
+      as_box env "${session_env[@]}" sh -c 'set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
+        CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve &
+        cua=$!
+        xfce4-session
+        kill "$cua" 2>/dev/null'
+    }
+    keep session &
   fi
-  keep as_box env "${display_env[@]}" /usr/local/libexec/bb-box/display &
-  session_env=(DISPLAY=:99 XAUTHORITY="$run/Xauthority" XDG_RUNTIME_DIR="/run/user/$uid"
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" XDG_SESSION_TYPE=x11
-    XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce)
-  # The session's D-Bus, which user@1000.service gives an LXC box.
-  keep as_box env "${session_env[@]}" dbus-daemon --session --address="unix:path=/run/user/$uid/bus" --nofork --nopidfile &
-  # The session, and Cua Driver with it, each time the display is up.
-  session() {
-    as_box /usr/local/libexec/bb-box/display wait || return
-    as_box env "${session_env[@]}" sh -c 'set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
-      CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve &
-      cua=$!
-      xfce4-session
-      kill "$cua" 2>/dev/null'
-  }
-  keep session &
   as_box /usr/local/libexec/bb-box/display wait || log "the display did not come up"
   for _ in $(seq 1 100); do
     [ -S "$home/.cache/cua-driver/cua-driver.sock" ] && break

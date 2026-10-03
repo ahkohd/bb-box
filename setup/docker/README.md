@@ -2,18 +2,21 @@
 
 This backend runs Linux boxes as containers on one Docker host: the Docker on
 BB's server, another machine's over SSH, or a BB machine's, through BB. It is
-the quickest way to try bb-box, as it needs only Docker. It offers three
+the quickest way to try bb-box, as it needs only Docker. It offers four
 kinds:
 
 - **linux**: Ubuntu 24.04 with the same tools as a Proxmox LXC linux box;
 - **linux-desktop-cpu**: XFCE and Chrome, drawn by the CPU, shown in the
   thread's panel with shared control, and computer use through Cua Driver;
 - **linux-desktop**: the same desktop on one of the host's NVIDIA GPUs,
-  through the NVIDIA Container Toolkit (off by default).
+  through the NVIDIA Container Toolkit (off by default);
+- **linux-desktop-wayland-cpu**: Sway on Wayland, streamed by wayvnc and
+  drawn by the CPU, for apps built for Wayland. X11-only apps do not run
+  there.
 
 All of them enrol in BB as machines, as Proxmox LXC boxes do.
 
-Both images have Docker installed, as every Linux image does
+Every image has Docker installed, as every Linux image does
 ([decision 041](../../docs/decisions/041-every-linux-box-has-docker.md)).
 By default each box is a privileged container with a Docker daemon of its
 own, which its first `docker` command starts. With `privileged` off, or on
@@ -38,7 +41,7 @@ the local socket, and a `docker exec` took 0.5 s, against 0.09 s (#97).
 
 | Path | What it does |
 | --- | --- |
-| `build.sh` | Builds the two images on the Docker host |
+| `build.sh` | Builds the three images on the Docker host |
 | `Dockerfile` | The images, made by the Proxmox LXC template's guest scripts |
 | `customize.sh` | Runs those scripts inside the image as it is built |
 | `start` | A box's main process: starts its services, then waits |
@@ -97,28 +100,29 @@ the local socket, and a `docker exec` took 0.5 s, against 0.09 s (#97).
 - Memory for the boxes: by default bb-box keeps 4 GiB of the host's memory
   free, and a small linux box has a 4 GiB limit, so the host needs at least
   8 GiB.
-- Disk to build the images: about 25 GB free on the Docker host for both,
-  10 GB for the linux image alone and 18 GB for the desktop image alone.
-  From an empty cache, building both used about 17 GB, for the images and
-  Docker's build cache; the rest leaves room for an earlier build's.
+- Disk to build the images: about 36 GB free on the Docker host for all
+  three, 10 GB for the linux image alone and 18 GB for either desktop image
+  alone. From an empty cache, building all three used about 28 GB, for the
+  images and Docker's build cache; the rest leaves room for an earlier
+  build's.
   `build.sh` does not start with less free, and says how much is free.
   Once the images are built, `docker builder prune` frees the build cache.
 
 ## 1. Build the images
 
-bb-box never pulls an image. Build both on the Docker host:
+bb-box never pulls an image. Build them on the Docker host:
 
 ```sh
 git clone <bb-box repository> && cd bb-box
 setup/docker/build.sh
 ```
 
-`build.sh linux` or `build.sh desktop` builds one. `--bb-url
-https://bb.example.com` puts BB's host app in the images, so a box enrols
-without downloading it. The app is the images' last layer, and its build
-argument is the digest that BB's server gives for it, so after BB's app
-changes, running `build.sh` again installs the new app and keeps the rest
-cached. To build on a Docker host over SSH, run it with
+`build.sh linux`, `build.sh desktop` or `build.sh desktop-wayland` builds
+one. `--bb-url https://bb.example.com` puts BB's host app in the images, so
+a box enrols without downloading it. The app is the images' last layer, and
+its build argument is the digest that BB's server gives for it, so after
+BB's app changes, running `build.sh` again installs the new app and keeps
+the rest cached. To build on a Docker host over SSH, run it with
 `DOCKER_HOST=ssh://user@host`, or with that host's Docker context in use.
 
 Before it builds, `build.sh` checks that the Docker host has the disk free
@@ -131,9 +135,9 @@ each other download against its pinned SHA-256. When the snapshot service
 has an outage, the build retries for a few minutes, then fails; run it again
 later.
 
-Building both takes about 10 minutes, mostly downloads. The images are
-`bbbox/linux:1` and `bbbox/linux-desktop:1`, and the `1` is the images'
-layout version, which `bb box doctor` checks.
+Building all three takes about 15 minutes, mostly downloads. The images are
+`bbbox/linux:1`, `bbbox/linux-desktop:1` and `bbbox/linux-desktop-wayland:1`,
+and the `1` is the images' layout version, which `bb box doctor` checks.
 
 ## 2. Settings
 
@@ -144,6 +148,7 @@ In BB, on BB Box's settings page, set up the Docker backend and turn it on. Its 
 | `host` | empty | `unix:///path/to/docker.sock` or `ssh://user@host`. Empty uses the `docker` CLI's own default on BB's server: `DOCKER_HOST`, its current context, or the local socket |
 | `linux-image` | `bbbox/linux:1` | The image of linux boxes. Empty turns them off |
 | `desktop-image` | `bbbox/linux-desktop:1` | The image of linux-desktop-cpu and linux-desktop boxes. Empty turns them off |
+| `wayland-desktop-image` | `bbbox/linux-desktop-wayland:1` | The image of linux-desktop-wayland-cpu boxes. Empty turns them off |
 | `privileged` | on | Docker in boxes: each box is a privileged container with a Docker daemon of its own, started by its first `docker` command. Off, boxes say No Docker |
 | `gpu-desktops` | off | Offers linux-desktop boxes, on the GPUs the NVIDIA Container Toolkit lists |
 | `desktops-per-gpu` | 4 | The most linux-desktop boxes on one GPU |
@@ -189,13 +194,13 @@ integration, and bb-box reaches Desktop's socket there. Over `ssh://` it
 does not work (#158). For a PC that hosts boxes with nobody signed in, use
 [Docker in WSL](../docker-wsl/README.md) instead.
 
-We tested it with Docker Desktop 4.93 and Ubuntu 26.04, in a Windows 11 Pro
-VM with 8 cores and 16 GiB (#233). Building both images took 14 minutes. A
-linux box was ready 1.9 s after it was asked for, and a linux-desktop-cpu
-box 1.5 s, its desktop and computer use working. Each enrolled in BB in
-22 to 25 s, most of it BB's installer, as the images bb-box builds on a
-machine do not hold BB's host app. A command took 0.2 s, a 16 MiB copy
-under 4 s, and Docker in a box worked.
+We tested it with Docker Desktop 4.93 and Ubuntu 26.04, in a Windows 11 Pro VM
+with 8 cores and 16 GiB (#233). Building the linux and desktop images took 14
+minutes. A linux box was ready 1.9 s after it was asked for, and a
+linux-desktop-cpu box 1.5 s, its desktop and computer use working. Each
+enrolled in BB in 22 to 25 s, most of it BB's installer, as the images bb-box
+builds on a machine do not hold BB's host app. A command took 0.2 s, a 16 MiB
+copy under 4 s, and Docker in a box worked.
 
 1. Install WSL and Ubuntu, in PowerShell as an administrator:
    `wsl --install -d Ubuntu`. Restart Windows if it asks. Ubuntu runs
@@ -226,8 +231,9 @@ Before you rely on it:
   keeps 4 GiB of it free, so on a 16 GiB PC one small box fits. Set
   `memory` in `.wslconfig` in your Windows profile for more.
 - `build.sh`'s check of the disk free sees Desktop's virtual disk, about
-  1 TB, which grows as it fills, not the Windows drive. Building both
-  images grew it by 16 GB, so check the drive has about 25 GB free.
+  1 TB, which grows as it fills, not the Windows drive. Building the linux
+  and desktop images grew it by 16 GB, and all three need more, so check
+  the drive has about 36 GB free.
 - With no containers running for 5 minutes, Desktop's Resource Saver
   pauses Docker, and the next call takes about 2.5 s.
 - When Windows restarts, BB may go on showing the machine connected until
@@ -281,8 +287,10 @@ GPU desktops have not yet been tested on a Docker host with a GPU.
   with `systemd-socket-activate`, so the first `docker` command starts
   Docker's daemon; a box with containers starts it at once, so their restart
   policies work. In a desktop box it starts the display, the session and Cua
-  Driver. Then it writes `/run/bb-box/ready`, once Docker's socket is the
-  `docker` group's, without waiting for Docker's daemon.
+  Driver; in a Wayland desktop box, Sway, wayvnc and Cua Driver, as a
+  Proxmox LXC box's services do. Then it writes `/run/bb-box/ready`, once
+  Docker's socket is the `docker` group's, without waiting for Docker's
+  daemon.
   bb-box waits for that file, then runs BB's bootstrap, which starts BB's
   daemon in the box.
 - **Stop and start.** `docker stop` and `docker start`. The restart policy is

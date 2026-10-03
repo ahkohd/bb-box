@@ -1,7 +1,7 @@
-# bb-box's images for the Docker backend: a linux image and a desktop image,
-# made by the same guest scripts as the Proxmox LXC templates
-# (setup/proxmox-lxc/template/guest), with BOX_RUNTIME=docker. build.sh builds
-# them, with setup/ as the context; see README.md.
+# bb-box's images for the Docker backend: a linux image, a desktop image and
+# a Wayland desktop image, made by the same guest scripts as the Proxmox LXC
+# templates (setup/proxmox-lxc/template/guest), with BOX_RUNTIME=docker.
+# build.sh builds them, with setup/ as the context; see README.md.
 
 # Ubuntu 24.04, pinned, and no newer than the apt snapshot
 # (proxmox-lxc/template/apt-snapshot): the build applies the snapshot's
@@ -19,6 +19,9 @@ RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /
 
 FROM fetch AS fetch-desktop
 RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-cpu
+
+FROM fetch AS fetch-desktop-wayland
+RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-wayland-cpu
 
 # BB's host app from BB's server, to pre-install it, so a box enrols without
 # downloading it. Empty BB_URL: boxes download it when they enrol.
@@ -73,4 +76,22 @@ COPY --chmod=0755 docker/gpu-bus-id /usr/local/libexec/bb-box/gpu-bus-id
 # bbbox.gpu-bus-id: start points Xorg at the GPU placed, so the plugin may
 # give a GPU desktop Docker (#283).
 LABEL bbbox.image-version="1" bbbox.gpu-bus-id="1" bbbox.bb-app="$BB_APP_SHA256"
+CMD ["/usr/local/sbin/bb-box-start"]
+
+# The Wayland desktop (048): Sway on the CPU, streamed by wayvnc, with no GPU.
+FROM ${UBUNTU} AS desktop-wayland
+RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
+    --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
+    --mount=type=bind,from=fetch-desktop-wayland,source=/artifacts,target=/mnt/artifacts \
+    --mount=type=bind,from=fetch,source=/etc/ssl/certs/ca-certificates.crt,target=/mnt/ca-certificates.crt \
+    bash /mnt/customize.sh desktop-wayland
+ARG BB_URL=
+ARG BB_APP_SHA256=
+RUN --mount=type=bind,source=proxmox-lxc/template/guest/install-bb-app.sh,target=/mnt/install-bb-app.sh \
+    --mount=type=bind,from=app,source=/app,target=/mnt/app \
+    if [ -n "$BB_URL" ]; then \
+      bash /mnt/install-bb-app.sh box "$BB_URL" /mnt/app && rm -rf /home/box/.npm /home/box/.cache /tmp/*; \
+    fi
+COPY --chmod=0755 docker/start /usr/local/sbin/bb-box-start
+LABEL bbbox.image-version="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]

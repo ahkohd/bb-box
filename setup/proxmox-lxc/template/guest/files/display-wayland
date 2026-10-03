@@ -37,8 +37,11 @@ case "${1:-}" in
     exit
     ;;
   ready)
-    # Run by Sway, so its Wayland socket is in the environment.
+    # Run by Sway, so its Wayland socket is in the environment. A Docker
+    # box's commands have no login to give them XDG_RUNTIME_DIR, where the
+    # socket and wayvnc's control socket are, so it is here too.
     {
+      echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
       echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
       echo "SWAYSOCK=$SWAYSOCK"
       echo "XDG_SESSION_TYPE=wayland"

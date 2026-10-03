@@ -130,7 +130,7 @@ and `start` and `stop` throw `gone`.
 | `linux` | Linux, no GPU | Proxmox LXC, Docker, an SSH pool machine |
 | `linux-desktop` | a Linux desktop with a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
 | `linux-desktop-cpu` | a Linux desktop without a GPU | Proxmox LXC from a CPU-only desktop template, Docker |
-| `linux-desktop-wayland-cpu` | a Linux desktop on Wayland without a GPU, where X11-only apps do not run | Proxmox LXC from a CPU Wayland desktop template; Docker planned (048) |
+| `linux-desktop-wayland-cpu` | a Linux desktop on Wayland without a GPU, where X11-only apps do not run | Proxmox LXC from a CPU Wayland desktop template, Docker (048) |
 | `linux-arm64` | Linux on arm64, no GPU | Tart |
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 without a GPU | Tart |
 | `windows-desktop` | a Windows desktop, no GPU | Proxmox QEMU |
@@ -1511,7 +1511,9 @@ Notes:
   are privileged unless the operator turns it off, or the host is rootless
   Docker ([041](decisions/041-every-linux-box-has-docker.md)). A privileged
   GPU desktop sees every GPU on the host, so its start script points Xorg
-  at the one placed, by its PCI bus ID (#283). Without
+  at the one placed, by its PCI bus ID (#283). In a Wayland desktop the
+  start script runs Sway, wayvnc and Cua, as the LXC template's units do,
+  and the display script's `resize` runs under `docker exec` (048). Without
   systemd, BB's installer leaves its host daemon running in the background.
   After a restart, the start script removes BB's daemon lock and PID file,
   and bb-box calls `bootstrap` again, which starts the daemon

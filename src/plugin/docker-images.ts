@@ -5,7 +5,7 @@
 // `docker build` sends its files through Docker's API. Images are built, not
 // copied, as everywhere. One build at a time per machine; the settings row
 // shows it until it ends. build.sh does not start with less disk free than
-// the build needs, about 25 GB for both images, and says how much is free.
+// the build needs, about 36 GB for all three images, and says how much is free.
 //
 // When BB has a public URL, the images have BB's host app from it, so a box
 // enrols without downloading it, and an image with another build of the app
@@ -16,13 +16,14 @@ import { LABELS } from "../backends/docker/cli.ts";
 import { IMAGE_VERSION } from "../backends/docker/config.ts";
 
 /** What build.sh builds: its target, by the image it tags. */
-export const BUILT_IMAGES: Readonly<Record<string, "linux" | "desktop">> = {
+export const BUILT_IMAGES: Readonly<Record<string, "linux" | "desktop" | "desktop-wayland">> = {
   [`bbbox/linux:${IMAGE_VERSION}`]: "linux",
   [`bbbox/linux-desktop:${IMAGE_VERSION}`]: "desktop",
+  [`bbbox/linux-desktop-wayland:${IMAGE_VERSION}`]: "desktop-wayland",
 };
 
-/** The disk a machine needs free to build both images, in GB, as build.sh checks before it starts. */
-export const BUILD_FREE_GB = 25;
+/** The disk a machine needs free to build all three images, in GB, as build.sh checks before it starts. */
+export const BUILD_FREE_GB = 36;
 
 export interface ImageBuild {
   readonly state: "checking" | "building" | "built" | "failed";
@@ -162,7 +163,7 @@ export class DockerImages {
         return set({ state: "built", detail: null, endedAt: now() });
       }
       const why = tail.join(" ").slice(-500);
-      const full = /no space left on device/i.test(why) ? ` The machine ran out of disk: building both images needs about ${BUILD_FREE_GB} GB free.` : "";
+      const full = /no space left on device/i.test(why) ? ` The machine ran out of disk: building all three images needs about ${BUILD_FREE_GB} GB free.` : "";
       return set({ state: "failed", detail: `build.sh exited with ${code ?? "no code"}: ${why}${full}`, endedAt: now() });
     } catch (error) {
       this.#deps.logError("docker images", error);
