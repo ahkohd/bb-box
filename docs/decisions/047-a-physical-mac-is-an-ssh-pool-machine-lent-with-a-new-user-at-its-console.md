@@ -9,9 +9,9 @@ the claim, the display and the reset. The reset now sets the next user as
 the automatic login before it logs the old one out, the helper writes
 `/etc/kcpassword` itself, and on macOS 27 a userspace restart signs the
 next user in. What a real Mac must still confirm is under
-[the live check](#the-live-check). Amended 3 October 2026: a probe found
-that Screen Sharing ignores the viewer's keyboard and pointer, a blocker
-the live check lists with its fallbacks.
+[the live check](#the-live-check). Amended 3 October 2026: Screen Sharing
+ignores the viewer's keyboard and pointer, so a helper in the box user's
+session posts them (#406), with one more grant per Mac at setup.
 
 ## Context
 
@@ -215,8 +215,23 @@ Boxes are not a security boundary between each other or from the Mac.
 - Type 30 showed the box user's console on macOS 27. If a later macOS
   drops it or stops showing the console, the fallbacks, in order: the VNC
   password with Screen Sharing's `VNCAlwaysStartOnConsole` setting; a VNC
-  server of our own. A later probe found that Screen Sharing ignores the
-  viewer's input: see [the blocker](#blocker-the-viewer-cannot-type-or-click).
+  server of our own.
+- The viewer's input does not go through Screen Sharing, which ignores a
+  viewer that is not Apple's ([the viewer's input](#the-viewers-input)).
+  `open()` also returns an `input`: core's `MacInput`, on
+  `macInputCommand()` run over the box user's SSH in its desktop session,
+  through 030's wrapper, as Tart's macOS desktop first did (#426). It is a
+  JXA script that posts each event at the HID event tap with `CGEventPost`,
+  about 0.4 ms an event. The relay starts it at the controlling viewer's
+  first input, sends it the keys, pointer, wheel and clipboard, and
+  releases what was held when control passes. The box's clipboard comes
+  back to the viewer over RPC.
+- Its limits: keys go by their position on a US keyboard, and a character
+  with no key there is dropped; text pasted into the box is Latin-1, as
+  RFB's clipboard is; Screen Sharing does not show windows that keep
+  themselves out of screen capture, or protected video; and macOS shows
+  Screen Sharing's menu bar icon while a viewer is connected, and a notice
+  when one leaves.
 
 **Computer use is Cua, granted once per Mac.**
 
@@ -241,16 +256,25 @@ Boxes are not a security boundary between each other or from the Mac.
   Mac's check measures when it shows. Whether a reset may carry a
   person's answer on to the next box's user is for the operator to decide;
   this decision does not.
-- SSH commands get no Accessibility or Screen Recording: setup grants
-  neither to `sshd-keygen-wrapper`. Desktop commands run through 030's
-  wrapper.
+- SSH gets Accessibility, for the viewer's input, and no Screen Recording.
+  A person allows `/usr/bin/osascript`, which runs the input helper, and
+  `/usr/libexec/sshd-keygen-wrapper`, the SSH process it runs under, in
+  System Settings > Privacy & Security > Accessibility, once per Mac. Both
+  need Accessibility and leave to post events (`kTCCServicePostEvent`), as
+  Tart's images have them; the live check confirms that this pane gives
+  both. A Mac under MDM can grant them by profile instead. Any command run
+  over SSH on the Mac can then post events, which bb-box accepts, as it is
+  not a boundary on the Mac. Desktop commands run through 030's wrapper.
 - SSH does need Full Disk Access, which a person gives at setup with
   Remote Login's "Allow full disk access for remote users". Without it,
   the reset cannot remove the folders macOS protects in a home, such as
   `~/Library/Mail`. The helper reads one byte of the system's `TCC.db` to
   tell whether it has it, and a Mac without it is out of service.
 - The helper's status reports Cua's grants from the signed-in user's
-  session, and the doctor shows them.
+  session, and the doctor shows them. The doctor checks the input helper's
+  grant there too: it posts a pointer move of one point over SSH, reads
+  the pointer's place back with `NSEvent.mouseLocation`, and moves it
+  back.
 
 **Xcode and the iOS Simulator.**
 
@@ -313,12 +337,14 @@ Mac mini with 16 GB fits the small and medium macOS presets. Several
 - makes the first box user and signs it in;
 - prints the machine line and host keys, and the steps for a person: turn
   on Screen Sharing for all users; allow full disk access for remote
-  users; turn on Cua Driver under Accessibility and Screen Recording, in
-  panes setup opens; install Xcode if wanted.
+  users; turn on Cua Driver under Accessibility and Screen Recording, and
+  add `osascript` and `sshd-keygen-wrapper` under Accessibility, in panes
+  setup opens; install Xcode if wanted.
 
 The doctor checks per Mac what it checks for Linux machines, and FileVault,
 the automatic login, the box user at the console, Full Disk Access, Screen
-Sharing, Cua's grants, and Xcode with its iOS runtime when present.
+Sharing, Cua's grants, the input helper's grant, and Xcode with its iOS
+runtime when present.
 
 **Tests come first on fakes, then on a Mac set aside.**
 
@@ -360,12 +386,14 @@ Sharing, Cua's grants, and Xcode with its iOS runtime when present.
   they then run again, and would stop any VM on it: one more reason a
   pool's Mac is not also a Tart host.
 - A person spends a few minutes on each Mac at setup, for Screen Sharing,
-  Full Disk Access and Cua's grants. Without MDM, a person may also answer
-  the 30-day confirmation once per box, if the live check finds it shows,
-  until the operator decides otherwise.
+  Full Disk Access, Cua's grants and SSH's Accessibility. Without MDM, a
+  person may also answer the 30-day confirmation once per box in the
+  viewer, if the live check finds it shows, until the operator decides
+  otherwise.
 - `brew install` does not work in a Mac box.
-- The interface gains `DisplayAuth` `apple`; the helper a `display`
-  command; and core's Cua socket a leading `~/`. Nothing else changes.
+- The interface gains `DisplayAuth` `apple` and a display's `input`
+  (#406); the helper a `display` command; and core's Cua socket a leading
+  `~/`. Nothing else changes.
 - 030's sudoers rule is written for each box's user by the helper, and
   removed with the user.
 - The pool's guide, settings text and doctor gain Macs, and its `hostOs`
@@ -433,8 +461,10 @@ It also found:
 
 A Mac set aside, as under the hardware above, must still confirm:
 
-- a blocker first: that the viewer can type and click, with the fix the
-  stand-in found ([below](#blocker-the-viewer-cannot-type-or-click));
+- that the person's Accessibility step lets the input helper post events
+  over SSH with System Integrity Protection on, as the stand-in's image
+  came with the grants ([below](#the-viewers-input)), and that the
+  doctor's check tells a Mac with the step from one without;
 - the sweep without Full Disk Access, and whether reading one byte of
   `TCC.db` tells whether SSH has it. Tart's image has System Integrity
   Protection off, so root removed the protected folders and read `TCC.db`
@@ -454,48 +484,43 @@ A Mac set aside, as under the hardware above, must still confirm:
 - the timings without a runner on the same Mac, and enrolment, with a BB
   server.
 
-### Blocker: the viewer cannot type or click
+### The viewer's input
 
 Core's probe on the stand-in (macOS 27 under Tart, type 30 as the
 console's user) showed the console and survived reconnects, but Screen
 Sharing ignored the viewer's keyboard and pointer. `screensharingd` logged
 "ignore key event", and `ScreensharingAgent` "viewer did not set keyboard
-source". A pool's Macs take the same path, so their desktops may be
-view-only in bb-box's viewer.
+source". A pool's Macs take the same path. Without a fix, a person could
+not type or click in a Mac box's desktop, so taking control
+([008](008-shared-control.md)) would do nothing there, nor answer Cua's
+30-day confirmation in the viewer. The agent's computer use was not
+affected, as Cua posts its own events.
 
-- **What it stops.** A person cannot type or click in a Mac box's
-  desktop, so taking control ([008](008-shared-control.md)) does nothing
-  there. Nor can they answer Cua's 30-day confirmation in the viewer,
-  which this decision relies on without MDM.
-- **What it does not stop.** The agent's computer use, as Cua posts its
-  own events. Tart's macOS boxes, whose screen comes from the
-  Virtualization framework's VNC server, not Screen Sharing.
+What #406 tried, in the order this record had set:
 
-To resolve, in this order, stopping at the first that works:
+1. **A Screen Sharing setting: none works.** Remote Management with every
+   privilege for all users (`kickstart -activate -configure -access -on
+   -privs -all -allowAccessFor -allUsers`), the VNC password with
+   `VNCAlwaysStartOnConsole`, and turning Screen Sharing off and on again.
+   The log said the same each time.
+2. **What Apple's client sends: not tried**, as 3 works.
+3. **Input through the box's session: works, with a helper of ours.**
+   - Cua Driver does not fit. Its API takes whole gestures aimed at an
+     app's process, with no separate presses and releases of keys and
+     buttons, and System Settings ignored its clicks sent in the
+     background.
+   - A JXA script run with `osascript` in the box user's session, posting
+     at the HID event tap with `CGEventPost`, moved the pointer, clicked,
+     dragged, scrolled, typed with Shift and ran Command shortcuts, at
+     about 0.4 ms an event. System Settings took its clicks and typing
+     too, so a person can answer macOS's own prompts in the viewer.
 
-1. **A Screen Sharing setting**, which core is testing, such as a user's
-   Control privilege under Remote Management.
-2. **What Apple's client sends.** The log suggests that Apple's Screen
-   Sharing app tells the server its keyboard source after signing in, and
-   noVNC never does. Recording Apple's app through a logging proxy against
-   the stand-in shows the messages. The relay would then send them itself
-   after type 30, out of the viewer's sight, as it already answers the
-   sign-in. Nothing changes on the Mac.
-3. **Input through the box's session (the fallback).** Screen Sharing
-   still gives the picture, and the relay sends the viewer's keyboard and
-   pointer events into the box user's session, where an app with
-   Accessibility posts them. That app is Cua Driver if its API takes key
-   and button presses and releases separately, or else a small helper of
-   ours, granted Accessibility once per Mac with Cua's at setup. It needs
-   no Screen Recording grant and no 30-day confirmation, as Screen Sharing
-   still captures. The relay maps RFB key symbols to macOS key codes.
-4. **A VNC server of our own** in the box user's session, as in the
-   desktop options above, gives the picture, input and resizing. It needs
-   Screen Recording and Accessibility once per Mac, a LaunchAgent in the
-   home template as Cua Driver has, and each new user's 30-day
-   confirmation of screen capture. A view-only viewer cannot answer that,
-   so it needs MDM's `forceBypassScreenCaptureAlert` or a person at the
-   Mac. It is the most work and the most grants, so it comes last.
+   This is the design under the desktop above. It needs no Screen
+   Recording grant and no 30-day confirmation, as Screen Sharing still
+   captures.
+4. **A VNC server of our own: not needed.** It stays the way to resize
+   the desktop later, at the cost of Screen Recording, a LaunchAgent and
+   each new user's 30-day confirmation.
 
 ## Plan
 
@@ -516,5 +541,9 @@ Small PRs, in this order:
    measured. A stand-in ran it first (#381); a Mac set aside runs it again
    for what the stand-in could not check, as under
    [the live check](#the-live-check).
+7. The viewer's input on the pool's Macs (#406): the display's `input`
+   through core's `MacInput`, the grant in `setup-mac.sh`'s steps for a
+   person and its pane, and the doctor's check, on the fake helper. Before
+   a Mac set aside runs 6 again, which checks it.
 
 2 and 3 can be built at once. Nothing before 6 needs a Mac.
