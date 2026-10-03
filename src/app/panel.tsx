@@ -58,7 +58,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     return refused;
   };
   // The size key is left out for the kind's default: RPC input must be JSON.
-  const make = (kind: string, size?: SizeRequest, _name?: string, on?: string | string[]) => settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}), ...(on ? { on } : {}) }));
+  const make = (kind: string, size?: SizeRequest, _name?: string, on?: string | string[], image?: string) => settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}), ...(on ? { on } : {}), ...(image ? { image } : {}) }));
   const act = async (method: BoxAction, box: BoxView, force = false) => {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && force ? { force: true } : {}) };
@@ -115,6 +115,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
             make={make}
             profile={(backend) => rpc.call("provider", { backend })}
             askForImage={state.imageOffer ? () => navigate.toCompose({ initialPrompt: IMAGE_REQUEST, focusPrompt: true }) : undefined}
+            images={state.images}
           />
         ) : null}
       </div>
