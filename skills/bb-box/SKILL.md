@@ -15,8 +15,8 @@ Every result ends with a `Next:` line that says what to do next.
 
 | Tool | Parameters | What it does |
 | --- | --- | --- |
-| `box_acquire` | `kind?`, `size?`, `cores?`, `memory_gib?`, `disk_gib?`, `wait?`, `on?` | Makes a box and waits until it answers. `kind` defaults to `linux`, and `size` to the kind's default preset. `on` names the provider to use, in the words `box_list` gives after "On:", or a list of them for the first with room among them, in that order (044): only they are tried, and a refusal says why each was out and names the others. Without it, the first with room. |
-| `box_list` | | Lists the thread's boxes and the kinds on offer. |
+| `box_acquire` | `kind?`, `size?`, `cores?`, `memory_gib?`, `disk_gib?`, `wait?`, `on?`, `image?` | Makes a box and waits until it answers. `kind` defaults to `linux`, and `size` to the kind's default preset. `on` names the provider to use, in the words `box_list` gives after "On:", or a list of them for the first with room among them, in that order (044): only they are tried, and a refusal says why each was out and names the others. Without it, the first with room. `image` is the image the box starts from: a project's image by name, as `box_list` gives them, or `standard`; without it, the box gets this project's image for the kind, if it has one. |
+| `box_list` | | Lists the thread's boxes and the kinds on offer, with each kind's images where a project's image covers it: this project's first, the default, then `standard`, then other projects'. |
 | `box_status` | `box` | Shows one box, checking its power state with the backend, and why it last stopped when bb-box did not stop it. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
 | `box_job` | `box`, `job` | Gives the exit code and output of a `box_run` command that went on in its box as a job when bb-box restarted, or the end of its output while it runs. |
@@ -257,7 +257,7 @@ Most take `--json`.
 | `bb box doctor` | Checks each backend's settings, host and templates, and says how to fix what is wrong. Exits 1 when a check fails. |
 | `bb box kinds` | Lists the kinds on offer. |
 | `bb box list` | Lists the thread's boxes. `--all` lists every thread's boxes. |
-| `bb box acquire <kind>` | Makes a box and waits for it. `--no-wait` returns at once. |
+| `bb box acquire <kind>` | Makes a box and waits for it. `--no-wait` returns at once. `--image <name>` or `--image standard` chooses its image. |
 | `bb box status <box>` | Shows one box. |
 | `bb box thread <box> --prompt <text>` | Starts a child thread on a box, as `box_thread` does. |
 | `bb box release <box> [--force]` | Releases a box. A box a thread is working on needs `--force`. |
