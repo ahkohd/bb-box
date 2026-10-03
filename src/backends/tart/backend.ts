@@ -59,6 +59,7 @@ import {
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
+import { judgeImage, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import { CUA_PIPE, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
@@ -1436,7 +1437,31 @@ export class TartBackend implements Backend {
     if (!this.#config.hosts.length) {
       push("tart.hosts", "Macs", "fail", "There are no Macs yet.", "Add a Mac, with its address, user and host key, as setup/tart/README.md says.");
     }
+    // What images are judged by (049), read while the Macs are.
+    const images = this.#context.images;
+    const judging = Promise.all([
+      images?.pins("linux") ?? null,
+      images?.pins("linux-desktop") ?? null,
+      images?.pins("macos") ?? null,
+      images?.pins("windows-arm64") ?? null,
+      images?.bbApp(signal) ?? null,
+    ]).catch(() => [null, null, null, null, null] as const);
     const states = keys ? await this.#states(signal) : new Map<string, MacState | Error>();
+    const [linuxPins, desktopPins, macosPins, windowsPins, app] = await judging;
+    /** An image's record judged, with the prepare script's command that builds it again as the fix. */
+    const judge = (kind: TartKind, image: string, record: ImageRecord | null, on: string): ImageJudgement => {
+      const os = guestOsOf(kind);
+      const key = "--key '<bb-box's public key>'";
+      const command =
+        os === "windows"
+          ? `prepare-windows-image.sh --iso <ISO> --iso-sha256 <its SHA-256> ${key} --name ${image} --replace`
+          : os === "linux"
+            ? `prepare-linux-image.sh${kind === "linux-arm64-desktop-cpu" ? " --desktop" : ""} ${key} --name ${image} --bb-url <BB's server URL> --replace`
+            : `prepare-image.sh ${key} --name ${image} --bb-url <BB's server URL> --replace`;
+      const pins = os === "windows" ? windowsPins : os === "macos" ? macosPins : kind === "linux-arm64-desktop-cpu" ? desktopPins : linuxPins;
+      // BB's app does not run on Windows.
+      return judgeImage(record, { os, pins, bbApp: os === "windows" ? null : app }, `Build it again on ${on} with setup/tart/${command}.`);
+    };
     const others = new Map<string, number>();
     const tart = this.#tart();
     const windowsImage = this.#config.kinds["windows-arm64-desktop"].image;
@@ -1466,7 +1491,7 @@ export class TartBackend implements Backend {
       } else {
         push(id, name, "ok", `macOS ${state.macos} on Apple silicon${tart ? `, Tart ${state.version}` : ""}.`);
       }
-      if (windowsImage) this.#doctorQemu(host, state.qemu, windowsImage, push);
+      if (windowsImage) this.#doctorQemu(host, state.qemu, windowsImage, push, judge);
       for (const kind of images) {
         const image = this.#config.kinds[kind].image!;
         const listed = state.vms.find((vm) => vm.name === image);
@@ -1478,7 +1503,14 @@ export class TartBackend implements Backend {
           const wanted = guestOsOf(kind) === "linux" ? "Linux" : "macOS";
           push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${image} on ${host.name} is a ${config.os} VM.`, `Give a ${wanted} image.`);
         } else {
-          push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "ok", `${image}${config ? `, ${config.cpus} cores and ${formatMiB(config.memoryMiB)} as prepared` : ""}.`);
+          const judged = judge(kind, image, state.records.get(image) ?? null, host.name);
+          push(
+            `image.${host.name}.${kind}`,
+            `${kind} image on ${host.name}`,
+            judged.status,
+            `${image}${config ? `, ${config.cpus} cores and ${formatMiB(config.memoryMiB)} as prepared` : ""}. ${judged.detail}`,
+            judged.fix,
+          );
         }
       }
       const room = this.#room(host, state, this.#context.kind("macos").defaultSize);
@@ -1533,6 +1565,7 @@ export class TartBackend implements Backend {
     qemu: QemuState,
     image: string,
     push: (id: string, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
+    judge: (kind: TartKind, image: string, record: ImageRecord | null, on: string) => ImageJudgement,
   ): void {
     const id = `qemu.${host.name}`;
     const name = `QEMU on ${host.name}`;
@@ -1558,7 +1591,8 @@ export class TartBackend implements Backend {
         `Make it read-only: chmod a-w ~/.bb-box/qemu/images/${image}/${qemu.image.build}/disk.qcow2`,
       );
     } else {
-      push(imageId, imageName, "ok", `${image}, build ${qemu.image.build}.`);
+      const judged = judge("windows-arm64-desktop", image, qemu.image.record, host.name);
+      push(imageId, imageName, judged.status, `${image}, build ${qemu.image.build}. ${judged.detail}`, judged.fix);
     }
   }
 

@@ -84,6 +84,17 @@ in_use() { qm config "$1" >/dev/null 2>&1 || pct config "$1" >/dev/null 2>&1; }
 # template's volume once made; elsewhere it needs the template's base volume.
 thin=
 [ "$(pvesh get "/storage/$BBBOX_STORAGE" --output-format json 2>/dev/null | jq -r .type)" != lvmthin ] || thin=1
+# The template's record (049): in it, C:\bb-box\image.json, which the first
+# logon writes from build.json, and on its description's second line, where
+# bb-box's doctor reads it. The pins' SHA-256 is of this script's pin lines.
+record=$(jq -cn --arg build "$build" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg os "$BBBOX_WINDOWS_EDITION" \
+  --arg pins "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/build.sh" | sha256sum | cut -d' ' -f1)" \
+  --arg pwsh "$PWSH_VERSION" --arg git "$GIT_VERSION" --arg gh "$GH_VERSION" --arg cua "$CUA_VERSION" \
+  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" \
+  '{contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: $build, built: $built, base: null, os: $os,
+    aptSnapshot: null, pins: $pins, bbApp: null,
+    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup},
+    nvidia: null, layer: null, sizeGiB: null}')
 linked_clones() { # vmid
   { grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null ||
     true; } | sed 's|.*/||; s|\.conf$||' | sort -n | paste -sd ' ' -
@@ -149,9 +160,10 @@ for name, value in (("PASSWORD", password), ("EDITION", edition), ("PRODUCT_KEY"
     text = text.replace(f"@{name}@", escape(value))
 open(path, "w").write(text)
 EOF
-python3 - "$work/answer/bb-box/build.json" <<EOF
+python3 - "$work/answer/bb-box/build.json" "$record" <<EOF
 import json, sys
 json.dump({
+    "record": sys.argv[2],
     "address": "$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX",
     "gateway": "$BBBOX_GATEWAY",
     "dns": "$BBBOX_DNS".split(),
@@ -294,7 +306,8 @@ qm destroy "$check_vm" --purge 1 >/dev/null
 check_vm=
 [ "$checked" = 0 ] || die "the check failed (above)"
 
-description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION."
+description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION.
+$record"
 # The pool's ACL lets the plugin's token delete guests in it; protection keeps
 # it from deleting templates. Clones inherit the flag, so the plugin clears it
 # on each box (delete=protection) when it configures the box.

@@ -74,6 +74,7 @@ import {
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
+import { judgeImage, recordInDescription } from "../images.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
@@ -687,6 +688,8 @@ export class ProxmoxQemuBackend implements Backend {
         fail(POOL, message(error), audit(error, `Give the token Pool.Audit on /pool/${pool}.`));
       }
 
+      // What images are judged by (049), read while the templates are.
+      const pins = (this.#context.images?.pins("windows") ?? Promise.resolve(null)).catch(() => null);
       for (const template of this.#config.templates) {
         const name = templateCheck(template);
         try {
@@ -704,6 +707,13 @@ export class ProxmoxQemuBackend implements Backend {
             } else {
               this.#templates.set(template, { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) });
               pass(name, `VM template ${template} on ${storage}, ${Math.floor((free as { available: number }).available / GiB)} GiB free.`);
+              // BB's app does not run on Windows.
+              const judged = judgeImage(
+                recordInDescription(String(config.description ?? "")),
+                { os: "windows", pins: await pins, bbApp: null },
+                `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh windows ${template} --replace.`,
+              );
+              checks.push({ id: `${name[0]}.image`, name: `Image of ${name[1]}`, ...judged });
             }
           }
         } catch (error) {

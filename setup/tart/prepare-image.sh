@@ -8,7 +8,10 @@
 # in it as its user, shuts it down, grants Cua Driver Accessibility and Screen
 # Recording on its disk (grant-tcc.sh), boots it again to check the grants,
 # shuts it down and renames it to <name>. Boxes cloned from an image it
-# replaces keep running.
+# replaces keep running. Its record (049) is in the image, in
+# /usr/local/share/bb-box/image.json, as macOS keeps /usr/share read-only,
+# and beside it, in ~/.bb-box/tart/images/<name>.json, where bb-box's doctor
+# reads it.
 set -eu
 
 CUA_VERSION=0.30.4
@@ -44,6 +47,8 @@ exists() { tart list --source local --quiet | grep -qxF "$1"; }
 if exists "$name" && [ "$replace" = 0 ]; then die "$name exists; give --replace to build it again"; fi
 
 build="$name-build"
+build_id=build.$(date -u +%Y%m%d-%H%M%S)-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')
+built=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 work=$(mktemp -d)
 pid=
 cleanup() {
@@ -81,6 +86,16 @@ boot
 step "customising $build"
 tart exec -i "$build" env BBBOX_SSH_PUBLIC_KEY="$key" CUA_VERSION="$CUA_VERSION" CUA_SHA256="$CUA_SHA256" BB_URL="$bb_url" /bin/sh -s \
   <"$here/guest/customize.sh"
+# The pins' SHA-256 is of this script's pin lines, as bb-box hashes them.
+step "recording $build_id in $build"
+os=$(tart exec "$build" sw_vers -productVersion)
+node=$(tart exec "$build" /bin/zsh -c 'node --version' 2>/dev/null | tr -d 'v\r') || node=
+app=$(tart exec "$build" /bin/sh -c 'cat "$HOME"/.bb-machines/*/host-artifact.sha256 2>/dev/null | head -n 1') || app=
+pins=$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-image.sh" | shasum -a 256 | cut -d' ' -f1)
+quoted() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf null; fi; }
+record=$(printf '{"contract":1,"image":"standard","kind":"macos","arch":"arm64","build":"%s","built":"%s","base":null,"os":"macOS %s","aptSnapshot":null,"pins":"%s","bbApp":%s,"tools":{"cua-driver":"%s"%s},"nvidia":null,"layer":null,"sizeGiB":null}' \
+  "$build_id" "$built" "$os" "$pins" "$(quoted "$app")" "$CUA_VERSION" "${node:+,\"node\":\"$node\"}")
+printf '%s\n' "$record" | tart exec -i "$build" sudo -n sh -c 'mkdir -p /usr/local/share/bb-box && cat >/usr/local/share/bb-box/image.json && chmod 0644 /usr/local/share/bb-box/image.json'
 step "shutting $build down"
 shutdown
 
@@ -109,4 +124,5 @@ tart rename "$build" "$name"
 mkdir -p "$HOME/.bb-box/tart/images"
 printf 'from=%s\ncua=%s\nbuilt=%s\n%s\n' "$from" "$CUA_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s\n' "$key" | awk '{print "key=" $2}')" \
   >"$HOME/.bb-box/tart/images/$name"
+printf '%s\n' "$record" >"$HOME/.bb-box/tart/images/$name.json"
 step "done: $name is ready to clone ($(du -sh "${TART_HOME:-$HOME/.tart}/vms/$name" | cut -f1) on disk)"

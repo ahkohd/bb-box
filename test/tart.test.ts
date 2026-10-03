@@ -6,7 +6,7 @@ import { TartBackend, hostnameOf, nameScript, powerOffScript, type TartBackendOp
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { crashSummary, endReason, parseEnded, parseState, parseVnc, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
-import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
+import { FAKE_MAC, addImage, fakeMacTools, imageRecord, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
@@ -481,6 +481,33 @@ test("a new instance on empty storage finds this install's VMs and their owners,
   assert.ok(doctor.notes.some((note) => /1 of install other/.test(note)));
   await fresh.release(guest, releasing);
   await other.release(theirs, releasing);
+});
+
+test("the doctor judges each Tart image by the record beside it (049)", async () => {
+  const { mac, context, make } = linuxSetup();
+  const day = 24 * 60 * 60 * 1000;
+  const [linuxPins, macosPins, app] = ["l", "m", "a"].map((letter) => letter.repeat(64));
+  const images = { pins: async (set: string) => (set === "linux" ? linuxPins! : set === "macos" ? macosPins! : "x".repeat(64)), bbApp: async () => app! };
+  const records = join(mac, ".bb-box", "tart", "images");
+  writeFileSync(join(records, "bb-box-macos.json"), imageRecord("macos", { pins: macosPins, bbApp: app }));
+  writeFileSync(join(records, "bb-box-linux.json"), imageRecord("linux-arm64", { pins: "o".repeat(64), bbApp: null, built: new Date(Date.now() - 15 * day).toISOString() }));
+  const backend = make({ ...context, images });
+  let report = await backend.doctor();
+  const check = (kind: string) => report.checks.find((candidate) => candidate.id === `image.mac1.${kind}`)!;
+  for (const kind of ["macos", "macos-desktop"]) {
+    assert.equal(check(kind).status, "ok", kind);
+    assert.match(check(kind).detail, /^bb-box-macos, 4 cores and 8 GiB as prepared\. Standard image build\.20261003-021500, built \d+ \w+ \(today\): fake OS\.$/);
+  }
+  const linux = check("linux-arm64");
+  assert.equal(linux.status, "warn");
+  assert.match(linux.detail, /It is 15 days old, more than 14, .* It has no build of BB's app, .* It was built with other pins than this bb-box's/);
+  assert.equal(linux.fix, "Build it again on mac1 with setup/tart/prepare-linux-image.sh --key '<bb-box's public key>' --name bb-box-linux --bb-url <BB's server URL> --replace.");
+
+  rmSync(join(records, "bb-box-macos.json"));
+  report = await backend.doctor();
+  assert.equal(check("macos").status, "warn");
+  assert.match(check("macos").detail, /^bb-box-macos, 4 cores and 8 GiB as prepared\. It has no image record/);
+  assert.equal(check("macos").fix, "Build it again on mac1 with setup/tart/prepare-image.sh --key '<bb-box's public key>' --name bb-box-macos --bb-url <BB's server URL> --replace.");
 });
 
 test("doctor says what is missing on the Mac", async () => {

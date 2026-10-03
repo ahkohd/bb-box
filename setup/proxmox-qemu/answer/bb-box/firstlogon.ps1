@@ -212,6 +212,12 @@ $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minu
 Register-ScheduledTask -TaskName 'bb-box address' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Set-Content C:\bb-box\dns.txt ($build.dns -join ' ')
 
+# The image's record (049), which the build gives as JSON text.
+if ($build.record) {
+  Step 'The image record, C:\bb-box\image.json'
+  [IO.File]::WriteAllText('C:\bb-box\image.json', "$($build.record)`n")
+}
+
 Step 'Done: restarting'
 Remove-Item C:\bb-box\build.json -Force
 Set-Content C:\bb-box\firstlogon-done (Get-Date -Format o)

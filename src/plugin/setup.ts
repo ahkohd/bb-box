@@ -315,7 +315,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // What the doctor judges images by (049): the pins in the plugin's own
   // setup files, which the bundle, dist/server.js, has one up, and BB's app
   // on BB's server now.
-  const pins = fileURLToPath(new URL("../setup/proxmox-lxc/template/", import.meta.url));
+  const pins = fileURLToPath(new URL("../setup/", import.meta.url));
   const images: ImageFacts = {
     pins: (set) => pinsDigest(pins, set),
     async bbApp() {
