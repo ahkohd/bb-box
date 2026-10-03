@@ -1,8 +1,9 @@
 #!/bin/bash
 # Host prerequisites for bb-box boxes on a Proxmox host:
 #
-# - the kernel modules Docker inside unprivileged boxes relies on, loaded at
-#   every boot (a container cannot load modules itself);
+# - the kernel modules Docker inside unprivileged boxes relies on, and tun for
+#   the /dev/net/tun every template binds (050), loaded at every boot (a
+#   container cannot load modules itself);
 # - with an NVIDIA GPU: a boot unit that creates every NVIDIA device node the
 #   desktop template binds. /dev/nvidia-uvm* otherwise appear only on first
 #   CUDA use, and `pct start` fails on a missing device.
@@ -29,6 +30,8 @@ xt_conntrack
 xt_addrtype
 xt_nat
 xt_tcpudp
+# The TUN device every template binds (050), for Tailscale and other VPNs.
+tun
 EOF
 grep -v '^#' /etc/modules-load.d/bb-box.conf | xargs modprobe -a
 echo "kernel modules: /etc/modules-load.d/bb-box.conf"

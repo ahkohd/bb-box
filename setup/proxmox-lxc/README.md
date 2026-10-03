@@ -21,7 +21,7 @@ This directory holds everything needed on the Proxmox side:
 | Path | What it does |
 | --- | --- |
 | `host/bb-box.env.example` | Example settings for every script here |
-| `host/setup-host.sh` | Kernel modules for Docker in boxes, NVIDIA device nodes at boot |
+| `host/setup-host.sh` | Kernel modules for Docker and TUN in boxes, NVIDIA device nodes at boot |
 | `host/setup-network.sh` | The box bridge, NAT and a unit that keeps them up |
 | `host/setup-token.sh` | Pool, user, role, API token and ACLs for the plugin |
 | `template/build.sh` | Builds the Linux and desktop templates |
@@ -70,8 +70,8 @@ host/setup-host.sh
 
 - An unprivileged container cannot load kernel modules, so the modules
   Docker needs inside boxes (overlayfs, veth, nftables NAT and the iptables
-  matches it uses) are loaded at every boot from
-  `/etc/modules-load.d/bb-box.conf`.
+  matches it uses), and `tun` for the TUN device every template has (050),
+  are loaded at every boot from `/etc/modules-load.d/bb-box.conf`.
 - With an NVIDIA driver, `bb-box-nvidia-devices.service` creates every NVIDIA
   device node at boot. `/dev/nvidia-uvm*` otherwise appear only on first CUDA
   use, and a desktop box then fails to start. The script lists each GPU's PCI
@@ -170,6 +170,20 @@ using GPU memory. `desktop --cpu --wayland` makes the Wayland desktop
 template (048) instead of XFCE; see [The Wayland desktop](#the-wayland-desktop).
 `build.sh headless`, the Linux template's earlier name, still works.
 
+Each template gets `/dev/net/tun`, so its boxes can run Tailscale and other
+VPNs with a TUN device (050). `build.sh` gives it the template's next free
+device line: `dev0`, or `dev7` after a GPU's `dev0` to `dev6`. The
+template's check confirms the device opens. `copy-desktop` keeps the line
+its template has, or adds one. To give a template built before this its TUN
+without building it again, run `host/setup-host.sh` again, add the line as
+root, then tag the template with a new build ID (below), so bb-box replaces
+its warm boxes. Boxes and spares cloned before do not have it.
+
+```sh
+pct set 9100 --dev0 /dev/net/tun   # the Linux template, or a CPU desktop
+pct set 9101 --dev7 /dev/net/tun   # a GPU desktop
+```
+
 To rebuild a template in place, for example with new pins, add `--replace`:
 
 ```sh
@@ -257,6 +271,7 @@ Both templates:
   so the host stops using a deleted box's MAC for a reused address at once
   instead of after its neighbour timers (up to 8 s);
 - BB's host package for `box`, if `BBBOX_BB_URL` was set;
+- `/dev/net/tun`, from the template's device line (050);
 - `bb-box-check-headless`, a health check the plugin can run as `box`.
 
 The desktop template adds:

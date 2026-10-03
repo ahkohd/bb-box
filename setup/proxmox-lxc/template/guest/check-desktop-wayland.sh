@@ -19,6 +19,9 @@ socket=$home/.cache/cua-driver/cua-driver.sock
 # Docker starts on first use (041): stopped after boot, then quick to start.
 t "docker stopped after boot" sh -c '! pgrep -x dockerd >/dev/null || { echo "dockerd runs"; exit 1; }; ! pgrep -x containerd >/dev/null || { echo "containerd runs"; exit 1; }; echo "docker.socket $(systemctl is-active docker.socket)"'
 t "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Server.Version}}" >/dev/null || exit 1; ms=$(( ($(date +%s%N) - s) / 1000000 )); echo "$ms ms (limit 2000)"; [ "$ms" -le 2000 ]'
+# A TUN device, for Tailscale and other VPNs (050): build.sh gives a
+# template /dev/net/tun, and a VM has its own.
+t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'
 t "services" sh -c 'systemctl is-active bb-box-display bb-box-vnc | paste -sd " "'
 t "display mode" sh -c 'echo "$(cat /run/bb-box/display-mode): $(cat /run/bb-box/display-reason)"'
 t "Sway and its output" sh -c 'swaymsg -r -t get_version | python3 -c "import json,sys; print(json.load(sys.stdin)[\"human_readable\"])" | tr "\n" " "; swaymsg -r -t get_outputs | python3 -c "import json,sys; o=json.load(sys.stdin)[0]; print(o[\"name\"], \"%dx%d\" % (o[\"rect\"][\"width\"], o[\"rect\"][\"height\"]))"'
