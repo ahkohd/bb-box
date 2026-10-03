@@ -2,11 +2,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { draftImage, parseDockerfile, parseJsonc, type Draft } from "../src/core/draft.ts";
+import { SCAN_SCRIPT, draftImage, parseDockerfile, parseJsonc, parseScan, type Draft } from "../src/core/draft.ts";
 
 /** A draft whose script and check bash can parse. */
-function drafted(files: { path: string; text: string }[]): Draft {
-  const draft = draftImage(files);
+function drafted(files: { path: string; text: string }[], box?: { name: string; scan: string }): Draft {
+  const draft = draftImage(files, box);
   for (const [name, text] of [["script", draft.script], ["check", draft.check]] as const) {
     const parsed = spawnSync("bash", ["-n"], { input: text, encoding: "utf8" });
     assert.equal(parsed.status, 0, `the ${name} parses: ${parsed.stderr}\n${text}`);
@@ -171,4 +171,51 @@ test("with nothing to draft from, a template; with JSON that is not, a gap (049)
   assert.match(empty.check, /\ntrue\n$/);
   assert.match(drafted([{ path: ".devcontainer.json", text: "{ nope" }]).gaps[0]!, /^\.devcontainer\.json: it is not JSON with comments/);
   assert.deepEqual(parseJsonc('{"url": "http://x//y", /* c */ "a": [1,],}'), { url: "http://x//y", a: [1] });
+});
+
+test("a box set up by hand: its packages, sources, npm globals, mise, Rust and uv tools, and what else is new, from what its image had not (049)", () => {
+  const scan = [
+    "== packages",
+    "libpq-dev",
+    "postgresql-client-16",
+    "== sources",
+    "# /etc/apt/sources.list.d/pgdg.list",
+    "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt noble-pgdg main",
+    "== local",
+    "/usr/local/bin/protoc",
+    "== npm",
+    "@biomejs/biome@1.9.4",
+    "== mise",
+    "[tools]",
+    'node = "22"',
+    "== rust",
+    "1.82.0-x86_64-unknown-linux-gnu",
+    "== uv",
+    "ruff",
+    "== home-bin",
+    "/home/box/.local/bin/ruff",
+    "/home/box/.local/bin/my-script",
+    "",
+  ].join("\n");
+  const draft = drafted([], { name: "calm-otter", scan });
+  assert.deepEqual(draft.used, ["box calm-otter"]);
+  order(
+    draft.script,
+    "# Package sources added in box calm-otter",
+    "# deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt noble-pgdg main",
+    "apt-get install -y --no-install-recommends 'libpq-dev' 'postgresql-client-16'",
+    "npm install -g '@biomejs/biome@1.9.4'",
+    "~/.local/bin/mise use --global 'node@22'  # box calm-otter, mise",
+    "--default-toolchain '1.82.0'",
+    "uv tool install 'ruff'",
+  );
+  assert.deepEqual(draft.gaps, [
+    "box calm-otter: it has package sources of its own: add their keys and lines before the packages that come from them.",
+    "box calm-otter: /usr/local/bin/protoc was made in the box: add how it was installed.",
+    "box calm-otter: /home/box/.local/bin/my-script was made in the box: add how it was installed.",
+  ]);
+  assert.match(drafted([], { name: "old", scan: "== no-record\n" }).gaps[0]!, /^box old: its image has no record/);
+  assert.deepEqual([...parseScan("== a\nx\n\n== b\n").entries()], [["a", ["x"]], ["b", []]]);
+  const syntax = spawnSync("bash", ["-n"], { input: SCAN_SCRIPT, encoding: "utf8" });
+  assert.equal(syntax.status, 0, syntax.stderr);
 });

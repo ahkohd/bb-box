@@ -8,7 +8,8 @@
  *
  * It reads devcontainer.json, a Dockerfile, .tool-versions, mise.toml,
  * .nvmrc, .node-version, .python-version, rust-toolchain(.toml), flake.nix
- * with flake.lock, and shell.nix.
+ * with flake.lock, and shell.nix; or what a box has that its image had not
+ * (SCAN_SCRIPT), for a box someone set up by hand.
  */
 
 /** A file of the project's, by its path in the repository. */
@@ -116,9 +117,85 @@ class Builder {
   }
 }
 
-/** The project's files, as box_image_draft takes them: a draft of its image's script. */
-export function draftImage(files: readonly DraftFile[]): Draft {
+/**
+ * What a box has that its image had not, as the box user can see it (049):
+ * sections of lines, each after a "== <section>" line. The image's record
+ * is the mark: what is newer was made in the box.
+ */
+export const SCAN_SCRIPT = String.raw`set -u
+mark=/usr/share/bb-box/image.json
+[ -e "$mark" ] || { echo "== no-record"; exit 0; }
+newer() { find "$@" -mindepth 1 -maxdepth 1 -newer "$mark" 2>/dev/null | sort; }
+echo "== packages"
+[ -r /usr/share/bb-box/template-packages.tsv ] && comm -13 <(cut -f1 /usr/share/bb-box/template-packages.tsv | sed 's/:.*//' | sort -u) <(apt-mark showmanual 2>/dev/null | sed 's/:.*//' | sort -u)
+echo "== sources"
+for f in $(newer /etc/apt/sources.list.d); do echo "# $f"; grep -v '^\s*#' "$f" | sed '/^\s*$/d'; done
+echo "== local"
+# Not npm's links for its globals, which come next.
+newer /usr/local/bin /usr/local/sbin /opt | while read -r p; do case $(readlink -f "$p") in /usr/local/lib/node_modules/*) ;; *) echo "$p" ;; esac; done
+echo "== npm"
+for d in $(newer /usr/local/lib/node_modules); do [ -f "$d/package.json" ] && node -p 'const p = require(process.argv[1]); p.name + "@" + p.version' "$d/package.json" 2>/dev/null; done
+echo "== mise"
+[ -f ~/.config/mise/config.toml ] && cat ~/.config/mise/config.toml
+echo "== rust"
+[ -x ~/.cargo/bin/rustup ] && ~/.cargo/bin/rustup show active-toolchain 2>/dev/null | cut -d' ' -f1
+echo "== uv"
+command -v uv >/dev/null && uv tool list 2>/dev/null | sed -n 's/^\([A-Za-z0-9_.-]*\) v.*/\1/p'
+echo "== home-bin"
+# Not BB's own CLI, which enrolment writes there, nor uv's tools.
+newer ~/.local/bin | while read -r p; do case $(readlink -f "$p") in "$HOME"/.local/bin/bb | "$HOME"/.bb-machines/* | "$HOME"/.local/share/uv/*) ;; *) echo "$p" ;; esac; done
+exit 0
+`;
+
+/** SCAN_SCRIPT's output, by section. */
+export function parseScan(text: string): Map<string, string[]> {
+  const sections = new Map<string, string[]>();
+  let current: string[] | null = null;
+  for (const line of text.split("\n")) {
+    const header = /^== ([\w-]+)$/.exec(line);
+    if (header) sections.set(header[1]!, (current = []));
+    else if (current && line.trim()) current.push(line);
+  }
+  return sections;
+}
+
+/** What a scan of a box found, into the draft. */
+function scanned(b: Builder, from: string, scan: Map<string, string[]>): void {
+  b.used.push(from);
+  if (scan.has("no-record")) return b.gap(from, "its image has no record, so the draft cannot tell what was added in the box: add what the project needs by hand.");
+  const packages = scan.get("packages") ?? [];
+  const sources = scan.get("sources") ?? [];
+  if (sources.length) {
+    b.root.push(`# Package sources added in ${from}: add each one's key and line, as its vendor says.`, ...sources.map((line) => (line.startsWith("# ") ? line : `# ${line}`)));
+    b.gap(from, "it has package sources of its own: add their keys and lines before the packages that come from them.");
+  }
+  if (packages.length) b.root.push(`# Packages installed in ${from}.`, `apt-get install -y --no-install-recommends ${packages.map(quote).join(" ")}`);
+  const npm = scan.get("npm") ?? [];
+  if (npm.length) b.root.push(`# npm packages installed globally in ${from}.`, `npm install -g ${npm.map(quote).join(" ")}`);
+  for (const [tool, value] of tomlSection((scan.get("mise") ?? []).join("\n"), "tools")) {
+    const version = /^"([^"]*)"$/.exec(value)?.[1];
+    if (version === undefined) b.gap(from, `mise's ${tool} = ${value} is not a plain version.`);
+    else b.useMise(tool, version, `${from}, mise`);
+  }
+  const toolchain = scan.get("rust")?.[0];
+  if (toolchain) {
+    b.after.push(...rustup(toolchain.replace(/-(x86_64|aarch64)-unknown-linux-gnu$/, ""), [], [], "minimal", from));
+    b.checks.push("cargo --version");
+  }
+  const uv = scan.get("uv") ?? [];
+  if (uv.length) b.user.push(`# uv tools installed in ${from}.`, `sudo -iu "$BOX_USER" bash -se <<'BB_BOX_AS_USER'`, ...uv.map((tool) => `uv tool install ${quote(tool)}`), "BB_BOX_AS_USER");
+  const local = scan.get("local") ?? [];
+  const homeBin = scan.get("home-bin") ?? [];
+  const known = new Set(uv);
+  for (const path of [...local, ...homeBin.filter((path) => !known.has(base(path)))]) {
+    b.gap(from, `${path} was made in the box: add how it was installed.`);
+  }
+}
+
+/** The project's files, as box_image_draft takes them, and a box's scan: a draft of its image's script. */
+export function draftImage(files: readonly DraftFile[], box?: { readonly name: string; readonly scan: string }): Draft {
   const b = new Builder();
+  if (box) scanned(b, `box ${box.name}`, parseScan(box.scan));
   const byName = (...names: string[]) => files.filter((file) => names.includes(base(file.path)));
   const dockerfiles = new Map(files.filter((file) => /(^|\/)(Dockerfile|Containerfile)(\.[\w-]+)?$|\.Dockerfile$/.test(file.path)).map((file) => [file.path, file]));
   const readDockerfiles = new Set<string>();

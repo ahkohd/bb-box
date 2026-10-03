@@ -1,6 +1,6 @@
 // The Box panel: a thread's boxes as rows, "New box", and the empty states.
 
-import { experimental_Icon as Icon, UrlLink, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
 import {
   AlertDialog,
@@ -20,7 +20,7 @@ import type { BoxView } from "../plugin/views.ts";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
-import { NewBox, type SizeRequest } from "./new-box.tsx";
+import { IMAGE_REQUEST, NewBox, type SizeRequest } from "./new-box.tsx";
 
 /** bb-box's page under BB's settings. */
 
@@ -30,6 +30,7 @@ function isMoving(box: BoxView): boolean {
 
 export function BoxesPanel({ threadId }: { threadId: string }) {
   const rpc = useRpc<Contract>();
+  const navigate = useBbNavigate();
   const { value: state, error, refresh } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
   const [open, setOpen] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -108,7 +109,14 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{boxes.length ? `${boxes.length} ${boxes.length === 1 ? "box" : "boxes"}` : null}</span>
-        {state.kinds.length ? <NewBox kinds={state.kinds} make={make} profile={(backend) => rpc.call("provider", { backend })} /> : null}
+        {state.kinds.length ? (
+          <NewBox
+            kinds={state.kinds}
+            make={make}
+            profile={(backend) => rpc.call("provider", { backend })}
+            askForImage={state.imageOffer ? () => navigate.toCompose({ initialPrompt: IMAGE_REQUEST, focusPrompt: true }) : undefined}
+          />
+        ) : null}
       </div>
       {problem ? (
         <p role="alert" className="text-xs leading-snug text-destructive-text">
