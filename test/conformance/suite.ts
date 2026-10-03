@@ -30,6 +30,7 @@ import {
   type Capacity,
   type DoctorReport,
   type Guest,
+  type ImageBuild,
   type Limit,
   type MachineNature,
   type ReleaseHooks,
@@ -60,7 +61,9 @@ export type ConformanceCheck =
   /** Measuring a box's cores, memory and disk in the box. */
   | "size"
   /** Booting an iOS Simulator device and running a command in it (047). */
-  | "ios-simulator";
+  | "ios-simulator"
+  /** Building a small image with the backend's image operations, which needs root in its box (049). */
+  | "images";
 
 /** A new Simulator device's first boot is slow (047). */
 const SIMULATOR_TIMEOUT_MS = 600_000;
@@ -952,6 +955,60 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             for (const guest of recorded.claimed) await assertReleased(backend, guest);
           });
         }
+      });
+
+      describe("images", { skip: skip.images ?? (!backend.images ? "the backend has no image operations" : kinds.length ? false : "no kinds to check") }, () => {
+        // Built and removed again: nothing is replaced, so boxes of the kind still start from its standard image.
+        const left: string[] = [];
+        after(async () => {
+          for (const ref of left.reverse()) await backend.images?.remove(ref).catch(() => undefined);
+        });
+
+        it("builds a small image: a box from a standard build, a script as root, a capture, and a trial box that has what the script made", { timeout: timeout * 6 }, async () => {
+          const images = backend.images!;
+          // The smallest kind under test that has a standard build: Linux first, as desktops are bigger.
+          const order = (kind: string) => (kind === "linux" ? 0 : kind.includes("desktop") ? 2 : 1);
+          const standard = (await images.list(signal()))
+            .builds.filter((build) => build.current && kinds.some((kind) => kind.id === build.kind))
+            .sort((a, b) => order(a.kind) - order(b.kind))[0];
+          assert.ok(standard, `the backend lists a standard build of ${kinds.map((kind) => kind.id).join(" or ")}`);
+          const box = await images.box(standard, "conformance image", signal());
+          left.push(box.ref);
+          assert.equal((await backend.held(signal())).find((guest) => guest.ref === box.ref), undefined, "an image box is no box's guest");
+          assert.ok((await images.list(signal())).boxes.includes(box.ref), "an image box is listed until it goes");
+
+          // As a build's script and finalizing leave it: a file of the image's, and its record.
+          const marker = `bb-box conformance ${randomBytes(4).toString("hex")}`;
+          const build = `build.conformance-${Date.now()}`;
+          const record = { contract: 1, image: "conformance", kind: standard.kind, arch: "", build, built: new Date().toISOString(), os: "", tools: {} };
+          const script = [
+            "set -e",
+            "sudo -n mkdir -p /usr/share/bb-box",
+            `printf '%s\\n' '${marker}' | sudo -n tee /usr/share/bb-box/conformance >/dev/null`,
+            `printf '%s\\n' '${JSON.stringify(record)}' | sudo -n tee /usr/share/bb-box/image.json >/dev/null`,
+          ].join("\n");
+          const ran = await box.command.run(script, { timeoutMs: timeout, signal: signal() });
+          assert.equal(ran.exitCode, 0, ran.stderr);
+
+          const made: ImageBuild = await images.capture(box, standard, "conformance", signal());
+          assert.deepEqual([made.image, made.kind, made.build, made.current, made.record?.build], ["conformance", standard.kind, build, false, build]);
+          const listed = await images.list(signal());
+          assert.ok(listed.builds.some((other) => other.ref === made.ref && other.image === "conformance"), "the build is listed");
+          assert.ok(!listed.boxes.includes(box.ref), "the captured box is a build, not a box");
+
+          const trial = await images.box(made, "conformance trial", signal());
+          left.push(trial.ref);
+          const read = await trial.command.run("cat /usr/share/bb-box/conformance", { timeoutMs: timeout, signal: signal() });
+          assert.equal(read.stdout.trim(), marker, "a box from the build has what the script made");
+
+          await images.remove(trial.ref, signal());
+          await images.remove(made.ref, signal());
+          left.length = 0;
+          const remaining = await images.list(signal());
+          assert.ok(!remaining.builds.some((other) => other.image === "conformance"), "the build is gone");
+          assert.deepEqual(remaining.boxes, [], "no image box is left");
+          assert.ok(remaining.builds.some((other) => other.ref === standard.ref && other.current), "the standard build stays");
+        });
       });
 
       describe("installs", { skip: skip.installs ?? (kinds.length ? false : "no kinds to check") }, () => {

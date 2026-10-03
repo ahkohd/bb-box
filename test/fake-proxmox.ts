@@ -58,6 +58,8 @@ export class FakeProxmox {
   cpus = 16;
   /** Storage in bytes by storage ID. */
   readonly storage = new Map<string, { total: number; avail: number }>([["local-lvm", { total: 900 * 2 ** 30, avail: 600 * 2 ** 30 }]]);
+  /** Each storage's type, lvmthin unless it says. */
+  readonly storageTypes = new Map<string, string>();
   readonly pools = new Set<string>(["bbbox"]);
   readonly bridges = new Set<string>(["vmbr0", "vmbr1"]);
   /** Optional hook to fail a request: return a response to short-circuit. */
@@ -194,7 +196,7 @@ export class FakeProxmox {
     if (method === "GET" && (match = /^\/nodes\/[^/]+\/storage\/([^/]+)\/status$/.exec(path))) {
       const storage = this.storage.get(decodeURIComponent(match[1]!));
       if (!storage) return respond(500, `storage '${match[1]}' does not exist`, { data: null });
-      return ok({ ...storage, used: storage.total - storage.avail, active: 1, enabled: 1, type: "lvmthin" });
+      return ok({ ...storage, used: storage.total - storage.avail, active: 1, enabled: 1, type: this.storageTypes.get(decodeURIComponent(match[1]!)) ?? "lvmthin" });
     }
 
     if (method === "GET" && path === "/pools") {
@@ -251,7 +253,7 @@ export class FakeProxmox {
       const type = match[1]!;
       const source = this.#of(type, Number(match[2]));
       if (!source) return this.#missing(Number(match[2]), type);
-      if (params.full === "0" && (params.storage || params.format)) {
+      if (params.full !== "1" && (params.storage || params.format)) {
         return respond(400, "Parameter verification failed.", {
           data: null,
           errors: { storage: "option is only allowed for full clones" },
@@ -278,7 +280,9 @@ export class FakeProxmox {
         if (config.net0) config.net0 = config.net0.replace(/=[0-9A-F:]{17}/, `=BC:24:11:${String(newid).padStart(6, "0").replace(/(..)(?!$)/g, "$1:")}`);
       } else {
         name = config.hostname = params.hostname ?? `CT${newid}`;
-        config.rootfs = `local-lvm:base-${source.vmid}-disk-0/vm-${newid}-disk-0,size=${/size=([^,]+)/.exec(source.config.rootfs ?? "")?.[1] ?? "8G"}`;
+        // A full clone is a copy, on the storage asked for.
+        const size = /size=([^,]+)/.exec(source.config.rootfs ?? "")?.[1] ?? "8G";
+        config.rootfs = params.full === "1" ? `${params.storage ?? "local-lvm"}:vm-${newid}-disk-0,size=${size}` : `local-lvm:base-${source.vmid}-disk-0/vm-${newid}-disk-0,size=${size}`;
       }
       if (params.description) config.description = params.description;
       this.guests.set(newid, {
@@ -320,6 +324,28 @@ export class FakeProxmox {
       if (!guest.config[disk]) return respond(500, `disk '${disk}' does not exist`, { data: null });
       if (!this.nextTaskExit.has("resize")) guest.config[disk] = guest.config[disk]!.replace(/size=[^,]+/, `size=${params.size}`);
       return ok(this.#task("resize", vmid));
+    }
+
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/template$/.exec(path)) && method === "POST") {
+      const [, type = "lxc", id] = match;
+      const guest = this.#of(type, Number(id));
+      if (!guest) return this.#missing(Number(id), type);
+      if (guest.status === "running") return respond(500, `CT ${id} is running`, { data: null });
+      if (guest.template) return respond(500, `CT ${id} is already a template`, { data: null });
+      guest.template = true;
+      guest.config.template = "1";
+      // Its disk becomes a base volume, which linked clones name.
+      const disk = type === "qemu" ? "scsi0" : "rootfs";
+      if (guest.config[disk]) guest.config[disk] = guest.config[disk]!.replace(/\bvm-(\d+)-disk/, "base-$1-disk");
+      return ok(null);
+    }
+
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/status\/(shutdown)$/.exec(path)) && method === "POST") {
+      const [, type = "lxc", id] = match;
+      const guest = this.#of(type, Number(id));
+      if (!guest) return this.#missing(Number(id), type);
+      guest.status = "stopped";
+      return ok(this.#task(type === "qemu" ? "qmshutdown" : "vzshutdown", Number(id)));
     }
 
     if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/status\/(start|stop|suspend|current)$/.exec(path))) {

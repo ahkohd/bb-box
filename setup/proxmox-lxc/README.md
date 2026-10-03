@@ -269,6 +269,15 @@ description, where bb-box's doctor reads it without starting the template.
   with other pins than the plugin's own `template/` files.
 
 Its fix is the `build.sh` command that rebuilds it with `--replace`.
+
+bb-box builds images itself with the API token (049):
+
+- **The image box.** It runs a build in a box: a linked clone of a template, at a box's VMID and address, named `bb-box-image` and tagged `image-box`.
+- **The capture.** It stops the box and makes it a template. The template is configured as its origin is, with its record on the description's second line. Its tags name the image, its kind and its build ID (`image.<name>`, `kind.<kind>`, `build.<…>`).
+- **The trial box.** It is a clone of that template.
+- **Refreshing a template.** bb-box replaces it in place, as `build.sh --replace` does. The old template goes and the new build is cloned into its VMID: linked on LVM-thin, otherwise a full copy on the template's storage. It is made a template with the old one's tags and the new build ID, and the build goes. Acquires wait for the template meanwhile.
+
+No sweep removes an image box or a captured build. The build that made them removes them.
 `/usr/share/bb-box/template-release` and the packages list stay, for
 people.
 

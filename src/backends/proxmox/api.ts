@@ -109,6 +109,8 @@ export interface GuestSettings {
   readonly tags?: readonly string[];
   readonly description?: string;
   readonly onboot?: boolean;
+  /** Whether Proxmox refuses to delete it, as bb-box's templates do. */
+  readonly protection?: boolean;
   /** Options to remove, such as "protection", which clones inherit from the template. */
   readonly delete?: readonly string[];
 }
@@ -144,6 +146,8 @@ export interface StorageStatus {
   /** Bytes. */
   readonly total: number;
   readonly available: number;
+  /** The storage's type, such as lvmthin, or "" when Proxmox does not say. */
+  readonly type: string;
 }
 
 export interface PoolGuest {
@@ -264,7 +268,7 @@ export class Proxmox {
       undefined,
       signal,
     );
-    return { total: Number(data?.total ?? 0), available: Number(data?.avail ?? 0) };
+    return { total: Number(data?.total ?? 0), available: Number(data?.avail ?? 0), type: typeof data?.type === "string" ? data.type : "" };
   }
 
   /**
@@ -286,6 +290,28 @@ export class Proxmox {
     await this.waitTask(upid, signal);
   }
 
+  /**
+   * Full clone of a template into the pool, on `storage`: a copy that needs
+   * nothing of the template, for storage where a linked clone would (049).
+   */
+  async cloneFull(
+    input: { template: number; vmid: number; hostname: string; storage: string; pool?: string; description?: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const upid = await this.#request<string>(
+      "POST",
+      this.#guest(input.template, "/clone"),
+      { newid: input.vmid, [this.type === "qemu" ? "name" : "hostname"]: input.hostname, full: 1, storage: input.storage, pool: input.pool, description: input.description },
+      signal,
+    );
+    await this.waitTask(upid, signal);
+  }
+
+  /** Makes a stopped guest a template (049), as `pct template` does. */
+  async makeTemplate(vmid: number, signal?: AbortSignal): Promise<void> {
+    await this.#change("POST", this.#guest(vmid, "/template"), {}, signal);
+  }
+
   async configure(vmid: number, settings: GuestSettings, signal?: AbortSignal): Promise<void> {
     const params: Params = {
       hostname: settings.hostname,
@@ -298,6 +324,7 @@ export class Proxmox {
       tags: settings.tags?.join(";"),
       description: settings.description,
       onboot: settings.onboot === undefined ? undefined : settings.onboot ? 1 : 0,
+      protection: settings.protection === undefined ? undefined : settings.protection ? 1 : 0,
       delete: settings.delete?.length ? settings.delete.join(",") : undefined,
     };
     if (Object.values(params).every((value) => value === undefined)) return;
@@ -323,6 +350,14 @@ export class Proxmox {
 
   async start(vmid: number, signal?: AbortSignal): Promise<void> {
     await this.#change("POST", this.#guest(vmid, "/status/start"), {}, signal);
+  }
+
+  /**
+   * A clean shutdown, as a capture needs (049): the guest stops its services,
+   * and is stopped hard after `timeoutS`.
+   */
+  async shutdown(vmid: number, timeoutS: number, signal?: AbortSignal): Promise<void> {
+    await this.#change("POST", this.#guest(vmid, "/status/shutdown"), { timeout: timeoutS, forceStop: 1 }, signal);
   }
 
   /** Hard stop: boxes are disposable, so there is no clean shutdown wait. */

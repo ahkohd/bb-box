@@ -15,7 +15,7 @@
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { Arch, CommandTransport, Display, DisplayProtocol, GuestOs, SshAccess } from "../transports/types.ts";
-import type { ImageFacts } from "./images.ts";
+import type { ImageFacts, ImageRecord } from "./images.ts";
 
 export type { Arch, GuestOs } from "../transports/types.ts";
 
@@ -447,6 +447,8 @@ export interface Backend {
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
+  /** Building images in boxes and keeping their builds (049). Only backends that can. */
+  readonly images?: BackendImages;
   dispose?(): Promise<void>;
 }
 
@@ -506,6 +508,53 @@ export interface DoctorReport {
 }
 
 /** Storage a backend may use for its own state, such as pool membership. */
+/**
+ * A box bb-box builds or tries an image in (049): not a thread's, not
+ * enrolled, and apart from boxes, so no sweep releases it.
+ */
+export interface ImageBox {
+  /** The backend's reference, such as a VMID. */
+  readonly ref: string;
+  /** Commands as the box user, who has sudo without a password. */
+  readonly command: CommandTransport;
+}
+
+/** A build of an image that a backend keeps: on Proxmox LXC, a template. */
+export interface ImageBuild {
+  readonly ref: string;
+  /** "standard" for a kind's own image, or a project's image's name. */
+  readonly image: string;
+  /** The kind boxes of it are. */
+  readonly kind: string;
+  /** Its build ID, or null for one built before build IDs. */
+  readonly build: string | null;
+  readonly record: ImageRecord | null;
+  /** Whether boxes start from it now: a standard image in the configuration. */
+  readonly current: boolean;
+}
+
+/**
+ * A backend's image operations (049). A build runs in a box from a build:
+ * the kind's current one for a refresh. The box is captured as a new build,
+ * a trial box from it is checked, and then it replaces the current one.
+ */
+export interface BackendImages {
+  /** The builds the backend keeps, and the image boxes left by a build that did not end. */
+  list(signal?: AbortSignal): Promise<{ readonly builds: readonly ImageBuild[]; readonly boxes: readonly string[] }>;
+  /** Starts a box from `build`, as a box of its kind starts, and waits until it answers. */
+  box(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox>;
+  /**
+   * Stops a build box and keeps it as a build of `image`, with the record in
+   * its /usr/share/bb-box/image.json, configured as `from` is. The box is
+   * then the build.
+   */
+  capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild>;
+  /** Puts `build` in `current`'s place, under its reference, so boxes of the kind start from it. `build` itself goes. */
+  replace(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild>;
+  /** Removes an image box or a build that is not current. */
+  remove(ref: string, signal?: AbortSignal): Promise<void>;
+}
+
 export interface BackendStorage {
   get<T>(key: string): Promise<T | undefined>;
   set(key: string, value: unknown): Promise<void>;
