@@ -5,9 +5,10 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { VNC_HOLDER_PY } from "../src/backends/tart/vnc-holder.ts";
+import { VNC_BRIDGE_PY, VNC_HOLDER_PY } from "../src/backends/tart/vnc-holder.ts";
 import { FakeTart, Viewer, u16, u32 } from "./fake-tart-vnc.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -73,33 +74,86 @@ test("viewers join, leave, come back and watch two at once over the run's one co
   assert.equal(tart.crashed, false);
 });
 
-test("a late joiner gets the size and cursor of the moment and a whole screen, and its ZRLE decodes on its own", async (t) => {
+test("a late joiner gets the size, cursor and screen of the moment at once, and its ZRLE decodes on its own", async (t) => {
   const { tart, socket } = await holder(t);
   const early = new Viewer(socket);
   await early.join();
+  await early.update();
   await early.update();
   tart.resize = { width: 1280, height: 800 };
   await tart.change();
   await early.update();
   assert.deepEqual(early.size, { width: 1280, height: 800 }, "the watching viewer sees the resize");
+  await early.update();
+  assert.match(early.tiles.toString(), /whole 3; $/, "then the holder asks for the whole screen again, at its new size");
 
-  // The screen is still: the late joiner's whole screen comes at once all the same.
+  // The screen is still, and Tart holds the holder's request for changes: the late joiner's screen comes at once all the same.
   const late = new Viewer(socket);
   await late.join();
   assert.deepEqual(late.size, { width: 1280, height: 800 }, "ServerInit has the size of the moment");
   await late.update();
   assert.ok(late.cursor, "the cursor shape, from before it joined");
   await late.update();
-  assert.match(late.tiles.toString(), /^whole 3; /, "its stream starts with the whole screen, and decodes on its own");
-  await early.update();
+  assert.match(late.tiles.toString(), /^whole 3; /, "its stream starts with the last whole screen, and decodes on its own");
   await tart.change();
   await Promise.all([early.update(), late.update()]);
   const sent = tart.tiles.map((tile) => tile.toString());
   assert.equal(early.tiles.toString(), sent.join(""), "the early viewer has every tile");
-  assert.equal(late.tiles.toString(), sent.slice(2).join(""), "the late joiner every tile since it joined");
+  assert.equal(late.tiles.toString(), sent.slice(2).join(""), "the late joiner every tile since the last whole screen");
   assert.equal(tart.crashed, false);
   early.close();
   late.close();
+});
+
+test("joiners on a still screen get it at once, however many come and go, and the holder asks Tart for nothing for them", async (t) => {
+  const { tart, socket } = await holder(t);
+  await until("the first whole screen", () => tart.tiles.length === 1);
+  for (let round = 0; round < 6; round++) {
+    const viewer = new Viewer(socket);
+    const started = performance.now();
+    await viewer.join();
+    await viewer.update();
+    await viewer.update();
+    assert.ok(performance.now() - started < 1_000, `joiner ${round + 1} had its screen in ${Math.round(performance.now() - started)} ms`);
+    assert.match(viewer.tiles.toString(), /^whole 1; /);
+    viewer.close();
+  }
+  assert.deepEqual(tart.requests, [true, false], "the sign-in's request for the whole screen, then one for changes, held all along");
+  // A change reaches a viewer that joins after it, from the updates kept since.
+  await tart.change();
+  await until("the change", () => tart.tiles.length === 2);
+  const after = new Viewer(socket);
+  await after.join();
+  await after.update();
+  await after.update();
+  await after.update();
+  assert.equal(after.tiles.toString(), tart.tiles.map((tile) => tile.toString()).join(""));
+  after.close();
+  assert.equal(tart.connections, 1);
+});
+
+test("the bridge carries a viewer's bytes both ways, and closes the holder's socket when the viewer's input ends", async (t) => {
+  const path = join(tempDir("bridge"), "holder.vnc");
+  let received = "";
+  let ended = false;
+  const server = createServer((connection) => {
+    connection.on("data", (data) => (received += data));
+    connection.on("end", () => (ended = true));
+    connection.write("from the holder");
+  });
+  await new Promise<void>((resolve) => server.listen(path, resolve));
+  t.after(() => server.close());
+  const bridge = spawn("python3", ["-c", VNC_BRIDGE_PY, path], { stdio: ["pipe", "pipe", "inherit"] });
+  t.after(() => bridge.kill());
+  const exited = new Promise<number | null>((resolve) => bridge.on("exit", resolve));
+  let sent = "";
+  bridge.stdout!.on("data", (data) => (sent += data));
+  bridge.stdin!.write("from the viewer");
+  await until("both ways", () => received === "from the viewer" && sent === "from the holder");
+  // The viewer goes: its SSH session's stdin ends.
+  bridge.stdin!.end();
+  await until("the holder to see the viewer go", () => ended);
+  assert.equal(await exited, 0);
 });
 
 test("a viewer's input reaches Tart byte for byte; its format, encodings and resizes stay with the holder", async (t) => {

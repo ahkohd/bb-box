@@ -110,6 +110,7 @@ import {
   type HostState,
   type VmConfig,
 } from "./host.ts";
+import { VNC_BRIDGE_PY } from "./vnc-holder.ts";
 import {
   parseQemuState,
   parseQemuVm,
@@ -1866,7 +1867,7 @@ export class TartBackend implements Backend {
 
   /**
    * A viewer's way to the VM's desktop: the run's VNC holder on the Mac,
-   * started now if the run began before holders, through `nc -U` on its
+   * started now if the run began before holders, through a bridge to its
    * socket, which only the Mac's host user can open. Tart's VNC server
    * crashes the VM on a second connection in a run, so bb-box never connects
    * to it but through the holder, which makes the run's only connection.
@@ -1883,7 +1884,8 @@ export class TartBackend implements Backend {
           : `${host.name} could not start the desktop's stream for ${vm}: ${why}`,
       );
     }
-    return { route: ssh.commandRoute(mac, `exec /usr/bin/nc -U "$HOME"/.bb-box/tart/run/${quote(`${vm}.vnc`)}`), auth: { type: "none" } };
+    const socket = `"$HOME"/.bb-box/tart/run/${quote(`${vm}.vnc`)}`;
+    return { route: ssh.commandRoute(mac, `exec /usr/bin/python3 -c '${VNC_BRIDGE_PY}' ${socket}`), auth: { type: "none" } };
   }
 
   /**

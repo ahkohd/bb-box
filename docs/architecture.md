@@ -1619,9 +1619,10 @@ Notes:
     which shows the whole virtual display. It crashes the VM on a second VNC
     connection in a run, so a holder on the Mac, started with the run, makes
     the run's only connection and serves every viewer on a unix socket,
-    reached with `nc -U` over SSH (#406). It also listens on every interface
-    of the Mac, ignores SetDesktopSize, and ends the VM when a client asks for
-    an update without the DesktopSize pseudo-encoding ([setup
+    reached over SSH through a bridge that closes it when the viewer goes
+    (#406). It also listens on every interface of the Mac, ignores
+    SetDesktopSize, and ends the VM when a client asks for an update without
+    the DesktopSize pseudo-encoding ([setup
     guide](../setup/tart/README.md#the-desktops-vnc-server)).
   - A suspended VM holds no slot and no memory, so `stop` suspends (macOS 14
     or later on the host), and `start` resumes in about 4 s.

@@ -481,21 +481,25 @@ after the first has closed (#406). So bb-box never connects to it but through
 a holder: a small Python program it starts on the Mac as the run comes up,
 which makes the run's only connection and keeps it until the run ends. The
 holder serves every viewer on a unix socket in `~/.bb-box/tart/run/`, which
-only the host user can open, and a viewer's connection goes `ssh <mac> nc -U
-<socket>`. A run has one holder: the first to make the run's directory, named
-after its port, starts it. The holder never connects again; if it ends early,
-the desktop shows again after a stop and start of the box. It survives
-bb-box's deploys and BB's restarts, as it runs on the Mac.
+only the host user can open, and a viewer's connection goes over SSH to a
+small bridge to the socket, which closes it as soon as the viewer goes. A run
+has one holder: the first to make the run's directory, named after its port,
+starts it. The holder never connects again; if it ends early, the desktop
+shows again after a stop and start of the box. It survives bb-box's deploys
+and BB's restarts, as it runs on the Mac.
 
 - **Needs python3.** The holder runs on `/usr/bin/python3` from Xcode's
   command line tools (`xcode-select --install`), which Homebrew needs anyway.
   Without them, a macOS desktop says how to get them.
 - **Sharing one connection.** The holder sets one pixel format and its own
-  encodings (ZRLE, CopyRect, Raw, DesktopSize, LastRect, Cursor), gives each
-  viewer whole messages from its first update request, with the size and
-  cursor of the moment and a whole screen, and gives each its own ZRLE zlib
-  stream. Viewers' keys, pointer and clipboard go to Tart's server as they
-  are; bb-box's relay passes only the controlling viewer's.
+  encodings (ZRLE, CopyRect, Raw, DesktopSize, LastRect, Cursor), and keeps
+  one update request outstanding, as a VNC viewer does, since Tart answers
+  requests in order and one for changes only when the screen changes. It keeps
+  the last whole screen and the updates since, so a viewer that joins gets the
+  screen of the moment at once, without asking Tart, and then every update,
+  each viewer on its own ZRLE zlib stream. Viewers' keys, pointer and
+  clipboard go to Tart's server as they are; bb-box's relay passes only the
+  controlling viewer's.
 - **What listens where.** Tart prints `127.0.0.1:<port>`, but the server
   listens on every interface of the Mac. While a desktop box runs, anyone on
   the Mac's networks who has that run's password can reach its desktop, and a
