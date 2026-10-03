@@ -5,7 +5,9 @@ import type { ImageRecord } from "../src/backends/images.ts";
 import type { Backend, BackendImages, ImageBox, ImageBuild } from "../src/backends/types.ts";
 import type { BoxImage, BoxRecord } from "../src/core/boxes.ts";
 import type { ImageConfig } from "../src/core/document.ts";
+import { BoxError } from "../src/core/boxes.ts";
 import { ImageBakes, bakeScript, scriptHash, type Bake } from "../src/plugin/bakes.ts";
+import { tryText } from "../src/plugin/views.ts";
 import type { RunResult } from "../src/transports/types.ts";
 import { MemoryStorage } from "./helpers.ts";
 
@@ -54,6 +56,7 @@ function backend(id = "proxmox-lxc", options: { startsFrom?: boolean; fail?: (sc
             ran.push({ box: ref, script });
             const failed = options.fail?.(script);
             if (failed) return failed;
+            if (script.includes("bb-box-check-headless")) return ok("node              ok   24.21.0\ndocker            ok   on first use\n");
             if (script === "cat /usr/share/bb-box/image.json") return ok(JSON.stringify(record("build.finalized", { sizeGiB: 3.4, kind: "linux-desktop" })));
             const json = /^printf '%s\\n' '(.*)' \| sudo -n tee \/usr\/share\/bb-box\/image\.json/.exec(script)?.[1];
             if (json) written = JSON.parse(json);
@@ -272,4 +275,42 @@ test("the bake's script runs the image's script as root and its check as the box
   assert.ok(!bakeScript("rust", "linux", "proxmox-lxc", "build.x", false).includes("check.sh"));
   const syntax = spawnSync("bash", ["-n"], { input: script });
   assert.equal(syntax.status, 0, syntax.stderr.toString());
+});
+
+test("a try runs the script as a build does, then the check and the kind's check on a box of the build, and removes all it made (049)", async () => {
+  const lxc = backend();
+  const { bakes: on, storage } = bakes([lxc.backend], {});
+  const result = await on.try({ name: "rust", kind: "linux", script: IMAGE.script, check: IMAGE.check! });
+  assert.equal(result.ok, true, tryText(result));
+  assert.deepEqual(
+    result.checks.map((check) => [check.name, check.ok]),
+    [
+      ["the script and the check, in the build box", true],
+      ["the check, on a box of the build", true],
+      ["the kind's check (bb-box-check-headless)", true],
+    ],
+  );
+  assert.equal(result.checks[2]!.detail, "2 checks passed");
+  assert.deepEqual(lxc.removed, ["7001", "7000"], "the trial box, then the build");
+  assert.deepEqual(await storage.list("images/"), [], "a try keeps nothing");
+  assert.match(tryText(result), /^The script passed on proxmox-lxc \(linux\), in \d+ s, as a build runs it\.\n- the script and the check, in the build box: ok, \d+ s, with finalizing\n/);
+  assert.ok(lxc.ran.some((one) => one.script.includes(`BB_BOX_IMAGE='rust' BB_BOX_KIND='linux' BB_BOX_BACKEND='proxmox-lxc'`)));
+});
+
+test("a try that fails says which step and gives the build's last lines; a GPU desktop, or no backend that builds, is refused (049)", async () => {
+  const lines = Array.from({ length: 250 }, (_, i) => `line ${i + 1}`).join("\n");
+  const lxc = backend("proxmox-lxc", { fail: (script) => (script.startsWith("set -euo pipefail") ? { ...ok(`${lines}\nE: Unable to locate package ripgrep\n`), exitCode: 100 } : null) });
+  const { bakes: on } = bakes([lxc.backend], {});
+  const result = await on.try({ name: "try", kind: "linux", script: "apt-get install -y ripgrep\n" });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.checks, [{ name: "the script, in the build box", ok: false, detail: "It exited with 100: E: Unable to locate package ripgrep" }]);
+  assert.equal(result.output.length, 200);
+  assert.equal(result.output.at(-1), "E: Unable to locate package ripgrep");
+  assert.deepEqual(lxc.removed, ["7000"]);
+  assert.match(tryText(result), /^The script failed on proxmox-lxc \(linux\), in \d+ s, as a build runs it\.\n- the script, in the build box: FAIL, It exited with 100/);
+
+  await assert.rejects(on.try({ name: "try", kind: "linux-desktop", script: "true\n" }), (error: unknown) => error instanceof BoxError && error.code === "unsupported" && /Try it on linux-desktop-cpu/.test(error.message));
+  await assert.rejects(on.try({ name: "try", kind: "linux", script: "true\n", on: "docker" }), (error: unknown) => error instanceof BoxError && error.code === "not_found");
+  const plain = bakes([backend("docker", { startsFrom: false }).backend], {});
+  await assert.rejects(plain.bakes.try({ name: "try", kind: "linux", script: "true\n" }), /No backend that is on builds linux images/);
 });
