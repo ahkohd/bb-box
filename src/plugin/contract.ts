@@ -21,6 +21,8 @@ export interface PanelState {
    * thread's own boxes (036): one of your machines, or another thread's box.
    */
   readonly runsOn: { readonly box: BoxView; readonly owner: "yours" | "thread"; /** The thread that holds it, when another thread's. */ readonly threadId: string | null } | null;
+  /** The thread's project has no box image (049), so New box offers to ask an agent to make one. */
+  readonly imageOffer: boolean;
 }
 
 /** One box's desktop or terminal, for its tab. */

@@ -296,6 +296,32 @@ providers` lists it as `bb-box-new`, with inputs such as `{"kind": "linux"}`.
 Give `--model` when the project has no remembered model, since the new box
 cannot list models until it exists.
 
+## A project's image
+
+A project's image is a script run as root on the standard image of its Linux
+kinds, so its boxes start with what it needs. A person never writes it: when
+asked to "make a box image for this project", or sent by New box's "Ask an
+agent to make one", follow these steps.
+
+1. **Draft.** Read the project's files and pass them to `box_image_draft`:
+   `.devcontainer/devcontainer.json` and the Dockerfile it names, a
+   Dockerfile, `.tool-versions`, `mise.toml`, `.nvmrc`, `.python-version`,
+   `rust-toolchain.toml`, `flake.nix` with `flake.lock`. For a box someone set
+   up by hand, give its name as `box` too.
+2. **Finish it.** Settle what the draft left to you, listed in its reply and
+   at the top of the script. Keep out of it what needs the checkout, such as
+   `npm ci` or `cargo fetch`: a build has no repository. Write the script to
+   `.bb/box-setup.sh`, and a check that fails when the script did not do its
+   work, such as `cargo --version`, to `.bb/box-check.sh`.
+3. **Try it** with `box_image_try`, which builds it in a clean box of the
+   standard image, as the build will. Fix and try again until every check
+   passes. To look inside, acquire a box, run the script with
+   `box_run` and `sudo bash`, and release the box after.
+4. **Register it.** Commit the two files, then call `box_image_set` with their
+   text and paths. It changes every new box of those kinds in the project, so
+   ask the user first unless they asked for the image. bb-box runs the script
+   as each box starts, and builds the image ahead once it is used.
+
 ## The panel
 
 The Box thread panel lists the thread's boxes as rows: name, the OS, badges

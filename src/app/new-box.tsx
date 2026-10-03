@@ -17,6 +17,14 @@ import { message } from "./common.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
+/**
+ * What "Ask an agent to make one" puts in a new thread's composer (049): the
+ * skill's flow for a project's image, for the person to send.
+ */
+export const IMAGE_REQUEST =
+  "Make a box image for this project with bb-box: draft .bb/box-setup.sh and .bb/box-check.sh with box_image_draft from the project's files, " +
+  "try them with box_image_try until every check passes, commit them, then register them with box_image_set.";
+
 /** What the acquire RPC takes: a preset, or the parts of a custom size. Nothing for the kind's default. */
 export interface SizeRequest {
   readonly preset?: string;
@@ -103,6 +111,7 @@ export function NewBox({
   make,
   machine = false,
   profile,
+  askForImage,
 }: {
   kinds: readonly KindView[];
   /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036). */
@@ -111,6 +120,8 @@ export function NewBox({
   machine?: boolean;
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
+  /** Asks an agent to make the project a box image (049), when it has none. */
+  askForImage?: () => void;
 }) {
   const pluginId = experimental_usePluginId();
   const [open, setOpen] = useState(false);
@@ -496,6 +507,21 @@ export function NewBox({
               {machine ? "Add machine" : "Create box"}
             </Button>
           </div>
+          {askForImage && wanted.os === "linux" ? (
+            <p className="text-2xs leading-snug text-muted-foreground">
+              This project has no box image, so its boxes start with the standard tools.{" "}
+              <button
+                type="button"
+                className="font-medium text-foreground underline underline-offset-2"
+                onClick={() => {
+                  setOpen(false);
+                  askForImage();
+                }}
+              >
+                Ask an agent to make one
+              </button>
+            </p>
+          ) : null}
         </form>
       </PopoverContent>
     </Popover>

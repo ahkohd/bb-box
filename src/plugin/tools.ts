@@ -5,7 +5,7 @@ import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
 import { z } from "zod";
 import { BoxError, OPERATOR, SPARES, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
-import { draftImage } from "../core/draft.ts";
+import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
@@ -472,17 +472,27 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     description:
       "Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. Read these from the repository and pass each one's path and text: " +
       ".devcontainer/devcontainer.json (or .devcontainer.json, or one in a subfolder of .devcontainer) and the Dockerfile it names; a Dockerfile; .tool-versions; mise.toml; .nvmrc or .node-version; .python-version; rust-toolchain.toml or rust-toolchain; flake.nix with flake.lock, or shell.nix. " +
-      "It returns a script for .bb/box-setup.sh, each part commented with the file it came from, a check for .bb/box-check.sh, and what it could not translate. The script runs as root on bb-box's standard Ubuntu 24.04 image, with no checkout of the repository: what needs one, such as npm ci, stays in the thread.",
+      "It returns a script for .bb/box-setup.sh, each part commented with the file it came from, a check for .bb/box-check.sh, and what it could not translate. The script runs as root on bb-box's standard Ubuntu 24.04 image, with no checkout of the repository: what needs one, such as npm ci, stays in the thread. " +
+      "With `box`, it also reads what a Linux box of this thread has that its image had not, for a box someone set up by hand: packages, package sources, npm globals, mise's tools, the Rust toolchain, uv tools, and what is new in /usr/local, /opt and ~/.local/bin.",
     presentation: { label: { pending: "Drafting the image's script", completed: "Drafted the image's script" } },
     parameters: z.object({
       files: z
         .array(z.object({ path: z.string().min(1).describe("The file's path in the repository, such as .devcontainer/devcontainer.json."), text: z.string().describe("The file's text.") }))
         .max(20)
         .describe("The project's files the draft reads. An empty list gives a template."),
+      box: z.string().optional().describe("A Linux box of this thread to read what was set up in it by hand, by name or ID."),
     }),
-    async execute({ files }) {
+    async execute({ files, box: ref }, { threadId, signal }) {
       try {
-        const draft = draftImage(files);
+        let scan: { name: string; scan: string } | undefined;
+        if (ref) {
+          const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
+          if (found.capabilities.os !== "linux") throw new BoxError("unsupported", `Box ${found.name} is not a Linux box, and an image's script is Linux's.`);
+          const { result } = await boxes.run(owner, found.id, SCAN_SCRIPT, { timeoutMs: 60_000, signal, maxOutputBytes: 256 * 1024, waitForEnrolment: false });
+          if (result.exitCode !== 0) throw new BoxError("unreachable", `Reading box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+          scan = { name: found.name, scan: result.stdout };
+        }
+        const draft = draftImage(files, scan);
         const hint = draft.gaps.length
           ? "Settle what it left to you, write the files, then try them with box_image_try."
           : "Write the files, then try them with box_image_try.";

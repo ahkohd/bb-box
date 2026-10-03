@@ -12,6 +12,7 @@ import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { SETTLE_MS } from "../src/app/desktop.tsx";
+import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
@@ -356,7 +357,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[] } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[] } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -375,7 +376,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   };
   const find = (ref: string) => boxes.find((candidate) => candidate.id === ref || candidate.name === ref) ?? null;
   const handlers: PluginRpcTestHandlers<Contract> = {
-    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null }),
+    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? null, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
@@ -695,6 +696,24 @@ test("the panel makes a box by steps, System, Architecture, Type and Resources, 
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Small/ }));
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}', "acquire linux-desktop"]));
+});
+
+test("New box offers to ask an agent to make the project a box image when it has none, in a new thread's composer (049)", async () => {
+  const slot = panel(server([], { imageOffer: true }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("radiogroup", { name: "Type" });
+  expect(screen.getByText(/This project has no box image, so its boxes start with the standard tools\./)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Ask an agent to make one" }));
+  await waitFor(() => expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toCompose", options: { initialPrompt: IMAGE_REQUEST, focusPrompt: true } }));
+  await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
+
+  // A project with an image, or none, gets no offer.
+  const plain = panel(server([]).handlers);
+  await plain.findAllByText("No boxes yet");
+  fireEvent.click(plain.getAllByRole("button", { name: "New box" }).at(-1)!);
+  await screen.findByRole("radiogroup", { name: "Type" });
+  expect(screen.queryByRole("button", { name: "Ask an agent to make one" })).toBeNull();
 });
 
 test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from a menu", async () => {
