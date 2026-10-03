@@ -42,19 +42,14 @@ export interface TartConfig {
   readonly kinds: Readonly<Record<TartKind, TartKindConfig>>;
   /** The most macOS VMs bb-box lets run on each Mac, counting every VM Tart lists there. */
   readonly vmsPerHost: number;
-  /**
-   * A null key means bb-box generates one and shows its public key. The VM
-   * user's password signs in to a macOS desktop's Screen Sharing (#406).
-   */
-  readonly ssh: { readonly privateKey: string | null; readonly vmUser: string; readonly vmPassword: string };
+  /** A null key means bb-box generates one and shows its public key. */
+  readonly ssh: { readonly privateKey: string | null; readonly vmUser: string };
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
 }
 
 export const TART_DEFAULTS = {
   image: "bb-box-macos",
   vmUser: "admin",
-  /** The password of the user in Tart's macOS images. */
-  vmPassword: "admin",
   reserveMemoryMiB: 16384,
   reserveDiskGiB: 50,
 } as const;
@@ -66,7 +61,6 @@ export const TART_KEYS = {
   hostKeys: "tart-host-keys",
   sshPrivateKey: "tart-ssh-private-key",
   vmUser: "tart-vm-user",
-  vmPassword: "tart-vm-password",
   macosImage: "tart-macos-image",
   desktopImage: "tart-macos-desktop-image",
   linuxImage: "tart-linux-image",
@@ -128,13 +122,6 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     label: "Tart: VM user",
     description: "The user in the macOS images that bb-box and BB work as. It is logged in to the desktop automatically. Linux boxes work as box.",
     default: TART_DEFAULTS.vmUser,
-  },
-  [TART_KEYS.vmPassword]: {
-    type: "string",
-    label: "Tart: VM user's password",
-    description:
-      "The VM user's password in the macOS images, which bb-box signs in to a macOS desktop's Screen Sharing with to show it. Leave empty for the password of Tart's own images.",
-    secret: true,
   },
   [TART_KEYS.macosImage]: {
     type: "string",
@@ -290,12 +277,11 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
 
   const vmUser = text(values, TART_KEYS.vmUser, TART_DEFAULTS.vmUser);
   if (!USER.test(vmUser)) problem(TART_KEYS.vmUser, `Tart: "${vmUser}" is not a user name.`);
-  const vmPassword = text(values, TART_KEYS.vmPassword) || TART_DEFAULTS.vmPassword;
   const keyText = text(values, TART_KEYS.sshPrivateKey);
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
   if (keyText && !privateKey) problem(TART_KEYS.sshPrivateKey, "Tart: use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
 
-  return { hosts, hostKeys, kinds, vmsPerHost, ssh: { privateKey, vmUser, vmPassword }, reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB } };
+  return { hosts, hostKeys, kinds, vmsPerHost, ssh: { privateKey, vmUser }, reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB } };
 }
 
 export const TART_PREFIX = "tart-";
@@ -313,7 +299,6 @@ const IMAGE_LABELS: Readonly<Record<string, string>> = {
 export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
   ([
     [TART_KEYS.sshPrivateKey, "credentials"],
-    [TART_KEYS.vmPassword, "credentials"],
     [TART_KEYS.macosImage, "boxes"],
     [TART_KEYS.desktopImage, "boxes"],
     [TART_KEYS.linuxImage, "boxes"],

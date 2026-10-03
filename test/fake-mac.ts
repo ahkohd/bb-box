@@ -26,6 +26,14 @@ export function fakeMacTools(home: string): void {
   }
 }
 
+/** Gives a fake Mac Xcode's command line tools, as far as `xcode-select -p` tells: the VNC holder runs on the test machine's own /usr/bin/python3. */
+export function fakeXcode(home: string): void {
+  const bin = join(home, ".nix-profile", "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "xcode-select"), "#!/bin/sh\necho /Library/Developer/CommandLineTools\n");
+  chmodSync(join(bin, "xcode-select"), 0o755);
+}
+
 /**
  * Puts the fake qemu-system-aarch64, qemu-img and nc in a fake Mac's
  * ~/.nix-profile/bin, and QEMU's firmware in its share/qemu, as a Nix

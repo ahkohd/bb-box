@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, hostnameOf, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { crashSummary, endReason, parseEnded, parseState, parseVnc, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
-import { FAKE_MAC, addImage, fakeMacTools, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FakeTart, Viewer } from "./fake-tart-vnc.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
@@ -18,8 +18,7 @@ after(async () => {
   for (const backend of made) await backend.dispose();
 });
 
-// Port 1 is closed on the test machine, so a macOS VM's Screen Sharing does not answer unless a test listens for it.
-const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, screenSharingPort: 1 };
+const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 };
 
 function setup(values: Record<string, unknown> = {}) {
   const ssh = fakeSsh();
@@ -132,32 +131,43 @@ test("reads Tart's pretty-printed listing and its VNC URL", () => {
   assert.equal(parseVnc(""), null);
 });
 
-test("a macOS desktop shows the VM's own Screen Sharing, signed in as the VM user, with input of its own; without it, Tart's VNC serves one connection per run (#406)", async (t) => {
-  const listener = createServer((socket) => socket.end());
-  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
-  t.after(() => void listener.close());
-  const port = (listener.address() as AddressInfo).port;
-  const values = { "tart-vm-password": "s3cret" };
-  const { context, backend } = setup(values);
+test("a macOS desktop is Tart's VNC through the run's holder, which starts with the run and makes its only connection, however often viewers open it (#406)", async (t) => {
+  const { mac, backend } = setup();
+  fakeXcode(mac);
+  // Tart's VNC server for the run, which crashes on a second connection.
+  const probe = new FakeTart("");
+  const port = await probe.listen();
+  const tart = new FakeTart(`fake-pass-word-${port}`);
+  probe.server.close();
+  await new Promise<void>((resolve) => tart.server.listen(port, "127.0.0.1", resolve));
+  t.after(() => {
+    tart.end();
+    tart.server.close();
+  });
+  writeFileSync(join(mac, ".fake-vnc-port"), String(port));
+
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  await until(() => tart.connections === 1);
+  const [display] = (await backend.transports(guest, "macos-desktop")).displays;
+  for (let open = 0; open < 3; open++) {
+    const opened = await display!.open(signal());
+    assert.deepEqual(opened.auth, { type: "none" }, "the holder's socket is the host user's alone");
+    const argv = opened.route.type === "command" ? opened.route.argv : [];
+    assert.deepEqual(argv.slice(-3), [`bbbox-admin@${MAC}`, "--", `exec /usr/bin/nc -U "$HOME"/.bb-box/tart/run/'${guest.ref}.vnc'`]);
+  }
+  // A viewer through the holder's socket, as nc gives it to the relay.
+  const viewer = new Viewer(join(mac, ".bb-box", "tart", "run", `${guest.ref}.vnc`));
+  await viewer.join();
+  await viewer.update();
+  viewer.close();
+  assert.equal(tart.connections, 1, "one connection to Tart's VNC for the run");
+  assert.equal(tart.crashed, false);
 
-  const sharing = new TartBackend(tartConfig(values), context, { ...FAKES, screenSharingPort: port });
-  made.push(sharing);
-  const [display] = (await sharing.transports(guest, "macos-desktop")).displays;
-  const opened = await display!.open(signal());
-  assert.deepEqual(opened.auth, { type: "apple", user: "admin", password: "s3cret" });
-  const argv = opened.route.type === "command" ? opened.route.argv : [];
-  assert.deepEqual(argv.slice(-3), ["-W", `127.0.0.1:${port}`, `admin@${guest.address}`], "to the VM's own Screen Sharing, through the Mac");
-  assert.equal(typeof opened.input, "function", "Screen Sharing ignores a viewer's input, so the display has its own");
-  assert.deepEqual((await display!.open(signal())).auth.type, "apple", "as often as viewers connect");
-
-  // With Screen Sharing off, Tart's VNC server, which ends the VM on a second connection in its run.
-  const [fallback] = (await backend.transports(guest, "macos-desktop")).displays;
-  const first = await fallback!.open(signal());
-  assert.equal(first.auth.type, "vnc-password");
-  assert.equal(first.input, undefined, "Tart's VNC server takes the viewer's input itself");
-  await assert.rejects(fallback!.open(signal()), /takes one connection per run: a second would end the VM\. Turn Screen Sharing on in the VM, or stop and start the box/);
-  assert.equal(tartConfig({}).ssh.vmPassword, "admin", "the password of Tart's images, unless one is set");
+  // The run ends; its holder with it, and no viewer can open the desktop until a new run.
+  tart.end();
+  await until(() => !existsSync(join(mac, ".bb-box", "tart", "run", `${guest.ref}.vnc`)));
+  await assert.rejects(display!.open(signal()), /The desktop's stream for this run of bb-box-\S+ has ended: Tart's VNC server closed the connection, as when the run ends\. Stop and start the box to show its desktop again\./);
+  assert.equal(tart.connections, 1, "and it did not connect again");
 });
 
 test("acquire claims the VM before it writes anything, then clones, starts and reaches it through the Mac", async () => {
@@ -181,10 +191,8 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   assert.deepEqual(access?.ssh?.jump, { host: MAC, port: 22, user: "bbbox-admin", hostKeys: [`${MAC} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForTests`] });
   assert.equal(access?.ssh?.user, "admin");
   assert.equal(displays[0]!.minSize, undefined, "a viewer cannot resize a macOS desktop");
-  const opened = await displays[0]!.open();
-  assert.equal(opened.route.type, "command");
-  assert.ok(opened.route.type === "command" && opened.route.argv.includes("-W") && opened.route.argv.at(-1) === `bbbox-admin@${MAC}`);
-  assert.match(opened.auth.type === "vnc-password" ? opened.auth.password : "", /^fake-pass-word-\d+$/);
+  // This Mac has no python3 for the VNC holder, so the desktop says how to give it one.
+  await assert.rejects(displays[0]!.open(), /mac1 could not start the desktop's stream for bb-box-\S+: The Mac has no python3 for bb-box's VNC holder: install Xcode's command line tools there \(xcode-select --install\)\./);
 
   // The VM's commands went to the VM, the rest to the Mac, and the VM is named after the box.
   const targets = new Set(ssh.log().map((entry) => entry.target));

@@ -93,7 +93,8 @@ function tart() {
       }
       writeFileSync(join(dir(name), "running"), String(process.pid));
       rmSync(join(dir(name), "state.vzvmsave"), { force: true });
-      const port = 5900 + (names().indexOf(name) % 100);
+      // A test that serves a fake VNC server names its port in ~/.fake-vnc-port.
+      const port = existsSync(join(home, ".fake-vnc-port")) ? Number(readFileSync(join(home, ".fake-vnc-port"), "utf8")) : 5900 + (names().indexOf(name) % 100);
       if (rest.includes("--vnc-experimental")) console.log(`VNC server is running at vnc://:fake-pass-word-${port}@127.0.0.1:${port}`);
       const stop = () => {
         rmSync(join(dir(name), "running"), { force: true });

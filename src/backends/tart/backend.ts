@@ -35,16 +35,12 @@ import {
   MIN_DESKTOP,
   TransportError,
   type Display,
-  type DisplayInput,
-  type DisplayInputEvents,
   type DisplayOpened,
   type DisplaySize,
   type GuestOs,
   type RunResult,
   type SshAccess,
 } from "../../transports/types.ts";
-import { command as inBoxCommand } from "../../core/in-box.ts";
-import { MacInput, macInputCommand } from "../../core/mac-input.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -88,6 +84,7 @@ import {
   endedScript,
   ownerScript,
   ipScript,
+  holderScript,
   ownerText,
   parseConfig,
   macScript,
@@ -96,13 +93,11 @@ import {
   parseFields,
   parseMacs,
   parseState,
-  parseVnc,
   powerScript,
   startScript,
   stateScript,
   stopScript,
   vmName,
-  vncScript,
   warmScript,
   type HostState,
   type VmConfig,
@@ -135,12 +130,6 @@ const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: t
 const LINUX_USER = "box";
 /** The Linux desktop's VNC server, inside the VM, and the password it makes at first boot, readable by the box user. */
 const LINUX_VNC_PORT = 5900;
-/** A macOS VM's own Screen Sharing, which shows a macOS desktop (#406). */
-const SCREEN_SHARING_PORT = 5900;
-/** Where the backend notes that Tart's VNC server served a VM's run once, by the VM and the run's port (#406). */
-const TART_VNC_USED = "tart-vnc-used:";
-/** How long the input helper may take to start in the desktop session. */
-const INPUT_START_MS = 15_000;
 const LINUX_VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 /** The cookie the Linux desktop's display :99 writes at each start. */
 const DISPLAY_AUTH_FILE = "/run/bb-box/Xauthority";
@@ -178,8 +167,6 @@ export interface TartBackendOptions {
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
-  /** Where a macOS VM's Screen Sharing listens. Tests point it at a listener of their own. */
-  readonly screenSharingPort?: number;
 }
 
 interface SshKeys {
@@ -980,7 +967,6 @@ export class TartBackend implements Backend {
     const host = this.#hostOf(guest);
     const started = performance.now();
     await this.#delete(host, guest.ref, this.#osOf(guest), this.#boxOf(guest), signal, this.#sshPort(guest));
-    await this.#context.storage.delete(`${TART_VNC_USED}${guest.ref}`);
     hooks.timing("delete", Math.round(performance.now() - started));
   }
 
@@ -1421,18 +1407,9 @@ export class TartBackend implements Backend {
             const password = await this.#linuxVncPassword(command, signal);
             return { route: ssh.route(access, LINUX_VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
           }
-          // A macOS desktop's own Screen Sharing, signed in as the VM
-          // user. It ignores a viewer's input, so that goes to the helper
-          // (#406).
-          const port = this.#options.screenSharingPort ?? SCREEN_SHARING_PORT;
-          if (await this.#listens(command, port, signal)) {
-            return {
-              route: ssh.route(access, port),
-              auth: { type: "apple", user: this.#config.ssh.vmUser, password: this.#config.ssh.vmPassword },
-              input: (events, signal) => this.#macInput(guest.ref, command, events, signal),
-            };
-          }
-          return this.#tartVnc(host, mac, guest.ref, ssh, signal);
+          // A macOS desktop is Tart's VNC server, through the run's holder,
+          // which keeps the run's one connection to it (#406).
+          return this.#held(host, mac, guest.ref, ssh, signal);
         },
         ...(os === "linux" ? { minSize: MIN_DESKTOP } : {}),
       }),
@@ -1841,47 +1818,26 @@ export class TartBackend implements Backend {
     await setMode(command, size, signal, 0);
   }
 
-  /** Whether something in the VM listens on `port`, as Screen Sharing does unless it is turned off. */
-  async #listens(command: SshTransport, port: number, signal?: AbortSignal): Promise<boolean> {
-    const result = await command.run(`/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/${port}' 2>/dev/null`, { timeoutMs: 10_000, signal, maxOutputBytes: 1024 });
-    return result.exitCode === 0;
-  }
-
   /**
-   * Tart's own VNC server, when the VM's Screen Sharing does not answer. Its
-   * VM crashes on a second VNC connection in a run, even after the first has
-   * closed (#406), so it serves one viewer connection per run, and refuses
-   * the rest rather than end the VM.
+   * A viewer's way to the VM's desktop: the run's VNC holder on the Mac,
+   * started now if the run began before holders, through `nc -U` on its
+   * socket, which only the Mac's host user can open. Tart's VNC server
+   * crashes the VM on a second connection in a run, so bb-box never connects
+   * to it but through the holder, which makes the run's only connection.
    */
-  async #tartVnc(host: TartHost, mac: SshAccess, vm: string, ssh: Ssh, signal?: AbortSignal): Promise<DisplayOpened> {
-    const vnc = await this.#vnc(host, vm, signal);
-    const key = `${TART_VNC_USED}${vm}`;
-    if ((await this.#context.storage.get<number>(key)) === vnc.port) {
-      throw new BackendError(
-        "unsupported",
-        `The VM's Screen Sharing does not answer, and Tart's VNC server, which shows the desktop instead, takes one connection per run: a second would end the VM. Turn Screen Sharing on in the VM, or stop and start the box to show its desktop once more.`,
+  async #held(host: TartHost, mac: SshAccess, vm: string, ssh: Ssh, signal?: AbortSignal): Promise<DisplayOpened> {
+    const { ssh: shell } = await this.#keys();
+    const result = await shell.run(mac, holderScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 1 << 16 }, "macos");
+    if (result.exitCode === 255) throw new HostError(`${host.name} did not answer over SSH as ${host.user}: ${result.stderr.trim() || "no reason given"}.`);
+    if (result.exitCode !== 0) {
+      const why = result.stderr.trim() || `exit code ${result.exitCode}`;
+      throw new Error(
+        result.exitCode === 4
+          ? `The desktop's stream for this run of ${vm} has ended: ${why.replace(/\.$/, "")}. Stop and start the box to show its desktop again.`
+          : `${host.name} could not start the desktop's stream for ${vm}: ${why}`,
       );
     }
-    await this.#context.storage.set(key, vnc.port);
-    return { route: ssh.route(mac, vnc.port), auth: { type: "vnc-password", password: vnc.password } };
-  }
-
-  /** The input helper in the VM user's desktop session, for one viewer (#406). */
-  async #macInput(vm: string, command: SshTransport, events: DisplayInputEvents, signal?: AbortSignal): Promise<DisplayInput> {
-    const channel = await command.spawn(inBoxCommand("macos", macInputCommand(), { session: "desktop" }), signal);
-    const input = new MacInput(channel, events);
-    const started = await Promise.race([input.ready.then(() => true), input.ended.then(() => false), pause(INPUT_START_MS, signal).then(() => false)]);
-    if (!started) {
-      await input.close();
-      throw new Error(`The desktop's input helper in ${vm} did not start: the VM user may not be signed in to the desktop.`);
-    }
-    return input;
-  }
-
-  async #vnc(host: TartHost, vm: string, signal?: AbortSignal): Promise<{ port: number; password: string }> {
-    const vnc = parseVnc((await this.#run(host, vncScript(vm), { timeoutMs: 15_000, signal })).stdout);
-    if (!vnc) throw new Error(`Tart's VNC server for ${vm} on ${host.name} is not running. The VM may be stopped.`);
-    return vnc;
+    return { route: ssh.commandRoute(mac, `exec /usr/bin/nc -U "$HOME"/.bb-box/tart/run/${quote(`${vm}.vnc`)}`), auth: { type: "none" } };
   }
 
   /**
