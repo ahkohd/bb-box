@@ -2354,6 +2354,25 @@ test("computer_launch opens apps and URLs and says which windows opened", async 
   assert.match(textedit, new RegExp(`Next: Call computer_observe with window ${own} to read it\\.`));
 });
 
+test("computer_launch of a single-instance app already open, which opens no new window, brings the app's window to the front", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  const opened = text(await tool("computer_launch", { box: box.name, app: "editor" }));
+  const id = Number(/window (\d+): editor "Untitled 1 - Editor"/.exec(opened)?.[1]);
+  const pid = readDesktop(file).windows.find((window) => window.id === id)!.pid;
+
+  // Cua hands the launch to the editor over D-Bus, which shows a new document in its window.
+  const again = await tool("computer_launch", { box: box.name, app: "Editor" });
+  assert.equal(isError(again), false);
+  assert.equal(
+    text(again),
+    `Editor was already open, and opening it again opened no new window. bb-box brought its window to the front:\n- window ${id}: editor "Untitled 2 - Editor", 640 by 480\n\n` +
+      `Its title was "Untitled 1 - Editor" before, so it may show a new document.\n\nNext: Call computer_observe with window ${id} to read it.`,
+  );
+  assert.deepEqual(lastCall(file, "bring_to_front")?.args, { pid, window_id: id });
+  assert.equal(readDesktop(file).windows.filter((window) => window.app === "editor").length, 1);
+});
+
 test("a web page's runs of text are one line each, and the limit counts every line shown", async (t) => {
   const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
   t.after(() => harness.lifecycle.dispose());
