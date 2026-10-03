@@ -17,7 +17,7 @@ Every result ends with a `Next:` line that says what to do next.
 | --- | --- | --- |
 | `box_acquire` | `kind?`, `size?`, `cores?`, `memory_gib?`, `disk_gib?`, `wait?`, `on?` | Makes a box and waits until it answers. `kind` defaults to `linux`, and `size` to the kind's default preset. `on` names the provider to use, in the words `box_list` gives after "On:", or a list of them for the first with room among them, in that order (044): only they are tried, and a refusal says why each was out and names the others. Without it, the first with room. |
 | `box_list` | | Lists the thread's boxes and the kinds on offer. |
-| `box_status` | `box` | Shows one box, checking its power state with the backend. |
+| `box_status` | `box` | Shows one box, checking its power state with the backend, and why it last stopped when bb-box did not stop it. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
 | `box_copy` | `box`, `direction`, `from`, `to?` | Copies one file between the thread's workspace and a box: `to_box` or `from_box`. |
 | `box_stop` | `box` | Stops a box and keeps its disk. Refused while a thread is working on the box, naming it. |
@@ -51,6 +51,10 @@ Limits:
   variables, but not its PowerShell variables: pass values in `$env:`.
 - A command that exits with a non-zero code is not a tool error. A command
   that times out is.
+- A box can stop without a request, as when its VM crashes. `box_status`
+  and the error a tool gives then say when and why. bb-box starts a box
+  whose VM crashed again at once, unless it did so less than 10 minutes
+  before: call `box_status` after a few seconds.
 - `box_copy` moves one file of up to 16 MiB. Tar a directory first. A
   relative workspace path is under the thread's workspace directory. A
   relative box path, or one that starts with `~/`, is under the box user's

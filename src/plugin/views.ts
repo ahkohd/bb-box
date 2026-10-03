@@ -5,7 +5,7 @@ import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases, kindInfo } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs, Windowing } from "../backends/types.ts";
-import { extraFeatures, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
+import { extraFeatures, stopWords, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
@@ -28,6 +28,8 @@ export interface BoxView {
   readonly size: string | null;
   readonly state: BoxState;
   readonly error: string | null;
+  /** Why it last stopped without bb-box's request, and what bb-box did, in words (#406). */
+  readonly stopped: string | null;
   readonly createdAt: number;
   readonly readyAt: number | null;
   readonly os: string;
@@ -79,6 +81,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     size: sizeWords(box),
     state: box.state,
     error: box.error,
+    stopped: stopWords(box) || null,
     createdAt: box.createdAt,
     readyAt: box.readyAt,
     os: box.capabilities.os,
@@ -346,6 +349,7 @@ export function boxLine(box: BoxRecord): string {
   if (box.role === "machine") parts.push("this thread's machine");
   else if (box.enrol.state === "enrolled") parts.push(`enrolled as a BB machine${box.timings.enrol !== undefined ? ` in ${seconds(box.timings.enrol)}` : ""}`);
   if (box.error) parts.push(box.error);
+  if (box.unrequestedStop && box.state !== "ready") parts.push(stopWords(box));
   return `- ${parts.join("; ")}`;
 }
 
@@ -387,6 +391,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const lines = [
     `Box ${box.name} (${box.id})`,
     `State: ${STATE_WORDS[box.state]}${box.error ? `. ${box.error}` : ""}`,
+    ...(box.unrequestedStop ? [`Last unrequested stop: ${stopWords(box)}`] : []),
     `Kind: ${box.kindLabel} (${box.kind}) from ${box.backendLabel}`,
     ...(sizeWords(box) ? [`Size: ${sizeWords(box)}`] : []),
     `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${capabilities.displays.length ? ", with a desktop" : ""}`,

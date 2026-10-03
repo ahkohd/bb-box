@@ -470,7 +470,17 @@ scales down, from 800x600 up.
 - **A box does not answer SSH.** Check that the image's user accepts
   bb-box's key: from the Mac, `tart run bb-box-macos &`, then `ssh
   admin@$(tart ip bb-box-macos)` with the key.
-- **A desktop box's VM stopped by itself.** If its output file,
-  `~/.bb-box/tart/run/<VM>.out`, ends with "It is unclear if we can support
-  clients that don't support this pseudo encoding", a VNC client without
-  DesktopSize ended it. Start the box again.
+- **A box's VM stopped by itself.** `box_status` says why (#406), from how
+  `tart run` exited, which bb-box keeps in `~/.bb-box/tart/run/<VM>.exit`,
+  and macOS's crash report of it, from `~/Library/Logs/DiagnosticReports`
+  or `/Library/Logs/DiagnosticReports` where the host user can read it.
+  bb-box starts a VM that crashed again, unless it did so less than 10
+  minutes before. A start keeps the run before's output and exit file as
+  `<VM>.out.last` and `<VM>.exit.last`.
+  - A crash on signal 5 (SIGTRAP), an assertion in Virtualization's
+    `-[_VZVNCServer _setupVirtualMachineAccessor]`, came as a viewer
+    connected to the desktop, with Tart 2.30.0 on macOS 27. The VM's guest
+    then boots afresh.
+  - If the output file ends with "It is unclear if we can support clients
+    that don't support this pseudo encoding", a VNC client without
+    DesktopSize ended it. Start the box again.

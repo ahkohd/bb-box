@@ -46,6 +46,7 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type StopReason,
 } from "../src/backends/types.ts";
 import { CommandLine, quote } from "../src/transports/process.ts";
 import { openRoute } from "../src/transports/route.ts";
@@ -189,6 +190,8 @@ export class FakeBackend implements Backend {
   /** Stops and starts wait here while it is set. */
   powerGate: Promise<void> | null = null;
   readonly calls: string[] = [];
+  /** What stopped() says of a guest that stopped without bb-box's request (#406). */
+  stopReason: StopReason | null = null;
   /** The steps a start reports, with the time each took. */
   startSteps: Readonly<Record<string, number>> = { boot: 1_200 };
   readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void) => Promise<void>;
@@ -352,6 +355,10 @@ export class FakeBackend implements Backend {
       throw error;
     }
     if (await this.#still(guest)) await this.#discard(guest, hooks);
+  }
+
+  async stopped(): Promise<StopReason | null> {
+    return this.stopReason;
   }
 
   async power(guest: Guest): Promise<PowerState | null> {

@@ -440,6 +440,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           <Notice>{box.name} has no desktop.</Notice>
         ) : box.state === "stopped" ? (
           <Notice
+            detail={box.stopped ?? undefined}
             action={
               box.canStopStart ? (
                 <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting} onClick={() => void start()}>
@@ -452,7 +453,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
             {box.name} is stopped.
           </Notice>
         ) : box.state === "acquiring" || box.state === "starting" ? (
-          <Notice detail="The desktop shows once it is ready.">{box.name} is starting…</Notice>
+          <Notice detail={box.stopped ?? "The desktop shows once it is ready."}>{box.name} is starting…</Notice>
         ) : box.state === "failed" ? (
           <Notice detail={box.error ?? undefined}>{box.name} failed to start.</Notice>
         ) : box.state === "gone" ? (

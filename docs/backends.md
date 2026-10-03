@@ -418,6 +418,12 @@ SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.
   thread, name, kind and creation time. It is written with noclobber before
   the clone and removed after the VM is deleted. VM names hold the box ID, so
   references are never reused.
+- `tart run`, and QEMU for a Windows box, run detached under a shell that
+  writes their process ID, then their exit status, to
+  `~/.bb-box/tart/run/<VM>.exit`, or `exit` in a Windows VM's directory.
+  `stopped()` reads it with the run's last output and macOS's crash report
+  of that process, so a VM that stopped by itself says why (#406). A start
+  keeps the run before's output and exit as `.last`.
 - Capacity is per Mac: `guests`, the running macOS VMs Tart lists there, at
   most two (Linux VMs do not count, as the framework does not count them);
   `memory`, less a reserve and every running VM's; and `disk`. A

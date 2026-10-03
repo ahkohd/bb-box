@@ -71,6 +71,7 @@ A backend declares its nature (virtual or real) and its kinds, and implements:
 | `release(guest, hooks)` | deletes a virtual guest, or resets a real machine and returns it to the pool |
 | `power(guest)` | `running`, `stopped` or `unknown` now, not from a listing that may lag; null when the guest is gone |
 | `start?`, `stop?` | only where the provider can; the panel and tools offer them only when present |
+| `stopped?(guest)` | why a guest stopped when bb-box did not stop it, such as its VM process's exit status and crash report, and whether the guest did not choose it (#406) |
 | `held()` | every guest this install holds for boxes, with the owner recorded at the provider ([018](decisions/018-guests-name-their-install-and-box.md)) |
 | `stamp?(boxId, guest)` | records this install on the guest of a box from before install IDs, and returns the guest with its box ID |
 | `asOffered?(guest, kind, createdAt)` | whether the guest comes from what the kind is offered from now, so a box gains what a release adds to its kind (see [Capabilities](#capabilities)) |
@@ -642,6 +643,14 @@ export interface Guest {
 
 export type PowerState = "running" | "stopped" | "unknown";
 
+/** Why a guest stopped without bb-box's request (#406). */
+export interface StopReason {
+  readonly reason: string;
+  /** The guest did not choose it: its VM crashed or was killed, or its host restarted. */
+  readonly crashed: boolean;
+  readonly at: number | null;
+}
+
 export interface BoxTransports {
   readonly command: CommandTransport | null;
   readonly displays: readonly Display[];
@@ -712,6 +721,7 @@ export interface Backend {
   power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null>;
   start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  stopped?(guest: Guest, signal?: AbortSignal): Promise<StopReason | null>;
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
   stamp?(boxId: string, guest: Guest, signal?: AbortSignal): Promise<Guest>;
   relabel?(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void>;
@@ -1336,6 +1346,13 @@ Nothing expires, so a box must never be forgotten.
 - **A guest deleted outside bb-box** makes `power` return nothing; the box is
   marked gone and the panel says so. It stays gone when its reference is
   reused, since the new guest names another box.
+- **A guest that stopped without bb-box's request**, found by the sweep, a
+  status check or a command that cannot reach it, is recorded as the box's
+  unrequested stop, with what the backend's `stopped()` says of it (#406).
+  `box_status`, the panel and the error a caller gets say when it stopped
+  and why. When the guest did not choose it, as when its VM crashed, bb-box
+  starts the box again at once, unless it did so for the stop before less
+  than 10 minutes before, and says so. A stop bb-box makes forgets it.
 - **If the BB server is down**, boxes keep running and nothing is released.
 - **If a box reboots**, its services start again, the viewer reconnects and
   control returns to the agent. This includes a reboot bb-box did not start,

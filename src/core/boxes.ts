@@ -36,6 +36,7 @@ import {
   type MachineNature,
   type PowerState,
   type ReleaseHooks,
+  type StopReason,
 } from "../backends/types.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
@@ -103,6 +104,47 @@ export interface BoxRecord {
   /** Milliseconds per acquire step, "total" from request to ready, and "release.<step>" after a failed release. */
   readonly timings: Readonly<Record<string, number>>;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
+  /** The last time the box's guest stopped without bb-box's request (#406). A stop bb-box makes forgets it. */
+  readonly unrequestedStop?: UnrequestedStop | null;
+}
+
+/** A stop bb-box did not make, why, and what bb-box did about it (#406). */
+export interface UnrequestedStop {
+  /** When the guest stopped, or when bb-box found it stopped. */
+  readonly at: number;
+  /** The backend's words, or null when it cannot tell. */
+  readonly reason: string | null;
+  /** The guest did not choose it, as when its VM crashed. */
+  readonly crashed: boolean;
+  /** When bb-box started the box again, and the error when that failed. */
+  readonly restart: { readonly at: number; readonly error: string | null } | null;
+}
+
+/**
+ * bb-box starts a box whose VM crashed again (#406), unless it did so for
+ * the stop before less than this long before, so a VM that keeps crashing
+ * stays stopped.
+ */
+export const RESTART_GAP_MS = 10 * 60_000;
+
+function utc(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 19).replace("T", " ")} UTC`;
+}
+
+/** Why the box last stopped without bb-box's request, and what bb-box did, in words (#406); empty when it has not. */
+export function stopWords(box: BoxRecord): string {
+  const stop = box.unrequestedStop;
+  if (!stop) return "";
+  const words = [`It stopped without a request from bb-box at ${utc(stop.at)}.`, stop.reason ? sentence(stop.reason) : "Its backend does not record why."];
+  if (stop.restart?.error) words.push(`bb-box could not start it again: ${sentence(stop.restart.error)}`);
+  else if (stop.restart) words.push(box.state === "ready" ? `bb-box started it again at ${utc(stop.restart.at)}.` : "bb-box is starting it again.");
+  else if (stop.crashed) words.push(`bb-box left it stopped, as it had started it again after a stop less than ${RESTART_GAP_MS / 60_000} minutes before.`);
+  return words.join(" ");
+}
+
+/** Whether bb-box is starting the box again after a stop it did not make (#406). */
+function restarting(box: BoxRecord): boolean {
+  return !!box.unrequestedStop?.restart && !box.unrequestedStop.restart.error;
 }
 
 /**
@@ -1302,34 +1344,70 @@ export class Boxes {
    */
   async start(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
-    return this.#chain(box.id, async () => {
-      const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
-      const { start } = this.#stopStart(current);
-      if (current.state === "ready") return current;
-      this.#require(current, "stopped");
-      this.#require((await this.#move(current, "starting")) ?? { ...current, state: "releasing" }, "starting");
-      const timings: Record<string, number> = {};
-      const began = this.#now();
-      try {
-        await start(current.guest!, signal, (step, ms) => {
-          timings[`start.${step}`] = ms;
+    return this.#chain(box.id, () => this.#start(box, signal));
+  }
+
+  /** start(), in the box's chain. */
+  async #start(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
+    const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
+    const { start } = this.#stopStart(current);
+    if (current.state === "ready") return current;
+    this.#require(current, "stopped");
+    this.#require((await this.#move(current, "starting")) ?? { ...current, state: "releasing" }, "starting");
+    const timings: Record<string, number> = {};
+    const began = this.#now();
+    try {
+      await start(current.guest!, signal, (step, ms) => {
+        timings[`start.${step}`] = ms;
+      });
+    } catch (error) {
+      await this.#observe(current, { signal, moving: true }).catch(() => null);
+      throw error;
+    }
+    timings["start.total"] = this.#now() - began;
+    const started = (await this.#move(current, "ready", timings)) ?? current;
+    if (started.state === "ready" && started.restoredAt) {
+      await this.#enrol(started, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
+      return (await this.#read(started.threadId, started.id)) ?? started;
+    }
+    // A hard stop ends BB's daemon, and nothing in the box starts it again (017).
+    if (started.state === "ready" && started.enrol.state === "enrolled" && this.#deps.reconnect) {
+      this.#waitFor(started.id, this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error)));
+    }
+    return started;
+  }
+
+  /**
+   * Records why a box's guest stopped when bb-box did not stop it, as its
+   * backend says (#406), and starts it again in the background when its VM
+   * crashed, unless bb-box started it again after the stop before less than
+   * RESTART_GAP_MS before.
+   */
+  async #stoppedUnrequested(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
+    const backend = this.#deps.backends.get(box.backend);
+    let why: StopReason | null = null;
+    try {
+      why = (await backend?.stopped?.(box.guest!, signal)) ?? null;
+    } catch (error) {
+      this.#deps.logError("stopped", error);
+    }
+    const now = this.#now();
+    const last = box.unrequestedStop?.restart?.at;
+    const restart = !!why?.crashed && !!backend?.start && (last === undefined || now - last >= RESTART_GAP_MS);
+    const stop: UnrequestedStop = { at: why?.at ?? now, reason: why?.reason ?? null, crashed: why?.crashed ?? false, restart: restart ? { at: now, error: null } : null };
+    const updated = (await this.update(box, (current) => (current.state === "stopped" ? { unrequestedStop: stop } : {}))) ?? box;
+    this.#deps.log?.(`${describeBox(box)}: ${stopWords(updated)}`);
+    if (restart && updated.unrequestedStop === stop) {
+      void this.#chain(box.id, () => this.#start(updated)).catch(async (error) => {
+        this.#deps.logError("restart", error);
+        const message = describeError(error, "The start");
+        await this.update(box, (current) => {
+          const last = current.unrequestedStop;
+          return last?.restart ? { unrequestedStop: { ...last, restart: { ...last.restart, error: message } } } : {};
         });
-      } catch (error) {
-        await this.#observe(current, { signal, moving: true }).catch(() => null);
-        throw error;
-      }
-      timings["start.total"] = this.#now() - began;
-      const started = (await this.#move(current, "ready", timings)) ?? current;
-      if (started.state === "ready" && started.restoredAt) {
-        await this.#enrol(started, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
-        return (await this.#read(started.threadId, started.id)) ?? started;
-      }
-      // A hard stop ends BB's daemon, and nothing in the box starts it again (017).
-      if (started.state === "ready" && started.enrol.state === "enrolled" && this.#deps.reconnect) {
-        this.#waitFor(started.id, this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error)));
-      }
-      return started;
-    });
+      });
+    }
+    return updated;
   }
 
   /**
@@ -1340,6 +1418,7 @@ export class Boxes {
     const moving = state === "stopping" || state === "starting";
     return this.update(box, (current) => {
       if (current.state === "releasing") return {};
+      if (state === "stopping") return { state, error: null, unrequestedStop: null };
       if (moving) return { state, error: null };
       if (!started) return { state };
       const kept = Object.entries(current.timings).filter(([step]) => !step.startsWith("start."));
@@ -1352,10 +1431,14 @@ export class Boxes {
     if (box.state === state && box.guest) return;
     const reasons: Record<BoxState, string> = {
       acquiring: `Box ${box.name} is still being acquired. Check its status in a few seconds.`,
-      starting: `Box ${box.name} is still starting. Check its status in a few seconds.`,
+      starting: restarting(box)
+        ? `Box ${box.name} is starting again. ${stopWords(box)} Check its status in a few seconds.`
+        : `Box ${box.name} is still starting. Check its status in a few seconds.`,
       ready: `Box ${box.name} is already running.`,
       stopping: `Box ${box.name} is stopping.`,
-      stopped: `Box ${box.name} is stopped. Start it first.`,
+      stopped: restarting(box)
+        ? `Box ${box.name} is stopped. ${stopWords(box)} Check its status in a few seconds.`
+        : `Box ${box.name} is stopped.${box.unrequestedStop ? ` ${stopWords(box)}` : ""} Start it first.`,
       failed: `Box ${box.name} failed: ${box.error ?? "unknown error"} Release it and acquire another.`,
       gone: `Box ${box.name} no longer exists at its provider. Release it and acquire another.`,
       releasing: `Box ${box.name} is being released.`,
@@ -1390,7 +1473,14 @@ export class Boxes {
       const current = await this.#read(box.threadId, box.id);
       if (current && Object.keys(observed(current, power, options.moving)).length) power = await read();
     }
-    return this.update(box, (current) => observed(current, power, options.moving));
+    let unrequested = false;
+    const updated = await this.update(box, (current) => {
+      const change = observed(current, power, options.moving);
+      // A ready box stops through stop(), which moves it to stopping first: one that did not was not asked (#406).
+      unrequested = current.state === "ready" && change.state === "stopped";
+      return change;
+    });
+    return unrequested && updated ? this.#stoppedUnrequested(updated, options.signal) : updated;
   }
 
   /**

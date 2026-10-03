@@ -13,8 +13,9 @@
 //   ports on the Mac's loopback, for SSH and VNC, and the machine, such as
 //   virt-11.1, that QEMU's virt stood for, all chosen when it is made.
 //   While QEMU runs it, it has QEMU's QMP socket, pid file and
-//   output. A stopped or warm VM keeps its memory in state, saved by QEMU's
-//   migration to a file, until it starts again.
+//   output. exit holds how QEMU last exited, as host.ts's detach records
+//   it (#406). A stopped or warm VM keeps its memory in state, saved by
+//   QEMU's migration to a file, until it starts again.
 // - The VM's owner file is in Tart's directory (host.ts) and names the
 //   engine, qemu. It is written before the VM's directory and removed after.
 //
@@ -226,7 +227,8 @@ echo @config; cat "$v/config"
  * QEMU's QMP socket. A VM with a saved state restores it, runs on, and drops
  * it, as it no longer matches the disk. Prints "running", "started" or
  * "restored". When QEMU exits first, exits 3 with its output; when a state
- * does not restore, fails saying so.
+ * does not restore, fails saying so. The last run's output and exit are
+ * kept (host.ts).
  */
 export function qemuStartScript(vm: string, waitSeconds: number): string {
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
@@ -245,9 +247,8 @@ set -- -name "$vm" -machine "$(val machine)" -accel hvf -cpu host -smp "$(val co
   -device virtio-gpu-pci -display none -vnc "127.0.0.1:$(($(val vnc) - 5900))" \
   -qmp "unix:$v/qmp,server=on,wait=off" -pidfile "$v/pid"
 saved=; if [ -f "$v/state" ]; then saved=1; set -- "$@" -incoming defer; fi
-: > "$v/out"
-nohup qemu-system-aarch64 "$@" >>"$v/out" 2>&1 </dev/null &
-pid=$!
+keep "$v/out" "$v/exit"
+detach "$v/out" "$v/exit" qemu-system-aarch64 "$@" || { echo "QEMU did not start for $vm." >&2; exit 1; }
 i=0
 until [ -S "$v/qmp" ]; do
   kill -0 "$pid" 2>/dev/null || { cat "$v/out" >&2; exit 3; }
@@ -340,6 +341,18 @@ export function qemuPowerScript(vm: string, installId: string, boxId: string | n
   return qemu(String.raw`vm=${quote(vm)}
 mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} || { echo gone; exit 0; }
 qstate "$vm" | grep . || echo gone
+`);
+}
+
+/**
+ * How the VM's last run of QEMU ended, when it names the box (#406), as
+ * host.ts's `ended` prints it. Prints "gone" when it is not there or not
+ * this box's.
+ */
+export function qemuEndedScript(vm: string, installId: string, boxId: string | null): string {
+  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
+mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} && [ -d "$v" ] || { echo gone; exit 0; }
+ended "$v/out" "$v/exit" qemu-system-aarch64
 `);
 }
 

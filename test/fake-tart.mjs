@@ -15,7 +15,7 @@
 // - A saved state that holds "corrupt" fails to restore, as Tart reports it.
 // - `sw_vers -buildVersion` says 27A1, or what the Mac's ~/.fake-macos-build holds.
 // - `sysctl` says the Mac has 16 cores, 128 GiB and the Hypervisor framework,
-//   unless the Mac's ~/.fake-no-hvf exists.
+//   unless the Mac's ~/.fake-no-hvf exists, and started in November 2023.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -156,7 +156,8 @@ switch (tool) {
     arp();
     break;
   case "sysctl":
-    console.log(args.includes("hw.ncpu") ? "16" : args.includes("kern.hv_support") ? (existsSync(join(home, ".fake-no-hvf")) ? "0" : "1") : String(128 * 1024 * 1024 * 1024));
+    if (args.includes("kern.boottime")) console.log("{ sec = 1700000000, usec = 0 } Tue Nov 14 22:13:20 2023");
+    else console.log(args.includes("hw.ncpu") ? "16" : args.includes("kern.hv_support") ? (existsSync(join(home, ".fake-no-hvf")) ? "0" : "1") : String(128 * 1024 * 1024 * 1024));
     break;
   case "sw_vers":
     console.log(args.includes("-buildVersion") ? (existsSync(join(home, ".fake-macos-build")) ? readFileSync(join(home, ".fake-macos-build"), "utf8").trim() : "27A1") : "27.0");

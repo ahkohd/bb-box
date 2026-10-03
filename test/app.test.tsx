@@ -200,6 +200,7 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     role: "box",
     state: "ready",
     error: null,
+    stopped: null,
     createdAt: Date.now() - 12 * 60_000,
     readyAt: Date.now() - 12 * 60_000 + 2100,
     os: "linux",
