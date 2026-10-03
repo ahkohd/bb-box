@@ -366,7 +366,7 @@ test("a GPU desktop on a desktop image built before gpu-bus-id stays unprivilege
   assert.match(image.fix!, /setup\/docker\/build\.sh to give GPU desktops Docker/);
 
   // Built again, the image has the label, and the next GPU desktop has Docker.
-  desktop({ "bbbox.image-version": "1", "bbbox.gpu-bus-id": "1" });
+  desktop({ "bbbox.image-version": "1", "bbbox.gpu-bus-id": "1", "bbbox.image-record": record() });
   const fresh = fake.inspect((await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal())).ref);
   assert.equal(fresh.HostConfig.Privileged, true);
   assert.ok(fresh.Config.Env.includes(`BBBOX_GPU_ID=${uuidOf(GPU_A)}`));
@@ -712,6 +712,50 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
   assert.equal(by("docker.privileged").status, "warn");
   assert.match(by("docker.privileged").detail, /^Rootless Docker cannot run the privileged containers .* say No Docker\.$/);
   assert.equal(broken.summary, `Image bbbox/linux-desktop:1: ${by("image.bbbox/linux-desktop:1").detail}`);
+});
+
+/** An image's record (049) as setup/docker/build.sh labels it, built `days` ago. */
+function record(days = 0, changes: Record<string, unknown> = {}): string {
+  const built = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  return JSON.stringify({ contract: 1, image: "standard", kind: "linux-desktop", arch: "x86_64", build: "build.20261003-021500-3f9c", built, os: "Ubuntu 24.04.5 LTS", pins: "d".repeat(64), bbApp: "a".repeat(64), tools: { node: "24.21.0" }, ...changes });
+}
+
+test("the doctor judges each image by its record's label: contract, age, BB's app and pins (049)", async () => {
+  const fake = fakeDockerHost();
+  const [linuxPins, desktopPins, app] = ["l", "d", "a"].map((letter) => letter.repeat(64));
+  const images = { pins: async (set: string) => (set === "linux" ? linuxPins! : desktopPins!), bbApp: async () => app! };
+  writeFileSync(
+    join(fake.root, "images.json"),
+    JSON.stringify({
+      "bbbox/linux:1": { "bbbox.image-version": "1", "bbbox.image-record": record(1, { kind: "linux", pins: linuxPins }) },
+      "bbbox/linux-desktop:1": { "bbbox.image-version": "1", "bbbox.gpu-bus-id": "1", "bbbox.image-record": record(20, { bbApp: null, pins: "x".repeat(64) }) },
+      "bbbox/linux-desktop-wayland:1": { "bbbox.image-version": "1", "bbbox.image-record": record(1, { contract: 0 }) },
+    }),
+  );
+  const backend = new DockerBackend(dockerConfig(), { ...testContext(), images }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const report = await backend.doctor(signal());
+  const by = (image: string) => report.checks.find((check) => check.id === `image.${image}`)!;
+
+  const linux = by("bbbox/linux:1");
+  assert.deepEqual([linux.status, linux.fix], ["ok", null]);
+  assert.match(linux.detail, /^For linux boxes\. Standard image build\.20261003-021500-3f9c, built \d+ \w+ \(1 day ago\): Ubuntu 24\.04\.5 LTS, node 24\.21\.0\.$/);
+
+  const desktop = by("bbbox/linux-desktop:1");
+  assert.equal(desktop.status, "warn");
+  assert.match(desktop.detail, /^For linux-desktop-cpu(, linux-desktop)? boxes\. /);
+  assert.match(desktop.detail, /It is 20 days old, more than 14, .* It has no build of BB's app, .* It was built with other pins than this bb-box's/);
+  assert.equal(desktop.fix, "Build it again with this bb-box's setup/docker/build.sh --bb-url <BB's server URL>.");
+
+  const wayland = by("bbbox/linux-desktop-wayland:1");
+  assert.equal(wayland.status, "fail");
+  assert.match(wayland.detail, /It keeps image contract 0, and this bb-box needs 1, so its boxes may not work\./);
+  assert.equal(report.ok, false);
+
+  // Built by an earlier bb-box: its layout, and no record.
+  writeFileSync(join(fake.root, "images.json"), JSON.stringify({ "bbbox/linux:1": { "bbbox.image-version": "1" } }));
+  const before = (await backend.doctor(signal())).checks.find((check) => check.id === "image.bbbox/linux:1")!;
+  assert.equal(before.status, "warn");
+  assert.match(before.detail, /^For linux boxes\. It has no image record/);
 });
 
 test("the doctor warns about a kind the host cannot hold at any preset, less the memory it keeps free (#74)", async () => {

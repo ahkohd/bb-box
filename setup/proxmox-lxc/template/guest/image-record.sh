@@ -1,8 +1,8 @@
 #!/bin/bash
 # Writes the image's record (049), <out-dir>/image.json, from the build
-# directory and the template-release finalize.sh wrote there. finalize.sh runs
-# it before it removes the build directory, then adds the image's size
-# (sizeGiB, null until then) once it is clean.
+# directory and the template-release finalize.sh wrote there, on one line.
+# finalize.sh runs it before it removes the build directory, then adds the
+# image's size (sizeGiB, null until then) once it is clean.
 #
 # The contract is what bb-box needs of an image. The pins' SHA-256 is of
 # pins.json, apt-snapshot and, for a desktop, desktop-pins.tsv, in that order,
@@ -27,7 +27,9 @@ tools=$(jq -c --arg arch "$arch" '[.tools[] | select(.arch == $arch) | {(.name):
 if [ "$kind" != linux ]; then
   pin_files+=("$build/desktop-pins.tsv")
   if [ "$(settings DESKTOP_SESSION)" = wayland ]; then image_kind=linux-desktop-wayland-cpu
-  elif [ "$(settings DESKTOP_GPU)" = none ]; then image_kind=$image_kind-desktop-cpu
+  # Docker's X desktop image serves GPU desktops too, with the host's NVIDIA
+  # userspace.
+  elif [ "$(settings DESKTOP_GPU)" = none ] && [ "$(settings BOX_RUNTIME)" != docker ]; then image_kind=$image_kind-desktop-cpu
   else image_kind=linux-desktop; fi
   version_of() { awk -F'\t' -v n="$1" -v a="$arch" '$1 == n && $5 == a { print $2 }' "$build/desktop-pins.tsv" | sed -n "$2"; }
   tools=$(jq -c --arg chrome "$(version_of chrome 's/^google-chrome-stable_\([0-9.]*\)-.*/\1/p')" \
@@ -39,7 +41,7 @@ case $nvidia in "" | none) nvidia= ;; esac
 build_id=$(settings BUILD_ID)
 [ -n "$build_id" ] || build_id=build.$(date -u +%Y%m%d-%H%M%S)-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')
 
-jq -n --arg kind "$image_kind" --arg arch "$arch" --arg build "$build_id" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+jq -cn --arg kind "$image_kind" --arg arch "$arch" --arg build "$build_id" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg os "$(. /etc/os-release && echo "$PRETTY_NAME")" \
   --arg snapshot "$(sed -n 's/^apt_snapshot=//p' "$out/template-release" | grep -v '^none$' || true)" \
   --arg pins "$(cat "${pin_files[@]}" | sha256sum | cut -d' ' -f1)" \

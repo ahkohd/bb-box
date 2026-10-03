@@ -43,8 +43,10 @@ export const LABELS = {
   created: "bbbox.created",
   /** The CDI device of a GPU desktop. */
   gpu: "bbbox.gpu",
-  /** On an image setup/docker/build.sh made: its layout version. */
+  /** On an image setup/docker/build.sh made: its layout version, which its record's contract replaces (049). */
   imageVersion: "bbbox.image-version",
+  /** On an image setup/docker/build.sh made: its record, /usr/share/bb-box/image.json, as JSON (049). */
+  imageRecord: "bbbox.image-record",
   /** On an image setup/docker/build.sh made: the digest of BB's app in it, or empty for none. */
   bbApp: "bbbox.bb-app",
   /** On a desktop image whose start points Xorg at the GPU placed, so a GPU desktop may be privileged (#283). */
