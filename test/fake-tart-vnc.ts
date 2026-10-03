@@ -16,8 +16,9 @@ const rect = (x: number, y: number, w: number, h: number, encoding: number) => B
 /**
  * Tart's VNC server as far as the holder sees it: it ends on a second
  * connection in its life, and on an update request before DesktopSize is
- * set. It answers a request for the whole screen at once, and a request for
- * changes only when change() says the screen changed.
+ * set. It answers requests in order, as Tart seems to: one for the whole
+ * screen at once, one for changes only when change() says the screen
+ * changed, and nothing behind a request for changes until then.
  */
 export class FakeTart {
   readonly server: Server;
@@ -34,8 +35,11 @@ export class FakeTart {
   #deflate = createDeflate();
   #compressed: Buffer[] = [];
   #updates = 0;
-  #held = false;
+  /** Requests not yet answered, in order: true for the whole screen. */
+  #queue: boolean[] = [];
   #changed = false;
+  /** Every request, in order: true for the whole screen. */
+  requests: boolean[] = [];
 
   readonly password: string;
 
@@ -50,14 +54,21 @@ export class FakeTart {
     return (this.server.address() as { port: number }).port;
   }
 
-  /** The screen changed: a held request for changes is answered, or the next one is. */
+  /** The screen changed: the request for changes at the head of the queue is answered, or the next one is. */
   async change(): Promise<void> {
-    if (!this.#held || !this.#socket) {
-      this.#changed = true;
-      return;
+    this.#changed = true;
+    await this.#answer();
+  }
+
+  /** Answers the queue's requests in order, as far as it can. */
+  async #answer(): Promise<void> {
+    while (this.#socket && this.#queue.length) {
+      const whole = this.#queue[0]!;
+      if (!whole && !this.#changed) return;
+      this.#queue.shift();
+      if (!whole) this.#changed = false;
+      await this.#update(this.#socket, whole);
     }
-    this.#held = false;
-    await this.#update(this.#socket, false);
   }
 
   /** The run ends, as when Tart exits: the connection closes, and the server goes on listening, to catch a reconnection. */
@@ -119,11 +130,9 @@ export class FakeTart {
           const body = Buffer.from(await reader.read(9));
           this.received.push(Buffer.concat([Buffer.from([3]), body]));
           if (!this.#encodings.includes(-223)) return this.#crash("update request without DesktopSize");
-          if (body[0] === 0) await this.#update(socket, true);
-          else if (this.#changed) {
-            this.#changed = false;
-            await this.#update(socket, false);
-          } else this.#held = true;
+          this.requests.push(body[0] === 0);
+          this.#queue.push(body[0] === 0);
+          await this.#answer();
         } else if (type === 4) this.received.push(Buffer.concat([Buffer.from([4]), Buffer.from(await reader.read(7))]));
         else if (type === 5) this.received.push(Buffer.concat([Buffer.from([5]), Buffer.from(await reader.read(5))]));
         else if (type === 6) {

@@ -6,11 +6,15 @@
 // never connects again; a new run gets a new holder (holderScript).
 //
 // It sets one pixel format and its own encodings upstream, reads each of the
-// server's messages whole, and gives each viewer whole messages from the
-// first update it asks for, with the size and cursor of the moment and a
-// whole screen. ZRLE's zlib stream is per connection, so it inflates the
-// server's once and deflates it again for each viewer. Viewers' input goes
-// upstream as it is.
+// server's messages whole, and keeps exactly one update request outstanding,
+// as a VNC viewer does, whether anyone watches or not: Tart answers requests
+// in order, and one for changes only when the screen changes. So it keeps the
+// last whole screen and the updates since, and a viewer that joins gets them
+// at once, then every update with the rest; it never asks Tart for anything.
+// When the updates since outgrow the whole screen, or the size changes, the
+// next request is for the whole screen again. ZRLE's zlib stream is per
+// connection, so it inflates the server's once and deflates it again for each
+// viewer. Viewers' input goes upstream as it is.
 //
 // Python 3.9, as Xcode's command line tools give it, with nothing else. It
 // reads the run's VNC URL from Tart's output, so the password is never on a
@@ -37,6 +41,9 @@ PIXEL_FORMAT = bytes([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0])
 ENCODINGS = [16, 1, 0, -223, -224, -239]
 # A viewer this far behind is dropped rather than held in memory.
 MAX_BEHIND = 64 * 1024 * 1024
+# The updates kept since the last whole screen, at most, before asking for a whole screen again.
+MAX_SINCE = 1000
+MAX_SINCE_BYTES = 64 * 1024 * 1024
 
 
 def vnc_response(challenge, password):
@@ -55,8 +62,11 @@ def vnc_response(challenge, password):
 class Viewer:
     def __init__(self, writer):
         self.writer = writer
+        # It asked for updates, and has had the screen so far: it gets each update as it comes.
         self.watching = False
-        self.deflate = zlib.compressobj()
+        self.synced = False
+        # Fastest: a viewer's first screen is deflated as it joins.
+        self.deflate = zlib.compressobj(1)
 
     def send(self, data):
         if self.writer.is_closing():
@@ -75,6 +85,13 @@ class Holder:
         self.viewers = set()
         self.inflate = zlib.decompressobj()
         self.cursor = None
+        # The last whole screen and the updates since, which a viewer that joins gets first.
+        self.base = None
+        self.since = []
+        self.base_bytes = 0
+        self.since_bytes = 0
+        # The one outstanding request is for the whole screen.
+        self.asked_whole = False
 
     def status(self, text):
         with open(self.status_path + ".new", "w") as file:
@@ -150,6 +167,7 @@ class Holder:
         self.name = await r.readexactly(struct.unpack(">I", init[20:24])[0])
         w.write(b"\x00\x00\x00\x00" + PIXEL_FORMAT)
         w.write(struct.pack(">BxH", 2, len(ENCODINGS)) + b"".join(struct.pack(">i", e) for e in ENCODINGS))
+        self.request(whole=True)
         await w.drain()
 
     async def pump(self):
@@ -196,30 +214,50 @@ class Holder:
             else:
                 raise RuntimeError("Tart's VNC server sent rect encoding %d, which the holder did not ask for" % encoding)
             rects.append((head, body, None))
+        size = sum(len(body if tiles is None else tiles) for head, body, tiles in rects)
+        resized = any(struct.unpack(">i", head[8:])[0] == -223 for head, body, tiles in rects)
+        if self.asked_whole and not resized:
+            self.base, self.since, self.base_bytes, self.since_bytes = rects, [], size, 0
+        elif self.base is not None and not resized:
+            self.since.append(rects)
+            self.since_bytes += size
+        else:
+            # A new size: what is kept no longer draws the screen, until the next whole one.
+            self.base, self.since = None, []
         for viewer in list(self.viewers):
-            if not viewer.watching:
-                continue
-            parts = [struct.pack(">BxH", 0, len(rects))]
-            for head, body, tiles in rects:
-                if tiles is None:
-                    parts.append(head + body)
-                else:
-                    data = viewer.deflate.compress(tiles) + viewer.deflate.flush(zlib.Z_SYNC_FLUSH)
-                    parts.append(head + struct.pack(">I", len(data)) + data)
-            viewer.send(b"".join(parts))
-        self.request()
+            if viewer.synced:
+                viewer.send(self.message(viewer, rects))
+            elif viewer.watching and self.base is not None:
+                self.replay(viewer)
+        self.request(whole=self.base is None or len(self.since) > MAX_SINCE or self.since_bytes > max(MAX_SINCE_BYTES, 2 * self.base_bytes))
+
+    def message(self, viewer, rects):
+        parts = [struct.pack(">BxH", 0, len(rects))]
+        for head, body, tiles in rects:
+            if tiles is None:
+                parts.append(head + body)
+            else:
+                data = viewer.deflate.compress(tiles) + viewer.deflate.flush(zlib.Z_SYNC_FLUSH)
+                parts.append(head + struct.pack(">I", len(data)) + data)
+        return b"".join(parts)
+
+    def replay(self, viewer):
+        # The cursor, the last whole screen and the updates since: the screen as it is.
+        if self.cursor:
+            viewer.send(struct.pack(">BxH", 0, 1) + self.cursor)
+        viewer.send(self.message(viewer, self.base))
+        for rects in self.since:
+            viewer.send(self.message(viewer, rects))
+        viewer.synced = True
 
     def broadcast(self, data):
         for viewer in list(self.viewers):
-            if viewer.watching:
+            if viewer.synced:
                 viewer.send(data)
 
     def request(self, whole=False):
-        # After each update, the next changes, while anyone watches; Tart
-        # answers those only when the screen changes. A viewer that joins asks
-        # for the whole screen at once, which Tart answers straight away.
-        if not whole and not any(viewer.watching for viewer in self.viewers):
-            return
+        # The one outstanding request, sent after the sign-in and after each update.
+        self.asked_whole = whole
         self.writer.write(struct.pack(">BBHHHH", 3, 0 if whole else 1, 0, 0, self.width, self.height))
 
     async def serve(self, reader, writer):
@@ -245,11 +283,10 @@ class Holder:
                 elif kind == 3:
                     await reader.readexactly(9)
                     if not viewer.watching:
-                        # From here the viewer gets every update, the first a whole screen, and the cursor first of all.
+                        # Its first request: the screen as it is, at once, then every update. Its later requests are the holder's own.
                         viewer.watching = True
-                        if self.cursor:
-                            viewer.send(struct.pack(">BxH", 0, 1) + self.cursor)
-                        self.request(whole=True)
+                        if self.base is not None:
+                            self.replay(viewer)
                 elif kind == 4:
                     self.writer.write(b"\x04" + await reader.readexactly(7))
                 elif kind == 5:
@@ -274,4 +311,32 @@ class Holder:
 if __name__ == "__main__":
     output, socket_path, status_path = sys.argv[1:4]
     asyncio.run(Holder(output, socket_path, status_path).run())
+`;
+
+/**
+ * A viewer's end of the holder's socket, run on the Mac for each viewer with
+ * the socket's path: it copies stdin to the socket and the socket to stdout.
+ * When the viewer goes, its SSH session's stdin ends, and the bridge closes
+ * the socket, so the holder stops serving it at once. `nc -U` would keep it
+ * open, and the holder would go on sending it every update. It has no single
+ * quotes, so it goes in single quotes as it is.
+ */
+export const VNC_BRIDGE_PY = String.raw`import os, socket, sys, threading
+connection = socket.socket(socket.AF_UNIX)
+connection.connect(sys.argv[1])
+def up():
+    try:
+        while True:
+            data = os.read(0, 65536)
+            if not data:
+                break
+            connection.sendall(data)
+    finally:
+        connection.shutdown(socket.SHUT_RDWR)
+threading.Thread(target=up, daemon=True).start()
+while True:
+    data = connection.recv(65536)
+    if not data:
+        break
+    os.write(1, data)
 `;

@@ -7,6 +7,7 @@ import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { crashSummary, endReason, parseEnded, parseState, parseVnc, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
+import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
 import { FakeTart, Viewer } from "./fake-tart-vnc.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
@@ -153,9 +154,9 @@ test("a macOS desktop is Tart's VNC through the run's holder, which starts with 
     const opened = await display!.open(signal());
     assert.deepEqual(opened.auth, { type: "none" }, "the holder's socket is the host user's alone");
     const argv = opened.route.type === "command" ? opened.route.argv : [];
-    assert.deepEqual(argv.slice(-3), [`bbbox-admin@${MAC}`, "--", `exec /usr/bin/nc -U "$HOME"/.bb-box/tart/run/'${guest.ref}.vnc'`]);
+    assert.deepEqual(argv.slice(-3), [`bbbox-admin@${MAC}`, "--", `exec /usr/bin/python3 -c '${VNC_BRIDGE_PY}' "$HOME"/.bb-box/tart/run/'${guest.ref}.vnc'`]);
   }
-  // A viewer through the holder's socket, as nc gives it to the relay.
+  // A viewer on the holder's socket, as the bridge gives it to the relay.
   const viewer = new Viewer(join(mac, ".bb-box", "tart", "run", `${guest.ref}.vnc`));
   await viewer.join();
   await viewer.update();
