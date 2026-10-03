@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { TartBackend, hostnameOf, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
+import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { crashSummary, endReason, parseEnded, parseState, parseVnc, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
@@ -205,9 +205,11 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   await backend.release(guest, releasing);
 });
 
-test("stop suspends the VM and start resumes it; the VM counts against its Mac only while it runs", async () => {
-  const { mac, backend } = setup();
+test("stop suspends the VM and start resumes it, setting its clock; the VM counts against its Mac only while it runs", async () => {
+  const { mac, backend, ssh } = setup();
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const clocks = () => ssh.log().filter((entry) => entry.target === `admin@${guest.address}` && entry.command.includes("sudo -n date -u ")).length;
+  assert.equal(clocks(), 0, "a clone boots with the right time");
   const used = async () => (await backend.capacity("macos", SMALL, [])).hosts[0]!.limits.find((limit) => limit.resource === "guests")!.used;
   assert.equal(await used(), 1);
   await backend.stop(guest);
@@ -217,7 +219,14 @@ test("stop suspends the VM and start resumes it; the VM counts against its Mac o
   await backend.start(guest);
   assert.equal(await backend.power(guest), "running");
   assert.equal(await used(), 1);
+  assert.equal(clocks(), 1, "a resumed VM's clock is set");
   await backend.release(guest, releasing);
+});
+
+test("a macOS VM's clock is set in UTC, half a second on, and only in a VM", () => {
+  const script = macClockScript(Date.parse("2026-10-03T23:59:59.700Z"));
+  assert.match(script, /^case "\$\(sysctl -n hw\.model 2>\/dev\/null\)" in VirtualMac\*\) ;; \*\) echo "not a VM"; exit 0 ;; esac\n/);
+  assert.ok(script.endsWith("\nsudo -n date -u 100400002026.00 >/dev/null"), script);
 });
 
 /** The Linux kinds' small preset (028, 040). */
