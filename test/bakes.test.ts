@@ -273,6 +273,7 @@ test("the bake's script runs the image's script as root and its check as the box
   assert.ok(lines.indexOf(lines.find((line) => line.includes("finalize.sh"))!) < lines.indexOf(lines.find((line) => line.startsWith("sudo -n sh -c 'cp -p /usr/share/bb-box/.bake-keep/*"))!));
   assert.ok(script.includes("BUILD_ID=%s\\n' 'build.20261003-100000-abcd'"));
   assert.ok(!bakeScript("rust", "linux", "proxmox-lxc", "build.x", false).includes("check.sh"));
+  assert.ok(lines.indexOf("sudo -n install -m 0755 /var/tmp/bb-box-build/proxmox-lxc/template/guest/bb-box-feature.sh /usr/local/bin/bb-box-feature") < lines.findIndex((line) => line.includes(".bb-box-image/setup.sh")), "bb-box-feature is there before the script");
   const syntax = spawnSync("bash", ["-n"], { input: script });
   assert.equal(syntax.status, 0, syntax.stderr.toString());
 });

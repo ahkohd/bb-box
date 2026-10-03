@@ -24,7 +24,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -172,6 +172,19 @@ test("a box of a project's image with a current build on its backend starts from
   const { command } = await world.backend.transports(box.guest!, "linux");
   assert.equal((await command!.run("test -e ran")).exitCode, 1, "the script did not run");
   assert.deepEqual(readied.map((one) => [one.id, one.image?.state]), [[plain.id, "done"], [box.id, "baked"]]);
+});
+
+test("an image's script at start finds bb-box's own commands first on its PATH, such as bb-box-feature (049)", async () => {
+  const image = { kinds: ["linux"], script: 'hello-tool > "$HOME/tool"\n', projects: ["prj"] };
+  const world = setup({}, {
+    image: (projectId, kind) => (projectId === "prj" && kind === "linux" ? { name: "tools", image } : null),
+    imageTools: { "hello-tool": "#!/bin/sh\necho tool ran\n" },
+  });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }));
+  assert.equal(box.state, "ready", box.error ?? "");
+  const { command } = await world.backend.transports(box.guest!, "linux");
+  assert.equal((await command!.run("cat tool")).stdout, "tool ran\n");
+  assert.equal((await command!.run("test -e .bb-box-image")).exitCode, 1, "its files go once it ran");
 });
 
 test("acquire records the box at once and it becomes ready in the background", async () => {

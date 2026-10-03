@@ -222,6 +222,12 @@ export interface BoxesDeps {
   image?(projectId: string | null, kind: string): { readonly name: string; readonly image: ImageConfig } | null;
   /** A current baked build of an image for a kind on a backend whose images start boxes from builds (049), or null. */
   baked?(name: string, backend: string, kind: string): Promise<{ readonly ref: string; readonly build: string | null } | null>;
+  /**
+   * Commands an image's script may call, as this bb-box has them, put first
+   * on its PATH at start: bb-box-feature, for boxes of images built before
+   * standard images had it (049).
+   */
+  readonly imageTools?: Readonly<Record<string, string>>;
   /** Says a box of an image is ready, whether its script ran at start or it started baked, for baking when used (049). */
   imageReady?(box: BoxRecord): void;
   /** Tells panels and tools that a thread's boxes changed. */
@@ -1239,6 +1245,9 @@ export class Boxes {
     const text = new TextEncoder();
     await command.writeFile(`${IMAGE_DIR}/setup.sh`, text.encode(image.script), { mode: "0700", signal });
     if (image.check) await command.writeFile(`${IMAGE_DIR}/check.sh`, text.encode(image.check), { mode: "0700", signal });
+    const tools = Object.entries(this.#deps.imageTools ?? {});
+    for (const [tool, body] of tools) await command.writeFile(`${IMAGE_DIR}/bin/${tool}`, text.encode(body), { mode: "0755", signal });
+    const path = tools.length ? `PATH="$HOME/${IMAGE_DIR}/bin:$PATH" ` : "";
     const env = Object.entries({ BB_BOX_IMAGE: name, BB_BOX_KIND: box.kind, BB_BOX_BACKEND: backend.id, BB_BOX_ARCH: box.capabilities.arch })
       .map(([key, value]) => `${key}=${quote(value)}`)
       .join(" ");
@@ -1246,7 +1255,7 @@ export class Boxes {
       const lines = ran.stdout.trimEnd().split("\n").slice(-IMAGE_LINES).join("\n");
       return new Error(`${name}'s ${what} ${ran.timedOut ? `ran out of time after ${limitMs / 60_000} minutes` : `exited with ${ran.exitCode}`}. Its last lines:\n${lines}`);
     };
-    const ran = await command.run(`sudo -n env ${env} bash "$HOME/${IMAGE_DIR}/setup.sh" 2>&1`, { timeoutMs: IMAGE_SCRIPT_MS, signal, maxOutputBytes: 256 * 1024 });
+    const ran = await command.run(`sudo -n env ${path}${env} bash "$HOME/${IMAGE_DIR}/setup.sh" 2>&1`, { timeoutMs: IMAGE_SCRIPT_MS, signal, maxOutputBytes: 256 * 1024 });
     if (ran.exitCode !== 0) throw failed("script", ran, IMAGE_SCRIPT_MS);
     if (image.check) {
       const checked = await command.run(`env ${env} bash "$HOME/${IMAGE_DIR}/check.sh" 2>&1`, { timeoutMs: IMAGE_CHECK_MS, signal, maxOutputBytes: 256 * 1024 });

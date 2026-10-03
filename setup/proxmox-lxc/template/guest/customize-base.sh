@@ -265,6 +265,8 @@ printf 'LANG=C.UTF-8\n' >/etc/default/locale
 
 # A health check the plugin (or a person) can run as the box user.
 install -m 0755 "$build/guest/check-headless.sh" /usr/local/bin/bb-box-check-headless
+# Dev Container features for a project image's script (049).
+install -m 0755 "$build/guest/bb-box-feature.sh" /usr/local/bin/bb-box-feature
 
 # What `uv tool install` and pipx put in ~/.local/bin runs by name, as it
 # does in a login shell. Once: a refresh (049) runs this on a built image,
@@ -280,7 +282,7 @@ box_path=$(sed -n 's/^PATH="\([^"]*\)"$/\1/p' /etc/environment)
 # shellcheck disable=SC2016
 for command in git git-lfs gh node npm npx pnpm yarn python3 pip3 uv uvx rg fd jj claude codex pi curl wget jq \
   zip unzip zstd rsync tree bc socat netstat make gcc pkg-config sudo sshd runuser docker psql redis-cli sqlite3 \
-  tmux vim nvim; do
+  tmux vim nvim bb-box-feature; do
   runuser -u "$user" -- env PATH="$box_path" sh -c 'command -v "$1" >/dev/null' sh "$command" ||
     die "$command is not on $user's PATH"
 done

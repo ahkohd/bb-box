@@ -31,7 +31,8 @@ import { CALL_TIMEOUT_MS, Holders, type RetiredTerminals } from "./holder.ts";
 import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
 import { dockerDriver } from "../backends/docker/index.ts";
 import { backendPart } from "../core/document.ts";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { abortable } from "../core/abortable.ts";
@@ -185,6 +186,15 @@ function isSet(value: unknown): boolean {
  * Waits `ms`, or until `signal` aborts. A signal that has aborted already
  * ends it at once: its abort event has fired, and would never come again.
  */
+/** Commands a project image's script may call at start (049), from the setup files, or none when they are not there. */
+function imageTools(setup: string): Record<string, string> {
+  try {
+    return { "bb-box-feature": readFileSync(join(setup, "proxmox-lxc", "template", "guest", "bb-box-feature.sh"), "utf8") };
+  } catch {
+    return {};
+  }
+}
+
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
@@ -441,6 +451,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     image: (projectId, kind) => projectImage(configuration.document, projectId, kind),
     baked: (name, backend, kind) => imageBakes.current(name, backend, kind),
     imageReady: (box) => imageBakes.ready(box),
+    // As the bundle's setup files have it; a build installs the same in the image.
+    imageTools: imageTools(pins),
     notify,
     recorded(box, deleted) {
       // Fetched while the box starts, for its enrolment.
