@@ -154,7 +154,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
   const staged = await mkdtemp(join(tmpdir(), "bb-box-refresh-"));
   try {
     const kind = current.kind;
-    if (!BUILDS[kind]) return end(false, null, `bb-box refreshes no ${kind} image.`);
+    if (!BUILDS[kind] && !images.build) return end(false, null, `bb-box refreshes no ${kind} image.`);
     const versions = await (options.versions ?? resolveVersions)(options.setup, { pinned: !!options.pinned, signal });
     for (const tool of versions.tools) if (tool.version !== tool.pinned || tool.kept?.startsWith("upstream")) say(`version: ${tool.name} ${tool.version} for ${tool.arch}${tool.kept ? ` (${tool.kept})` : ""}`);
     await stageSetup(options.setup, join(staged, "setup"), versions);
@@ -211,7 +211,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       detail: `A box of the new build answered in ${(ms / 1000).toFixed(1)} s, of the old in ${(baseline.ms / 1000).toFixed(1)} s.`,
     });
     // The backend's own check where it has one, else the template's, whose desktop needs its display, which starts soon after boot.
-    const check = images.check?.(kind) ?? BUILDS[kind]!.check;
+    const check = images.check?.(kind) ?? BUILDS[kind]?.check ?? "false";
     const ran = await trial.command.run(
       images.check ? check : `for i in $(seq 1 60); do [ ! -e /etc/systemd/system/bb-box-display.service ] || [ -s /run/bb-box/display-mode ] && break; sleep 1; done; ${check}`,
       { timeoutMs: 10 * 60_000, signal, maxOutputBytes: 256 * 1024 },

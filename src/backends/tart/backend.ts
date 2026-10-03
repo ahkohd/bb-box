@@ -26,6 +26,7 @@
 //   start restores it, as a box that takes a warm VM does. A running one
 //   counts its memory and QEMU's own, but not against the two macOS VMs.
 
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
@@ -46,6 +47,7 @@ import {
   type AcquireHooks,
   type Backend,
   type BackendContext,
+  type BackendImages,
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
@@ -60,6 +62,8 @@ import {
   type Guest,
   type HeldGuest,
   type HostCapacity,
+  type ImageBox,
+  type ImageBuild,
   type Limit,
   type PoolMember,
   type PowerState,
@@ -68,15 +72,18 @@ import {
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { judgeImage, type ImageJudgement, type ImageRecord } from "../images.ts";
+import { judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import { CUA_PIPE, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
+  captureScript,
   claimScript,
   cloneScript,
   deleteScript,
+  forgetImageScript,
+  replaceScript,
   discardStateScript,
   holdScript,
   relabelScript,
@@ -99,6 +106,7 @@ import {
   stopScript,
   vmName,
   warmScript,
+  VM_PREFIX,
   type HostState,
   type VmConfig,
 } from "./host.ts";
@@ -161,6 +169,26 @@ function footprint(kind: string, size: BoxSize): number {
 type MacState = HostState & { readonly qemu: QemuState };
 
 type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
+
+/** Where an image's record is in it (049): macOS keeps /usr/share read-only. */
+const RECORD_PATH: Readonly<Record<string, string>> = { linux: "/usr/share/bb-box/image.json", macos: "/usr/local/share/bb-box/image.json" };
+
+/**
+ * A macOS box's checks as its user (049), as its image has no check of its
+ * own: the tools and Cua Driver, a line per check, with ok or FAIL.
+ */
+export const MAC_CHECK = String.raw`t() { name=$1; shift; if out=$("$@" 2>&1); then echo "$name ok   $(echo "$out" | head -n 1)"; else echo "$name FAIL $(echo "$out" | head -n 1)"; fi; }
+t node node --version
+t git git --version
+t cua-driver /usr/local/bin/cua-driver --version
+t "image record" test -s /usr/local/share/bb-box/image.json`;
+
+/** The check a trial box of each kind runs: a Linux image's own, after its display is up, or macOS's above. */
+function tartCheck(kind: string): string {
+  if (guestOsOf(kind) === "macos") return MAC_CHECK;
+  if (kind === "linux-arm64") return "bb-box-check-headless";
+  return "for i in $(seq 1 60); do [ -s /run/bb-box/display-mode ] && break; sleep 1; done; bb-box-check-desktop";
+}
 
 export interface TartBackendOptions {
   readonly sshBinary?: string;
@@ -508,6 +536,22 @@ export class TartBackend implements Backend {
   #placement: Promise<unknown> = Promise.resolve();
   /** Warm VMs this instance is filling, by VM. */
   readonly #filling = new Map<string, Fill>();
+
+  /**
+   * Image operations (049) on each Mac: a clone of an image as an image box,
+   * its capture as a VM of its own with its record beside it, a new build of
+   * a standard image by its prepare script, and the image's name moved to a
+   * build. A reference is <Mac>/<VM>. Windows images are later.
+   */
+  readonly images: BackendImages = {
+    list: (signal) => this.#imageList(signal),
+    box: (build, label, signal) => this.#imageBox(build, label, signal),
+    capture: (box, from, image, signal) => this.#capture(box, from, image, signal),
+    replace: (build, current, signal) => this.#replaceImage(build, current, signal),
+    remove: (ref, signal) => this.#removeImage(ref, signal),
+    build: (current, setup, options) => this.#buildStandard(current, setup, options),
+    check: (kind) => tartCheck(kind),
+  };
   /** Display helpers compiling for new Windows boxes, by VM, which a resize waits for. */
   readonly #compiling = new Map<string, Promise<void>>();
   readonly #warm: ReadyPool<BoxIdentity>;
@@ -1067,6 +1111,8 @@ export class TartBackend implements Backend {
       }
       for (const [vm, fields] of state.owners) {
         if (fields.install !== this.#context.installId) continue;
+        // An image box or build (049) is no box's: its build removes it.
+        if (fields["image-box"] || fields["image-build"]) continue;
         // A warm VM is no box's, and neither is one this instance is filling.
         // One being filled when bb-box stopped is listed with no owner, so the
         // sweep releases it.
@@ -1933,6 +1979,163 @@ export class TartBackend implements Backend {
     await this.#forget(host, vm, os, port);
     const script = os === "windows" ? qemuDeleteScript : deleteScript;
     await this.#run(host, script(vm, this.#context.installId, boxId), { timeoutMs: 120_000, signal });
+  }
+
+  /** A Mac and a VM from an image reference, <Mac>/<VM>. */
+  #imageRef(ref: string): { host: TartHost; vm: string } {
+    const at = ref.indexOf("/");
+    const host = this.#hostNamed(at > 0 ? ref.slice(0, at) : null);
+    if (!host) throw new Error(`${ref} is not an image on a Mac in bb-box's Tart settings.`);
+    return { host, vm: ref.slice(at + 1) };
+  }
+
+  /** Each Mac's images of its kinds as standard builds, with their records, and this install's captured builds and image boxes. */
+  async #imageList(signal?: AbortSignal): Promise<{ builds: ImageBuild[]; boxes: string[] }> {
+    const builds: ImageBuild[] = [];
+    const boxes: string[] = [];
+    const states = await this.#states(signal);
+    for (const host of this.#config.hosts) {
+      const state = states.get(host.name);
+      if (!state || state instanceof Error) continue;
+      const exists = (vm: string) => state.vms.some((listed) => listed.name === vm);
+      const seen = new Set<string>();
+      for (const kind of TART_KINDS) {
+        const image = this.#config.kinds[kind].image;
+        if (!image || guestOsOf(kind) === "windows" || seen.has(image) || !exists(image)) continue;
+        seen.add(image);
+        const record = state.records.get(image) ?? null;
+        builds.push({ ref: `${host.name}/${image}`, image: "standard", kind, build: record?.build ?? null, record, current: true });
+      }
+      for (const [vm, fields] of state.owners) {
+        if (fields.install !== this.#context.installId) continue;
+        if (fields["image-box"]) boxes.push(`${host.name}/${vm}`);
+        else if (fields["image-build"] && fields.kind && exists(vm)) {
+          const record = state.records.get(vm) ?? null;
+          builds.push({ ref: `${host.name}/${vm}`, image: fields["image-build"], kind: fields.kind, build: record?.build ?? null, record, current: false });
+        }
+      }
+    }
+    return { builds, boxes };
+  }
+
+  /** A clone of a build's VM, started at its kind's default size as a box is, with an owner file that marks it an image box. */
+  async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
+    const { host, vm: image } = this.#imageRef(build.ref);
+    const os = guestOsOf(build.kind);
+    if (os === "windows") throw new Error("bb-box builds no Windows images on a Mac yet.");
+    const vm = `${VM_PREFIX}image-${randomBytes(6).toString("hex")}`;
+    const { cores, memoryMiB } = this.#context.kind(build.kind).defaultSize;
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? this.#kind(build.kind).readyTimeoutMs);
+    const owner = ownerText({ install: this.#context.installId, kind: build.kind, "image-box": label.replace(/[^\w .:-]/g, "").slice(0, 80) || "box", created: Date.now() });
+    try {
+      if ((await this.#run(host, claimScript(vm, owner), { signal })).stdout.trim() !== "claimed") throw new Error(`VM ${vm} on ${host.name} is taken.`);
+      await this.#run(host, cloneScript(image, vm, cores, memoryMiB), { timeoutMs: 10 * 60_000, signal });
+      await this.#start(host, vm, os, deadline, signal);
+      const address = await this.#address(host, vm, deadline, signal);
+      const access = this.#vm(await this.#mac(host), address, os);
+      await this.#waitReady(host, vm, access, os, deadline, signal);
+      return { ref: `${host.name}/${vm}`, command: new SshTransport((await this.#keys()).ssh, access, os) };
+    } catch (error) {
+      await this.#delete(host, vm, os, null).catch((cause) => this.#context.logError("remove an image box", cause));
+      throw error;
+    }
+  }
+
+  /** Stops an image box and keeps it as bb-box-img-<image>-<build>, with its record beside it and an owner file that names its image. */
+  async #capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
+    const { host, vm } = this.#imageRef(box.ref);
+    const os = guestOsOf(from.kind);
+    const read = await box.command.run(`cat ${RECORD_PATH[os] ?? RECORD_PATH.linux}`, { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
+    const record = read.exitCode === 0 ? recordFromJson(read.stdout.trim()) : null;
+    if (!record) throw new Error(`Image box ${vm} on ${host.name} has no image record in ${RECORD_PATH[os]}, which finalizing writes.`);
+    await box.command.run("sync", { timeoutMs: 60_000, signal }).catch(() => undefined);
+    await this.#forget(host, vm, os);
+    const to = `${VM_PREFIX}img-${image.replace(/[^a-z0-9-]/gi, "-")}-${record.build.replace(/^build\./, "")}`;
+    const owner = ownerText({ install: this.#context.installId, kind: from.kind, "image-build": image, created: Date.now() });
+    await this.#run(host, captureScript(vm, to, JSON.stringify(record), owner), { timeoutMs: 15 * 60_000, signal });
+    return { ref: `${host.name}/${to}`, image, kind: from.kind, build: record.build, record, current: false };
+  }
+
+  /** Gives a build the image's name: the image goes, and boxes cloned from it keep running, as copies on write. */
+  async #replaceImage(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
+    const target = this.#imageRef(current.ref);
+    const source = this.#imageRef(build.ref);
+    if (!current.current || build.current || target.host !== source.host) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is not a build on its Mac.`);
+    await this.#run(target.host, replaceScript(source.vm, target.vm), { timeoutMs: 10 * 60_000, signal });
+    return { ...build, ref: current.ref, image: "standard", current: true };
+  }
+
+  /** Removes an image box, a captured build or a refresh's build of this install's, and nothing else. */
+  async #removeImage(ref: string, signal?: AbortSignal): Promise<void> {
+    const { host, vm } = this.#imageRef(ref);
+    const state = await this.#state(host, signal);
+    const fields = state.owners.get(vm);
+    const configured = TART_KINDS.some((kind) => this.#config.kinds[kind].image === vm);
+    if (configured || !fields || fields.install !== this.#context.installId || !(fields["image-box"] || fields["image-build"])) {
+      throw new Error(`${vm} on ${host.name} is not an image box or build of this install's, so bb-box leaves it.`);
+    }
+    await this.#delete(host, vm, guestOsOf(fields.kind ?? ""), null, signal);
+    await this.#run(host, forgetImageScript(vm), { timeoutMs: 30_000, signal });
+  }
+
+  /**
+   * A new build of a configured image by its prepare script, run on its Mac
+   * as the user bb-box logs in as, from a copy of `setup` there, under a name
+   * of its own until it replaces the image. The image's user accepts
+   * bb-box's key, and a macOS image starts from the base the image did.
+   */
+  async #buildStandard(current: ImageBuild, setup: string, options: { bbUrl: string | null; log: (line: string) => void; signal: AbortSignal }): Promise<ImageBuild> {
+    const { host, vm: image } = this.#imageRef(current.ref);
+    const os = guestOsOf(current.kind);
+    if (os === "windows") throw new Error("bb-box refreshes no Windows images on a Mac yet.");
+    const { ssh, publicKey: key } = await this.#keys();
+    if (!key) throw new Error("bb-box has no SSH public key for the image's user to accept.");
+    const stamp = Date.now().toString(36);
+    const vm = `${VM_PREFIX}img-refresh-${stamp}`;
+    const dir = `.bb-box/tart/setup-${stamp}`;
+    const tar = spawnSync("tar", ["-C", setup, "-czf", "-", "tart", "proxmox-lxc"], { maxBuffer: 64 * 1024 * 1024 });
+    if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
+    const mac = new SshTransport(ssh, await this.#mac(host), "macos");
+    const owner = ownerText({ install: this.#context.installId, kind: current.kind, "image-build": "standard", created: Date.now() });
+    await this.#run(host, claimScript(vm, owner), { signal: options.signal });
+    try {
+      await mac.writeFile(`${dir}.tgz`, tar.stdout, { signal: options.signal });
+      const from = os === "macos" ? (await this.#run(host, `exec /bin/sh -c ${quote(`sed -n 's/^from=//p' "$HOME/.bb-box/tart/images/${image}" 2>/dev/null | head -n 1`)}`)).stdout.trim() : "";
+      const args = [
+        os === "macos" ? "./prepare-image.sh" : "./prepare-linux-image.sh",
+        ...(current.kind === "linux-arm64-desktop-cpu" ? ["--desktop"] : []),
+        "--key", key,
+        ...(from ? ["--from", from] : []),
+        "--name", vm,
+        ...(options.bbUrl ? ["--bb-url", options.bbUrl] : []),
+      ];
+      const run = `cd "$HOME/${dir}" 2>/dev/null || { mkdir -p "$HOME/${dir}" && tar -xzf "$HOME/${dir}.tgz" -C "$HOME/${dir}"; }; cd "$HOME/${dir}/tart" && ${args.map(quote).join(" ")}`;
+      let rest = "";
+      const decoder = new TextDecoder();
+      const ran = await mac.stream(`exec /bin/sh -c ${quote(run)}`, {
+        timeoutMs: 60 * 60_000,
+        signal: options.signal,
+        onOutput: (chunk) => {
+          const lines = (rest + decoder.decode(chunk, { stream: true })).split(/\r?\n|\r/);
+          rest = lines.pop() ?? "";
+          for (const line of lines) if (line.trim()) options.log(line);
+        },
+      });
+      if (rest.trim()) options.log(rest);
+      if (ran.exitCode !== 0) throw new Error(`The prepare script on ${host.name} ${ran.timedOut ? "ran out of time" : `exited with ${ran.exitCode}`}.`);
+      const state = await this.#state(host, options.signal);
+      if (!state.vms.some((listed) => listed.name === vm)) throw new Error(`The prepare script on ${host.name} made no VM ${vm}.`);
+      const record = state.records.get(vm) ?? null;
+      return { ref: `${host.name}/${vm}`, image: "standard", kind: current.kind, build: record?.build ?? null, record, current: false };
+    } catch (error) {
+      // What the prepare script left, its build VM too, goes.
+      await this.#run(host, `exec /bin/sh -c ${quote(`PATH=/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:$PATH; tart delete ${quote(`${vm}-build`)} 2>/dev/null; :`)}`).catch(() => undefined);
+      await this.#delete(host, vm, os, null).catch(() => undefined);
+      await this.#run(host, forgetImageScript(vm)).catch(() => undefined);
+      throw error;
+    } finally {
+      await this.#run(host, `exec /bin/sh -c ${quote(`rm -rf "$HOME/${dir}" "$HOME/${dir}.tgz"`)}`).catch(() => undefined);
+    }
   }
 
   #keys(): Promise<SshKeys> {

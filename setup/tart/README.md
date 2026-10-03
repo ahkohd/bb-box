@@ -370,6 +370,21 @@ pin files. The doctor's check of each image:
 
 Its fix gives the prepare script's command that builds the image again.
 
+bb-box refreshes the macOS and Linux images itself
+([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)), on each Mac in turn:
+
+1. **The build.** It copies its setup files, with the versions a rebuild takes, to `~/.bb-box/tart/setup-<time>` on the Mac. It runs the image's prepare script there over SSH, as the user bb-box logs in as, with bb-box's key and BB's URL, under a name of its own (`bb-box-img-refresh-<time>`). A macOS image starts from the base the image was prepared from. The copy goes afterwards.
+2. **The trial box.** It checks a trial box from the new build:
+   - a Linux image's own check, after its display is up, or for macOS the tools and Cua Driver;
+   - BB's app at the recorded digest;
+   - answering no more than 5 s slower than a box of the old image;
+   - a whole record, with no tool older.
+3. **The replace.** The new build takes the image's name, and the old image goes. Boxes are copies on write and keep running.
+
+To run one by hand, use `npm run refresh -- --backend tart --settings <settings.json> --image <Mac>/<image> [--bb-url <url>] [--pinned] [--try]`.
+
+Image boxes are VMs named `bb-box-image-<id>`. Captured builds are named `bb-box-img-<name>-<build>`, with their records beside them. Their owner files mark them, so no sweep removes them; the build that made them does. Windows images are not refreshed yet.
+
 ### A warm pool
 
 The backend's warm count for a kind keeps that many suspended VMs ready, so
