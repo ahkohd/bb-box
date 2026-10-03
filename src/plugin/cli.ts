@@ -280,7 +280,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "image list": cliCommand({
-          summary: "List projects' images (049): each one's kinds, projects, how it is baked, and where its script came from.",
+          summary: "List projects' images (049): each one's kinds, projects, how it is baked, where its script came from, and its builds.",
           options: jsonOption,
           run: ({ options }) =>
             guard("Listing the images", async () => {
@@ -288,14 +288,13 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               if (options.json) return json(images);
               const names = Object.keys(images).sort();
               if (!names.length) return out("No project has an image. bb box image set sets one.");
-              return out(
-                names
-                  .map((name) => {
-                    const image = images[name]!;
-                    return `${name}: ${image.kinds.join(", ")} boxes in ${image.projects.join(", ")}; baked ${image.bake ?? "auto"}; script ${image.source?.script ?? "set by hand"}${image.check ? `, check ${image.source?.check ?? "set by hand"}` : ""}${image.updated ? `; set ${image.updated.slice(0, 10)}` : ""}.`;
-                  })
-                  .join("\n"),
-              );
+              const lines: string[] = [];
+              for (const name of names) {
+                const image = images[name]!;
+                lines.push(`${name}: ${image.kinds.join(", ")} boxes in ${image.projects.join(", ")}; baked ${image.bake ?? "auto"}; script ${image.source?.script ?? "set by hand"}${image.check ? `, check ${image.source?.check ?? "set by hand"}` : ""}${image.updated ? `; set ${image.updated.slice(0, 10)}` : ""}.`);
+                for (const line of await app.imageBakes.lines(name)) lines.push(`  ${line}`);
+              }
+              return out(lines.join("\n"));
             }),
         }),
         "image show": cliCommand({

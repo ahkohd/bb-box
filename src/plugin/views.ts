@@ -390,7 +390,13 @@ function adminLine(capabilities: BoxRecord["capabilities"]): string | null {
 /** Everything an agent may want to know about one box. */
 /** A box's project's image (049): its name, and what its script did as the box started. */
 export function imageWords(image: BoxImage): string {
-  const what = { pending: "its script runs as the box starts", running: "running its script", done: `its script ran as the box started${image.seconds !== undefined ? `, in ${image.seconds} s` : ""}`, failed: "its script failed" };
+  const what = {
+    pending: "its script runs as the box starts",
+    running: "running its script",
+    done: `its script ran as the box started${image.seconds !== undefined ? `, in ${image.seconds} s` : ""}`,
+    failed: "its script failed",
+    baked: `baked${image.build ? `, build ${image.build}` : ""}`,
+  };
   return `${image.name}, ${what[image.state]}`;
 }
 

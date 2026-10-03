@@ -1392,6 +1392,28 @@ test("image operations: a box from a template, its capture as a template with it
   assert.equal(templateFromTags(parseTags(proxmox.guests.get(Number(box2.ref))!.config.tags)), 9000);
 });
 
+test("a project's box starts from its image's build, not a warm guest, and a build goes though templates are protected (049)", async () => {
+  const dir = tempDir("image-from");
+  const binary = join(dir, "ssh");
+  writeFileSync(binary, `#!/bin/sh\ncase "$*" in *"cat /usr/share/bb-box/image.json"*) echo '{"contract":1,"image":"rust","kind":"linux","build":"build.x","built":"2026-10-03T00:00:00Z"}'; exit 0;; esac\nexec "${FAKE_SSH_BINARY}" "$@"\n`, { mode: 0o755 });
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 }, new MemoryStorage(), { sshBinary: binary });
+  assert.equal(backend.images.startsFrom, true);
+  const standard = (await backend.images.list()).builds.find((build) => build.ref === "9000")!;
+  const captured = await backend.images.capture(await backend.images.box(standard, "bake of rust", signal()), standard, "rust", signal());
+  await backend.maintain();
+  const warmGuests = [...proxmox.guests.entries()].filter(([, guest]) => parseTags(guest.config.tags).includes("warm")).map(([vmid]) => vmid);
+  assert.equal(warmGuests.length, 1);
+
+  const guest = await backend.acquire({ ...identity(), from: captured.ref }, null, hooks().value, signal());
+  assert.equal(templateFromTags(parseTags(proxmox.guests.get(Number(guest.ref))!.config.tags)), Number(captured.ref));
+  assert.ok(!warmGuests.includes(Number(guest.ref)), "not a warm guest of the standard image");
+  await backend.release(guest, releasing());
+
+  assert.equal(proxmox.guests.get(Number(captured.ref))!.config.protection, "1");
+  await backend.images.remove(captured.ref, signal());
+  assert.equal(proxmox.guests.has(Number(captured.ref)), false);
+});
+
 test("image operations replace a template on storage other than LVM-thin with a full copy, as a linked clone there needs its origin (049)", async () => {
   const dir = tempDir("image-ops-full");
   const binary = join(dir, "ssh");

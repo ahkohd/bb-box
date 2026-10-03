@@ -3,7 +3,8 @@
  * needed first, a refresh of each in turn within a time limit, what each
  * last did, and the doctor's checks of them. `bb box images refresh`, which
  * a BB script automation runs each night, starts a run here and waits for
- * it; the run goes on should the command's call end first.
+ * it; the run goes on should the command's call end first. Projects'
+ * images' builds are kept in order after the rebuilds (bakes.ts).
  */
 import { createHash } from "node:crypto";
 import { judgeImage, type ImageFacts, type PinSet } from "../backends/images.ts";
@@ -11,6 +12,7 @@ import type { Backend, BackendStorage, DoctorCheck, ImageBuild } from "../backen
 import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { refreshImage, type RefreshResult } from "../core/refresh.ts";
 import { defaultSize, kindSizes } from "../core/sizes.ts";
+import type { ImageBakes } from "./bakes.ts";
 
 /** The days after which a standard image is due (049): a week for Linux, a month for macOS and Windows. */
 const INTERVAL_DAYS = { linux: 7, macos: 30, windows: 30 } as const;
@@ -37,6 +39,8 @@ export interface ImageJobsDeps {
   bbUrl(): string | null;
   readonly facts: ImageFacts;
   readonly storage: BackendStorage;
+  /** Projects' images' builds: no bake while a run removes what runs left, and their upkeep after the rebuilds. */
+  readonly bakes?: Pick<ImageBakes, "exclusive" | "maintain">;
   readonly log?: (line: string) => void;
   readonly now?: () => number;
   /** Replace refreshImage and resolveVersions, for tests. */
@@ -72,7 +76,7 @@ export interface ImageView {
 
 export interface RunLine {
   readonly name: string;
-  readonly outcome: "refreshed" | "failed" | "skipped" | "waiting" | "not started";
+  readonly outcome: "refreshed" | "baked" | "removed" | "failed" | "skipped" | "waiting" | "not started";
   readonly detail: string;
 }
 
@@ -192,16 +196,20 @@ export class ImageJobs {
     await this.#deps.storage.set(LOCK, { at: started });
     const lines: RunLine[] = [];
     try {
-      // Image boxes and refresh builds left by a run that did not end.
-      for (const backend of this.#deps.backends()) {
-        if (!backend.images) continue;
-        const left = await backend.images.list(signal).catch(() => ({ boxes: [] as string[], builds: [] as ImageBuild[] }));
-        const refs = [...left.boxes, ...left.builds.filter((build) => !build.current && build.image === "standard").map((build) => build.ref)];
-        for (const ref of refs) {
-          say(`removing ${backend.id}/${ref}, left by a run that did not end`);
-          await backend.images.remove(ref, signal).catch((error: unknown) => say(`could not remove ${backend.id}/${ref}: ${error instanceof Error ? error.message : String(error)}`));
+      // Image boxes and refresh builds left by a run or a bake that did not end, while no bake makes any.
+      const bakes = this.#deps.bakes;
+      const alone = (work: () => Promise<void>) => (bakes ? bakes.exclusive(work) : work());
+      await alone(async () => {
+        for (const backend of this.#deps.backends()) {
+          if (!backend.images) continue;
+          const left = await backend.images.list(signal).catch(() => ({ boxes: [] as string[], builds: [] as ImageBuild[] }));
+          const refs = [...left.boxes, ...left.builds.filter((build) => !build.current && build.image === "standard").map((build) => build.ref)];
+          for (const ref of refs) {
+            say(`removing ${backend.id}/${ref}, left by a run that did not end`);
+            await backend.images.remove(ref, signal).catch((error: unknown) => say(`could not remove ${backend.id}/${ref}: ${error instanceof Error ? error.message : String(error)}`));
+          }
         }
-      }
+      });
       const versions = await (this.#deps.versions ?? resolveVersions)(this.#deps.setup, { pinned: !!options.pinned, signal }).catch(() => null);
       const app = await this.#deps.facts.bbApp(signal).catch(() => null);
       const views = await this.list(signal);
@@ -235,6 +243,7 @@ export class ImageJobs {
         lines.push(result.ok ? { name: view.name, outcome: "refreshed", detail: `now ${result.build?.build ?? "a new build"}, in ${result.seconds} s` } : { name: view.name, outcome: "failed", detail: result.reason ?? "no reason given" });
       }
       for (const view of views) if (!view.due) lines.push({ name: view.name, outcome: "skipped", detail: "not due" });
+      if (bakes) lines.push(...(await bakes.maintain({ until: limit, signal })));
       const ok = !lines.some((line) => line.outcome === "failed");
       await this.#deps.storage.set(LAST_RUN, { at: this.#now(), ok, lines });
       return { ok, lines, seconds: Math.round((this.#now() - started) / 1000) };

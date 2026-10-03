@@ -10,6 +10,7 @@ import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../bac
 import { warmChecks } from "../backends/warm.ts";
 import { pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
+import { ImageBakes } from "./bakes.ts";
 import { ImageJobs } from "./images.ts";
 import { projectImage, withImage } from "../core/project-images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
@@ -94,6 +95,7 @@ export interface BbBox {
   imageVersions(options: { pinned?: boolean; signal?: AbortSignal }): Promise<Versions>;
   /** The nightly rebuilds of the standard images (049). */
   readonly imageJobs: ImageJobs;
+  readonly imageBakes: ImageBakes;
   /** Sets a project's image in the configuration, or removes it with null (049). */
   setImage(name: string, image: ImageConfig | null): Promise<ApplyResult>;
   general(): Promise<GeneralConfig>;
@@ -423,12 +425,22 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   let desktops: Desktops | undefined;
   let terminals: Terminals | undefined;
   let computer: Computer | undefined;
+  // Projects' images, baked where their boxes start (049).
+  const imageBakes = new ImageBakes({
+    backends: () => backends.on(),
+    images: () => configuration.document.images ?? {},
+    storage: kv,
+    setup: pins,
+    log: (line) => bb.log.info(line),
+  });
   const boxes = new Boxes({
     kv: bb.storage.kv,
     backends,
     general,
     // A project's image for a kind (049), from the configuration as it is now.
     image: (projectId, kind) => projectImage(configuration.document, projectId, kind),
+    baked: (name, backend, kind) => imageBakes.current(name, backend, kind),
+    imageReady: (box) => imageBakes.ready(box),
     notify,
     recorded(box, deleted) {
       // Fetched while the box starts, for its enrolment.
@@ -520,9 +532,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     bbUrl: () => bb.server.experimental_appUrl,
     facts: images,
     storage: kv,
+    bakes: imageBakes,
     log: (line) => bb.log.info(line),
   });
   bb.onDispose(() => imageJobs.stop());
+  bb.onDispose(() => imageBakes.stop());
   bb.onDispose(() => backends.dispose());
   bb.onDispose(() => boxes.dispose());
   bb.onDispose(() => desktop.dispose());
@@ -667,11 +681,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     imageVersions: ({ pinned, signal }) => resolveVersions(pins, { pinned: !!pinned, ...(signal ? { signal } : {}) }),
     imageJobs,
+    imageBakes,
     async setImage(name, image) {
       // Against the revision it read: another write in between means reading again.
       for (let tries = 0; ; tries++) {
         const document = configuration.exported();
         const result = await configuration.apply(withImage(document, name, image), document.revision);
+        // A changed script's builds are baked again at once, and a removed image's go (049).
+        if (result.ok) imageBakes.settle(name);
         if (result.ok || result.reason !== "revision" || tries >= 2) return result;
       }
     },
@@ -785,7 +802,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
         });
       }
-      const imageChecks = await imageJobs.checks(signal);
+      const imageChecks = [...(await imageJobs.checks(signal)), ...(await imageBakes.checks())];
       if (imageChecks.length) {
         sections.push({
           title: "Images",

@@ -386,6 +386,7 @@ export class DockerBackend implements Backend {
     remove: (ref, signal) => this.#removeImage(ref, signal),
     build: (current, setup, options) => this.#buildStandard(current, setup, options),
     check: () => DOCKER_CHECK,
+    startsFrom: true,
   };
   /** Placement is one at a time, so two acquires never take the last room on the host. */
   #placement: Promise<unknown> = Promise.resolve();
@@ -649,7 +650,8 @@ export class DockerBackend implements Backend {
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
-    const image = this.#config.images[box.kind as DockerKind]!;
+    // A box from an image build (049) is a container of its image.
+    const image = box.from ?? this.#config.images[box.kind as DockerKind]!;
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs);
     const name = containerName(box.boxId);
     const step: Step = async (stepName, run) => {

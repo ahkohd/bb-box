@@ -473,6 +473,7 @@ export class ProxmoxLxcBackend implements Backend {
     capture: (box, from, image, signal) => this.#capture(box, from, image, signal),
     replace: (build, current, signal) => this.#replaceTemplate(build, current, signal),
     remove: (ref, signal) => this.#removeImage(ref, signal),
+    startsFrom: true,
   };
 
   constructor(config: LxcConfig, context: BackendContext, options: LxcBackendOptions = {}) {
@@ -691,7 +692,8 @@ export class ProxmoxLxcBackend implements Backend {
         acquiring.build = typeof previous.data?.build === "string" ? previous.data.build : null;
       }
       let warm = false;
-      if (vmid === null) {
+      // A box from an image build (049) is a clone of it: no warm guest has it.
+      if (vmid === null && !box.from) {
         let memory = 0;
         const member = await step("warm", () =>
           this.#warm.claim(box.kind, box, {
@@ -726,9 +728,13 @@ export class ProxmoxLxcBackend implements Backend {
           const cloning = performance.now();
           try {
             const guests = await api.listPool(this.#config.proxmox.pool, signal);
-            const choice = this.#choose(offer, guests, [], api.node, this.#placing(offer, new Set(failed.keys())));
-            if (failed.size && choice.problem) throw noGpu(failed, choice.problem);
-            acquiring.template = choice.template.vmid;
+            if (box.from) {
+              acquiring.template = Number(box.from);
+            } else {
+              const choice = this.#choose(offer, guests, [], api.node, this.#placing(offer, new Set(failed.keys())));
+              if (failed.size && choice.problem) throw noGpu(failed, choice.problem);
+              acquiring.template = choice.template.vmid;
+            }
             // Read before the clone, so it is never newer than the clone's: a replace in between leaves the box what it has.
             acquiring.build = (await templateBuild(api, guests, acquiring.template, signal)) ?? null;
             const description = describe(box, this.#context.installId);
@@ -1657,6 +1663,8 @@ export class ProxmoxLxcBackend implements Backend {
     const ours = tags.includes(installTag(this.#context.installId)) && (tags.includes(IMAGE_BOX) || tags.some((tag) => tag.startsWith(IMAGE_TAG)));
     if (configured || !ours || !this.#inRange(vmid)) throw new Error(`CT ${vmid} is not an image box or build of this install's, so bb-box leaves it.`);
     await this.#forget(vmid);
+    // A captured build is protected, as templates are.
+    if (config.protection) await api.configure(vmid, { delete: ["protection"] }, signal);
     await api.destroy(vmid, signal);
     this.#imageBoxes.delete(vmid);
   }
