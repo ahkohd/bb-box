@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { recordFromJson, type ImageRecord } from "../backends/images.ts";
 import type { Backend, BackendStorage, DoctorCheck, ImageBox, ImageBuild } from "../backends/types.ts";
-import { BoxError, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, LOAD_ENVIRONMENT, type BoxRecord } from "../core/boxes.ts";
 import type { ImageConfig } from "../core/document.ts";
 import { trialCheck } from "../core/refresh.ts";
 import { quote } from "../transports/process.ts";
@@ -126,7 +126,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 /** Runs an image's check as the box user in a box of its build. */
 async function imageCheck(box: ImageBox, check: string, signal: AbortSignal) {
   await box.command.writeFile(".bb-box-image/check.sh", new TextEncoder().encode(check), { mode: "0700", signal });
-  return box.command.run('bash "$HOME/.bb-box-image/check.sh" 2>&1; s=$?; rm -rf "$HOME/.bb-box-image"; exit $s', { timeoutMs: CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
+  return box.command.run(`${LOAD_ENVIRONMENT} bash "$HOME/.bb-box-image/check.sh" 2>&1; s=$?; rm -rf "$HOME/.bb-box-image"; exit $s`, { timeoutMs: CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
 }
 const key = (prefix: string, name: string, backend: string, kind: string) => `${prefix}${name}/${backend}/${kind}`;
 const label = (name: string, backend: string, kind: string) => `${name} for ${kind} on ${backend}`;
@@ -628,7 +628,7 @@ export function bakeScript(name: string, kind: string, backend: string, buildId:
     `{ grep -vE '^(kind|built|apt_snapshot|tool)=' /usr/share/bb-box/template-release || true; } | sudo -n tee ${src}/extra-release >/dev/null`,
     `echo "bake: ${name}'s script, as root"`,
     `sudo -n env ${env} bash "$HOME/.bb-box-image/setup.sh"`,
-    ...(check ? [`echo "bake: ${name}'s check"`, `env ${env} bash "$HOME/.bb-box-image/check.sh"`] : []),
+    ...(check ? [`echo "bake: ${name}'s check"`, `(${LOAD_ENVIRONMENT} env ${env} bash "$HOME/.bb-box-image/check.sh")`] : []),
     'rm -rf "$HOME/.bb-box-image"',
     `sudo -n rm -rf ${keep} && sudo -n install -d ${keep}`,
     `for file in template-release template-pins.json; do [ ! -f /usr/share/bb-box/$file ] || sudo -n cp -p /usr/share/bb-box/$file ${keep}/; done`,

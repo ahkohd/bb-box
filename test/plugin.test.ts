@@ -310,6 +310,11 @@ test("box_image_set and bb box image set, list, show and remove keep a project's
   assert.match((await harness.behavior.runCli(["image", "list"])).stdout ?? "", /^rust-tailscale: linux boxes in prj_one; baked auto; script \.bb\/box-setup\.sh, check \.bb\/box-check\.sh; set \d{4}-\d{2}-\d{2}\.\n$/);
   assert.equal((await harness.behavior.runCli(["image", "show", "rust-tailscale"])).stdout, "#!/bin/bash\necho rust\n\n# The check, run as the box user:\ncargo --version\n");
 
+  // A draft from the project's files.
+  const draft = text(await tool("box_image_draft", { files: [{ path: ".nvmrc", text: "20\n" }, { path: "Dockerfile", text: "FROM ubuntu:24.04\nCOPY . /app\n" }] }));
+  assert.match(draft, /^Drafted from Dockerfile, \.nvmrc\.\n\nLeft to you, also commented at the top of the script:\n- Dockerfile: COPY \. \/app is commented out/);
+  assert.match(draft, /`\.bb\/box-setup\.sh`:\n```bash\n#!\/bin\/bash\n[\s\S]*'node@20'  # \.nvmrc\n[\s\S]*```\n\n`\.bb\/box-check\.sh`:\n```bash\n[\s\S]*node --version\n```/);
+
   // A try needs a backend that builds images, which the fake host is not; the CLI tries an image already set, on a kind it covers.
   const tried = await tool("box_image_try", { kind: "linux", script: "#!/bin/bash\necho rust\n" });
   assert.ok(isError(tried));

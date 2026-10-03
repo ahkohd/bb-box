@@ -7,6 +7,7 @@ import { kindAliases, kindInfo } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs, Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
+import type { Draft } from "../core/draft.ts";
 import type { ImageView } from "./images.ts";
 import { extraFeatures, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
@@ -456,6 +457,24 @@ export function imageLine(view: ImageView): string {
   const built = record ? `${record.build}, ${age === 0 ? "built today" : `${age} days old`}` : "no record";
   const last = view.last ? `; last rebuild ${new Date(view.last.at).toISOString().slice(0, 10)} ${view.last.ok ? "passed" : view.last.waiting ? `waited: ${view.last.reason}` : `failed: ${view.last.reason}`}` : "";
   return `${view.name} (${view.build.kind}): ${built}; ${view.due ? `due, as ${view.due}` : "not due"}${last}.`;
+}
+
+/** A draft of a project image's script (049): the files it used, what it left to the agent, the script and the check. */
+export function draftText(draft: Draft): string {
+  return [
+    draft.used.length ? `Drafted from ${draft.used.join(", ")}.` : "No file it reads was given, so the draft is a template to fill in.",
+    ...(draft.gaps.length ? ["", "Left to you, also commented at the top of the script:", ...draft.gaps.map((gap) => `- ${gap}`)] : []),
+    "",
+    "`.bb/box-setup.sh`:",
+    "```bash",
+    draft.script.trimEnd(),
+    "```",
+    "",
+    "`.bb/box-check.sh`:",
+    "```bash",
+    draft.check.trimEnd(),
+    "```",
+  ].join("\n");
 }
 
 /** What a try of a script did (049): a line per check, then the build's last lines. */

@@ -5,12 +5,13 @@ import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
 import { z } from "zod";
 import { BoxError, OPERATOR, SPARES, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, boxSize, idleWords, next, tryText, type KindView } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, next, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -462,6 +463,32 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         return `Released box ${box.name}.${idleWords(idle, false)}${next("Call box_acquire when you need another box.")}`;
       } catch (error) {
         return failure(error, "Releasing the box");
+      }
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "box_image_draft",
+    description:
+      "Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. Read these from the repository and pass each one's path and text: " +
+      ".devcontainer/devcontainer.json (or .devcontainer.json, or one in a subfolder of .devcontainer) and the Dockerfile it names; a Dockerfile; .tool-versions; mise.toml; .nvmrc or .node-version; .python-version; rust-toolchain.toml or rust-toolchain; flake.nix with flake.lock, or shell.nix. " +
+      "It returns a script for .bb/box-setup.sh, each part commented with the file it came from, a check for .bb/box-check.sh, and what it could not translate. The script runs as root on bb-box's standard Ubuntu 24.04 image, with no checkout of the repository: what needs one, such as npm ci, stays in the thread.",
+    presentation: { label: { pending: "Drafting the image's script", completed: "Drafted the image's script" } },
+    parameters: z.object({
+      files: z
+        .array(z.object({ path: z.string().min(1).describe("The file's path in the repository, such as .devcontainer/devcontainer.json."), text: z.string().describe("The file's text.") }))
+        .max(20)
+        .describe("The project's files the draft reads. An empty list gives a template."),
+    }),
+    async execute({ files }) {
+      try {
+        const draft = draftImage(files);
+        const hint = draft.gaps.length
+          ? "Settle what it left to you, write the files, then try them with box_image_try."
+          : "Write the files, then try them with box_image_try.";
+        return `${draftText(draft)}${next(hint)}`;
+      } catch (error) {
+        return failure(error, "Drafting the script");
       }
     },
   });

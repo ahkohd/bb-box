@@ -131,7 +131,7 @@ test("an image is baked on a backend once two of its boxes ran its script there 
     "7000: cat /usr/share/bb-box/image.json",
     "7000: printf '%s\\n' '{\"contract\":1,\"image\":\"ru",
     "7001: write .bb-box-image/check.sh",
-    '7001: bash "$HOME/.bb-box-image/check.sh" 2>&1',
+    "7001: set -a; [ ! -r /etc/environment ] || . /",
   ]);
   const built = lxc.builds.find((build) => build.image === "rust")!;
   assert.deepEqual([built.ref, built.kind, built.record?.kind, built.record?.base, built.record?.layer?.sha256, built.record?.sizeGiB, built.record?.tools], [
@@ -268,7 +268,7 @@ test("the bake's script runs the image's script as root and its check as the box
   const script = bakeScript("rust", "linux-desktop-cpu", "docker", "build.20261003-100000-abcd", true);
   const lines = script.split("\n");
   assert.ok(lines.includes(`sudo -n env BB_BOX_IMAGE='rust' BB_BOX_KIND='linux-desktop-cpu' BB_BOX_BACKEND='docker' BB_BOX_ARCH="$(uname -m | sed s/aarch64/arm64/)" bash "$HOME/.bb-box-image/setup.sh"`));
-  assert.ok(lines.includes(`env BB_BOX_IMAGE='rust' BB_BOX_KIND='linux-desktop-cpu' BB_BOX_BACKEND='docker' BB_BOX_ARCH="$(uname -m | sed s/aarch64/arm64/)" bash "$HOME/.bb-box-image/check.sh"`));
+  assert.ok(lines.includes(`(set -a; [ ! -r /etc/environment ] || . /etc/environment; set +a; env BB_BOX_IMAGE='rust' BB_BOX_KIND='linux-desktop-cpu' BB_BOX_BACKEND='docker' BB_BOX_ARCH="$(uname -m | sed s/aarch64/arm64/)" bash "$HOME/.bb-box-image/check.sh")`), "the check reads the PATH the script set");
   assert.ok(lines.includes("sudo -n bash /var/tmp/bb-box-build/proxmox-lxc/template/guest/finalize.sh /var/tmp/bb-box-build/proxmox-lxc/template desktop"));
   assert.ok(lines.indexOf(lines.find((line) => line.includes("finalize.sh"))!) < lines.indexOf(lines.find((line) => line.startsWith("sudo -n sh -c 'cp -p /usr/share/bb-box/.bake-keep/*"))!));
   assert.ok(script.includes("BUILD_ID=%s\\n' 'build.20261003-100000-abcd'"));

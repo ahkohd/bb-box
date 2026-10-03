@@ -76,6 +76,9 @@ export interface BoxImage {
   readonly from?: string;
 }
 
+/** Reads /etc/environment, where an image's script sets the box's PATH and variables, as a new session would (049). */
+export const LOAD_ENVIRONMENT = "set -a; [ ! -r /etc/environment ] || . /etc/environment; set +a;";
+
 /** How long an image's script may run at start (049), and its check. */
 const IMAGE_SCRIPT_MS = 30 * 60_000;
 const IMAGE_CHECK_MS = 10 * 60_000;
@@ -1258,7 +1261,8 @@ export class Boxes {
     const ran = await command.run(`sudo -n env ${path}${env} bash "$HOME/${IMAGE_DIR}/setup.sh" 2>&1`, { timeoutMs: IMAGE_SCRIPT_MS, signal, maxOutputBytes: 256 * 1024 });
     if (ran.exitCode !== 0) throw failed("script", ran, IMAGE_SCRIPT_MS);
     if (image.check) {
-      const checked = await command.run(`env ${env} bash "$HOME/${IMAGE_DIR}/check.sh" 2>&1`, { timeoutMs: IMAGE_CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
+      // With the PATH and variables the script set, which a session on a shared connection has not read yet.
+      const checked = await command.run(`${LOAD_ENVIRONMENT} env ${env} bash "$HOME/${IMAGE_DIR}/check.sh" 2>&1`, { timeoutMs: IMAGE_CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
       if (checked.exitCode !== 0) throw failed("check", checked, IMAGE_CHECK_MS);
     }
     await command.run(`rm -rf "$HOME/${IMAGE_DIR}"`, { timeoutMs: 30_000, signal }).catch(() => undefined);
