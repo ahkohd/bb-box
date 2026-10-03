@@ -168,7 +168,9 @@ test("a staged setup builds with the versions, and its image's record keeps the 
   assert.equal(run.status, 0, run.stderr);
   const record = parseImageRecord(JSON.parse(readFileSync(join(out, "image.json"), "utf8")))!;
   assert.equal(record.pins, await pinsDigest(SETUP, "linux-desktop"), "the pins it was built from, not the versions");
-  assert.deepEqual([record.tools.codex, record.tools.gh, record.tools.chrome, record.aptSnapshot], [NEXT, NEXT, "999.0.0.1", "20261003T000000Z"]);
+  // Chrome as this machine has it installed, else as the pins say.
+  const installed = spawnSync("sh", ["-c", "dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed \\([0-9.]*\\)-.*/\\1/p'"], { encoding: "utf8" }).stdout.trim();
+  assert.deepEqual([record.tools.codex, record.tools.gh, record.tools.chrome, record.aptSnapshot], [NEXT, NEXT, installed || "999.0.0.1", "20261003T000000Z"]);
 });
 
 test("bb box images versions says what a rebuild takes, a line per tool, its architectures together where they agree", () => {

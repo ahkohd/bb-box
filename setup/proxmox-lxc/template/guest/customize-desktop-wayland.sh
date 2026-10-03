@@ -56,17 +56,24 @@ desktop_packages="$desktop_packages fonts-noto-cjk"
 gpui_packages="clang cmake libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
   libfontconfig-dev libfreetype-dev libssl-dev libzstd-dev libvulkan-dev libasound2-dev"
 chrome=$(check chrome)
+# A refresh of a built image (049) may have a newer Chrome already, which
+# Google's apt source brought: keep it rather than go back to the pin.
+installed=$(dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed //p')
+if [ -n "$installed" ] && dpkg --compare-versions "$installed" ge "$(dpkg-deb -f "$chrome" Version)"; then
+  echo "customize-desktop-wayland: keeping Chrome $installed, as new as the pin or newer"
+  chrome=
+fi
 # Downloads are retried through snapshot.ubuntu.com's short outages, as in
 # baseline.sh; files already downloaded stay in apt's cache.
 # shellcheck disable=SC2086
 for try in 1 2 3 4 5; do
-  apt-get install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$chrome" && break
+  apt-get install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages ${chrome:+"$chrome"} && break
   [ "$try" = 5 ] && exit 1
   echo "customize-desktop-wayland: download failed (try $try of 5); retrying in $((try * 30)) s" >&2
   sleep $((try * 30))
 done
 # shellcheck disable=SC2086
-apt-get install -y -q --no-install-recommends $desktop_packages $gpui_packages "$chrome"
+apt-get install -y -q --no-install-recommends $desktop_packages $gpui_packages ${chrome:+"$chrome"}
 for package in $desktop_packages $gpui_packages google-chrome-stable; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || die "$package is not installed"
 done

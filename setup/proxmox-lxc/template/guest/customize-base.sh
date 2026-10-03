@@ -267,8 +267,9 @@ printf 'LANG=C.UTF-8\n' >/etc/default/locale
 install -m 0755 "$build/guest/check-headless.sh" /usr/local/bin/bb-box-check-headless
 
 # What `uv tool install` and pipx put in ~/.local/bin runs by name, as it
-# does in a login shell.
-grep -q "^PATH=\"/home/$user/.local/bin:" /etc/environment ||
+# does in a login shell. Once: a refresh (049) runs this on a built image,
+# where a later step may have put another directory first.
+[[ ":$(sed -n 's/^PATH="\([^"]*\)"$/\1/p' /etc/environment):" == *":/home/$user/.local/bin:"* ]] ||
   sed -i "s|^PATH=\"|PATH=\"/home/$user/.local/bin:|" /etc/environment
 
 # Every command BB and agents use must be on the box user's PATH over SSH,
