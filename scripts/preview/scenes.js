@@ -358,7 +358,7 @@ function rpc(boxes, options = {}) {
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
-    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false }),
+    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
     desktop: ({ box: ref }) => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     allBoxes: () => [
       ...(options.machines ?? []).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
@@ -504,6 +504,23 @@ export const scenes = {
     rpc: rpc([], { imageOffer: true }),
     after: async (root) => {
       click(root, "button", "New box");
+      await wait(300);
+    },
+  },
+  // Two projects' images cover Linux (049): a dim sub-label "Image" under the Type cards and one menu, this project's image first, open.
+  "panel-chooser-images": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 860,
+    rpc: rpc([], { images: [
+      { name: "rust-tools", kinds: ["linux"], projects: [{ id: "proj_1", name: "Example" }], mine: true, builds: [{ kind: "linux", backend: "proxmox-lxc", build: "b1", built: "2026-10-02T10:00:00Z" }] },
+      { name: "go-tools", kinds: ["linux"], projects: [{ id: "proj_2", name: "Another project" }], mine: false, builds: [] },
+    ] }),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      document.querySelector('[role="combobox"][aria-label="Image"]')?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
       await wait(300);
     },
   },

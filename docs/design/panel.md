@@ -38,8 +38,8 @@ size ([#58](https://github.com/moonstead/bb-box/issues/58), decision 028).
 Kinds follow the operator's decisions of 1 October 2026: a kind is named by
 its OS, and what it has reads as badges or, in the New box form, as the
 steps that name it (System, Architecture, Type with a Display under it
-where a desktop's system offers both windowings, and a GPU under
-Resources).
+where a desktop's system offers both windowings and an Image where a
+project's image covers the kind, and a GPU under Resources).
 
 | Kind ID | Box row | New box steps |
 | --- | --- | --- |
@@ -242,6 +242,9 @@ words are never cut off.
 |                                                                   |
 | Display                                                           |
 | [ X11             v ]                                             |
+|                                                                   |
+| Image                                                             |
+| [ rust-tools      v ]                                             |
 | Resources                                                         |
 | Configure the box's cores, memory, disk and GPU: pick a size, or  |
 | Custom to set your own.                                           |
@@ -303,6 +306,20 @@ bottom sheet still carries the title "New box".
   operator took the Wayland note off). It defaults to X11, so nothing
   changes for today's boxes. Like every step it names no kind: the
   windowing maps to a kind ID in `box-form.tsx`.
+- **Image** (049) is a detail of the box's kind, in the Display choice's
+  shape: where a project's image covers the chosen kind, a dim sub-label
+  "Image" under the Type cards, then one menu, this project's image
+  first by its name alone ("rust-tools") and chosen at first, which
+  says it is this project's, then Standard, then other projects'
+  images as "name · Project" ("go-tools · Another project"); plain
+  names, no description, and not remembered across forms. The build state (built ahead, or its
+  script running as the box starts) stays off the form; the box's row
+  and details carry it. Create sends the choice as the acquire RPC's
+  `image`, a name or "standard". BB's new-thread inputs offer the same
+  list as an Image group after Size, with check marks; outside a
+  project nothing is chosen and nothing is sent until the person picks,
+  so the provider's own default, the new thread's project's image, still
+  applies.
 - **No box image** (049): for a Linux box in a project that has no box
   image, the footer's free slot, left of Create box, holds one dim
   link-styled line, "Make a box image for this project", which opens BB's

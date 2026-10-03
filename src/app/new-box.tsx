@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { KindView, ProviderProfile, SizeView } from "../plugin/views.ts";
+import type { ImageOptionView, KindView, ProviderProfile, SizeView } from "../plugin/views.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
@@ -112,10 +112,13 @@ export function NewBox({
   machine = false,
   profile,
   askForImage,
+  images = [],
 }: {
   kinds: readonly KindView[];
-  /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036). */
-  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[]) => Promise<string | null>;
+  /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036), and its image (049). */
+  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[], image?: string) => Promise<string | null>;
+  /** The projects' images a box can choose (049), this project's marked mine; the choice shows where one covers the chosen kind. */
+  images?: readonly ImageOptionView[];
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
   machine?: boolean;
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
@@ -134,6 +137,8 @@ export function NewBox({
     return remembered ? choiceOf(remembered) : { os: "linux", arch: "x86_64", desktop: false, gpu: false, windowing: "x11" };
   });
   const [choice, setChoice] = useState<Choice2 | null>(last.size ?? null);
+  /** The image chosen by hand (049): a name or "standard"; null until then, so the form starts on the project's image each time. */
+  const [image, setImage] = useState<string | null>(null);
   /** The preset last chosen, which Custom starts from. */
   const [viewed, setViewed] = useState<string | null>(last.size && last.size !== CUSTOM ? last.size : null);
   // Custom fields belong to a kind: edited ones are kept per kind, and a
@@ -182,6 +187,16 @@ export function NewBox({
   // Every step shows what exists; a choice snaps to the nearest that does.
   const picked = nearest(kinds, wanted);
   const kind = kindFor(kinds, picked);
+  // The images covering the chosen kind (049): the choice shows only where there is one. The state lists this project's first.
+  const covering = kind ? images.filter((candidate) => candidate.kinds.includes(kind.id)) : [];
+  const imageChoice = covering.length > 0;
+  const imageOptions = [
+    ...covering.filter((candidate) => candidate.mine).map((candidate) => ({ value: candidate.name, label: candidate.name })),
+    { value: "standard", label: "Standard" },
+    ...covering.filter((candidate) => !candidate.mine).map((candidate) => ({ value: candidate.name, label: `${candidate.name} · ${candidate.projects.map((project) => project.name).join(", ")}` })),
+  ];
+  /** What the form says about the image: the hand's choice while it covers the kind, else this project's image, else Standard; nothing when there is no choice. */
+  const chosenImage = imageChoice ? (image && imageOptions.some((option) => option.value === image) ? image : (covering.find((candidate) => candidate.mine)?.name ?? "standard")) : undefined;
   const systems = systemsOf(kinds);
   const gpus = gpuChoices(kinds, picked.os, picked.arch, picked.windowing);
   /** A desktop whose system has a GPU desktop and a CPU one: the GPU is a choice. */
@@ -257,7 +272,7 @@ export function NewBox({
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn);
+      const refused = await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -362,6 +377,14 @@ export function NewBox({
                   ]}
                   onChange={(value) => pick({ windowing: value as Windowing })}
                 />
+              </div>
+            ) : null}
+            {imageChoice ? (
+              // The image is a detail of the box's kind (049), in the Display choice's shape: a dim sub-label under the cards, then one menu,
+              // this project's image first and chosen at first, then Standard, then other projects' images; plain names, no description.
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Image</p>
+                <MenuSelect label="Image" value={chosenImage ?? "standard"} options={imageOptions} onChange={setImage} />
               </div>
             ) : null}
           </FormSection>

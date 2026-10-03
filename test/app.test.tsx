@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
+import type { ImageOptionView } from "../src/plugin/views.ts";
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
@@ -357,7 +358,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[] } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[] } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -376,12 +377,12 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   };
   const find = (ref: string) => boxes.find((candidate) => candidate.id === ref || candidate.name === ref) ?? null;
   const handlers: PluginRpcTestHandlers<Contract> = {
-    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: [] }),
+    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? null, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktopClipboard: () => null,
-    images: () => [],
+    images: () => options.images ?? [],
     allBoxes: () => boxes.map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
     // Your machines (036): `options.machines` to start with, kept as the tests add, stop, start and remove them.
     "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol) }),
@@ -424,8 +425,8 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
       changes.push(`thread ${ref} ${prompt}`);
       return { threadId: "thr_child", error: null };
     },
-    acquire: ({ kind, size, on }) => {
-      changes.push(`acquire ${kind}${size ? ` ${JSON.stringify(size)}` : ""}${on ? ` on ${on}` : ""}`);
+    acquire: ({ kind, size, on, image }) => {
+      changes.push(`acquire ${kind}${size ? ` ${JSON.stringify(size)}` : ""}${on ? ` on ${on}` : ""}${image ? ` image ${image}` : ""}`);
       if (options.failWith) return result(null);
       const made = box({ id: `box_${boxes.length + 2}`, name: "new-box", kind, kindLabel: KINDS.find((candidate) => candidate.id === kind)?.label ?? kind, state: "acquiring", createdAt: Date.now(), timings: {}, enrol: { state: "off", hostId: null, error: null } });
       boxes = [...boxes, made];
@@ -1954,6 +1955,63 @@ test("the Display choice shows only when a system offers X11 and Wayland, defaul
   expect(screen.queryByText(/X11 desktop|XFCE|Sway/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux-desktop-wayland-cpu"]));
+});
+
+/** Two projects' images for Linux (049): this project's, and another project's. */
+const IMAGES: ImageOptionView[] = [
+  { name: "rust-tools", kinds: ["linux"], projects: [{ id: "proj_1", name: "Example" }], mine: true, builds: [{ kind: "linux", backend: "proxmox-lxc", build: "b1", built: "2026-10-02T10:00:00Z" }] },
+  { name: "go-tools", kinds: ["linux"], projects: [{ id: "proj_2", name: "Another project" }], mine: false, builds: [] },
+];
+
+test("the Image choice shows under Type where an image covers the kind, this project's first and chosen, and Create sends the choice (049)", async () => {
+  const { handlers, changes } = server([], { images: IMAGES });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const types = await screen.findByRole("radiogroup", { name: "Type" });
+  // A Linux server: two images cover it. A dim sub-label of Type, no heading, this project's image chosen at first.
+  const menu = await screen.findByRole("combobox", { name: "Image" });
+  expect(menu.textContent).toBe("rust-tools");
+  expect(screen.queryByRole("heading", { name: "Image" })).toBeNull();
+  // The options in order: this project's, Standard, the other project's with its name.
+  fireEvent.keyDown(menu, { key: "ArrowDown" });
+  const options = (await screen.findAllByRole("option")).map((option) => option.textContent);
+  expect(options).toEqual(["rust-tools", "Standard", "go-tools · Another project"]);
+  fireEvent.click(screen.getAllByRole("option").find((option) => option.textContent === "Standard")!);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Image" }).textContent).toBe("Standard"));
+  // A desktop: no image covers it, so no choice and no image sent.
+  fireEvent.click(within(types).getByRole("radio", { name: /^Desktop/ }));
+  await waitFor(() => expect(screen.queryByRole("combobox", { name: "Image" })).toBeNull());
+  // Back to the server: the hand's choice stands. Create sends it.
+  fireEvent.click(within(types).getByRole("radio", { name: /^Server/ }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Image" }).textContent).toBe("Standard"));
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes).toEqual(["acquire linux image standard"]));
+});
+
+test("New box's new-thread inputs offer the Image group with the project's image chosen, and nothing chosen without a project (049)", async () => {
+  const [inputs] = app.machineProviderInputs;
+  const values: unknown[] = [];
+  const onChange = (next: { status: string; value?: unknown }) => values.push(next.status === "ready" ? next.value : next.status);
+  // In a project: its image is the choice at first, and it goes in the value.
+  renderSlot(inputs!, { value: null, onChange }, { rpc: server([], { images: IMAGES }).handlers, pluginId: "bb-box", context: { projectId: "proj_1" } });
+  await waitFor(() => expect(values.at(-1)).toEqual({ kind: "linux", size: "small", image: "rust-tools" }));
+  const trigger = screen.getByRole("button", { name: "New box options" });
+  expect(trigger.textContent).toContain("rust-tools");
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+  expect(items.slice(-3)).toEqual(["rust-tools", "Standard", "go-tools · Another project"]);
+  fireEvent.click(screen.getAllByRole("menuitem").find((item) => item.textContent === "Standard")!);
+  await waitFor(() => expect(values.at(-1)).toEqual({ kind: "linux", size: "small", image: "standard" }));
+  cleanup();
+  // Outside a project: no image is this project's, nothing is chosen, and no image goes in the value until the person picks one.
+  const outside: unknown[] = [];
+  const nobody = IMAGES.map((image) => ({ ...image, mine: false }));
+  renderSlot(inputs!, { value: null, onChange: (next: { status: string; value?: unknown }) => outside.push(next.status === "ready" ? next.value : next.status) }, { rpc: server([], { images: nobody }).handlers, pluginId: "bb-box", context: { projectId: null } });
+  await waitFor(() => expect(outside.at(-1)).toEqual({ kind: "linux", size: "small" }));
+  fireEvent.keyDown(screen.getByRole("button", { name: "New box options" }), { key: "ArrowDown" });
+  fireEvent.click((await screen.findAllByRole("menuitem")).find((item) => item.textContent === "go-tools · Another project")!);
+  await waitFor(() => expect(outside.at(-1)).toEqual({ kind: "linux", size: "small", image: "go-tools" }));
 });
 
 test("the form's words: a provider's title, the systems' hosts, the nearest choice and the filters", () => {
