@@ -131,7 +131,7 @@ test("a box at the default size takes a warm VM, and the pool fills again", asyn
   const guest = await backend.acquire(box, null, recorded.hooks, signal());
   assert.equal(guest.ref, warm);
   assert.deepEqual(guest.size, SMALL);
-  assert.ok("warm" in recorded.timings && !("clone" in recorded.timings), JSON.stringify(recorded.timings));
+  assert.ok("warm" in recorded.timings && "clock" in recorded.timings && !("clone" in recorded.timings), JSON.stringify(recorded.timings));
   assert.match(owner(warm!), new RegExp(`^box=${box.boxId}$`, "m"));
   assert.doesNotMatch(owner(warm!), /^state=/m);
   assert.equal(await backend.power(guest), "running");

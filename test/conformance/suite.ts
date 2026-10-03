@@ -1003,15 +1003,16 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           assert.equal((await backend.held(signal())).find((guest) => guest.ref === box.ref), undefined, "an image box is no box's guest");
           assert.ok((await images.list(signal())).boxes.includes(box.ref), "an image box is listed until it goes");
 
-          // As a build's script and finalizing leave it: a file of the image's, and its record.
+          // As a build's script and finalizing leave it: a file of the image's, and its record, where the OS keeps it (049).
+          const dir = kinds.find((kind) => kind.id === standard.kind)?.capabilities.os === "macos" ? "/usr/local/share/bb-box" : "/usr/share/bb-box";
           const marker = `bb-box conformance ${randomBytes(4).toString("hex")}`;
           const build = `build.conformance-${Date.now()}`;
           const record = { contract: 1, image: "conformance", kind: standard.kind, arch: "", build, built: new Date().toISOString(), os: "", tools: {} };
           const script = [
             "set -e",
-            "sudo -n mkdir -p /usr/share/bb-box",
-            `printf '%s\\n' '${marker}' | sudo -n tee /usr/share/bb-box/conformance >/dev/null`,
-            `printf '%s\\n' '${JSON.stringify(record)}' | sudo -n tee /usr/share/bb-box/image.json >/dev/null`,
+            `sudo -n mkdir -p ${dir}`,
+            `printf '%s\\n' '${marker}' | sudo -n tee ${dir}/conformance >/dev/null`,
+            `printf '%s\\n' '${JSON.stringify(record)}' | sudo -n tee ${dir}/image.json >/dev/null`,
           ].join("\n");
           const ran = await box.command.run(script, { timeoutMs: timeout, signal: signal() });
           assert.equal(ran.exitCode, 0, ran.stderr);
@@ -1024,7 +1025,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
 
           const trial = await images.box(made, "conformance trial", signal());
           left.push(trial.ref);
-          const read = await trial.command.run("cat /usr/share/bb-box/conformance", { timeoutMs: timeout, signal: signal() });
+          const read = await trial.command.run(`cat ${dir}/conformance`, { timeoutMs: timeout, signal: signal() });
           assert.equal(read.stdout.trim(), marker, "a box from the build has what the script made");
 
           await images.remove(trial.ref, signal());

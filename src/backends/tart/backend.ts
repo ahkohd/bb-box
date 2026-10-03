@@ -495,6 +495,21 @@ for key in ComputerName LocalHostName HostName; do sudo -n scutil --set "$key" $
 }
 
 /**
+ * Sets a macOS VM's clock to `now`, in UTC: a VM resumed from a suspend has
+ * the time it was suspended at, and macOS does not notice for a while. Half
+ * a second on, for the seconds date drops and the command's way there. Only
+ * in a VM, as nameScript.
+ */
+export function macClockScript(now: number): string {
+  const at = new Date(now + 500);
+  const two = (value: number) => String(value).padStart(2, "0");
+  // BSD date's mmddHHMMccyy.ss.
+  const stamp = `${two(at.getUTCMonth() + 1)}${two(at.getUTCDate())}${two(at.getUTCHours())}${two(at.getUTCMinutes())}${at.getUTCFullYear()}.${two(at.getUTCSeconds())}`;
+  return `case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) echo "not a VM"; exit 0 ;; esac
+sudo -n date -u ${stamp} >/dev/null`;
+}
+
+/**
  * Asks a Linux VM to shut itself down, after its file systems are written
  * out: `tart stop` does not wait for a Linux guest, and what the guest had not
  * written was lost (an SSH host key made at first boot came back empty).
@@ -855,6 +870,8 @@ export class TartBackend implements Backend {
         if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
         await step("identify", () => this.#identify(host, address, vm, os, signal));
         await step("name", () => this.#rename(host, address, vm, os, box.name, signal));
+        // A warm VM, or one held before a restart, resumed from a suspend with an old clock.
+        if (os === "macos" && (placement.how === "warm" || placement.how === "resume")) await step("clock", () => this.#clock(host, address, signal));
         const size = sizeOf((await this.#state(host, signal)).configs.get(vm));
         // Claimed again, so the box's record has the address and size as it becomes ready.
         await hooks.claim(guest(address, size));
@@ -1062,6 +1079,8 @@ export class TartBackend implements Backend {
     await this.#waitReady(host, guest.ref, this.#vm(await this.#mac(host), address, os), os, deadline, signal);
     await this.#identify(host, address, guest.ref, os, signal);
     if (os === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
+    // A macOS VM resumes from its suspend with the time it stopped at.
+    if (os === "macos") await this.#clock(host, address, signal);
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -1908,6 +1927,14 @@ export class TartBackend implements Backend {
     }
     const remembered = await command.run(rememberScript(vm), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
     if (remembered.exitCode !== 0) throw new Error(`${host.name}: ${remembered.stderr.trim() || `exit code ${remembered.exitCode}`}`);
+  }
+
+  /** Sets a resumed macOS VM's clock from this server's (macClockScript). A box whose clock could not be set still works, so that only logs. */
+  async #clock(host: TartHost, address: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "macos"), "macos");
+    const result = await command.run(macClockScript(Date.now()), { timeoutMs: 15_000, signal, maxOutputBytes: 4096 }).catch((error: unknown) => ({ exitCode: null, stderr: message(error) }));
+    if (result.exitCode !== 0) this.#context.logError("set the clock", new Error(`${host.name}: the VM at ${address} could not set its clock: ${result.stderr.trim() || `exit code ${result.exitCode}`}`));
   }
 
   /**
