@@ -122,7 +122,7 @@ class Builder {
  * sections of lines, each after a "== <section>" line. The image's record
  * is the mark: what is newer was made in the box.
  */
-export const SCAN_SCRIPT = `set -u
+export const SCAN_SCRIPT = String.raw`set -u
 mark=/usr/share/bb-box/image.json
 [ -e "$mark" ] || { echo "== no-record"; exit 0; }
 newer() { find "$@" -mindepth 1 -maxdepth 1 -newer "$mark" 2>/dev/null | sort; }
