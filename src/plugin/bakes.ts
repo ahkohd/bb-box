@@ -622,6 +622,8 @@ export function bakeScript(name: string, kind: string, backend: string, buildId:
     `sudo -n rm -rf ${BUILD_DIR} && sudo -n install -d -m 0700 ${BUILD_DIR}`,
     `sudo -n tar -xzf ~/bb-box-setup.tgz -C ${BUILD_DIR} && rm -f ~/bb-box-setup.tgz`,
     `printf 'BOX_USER=box\\nBUILD_ID=%s\\n' ${quote(buildId)} | sudo -n tee ${src}/build.env >/dev/null`,
+    // bb-box-feature as this bb-box has it, for an image built before standard images had it (049).
+    `sudo -n install -m 0755 ${src}/guest/bb-box-feature.sh /usr/local/bin/bb-box-feature`,
     // The release lines finalizing does not write itself, such as runtime=docker and nvidia=.
     `{ grep -vE '^(kind|built|apt_snapshot|tool)=' /usr/share/bb-box/template-release || true; } | sudo -n tee ${src}/extra-release >/dev/null`,
     `echo "bake: ${name}'s script, as root"`,
