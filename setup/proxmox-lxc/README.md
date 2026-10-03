@@ -278,6 +278,18 @@ bb-box builds images itself with the API token (049):
 - **Refreshing a template.** bb-box replaces it in place, as `build.sh --replace` does. The old template goes and the new build is cloned into its VMID: linked on LVM-thin, otherwise a full copy on the template's storage. It is made a template with the old one's tags and the new build ID, and the build goes. Acquires wait for the template meanwhile.
 
 No sweep removes an image box or a captured build. The build that made them removes them.
+
+A refresh of a template does all of this in turn:
+
+1. It runs the guest scripts again in an image box of the template. It uses the versions a rebuild takes and BB's app, then finalizes and captures the box.
+2. It checks a trial box from the capture:
+   - The kind's own check passes as the box user.
+   - The box has BB's app at the recorded digest.
+   - The box answers no more than 5 s slower than a box of the old build.
+   - The record is whole, and no tool is older than in the old build.
+3. Only then does it replace the template. A failure keeps the old template and removes what the refresh made.
+
+To run one by hand, use `npm run refresh -- --backend proxmox-lxc --settings <settings.json> --image <vmid> [--bb-url <url>] [--pinned] [--try]`. With `--try` it builds and checks, then leaves the template as it is.
 `/usr/share/bb-box/template-release` and the packages list stay, for
 people.
 

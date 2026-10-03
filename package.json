@@ -35,6 +35,7 @@
     "build": "bb plugin build",
     "smoke": "node scripts/smoke.ts",
     "conformance": "node scripts/conformance.ts",
+    "refresh": "node scripts/refresh.ts",
     "test:app": "vitest run"
   },
   "dependencies": {
