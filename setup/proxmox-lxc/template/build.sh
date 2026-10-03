@@ -148,6 +148,16 @@ gpu_lines() {
   echo "--dev5 /dev/dri/$render,mode=0666 --dev6 /dev/dri/$card,mode=0666"
   echo "# gpu $pci"
 }
+# /dev/net/tun, so boxes can run Tailscale and other VPNs with a TUN device
+# (050), as CT <ct>'s next free devN: a GPU's nodes take dev0 to dev6. A copy
+# keeps the line its template has.
+add_tun() { # ct
+  local config n=0
+  config=$(pct config "$1")
+  ! grep -Eq '^dev[0-9]+: /dev/net/tun(,|$)' <<<"$config" || return 0
+  while grep -q "^dev$n:" <<<"$config"; do n=$((n + 1)); done
+  pct set "$1" "--dev$n" /dev/net/tun
+}
 
 make_template() { # vmid description
   pct template "$1"
@@ -189,6 +199,7 @@ if [ "$kind" = copy-desktop ]; then
   pct set "$ct" --delete protection 2>/dev/null || true
   # shellcheck disable=SC2046
   pct set "$ct" --tags "$build" $(grep -v '^#' <<<"$lines")
+  add_tun "$ct"
   if [ "$ct" != "$vmid" ]; then
     replace_with "$ct" "$vmid" "bb-box-desktop-$vmid" "$description"
   else
@@ -252,6 +263,7 @@ pct create "$ct" "$BBBOX_OS_TEMPLATE" --hostname "bb-box-$kind" --pool "$BBBOX_P
 devices=$(grep -v '^#' <<<"$lines" || true)
 # shellcheck disable=SC2086
 [ -z "$devices" ] || pct set "$ct" $devices
+add_tun "$ct"
 pct start "$ct"
 for _ in $(seq 1 60); do
   pct exec "$ct" -- getent hosts archive.ubuntu.com >/dev/null 2>&1 && break

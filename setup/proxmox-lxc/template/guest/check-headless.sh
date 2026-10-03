@@ -10,6 +10,9 @@ t "boot time" sh -c 'systemd-analyze | head -1'
 t "dns (resolved stub)" sh -c 'readlink /etc/resolv.conf; resolvectl dns eth0 2>/dev/null | head -1; getent hosts github.com'
 t "address announced" sh -c 'systemctl cat bb-box-announce >/dev/null 2>&1 || { echo "not needed here (a VM keeps its own network)"; exit 0; }; [ "$(systemctl show -p Result --value bb-box-announce)" = success ] && echo "gratuitous ARP sent"'
 t "https reach" curl -sS -o /dev/null -m 10 -w '%{http_code}' https://example.com/
+# A TUN device, for Tailscale and other VPNs (050): build.sh gives a
+# template /dev/net/tun, and a VM has its own.
+t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'
 t "PATH" sh -c 'echo $PATH'
 t "tools" sh -c 'for c in node npm pnpm yarn uv gh rg fd jj git-lfs claude codex pi docker psql redis-cli sqlite3 tree vim nvim; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; node --version; uv --version; claude --version | head -1'
 # A new box installs packages without `apt-get update` first.
