@@ -9,6 +9,9 @@ spares can be of an image; and
 through the same relay. Extended by
 [050](050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md):
 standard Linux images carry Tailscale, stopped and with no state.
+Amended before it was built, 3 October 2026: a person never writes the
+script. It lives in the project's repository, and an agent writes it from
+a draft that bb-box makes from the project's files.
 
 ## Context
 
@@ -18,7 +21,8 @@ Docker image, a Tart VM or a QEMU disk. The operator asked for two things.
 - **Their own setup on top.** A project should be able to add what its
   threads need, such as Rust and Tailscale for a project that shares a
   keyboard and mouse over a tailnet, once for every backend, and have its
-  threads' boxes start with it.
+  threads' boxes start with it. They added later that no person should
+  have to write a script for it by hand.
 - **Freshness.** Images are rebuilt only when a person runs a setup
   script. Each should say when it was built and what is in it, the doctor
   should say when one is old, and a nightly job should rebuild them.
@@ -100,10 +104,12 @@ each backend that offers the kind.
 - **In the configuration.** Each image has a name such as `rust-tailscale`,
   the kinds it builds on, a script for each OS family (Linux now; Windows
   in PowerShell and macOS later), an optional check run as the box user,
-  how it is baked (below), and the projects it belongs to.
-- **Set from the CLI or the page.** `bb box image set <name> --kinds
-  linux,linux-desktop-cpu --script-file layer.sh [--check-file check.sh]
-  --project <id>` keeps a copy of the files, as BB's script automations do.
+  how it is baked (below), the projects it belongs to, and where the
+  script came from in the project's repository.
+- **Set by an agent, the CLI or the page.** `box_image_set`, or `bb box
+  image set <name> --kinds linux,linux-desktop-cpu --script-file
+  .bb/box-setup.sh [--check-file .bb/box-check.sh] --project <id>`, keeps
+  a copy of the files, as BB's script automations do.
   The settings page lists each image with its builds per backend, their
   dates, sizes and states, and the last build's output.
 - **One script for every Linux backend.** It runs in a booted box with the
@@ -115,7 +121,7 @@ each backend that offers the kind.
   project's variables, and what an image holds every box from it gets.
   Joining a tailnet is done per box, at start (050).
 
-The example project's script:
+The example project's `.bb/box-setup.sh`:
 
     #!/bin/bash
     set -euo pipefail
@@ -128,6 +134,71 @@ The example project's script:
     systemctl disable --now tailscaled && rm -rf /var/lib/tailscale
     sudo -iu box sh -c 'curl -fsSL https://sh.rustup.rs |
       sh -s -- -y --profile minimal -c clippy -c rustfmt'
+
+### Writing the script
+
+A person never writes the script. It is still what is stored and built,
+but an agent writes it on request, from a draft bb-box makes from what the
+project already has.
+
+- **In the repository.** The script is `.bb/box-setup.sh` in the project's
+  repository by default, beside an optional `.bb/box-check.sh`, so it is
+  reviewed and changed with the code that needs it. Registering it copies
+  it into the configuration with its path, and builds use that copy. A
+  change in the repository counts once it is registered again.
+- **On request.** A person asks in a thread, such as "make a box image for
+  this project". When a project has no image, New box offers "Ask an agent
+  to make one", which starts a thread with that request.
+- **The flow**, in the bb-box skill:
+  1. `box_image_draft` reads the project's files from the thread's
+     workspace and returns a draft, each part commented with the file it
+     came from, and a list of what it could not translate.
+  2. The agent fills the gaps and writes `.bb/box-setup.sh`, and a check
+     of what the project needs, such as `cargo --version`, in
+     `.bb/box-check.sh`.
+  3. `box_image_try` runs the script as a build does: in a new box of the
+     base kind from the current standard image, as root with the
+     `BB_BOX_*` variables, then finalizing, the kind's check and the
+     image's check. It returns the time, the last 200 lines and each
+     check's result, then releases the box, or keeps it with `keep: true`
+     so the agent can look inside. The agent repeats until the checks
+     pass, from a clean base each time, as the build will be.
+  4. The agent commits the files and registers them with `box_image_set`.
+     Registering changes every new box in the project's threads, so the
+     agent asks the person first unless they asked for that. bb-box then
+     runs the script at start or bakes it, as below.
+- **No repository at build time.** The build box has no checkout, so the
+  script cannot read the repository. What needs it, such as `npm ci` or
+  `cargo fetch`, stays in the thread, and the draft says so.
+
+What bb-box drafts from:
+
+| The project has | The draft | Left to the agent |
+| --- | --- | --- |
+| `devcontainer.json` features | nothing for what standard images have, such as Docker in Docker, the GitHub CLI and common utilities; mise for languages; other features through `bb-box-feature`, which fetches the feature and runs its `install.sh` with its options, as the Dev Container spec says | features for another OS family |
+| `devcontainer.json` `containerEnv`, `onCreateCommand`, `postCreateCommand` | the variables in `/etc/profile.d`; the commands, commented out | which commands need no workspace |
+| A Dockerfile from Ubuntu or Debian | `RUN` lines in order, `ENV` and `ARG` as variables, and a `USER` other than root as the box user | `COPY` and `ADD`, other bases and multi-stage builds |
+| `.tool-versions`, `mise.toml`, `.nvmrc`, `.python-version` | mise for the box user, with each tool at its version | tools mise does not have |
+| `rust-toolchain.toml` | rustup with its channel, components and targets | |
+| `flake.nix` or `shell.nix` | Nix, and the dev shell built once from copies of the flake and its lock in the script | |
+| none of these | a script with a comment for each part to fill in | all of it |
+
+**Considered and rejected: saving a box as the image.** A "Save this box
+as an image" button would capture a box someone set up by hand. It is not
+the stored form:
+
+- It cannot be built again on a fresh standard image, so nightly rebuilds
+  and contract changes would leave it behind.
+- It keeps whatever happened in the box: caches, shell history, the
+  thread's files, BB's enrolment, secrets typed in.
+- A capture serves one backend. A script serves Proxmox LXC, Docker and
+  Tart.
+- No one can review or change it in a pull request.
+
+At most it is a start. `box_image_draft` can read a box instead of files:
+it lists what differs from the box's image, such as the packages beyond
+the image's packages list and the tools in `/usr/local`, `/opt` and the
+box user's home, for the agent to turn into a script.
 
 ### Building an image: a box, the script, a check, a capture
 
@@ -331,6 +402,8 @@ A check named "Nightly rebuilds" warns when none has run for 8 days.
 
 - A project's boxes start with its tools: the example project's after
   22 s for its first boxes on a backend, then as fast as standard ones.
+- A person says what the project needs, or nothing; an agent writes and
+  tries the script, often from files the project already has.
 - Agent CLIs and Chrome in new boxes are at most a week old, and Windows
   and macOS images at most a month.
 - The doctor says how old each image is and what is in it.
@@ -356,12 +429,17 @@ A check named "Nightly rebuilds" warns when none has run for 8 days.
 4. **The nightly job**: `bb box images refresh` and `build`, the order,
    the room check, the output, the "Nightly rebuilds" check, and the setup
    guide's automation.
-5. **Project images**: the configuration, `bb box image set` and `remove`,
-   the script at start, baking when used and removing when unused.
-6. **Choosing**: New box's Image choice, `box_acquire`'s `image`,
+5. **Project images**: the configuration, `box_image_set`, `bb box image
+   set` and `remove`, the script at start, baking when used and removing
+   when unused.
+6. **Writing the script**: `box_image_try`, `box_image_draft` from files
+   and from a box, `bb-box-feature` in standard Linux images, the skill's
+   flow, and New box's offer for a project with no image.
+7. **Choosing**: New box's Image choice, `box_acquire`'s `image`,
    `box_list`, and the box's record and details.
-7. **Docs**: the architecture, the setup guides and the kinds, with each
-   PR.
+8. **Docs**: the architecture, the setup guides, the kinds and the skill,
+   with each PR.
 
-Later: Windows and macOS scripts, and a project's script kept in its own
-repository.
+Later: Windows and macOS scripts and their drafts, and builds that follow
+the script in the repository's default branch without registering it
+again.

@@ -1359,6 +1359,14 @@ Today each kind has one image per backend, built by the setup scripts.
   bakes it there. It is built in a box of the base kind, then captured: a
   template, `docker commit`, or a renamed Tart VM. A project's threads get
   it by default, and New box and `box_acquire` can choose it.
+- **Written by an agent.** A person never writes the script. It lives in
+  the project's repository, `.bb/box-setup.sh` by default. On request, an
+  agent drafts it with `box_image_draft` from the project's
+  `devcontainer.json`, Dockerfile, mise or `.tool-versions`,
+  `rust-toolchain.toml` or Nix files, fills the gaps, and tries it with
+  `box_image_try` in a fresh box until the checks pass. It then registers
+  it with `box_image_set`. A box saved as an image is not stored, as it
+  cannot be built again on a fresh base.
 - **The record**, `/usr/share/bb-box/image.json`, gives the build's date,
   contract, apt snapshot, BB app's digest, tools, NVIDIA userspace and the
   script's digest, with a copy readable without starting the image.
