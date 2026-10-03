@@ -5,16 +5,21 @@
 // of viewers on a unix socket that only the Mac's host user can open. It
 // never connects again; a new run gets a new holder (holderScript).
 //
-// It sets one pixel format and its own encodings upstream, reads each of the
-// server's messages whole, and keeps exactly one update request outstanding,
+// It reads each of the server's messages whole, and keeps exactly one update
+// request outstanding,
 // as a VNC viewer does, whether anyone watches or not: Tart answers requests
 // in order, and one for changes only when the screen changes. So it keeps the
 // last whole screen and the updates since, and a viewer that joins gets them
 // at once, then every update with the rest; it never asks Tart for anything.
 // When the updates since outgrow the whole screen, or the size changes, the
-// next request is for the whole screen again. ZRLE's zlib stream is per
-// connection, so it inflates the server's once and deflates it again for each
-// viewer. Viewers' input goes upstream as it is.
+// next request is for the whole screen again. Viewers' input goes upstream as
+// it is.
+//
+// Tart's server does not send the pixel format a client asks for: red and
+// blue came out swapped. So the holder keeps the server's own format, as its
+// ServerInit gives it, asks for raw pixels, and puts each pixel's bytes in
+// noVNC's order itself. A viewer gets them as Zlib rects, on a zlib stream of
+// its own, with the cursor's pixels in that order too.
 //
 // Python 3.9, as Xcode's command line tools give it, with nothing else. It
 // reads the run's VNC URL from Tart's output, so the password is never on a
@@ -35,10 +40,11 @@ import subprocess
 import sys
 import zlib
 
-# noVNC's: 32 bits a pixel, depth 24, little-endian true colour, 8 bits a channel, red lowest.
+# noVNC's: 32 bits a pixel, depth 24, little-endian true colour, 8 bits a channel, red lowest: bytes red, green, blue, unused.
 PIXEL_FORMAT = bytes([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0])
-# ZRLE, CopyRect, Raw, DesktopSize, LastRect, Cursor. Tart's server ends the VM on an update request without DesktopSize.
-ENCODINGS = [16, 1, 0, -223, -224, -239]
+# CopyRect, Raw, DesktopSize, LastRect, Cursor. Tart's server ends the VM on an update request without DesktopSize.
+ENCODINGS = [1, 0, -223, -224, -239]
+ZLIB = 6
 # A viewer this far behind is dropped rather than held in memory.
 MAX_BEHIND = 64 * 1024 * 1024
 # The updates kept since the last whole screen, at most, before asking for a whole screen again.
@@ -83,7 +89,8 @@ class Holder:
         self.socket_path = socket_path
         self.status_path = status_path
         self.viewers = set()
-        self.inflate = zlib.decompressobj()
+        # Where red, green and blue are in each of the server's 4-byte pixels.
+        self.order = (0, 1, 2)
         self.cursor = None
         # The last whole screen and the updates since, which a viewer that joins gets first.
         self.base = None
@@ -165,7 +172,15 @@ class Holder:
         init = await r.readexactly(24)
         self.width, self.height = struct.unpack(">HH", init[:4])
         self.name = await r.readexactly(struct.unpack(">I", init[20:24])[0])
-        w.write(b"\x00\x00\x00\x00" + PIXEL_FORMAT)
+        bits, depth, big, true_colour = init[4:8]
+        maxima = struct.unpack(">HHH", init[8:14])
+        shifts = init[14:17]
+        if bits == 32 and true_colour and maxima == (255, 255, 255) and sorted(shifts) in ([0, 8, 16], [8, 16, 24]):
+            # The server's own format, whose bytes the holder reorders.
+            self.order = tuple(3 - shift // 8 if big else shift // 8 for shift in shifts)
+        else:
+            # A format the holder cannot reorder: ask for noVNC's, and pass the pixels on as they come.
+            w.write(b"\x00\x00\x00\x00" + PIXEL_FORMAT)
         w.write(struct.pack(">BxH", 2, len(ENCODINGS)) + b"".join(struct.pack(">i", e) for e in ENCODINGS))
         self.request(whole=True)
         await w.drain()
@@ -197,19 +212,17 @@ class Holder:
             width, height, encoding = struct.unpack(">HHi", head[4:])
             if encoding == -224:
                 break
-            if encoding == 16:
-                size = struct.unpack(">I", await r.readexactly(4))[0]
-                rects.append((head, None, self.inflate.decompress(await r.readexactly(size))))
-                continue
             if encoding == 0:
-                body = await r.readexactly(width * height * 4)
-            elif encoding == 1:
+                pixels = self.reorder(await r.readexactly(width * height * 4))
+                rects.append((head[:8] + struct.pack(">i", ZLIB), None, pixels))
+                continue
+            if encoding == 1:
                 body = await r.readexactly(4)
             elif encoding == -223:
                 self.width, self.height = width, height
                 body = b""
             elif encoding == -239:
-                body = await r.readexactly(width * height * 4 + (width + 7) // 8 * height)
+                body = self.reorder(await r.readexactly(width * height * 4)) + await r.readexactly((width + 7) // 8 * height)
                 self.cursor = head + body
             else:
                 raise RuntimeError("Tart's VNC server sent rect encoding %d, which the holder did not ask for" % encoding)
@@ -230,6 +243,17 @@ class Holder:
             elif viewer.watching and self.base is not None:
                 self.replay(viewer)
         self.request(whole=self.base is None or len(self.since) > MAX_SINCE or self.since_bytes > max(MAX_SINCE_BYTES, 2 * self.base_bytes))
+
+    def reorder(self, data):
+        # Each pixel's red, green and blue bytes, from the server's places to noVNC's.
+        if self.order == (0, 1, 2):
+            return data
+        red, green, blue = self.order
+        pixels = bytearray(len(data))
+        pixels[0::4] = data[red::4]
+        pixels[1::4] = data[green::4]
+        pixels[2::4] = data[blue::4]
+        return bytes(pixels)
 
     def message(self, viewer, rects):
         parts = [struct.pack(">BxH", 0, len(rects))]

@@ -22,8 +22,8 @@ async function until(what: string, check: () => boolean, ms = 10_000): Promise<v
   }
 }
 
-async function holder(t: TestContext, password = PASSWORD) {
-  const tart = new FakeTart(PASSWORD);
+async function holder(t: TestContext, password = PASSWORD, native: "bgrx" | "rgbx" = "bgrx") {
+  const tart = new FakeTart(PASSWORD, native);
   const port = await tart.listen();
   t.after(() => tart.server.close());
   const dir = tempDir("holder");
@@ -74,7 +74,7 @@ test("viewers join, leave, come back and watch two at once over the run's one co
   assert.equal(tart.crashed, false);
 });
 
-test("a late joiner gets the size, cursor and screen of the moment at once, and its ZRLE decodes on its own", async (t) => {
+test("a late joiner gets the size, cursor and screen of the moment at once, and its Zlib decodes on its own", async (t) => {
   const { tart, socket } = await holder(t);
   const early = new Viewer(socket);
   await early.join();
@@ -132,6 +132,39 @@ test("joiners on a still screen get it at once, however many come and go, and th
   assert.equal(tart.connections, 1);
 });
 
+test("red, green and blue from Tart are red, green and blue at the viewer, in the screen, its updates and the cursor, whichever order Tart's own pixels are in", async (t) => {
+  const RED_GREEN_BLUE = [
+    [255, 0, 0],
+    [0, 255, 0],
+    [0, 0, 255],
+  ];
+  // Tart's server sends its own format whatever a client asks, so each is tried: macOS's blue-first, and red-first.
+  for (const native of ["bgrx", "rgbx"] as const) {
+    const { tart, socket } = await holder(t, PASSWORD, native);
+    const viewer = new Viewer(socket);
+    await viewer.join();
+    await viewer.update();
+    assert.deepEqual(viewer.cursorColour, [200, 100, 50], `${native}: the cursor's colour`);
+    await viewer.update();
+    assert.deepEqual(viewer.colours, RED_GREEN_BLUE, `${native}: the whole screen's colours`);
+    assert.match(viewer.tiles.toString(), /^whole 1; $/, `${native}: and the label, red by red`);
+    viewer.colours = [];
+    await tart.change();
+    await viewer.update();
+    assert.deepEqual(viewer.colours, RED_GREEN_BLUE, `${native}: an update's colours`);
+    // A joiner's replay too.
+    const late = new Viewer(socket);
+    await late.join();
+    await late.update();
+    await late.update();
+    await late.update();
+    assert.deepEqual(late.colours, RED_GREEN_BLUE, `${native}: a joiner's colours`);
+    viewer.close();
+    late.close();
+    tart.end();
+  }
+});
+
 test("the bridge carries a viewer's bytes both ways, and closes the holder's socket when the viewer's input ends", async (t) => {
   const path = join(tempDir("bridge"), "holder.vnc");
   let received = "";
@@ -170,7 +203,7 @@ test("a viewer's input reaches Tart byte for byte; its format, encodings and res
   const input = tart.received.filter((message) => [4, 5, 6, 251].includes(message[0]!));
   assert.deepEqual(input.map((message) => message.toString("hex")), [key, pointer, cut].map((message) => message.toString("hex")));
   const formats = tart.received.filter((message) => message[0] === 0);
-  assert.equal(formats.length, 1, "only the holder's own SetPixelFormat");
+  assert.equal(formats.length, 0, "the holder keeps the server's own format, and a viewer's stays with the holder");
   assert.equal(tart.received.filter((message) => message[0] === 2).length, 1, "only the holder's own SetEncodings");
   viewer.close();
 });
