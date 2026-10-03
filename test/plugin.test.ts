@@ -3,7 +3,7 @@
 // and settings.
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
@@ -17,7 +17,7 @@ import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
-import { FAKE_PWSH, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
+import { FAKE_KINDS, FAKE_PWSH, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -268,8 +268,10 @@ async function start(
     machineBootstrap: {
       async bootstrap({ key, executor, signal }) {
         world.bootstraps.push(key);
-        const { exitCode } = await executor.exec({ command: ["sh", "-c", world.installer], timeoutMs: 10_000, signal, stdin: "", onOutput: () => {} });
-        if (exitCode !== 0) throw new Error(`The installer exited with ${exitCode}.`);
+        let output = "";
+        const { exitCode } = await executor.exec({ command: ["sh", "-c", world.installer], timeoutMs: 10_000, signal, stdin: "", onOutput: (text) => (output += text) });
+        // As BB reports it, with the installer's output.
+        if (exitCode !== 0) throw new Error(`Machine bootstrap command failed:\n\n${output}The installer exited with ${exitCode}.`);
         const connect = () => {
           const host = hosts.get(`host-${key}`);
           if (host?.lifecycle.phase === "active") hosts.set(host.id, { ...host, status: "connected" });
@@ -913,6 +915,39 @@ test("a stopped box starts again and BB's daemon is started with the same key", 
   assert.match(text(await tool("box_start", { box: box.name })), /State: ready/);
   await until("reconnect", async () => world.bootstraps.length === 2);
   assert.deepEqual(world.bootstraps, [box.id, box.id]);
+});
+
+test("on a Mac that booted, BB's daemon loaded at login is unloaded and the bootstrap runs again, so the reconnect works (#416)", async (t) => {
+  // A launchctl that keeps whether the job is loaded in a file in the box's home.
+  const bin = tempDir("launchctl");
+  writeFileSync(join(bin, "launchctl"), `#!/bin/sh\necho "$*" >> "$HOME/launchctl.log"\ncase "$1" in print) [ -f "$HOME/loaded" ] ;; bootout) rm -f "$HOME/loaded" ;; esac\n`);
+  chmodSync(join(bin, "launchctl"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const macos: BoxKind = { ...FAKE_KINDS[0]!, id: "macos", label: "macOS", capabilities: { ...FAKE_KINDS[0]!.capabilities, os: "macos", features: [] } };
+  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [macos] });
+  t.after(() => harness.lifecycle.dispose());
+
+  await tool("box_acquire", { kind: "macos" });
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  // BB's installer, as on a Mac: launchctl bootstrap fails while the job is loaded.
+  world.installer = `mkdir -p Library/LaunchAgents && : > Library/LaunchAgents/app.getbb.host-daemon.srv-host-${box.id}.plist && : > Library/LaunchAgents/app.getbb.host-daemon.srv-host-other.plist; if [ -f loaded ]; then echo 'Bootstrap failed: 5: Input/output error'; exit 1; fi; : > loaded`;
+  // launchd loads it at login after the boot.
+  await tool("box_run", { box: box.name, command: ": > loaded" });
+  assert.match(text(await tool("box_stop", { box: box.name })), /is stopped/);
+  assert.match(text(await tool("box_start", { box: box.name })), /State: ready/);
+  await until("the bootstrap again", async () => world.bootstraps.length === 3);
+  const log = text(await tool("box_run", { box: box.name, command: "cat launchctl.log" }));
+  assert.match(log, new RegExp(`print gui/\\d+/app\\.getbb\\.host-daemon\\.srv-host-${box.id}\\nbootout gui/\\d+/app\\.getbb\\.host-daemon\\.srv-host-${box.id}\\nprint`));
+  assert.doesNotMatch(log, /host-other/, "another machine's daemon is left alone");
+  const after = (await app.boxes.find(box.id))!;
+  assert.equal(after.enrol.state, "enrolled");
+  assert.equal(after.enrol.error, null);
+  assert.deepEqual(world.bootstraps, [box.id, box.id, box.id]);
 });
 
 test("the sweep starts BB's daemon again in a ready box that BB shows disconnected", async (t) => {

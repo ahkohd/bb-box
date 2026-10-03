@@ -1369,7 +1369,10 @@ Nothing expires, so a box must never be forgotten.
   control returns to the agent. This includes a reboot bb-box did not start,
   such as the host's. The sweep bootstraps a ready box's BB machine again
   when BB shows it disconnected
-  ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
+  ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)). A Mac
+  that booted has BB's daemon's LaunchAgent loaded already, from the login,
+  and BB's `launchctl bootstrap` fails for it with "Bootstrap failed: 5":
+  bb-box then unloads it and runs the bootstrap once more (#416).
 
 ## Images
 
