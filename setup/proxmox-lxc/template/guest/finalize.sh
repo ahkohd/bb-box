@@ -2,7 +2,10 @@
 # Last stage of a bb-box template, run as root inside the CT or VM: record
 # what is in it, remove the build's apt pins, fetch fresh package lists from
 # the Ubuntu archive, then remove SSH host keys, logs, caches, Docker state and
-# the build directory.
+# the build directory. It writes the image's record,
+# /usr/share/bb-box/image.json (049), with image-record.sh before the build
+# directory goes, and its size last. The builds copy it outside the image for
+# the doctor.
 #
 # usage: finalize.sh <build-dir> <kind>
 set -euo pipefail
@@ -26,6 +29,7 @@ install -m 0644 "$build/pins.json" "$out/template-pins.json"
   [ ! -f "$build/extra-release" ] || cat "$build/extra-release"
 } >"$out/template-release"
 chmod 0644 "$out"/*
+bash "$build/guest/image-record.sh" "$build" "$kind" "$out"
 
 # Docker's state from the build's checks. A template keeps no containers: a
 # box with any starts Docker at boot (041).
@@ -70,5 +74,13 @@ rm -rf /home/*/.local/share/Mousepad /home/*/.config/dconf/user
 # PVE also truncates this on clone; an empty file avoids first-boot presets.
 : >/etc/machine-id
 rm -f /var/lib/dbus/machine-id
+# The image's size in its record, now that it is clean. A Docker image's is
+# its layers', which Docker gives.
+if ! grep -qx runtime=docker "$out/template-release"; then
+  size=$(df -B1 --output=used / | tail -1 | awk '{ printf "%.1f", $1 / 1073741824 }')
+  jq --argjson size "$size" '.sizeGiB = $size' "$out/image.json" >"$out/image.json.new"
+  mv "$out/image.json.new" "$out/image.json"
+  chmod 0644 "$out/image.json"
+fi
 rm -rf "$build"
 echo "finalize: done ($kind)"

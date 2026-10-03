@@ -184,7 +184,10 @@ if [ "$kind" = copy-desktop ]; then
     || die "$from is not a GPU desktop template; copy a GPU desktop template to another GPU, or build a new desktop with build.sh desktop"
   lines=$(gpu_lines "$gpu")
   note=$(grep '^#' <<<"$lines" | cut -c3-)
-  description="bb-box desktop template ($note), copied from $from on $(date -u +%F)."
+  # The copy has its source's image record (049), from the description's second line.
+  record=$(pvesh get "/nodes/$BBBOX_NODE/lxc/$from/config" --output-format json | jq -r '.description // ""' | grep '^{' | tail -1 || true)
+  description="bb-box desktop template ($note), copied from $from on $(date -u +%F).${record:+
+$record}"
   copy_ct "$from" "$ct" "bb-box-desktop-$vmid"
   pct set "$ct" --delete protection 2>/dev/null || true
   # shellcheck disable=SC2046
@@ -221,6 +224,7 @@ BOX_DNS="$BBBOX_DNS"
 BB_URL="$BBBOX_BB_URL"
 DESKTOP_GPU=$desktop_gpu
 DESKTOP_SESSION=${wayland:+wayland}
+BUILD_ID=$build
 EOF
 for f in "$cache"/*; do
   case "${f##*/}" in
@@ -283,12 +287,16 @@ fi
 
 push --exclude=./artifacts
 pct exec "$ct" -- bash "$in_ct/guest/finalize.sh" "$in_ct" "$kind"
+# The image's record (049), which the template's description carries for the
+# plugin's doctor, as its second line.
+record=$(pct exec "$ct" -- cat /usr/share/bb-box/image.json | jq -c .) || die "the template has no image record"
 pct shutdown "$ct" --timeout 60
 # Clones get their address from the plugin; without one they have none.
 pct set "$ct" --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=manual,type=veth" --delete nameserver \
   --cores "$cores" --memory "$memory" --swap 512
 note=$(grep '^#' <<<"$lines" | cut -c3- || true)
-description="bb-box $kind template${note:+ ($note)}, built $(date -u +%F). See /usr/share/bb-box/template-release inside."
+description="bb-box $kind template${note:+ ($note)}, built $(date -u +%F). See /usr/share/bb-box/template-release inside.
+$record"
 if [ "$ct" != "$vmid" ]; then
   # The new template replaces the old one only now.
   echo "replacing template $vmid with CT $ct (if this fails, CT $ct keeps the new template)"

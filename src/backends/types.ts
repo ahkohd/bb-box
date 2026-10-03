@@ -15,6 +15,7 @@
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { Arch, CommandTransport, Display, DisplayProtocol, GuestOs, SshAccess } from "../transports/types.ts";
+import type { ImageFacts } from "./images.ts";
 
 export type { Arch, GuestOs } from "../transports/types.ts";
 
@@ -516,6 +517,8 @@ export interface BackendContext {
   kind(id: string): KindSettings;
   /** BB machines bb-box reaches through BB (042). Absent where there is no BB, as in the conformance run. */
   readonly machines?: MachineAccess;
+  /** What the doctor judges images by (049). Absent where bb-box cannot tell, as in the conformance run. */
+  readonly images?: ImageFacts;
   /**
    * Tells bb-box which warm pools an upkeep that ran to its end left short
    * for want of room (#356), for the log, the doctor and the settings.
