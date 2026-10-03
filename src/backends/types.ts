@@ -124,6 +124,12 @@ export interface BoxIdentity {
    * claims its smallest free machine of at least that size.
    */
   readonly size: BoxSize;
+  /**
+   * An image build to start from in place of the kind's standard image, as
+   * images.list() gives its reference (049): only on a backend whose images
+   * say startsFrom. No warm guest serves such a box.
+   */
+  readonly from?: string;
 }
 
 /** A backend's handle on the machine behind a box. */
@@ -562,6 +568,8 @@ export interface BackendImages {
   build?(current: ImageBuild, setup: string, options: { readonly bbUrl: string | null; readonly log: (line: string) => void; readonly signal: AbortSignal }): Promise<ImageBuild>;
   /** The kind's check a trial box runs as the box user, printing a line per check with ok or FAIL, where it is not the template's own. */
   check?(kind: string): string;
+  /** Whether acquire starts a box from a build in BoxIdentity.from (049). */
+  readonly startsFrom?: boolean;
 }
 
 export interface BackendStorage {

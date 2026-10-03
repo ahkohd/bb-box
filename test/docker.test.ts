@@ -805,6 +805,11 @@ test("image operations on Docker: an image box, its commit as an image with its 
   const trial = await images.box(captured, "trial", signal());
   assert.equal(fake.inspect(trial.ref).Config.Image, "bbbox-image/small:20261003-030000-abcd");
   await images.remove(trial.ref, signal());
+  // A project's box starts from the build (049).
+  assert.equal(images.startsFrom, true);
+  const project = await backend.acquire({ ...identity(), from: captured.ref }, null, hooks().hooks, signal());
+  assert.equal(fake.inspect(project.ref).Config.Image, "bbbox-image/small:20261003-030000-abcd");
+  await backend.release(project, releasing, signal());
   await images.remove(captured.ref, signal());
   assert.deepEqual((await images.list(signal())).builds.map((build) => build.ref), ["bbbox/linux:1", "bbbox/linux-desktop:1", "bbbox/linux-desktop-wayland:1"]);
   await assert.rejects(images.remove("bbbox/linux:1", signal()), /The image bbbox\/linux:1 is not an image build of this install's/);

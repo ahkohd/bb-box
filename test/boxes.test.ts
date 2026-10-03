@@ -24,7 +24,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -143,6 +143,35 @@ test("a box of a project with an image runs its script as root, then its check, 
   const unchecked = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }));
   assert.match(unchecked.error ?? "", /^Running rust-tailscale's script failed: rust-tailscale's check exited with 1\. Its last lines:\nchecked\ncargo: not found$/);
   assert.equal((await world.backend.held()).filter((guest) => guest.ref === failed.guest?.ref).length, 0);
+});
+
+test("a box of a project's image with a current build on its backend starts from it and runs no script, and each box of an image is counted (049)", async () => {
+  const image = { kinds: ["linux"], script: 'touch "$HOME/ran"\n', projects: ["prj"] };
+  const readied: BoxRecord[] = [];
+  const world = setup({}, {
+    image: (projectId, kind) => (projectId === "prj" && kind === "linux" ? { name: "rust", image } : null),
+    baked: async (name, backend, kind) => (name === "rust" && backend === "fake" && kind === "linux" ? { ref: "rust-build", build: "build.20261003-100000-abcd" } : null),
+    imageReady: (box) => void readied.push(box),
+  });
+  const started: (string | undefined)[] = [];
+  const acquire = world.backend.acquire.bind(world.backend);
+  world.backend.acquire = (box, previous, hooks, signal) => {
+    started.push(box.from);
+    return acquire(box, previous, hooks, signal);
+  };
+  // Only where the backend's builds start boxes.
+  const plain = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }));
+  assert.deepEqual([plain.image?.state, started], ["done", [undefined]]);
+  Object.defineProperty(world.backend, "images", { value: { startsFrom: true } });
+
+  const asked = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
+  assert.deepEqual(asked.image, { name: "rust", state: "baked", build: "build.20261003-100000-abcd", from: "rust-build" });
+  const box = await ready(world.boxes, asked);
+  assert.equal(box.state, "ready", box.error ?? "");
+  assert.deepEqual(started, [undefined, "rust-build"]);
+  const { command } = await world.backend.transports(box.guest!, "linux");
+  assert.equal((await command!.run("test -e ran")).exitCode, 1, "the script did not run");
+  assert.deepEqual(readied.map((one) => [one.id, one.image?.state]), [[plain.id, "done"], [box.id, "baked"]]);
 });
 
 test("acquire records the box at once and it becomes ready in the background", async () => {

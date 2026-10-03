@@ -65,12 +65,15 @@ export type BoxState =
 export type BoxRole = "box" | "machine";
 export type EnrolState = "off" | "enrolling" | "enrolled" | "failed";
 
-/** A box's project's image (049): its name, and its script's run at start. */
+/** A box's project's image (049): its name, and its script's run at start, or the baked build it started from. */
 export interface BoxImage {
   readonly name: string;
-  readonly state: "pending" | "running" | "done" | "failed";
+  readonly state: "pending" | "running" | "done" | "failed" | "baked";
   /** How long its script and check took, once done. */
   readonly seconds?: number;
+  /** For a baked image: the build's ID, and its reference, which the box starts from. */
+  readonly build?: string | null;
+  readonly from?: string;
 }
 
 /** How long an image's script may run at start (049), and its check. */
@@ -217,6 +220,10 @@ export interface BoxesDeps {
   general(): Promise<GeneralConfig>;
   /** The image a project's boxes of a kind get (049), from the configuration, or null. */
   image?(projectId: string | null, kind: string): { readonly name: string; readonly image: ImageConfig } | null;
+  /** A current baked build of an image for a kind on a backend whose images start boxes from builds (049), or null. */
+  baked?(name: string, backend: string, kind: string): Promise<{ readonly ref: string; readonly build: string | null } | null>;
+  /** Says a box of an image is ready, whether its script ran at start or it started baked, for baking when used (049). */
+  imageReady?(box: BoxRecord): void;
   /** Tells panels and tools that a thread's boxes changed. */
   notify(threadId: string): void;
   /** A box's record was written, or deleted when `deleted` is true. */
@@ -359,7 +366,7 @@ function observed(current: BoxRecord, power: PowerState | null, moving = false):
 }
 
 export function identity(box: BoxRecord, size: BoxSize): BoxIdentity {
-  return { boxId: box.id, threadId: box.threadId, name: box.name, kind: box.kind, createdAt: box.createdAt, size };
+  return { boxId: box.id, threadId: box.threadId, name: box.name, kind: box.kind, createdAt: box.createdAt, size, ...(box.image?.from ? { from: box.image.from } : {}) };
 }
 
 /** The message a user sees for an error: bb-box's and backends' own messages as they are. */
@@ -639,6 +646,9 @@ export class Boxes {
         const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
         const chosen = await this.#place({ threadId: input.threadId, named }, offered, everywhere, sized.size, features);
+        // A current baked build of the image on the backend chosen starts the box with it (049); otherwise its script runs at start.
+        const baked =
+          image && chosen.backend.images?.startsFrom ? await this.#deps.baked?.(image.name, chosen.backend.id, chosen.kind.id).catch(() => null) : null;
         const box: BoxRecord = {
           id: newBoxId(this.#random),
           threadId: input.threadId,
@@ -662,7 +672,7 @@ export class Boxes {
           resetAt: null,
           timings: {},
           enrol: { state: "off", hostId: null, error: null },
-          ...(image ? { image: { name: image.name, state: "pending" as const } } : {}),
+          ...(image ? { image: baked ? { name: image.name, state: "baked" as const, build: baked.build, from: baked.ref } : { name: image.name, state: "pending" as const } } : {}),
         };
         await this.#deps.kv.set(indexKey(box.id), box.threadId);
         return { box: await this.#write(box), claimed: null };
@@ -1177,7 +1187,7 @@ export class Boxes {
       return;
     }
     // The project's image's script (049), as root, before the box is handed over. A failure releases the box.
-    if (box.image && box.image.state !== "done") {
+    if (box.image && box.image.state !== "done" && box.image.state !== "baked") {
       try {
         await this.#runImage(box, guest, backend, timings, signal);
       } catch (error) {
@@ -1199,6 +1209,7 @@ export class Boxes {
         : { guest, state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt } },
     );
     if (next?.state === "ready") void this.#recordReady(next).catch((error) => this.#deps.logError("ready history", error));
+    if (next?.state === "ready" && next.image) this.#deps.imageReady?.(next);
     if (!next) {
       await backend.release(guest, QUIET).catch((error) => this.#deps.logError("release", error));
       return;

@@ -249,6 +249,8 @@ needed first. The order is:
 
 Each one is built with the latest Claude Code, Codex, pi, gh and Chrome. It replaces the image only when a trial box of the new build passes its checks. A run starts no image after 4 hours (`--hours`), and ends with a line per image. A failure keeps the old image, and the image is not tried again until something it is built from changes. An image whose host lacks room waits for the next night.
 
+The run then keeps projects' images' builds in order. bb-box builds a project's image on Proxmox LXC or Docker once two of its boxes started there within 14 days. The run removes builds no box started from for 30 days. It builds again those in use whose standard image was rebuilt.
+
 Other commands:
 
 - `bb box images list` shows each image's age, why it is due, and what its last rebuild did, with `--output <image>` for its last lines.
