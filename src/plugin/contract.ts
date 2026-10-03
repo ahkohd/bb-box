@@ -100,6 +100,8 @@ export const contract = defineRpcContract({
   desktop: { input: oneBox, output: z.custom<DesktopState>() },
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },
+  /** The box's clipboard text as its desktop's own input last reported it, for the viewer with control to copy (#406). */
+  desktopClipboard: { input: oneBox, output: z.object({ text: z.string(), serial: z.number() }).nullable() },
   /** Every box across threads, servers as well as desktops, and your machines (036), for the Boxes page. */
   allBoxes: { input: z.null(), output: z.custom<BoxEntry[]>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */

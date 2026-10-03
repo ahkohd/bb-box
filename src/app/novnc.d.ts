@@ -17,6 +17,8 @@ declare module "@novnc/novnc" {
     background: string;
     disconnect(): void;
     focus(options?: FocusOptions): void;
+    /** Sends text as the viewer's clipboard: ClientCutText. */
+    clipboardPasteFrom(text: string): void;
     blur(): void;
     /** The size of the element it draws in, which it asks the box for, floored; a subclass may measure it otherwise. */
     _screenSize(): { w: number; h: number };

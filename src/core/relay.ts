@@ -4,10 +4,13 @@
 // are parsed so input from a viewer without control never reaches the box
 // (008, 011), and a resize below the display's smallest size is raised to it.
 // A raised size asked for again goes with no screens, so that Xvnc refuses it
-// and noVNC stops asking. Pixels pass through undecoded.
+// and noVNC stops asking. Pixels pass through undecoded. A display whose
+// stream server ignores a viewer's input, as macOS Screen Sharing does
+// (#406), gives an input of its own, and the controlling viewer's keys,
+// pointer and clipboard go there instead.
 
 import { openRoute } from "../transports/route.ts";
-import type { ByteChannel, Display, DisplayAuth } from "../transports/types.ts";
+import type { ByteChannel, Display, DisplayAuth, DisplayInput, DisplayOpened } from "../transports/types.ts";
 import {
   ClientParser,
   DESKTOP_SIZE,
@@ -36,6 +39,12 @@ import {
 const CONNECT_TIMEOUT_MS = 20_000;
 /** How long closing waits for the box to take the releases of held keys and buttons. */
 const RELEASE_TIMEOUT_MS = 2_000;
+const CLIENT_CUT_TEXT = 6;
+
+/** Whether a message is a viewer's input, which a display's own input takes instead of the stream server. */
+function isInput(message: ClientMessage): boolean {
+  return message.type === "key" || message.type === "qemu-key" || message.type === "pointer" || (message.type === "other" && message.bytes[0] === CLIENT_CUT_TEXT);
+}
 
 /** The viewer's end of the relay: a WebSocket carrying RFB. */
 export interface Viewer {
@@ -44,7 +53,7 @@ export interface Viewer {
 }
 
 /** Opens a connection to the box's display, with the authentication it expects. */
-export type OpenDisplay = (signal: AbortSignal) => Promise<{ readonly channel: ByteChannel; readonly auth: DisplayAuth }>;
+export type OpenDisplay = (signal: AbortSignal) => Promise<{ readonly channel: ByteChannel; readonly auth: DisplayAuth; readonly input?: DisplayOpened["input"] }>;
 
 export interface Size {
   readonly width: number;
@@ -64,6 +73,10 @@ export interface RelayOptions {
   onResize?(size: Size, screen: Screen | null): void;
   /** Called once when the relay ends: by the viewer, or by the box or an error. */
   onEnd?(by: "viewer" | "box", error: Error | null): void;
+  /** The display's input could not be opened, or failed, so this viewer's input goes nowhere. */
+  onInputError?(error: Error): void;
+  /** The box's clipboard text changed, as the display's own input reports it. */
+  onClipboard?(text: string): void;
   readonly connectTimeoutMs?: number;
 }
 
@@ -71,12 +84,13 @@ interface BoxConnection {
   readonly channel: ByteChannel;
   readonly reader: StreamReader;
   readonly writer: WritableStreamDefaultWriter<Uint8Array>;
+  readonly input?: DisplayOpened["input"];
 }
 
 /** Opens the box's display and does its security handshake. Closes the channel if that fails. */
 export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_MS): Promise<BoxConnection> {
   const signal = AbortSignal.timeout(timeoutMs);
-  const { channel, auth } = await open(signal);
+  const { channel, auth, input } = await open(signal);
   const reader = new StreamReader(channel.readable);
   const writer = channel.writable.getWriter();
   const timedOut = new Promise<never>((_, reject) => {
@@ -85,7 +99,7 @@ export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_
   try {
     if (signal.aborted) throw new RfbError("The box's desktop did not finish its handshake in time.");
     await Promise.race([boxHandshake(reader, (bytes) => writer.write(bytes), auth), timedOut]);
-    return { channel, reader, writer };
+    return { channel, reader, writer, input };
   } catch (error) {
     await channel.close().catch(() => undefined);
     throw error;
@@ -138,6 +152,10 @@ export class RfbRelay {
   /** The size this viewer's last resize was raised to, until it is asked for again. */
   #raised: Size | null = null;
   #ended = false;
+  /** The desktop's size from ServerInit, which a display's own input scales positions from. */
+  #size: Size = { width: 0, height: 0 };
+  /** The display's own input, once this viewer's first input opens it (#406). */
+  #input: Promise<DisplayInput | null> | null = null;
 
   constructor(options: RelayOptions) {
     this.#options = options;
@@ -192,6 +210,7 @@ export class RfbRelay {
       const init: ServerInit = await readServerInit(connection.reader);
       if (this.#ended) return;
       this.#options.viewer.send(init.bytes);
+      this.#size = { width: init.width, height: init.height };
       this.#options.onServerInit?.({ width: init.width, height: init.height });
       this.#phase = "messages";
       void this.#pump(connection);
@@ -220,8 +239,50 @@ export class RfbRelay {
     if (!connection || this.#ended) return;
     // One write, awaited: a write left unawaited to a box that has gone
     // rejects with nobody to catch it, which ends the plugin's process.
-    const passing = messages.flatMap((message) => this.#passing(message) ?? []);
+    const passing: Uint8Array[] = [];
+    for (const message of messages) {
+      const bytes = this.#passing(message);
+      if (!bytes) continue;
+      if (connection.input && isInput(message)) await this.#toInput(connection, message);
+      else passing.push(bytes);
+    }
     if (passing.length) await connection.writer.write(passing.reduce(concat));
+  }
+
+  /** The display's own input, opened at this viewer's first input; null when it cannot be opened. */
+  #opened(connection: BoxConnection): Promise<DisplayInput | null> {
+    this.#input ??= connection.input!({ onClipboard: (text) => this.#options.onClipboard?.(text) })
+      .then(async (input) => {
+        await input.size(this.#size.width, this.#size.height);
+        return input;
+      })
+      .catch((error: unknown) => {
+        this.#options.onInputError?.(error instanceof Error ? error : new Error(String(error)));
+        return null;
+      });
+    return this.#input;
+  }
+
+  /** Sends an input message, which passed the control check, to the display's own input. */
+  async #toInput(connection: BoxConnection, message: ClientMessage): Promise<void> {
+    const input = await this.#opened(connection);
+    if (!input || this.#ended) return;
+    switch (message.type) {
+      case "key":
+      case "qemu-key":
+        await input.key(message.down, message.keysym);
+        break;
+      case "pointer":
+        await input.pointer(message.mask, message.x, message.y);
+        break;
+      case "other": {
+        // ClientCutText's Latin-1 text. The extended clipboard, with a negative length, is not taken.
+        if (message.bytes[0] !== CLIENT_CUT_TEXT) break;
+        const length = new DataView(message.bytes.buffer, message.bytes.byteOffset).getInt32(4);
+        if (length >= 0) await input.clipboard(new TextDecoder("latin1").decode(message.bytes.subarray(8, 8 + length)));
+        break;
+      }
+    }
   }
 
   /** What of a message goes to the box, if any, tracking what the viewer holds down. */
@@ -271,7 +332,15 @@ export class RfbRelay {
       this.#pointer = { ...this.#pointer, mask: 0 };
     }
     if (!messages.length) return;
-    await connection.writer.write(messages.reduce(concat));
+    if (!connection.input) {
+      await connection.writer.write(messages.reduce(concat));
+      return;
+    }
+    const input = await (this.#input ?? Promise.resolve(null));
+    for (const message of new ClientParser().push(messages.reduce(concat))) {
+      if (input && message.type === "pointer") await input.pointer(message.mask, message.x, message.y);
+      else if (input && (message.type === "key" || message.type === "qemu-key")) await input.key(message.down, message.keysym);
+    }
   }
 
   /** Whether this viewer holds any key or button down in the box. */
@@ -293,6 +362,7 @@ export class RfbRelay {
       this.#phase = "ended";
       connection.reader.cancel();
       await connection.channel.close().catch(() => undefined);
+      await this.#input?.then((input) => input?.close()).catch(() => undefined);
     } else {
       this.#phase = "ended";
       // Still connecting: close the box's side whenever it opens.
@@ -314,8 +384,8 @@ export class RfbRelay {
 /** Opens a box's display through its route. */
 export function displayOpener(display: Display): OpenDisplay {
   return async (signal) => {
-    const { route, auth } = await display.open(signal);
-    return { channel: await openRoute(route, signal), auth };
+    const { route, auth, input } = await display.open(signal);
+    return { channel: await openRoute(route, signal), auth, input };
   };
 }
 

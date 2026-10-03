@@ -64,13 +64,45 @@ export interface DisplaySize {
   readonly height: number;
 }
 
+/**
+ * A display's input, for a stream server that ignores a viewer's keys and
+ * pointer, as macOS Screen Sharing ignores a viewer that is not Apple's
+ * (#406). Positions are in the framebuffer's pixels.
+ */
+export interface DisplayInput {
+  /** Resolves once sent; false when the box has no key that types the keysym. */
+  key(down: boolean, keysym: number): Promise<boolean>;
+  /** RFB's PointerEvent: a button mask and a position. */
+  pointer(mask: number, x: number, y: number): Promise<void>;
+  /** The viewer's clipboard text, for the box's. */
+  clipboard(text: string): Promise<void>;
+  /** The framebuffer's size, which positions are in. */
+  size(width: number, height: number): Promise<void>;
+  /** Resolves once every event sent before it has reached the box, to time the path. */
+  ping(): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface DisplayInputEvents {
+  /** The box's clipboard text, when it changes there. */
+  onClipboard?(text: string): void;
+}
+
+/** What a display's open() gives: the stream, its sign-in, and its input when the stream server ignores a viewer's. */
+export interface DisplayOpened {
+  readonly route: Route;
+  readonly auth: DisplayAuth;
+  /** Opens the display's input for one viewer; core sends that viewer's input there instead of to the stream server. */
+  readonly input?: (events: DisplayInputEvents, signal?: AbortSignal) => Promise<DisplayInput>;
+}
+
 export interface Display {
   readonly id: string;
   readonly label: string;
   readonly protocol: DisplayProtocol;
   readonly resizable: boolean;
   /** Called once per viewer connection, because tickets can be single use. */
-  open(signal?: AbortSignal): Promise<{ readonly route: Route; readonly auth: DisplayAuth }>;
+  open(signal?: AbortSignal): Promise<DisplayOpened>;
   /**
    * Sets the display's size the backend's own way, for a stream server that
    * may not act on a viewer's SetDesktopSize (021). A display with it is

@@ -21,6 +21,8 @@ export const DESKTOP_PAGE = "desktop";
 
 /** The longest wait between attempts to reconnect to a desktop. */
 const MAX_RETRY_MS = 15_000;
+/** How often a tab with control asks for the box's clipboard. */
+const CLIPBOARD_POLL_MS = 2_000;
 /** How long the viewer's size must hold before the desktop is asked for it again. */
 export const SETTLE_MS = 250;
 
@@ -216,6 +218,11 @@ export class DesktopSession implements Kept {
     if (this.#mine) client.focus({ preventScroll: true });
   }
 
+  /** Puts text on the box's clipboard, as a viewer's paste does. */
+  sendClipboard(text: string): void {
+    if (this.connection.state === "connected") this.#client?.clipboardPasteFrom(text);
+  }
+
   /** The viewer's size has held: noVNC asks for it once, if the desktop differs and this viewer may resize it. */
   #nudge(): void {
     const client = this.#client;
@@ -323,6 +330,47 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   useEffect(() => {
     if (state && !showing) dropKept(key);
   }, [state, showing, key]);
+
+  // The clipboard, both ways, while this tab has control: the browser's goes
+  // to the box when the tab gets the focus, and the box's comes back when it
+  // changes there, as a macOS desktop's input reports it (#406).
+  const connected = connection.state === "connected";
+  useEffect(() => {
+    if (!mine || !connected) return;
+    let stopped = false;
+    let sent: string | null = null;
+    let seen: number | null = null;
+    const toBox = () => {
+      navigator.clipboard?.readText?.().then(
+        (text) => {
+          if (stopped || !text || text === sent) return;
+          sent = text;
+          session.current?.sendClipboard(text);
+        },
+        () => undefined,
+      );
+    };
+    const fromBox = async () => {
+      if (!document.hasFocus()) return;
+      const latest = await rpc.call("desktopClipboard", { threadId, box: boxId }).catch(() => null);
+      if (stopped || !latest || latest.serial === seen) return;
+      // The first answer is what the box had before: only later changes are copied.
+      const first = seen === null;
+      seen = latest.serial;
+      if (first) return;
+      sent = latest.text;
+      await navigator.clipboard?.writeText?.(latest.text).catch(() => undefined);
+    };
+    toBox();
+    void fromBox();
+    window.addEventListener("focus", toBox);
+    const timer = setInterval(() => void fromBox(), CLIPBOARD_POLL_MS);
+    return () => {
+      stopped = true;
+      window.removeEventListener("focus", toBox);
+      clearInterval(timer);
+    };
+  }, [mine, connected, rpc, threadId, boxId]);
 
   const act = async (task: () => Promise<BoxResult>) => {
     setActing(true);

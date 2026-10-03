@@ -631,6 +631,32 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               }
             });
 
+            it(`takes the ${capability.id} display's input through its own channel, when its stream server ignores a viewer's (#406)`, { timeout, skip: skip.display ?? unsupported }, async (t) => {
+              assert.ok(guest, "the box was acquired");
+              const display = (await backend.transports(guest, kind.id)).displays.find((other) => other.id === capability.id);
+              assert.ok(display, `the box has the ${capability.id} display`);
+              const { input: openInput } = await display.open(signal());
+              if (!openInput) return t.skip("the stream server takes a viewer's input itself");
+              const started = Date.now();
+              const input = await openInput({}, signal());
+              const opened = Date.now() - started;
+              try {
+                await input.size(1024, 768);
+                // A pointer move, then a ping that returns once the move is posted: the time per event.
+                const times: number[] = [];
+                for (let i = 0; i < 20; i++) {
+                  const sent = performance.now();
+                  await input.pointer(0, 400 + i, 300);
+                  await input.ping();
+                  times.push(performance.now() - sent);
+                }
+                times.sort((a, b) => a - b);
+                console.log(`# ${options.name} ${kind.id}: input opened in ${opened} ms; an event to the box and back takes ${times[10]!.toFixed(1)} ms (median of 20), at most ${times[19]!.toFixed(1)} ms`);
+              } finally {
+                await input.close();
+              }
+            });
+
             it(`resizes the ${capability.id} display through the backend`, { timeout, skip: skip.display ?? unsupported }, async (t) => {
               assert.ok(guest, "the box was acquired");
               const display = (await backend.transports(guest, kind.id)).displays.find((other) => other.id === capability.id);

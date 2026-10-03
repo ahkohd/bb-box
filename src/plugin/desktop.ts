@@ -48,6 +48,12 @@ export interface Desktops {
   readonly control: Control;
   /** Where the panel opens the viewer's WebSocket, on the BB server's origin. */
   readonly path: string;
+  /**
+   * The box's clipboard text as its desktop's own input last reported it,
+   * with a count that changes with it, for the viewer with control to copy
+   * (#406). Null before any.
+   */
+  clipboard(boxId: string): { readonly text: string; readonly serial: number } | null;
   dispose(): Promise<void>;
 }
 
@@ -150,6 +156,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     },
   });
   const relays = new Set<RfbRelay>();
+  const clipboards = new Map<string, { text: string; serial: number }>();
+  let clipboardSerial = 0;
 
   // Control people had as the last instance stopped. BB starts this one first, so the viewers connect again once that one stops.
   void (async () => {
@@ -197,6 +205,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 resizes.request(boxId, shown, size).catch((error) => deps.logError("resize the desktop", error));
               }
             },
+            onClipboard: (text) => {
+              clipboards.set(boxId, { text, serial: ++clipboardSerial });
+            },
+            onInputError: (error) => deps.logError("open the desktop's input", error),
             onEnd: (by, error) => {
               relays.delete(relay!);
               // Control goes back to the agent unless the viewer connects again soon (020), so the log says why it may lose it.
@@ -236,6 +248,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   return {
     control,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
+    clipboard: (boxId) => clipboards.get(boxId) ?? null,
     async dispose() {
       await control.dispose();
       await Promise.all([...relays].map((relay) => relay.close()));
