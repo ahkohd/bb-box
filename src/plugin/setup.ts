@@ -192,6 +192,8 @@ export interface SetupOptions {
   readonly daemonParent?: string;
   /** How long a viewer holding control may be gone before the agent has it again. */
   readonly controlStaleMs?: number;
+  /** How long a deploy waits for box_run's commands still running (#405). */
+  readonly drainMs?: number;
   /** How long a viewer holding control has to connect again after the box ended its connection. */
   readonly controlReconnectMs?: number;
   /** How long a terminal session stays with no tab showing it. */
@@ -864,7 +866,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
   };
 
-  registerTools(bb, api);
+  registerTools(bb, api, { drainMs: options.drainMs });
   registerComputerTools(bb, api);
   registerRpc(bb, api);
   registerCli(bb, api);

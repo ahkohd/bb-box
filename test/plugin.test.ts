@@ -52,7 +52,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; controlReconnectMs?: number; controlStaleMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -288,6 +288,7 @@ async function start(
     providerRetryMs: options.providerRetryMs,
     controlReconnectMs: options.controlReconnectMs,
     controlStaleMs: options.controlStaleMs,
+    drainMs: options.drainMs,
   };
   const app = await setup(bb, setupOptions);
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
@@ -386,6 +387,70 @@ test("a run that times out says how to start a long job in the box's own shell",
     assert.equal(isError(ran), true);
     assert.ok(text(ran).endsWith(`Next: Give timeout_seconds more time, or start a long job in the background with ${background} and check on it.`), text(ran));
   }
+});
+
+test("a deploy lets box_run's commands finish and takes no new ones, and a command still running goes on as a job (#405)", async (t) => {
+  const { harness, app, tool } = await start({ "fake-enabled": true, "enrol-boxes": false }, { drainMs: 1_500 });
+  let disposing: Promise<void> | null = null;
+  t.after(() => disposing ?? harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+
+  // As BB updates a plugin: it aborts the tool calls, then runs the dispose hooks.
+  const deploy = new AbortController();
+  const call = (command: string) => harness.behavior.callAgentTool("box_run", { box: box.name, command }, { threadId: THREAD, projectId: PROJECT, signal: deploy.signal });
+  const short = call("sleep 0.5; echo short");
+  const long = call("echo long; sleep 3; exit 4");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  deploy.abort("plugin-disposed");
+  disposing = harness.lifecycle.dispose();
+
+  const refused = await tool("box_run", { box: box.name, command: "echo new" });
+  assert.equal(isError(refused), true);
+  assert.equal(text(refused), "bb-box is restarting, as for an update, and takes no new commands until it is back, within a minute.\n\nNext: Run the command again in a minute, once bb-box is back.");
+  const finished = await short;
+  assert.equal(isError(finished), false, text(finished));
+  assert.match(text(finished), /^Exit code 0 in box .*\n\nstdout:\nshort\n/);
+
+  const stopped = await long;
+  assert.equal(isError(stopped), true);
+  const job = /It goes on there as job ([0-9a-f]{12})\./.exec(text(stopped))?.[1];
+  assert.ok(job, text(stopped));
+  assert.ok(text(stopped).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends.`), text(stopped));
+  await disposing;
+  assert.equal(readFileSync(join(home, ".local/state/bb-box/jobs", job, "out"), "utf8"), "long\n", "the command's output is in the box");
+});
+
+test("box_job gives a job's output while it runs and its exit code once it ends, and the box's next command removes it (#405)", async (t) => {
+  const { harness, app, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+  const job = "0123456789ab";
+  const dir = join(home, ".local/state/bb-box/jobs", job);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "out"), "building\n");
+  writeFileSync(join(dir, "err"), "");
+
+  const running = await tool("box_job", { box: box.name, job });
+  assert.equal(isError(running), false, text(running));
+  assert.equal(text(running), `Job ${job} is still running in box ${box.name}. The end of its output so far:\n\nstdout:\nbuilding\n\n\nNext: Call box_job again later.`);
+
+  writeFileSync(join(dir, "out"), "building\nbuilt\n");
+  writeFileSync(join(dir, "err"), "a warning\n");
+  writeFileSync(join(dir, "status"), "0\n");
+  const ended = await tool("box_job", { box: box.name, job });
+  assert.equal(text(ended), `Job ${job} ended with exit code 0 in box ${box.name}.\n\nstdout:\nbuilding\nbuilt\n\n\nstderr:\na warning\n\n\nNext: Run more with box_run.`);
+  assert.ok(existsSync(dir), "kept until bb-box's next command");
+  assert.match(text(await tool("box_run", { box: box.name, command: "true" })), /Exit code 0/);
+  assert.equal(existsSync(dir), false);
+
+  const gone = await tool("box_job", { box: box.name, job });
+  assert.equal(isError(gone), true);
+  assert.match(text(gone), new RegExp(`^Box ${box.name} has no job ${job}: its result was read already, or it ended more than 7 days ago\\.`));
+  await assert.rejects(tool("box_job", { box: box.name, job: "../../x" }));
 });
 
 test("box_copy takes relative paths under the workspace and the box user's home, and names files after their source", async (t) => {

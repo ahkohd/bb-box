@@ -5,8 +5,10 @@ import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
 import { z } from "zod";
 import { BoxError, OPERATOR, SPARES, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
+import { DRAIN_MS, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, boxLine, boxSize, idleWords, next, type KindView } from "./views.ts";
 
@@ -32,11 +34,21 @@ const HINTS: Record<BoxErrorCode, string> = {
   invalid_name: "Pick another name: a lower-case letter first, then letters, digits and \"-\".",
   not_owner: "Keep using it with box_run, box_copy and the other box tools; its owner releases or stops it.",
   in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
+  restarting: "Run the command again in a minute, once bb-box is back.",
 };
 
 export function failure(error: unknown, action: string): PluginAgentToolResult {
   const hint = error instanceof BoxError ? HINTS[error.code] : "Call box_status to see the box, or try again.";
   return { content: [{ type: "text", text: `${describeError(error, action)}${next(hint)}` }], isError: true };
+}
+
+/** box_run's answer when bb-box restarted while its command ran: `sure` when bb-box stopped it itself (#405). */
+function restarted(box: BoxRecord, job: string, sure: boolean): PluginAgentToolResult {
+  const text =
+    box.capabilities.os === "windows"
+      ? `bb-box restarted, as for an update, while the command ran in box ${box.name}. On Windows a command ends with bb-box's connection, so it stopped.${next("Run it again.")}`
+      : `bb-box restarted, as for an update, while the command ran in box ${box.name}. It ${sure ? "goes" : "may go"} on there as job ${job}.${next(`Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends.`)}`;
+  return { content: [{ type: "text", text }], isError: true };
 }
 
 export function thread(threadId: string | undefined): string {
@@ -49,11 +61,16 @@ function using(box: BoxRecord): string[] {
 }
 
 function runText(box: BoxRecord, result: RunResult): string {
-  const parts = [
+  return outputText(
     result.timedOut
       ? `Timed out in box ${box.name} after ${(result.durationMs / 1000).toFixed(1)} s.`
       : `Exit code ${result.exitCode ?? "none (killed)"} in box ${box.name}, after ${(result.durationMs / 1000).toFixed(1)} s.`,
-  ];
+    result,
+  );
+}
+
+function outputText(headline: string, result: { stdout: string; stderr: string; truncated?: boolean }): string {
+  const parts = [headline];
   if (result.stdout) parts.push(`stdout:\n${result.stdout}`);
   if (result.stderr) parts.push(`stderr:\n${result.stderr}`);
   if (!result.stdout && !result.stderr) parts.push("No output.");
@@ -121,8 +138,12 @@ function ownerWords(box: BoxRecord): string {
 
 export const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
 
-export function registerTools(bb: BbPluginApi, app: BbBox): void {
+export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number } = {}): void {
   const { boxes } = app;
+  // Registered after the core's hooks, so it runs first, while boxes and
+  // backends still work (#405).
+  const drain = new Drain();
+  bb.onDispose(() => drain.close(options.drainMs ?? DRAIN_MS));
 
   bb.agents.registerTool({
     name: "box_acquire",
@@ -262,16 +283,22 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
       desktop: z.boolean().optional().describe("Run in the box's desktop session so it can open windows. Desktop boxes only."),
     }),
     async execute({ box: ref, command, cwd, timeout_seconds, stdin, desktop }, { threadId, signal }) {
+      const job = newJobId();
+      let target: BoxRecord | undefined;
       try {
         const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
-        const { box, result } = await boxes.run(owner, found.id, command, {
-          cwd,
-          stdin,
-          timeoutMs: (timeout_seconds ?? RUN_TIMEOUT_S) * 1000,
-          session: desktop ? "desktop" : "default",
-          signal,
-          maxOutputBytes: RUN_OUTPUT_BYTES,
-        });
+        target = found;
+        const { box, result } = await drain.run(signal, (signal) =>
+          boxes.run(owner, found.id, command, {
+            cwd,
+            stdin,
+            timeoutMs: (timeout_seconds ?? RUN_TIMEOUT_S) * 1000,
+            session: desktop ? "desktop" : "default",
+            signal,
+            maxOutputBytes: RUN_OUTPUT_BYTES,
+            job,
+          }),
+        );
         const text = runText(box, result);
         const background = box.capabilities.os === "windows" ? "Start-Detached { <cmd> } job.log" : "nohup <cmd> >job.log 2>&1 &";
         const hints = result.timedOut
@@ -281,7 +308,37 @@ export function registerTools(bb: BbPluginApi, app: BbBox): void {
           ? `${text}${next(...hints)}`
           : { content: [{ type: "text", text: `${text}${next(...hints)}` }], isError: result.timedOut };
       } catch (error) {
+        // A command that fails while bb-box stops may go on too.
+        const stopping = drain.closed && !(error instanceof BoxError && error.code === "restarting");
+        if (target && (error instanceof Restarted || stopping)) return restarted(target, job, error instanceof Restarted);
         return failure(error, "Running the command");
+      }
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "box_job",
+    description:
+      "Get the exit code and output of a box_run command that went on in its box as a job when bb-box restarted, as for an update. box_run's error names the job.",
+    presentation: { label: { pending: "Reading a job", completed: "Read a job" } },
+    parameters: z.object({
+      box: boxParam,
+      job: z.string().regex(JOB_ID).describe("The job's ID, from box_run's error."),
+    }),
+    async execute({ box: ref, job }, { threadId, signal }) {
+      try {
+        const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
+        const { box, job: result } = await boxes.job(owner, found.id, job, { signal, maxOutputBytes: RUN_OUTPUT_BYTES });
+        if (!result) {
+          const text = `Box ${box.name} has no job ${job}: its result was read already, or it ended more than ${JOB_DAYS} days ago.`;
+          return { content: [{ type: "text", text: `${text}${next("Check the box's state with box_run.")}` }], isError: true };
+        }
+        if (result.state === "running") {
+          return `${outputText(`Job ${job} is still running in box ${box.name}. The end of its output so far:`, result)}${next(`Call box_job again later.`)}`;
+        }
+        return `${outputText(`Job ${job} ended with exit code ${result.exitCode} in box ${box.name}.`, result)}${next(`Run more with box_run.`)}`;
+      } catch (error) {
+        return failure(error, "Reading the job");
       }
     },
   });

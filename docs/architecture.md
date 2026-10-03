@@ -1295,6 +1295,17 @@ Nothing expires, so a box must never be forgotten.
   is made, so an interrupted acquire is always found.
 - **After a restart** the registry resumes boxes that were acquiring, repeats
   releases that were interrupted, and checks the power of the rest.
+- **Commands across a restart** (#405). BB aborts a plugin's tool calls when
+  it updates or reloads it, then waits for its dispose hooks. `box_run` does
+  not stop on that abort: bb-box's first hook takes no new commands and waits
+  up to 60 s for those running, then stops the rest. On Linux and macOS each
+  command runs as a job, with its output and exit status in files under
+  `~/.local/state/bb-box/jobs/` that the box's next command removes once
+  bb-box has them, so a stopped command goes on in the box and `box_job` gives
+  its result. A job cannot tell whether bb-box got its output, as a write to a
+  dropped `docker exec` still succeeds, so it never removes its own files;
+  those nobody removes go after 7 days. On Windows, sshd ends a session's
+  processes with it, so a command stops.
 - **The sweep** runs at start and every few minutes:
   1. records this install on the guests of its boxes from before install
      IDs, through `stamp()`, once per box. A guest with no install ID that

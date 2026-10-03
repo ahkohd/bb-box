@@ -6,13 +6,13 @@ import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
 import { BackendError, type Backend, type BoxKind, type BoxSize, type ReleaseHooks } from "../src/backends/types.ts";
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, accessCheck, accessSetup, accessSetupMs, command, envScript } from "../src/core/in-box.ts";
+import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, accessCheck, accessSetup, accessSetupMs, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
 import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
@@ -2186,4 +2186,47 @@ test("a box gains what a release adds to its kind, where its backend says the gu
   assert.deepEqual({ ...gained, capabilities: kept.capabilities }, kept, "the rest of the record, its guest and size among it, stays");
   assert.equal((await boxes.find(other.id))!.capabilities.computerUse, null);
   assert.equal(await boxes.refreshCapabilities(), 0, "once is enough");
+});
+
+test("a job's command outlives its connection and leaves its exit status and output, which the next job removes once bb-box has them (#405)", async () => {
+  const home = tempDir("jobs");
+  const env = { PATH: process.env.PATH, HOME: home };
+  const run = (script: string, job: { id: string; forget: string[]; prune: boolean }) =>
+    spawnSync("sh", ["-c", command("linux", script, { timeoutMs: 10_000, job })], { env, encoding: "utf8" });
+  const read = (id: string) => spawnSync("sh", ["-c", jobScript(id, 4)], { env, encoding: "utf8" });
+
+  // As when bb-box goes mid-command: its end of the connection closes, and
+  // the command runs on.
+  const id = newJobId();
+  const child = spawn("sh", ["-c", command("linux", "echo started; sleep 0.5; echo out; echo err >&2; exit 3", { timeoutMs: 10_000, job: { id, forget: [], prune: false } })], { env, stdio: ["ignore", "pipe", "pipe"] });
+  child.stdout.destroy();
+  child.stderr.destroy();
+  await until(async () => read(id).status === 4);
+  assert.deepEqual([read(id).stdout, read(id).stderr], ["ted\n", ""], "while it runs, the end of its output so far");
+  await until(async () => read(id).status === 0);
+  assert.deepEqual([read(id).stdout, read(id).stderr], ["3\nstarted\nout\n", "err\n"], "its exit status, then its output, as often as it is read");
+
+  // A job passes its result on as a command does, and leaves it too; the
+  // next job removes the jobs bb-box has the results of.
+  const next = newJobId();
+  const ran = run("echo next; exit 2", { id: next, forget: [id], prune: false });
+  assert.deepEqual([ran.status, ran.stdout, ran.stderr], [2, "next\n", ""]);
+  assert.deepEqual([read(id).status, read(next).status], [3, 0]);
+
+  // Once per box after bb-box starts, a job removes those older than a week.
+  const old = join(home, JOBS_DIR, newJobId());
+  mkdirSync(old);
+  utimesSync(old, new Date(Date.now() - 8 * 86_400_000), new Date(Date.now() - 8 * 86_400_000));
+  assert.equal(run("true", { id: newJobId(), forget: [], prune: false }).status, 0);
+  assert.ok(existsSync(old), "kept without a prune");
+  assert.equal(run("true", { id: newJobId(), forget: [], prune: true }).status, 0);
+  assert.equal(existsSync(old), false);
+  assert.equal(read(next).status, 0, "a recent job stays");
+
+  // Where the files cannot be made, the command runs as it is.
+  chmodSync(join(home, JOBS_DIR), 0o555);
+  const direct = run("echo direct; exit 5", { id: newJobId(), forget: [], prune: false });
+  chmodSync(join(home, JOBS_DIR), 0o755);
+  assert.deepEqual([direct.status, direct.stdout], [5, "direct\n"]);
+  assert.throws(() => jobScript("../x", 4), /is not a job ID/);
 });
