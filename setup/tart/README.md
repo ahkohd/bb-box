@@ -385,6 +385,8 @@ To run one by hand, use `npm run refresh -- --backend tart --settings <settings.
 
 Image boxes are VMs named `bb-box-image-<id>`. Captured builds are named `bb-box-img-<name>-<build>`, with their records beside them. Their owner files mark them, so no sweep removes them; the build that made them does. Windows images are not refreshed yet.
 
+A project's image is not built on a Mac yet: its boxes there run the image's script as they start.
+
 ### A warm pool
 
 The backend's warm count for a kind keeps that many suspended VMs ready, so

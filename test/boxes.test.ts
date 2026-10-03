@@ -118,14 +118,14 @@ test("a box of a project with an image runs its script as root, then its check, 
     check: 'test -s "$HOME/ran" && echo checked\n[ ! -e "$HOME/../fail-check" ] || { echo "cargo: not found"; exit 1; }\n',
     projects: ["prj"],
   };
-  const world = setup({}, { image: (projectId, kind) => (projectId === "prj" && kind === "linux" ? { name: "rust-tailscale", image } : null) });
+  const world = setup({}, { image: (projectId, kind) => (projectId === "prj" && kind === "linux" ? { name: "rust-tools", image } : null) });
   const asked = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
-  assert.deepEqual(asked.image, { name: "rust-tailscale", state: "pending" });
+  assert.deepEqual(asked.image, { name: "rust-tools", state: "pending" });
   const box = await ready(world.boxes, asked);
   assert.equal(box.state, "ready", box.error ?? "");
-  assert.deepEqual([box.image?.name, box.image?.state, typeof box.image?.seconds, typeof box.timings.image], ["rust-tailscale", "done", "number", "number"]);
+  assert.deepEqual([box.image?.name, box.image?.state, typeof box.image?.seconds, typeof box.timings.image], ["rust-tools", "done", "number", "number"]);
   const { command } = await world.backend.transports(box.guest!, "linux");
-  assert.equal((await command!.run("cat ran")).stdout, `rust-tailscale linux fake ${box.capabilities.arch}\n`);
+  assert.equal((await command!.run("cat ran")).stdout, `rust-tools linux fake ${box.capabilities.arch}\n`);
   assert.equal((await command!.run("test -e .bb-box-image")).exitCode, 1, "its files go once it ran");
 
   // Another project's box, or another kind, has none.
@@ -136,12 +136,12 @@ test("a box of a project with an image runs its script as root, then its check, 
   writeFileSync(join(world.root, "fake", "fail-script"), "");
   const failed = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }));
   assert.equal(failed.state, "failed");
-  assert.equal(failed.error, `Running rust-tailscale's script failed: rust-tailscale's script exited with 3. Its last lines:\n${Array.from({ length: 20 }, (_, i) => `line ${i + 6}`).join("\n")}`);
+  assert.equal(failed.error, `Running rust-tools's script failed: rust-tools's script exited with 3. Its last lines:\n${Array.from({ length: 20 }, (_, i) => `line ${i + 6}`).join("\n")}`);
   assert.deepEqual([failed.guest, failed.image?.state], [null, "failed"]);
   rmSync(join(world.root, "fake", "fail-script"));
   writeFileSync(join(world.root, "fake", "fail-check"), "");
   const unchecked = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }));
-  assert.match(unchecked.error ?? "", /^Running rust-tailscale's script failed: rust-tailscale's check exited with 1\. Its last lines:\nchecked\ncargo: not found$/);
+  assert.match(unchecked.error ?? "", /^Running rust-tools's script failed: rust-tools's check exited with 1\. Its last lines:\nchecked\ncargo: not found$/);
   assert.equal((await world.backend.held()).filter((guest) => guest.ref === failed.guest?.ref).length, 0);
 });
 

@@ -170,6 +170,8 @@ To run one by hand, use `npm run refresh -- --backend docker --settings <setting
 
 bb-box's image boxes are containers named `bbbox-image-<id>` with the label `bbbox.image-box`. No sweep removes them; the build that made them does. A captured image is `bbbox-image/<name>:<build>`, with its record in its labels.
 
+A project's image is built as such an image, from a container of the kind's image, and the project's boxes are containers of it. An image a container still uses cannot go until the container does, so the nightly run removes it then.
+
 ## 2. Settings
 
 In BB, on BB Box's settings page, set up the Docker backend and turn it on. Its fields:

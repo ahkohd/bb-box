@@ -66,7 +66,8 @@ To try it, see [Install](#install): one Docker host is enough.
   live, lets you take and return control, and releases boxes.
 - **The agent**: bb-box's tools acquire a box of a kind, list and check boxes,
   run commands, copy files, drive a desktop with computer use, and release
-  boxes. It can also start a child thread on a box.
+  boxes. It can also start a child thread on a box, and make a project's
+  image: a script its boxes start with.
 
 ## Backends
 
@@ -196,6 +197,9 @@ Working today, on every backend above that says so:
   a BB machine already, so a thread gets one with its access at once.
 - A terminal in every box from the panel, and a BB machine can host Docker
   boxes with nothing installed but Docker.
+- Images rebuilt each night with the latest agent CLIs, and projects'
+  images: a script an agent writes, run as a project's boxes start and then
+  built ahead on Proxmox LXC and Docker.
 
 Next: Windows boxes as BB machines (a BB request), and physical Macs in the
 SSH host pool.
@@ -257,6 +261,27 @@ Other commands:
 - `bb box images build <image>` rebuilds one now, and `--try` checks a new build without replacing.
 - `bb box images versions` shows what a rebuild would take.
 - `bb box doctor`'s "Nightly rebuilds" check warns when no run has ended for 8 days.
+
+### Projects' images
+
+A project's image adds what the project needs, such as a toolchain, to a
+kind's standard image
+([049](docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)).
+Ask an agent in one of the project's threads to "make a box image for this
+project", or use New box's offer. The agent drafts `.bb/box-setup.sh` and
+`.bb/box-check.sh` from the project's files, tries them in a clean box until
+they pass, commits them, and registers them with your approval.
+
+The project's boxes of those kinds then run the script as they start. Once
+two of them started on Proxmox LXC or Docker within 14 days, bb-box builds
+the image there in the background, and later boxes start from the build in
+the usual few seconds. Nothing needs setting up for it: builds use the
+access each backend has already.
+
+- `bb box image list` shows each image, its kinds, projects and builds; `show <name>` prints its script, and `remove <name>` removes it and its builds.
+- `bb box image try <name>` builds it as a bake does, reports each check, and keeps nothing.
+- `bb box image set <name> --kinds <kinds> --script-file <file> --project <id> [--bake auto|always|never]` sets one from files on the machine BB's server runs on.
+- `box_list` names each kind's images, and `bb box acquire --image <name|standard>` chooses one.
 
 ## Upgrade
 

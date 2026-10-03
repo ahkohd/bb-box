@@ -101,7 +101,7 @@ version, which this replaces.
 An image is a script run as root on a kind's standard image, built for
 each backend that offers the kind.
 
-- **In the configuration.** Each image has a name such as `rust-tailscale`,
+- **In the configuration.** Each image has a name such as `rust-tools`,
   the kinds it builds on, a script for each OS family (Linux now; Windows
   in PowerShell and macOS later), an optional check run as the box user,
   how it is baked (below), the projects it belongs to, and where the
@@ -208,7 +208,7 @@ root on its host for it.
 
 1. **A build box** of the base kind, from the current standard image: not
    a thread's and not enrolled. The panel shows it as "Building image
-   rust-tailscale". On Proxmox LXC it is a linked clone on LVM-thin, which is
+   rust-tools". On Proxmox LXC it is a linked clone on LVM-thin, which is
    as independent as a copy, and a full clone elsewhere, so the standard
    template can still be replaced.
 2. **The script**, as root, with a time limit of 30 minutes by default.
@@ -241,7 +241,7 @@ pile up layers.
 - **At start.** A box of an image with no current build on its backend
   takes a box of the base kind, a spare if there is one, and runs the
   script as root before it is handed over. Acquire's progress says
-  "Running rust-tailscale's script". If the script fails, the box is released
+  "Running rust-tools's script". If the script fails, the box is released
   and the acquire fails with the script's last 20 lines.
 - **Baked when used.** bb-box bakes an image on a backend once two of its
   boxes started there within 14 days. The build runs in the background, and
@@ -269,7 +269,7 @@ pile up layers.
   `standard`), and `box_list` shows each kind's images for the thread's
   project.
 - **A box says which it has.** Its record and its details give the image
-  and build, such as "rust-tailscale, built 2 October".
+  and build, such as "rust-tools, built 2 October".
 
 ### The record
 
@@ -280,7 +280,7 @@ description, a Docker label, or a file beside the image on the Mac.
 
     {
       "contract": 1,
-      "image": "rust-tailscale",
+      "image": "rust-tools",
       "kind": "linux-desktop-cpu",
       "arch": "x86_64",
       "build": "build.20261003-021500-3f9c",
