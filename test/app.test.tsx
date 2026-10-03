@@ -703,8 +703,9 @@ test("New box offers to ask an agent to make the project a box image when it has
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   await screen.findByRole("radiogroup", { name: "Type" });
-  expect(screen.getByText(/This project has no box image, so its boxes start with the standard tools\./)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Ask an agent to make one" }));
+  // One dim link in the footer, no sentence (the operator's note of 3 October 2026).
+  expect(screen.queryByText(/standard tools/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Make a box image for this project" }));
   await waitFor(() => expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toCompose", options: { initialPrompt: IMAGE_REQUEST, focusPrompt: true } }));
   await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
 
@@ -713,7 +714,7 @@ test("New box offers to ask an agent to make the project a box image when it has
   await plain.findAllByText("No boxes yet");
   fireEvent.click(plain.getAllByRole("button", { name: "New box" }).at(-1)!);
   await screen.findByRole("radiogroup", { name: "Type" });
-  expect(screen.queryByRole("button", { name: "Ask an agent to make one" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Make a box image for this project" })).toBeNull();
 });
 
 test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from a menu", async () => {

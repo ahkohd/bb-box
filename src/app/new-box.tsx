@@ -499,6 +499,19 @@ export function NewBox({
               <p role={problem ? "alert" : undefined} className={cn("min-w-0 text-xs leading-snug", problem ? "text-destructive-text" : "text-muted-foreground")}>
                 {standing}
               </p>
+            ) : askForImage && wanted.os === "linux" ? (
+              // A project without a box image (049): one dim link in the footer's free slot, in as few words as the form's other
+              // optional bits (the operator's note of 3 October 2026); the standing text takes the slot when there is one.
+              <button
+                type="button"
+                className="min-w-0 truncate text-left text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                onClick={() => {
+                  setOpen(false);
+                  askForImage();
+                }}
+              >
+                Make a box image for this project
+              </button>
             ) : (
               <span />
             )}
@@ -507,21 +520,6 @@ export function NewBox({
               {machine ? "Add machine" : "Create box"}
             </Button>
           </div>
-          {askForImage && wanted.os === "linux" ? (
-            <p className="text-2xs leading-snug text-muted-foreground">
-              This project has no box image, so its boxes start with the standard tools.{" "}
-              <button
-                type="button"
-                className="font-medium text-foreground underline underline-offset-2"
-                onClick={() => {
-                  setOpen(false);
-                  askForImage();
-                }}
-              >
-                Ask an agent to make one
-              </button>
-            </p>
-          ) : null}
         </form>
       </PopoverContent>
     </Popover>
