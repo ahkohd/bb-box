@@ -11,10 +11,11 @@ import { warmChecks } from "../backends/warm.ts";
 import { pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { ImageJobs } from "./images.ts";
+import { withImage } from "../core/project-images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
-import { emptyDocument, type BackendConfig, type ConfigDocument } from "../core/document.ts";
+import { emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
 import { LINUX_LEAST_MEMORY_GIB, presetMemoryChecks } from "../core/sizes.ts";
@@ -93,6 +94,8 @@ export interface BbBox {
   imageVersions(options: { pinned?: boolean; signal?: AbortSignal }): Promise<Versions>;
   /** The nightly rebuilds of the standard images (049). */
   readonly imageJobs: ImageJobs;
+  /** Sets a project's image in the configuration, or removes it with null (049). */
+  setImage(name: string, image: ImageConfig | null): Promise<ApplyResult>;
   general(): Promise<GeneralConfig>;
   view(box: BoxRecord): BoxView;
   /** Who controls a box's desktop. */
@@ -662,6 +665,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     imageVersions: ({ pinned, signal }) => resolveVersions(pins, { pinned: !!pinned, ...(signal ? { signal } : {}) }),
     imageJobs,
+    async setImage(name, image) {
+      // Against the revision it read: another write in between means reading again.
+      for (let tries = 0; ; tries++) {
+        const document = configuration.exported();
+        const result = await configuration.apply(withImage(document, name, image), document.revision);
+        if (result.ok || result.reason !== "revision" || tries >= 2) return result;
+      }
+    },
     async dockerCheck(machine, signal) {
       const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];
       const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);

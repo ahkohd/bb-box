@@ -301,6 +301,34 @@ function text(result: PluginAgentToolResult): string {
   return typeof result === "string" ? result : result.content.map((part) => ("text" in part ? part.text : "")).join("");
 }
 
+test("box_image_set and bb box image set, list, show and remove keep a project's image in the configuration (049)", async () => {
+  const { app, harness, tool, world } = await start();
+  const set = await tool("box_image_set", { name: "rust-tailscale", kinds: ["linux"], script: "#!/bin/bash\necho rust\n", check: "cargo --version\n", script_path: ".bb/box-setup.sh", check_path: ".bb/box-check.sh" });
+  assert.match(text(set), /^Set image rust-tailscale for linux boxes in this thread's project\./);
+  const image = app.configuration.exported().images?.["rust-tailscale"];
+  assert.deepEqual([image?.projects, image?.kinds, image?.check, image?.source], [[PROJECT], ["linux"], "cargo --version\n", { script: ".bb/box-setup.sh", check: ".bb/box-check.sh" }]);
+  assert.match((await harness.behavior.runCli(["image", "list"])).stdout ?? "", /^rust-tailscale: linux boxes in prj_one; baked auto; script \.bb\/box-setup\.sh, check \.bb\/box-check\.sh; set \d{4}-\d{2}-\d{2}\.\n$/);
+  assert.equal((await harness.behavior.runCli(["image", "show", "rust-tailscale"])).stdout, "#!/bin/bash\necho rust\n\n# The check, run as the box user:\ncargo --version\n");
+
+  // From files, by the CLI: another image for the project's linux boxes is refused, and "standard" is no name.
+  const file = join(world.root, "setup.sh");
+  writeFileSync(file, "#!/bin/bash\necho other\n");
+  const twin = await harness.behavior.runCli(["image", "set", "other", "--kinds", "linux", "--script-file", file, "--project", PROJECT]);
+  assert.equal(twin.exitCode, 1);
+  assert.match(twin.stderr ?? "", /Project prj_one's linux boxes would get both rust-tailscale and other/);
+  assert.equal((await harness.behavior.runCli(["image", "set", "standard", "--kinds", "linux", "--script-file", file, "--project", "prj_two"])).exitCode, 1);
+  const other = await harness.behavior.runCli(["image", "set", "other", "--kinds", "linux", "--script-file", file, "--project", "prj_two", "--bake", "never"]);
+  assert.match(other.stdout ?? "", /^Saved image other for linux boxes in project prj_two, at revision \d+\.\n$/, other.stderr);
+  assert.deepEqual(app.configuration.exported().images?.other?.source, { script: file });
+
+  // Another project's image is not this thread's to change.
+  assert.match(text(await tool("box_image_set", { name: "other", kinds: ["linux"], script: "echo" })), /Image other belongs to prj_two, not this thread's project\. Pick another name\./);
+
+  assert.match((await harness.behavior.runCli(["image", "remove", "rust-tailscale"])).stdout ?? "", /^Removed image rust-tailscale, at revision \d+\.\n$/);
+  assert.equal(app.configuration.exported().images?.["rust-tailscale"], undefined);
+  assert.equal((await harness.behavior.runCli(["image", "remove", "rust-tailscale"])).exitCode, 1);
+});
+
 function isError(result: PluginAgentToolResult): boolean {
   return typeof result !== "string" && result.isError === true;
 }
