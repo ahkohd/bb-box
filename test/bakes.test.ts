@@ -106,14 +106,14 @@ test("an image is baked on a backend once two of its boxes ran its script there 
   const { bakes: on, storage, clock } = bakes([lxc.backend]);
   on.ready(box({ name: "rust", state: "done" }));
   await settled(on);
-  assert.deepEqual(lxc.ran, [], "one box is not enough");
+  assert.equal(lxc.ran.length, 0, "one box is not enough");
   assert.equal(await on.current("rust", "proxmox-lxc", "linux"), null);
 
   // A box 15 days later counts alone.
   clock.now += 15 * DAY;
   on.ready(box({ name: "rust", state: "done" }));
   await settled(on);
-  assert.deepEqual(lxc.ran, []);
+  assert.equal(lxc.ran.length, 0);
   clock.now += DAY;
   on.ready(box({ name: "rust", state: "done" }));
   await settled(on);
@@ -126,9 +126,9 @@ test("an image is baked on a backend once two of its boxes ran its script there 
     "7000: write .bb-box-image/check.sh",
     "7000: set -euo pipefail",
     "7000: cat /usr/share/bb-box/image.json",
-    "7000: printf '%s\\n' '{\"contract\":1,\"image\":\"rus",
+    "7000: printf '%s\\n' '{\"contract\":1,\"image\":\"ru",
     "7001: write .bb-box-image/check.sh",
-    '7001: bash "$HOME/.bb-box-image/check.sh" 2>&1; s=',
+    '7001: bash "$HOME/.bb-box-image/check.sh" 2>&1',
   ]);
   const built = lxc.builds.find((build) => build.image === "rust")!;
   assert.deepEqual([built.ref, built.kind, built.record?.kind, built.record?.base, built.record?.layer?.sha256, built.record?.sizeGiB, built.record?.tools], [
@@ -219,7 +219,7 @@ test("the nightly upkeep removes unused builds, those of removed images and thos
   for (const name of ["rust", "idle", "gone"]) await on.bake(name, lxc.backend, "linux");
   assert.deepEqual(lxc.builds.filter((build) => !build.current).map((build) => `${build.ref} ${build.image}`), ["7000 rust", "7002 idle", "7004 gone"]);
   // One left by a bake that did not end, and a refreshed standard build.
-  lxc.builds.push({ ref: "7009", image: "rust", kind: "linux", build: "build.x", record: null, current: false });
+  lxc.builds.push({ ref: "7099", image: "rust", kind: "linux", build: "build.x", record: null, current: false });
   lxc.builds.push(standard("9002", "linux-desktop-cpu", "build.20261001-020000-dddd"));
   lxc.builds[0] = standard("9000", "linux", "build.20261010-020000-cccc");
   clock.now += 31 * DAY;
@@ -233,12 +233,12 @@ test("the nightly upkeep removes unused builds, those of removed images and thos
     [
       "gone for linux on proxmox-lxc: removed, its image no longer covers the kind there",
       "idle for linux on proxmox-lxc: removed, no box started from it for 30 days",
-      "rust for linux on proxmox-lxc: removed, 7009 was left by a bake that did not end",
+      "rust for linux on proxmox-lxc: removed, 7099 was left by a bake that did not end",
       "rust for linux on proxmox-lxc: baked, now <build>, in 0 s",
       "always for linux-desktop-cpu on proxmox-lxc: baked, now <build>, in 0 s",
     ],
   );
-  assert.deepEqual(lxc.removed.filter((ref) => ["7000", "7002", "7004", "7009"].includes(ref)).sort(), ["7000", "7004", "7009"]);
+  assert.deepEqual(lxc.removed.filter((ref) => ["7000", "7002", "7004", "7099"].includes(ref)).sort(), ["7000", "7004", "7099"]);
   assert.deepEqual(await storage.get("images/bake-retired"), [{ backend: "proxmox-lxc", ref: "7002" }], "idle's build has a box still, so it waits");
 
   // Once no box uses it, the next upkeep removes it.
