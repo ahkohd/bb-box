@@ -67,6 +67,8 @@ export interface FakeWindow {
   noActions?: boolean;
   /** Its elements' frames are in its own pixels, as a GTK 3 app's are on Wayland. */
   ownFrames?: boolean;
+  /** A "Show older tasks" button lies partly above it, scrolled out of view. */
+  olderTasks?: boolean;
 }
 
 export interface FakeDesktop {
@@ -261,6 +263,7 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
     frame: frame(0, 0, window.width, window.height),
     children: [
       { key: "heading", role: "heading", label: "My tasks", actions: [], frame: frame(0, 0, 800, 30), children: [], text: true },
+      ...(window.olderTasks ? [{ key: "older", role: "push button", label: "Show older tasks", actions: ["click"], frame: frame(20, -10, 200, 40), children: [] }] : []),
       {
         key: "list",
         role: "list",

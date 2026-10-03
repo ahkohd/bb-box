@@ -9,7 +9,7 @@ import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
-import type { BackendDriver } from "../src/backends/types.ts";
+import type { BackendDriver, BoxKind } from "../src/backends/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases } from "../src/plugin/enrol.ts";
@@ -17,7 +17,7 @@ import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
-import { FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
+import { FAKE_PWSH, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -2115,9 +2115,9 @@ function imageOf(result: PluginAgentToolResult): { data: string; mimeType: strin
 }
 
 /** A desktop box whose desktop has one Tasks window, window 100. */
-async function desktopBox(options: { computer?: SetupOptions["computer"] } = {}) {
-  const started = await start(undefined, { computer: { pauseWaitMs: 300, desktopWaitMs: 300, ...options.computer } });
-  await started.harness.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux-desktop" });
+async function desktopBox(options: { computer?: SetupOptions["computer"]; kind?: BoxKind } = {}) {
+  const started = await start(undefined, { computer: { pauseWaitMs: 300, desktopWaitMs: 300, ...options.computer }, kinds: options.kind && [options.kind] });
+  await started.harness.behavior.callRpc("acquire", { threadId: THREAD, kind: options.kind?.id ?? "linux-desktop" });
   await started.app.boxes.idle();
   const box = await only(started.app);
   const file = desktopFile(started.world, box);
@@ -2294,7 +2294,7 @@ test("a click on an element the desktop cannot click as an element goes to the e
 });
 
 test("an element's frame in its window's own pixels, as a GTK 3 app on Wayland gives it, is put on the screen (048)", async (t) => {
-  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 }, kind: FAKE_WAYLAND_KIND });
   t.after(() => harness.lifecycle.dispose());
   editDesktop(file, (desktop) => {
     desktop.wayland = true;
@@ -2307,6 +2307,20 @@ test("an element's frame in its window's own pixels, as a GTK 3 app on Wayland g
   // Its frame, (700, 125) and 90 by 30 in the window, is where it is drawn.
   assert.deepEqual(lastCall(file, "click")?.args, { pid: 5000, window_id: 100, x: 745, y: 140, button: "left", count: 1, delivery_mode: "foreground" });
   assert.deepEqual(readDesktop(file).tasks["100"], ["Task 1", "Task 2"]);
+});
+
+test("an element partly above its window on an X11 desktop keeps its frame on the screen (048)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.windows[0]!.olderTasks = true;
+  });
+  await tool("computer_screenshot", { box: box.name });
+  // Its frame, (120, 90) and 200 by 40 on the screen, starts above the window
+  // at (100, 100). Read as the window's own pixels, it would lie wholly inside
+  // the window, over Task 2, at (300, 210) on the screen.
+  const menu = text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 245, y: 172 }));
+  assert.match(menu, /\n\nOpened a context menu on list item 'Task 2' \(window 101\):\n/);
 });
 
 test("computer_launch opens apps and URLs and says which windows opened", async (t) => {
