@@ -21,6 +21,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Make a plugin's host call quick](#12-make-a-plugins-host-call-quick) | draft | each call to bb-box's host entry takes about 0.4 s, so it cannot carry commands |
 | [Mark a machine offline when it stops checking in](#13-mark-a-machine-offline-when-it-stops-checking-in) | draft | a machine that goes with no word, such as a PC that restarts, shows as connected for about 16 minutes, so bb-box judges it by when BB last heard from it |
 | [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | draft | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
+| [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | draft | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text |
 
 ## 1. BB's host app on Windows
 
@@ -574,6 +575,29 @@ when there is none shows "No desktop box" with a button to the Box panel;
 Terminal does the same for the thread's boxes with a terminal. The logic
 lives in each tab's component, since a panel action gets no RPC in its
 context and `run()` none either.
+
+## 15. Give a plugin's CLI the caller's files
+
+**What bb-box needs.** A plugin CLI command that reads a file where `bb` runs:
+a project image's script for `bb box image set --script-file`
+([049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)),
+or a configuration for `bb box config apply`.
+
+**What BB does now.** A plugin's CLI command runs in the plugin, on BB's
+server. Its context is `{ cwd, threadId, projectId, signal }` (plugin SDK
+0.5.29), with no standard input and no way to read the caller's files. A path
+resolves against `cwd` on the server, so from an execution machine the file
+is not found ("Cannot read /tmp/…: ENOENT").
+
+**What we ask.** One of:
+
+- standard input for a command, as `bb box image set --script-file -` would read it; or
+- a declared file option, such as `{ type: "file" }`, whose contents the `bb` CLI reads where it runs and sends with the call.
+
+**Until then.** The commands say the file is read on the machine BB's
+server runs on. Agents use `box_image_set` and `box_image_try`, which take
+the text, and `bb box image try <name>` tries an image already set, with no
+file.
 
 ## Checked, no request needed
 

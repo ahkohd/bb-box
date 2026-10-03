@@ -10,7 +10,7 @@ import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, boxSize, idleWords, next, type KindView } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, boxSize, idleWords, next, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -462,6 +462,35 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         return `Released box ${box.name}.${idleWords(idle, false)}${next("Call box_acquire when you need another box.")}`;
       } catch (error) {
         return failure(error, "Releasing the box");
+      }
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "box_image_try",
+    description:
+      "Try a project image's script as a build runs it (049), before box_image_set: in a new box of the kind's current standard image, on a backend that builds images, the script runs as root with BB_BOX_IMAGE, BB_BOX_KIND, BB_BOX_BACKEND and BB_BOX_ARCH, then the check as the box user, then finalizing, which empties /tmp, /var/tmp and the caches. " +
+      "A box of the build then runs the check again and the kind's own check. It returns each check's result, the time and the build's last 200 lines, and removes the boxes and the build. " +
+      "Each try starts from a clean standard image, as a build does, so fix the script and try again until every check passes. It can take as long as the script, plus about a minute.",
+    presentation: { label: { pending: "Trying the image's script", completed: "Tried the image's script" } },
+    parameters: z.object({
+      kind: z.string().min(1).describe('The Linux kind to try it on, such as "linux". box_list shows the kinds.'),
+      script: z.string().min(1).describe("The script's text, run as root, as in .bb/box-setup.sh."),
+      check: z.string().optional().describe("The check's text, run as the box user, as in .bb/box-check.sh: it should fail when the script did not do its work."),
+      name: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).optional().describe('The image\'s name, which the script reads as BB_BOX_IMAGE. "try" when left out.'),
+      on: z.string().optional().describe("A backend's ID from box_list, such as proxmox-lxc. The first that builds the kind's images when left out."),
+    }),
+    async execute({ kind, script, check, name, on }, { signal }) {
+      try {
+        const result = await app.imageBakes.try({ name: name ?? "try", kind, script, ...(check?.trim() ? { check } : {}), ...(on ? { on } : {}) }, signal);
+        const hint = result.ok
+          ? "Commit the files, then register them with box_image_set; ask the user first unless they asked for the image."
+          : result.reason
+            ? "Try again; if it fails the same way, tell the user."
+            : "Fix the script or the check from the lines above, then call box_image_try again.";
+        return { content: [{ type: "text", text: `${tryText(result)}${next(hint)}` }], ...(result.ok ? {} : { isError: true }) };
+      } catch (error) {
+        return failure(error, "Trying the script");
       }
     },
   });

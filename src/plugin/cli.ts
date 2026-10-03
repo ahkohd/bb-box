@@ -10,7 +10,7 @@ import type { ImageBake, Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, versionsText } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, tryText, versionsText } from "./views.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -305,6 +305,26 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const image = app.configuration.exported().images?.[positionals.name];
               if (!image) throw new BoxError("not_found", `There is no image ${positionals.name}.`);
               return out(`${image.script.trimEnd()}${image.check ? `\n\n# The check, run as the box user:\n${image.check.trimEnd()}` : ""}`);
+            }),
+        }),
+        "image try": cliCommand({
+          summary: "Try a project's image's script as a build runs it (049), on a kind it covers, and remove what the try made. It prints each check's result and the build's last lines, and exits 1 if one failed.",
+          positionals: [{ name: "name", description: "The image's name, from bb box image list.", required: true }],
+          options: {
+            kind: { type: "string", description: "The kind to try it on: its first kind by default." },
+            on: { type: "string", description: "A backend's ID, such as proxmox-lxc: the first that builds the kind's images by default." },
+          },
+          run: ({ positionals, options }, ctx) =>
+            guard("Trying the image", async () => {
+              const image = app.configuration.exported().images?.[positionals.name];
+              if (!image) throw new BoxError("not_found", `There is no image ${positionals.name}.`);
+              const kind = options.kind === undefined ? image.kinds[0]! : String(options.kind);
+              if (!image.kinds.includes(kind)) throw new BoxError("unknown_kind", `Image ${positionals.name} covers ${image.kinds.join(", ")}, not ${kind}.`);
+              const result = await app.imageBakes.try(
+                { name: positionals.name, kind, script: image.script, ...(image.check ? { check: image.check } : {}), ...(options.on ? { on: String(options.on) } : {}) },
+                ctx.signal,
+              );
+              return { exitCode: result.ok ? 0 : 1, stdout: `${tryText(result)}\n` };
             }),
         }),
         "images list": cliCommand({

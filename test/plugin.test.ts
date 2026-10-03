@@ -310,6 +310,14 @@ test("box_image_set and bb box image set, list, show and remove keep a project's
   assert.match((await harness.behavior.runCli(["image", "list"])).stdout ?? "", /^rust-tailscale: linux boxes in prj_one; baked auto; script \.bb\/box-setup\.sh, check \.bb\/box-check\.sh; set \d{4}-\d{2}-\d{2}\.\n$/);
   assert.equal((await harness.behavior.runCli(["image", "show", "rust-tailscale"])).stdout, "#!/bin/bash\necho rust\n\n# The check, run as the box user:\ncargo --version\n");
 
+  // A try needs a backend that builds images, which the fake host is not; the CLI tries an image already set, on a kind it covers.
+  const tried = await tool("box_image_try", { kind: "linux", script: "#!/bin/bash\necho rust\n" });
+  assert.ok(isError(tried));
+  assert.match(text(tried), /No backend that is on builds linux images\. Proxmox LXC and Docker do; elsewhere boxes run the script as they start\./);
+  const otherKind = await harness.behavior.runCli(["image", "try", "rust-tailscale", "--kind", "linux-desktop-cpu"]);
+  assert.deepEqual([otherKind.exitCode, /Image rust-tailscale covers linux, not linux-desktop-cpu\./.test(otherKind.stderr ?? "")], [1, true], otherKind.stderr);
+  assert.match((await harness.behavior.runCli(["image", "try", "rust-tailscale"])).stderr ?? "", /No backend that is on builds linux images/);
+
   // From files, by the CLI: another image for the project's linux boxes is refused, and "standard" is no name.
   const file = join(world.root, "setup.sh");
   writeFileSync(file, "#!/bin/bash\necho other\n");

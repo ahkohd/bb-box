@@ -106,6 +106,19 @@ function newBuildId(now: number): string {
   return `build.${time}-${Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0")}`;
 }
 
+/**
+ * The kind's check a trial box runs (049): the backend's own where it has
+ * one, else the template's, whose desktop needs its display, which starts
+ * soon after boot. Each line says ok or FAIL.
+ */
+export function trialCheck(images: BackendImages, kind: string): { readonly name: string; readonly script: string } {
+  const check = images.check?.(kind) ?? BUILDS[kind]?.check ?? "false";
+  return {
+    name: images.check ? "the kind's check" : `the kind's check (${check})`,
+    script: images.check ? check : `for i in $(seq 1 60); do [ ! -e /etc/systemd/system/bb-box-display.service ] || [ -s /run/bb-box/display-mode ] && break; sleep 1; done; ${check}`,
+  };
+}
+
 /** The record's checks against the old build's: whole, of this contract and kind, and no tool older (049). */
 export function recordChecks(record: ImageRecord | null, old: ImageRecord | null, kind: string): RefreshCheck[] {
   if (!record) return [{ name: "the record", ok: false, detail: "The new build has no image record." }];
@@ -210,16 +223,12 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       ok: ms <= baseline.ms + SLOWER_MS,
       detail: `A box of the new build answered in ${(ms / 1000).toFixed(1)} s, of the old in ${(baseline.ms / 1000).toFixed(1)} s.`,
     });
-    // The backend's own check where it has one, else the template's, whose desktop needs its display, which starts soon after boot.
-    const check = images.check?.(kind) ?? BUILDS[kind]?.check ?? "false";
-    const ran = await trial.command.run(
-      images.check ? check : `for i in $(seq 1 60); do [ ! -e /etc/systemd/system/bb-box-display.service ] || [ -s /run/bb-box/display-mode ] && break; sleep 1; done; ${check}`,
-      { timeoutMs: 10 * 60_000, signal, maxOutputBytes: 256 * 1024 },
-    );
+    const check = trialCheck(images, kind);
+    const ran = await trial.command.run(check.script, { timeoutMs: 10 * 60_000, signal, maxOutputBytes: 256 * 1024 });
     const failed = ran.stdout.split("\n").filter((line) => /\bFAIL\b/.test(line));
     for (const line of ran.stdout.split("\n").filter((line) => line.trim())) say(`check: ${line}`);
     checks.push({
-      name: images.check ? "the kind's check" : `the kind's check (${check})`,
+      name: check.name,
       ok: ran.exitCode !== null && !failed.length && ran.stdout.trim() !== "",
       detail: failed.length ? failed.join(" | ").slice(0, 600) : ran.stdout.trim() ? `${ran.stdout.trim().split("\n").length} checks passed.` : `It printed nothing: ${ran.stderr.trim().slice(0, 300)}`,
     });

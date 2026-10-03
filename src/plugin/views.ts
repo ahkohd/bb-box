@@ -6,6 +6,7 @@ import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../b
 import { kindAliases, kindInfo } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs, Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
+import type { TryResult } from "./bakes.ts";
 import type { ImageView } from "./images.ts";
 import { extraFeatures, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
@@ -455,6 +456,16 @@ export function imageLine(view: ImageView): string {
   const built = record ? `${record.build}, ${age === 0 ? "built today" : `${age} days old`}` : "no record";
   const last = view.last ? `; last rebuild ${new Date(view.last.at).toISOString().slice(0, 10)} ${view.last.ok ? "passed" : view.last.waiting ? `waited: ${view.last.reason}` : `failed: ${view.last.reason}`}` : "";
   return `${view.name} (${view.build.kind}): ${built}; ${view.due ? `due, as ${view.due}` : "not due"}${last}.`;
+}
+
+/** What a try of a script did (049): a line per check, then the build's last lines. */
+export function tryText(result: TryResult): string {
+  const head = result.reason
+    ? `The try on ${result.backend} (${result.kind}) did not finish, after ${result.seconds} s: ${result.reason}`
+    : `The script ${result.ok ? "passed" : "failed"} on ${result.backend} (${result.kind}), in ${result.seconds} s, as a build runs it.`;
+  const checks = result.checks.map((check) => `- ${check.name}: ${check.ok ? "ok" : "FAIL"}, ${check.detail}`);
+  const lines = result.output.length ? ["", `The build's last ${result.output.length} lines:`, ...result.output] : [];
+  return [head, ...checks, ...lines].join("\n");
 }
 
 /** What a rebuild of the standard Linux images would take, a line per tool, its architectures together where they agree. */

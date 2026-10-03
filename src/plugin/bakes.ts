@@ -11,9 +11,10 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { recordFromJson, type ImageRecord } from "../backends/images.ts";
-import type { Backend, BackendStorage, DoctorCheck, ImageBuild } from "../backends/types.ts";
-import type { BoxRecord } from "../core/boxes.ts";
+import type { Backend, BackendStorage, DoctorCheck, ImageBox, ImageBuild } from "../backends/types.ts";
+import { BoxError, type BoxRecord } from "../core/boxes.ts";
 import type { ImageConfig } from "../core/document.ts";
+import { trialCheck } from "../core/refresh.ts";
 import { quote } from "../transports/process.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -61,6 +62,42 @@ export interface BakeFailure {
   readonly base: string | null;
 }
 
+/** A build a bake or a try made, and a trial box of it; `ms` is how long the script, the check and finalizing took. */
+interface Built {
+  readonly captured: ImageBuild;
+  readonly trial: ImageBox;
+  readonly ms: number;
+}
+
+/** A script to try as a build runs it (049). */
+export interface TryInput {
+  /** The image's name, which the script reads as BB_BOX_IMAGE. */
+  readonly name: string;
+  readonly kind: string;
+  readonly script: string;
+  readonly check?: string;
+  /** A backend's ID, or the first that bakes the kind. */
+  readonly on?: string;
+}
+
+export interface TryCheck {
+  readonly name: string;
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+/** What a try did: each step's check, the time, and the build's last 200 lines. */
+export interface TryResult {
+  readonly ok: boolean;
+  readonly backend: string;
+  readonly kind: string;
+  readonly seconds: number;
+  readonly checks: readonly TryCheck[];
+  readonly output: readonly string[];
+  /** Why it could not try, as a box that would not start, or null. */
+  readonly reason: string | null;
+}
+
 /** What a bake or the nightly upkeep did to an image's build, as a line of the nightly run. */
 export interface BakeLine {
   readonly name: string;
@@ -86,6 +123,11 @@ export function scriptHash(image: ImageConfig): string {
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+/** Runs an image's check as the box user in a box of its build. */
+async function imageCheck(box: ImageBox, check: string, signal: AbortSignal) {
+  await box.command.writeFile(".bb-box-image/check.sh", new TextEncoder().encode(check), { mode: "0700", signal });
+  return box.command.run('bash "$HOME/.bb-box-image/check.sh" 2>&1; s=$?; rm -rf "$HOME/.bb-box-image"; exit $s', { timeoutMs: CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
+}
 const key = (prefix: string, name: string, backend: string, kind: string) => `${prefix}${name}/${backend}/${kind}`;
 const label = (name: string, backend: string, kind: string) => `${name} for ${kind} on ${backend}`;
 /** An entry's image, backend and kind. */
@@ -234,45 +276,10 @@ export class ImageBakes {
     const signal = AbortSignal.any([this.#stop.signal, AbortSignal.timeout(SCRIPT_MS + 2 * CHECK_MS + 30 * 60_000)]);
     const made: string[] = [];
     const output: string[] = [];
-    const text = new TextEncoder();
     try {
-      const tar = spawnSync("tar", ["-C", this.#deps.setup, "-czf", "-", "proxmox-lxc/template"], { maxBuffer: 64 * 1024 * 1024 });
-      if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
-      const box = await images.box(standard, `bake of ${name}`, signal);
-      made.push(box.ref);
-      await box.command.writeFile("bb-box-setup.tgz", tar.stdout, { signal });
-      await box.command.writeFile(".bb-box-image/setup.sh", text.encode(image.script), { mode: "0700", signal });
-      if (image.check) await box.command.writeFile(".bb-box-image/check.sh", text.encode(image.check), { mode: "0700", signal });
-      const time = new Date(started).toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
-      const buildId = `build.${time}-${Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0")}`;
-      const ran = await box.command.run(bakeScript(name, kind, backend.id, buildId, !!image.check), { timeoutMs: SCRIPT_MS + CHECK_MS, signal, maxOutputBytes: 512 * 1024 });
-      output.push(...ran.stdout.trimEnd().split("\n").slice(-20));
-      if (ran.exitCode !== 0) throw new Error(`${ran.timedOut ? "It ran out of time" : `It exited with ${ran.exitCode}`}: ${output.at(-1) ?? ""}`);
-
-      // The standard build's record, as a project's image on it (049).
-      const read = await box.command.run("cat /usr/share/bb-box/image.json", { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
-      const finalized = recordFromJson(read.stdout.trim());
-      if (!finalized) throw new Error("Finalizing wrote no image record.");
-      const record: ImageRecord = {
-        ...(standard.record ?? { ...finalized, kind }),
-        image: name,
-        build: buildId,
-        built: new Date(this.#now()).toISOString(),
-        base: standard.build,
-        layer: { sha256: hash, seconds: Math.round((this.#now() - started) / 1000) },
-        sizeGiB: finalized.sizeGiB,
-      };
-      const wrote = await box.command.run(`printf '%s\\n' ${quote(JSON.stringify(record))} | sudo -n tee /usr/share/bb-box/image.json >/dev/null`, { timeoutMs: 15_000, signal });
-      if (wrote.exitCode !== 0) throw new Error(`The image's record could not be written: ${wrote.stderr.trim()}`);
-      const captured = await images.capture(box, standard, name, signal);
-      made.splice(made.indexOf(box.ref), 1, captured.ref);
-
-      // The trial: a box of the build passes the image's check.
-      const trial = await images.box(captured, `trial of ${name}`, signal);
-      made.push(trial.ref);
+      const { captured, trial } = await this.#build(name, image, backend, kind, standard, { signal, made, output, lines: 20 });
       if (image.check) {
-        await trial.command.writeFile(".bb-box-image/check.sh", text.encode(image.check), { mode: "0700", signal });
-        const checked = await trial.command.run('bash "$HOME/.bb-box-image/check.sh" 2>&1; s=$?; rm -rf "$HOME/.bb-box-image"; exit $s', { timeoutMs: CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
+        const checked = await imageCheck(trial, image.check, signal);
         if (checked.exitCode !== 0) throw new Error(`A box of the build failed the check: ${checked.stdout.trim().split("\n").at(-1) ?? ""}`);
       }
       await images.remove(trial.ref, signal);
@@ -293,6 +300,139 @@ export class ImageBakes {
       throw error;
     } finally {
       // What the bake made and did not keep goes, the newest first.
+      for (const ref of made.reverse()) await images.remove(ref).catch((error: unknown) => this.#say(`could not remove ${backend.id}/${ref}: ${message(error)}`));
+    }
+  }
+
+  /**
+   * An image's build as a bake makes it (049): a box of the standard build,
+   * the setup files, the script as root and the check as the box user,
+   * finalizing, the record, a capture, and a trial box of the build. What
+   * it makes goes in `made`, for the caller to remove; the last `lines` of
+   * the build's output go in `output`.
+   */
+  async #build(
+    name: string,
+    image: ImageConfig,
+    backend: Backend,
+    kind: string,
+    standard: ImageBuild,
+    options: { readonly signal: AbortSignal; readonly made: string[]; readonly output: string[]; readonly lines: number },
+  ): Promise<Built> {
+    const { signal, made, output } = options;
+    const images = backend.images!;
+    const started = this.#now();
+    const text = new TextEncoder();
+    const tar = spawnSync("tar", ["-C", this.#deps.setup, "-czf", "-", "proxmox-lxc/template"], { maxBuffer: 64 * 1024 * 1024 });
+    if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
+    const box = await images.box(standard, `build of ${name}`, signal);
+    made.push(box.ref);
+    await box.command.writeFile("bb-box-setup.tgz", tar.stdout, { signal });
+    await box.command.writeFile(".bb-box-image/setup.sh", text.encode(image.script), { mode: "0700", signal });
+    if (image.check) await box.command.writeFile(".bb-box-image/check.sh", text.encode(image.check), { mode: "0700", signal });
+    const time = new Date(started).toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+    const buildId = `build.${time}-${Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0")}`;
+    const at = this.#now();
+    const ran = await box.command.run(bakeScript(name, kind, backend.id, buildId, !!image.check), { timeoutMs: SCRIPT_MS + CHECK_MS, signal, maxOutputBytes: 512 * 1024 });
+    const ms = this.#now() - at;
+    output.push(...ran.stdout.trimEnd().split("\n").slice(-options.lines));
+    if (ran.exitCode !== 0) throw new Error(`${ran.timedOut ? "It ran out of time" : `It exited with ${ran.exitCode}`}: ${output.at(-1) ?? ""}`);
+
+    // The standard build's record, as a project's image on it (049).
+    const read = await box.command.run("cat /usr/share/bb-box/image.json", { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
+    const finalized = recordFromJson(read.stdout.trim());
+    if (!finalized) throw new Error("Finalizing wrote no image record.");
+    const record: ImageRecord = {
+      ...(standard.record ?? { ...finalized, kind }),
+      image: name,
+      build: buildId,
+      built: new Date(this.#now()).toISOString(),
+      base: standard.build,
+      layer: { sha256: scriptHash(image), seconds: Math.round((this.#now() - started) / 1000) },
+      sizeGiB: finalized.sizeGiB,
+    };
+    const wrote = await box.command.run(`printf '%s\\n' ${quote(JSON.stringify(record))} | sudo -n tee /usr/share/bb-box/image.json >/dev/null`, { timeoutMs: 15_000, signal });
+    if (wrote.exitCode !== 0) throw new Error(`The image's record could not be written: ${wrote.stderr.trim()}`);
+    const captured = await images.capture(box, standard, name, signal);
+    made.splice(made.indexOf(box.ref), 1, captured.ref);
+    const trial = await images.box(captured, `trial of ${name}`, signal);
+    made.push(trial.ref);
+    return { captured, trial, ms };
+  }
+
+  /**
+   * Tries a script as a build runs it (049), for an agent writing one: the
+   * build in a box of the kind's standard build on a backend that bakes,
+   * then the image's check and the kind's check on a trial box of it. The
+   * build and its boxes go after, whatever happened. It waits for any bake
+   * going on, and stops when `signal` aborts.
+   */
+  try(input: TryInput, signal?: AbortSignal): Promise<TryResult> {
+    const backend = this.#tryBackend(input);
+    return this.exclusive(() => this.#try(input, backend, signal));
+  }
+
+  /** The backend a try runs on: the one asked for, or the first that bakes the kind. */
+  #tryBackend(input: TryInput): Backend {
+    if (UNBAKED_KINDS.has(input.kind)) throw new BoxError("unsupported", `A ${input.kind} image is not built: its boxes run the script as they start, as a build would hold one GPU's devices. Try it on linux-desktop-cpu.`);
+    const bakes = (backend: Backend) => !!backend.images?.startsFrom && backend.kinds().some((offered) => offered.id === input.kind);
+    if (input.on) {
+      const backend = this.#backend(input.on);
+      if (!backend) throw new BoxError("not_found", `There is no backend ${input.on} on. box_list names them.`);
+      if (!bakes(backend)) throw new BoxError("unsupported", `${backend.label} builds no ${input.kind} image. Boxes there run the script as they start.`);
+      return backend;
+    }
+    const backend = this.#deps.backends().find(bakes);
+    if (!backend) throw new BoxError("unsupported", `No backend that is on builds ${input.kind} images. Proxmox LXC and Docker do; elsewhere boxes run the script as they start.`);
+    return backend;
+  }
+
+  async #try(input: TryInput, backend: Backend, outer?: AbortSignal): Promise<TryResult> {
+    const images = backend.images!;
+    const started = this.#now();
+    const signal = AbortSignal.any([this.#stop.signal, AbortSignal.timeout(SCRIPT_MS + 2 * CHECK_MS + 30 * 60_000), ...(outer ? [outer] : [])]);
+    const made: string[] = [];
+    const output: string[] = [];
+    const checks: TryCheck[] = [];
+    const image: ImageConfig = { kinds: [input.kind], script: input.script, ...(input.check ? { check: input.check } : {}), projects: [] };
+    const end = (reason: string | null): TryResult => ({
+      ok: reason === null && checks.every((check) => check.ok),
+      backend: backend.id,
+      kind: input.kind,
+      seconds: Math.round((this.#now() - started) / 1000),
+      checks,
+      output,
+      reason,
+    });
+    try {
+      const standard = this.#standard(await this.#builds(backend, true), input.kind);
+      if (!standard) return end(`${backend.label} has no standard ${input.kind} build to try it on.`);
+      let built: Built;
+      try {
+        built = await this.#build(input.name, image, backend, input.kind, standard, { signal, made, output, lines: 200 });
+      } catch (error) {
+        checks.push({ name: input.check ? "the script and the check, in the build box" : "the script, in the build box", ok: false, detail: message(error) });
+        return end(null);
+      }
+      checks.push({ name: input.check ? "the script and the check, in the build box" : "the script, in the build box", ok: true, detail: `${Math.round(built.ms / 1000)} s, with finalizing` });
+      if (input.check) {
+        const checked = await imageCheck(built.trial, input.check, signal);
+        const last = checked.stdout.trim().split("\n").at(-1) ?? "";
+        checks.push({ name: "the check, on a box of the build", ok: checked.exitCode === 0, detail: checked.exitCode === 0 ? last || "passed" : `exit code ${checked.exitCode}: ${last}` });
+      }
+      const kindCheck = trialCheck(images, input.kind);
+      const ran = await built.trial.command.run(kindCheck.script, { timeoutMs: CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
+      const lines = ran.stdout.split("\n").filter((line) => line.trim());
+      const failed = lines.filter((line) => /\bFAIL\b/.test(line));
+      checks.push({
+        name: kindCheck.name,
+        ok: ran.exitCode !== null && !failed.length && lines.length > 0,
+        detail: failed.length ? failed.join(" | ").slice(0, 600) : lines.length ? `${lines.length} checks passed` : `It printed nothing: ${ran.stderr.trim().slice(0, 300)}`,
+      });
+      return end(null);
+    } catch (error) {
+      return end(message(error));
+    } finally {
       for (const ref of made.reverse()) await images.remove(ref).catch((error: unknown) => this.#say(`could not remove ${backend.id}/${ref}: ${message(error)}`));
     }
   }
