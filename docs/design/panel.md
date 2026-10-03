@@ -215,6 +215,15 @@ Items that do not apply are left out, not disabled, except "Check now".
 For a real machine: "The machine will be reset and returned to its pool.
 Anything in the box user's home will be deleted."
 
+Every alert dialog in bb-box (this one, "Stop anyway?", "Remove machine?"
+in settings) moves as BB's own dialogs do: a fade with a slight scale from
+the centre over 200 ms, the same on close, and no motion at all under
+prefers-reduced-motion. shadcn's extra slide (from the left half and the
+top 48%) is left out of `components/ui/alert-dialog.tsx`: it was a
+Tailwind v3 workaround for the -50% centring, and on v4's separate
+`translate` it made the box fly in from the top left (the operator's note
+of 3 October 2026, "the way it animates in is weird").
+
 ### New box
 
 The plus opens a popover (a bottom sheet on compact viewports) with one
