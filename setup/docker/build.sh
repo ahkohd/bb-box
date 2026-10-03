@@ -5,7 +5,9 @@
 # and bbbox/linux-desktop-wayland:1 for linux-desktop-wayland-cpu boxes (048).
 # See README.md.
 #
-# usage: build.sh [--bb-url <url>] [linux|desktop|desktop-wayland]...
+# usage: build.sh [--bb-url <url>] [--tag <image>] [linux|desktop|desktop-wayland]...
+# --tag names the one image it builds otherwise, as a refresh does (049) to
+# check a build before it takes the image's own name.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # The images' layout version, which the backend checks (IMAGE_VERSION in
@@ -13,21 +15,25 @@ here=$(cd "$(dirname "$0")" && pwd)
 version=1
 
 usage() {
-  echo "usage: build.sh [--bb-url <url>] [linux|desktop|desktop-wayland]..." >&2
+  echo "usage: build.sh [--bb-url <url>] [--tag <image>] [linux|desktop|desktop-wayland]..." >&2
   echo "  --bb-url  BB's server URL, to pre-install BB's host app in the images" >&2
+  echo "  --tag     the name of the one image to build, in place of its own" >&2
   echo "  With no image named, builds all three." >&2
   exit 2
 }
 bb_url=
+tag=
 targets=()
 while [ $# -gt 0 ]; do
   case $1 in
     --bb-url) [ $# -ge 2 ] || usage; bb_url=$2; shift 2 ;;
+    --tag) [ $# -ge 2 ] || usage; tag=$2; shift 2 ;;
     linux | desktop | desktop-wayland) targets+=("$1"); shift ;;
     *) usage ;;
   esac
 done
 [ ${#targets[@]} -gt 0 ] || targets=(linux desktop desktop-wayland)
+[ -z "$tag" ] || [ ${#targets[@]} = 1 ] || { echo "--tag names one image: give one of linux, desktop or desktop-wayland" >&2; exit 2; }
 
 # The digest of BB's app on the server, which the build fetches. It keys the
 # images' layer with the app, so a build installs the app again only once
@@ -73,6 +79,7 @@ for target in "${targets[@]}"; do
     desktop) image=bbbox/linux-desktop:$version ;;
     desktop-wayland) image=bbbox/linux-desktop-wayland:$version ;;
   esac
+  image=${tag:-$image}
   # The guest scripts install x86_64 builds of their tools.
   build=(docker build --platform linux/amd64 --target "$target" --build-arg BB_URL="$bb_url"
     --build-arg BB_APP_SHA256="$app_sha256" -t "$image" -f "$here/Dockerfile")

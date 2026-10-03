@@ -553,6 +553,15 @@ export interface BackendImages {
   replace(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild>;
   /** Removes an image box or a build that is not current. */
   remove(ref: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Builds a new build of a standard image from `setup`, a copy of the
+   * plugin's setup/ with the versions a rebuild takes, without a box: for a
+   * backend whose standard images come from a build script, as Docker's do
+   * (049). A refresh then checks it on a trial box, as a capture.
+   */
+  build?(current: ImageBuild, setup: string, options: { readonly bbUrl: string | null; readonly log: (line: string) => void; readonly signal: AbortSignal }): Promise<ImageBuild>;
+  /** The kind's check a trial box runs as the box user, printing a line per check with ok or FAIL, where it is not the template's own. */
+  check?(kind: string): string;
 }
 
 export interface BackendStorage {

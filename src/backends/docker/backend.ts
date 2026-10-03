@@ -17,7 +17,10 @@
 // - Every call that acts on a container inspects it first and acts only on
 //   one whose labels name this install and the box (018).
 
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { hostname as localHostname } from "node:os";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { MIN_DESKTOP, type Display, type DisplaySize } from "../../transports/types.ts";
 import {
@@ -26,6 +29,7 @@ import {
   type AcquireHooks,
   type Backend,
   type BackendContext,
+  type BackendImages,
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
@@ -39,6 +43,8 @@ import {
   type Guest,
   type HeldGuest,
   type HostCapacity,
+  type ImageBox,
+  type ImageBuild,
   type Limit,
   type MachineAccess,
   type PowerState,
@@ -84,6 +90,52 @@ export interface DockerBackendOptions {
   readonly ssh?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
+  /** Runs setup/docker/build.sh with `args`, for tests; bash by default. Resolves with its exit code. */
+  readonly script?: (script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void, signal: AbortSignal) => Promise<number | null>;
+}
+
+/** setup/docker/build.sh's target for the image of each kind. */
+const BUILD_TARGET: Readonly<Record<DockerKind, string>> = {
+  linux: "linux",
+  "linux-desktop-cpu": "desktop",
+  "linux-desktop": "desktop",
+  "linux-desktop-wayland-cpu": "desktop-wayland",
+};
+
+/**
+ * A Docker box's checks as the box user (049): the tools, Docker on first
+ * use in a box that has it, and a desktop's display. A line per check, with
+ * ok or FAIL, as the templates' checks print them.
+ */
+export const DOCKER_CHECK = String.raw`t() { name=$1; shift; if out=$("$@" 2>&1); then echo "$name ok   $(echo "$out" | head -n 1)"; else echo "$name FAIL $(echo "$out" | head -n 1)"; fi; }
+for tool in node git gh claude codex pi rg fd jj uv; do t "$tool" "$tool" --version; done
+[ "${"$"}{BBBOX_DOCKERD:-0}" != 1 ] || t "docker on first use" docker version --format '{{.Server.Version}}'
+if [ -e /usr/local/libexec/bb-box/display ]; then
+  for i in $(seq 1 60); do [ -s /run/bb-box/display-mode ] && break; sleep 1; done
+  t "display" cat /run/bb-box/display-mode
+fi`;
+
+/** Runs a script with bash, a line of its output at a time. */
+function runScript(script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void, signal: AbortSignal): Promise<number | null> {
+  return new Promise((resolve) => {
+    const child = spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"], signal });
+    let rest = "";
+    const read = (chunk: Buffer) => {
+      const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);
+      rest = lines.pop() ?? "";
+      for (const line of lines) if (line.trim()) onLine(line);
+    };
+    child.stdout.on("data", read);
+    child.stderr.on("data", read);
+    child.on("error", (error) => {
+      onLine(error.message);
+      resolve(null);
+    });
+    child.on("close", (code) => {
+      if (rest.trim()) onLine(rest);
+      resolve(code);
+    });
+  });
 }
 
 /** A container bb-box is making, counted against the host until docker lists it. */
@@ -320,6 +372,21 @@ export class DockerBackend implements Backend {
   #knownOs: GuestOs | null = null;
   /** Containers being acquired, by box ID, until their acquire ends. */
   readonly #placing = new Map<string, Placing>();
+
+  /**
+   * Image operations (049): a container from an image, its commit as an
+   * image with its record, a standard image built by setup/docker/build.sh
+   * under another tag, and the image's tag moved to a new build.
+   */
+  readonly images: BackendImages = {
+    list: (signal) => this.#imageList(signal),
+    box: (build, label, signal) => this.#imageBox(build, label, signal),
+    capture: (box, from, image, signal) => this.#capture(box, from, image, signal),
+    replace: (build, current, signal) => this.#replaceImage(build, current, signal),
+    remove: (ref, signal) => this.#removeImage(ref, signal),
+    build: (current, setup, options) => this.#buildStandard(current, setup, options),
+    check: () => DOCKER_CHECK,
+  };
   /** Placement is one at a time, so two acquires never take the last room on the host. */
   #placement: Promise<unknown> = Promise.resolve();
 
@@ -683,7 +750,8 @@ export class DockerBackend implements Backend {
     ]);
     this.#info = info;
     return Promise.all(
-      containers.map(async (container) => {
+      // An image box (049) is no box's: its build removes it.
+      containers.filter((container) => !container.labels[LABELS.imageBox]).map(async (container) => {
         const owner = ownerOf(container.labels);
         const relabelled = owner ? await this.#context.storage.get<Relabelled>(relabelKey(container.name)) : undefined;
         return {
@@ -1062,6 +1130,165 @@ export class DockerBackend implements Backend {
       throw new Error(`${this.#host} has no image ${image}, and bb-box never pulls one. Build it with setup/docker/build.sh (setup/docker/README.md).`);
     }
     throw this.#cli.error("docker container create", result);
+  }
+
+  /** An image's labels, or null when the host has no such image. */
+  async #imageLabels(ref: string, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
+    const result = await this.#cli.run(["image", "inspect", "--format", "{{json .Config.Labels}}", ref], { timeoutMs: 30_000, signal });
+    return result.exitCode === 0 ? imageLabels(result.stdout) : null;
+  }
+
+  #imageBuild(ref: string, kind: string, image: string, labels: Record<string, unknown>, current: boolean): ImageBuild {
+    const record = recordFromJson(labels[LABELS.imageRecord]);
+    return { ref, image, kind, build: record?.build ?? null, record, current };
+  }
+
+  /** The configured images, as standard builds, and this install's captured images and image boxes. */
+  async #imageList(signal?: AbortSignal): Promise<{ builds: ImageBuild[]; boxes: string[] }> {
+    await this.#cli.prepare(signal);
+    const install = this.#context.installId;
+    const builds: ImageBuild[] = [];
+    for (const image of [...new Set(DOCKER_KINDS.map((kind) => this.#config.images[kind]))]) {
+      if (!image) continue;
+      const labels = await this.#imageLabels(image, signal);
+      const kind = DOCKER_KINDS.find((candidate) => this.#config.images[candidate] === image)!;
+      if (labels) builds.push(this.#imageBuild(image, kind, "standard", labels, true));
+    }
+    const listed = await this.#cli.ok(
+      ["image", "ls", "--filter", `label=${LABELS.install}=${install}`, "--filter", `label=${LABELS.image}`, "--format", "{{.Repository}}:{{.Tag}}"],
+      { timeoutMs: 30_000, signal },
+    );
+    for (const ref of listed.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      const labels = await this.#imageLabels(ref, signal);
+      const image = labels?.[LABELS.image];
+      if (labels && typeof image === "string" && image) builds.push(this.#imageBuild(ref, String(labels[LABELS.kind] ?? ""), image, labels, false));
+    }
+    const boxes = await this.#cli.list({ [LABELS.backend]: "docker", [LABELS.install]: install, [LABELS.imageBox]: install }, signal);
+    return { builds, boxes: boxes.map((container) => container.name) };
+  }
+
+  /** A container from a build's image, made as a box of its kind is, at its default size, labelled so that no sweep takes it. */
+  async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
+    await this.#cli.prepare(signal);
+    await this.#network(signal);
+    const kind = this.#kind(build.kind);
+    const name = `bbbox-image-${randomBytes(6).toString("hex")}`;
+    const { cores, memoryMiB } = this.#context.kind(build.kind).defaultSize;
+    const privileged = this.#privileged(build.kind);
+    const labels: Record<string, string> = {
+      [LABELS.backend]: "docker",
+      [LABELS.install]: this.#context.installId,
+      [LABELS.imageBox]: this.#context.installId,
+      [LABELS.kind]: build.kind,
+      [LABELS.name]: label.slice(0, 120),
+    };
+    const args = [
+      "container", "create",
+      "--pull", "never",
+      "--name", name,
+      ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
+      "--hostname", "bb-box-image",
+      "--init",
+      "--cpus", String(cores),
+      "--memory", `${memoryMiB}m`,
+      "--memory-swap", `${memoryMiB}m`,
+      "--shm-size", `${Math.max(SHM_MIN_MiB, Math.floor(memoryMiB / 2))}m`,
+      "--pids-limit", "16384",
+      "--stop-timeout", "10",
+      "--tmpfs", "/run:exec,mode=755",
+      "--network", this.#config.network,
+      ...(privileged ? ["--privileged", "--env", "BBBOX_DOCKERD=1", "--volume", "/var/lib/docker"] : []),
+      build.ref,
+      START,
+    ];
+    try {
+      await this.#cli.ok(args, { timeoutMs: 120_000, signal });
+      await this.#cli.ok(["container", "start", name], { timeoutMs: 120_000, signal });
+      await this.#ready(name, Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs), signal);
+      return { ref: name, command: new DockerTransport(this.#cli, name) };
+    } catch (error) {
+      await this.#cli.run(["container", "rm", "--force", "--volumes", name], { timeoutMs: 120_000 }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /**
+   * Stops an image box and commits it as bbbox-image/<image>:<build>, with
+   * its record in the image's labels; the container then goes. Docker is
+   * off in the image, and the image-box label empty, so a box of it is a box.
+   */
+  async #capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
+    const read = await box.command.run("cat /usr/share/bb-box/image.json", { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
+    const record = read.exitCode === 0 ? recordFromJson(read.stdout.trim()) : null;
+    if (!record) throw new Error(`Image box ${box.ref} has no image record in /usr/share/bb-box/image.json, which finalizing writes.`);
+    const tag = `bbbox-image/${image}:${record.build.replace(/^build\./, "")}`;
+    await this.#cli.ok(["container", "stop", "--time", "30", box.ref], { timeoutMs: 120_000, signal });
+    const label = (key: string, value: string) => ["--change", `LABEL ${key}=${JSON.stringify(value)}`];
+    await this.#cli.ok(
+      [
+        "container", "commit",
+        ...label(LABELS.imageRecord, JSON.stringify(record)),
+        ...label(LABELS.image, image),
+        ...label(LABELS.kind, from.kind),
+        ...label(LABELS.imageBox, ""),
+        "--change", "ENV BBBOX_DOCKERD=0",
+        box.ref,
+        tag,
+      ],
+      { timeoutMs: 30 * 60_000, signal },
+    );
+    await this.#cli.run(["container", "rm", "--force", "--volumes", box.ref], { timeoutMs: 120_000, signal });
+    return { ref: tag, image, kind: from.kind, build: record.build, record, current: false };
+  }
+
+  /**
+   * Moves a standard image's tag to a new build. The old image goes once no
+   * container uses it: now if none does, else it stays, untagged, with them.
+   */
+  async #replaceImage(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
+    if (!current.current || build.current) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is one.`);
+    const old = (await this.#cli.run(["image", "inspect", "--format", "{{.Id}}", current.ref], { timeoutMs: 30_000, signal })).stdout.trim();
+    await this.#cli.ok(["image", "tag", build.ref, current.ref], { timeoutMs: 60_000, signal });
+    await this.#cli.ok(["image", "rm", build.ref], { timeoutMs: 60_000, signal });
+    if (old) await this.#cli.run(["image", "rm", old], { timeoutMs: 120_000, signal });
+    return { ...build, ref: current.ref, image: "standard", current: true };
+  }
+
+  /** Removes an image box, a captured image or a refresh's build of this install's, and nothing else. */
+  async #removeImage(ref: string, signal?: AbortSignal): Promise<void> {
+    await this.#cli.prepare(signal);
+    const install = this.#context.installId;
+    const [container] = await this.#cli.inspect([ref], signal);
+    if (container) {
+      if (container.labels[LABELS.imageBox] !== install) throw new Error(`The container ${ref} is not an image box of this install's, so bb-box leaves it.`);
+      await this.#cli.run(["container", "rm", "--force", "--volumes", container.id], { timeoutMs: 120_000, signal });
+      return;
+    }
+    const labels = await this.#imageLabels(ref, signal);
+    if (!labels) return;
+    const configured = DOCKER_KINDS.some((kind) => this.#config.images[kind] === ref);
+    const captured = labels[LABELS.install] === install && !!labels[LABELS.image];
+    const refreshing = DOCKER_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
+    if (configured || !(captured || refreshing)) throw new Error(`The image ${ref} is not an image build of this install's, so bb-box leaves it.`);
+    await this.#cli.run(["image", "rm", ref], { timeoutMs: 120_000, signal });
+  }
+
+  /** A new build of a configured image, by setup/docker/build.sh from `setup`, under a tag of its own until it replaces the image. */
+  async #buildStandard(current: ImageBuild, setup: string, options: { bbUrl: string | null; log: (line: string) => void; signal: AbortSignal }): Promise<ImageBuild> {
+    const kind = DOCKER_KINDS.find((candidate) => this.#config.images[candidate] === current.ref);
+    if (!kind || !current.current) throw new Error(`${current.ref} is not a configured image.`);
+    const tag = `${current.ref.replace(/:[^:/]*$/, "")}:refresh-${Date.now().toString(36)}`;
+    await this.#cli.prepare(options.signal);
+    const env = { ...process.env, ...(this.#cli.host ? { DOCKER_HOST: this.#cli.host } : {}) };
+    const args = [...(options.bbUrl ? ["--bb-url", options.bbUrl] : []), "--tag", tag, BUILD_TARGET[kind]];
+    const code = await (this.#options.script ?? runScript)(join(setup, "docker", "build.sh"), args, env, options.log, options.signal);
+    if (code !== 0) {
+      await this.#cli.run(["image", "rm", tag], { timeoutMs: 120_000 }).catch(() => undefined);
+      throw new Error(`setup/docker/build.sh exited with ${code ?? "a signal"}.`);
+    }
+    const labels = await this.#imageLabels(tag, options.signal);
+    if (!labels) throw new Error(`setup/docker/build.sh made no image ${tag}.`);
+    return this.#imageBuild(tag, current.kind, "standard", labels, false);
   }
 
   /** Waits for the box's main process to say the box is up, in one `docker exec`. */
