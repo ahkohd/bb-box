@@ -1036,6 +1036,50 @@ test("a box stopped behind bb-box's back is found when a command cannot reach it
   assert.equal((await world.boxes.get(THREAD, box.name)).state, "stopped");
 });
 
+test("a box that stopped by itself says why, and a stop bb-box makes forgets it (#406)", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  world.backend.stopReason = { reason: "tart run exited with status 0: the guest shut itself down", crashed: false, at: Date.UTC(2026, 9, 2, 23, 33, 5) };
+  await world.backend.stop!(box.guest!);
+  await assert.rejects(
+    world.boxes.run(THREAD, box.name, "true"),
+    new RegExp(`^BoxError: Box ${box.name} is stopped\\. It stopped without a request from bb-box at 2026-10-02 23:33:05 UTC\\. tart run exited with status 0: the guest shut itself down\\. Start it first\\.$`),
+  );
+  const stopped = await world.boxes.settled(box);
+  assert.equal(stopped!.state, "stopped");
+  assert.equal(stopped!.unrequestedStop?.restart, null);
+  assert.match(boxDetail(stopped!), /\nLast unrequested stop: It stopped without a request from bb-box at 2026-10-02 23:33:05 UTC\. tart run exited/);
+  assert.match(boxView(stopped!, true, { owner: "agent" } as never).stopped!, /the guest shut itself down/);
+
+  await world.boxes.start(THREAD, box.name);
+  assert.ok((await world.boxes.get(THREAD, box.name)).unrequestedStop, "a start keeps it");
+  await world.boxes.stop(THREAD, box.name);
+  const forgotten = await world.boxes.get(THREAD, box.name);
+  assert.equal(forgotten.unrequestedStop, null);
+  assert.doesNotMatch(boxDetail(forgotten), /unrequested/);
+});
+
+test("a box whose VM crashed is started again, but not twice in 10 minutes (#406)", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  world.backend.stopReason = { reason: "tart run ended on signal 5 (SIGTRAP).", crashed: true, at: null };
+  await world.backend.stop!(box.guest!);
+  const found = await world.boxes.refresh(THREAD, box.name);
+  assert.equal(found.state, "stopped");
+  assert.match(found.unrequestedStop!.reason!, /SIGTRAP/);
+  assert.ok(found.unrequestedStop!.restart);
+  const restarted = await world.boxes.settled(box);
+  assert.equal(restarted!.state, "ready");
+  assert.match(boxDetail(restarted!), /Last unrequested stop: It stopped without a request from bb-box at .* UTC\. tart run ended on signal 5 \(SIGTRAP\)\. bb-box started it again at .* UTC\./);
+
+  // It crashes again at once: bb-box leaves it stopped, and says so.
+  await world.backend.stop!(box.guest!);
+  await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /SIGTRAP\)\. bb-box left it stopped, as it had started it again after a stop less than 10 minutes before\. Start it first\.$/);
+  const left = await world.boxes.settled(box);
+  assert.equal(left!.state, "stopped");
+  assert.equal(left!.unrequestedStop!.restart, null);
+});
+
 test("a guest deleted outside bb-box marks the box gone, and release still works", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));

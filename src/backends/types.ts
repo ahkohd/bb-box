@@ -173,6 +173,19 @@ export interface HeldGuest extends Guest {
 /** "unknown" when the provider cannot tell, for example a machine that does not answer. */
 export type PowerState = "running" | "stopped" | "unknown";
 
+/** Why a guest stopped without bb-box's request (#406), as its backend recorded it. */
+export interface StopReason {
+  /** In words: a sentence or two. */
+  readonly reason: string;
+  /**
+   * The guest did not choose to stop: its VM's process crashed or was
+   * killed, or its host restarted. bb-box may start such a guest again.
+   */
+  readonly crashed: boolean;
+  /** When it stopped, in ms since the epoch, when the backend knows. */
+  readonly at: number | null;
+}
+
 export interface AcquireHooks {
   /**
    * Records the guest before the backend makes or changes anything, so a
@@ -365,6 +378,12 @@ export interface Backend {
   start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  /**
+   * Why the guest stopped, when bb-box finds it stopped without having
+   * stopped it (#406), such as its VM process's exit status and crash
+   * report. Null when the backend cannot tell. Only backends that record it.
+   */
+  stopped?(guest: Guest, signal?: AbortSignal): Promise<StopReason | null>;
 
   /**
    * Every guest this backend holds for this install's boxes, for the safety

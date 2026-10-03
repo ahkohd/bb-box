@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, hostnameOf, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
-import { parseState, parseVnc } from "../src/backends/tart/host.ts";
+import { crashSummary, endReason, parseEnded, parseState, parseVnc, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
@@ -366,6 +366,92 @@ test("release deletes the VM, its output and last its owner file; again is fine;
   await backend.release(guest, releasing);
   assert.equal(await backend.power(guest), null);
   await assert.rejects(backend.start(guest), (error: unknown) => error instanceof BackendError && error.code === "gone");
+});
+
+/** A macOS crash report (.ips) of `tart run` in Apple's VNC server, as on 2 October 2026 (#406), cut down. */
+function crashReport(pid: number): string {
+  const header = { app_name: "tart", timestamp: "2026-10-03 00:33:06.00 +0100", app_version: "2.30.0", bug_type: "309", name: "tart" };
+  const frames = [
+    { imageIndex: 0, symbol: "Base::assertion_trap()" },
+    { imageIndex: 0, symbol: "-[_VZVirtualMachineAccessor addAccessorObserver:]" },
+    { imageIndex: 0, symbol: "void void (*Base::CallbackAdapter::Callback<0ul>::make<false, -[_VZVNCServer _setupVirtualMachineAccessor]::$_18>)(void*)" },
+    { imageIndex: 1, symbol: "_dispatch_client_callout" },
+  ];
+  return `${JSON.stringify(header)}
+{
+  "pid" : ${pid},
+  "exception" : {"codes":"0x1","type":"EXC_BREAKPOINT","signal":"SIGTRAP"},
+  "asi" : {"libsystem_c.dylib":["assertion failed"]},
+  "faultingThread" : 1,
+  "threads" : [{"frames":[]},{"frames":${JSON.stringify(frames)}}],
+  "usedImages" : [{"name":"Virtualization"},{"name":"libdispatch.dylib"}]
+}`;
+}
+
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; !done(); i++) {
+    assert.ok(i < 200, "it did not happen within 10 s");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+test("a VM whose tart run crashed says so, with macOS's crash report; one that shut down says that; a start keeps the run before (#406)", async () => {
+  const { mac, backend } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const run = join(mac, ".bb-box", "tart", "run");
+  const exit = join(run, `${guest.ref}.exit`);
+  const pid = Number(readFileSync(join(mac, ".tart", "vms", guest.ref, "running"), "utf8"));
+  assert.match(readFileSync(exit, "utf8"), new RegExp(`^pid=${pid}\nstarted=\\d+\n$`));
+
+  process.kill(pid, "SIGTRAP");
+  await until(() => readFileSync(exit, "utf8").includes("status="));
+  assert.match(readFileSync(exit, "utf8"), /\nstatus=133\nended=\d+\n$/);
+  const reports = join(mac, "Library", "Logs", "DiagnosticReports");
+  mkdirSync(reports, { recursive: true });
+  writeFileSync(join(reports, "tart-2026-10-02-235959.ips"), crashReport(pid + 1));
+  writeFileSync(join(reports, "tart-2026-10-03-003306.ips"), crashReport(pid));
+  assert.equal(await backend.power(guest), "stopped");
+  const crashed = await backend.stopped(guest, signal());
+  assert.equal(crashed?.crashed, true);
+  assert.equal(
+    crashed?.reason,
+    "tart run ended on signal 5 (SIGTRAP). macOS's crash report tart-2026-10-03-003306.ips: EXC_BREAKPOINT (SIGTRAP), assertion failed, in Virtualization's -[_VZVirtualMachineAccessor addAccessorObserver:], called from -[_VZVNCServer _setupVirtualMachineAccessor].",
+  );
+  assert.ok(crashed?.at, "it says when");
+
+  await backend.start(guest);
+  assert.match(readFileSync(`${exit}.last`, "utf8"), /status=133/);
+  assert.match(readFileSync(join(run, `${guest.ref}.out.last`), "utf8"), /VNC server is running/);
+  // The guest shuts itself down, so tart run exits 0.
+  rmSync(join(mac, ".tart", "vms", guest.ref, "running"));
+  await until(() => readFileSync(exit, "utf8").includes("status="));
+  const shut = await backend.stopped(guest, signal());
+  assert.equal(shut?.crashed, false);
+  assert.match(shut!.reason, /^tart run exited with status 0: the guest shut itself down/);
+  assert.doesNotMatch(shut!.reason, /vnc:|fake-pass-word/);
+
+  await backend.release(guest, releasing);
+  for (const file of [".out", ".out.last", ".exit", ".exit.last"]) assert.equal(existsSync(join(run, `${guest.ref}${file}`)), false, file);
+});
+
+test("says why a run ended from what the Mac recorded (#406)", () => {
+  const end = (fields: Partial<RunEnd>): RunEnd => ({ pid: 81818, startedAt: 1_790_000_000_000, status: null, endedAt: null, bootedAt: 1_700_000_000_000, output: "", crash: null, ...fields });
+  assert.deepEqual(parseEnded("@exit\npid=81818\nstarted=1790000000\nstatus=1\nended=1790000060\n@boot\n{ sec = 1700000000, usec = 0 } Tue Nov 14\n@output\nError: VM stopped\n  with an error\n"), {
+    pid: 81818,
+    startedAt: 1_790_000_000_000,
+    status: 1,
+    endedAt: 1_790_000_060_000,
+    bootedAt: 1_700_000_000_000,
+    output: "Error: VM stopped / with an error",
+    crash: null,
+  });
+  assert.equal(parseEnded("gone\n"), null);
+  assert.equal(endReason(end({ pid: null }), "tart run"), null, "a run started before bb-box recorded them");
+  assert.deepEqual(endReason(end({ status: 1, endedAt: 5, output: "Error: VM stopped" }), "tart run"), { reason: "tart run exited with status 1. Its last output: Error: VM stopped", crashed: true, at: 5 });
+  assert.deepEqual(endReason(end({ bootedAt: 1_790_000_100_000 }), "tart run"), { reason: "The Mac restarted at 2026-09-21 14:15:00 UTC, which ended tart run.", crashed: true, at: 1_790_000_100_000 });
+  assert.deepEqual(endReason(end({}), "QEMU"), { reason: "QEMU ended, but left no exit status.", crashed: false, at: null });
+  assert.match(endReason(end({ status: 137 }), "QEMU")!.reason, /^QEMU ended on signal 9 \(SIGKILL\)\.$/);
+  assert.equal(crashSummary("{}\nnot json"), null);
 });
 
 test("a new instance on empty storage finds this install's VMs and their owners, and no other install's", async () => {

@@ -444,6 +444,26 @@ test("a stop saves a Windows VM to a file and QEMU quits; a start restores it, d
   await backend.release(guest, releasing, signal());
 });
 
+test("a Windows VM whose QEMU crashed says so, and its start keeps the run before (#406)", async () => {
+  const { backend, qemu } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const dir = join(qemu, "vms", guest.ref);
+  const pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+  assert.match(readFileSync(join(dir, "exit"), "utf8"), new RegExp(`^pid=${pid}\n`), "QEMU's own process, which a failed restore kills");
+  process.kill(pid, "SIGSEGV");
+  for (let i = 0; !readFileSync(join(dir, "exit"), "utf8").includes("status="); i++) {
+    assert.ok(i < 200, "its exit was not recorded within 10 s");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(await backend.power(guest, signal()), "stopped");
+  const why = await backend.stopped(guest, signal());
+  assert.equal(why?.crashed, true);
+  assert.match(why!.reason, /^QEMU ended on signal 11 \(SIGSEGV\)\./);
+  await backend.start(guest, signal());
+  assert.match(readFileSync(join(dir, "exit.last"), "utf8"), /status=139/);
+  await backend.release(guest, releasing, signal());
+});
+
 test("a stop whose save is cancelled fails at once, and the VM runs on", async () => {
   const { backend, mac, qemu } = setup();
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());

@@ -151,6 +151,7 @@ export function BoxRow({
           />
         </div>
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
+        {box.stopped ? <p className="mt-0.5 text-xs leading-snug text-warning-text">{box.stopped}</p> : null}
         {held ? (
           <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
             {held.owner === "yours" ? (

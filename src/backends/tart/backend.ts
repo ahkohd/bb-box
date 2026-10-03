@@ -55,6 +55,7 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type StopReason,
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
@@ -69,12 +70,15 @@ import {
   discardStateScript,
   holdScript,
   relabelScript,
+  endReason,
+  endedScript,
   ownerScript,
   ipScript,
   ownerText,
   parseConfig,
   macScript,
   normalMac,
+  parseEnded,
   parseFields,
   parseMacs,
   parseState,
@@ -95,6 +99,7 @@ import {
   qemuCloneScript,
   qemuDeleteScript,
   qemuDiscardScript,
+  qemuEndedScript,
   qemuPowerScript,
   qemuStartScript,
   qemuStateBody,
@@ -970,6 +975,18 @@ export class TartBackend implements Backend {
     const state = result.stdout.trim().split("\n").pop();
     if (state === "gone") return null;
     return powerOf(state);
+  }
+
+  /** How `tart run`, or QEMU for a Windows VM, last exited, with macOS's crash report of it (#406). */
+  async stopped(guest: Guest, signal?: AbortSignal): Promise<StopReason | null> {
+    const host = this.#hostNamed(guest.host);
+    if (!host) return null;
+    const windows = this.#osOf(guest) === "windows";
+    const script = windows ? qemuEndedScript : endedScript;
+    // A crash's report can take 10 s to be written (host.ts).
+    const result = await this.#run(host, script(guest.ref, this.#context.installId, this.#boxOf(guest)), { timeoutMs: 40_000, signal });
+    const end = parseEnded(result.stdout);
+    return end ? endReason(end, windows ? "QEMU" : "tart run") : null;
   }
 
   async start(guest: Guest, signal?: AbortSignal): Promise<void> {
