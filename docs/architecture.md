@@ -300,7 +300,9 @@ held for 250 ms: the last frame of a pane opening is not lost.
   relay signs in as the box's user with Apple's type 30, which shows that
   user's console, and Screen Sharing's VNC password stays off. Type 30 is
   Diffie-Hellman in the server's group, whose shared secret's MD5 is the
-  AES-128 key for the user and password, as noVNC does it.
+  AES-128 key for the user and password, as noVNC does it. On macOS 27,
+  Screen Sharing ignored the viewer's keyboard and pointer this way: a
+  blocker, with its fallbacks in 047's live check.
 - wayvnc, which streams a Wayland desktop (048), offers no VNC password,
   so the relay signs in there with type 30 too, as the user `box`.
 - Windows uses RFB through Proxmox's console: nothing to install in the
@@ -1654,7 +1656,7 @@ Notes:
 | Question | Where it is answered |
 | --- | --- |
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
-| What a stand-in Mac could not show: the reset's sweep with System Integrity Protection on, the console's size with no display, Cua's first capture for a new user, and Xcode with the Simulator's first boot | the live check on a Mac set aside, in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-live-check) |
+| Whether a viewer can type and click through a Mac's Screen Sharing (a blocker); what a stand-in Mac could not show: the reset's sweep with System Integrity Protection on, the console's size with no display, Cua's first capture for a new user, and Xcode with the Simulator's first boot | the live check on a Mac set aside, in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-live-check) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB requests](bb-requests.md) |
 | Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md), once the host allows it |
 | Whether the Proxmox API token can capture and replace templates, whether the guest scripts run again cleanly on a built template, and whether a BB script automation can run `bb box` | the first PRs of [049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md#to-verify-in-the-first-prs) |
