@@ -7,10 +7,10 @@
 # fetched artifacts at /mnt/artifacts and the fetch stage's CA certificates
 # at /mnt/ca-certificates.crt, all read-only.
 #
-# usage: customize.sh linux|desktop
+# usage: customize.sh linux|desktop|desktop-wayland
 set -euo pipefail
 kind=${1:-}
-case $kind in linux | desktop) ;; *) echo "usage: customize.sh linux|desktop" >&2; exit 2 ;; esac
+case $kind in linux | desktop | desktop-wayland) ;; *) echo "usage: customize.sh linux|desktop|desktop-wayland" >&2; exit 2 ;; esac
 build=/root/bb-box-build
 
 # Ubuntu's container image has a user with uid 1000, which the box user takes.
@@ -33,14 +33,19 @@ cp -r /mnt/template/guest /mnt/template/pins.json /mnt/template/desktop-pins.tsv
 # artifacts alone.
 ln -s /mnt/artifacts "$build/artifacts"
 # The display takes the CPU unless the box has a GPU, whose driver the NVIDIA
-# Container Toolkit brings from the host when the box starts.
+# Container Toolkit brings from the host when the box starts. The Wayland
+# desktop is customize-desktop.sh's Wayland session, as in the template.
+session=x11
+[ "$kind" != desktop-wayland ] || session=wayland
 cat >"$build/build.env" <<END
 BOX_USER=box
 DESKTOP_GPU=none
+DESKTOP_SESSION=$session
 BOX_RUNTIME=docker
 END
 echo runtime=docker >"$build/extra-release"
 
 bash "$build/guest/customize-base.sh" "$build"
 [ "$kind" = linux ] || bash "$build/guest/customize-desktop.sh" "$build"
-bash "$build/guest/finalize.sh" "$build" "$kind"
+# The template's release names the session, as an LXC template's does.
+bash "$build/guest/finalize.sh" "$build" "${kind%-wayland}"

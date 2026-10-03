@@ -9,7 +9,7 @@
 
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
-export const DOCKER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop"] as const;
+export const DOCKER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop", "linux-desktop-wayland-cpu"] as const;
 export type DockerKind = (typeof DOCKER_KINDS)[number];
 
 /** The images' layout version. setup/docker/build.sh labels each image with it, and the doctor checks the label. */
@@ -39,6 +39,7 @@ export interface DockerConfig {
 export const DOCKER_DEFAULTS = {
   linuxImage: `bbbox/linux:${IMAGE_VERSION}`,
   desktopImage: `bbbox/linux-desktop:${IMAGE_VERSION}`,
+  waylandImage: `bbbox/linux-desktop-wayland:${IMAGE_VERSION}`,
   network: "bbbox",
   boxes: 10,
   desktopsPerGpu: 4,
@@ -50,6 +51,7 @@ export const DOCKER_KEYS = {
   host: "host",
   linuxImage: "linux-image",
   desktopImage: "desktop-image",
+  waylandImage: "wayland-desktop-image",
   privileged: "privileged",
   gpuDesktops: "gpu-desktops",
   desktopsPerGpu: "desktops-per-gpu",
@@ -80,6 +82,13 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     description: "The image linux-desktop-cpu boxes, and linux-desktop boxes when GPU desktops are on, run. setup/docker/build.sh builds it. Empty turns them off.",
     group: "boxes",
     default: DOCKER_DEFAULTS.desktopImage,
+  },
+  [DOCKER_KEYS.waylandImage]: {
+    type: "string",
+    label: "Wayland desktop image",
+    description: "The image linux-desktop-wayland-cpu boxes run: Sway on Wayland, drawn by the CPU. setup/docker/build.sh builds it. Empty turns them off.",
+    group: "boxes",
+    default: DOCKER_DEFAULTS.waylandImage,
   },
   [DOCKER_KEYS.privileged]: {
     type: "boolean",
@@ -162,13 +171,15 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
 
   const linux = text(values, DOCKER_KEYS.linuxImage, DOCKER_DEFAULTS.linuxImage);
   const desktop = text(values, DOCKER_KEYS.desktopImage, DOCKER_DEFAULTS.desktopImage);
+  const wayland = text(values, DOCKER_KEYS.waylandImage, DOCKER_DEFAULTS.waylandImage);
   for (const [key, what, image] of [
     [DOCKER_KEYS.linuxImage, "linux", linux],
     [DOCKER_KEYS.desktopImage, "desktop", desktop],
+    [DOCKER_KEYS.waylandImage, "Wayland desktop", wayland],
   ] as const) {
     if (image && !IMAGE.test(image)) problem(key, `Docker: the ${what} image "${image}" is not an image reference bb-box can use.`);
   }
-  if (!linux && !desktop) problem(DOCKER_KEYS.linuxImage, "Docker: give a linux or a desktop image.");
+  if (!linux && !desktop && !wayland) problem(DOCKER_KEYS.linuxImage, "Docker: give a linux or a desktop image.");
   // On unless set to false (041).
   const privileged = values[DOCKER_KEYS.privileged] !== false;
   const gpu = values[DOCKER_KEYS.gpuDesktops] === true;
@@ -176,6 +187,7 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
     linux: linux || null,
     "linux-desktop-cpu": desktop || null,
     "linux-desktop": gpu && desktop ? desktop : null,
+    "linux-desktop-wayland-cpu": wayland || null,
   };
 
   const network = text(values, DOCKER_KEYS.network, DOCKER_DEFAULTS.network);

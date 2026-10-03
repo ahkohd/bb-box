@@ -58,6 +58,12 @@ test("a machine with every image it needs builds nothing, and one that lacks one
   assert.deepEqual(lacking.runs, [{ args: ["linux"], host: "unix:///tmp/relay/host_a.sock" }]);
   assert.deepEqual([done.state, done.targets, done.detail], ["built", ["linux"], null]);
   assert.ok(lacking.changes.length >= 3, "each step reaches the settings page");
+
+  // The Wayland desktop's image is build.sh's desktop-wayland target (048).
+  const wayland = world({ images: () => ["bbbox/linux:1", "bbbox/linux-desktop-wayland:1"], staleImages: ["bbbox/linux-desktop-wayland:1"] });
+  wayland.release();
+  assert.deepEqual((await wayland.images.ensure("host_a")).targets, ["desktop-wayland"]);
+  assert.deepEqual(wayland.runs.map((each) => each.args), [["desktop-wayland"]]);
 });
 
 test("with BB's URL, the images have BB's app, and one with another build of it is built again (#95)", async () => {
@@ -150,7 +156,7 @@ test("a build that runs out of disk says how much a build needs", async () => {
   assert.equal(
     (await full.images.ensure("host_a")).detail,
     "build.sh exited with 1: #12 exporting layers ERROR: failed to solve: write /var/lib/docker/tmp/layer: no space left on device " +
-      `The machine ran out of disk: building both images needs about ${BUILD_FREE_GB} GB free.`,
+      `The machine ran out of disk: building all three images needs about ${BUILD_FREE_GB} GB free.`,
   );
 });
 
@@ -158,6 +164,7 @@ const BUILD_SCRIPT = fileURLToPath(new URL("../setup/docker/build.sh", import.me
 /** What build.sh needs free to build one image, in GB. */
 const LINUX_FREE_GB = 10;
 const DESKTOP_FREE_GB = 18;
+const WAYLAND_FREE_GB = 18;
 
 /**
  * Runs build.sh with a docker that says `freeGB` is free, or fails its check
@@ -201,23 +208,24 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
     stderr: result.stderr,
     checks: calls.filter((call) => call.startsWith("run ")),
     builds,
-    built: builds.map((call) => / --target (\w+) /.exec(call)?.[1]),
+    built: builds.map((call) => / --target ([\w-]+) /.exec(call)?.[1]),
     curls: existsSync(`${log}.curl`) ? readFileSync(`${log}.curl`, "utf8").split("\n").filter(Boolean) : [],
   };
 }
 
 test("build.sh does not start with less disk free than the build needs, and says how much is free", () => {
-  const short = buildWith(24.9);
+  const short = buildWith(35.9);
   assert.equal(short.status, 1);
-  assert.equal(short.stderr, "The Docker host has 24 GB of disk free, and building both images needs about 25 GB. Free some, for example with docker builder prune, then build again.\n");
+  assert.equal(short.stderr, "The Docker host has 35 GB of disk free, and building 3 images needs about 36 GB. Free some, for example with docker builder prune, then build again.\n");
   assert.deepEqual(short.built, []);
   assert.equal(short.checks.length, 1);
   assert.match(short.checks[0]!, /^run --rm --quiet --network none --platform linux\/amd64 --entrypoint df ubuntu:24\.04@sha256:[0-9a-f]{64} -Pk \/$/, "from the Dockerfile's base image");
 
   const enough = buildWith(BUILD_FREE_GB);
-  assert.deepEqual([enough.status, enough.built], [0, ["linux", "desktop"]], enough.stderr);
+  assert.deepEqual([enough.status, enough.built], [0, ["linux", "desktop", "desktop-wayland"]], enough.stderr);
+  assert.match(buildWith(BUILD_FREE_GB - 0.5, ["linux", "desktop"]).stderr, /building 2 images needs about 36 GB\./);
 
-  for (const [target, need] of [["linux", LINUX_FREE_GB], ["desktop", DESKTOP_FREE_GB]] as const) {
+  for (const [target, need] of [["linux", LINUX_FREE_GB], ["desktop", DESKTOP_FREE_GB], ["desktop-wayland", WAYLAND_FREE_GB]] as const) {
     const less = buildWith(need - 0.5, [target]);
     assert.equal(less.status, 1, target);
     assert.match(less.stderr, new RegExp(`^The Docker host has ${need - 1} GB of disk free, and building the ${target} image needs about ${need} GB\\.`));
@@ -225,7 +233,7 @@ test("build.sh does not start with less disk free than the build needs, and says
   }
 
   const unseen = buildWith(1, [], "Unable to find image 'ubuntu:24.04' locally");
-  assert.deepEqual([unseen.status, unseen.built], [0, ["linux", "desktop"]], "a check that cannot run does not stop the build");
+  assert.deepEqual([unseen.status, unseen.built], [0, ["linux", "desktop", "desktop-wayland"]], "a check that cannot run does not stop the build");
   assert.equal(unseen.stderr, "build.sh could not see how much disk the Docker host has free, so it builds anyway: Unable to find image 'ubuntu:24.04' locally\n");
 });
 

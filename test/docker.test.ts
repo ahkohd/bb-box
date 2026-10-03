@@ -74,7 +74,7 @@ test("parses the fields, with the setup guide's defaults", () => {
   assert.deepEqual(config, {
     host: null,
     machine: null,
-    images: { linux: "bbbox/linux:1", "linux-desktop-cpu": "bbbox/linux-desktop:1", "linux-desktop": null },
+    images: { linux: "bbbox/linux:1", "linux-desktop-cpu": "bbbox/linux-desktop:1", "linux-desktop": null, "linux-desktop-wayland-cpu": "bbbox/linux-desktop-wayland:1" },
     // Docker in boxes is on unless set (041).
     docker: true,
     network: "bbbox",
@@ -95,6 +95,14 @@ test("parses the fields, with the setup guide's defaults", () => {
     linux: "bbbox/linux:1",
     "linux-desktop-cpu": null,
     "linux-desktop": null,
+    "linux-desktop-wayland-cpu": "bbbox/linux-desktop-wayland:1",
+  });
+  // The Wayland desktop has an image of its own (048).
+  assert.deepEqual(dockerConfig({ "linux-image": "", "desktop-image": "", "wayland-desktop-image": "registry.example/sway:2" }).images, {
+    linux: null,
+    "linux-desktop-cpu": null,
+    "linux-desktop": null,
+    "linux-desktop-wayland-cpu": "registry.example/sway:2",
   });
 });
 
@@ -104,6 +112,7 @@ test("refuses fields it cannot use, and says which, at each field", () => {
     fields: {
       host: "tcp://192.0.2.10:2375",
       "linux-image": "--privileged",
+      "wayland-desktop-image": "-v /:/host",
       network: "bad name",
       boxes: 0,
       "desktops-per-gpu": 1.5,
@@ -115,6 +124,7 @@ test("refuses fields it cannot use, and says which, at each field", () => {
   for (const [path, pattern] of [
     ["host", /unix:\/\/\/path/],
     ["linux-image", /linux image "--privileged"/],
+    ["wayland-desktop-image", /Wayland desktop image "-v \/:\/host"/],
     ["network", /network name/],
     ["boxes", /most boxes/],
     ["desktops-per-gpu", /desktops per GPU/],
@@ -122,7 +132,7 @@ test("refuses fields it cannot use, and says which, at each field", () => {
   ] as const) {
     assert.ok(parsed.problems.some((problem) => problem.path === path && pattern.test(problem.message)), `${path}: ${pattern} in ${JSON.stringify(parsed.problems)}`);
   }
-  const none = parseDockerPart({ id: "docker", fields: { "linux-image": "", "desktop-image": "" }, hosts: [] });
+  const none = parseDockerPart({ id: "docker", fields: { "linux-image": "", "desktop-image": "", "wayland-desktop-image": "" }, hosts: [] });
   assert.ok(!none.ok);
   assert.deepEqual(none.problems, [{ path: "linux-image", message: "Docker: give a linux or a desktop image." }]);
 });
@@ -143,13 +153,13 @@ test("reads its part of bb-box's configuration", () => {
 });
 
 test("offers kinds by image, and its offers agree with Proxmox LXC's", async () => {
-  assert.deepEqual(dockerKinds(dockerConfig()).map((kind) => kind.id), ["linux", "linux-desktop-cpu"]);
+  assert.deepEqual(dockerKinds(dockerConfig()).map((kind) => kind.id), ["linux", "linux-desktop-cpu", "linux-desktop-wayland-cpu"]);
   const kinds = dockerKinds(dockerConfig({ "gpu-desktops": true }));
-  assert.deepEqual(kinds.map((kind) => kind.id), ["linux", "linux-desktop-cpu", "linux-desktop"]);
+  assert.deepEqual(kinds.map((kind) => kind.id), ["linux", "linux-desktop-cpu", "linux-desktop", "linux-desktop-wayland-cpu"]);
   // Every box has Docker in a privileged container, a GPU desktop too (#283), and none does with the setting off or on rootless Docker (041).
-  assert.deepEqual(kinds.map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
-  assert.deepEqual(dockerKinds(dockerConfig({ privileged: false, "gpu-desktops": true })).map((kind) => kind.capabilities.features), [[], [], []]);
-  assert.deepEqual(dockerKinds(dockerConfig(), true).map((kind) => kind.capabilities.features), [[], []]);
+  assert.deepEqual(kinds.map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"], ["docker"]]);
+  assert.deepEqual(dockerKinds(dockerConfig({ privileged: false, "gpu-desktops": true })).map((kind) => kind.capabilities.features), [[], [], [], []]);
+  assert.deepEqual(dockerKinds(dockerConfig(), true).map((kind) => kind.capabilities.features), [[], [], []]);
   for (const kind of kinds) {
     assert.equal(kind.capabilities.arch, "x86_64");
     assert.equal(kind.capabilities.command?.transport, "docker");
@@ -157,7 +167,7 @@ test("offers kinds by image, and its offers agree with Proxmox LXC's", async () 
     assert.equal(kind.capabilities.enrol, true);
   }
   const lxc = new ProxmoxLxcBackend(
-    lxcConfig({ "proxmox-lxc-desktop-templates": "9001 gpu-a", "proxmox-lxc-desktop-cpu-templates": "9003" }),
+    lxcConfig({ "proxmox-lxc-desktop-templates": "9001 gpu-a", "proxmox-lxc-desktop-cpu-templates": "9003", "proxmox-lxc-desktop-wayland-cpu-templates": "9004" }),
     testContext(),
   );
   try {
@@ -338,9 +348,9 @@ test("a GPU desktop on a desktop image built before gpu-bus-id stays unprivilege
     writeFileSync(join(fake.root, "images.json"), JSON.stringify({ "bbbox/linux:1": { "bbbox.image-version": "1" }, "bbbox/linux-desktop:1": labels }));
   desktop({ "bbbox.image-version": "1" });
   // Until bb-box has seen the image, the setting decides.
-  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"], ["docker"]]);
   assert.equal((await backend.capacity("linux-desktop", SMALL, [], signal())).ok, true);
-  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], []]);
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], [], ["docker"]]);
   const size = { cores: 4, memoryMiB: 8192, diskGiB: null };
   const old = fake.inspect((await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal())).ref);
   assert.equal(old.HostConfig.Privileged, false);
@@ -360,7 +370,7 @@ test("a GPU desktop on a desktop image built before gpu-bus-id stays unprivilege
   const fresh = fake.inspect((await backend.acquire(identity("linux-desktop", size), null, hooks().hooks, signal())).ref);
   assert.equal(fresh.HostConfig.Privileged, true);
   assert.ok(fresh.Config.Env.includes(`BBBOX_GPU_ID=${uuidOf(GPU_A)}`));
-  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"], ["docker"]]);
   assert.equal((await backend.doctor(signal())).checks.find((check) => check.id === "image.bbbox/linux-desktop:1")!.status, "ok");
 });
 
@@ -417,10 +427,10 @@ test("when the placed GPU cannot be found, a GPU desktop's start leaves Xorg's c
     assert.equal(lost.conf, XORG_DEVICE);
   }
   const start = readFileSync(new URL("../setup/docker/start", import.meta.url), "utf8");
-  const fallback = `      if bus=$(/usr/local/libexec/bb-box/gpu-bus-id "$BBBOX_GPU_ID"); then
-        display_env+=(GPU_BUS_ID="$bus")
-      else
-        display_env[0]=DISPLAY_MODE=cpu
+  const fallback = `        if bus=$(/usr/local/libexec/bb-box/gpu-bus-id "$BBBOX_GPU_ID"); then
+          display_env+=(GPU_BUS_ID="$bus")
+        else
+          display_env[0]=DISPLAY_MODE=cpu
 `;
   assert.ok(start.includes(fallback), "start keeps the display on the CPU when gpu-bus-id fails");
 });
@@ -428,9 +438,9 @@ test("when the placed GPU cannot be found, a GPU desktop's start leaves Xorg's c
 test("on rootless Docker, offers no Docker once the daemon has said so, and makes boxes unprivileged", async () => {
   const { fake, backend } = setup({}, { rootless: true });
   // Until the daemon answers, the setting decides.
-  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"]]);
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"]]);
   assert.equal((await backend.capacity("linux", SMALL, [], signal())).ok, true);
-  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [[], []]);
+  assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [[], [], []]);
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   assert.equal(fake.inspect(guest.ref).HostConfig.Privileged, false);
   assert.ok(!fake.inspect(guest.ref).Config.Env.includes("BBBOX_DOCKERD=1"));
@@ -669,6 +679,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["docker.limits", "ok"],
       ["image.bbbox/linux:1", "ok"],
       ["image.bbbox/linux-desktop:1", "ok"],
+      ["image.bbbox/linux-desktop-wayland:1", "ok"],
       ["docker.network", "ok"],
       ["docker.privileged", "ok"],
       ["docker.capacity", "ok"],
@@ -710,9 +721,10 @@ test("the doctor warns about a kind the host cannot hold at any preset, less the
   assert.equal(sizes.status, "warn");
   assert.equal(
     sizes.detail,
-    "fake-docker has 4 cores and 10 GiB memory, and keeps 4 GiB free. It cannot hold a linux-desktop-cpu box at any of its presets, the smallest 4 cores, 8 GiB memory.",
+    "fake-docker has 4 cores and 10 GiB memory, and keeps 4 GiB free. It cannot hold a linux-desktop-cpu box at any of its presets, the smallest 4 cores, 8 GiB memory. " +
+      "It cannot hold a linux-desktop-wayland-cpu box at any of its presets, the smallest 4 cores, 8 GiB memory.",
   );
-  assert.match(sizes.fix!, /^Give fake-docker more memory, lower the memory kept free, or make the presets of linux-desktop-cpu smaller/);
+  assert.match(sizes.fix!, /^Give fake-docker more memory, lower the memory kept free, or make the presets of linux-desktop-cpu and linux-desktop-wayland-cpu smaller/);
   assert.equal(report.ok, true, "a warning");
 });
 
@@ -749,6 +761,7 @@ test("the doctor fails without a daemon or a CLI, and skips what depends on them
       ["docker.daemon", "fail"],
       ["image.bbbox/linux:1", "skipped"],
       ["image.bbbox/linux-desktop:1", "skipped"],
+      ["image.bbbox/linux-desktop-wayland:1", "skipped"],
     ],
   );
   assert.match(down.checks[1]!.fix!, /Start Docker on BB's server/);
@@ -890,6 +903,27 @@ test("streams the desktop through socat under docker exec, with the box's VNC pa
   writeFileSync(join(fake.root, "containers", gpu.ref, "run", "bb-box", "display-mode"), "cpu\n");
   await gpuDisplay!.resize!({ width: 1280, height: 800 }, signal());
   await assert.rejects(gpuDisplay!.resize!({ width: 0, height: 800 }, signal()), /cannot be 0 by 800 pixels/);
+});
+
+test("streams the Wayland desktop with Apple's sign-in, as wayvnc asks, and resizes it with its display script (048)", async () => {
+  const { fake, backend } = setup();
+  const box = await backend.acquire(identity("linux-desktop-wayland-cpu", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().hooks, signal());
+  const [display] = (await backend.transports(box, "linux-desktop-wayland-cpu")).displays;
+  assert.deepEqual(display?.minSize, { width: 800, height: 600 });
+  const container = join(fake.root, "containers", box.ref);
+  mkdirSync(join(container, "var-lib", "bb-box"), { recursive: true });
+  writeFileSync(join(container, "var-lib", "bb-box", "vnc-password"), "s3cr3t\n");
+  assert.deepEqual((await display!.open(signal())).auth, { type: "apple", user: "box", password: "s3cr3t" });
+
+  // The script runs in the box, and says why Sway refused a size.
+  mkdirSync(join(container, "libexec", "bb-box"), { recursive: true });
+  const script = join(container, "libexec", "bb-box", "display");
+  writeFileSync(script, `#!/bin/sh\necho "$*" >>"${container}/display.log"\n[ "$2" != 40000x800 ] || { echo "Sway refused 40000x800" >&2; exit 1; }\n`);
+  chmodSync(script, 0o755);
+  await display!.resize!({ width: 1280, height: 800 }, signal());
+  await assert.rejects(display!.resize!({ width: 40000, height: 800 }, signal()), { message: "Sway could not set the desktop to 40000x800: Sway refused 40000x800." });
+  await assert.rejects(display!.resize!({ width: 1280.5, height: 800 }, signal()), /cannot be 1280\.5 by 800 pixels/);
+  assert.equal(readFileSync(join(container, "display.log"), "utf8"), "resize 1280x800\nresize 40000x800\n");
 });
 
 test("a box that changes hands keeps its new owner and name for the sweep, though its labels cannot change (036)", async () => {

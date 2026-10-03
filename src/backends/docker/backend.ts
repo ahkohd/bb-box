@@ -60,6 +60,10 @@ const VNC_PORT = 5900;
 const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 const DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
 const DISPLAY_ENV = "DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority";
+/** The Wayland desktop's display script, which resizes it (048). */
+const DISPLAY_SCRIPT = "/usr/local/libexec/bb-box/display";
+/** The user wayvnc signs in, with the VNC password, on a Wayland desktop (048). */
+const WAYVNC_USER = "box";
 const MiB_PER_GiB = 1024;
 /** Docker's own default for /dev/shm is 64 MiB, too little for Chrome. */
 const SHM_MIN_MiB = 1024;
@@ -254,6 +258,26 @@ export function dockerKinds(config: DockerConfig, rootless = false, gpuDocker = 
         gpu: false,
         features: docker,
         command: DOCKER_COMMAND,
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        computerUse: CUA_DRIVER,
+        enrol: true,
+      },
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    },
+    "linux-desktop-wayland-cpu": {
+      id: "linux-desktop-wayland-cpu",
+      label: "Linux desktop on Wayland",
+      description:
+        "A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there.",
+      requires: [],
+      capabilities: {
+        os: "linux",
+        arch: "x86_64",
+        gpu: false,
+        features: docker,
+        command: DOCKER_COMMAND,
+        // wayvnc refuses a viewer's resize, so transports() gives this display
+        // a resize that runs the display script's (048).
         displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
         computerUse: CUA_DRIVER,
         enrol: true,
@@ -679,15 +703,21 @@ export class DockerBackend implements Backend {
     await this.#cli.prepare();
     const command = new DockerTransport(this.#cli, guest.ref);
     const capabilities = this.kinds().find((candidate) => candidate.id === kind)?.capabilities;
+    // wayvnc offers Apple's sign-in, not a VNC password (048).
+    const wayland = kind === "linux-desktop-wayland-cpu";
     const displays = (capabilities?.displays ?? []).map(
       (display): Display => ({
         ...display,
         label: "Desktop",
         open: async (signal) => {
           const password = await this.#vncPassword(command, signal);
-          return { route: await command.route(VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
+          return {
+            route: await command.route(VNC_PORT),
+            auth: !password ? { type: "none" } : wayland ? { type: "apple", user: WAYVNC_USER, password } : { type: "vnc-password", password },
+          };
         },
         ...(kind === "linux-desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
+        ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal) } : {}),
         minSize: MIN_DESKTOP,
       }),
     );
@@ -1067,14 +1097,33 @@ export class DockerBackend implements Backend {
    * SetDesktopSize.
    */
   async #resize(command: DockerTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
-    const { width, height } = size;
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
-      throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
-    }
+    const { width, height } = wholeSize(size);
     const script = `[ "$(cat ${DISPLAY_MODE_FILE} 2>/dev/null)" = cpu ] || ${DISPLAY_ENV} xrandr --fb ${width}x${height}`;
     const result = await command.run(script, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) {
       throw new Error(`xrandr could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
     }
   }
+
+  /**
+   * Sets the Wayland desktop's size with its display script, as the box user:
+   * Sway's output takes the size, and the floating windows are fitted into it,
+   * as in a Proxmox LXC box (048). A size Sway cannot take fails with the
+   * script's reason.
+   */
+  async #resizeWayland(command: DockerTransport, size: DisplaySize, signal?: AbortSignal): Promise<void> {
+    const { width, height } = wholeSize(size);
+    const result = await command.run(`${DISPLAY_SCRIPT} resize ${width}x${height}`, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) {
+      throw new Error(`Sway could not set the desktop to ${width}x${height}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    }
+  }
+}
+
+/** A size a desktop can take, in whole pixels, or an error. */
+function wholeSize({ width, height }: DisplaySize): DisplaySize {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error(`The desktop cannot be ${width} by ${height} pixels.`);
+  }
+  return { width, height };
 }

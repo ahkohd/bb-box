@@ -8,15 +8,15 @@
 // - images.json: each image and its labels. networks.json: each network and
 //   its labels.
 // - containers/<name>/: a container. config.json is what `container inspect`
-//   prints; home/ is the box user's home, run/ is /run and var-lib/ is
-//   /var/lib.
+//   prints; home/ is the box user's home, run/ is /run, var-lib/ is /var/lib
+//   and libexec/ is /usr/local/libexec.
 //
 // `docker exec` runs the command on the test machine as the real user, in the
-// container's home, with /home/box, /run/bb-box/ and /var/lib/bb-box/ in its
-// arguments made the container's own, in the test process's group of fakes,
-// through the command line $FAKE_GROUP holds, so what it starts ends with the
-// test process, though a timeout kills only this (#320). Every call is logged
-// to log, one JSON array per line.
+// container's home, with /home/box, /run/bb-box/, /var/lib/bb-box/ and
+// /usr/local/libexec/bb-box/ in its arguments made the container's own, in
+// the test process's group of fakes, through the command line $FAKE_GROUP
+// holds, so what it starts ends with the test process, though a timeout kills
+// only this (#320). Every call is logged to log, one JSON array per line.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -213,6 +213,7 @@ function exec(rest) {
     text
       .replaceAll("/run/bb-box/", `${join(dir(name), "run", "bb-box")}/`)
       .replaceAll("/var/lib/bb-box/", `${join(dir(name), "var-lib", "bb-box")}/`)
+      .replaceAll("/usr/local/libexec/bb-box/", `${join(dir(name), "libexec", "bb-box")}/`)
       .replaceAll("/home/box", home);
   const [command, ...commandArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...rest.slice(i + 1).map(own)];
   const child = spawn(command, commandArgs, {
