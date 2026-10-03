@@ -358,7 +358,7 @@ function rpc(boxes, options = {}) {
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
-    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null }),
+    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false }),
     desktop: ({ box: ref }) => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     allBoxes: () => [
       ...(options.machines ?? []).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
@@ -492,6 +492,18 @@ export const scenes = {
       document.querySelector('[role="combobox"][aria-label="Display"]')?.click();
       await wait(300);
       [...document.querySelectorAll('[role="option"]')].find((option) => option.textContent.trim() === "Wayland")?.click();
+      await wait(300);
+    },
+  },
+  // A Linux box for a project with no box image (049): the footer's dim link offers to make one, opposite Create box.
+  "panel-chooser-image": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 860,
+    rpc: rpc([], { imageOffer: true }),
+    after: async (root) => {
+      click(root, "button", "New box");
       await wait(300);
     },
   },

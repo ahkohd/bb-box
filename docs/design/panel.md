@@ -303,6 +303,12 @@ bottom sheet still carries the title "New box".
   operator took the Wayland note off). It defaults to X11, so nothing
   changes for today's boxes. Like every step it names no kind: the
   windowing maps to a kind ID in `box-form.tsx`.
+- **No box image** (049): for a Linux box in a project that has no box
+  image, the footer's free slot, left of Create box, holds one dim
+  link-styled line, "Make a box image for this project", which opens BB's
+  new-thread composer with the request filled in. No sentence explains
+  it (the operator's note of 3 October 2026); the standing text takes the
+  slot when there is one.
 - **The sections narrow each other.** Each shows every option, and the
   choice is the nearest that exists: picking Windows, which has no server,
   moves Type to Desktop; picking arm64 where only a server exists moves
