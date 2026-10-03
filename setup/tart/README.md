@@ -344,6 +344,31 @@ Then `bb box doctor` checks each Mac: that SSH as the host user works with
 its pinned key, that it is Apple silicon with Tart, that each kind's image is
 there, and how many VMs, how much memory and how much disk it has free.
 
+Each prepare script writes the image's record
+([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)):
+the contract it keeps, its build ID and time, the OS, the SHA-256 of the
+pins it was built with, the digest of BB's app in it, and each tool's
+version. The record goes in the image and beside it on the Mac:
+
+| Image | In the image | Beside it |
+| --- | --- | --- |
+| macOS | `/usr/local/share/bb-box/image.json`, as macOS keeps `/usr/share` read-only | `~/.bb-box/tart/images/<name>.json` |
+| Linux | `/usr/share/bb-box/image.json` | `~/.bb-box/tart/images/<name>.json` |
+| Windows | `C:\bb-box\image.json` | `image.json` in the build's directory, `~/.bb-box/qemu/images/<name>/<build>/` |
+
+A macOS or Windows image's pins are its script's pin lines, `NAME_VERSION=`,
+`NAME_SHA256=` and `NAME_URL=`. A Linux image's are the Linux template's
+pin files. The doctor's check of each image:
+
+- fails when the image keeps an older contract than bb-box needs;
+- warns when it has no record (built before records), is older than twice
+  its interval (14 days for Linux, 60 for macOS and Windows), has another
+  build of BB's app than BB's server gives (not on Windows, where BB's app
+  does not run), or was built with other pins than the plugin's own copy of
+  its script.
+
+Its fix gives the prepare script's command that builds the image again.
+
 ### A warm pool
 
 The backend's warm count for a kind keeps that many suspended VMs ready, so

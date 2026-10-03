@@ -21,6 +21,7 @@
 //   which a start keeps.
 
 import { quote } from "../../transports/process.ts";
+import { recordFromJson, type ImageRecord } from "../images.ts";
 import type { StopReason } from "../types.ts";
 
 /** Where `tart` may be on a Mac: Homebrew on Apple silicon and Intel, Nix. */
@@ -173,6 +174,8 @@ for vm in $(ls "$home/vms" 2>/dev/null); do
   [ -f "$home/vms/$vm/config.json" ] || continue
   printf '=%s\\n' "$vm"; tr -d '\\n' < "$home/vms/$vm/config.json"; echo
 done
+echo @records
+for f in "$d"/images/*.json; do [ -f "$f" ] || continue; n=\${f##*/}; printf '=%s\\n' "\${n%.json}"; tr -d '\\n' < "$f"; echo; done
 echo @builds
 for vm in $(ls "$home/vms" 2>/dev/null); do
   f="$home/vms/$vm/disk.img"
@@ -211,6 +214,8 @@ export interface HostState {
   readonly version: string;
   readonly vms: readonly TartVm[];
   readonly configs: ReadonlyMap<string, VmConfig>;
+  /** Each image's record (049), from ~/.bb-box/tart/images/<image>.json, which the prepare scripts write. */
+  readonly records: ReadonlyMap<string, ImageRecord>;
   /**
    * Each VM's disk, as an ID that changes when the disk changes: its file's
    * inode and modification time. A clone or an image built again has a new
@@ -278,6 +283,11 @@ export function parseState(text: string): HostState {
     const config = parseConfig(json);
     if (config) configs.set(name, config);
   }
+  const records = new Map<string, ImageRecord>();
+  for (const [name, json] of named(parts.get("records") ?? "")) {
+    const record = recordFromJson(json.trim());
+    if (record) records.set(name, record);
+  }
   const builds = new Map<string, string>();
   for (const line of (parts.get("builds") ?? "").split("\n")) {
     const [name, build] = line.trim().split(/\s+/);
@@ -290,6 +300,7 @@ export function parseState(text: string): HostState {
     version: parts.get("version")?.trim() ?? "",
     vms,
     configs,
+    records,
     builds,
     owners,
     memoryMiB: Math.floor(Number(parts.get("memory")?.trim() || 0) / 1024 / 1024),

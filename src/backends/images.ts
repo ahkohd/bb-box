@@ -93,20 +93,43 @@ export function recordInDescription(description: string): ImageRecord | null {
   return recordFromJson(line);
 }
 
-/** The pins an image is built with: a Linux image's, or a desktop's, which adds the desktop's. */
-export type PinSet = "linux" | "linux-desktop";
+/**
+ * The pins an image is built with: a Linux image's, or a desktop's, which
+ * adds the desktop's; a macOS image's on a Mac; a Windows template's on
+ * Proxmox, or a Windows image's on a Mac.
+ */
+export type PinSet = "linux" | "linux-desktop" | "macos" | "windows" | "windows-arm64";
 
-/** The files each set's digest covers, in order, in setup/proxmox-lxc/template/, as finalize.sh reads them. */
-const PIN_FILES: Readonly<Record<PinSet, readonly string[]>> = {
-  linux: ["pins.json", "apt-snapshot"],
-  "linux-desktop": ["pins.json", "apt-snapshot", "desktop-pins.tsv"],
+/**
+ * What each set's digest covers, under setup/: Linux's are files in
+ * proxmox-lxc/template/, in order, as image-record.sh reads them. The others
+ * are a build script's pin lines, NAME_VERSION=, NAME_SHA256= and NAME_URL=,
+ * in the order the script has them, as the script itself hashes them.
+ */
+const PINS: Readonly<Record<PinSet, { readonly files: readonly string[] } | { readonly lines: string }>> = {
+  linux: { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot"] },
+  "linux-desktop": { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot", "proxmox-lxc/template/desktop-pins.tsv"] },
+  macos: { lines: "tart/prepare-image.sh" },
+  windows: { lines: "proxmox-qemu/build.sh" },
+  "windows-arm64": { lines: "tart/prepare-windows-image.sh" },
 };
 
-/** The SHA-256 of a set of pins in `dir`, as an image built with them records it, or null when a file is missing. */
-export async function pinsDigest(dir: string, set: PinSet): Promise<string | null> {
+/** A build script's pin lines, as `grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)='` prints them. */
+export function pinLines(script: string): string {
+  return script
+    .split("\n")
+    .filter((line) => /^[A-Z0-9_]+_(VERSION|SHA256|URL)=/.test(line))
+    .map((line) => `${line}\n`)
+    .join("");
+}
+
+/** The SHA-256 of a set of pins in `setup`, the plugin's setup/ directory, as an image built with them records it, or null when a file is missing. */
+export async function pinsDigest(setup: string, set: PinSet): Promise<string | null> {
   try {
     const hash = createHash("sha256");
-    for (const file of PIN_FILES[set]) hash.update(await readFile(join(dir, file)));
+    const pins = PINS[set];
+    if ("files" in pins) for (const file of pins.files) hash.update(await readFile(join(setup, file)));
+    else hash.update(pinLines(await readFile(join(setup, pins.lines), "utf8")));
     return hash.digest("hex");
   } catch {
     return null;

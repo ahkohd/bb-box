@@ -12,7 +12,10 @@
 # (BOX_RUNTIME=vm), guest/customize-desktop.sh (--desktop, DESKTOP_GPU=none)
 # and guest/finalize.sh in it as root, checks it as the box user in between,
 # shuts it down and renames it to <name>. Boxes cloned from an image it
-# replaces keep running. About 6 minutes, 8 with --desktop.
+# replaces keep running. finalize.sh writes its record (049),
+# /usr/share/bb-box/image.json, and this copies it beside the image, to
+# ~/.bb-box/tart/images/<name>.json, where bb-box's doctor reads it. About 6
+# minutes, 8 with --desktop.
 set -eu
 
 from=ghcr.io/cirruslabs/ubuntu:24.04
@@ -59,6 +62,7 @@ exists() { tart list --source local --quiet | grep -qxF "$1"; }
 if exists "$name" && [ "$replace" = 0 ]; then die "$name exists; give --replace to build it again"; fi
 
 build="$name-build"
+build_id=build.$(date -u +%Y%m%d-%H%M%S)-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')
 work=$(mktemp -d)
 pid=
 cleanup() {
@@ -116,7 +120,7 @@ dir=/var/tmp/bb-box-build
 tar -C "$here/.." -czf - proxmox-lxc/template proxmox-lxc/host/common.sh |
   as_root sh -c "rm -rf $dir && mkdir -p $dir && tar -xzf - -C $dir"
 src=$dir/proxmox-lxc/template
-printf 'BOX_USER=box\nBOX_RUNTIME=vm\nDESKTOP_GPU=none\nBB_URL=%s\n' "$bb_url" | as_root sh -c "cat >$src/build.env"
+printf 'BOX_USER=box\nBOX_RUNTIME=vm\nDESKTOP_GPU=none\nBB_URL=%s\nBUILD_ID=%s\n' "$bb_url" "$build_id" | as_root sh -c "cat >$src/build.env"
 printf '%s\n' "$key" | as_root sh -c "cat >$src/plugin-key.pub"
 
 step "fetching the arm64 tools, BB's host app and any desktop artifacts"
@@ -142,6 +146,7 @@ if [ "$desktop" = 1 ]; then
 fi
 step "finalizing $build"
 as_root bash "$src/guest/finalize.sh" "$src" "$finalize" </dev/null
+tart exec "$build" cat /usr/share/bb-box/image.json >"$work/image.json" || die "$build has no image record"
 step "shutting $build down"
 shutdown
 
@@ -150,4 +155,5 @@ tart rename "$build" "$name"
 mkdir -p "$HOME/.bb-box/tart/images"
 printf 'from=%s\nkind=%s\nbuilt=%s\n%s\n' "$from" "$kind" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s\n' "$key" | awk '{print "key=" $2}')" \
   >"$HOME/.bb-box/tart/images/$name"
+cp "$work/image.json" "$HOME/.bb-box/tart/images/$name.json"
 step "done: $name is ready to clone ($(du -sh "${TART_HOME:-$HOME/.tart}/vms/$name" | cut -f1) on disk)"
