@@ -122,7 +122,7 @@ test("an image says what it is and how old", () => {
     describeImage(record(3), NOW),
     "Standard image build.20261002-021500-3f9c, built 30 September (3 days ago): Ubuntu 24.04.3 LTS, node 24.21.0, claude-code 2.1.283, NVIDIA 580.95.05, 6.2 GiB.",
   );
-  assert.match(describeImage(record(0.2, { image: "rust-tailscale", nvidia: null, sizeGiB: null, tools: {} }), NOW), /^Image rust-tailscale \S+, built 3 October \(today\): Ubuntu 24\.04\.3 LTS\.$/);
+  assert.match(describeImage(record(0.2, { image: "rust-tools", nvidia: null, sizeGiB: null, tools: {} }), NOW), /^Image rust-tools \S+, built 3 October \(today\): Ubuntu 24\.04\.3 LTS\.$/);
   assert.match(describeImage(record(300), NOW), /built 7 December 2025/);
 });
 

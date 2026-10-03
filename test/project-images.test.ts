@@ -9,9 +9,9 @@ const IMAGE: ImageConfig = { kinds: ["linux", "linux-desktop-cpu"], script: "#!/
 const problemsOf = (document: ConfigDocument) => checkDocument(document, {}, DRIVERS).filter((problem) => problem.path.startsWith("images"));
 
 test("a project's image reads from the configuration, and comes back as it was (049)", () => {
-  const draft = readDraft({ ...emptyDocument(), images: { "rust-tailscale": IMAGE } }, DRIVERS);
+  const draft = readDraft({ ...emptyDocument(), images: { "rust-tools": IMAGE } }, DRIVERS);
   assert.deepEqual(draft.problems, []);
-  assert.deepEqual(draft.document.images, { "rust-tailscale": IMAGE });
+  assert.deepEqual(draft.document.images, { "rust-tools": IMAGE });
   assert.deepEqual(problemsOf(draft.document), []);
   assert.equal(readDraft(emptyDocument(), DRIVERS).document.images, undefined, "a document without images has none");
 });
@@ -49,22 +49,22 @@ test("an image's shape and its checks: its name, Linux kinds that exist, its pro
 });
 
 test("a project's boxes of a kind get its image, and an image is set and removed in the document", () => {
-  const document = withImage(emptyDocument(3), "rust-tailscale", IMAGE);
-  assert.deepEqual(projectImage(document, "prj_one", "linux"), { name: "rust-tailscale", image: IMAGE });
+  const document = withImage(emptyDocument(3), "rust-tools", IMAGE);
+  assert.deepEqual(projectImage(document, "prj_one", "linux"), { name: "rust-tools", image: IMAGE });
   assert.equal(projectImage(document, "prj_one", "linux-desktop"), null, "a kind it does not cover");
   assert.equal(projectImage(document, "prj_two", "linux"), null, "another project");
   assert.equal(projectImage(document, null, "linux"), null, "a thread with no project");
   assert.equal(document.revision, 3);
-  const removed = withImage(document, "rust-tailscale", null);
+  const removed = withImage(document, "rust-tools", null);
   assert.equal(removed.images, undefined);
   assert.equal(projectImage(removed, "prj_one", "linux"), null);
 });
 
 test("a box's choice of image: the project's first, the default, then standard, then other projects'; by name whichever project it is of (049)", () => {
-  const document = withImage(withImage(withImage(emptyDocument(), "rust-tailscale", IMAGE), "zebra", { ...IMAGE, projects: ["prj_two"] }), "alpha", { ...IMAGE, kinds: ["linux"], projects: ["prj_three"] });
-  assert.deepEqual(imageChoices(document, "prj_one", "linux"), [{ name: "rust-tailscale", mine: true }, { name: "standard", mine: false }, { name: "alpha", mine: false }, { name: "zebra", mine: false }]);
-  assert.deepEqual(imageChoices(document, "prj_one", "linux-desktop-cpu").map((choice) => choice.name), ["rust-tailscale", "standard", "zebra"]);
-  assert.deepEqual(imageChoices(document, "prj_nine", "linux").map((choice) => choice.name), ["standard", "alpha", "rust-tailscale", "zebra"]);
+  const document = withImage(withImage(withImage(emptyDocument(), "rust-tools", IMAGE), "zebra", { ...IMAGE, projects: ["prj_two"] }), "alpha", { ...IMAGE, kinds: ["linux"], projects: ["prj_three"] });
+  assert.deepEqual(imageChoices(document, "prj_one", "linux"), [{ name: "rust-tools", mine: true }, { name: "standard", mine: false }, { name: "alpha", mine: false }, { name: "zebra", mine: false }]);
+  assert.deepEqual(imageChoices(document, "prj_one", "linux-desktop-cpu").map((choice) => choice.name), ["rust-tools", "standard", "zebra"]);
+  assert.deepEqual(imageChoices(document, "prj_nine", "linux").map((choice) => choice.name), ["standard", "alpha", "rust-tools", "zebra"]);
   assert.deepEqual(imageChoices(document, "prj_one", "linux-desktop"), [], "no image covers it: no choice");
   assert.equal(namedImage(document, "zebra", "linux")?.name, "zebra");
   assert.equal(namedImage(document, "alpha", "linux-desktop-cpu"), null);
@@ -72,11 +72,11 @@ test("a box's choice of image: the project's first, the default, then standard, 
 });
 
 test("box_list's images per kind, and a box's image in its details (049)", () => {
-  const option = (name: string, mine: boolean, changes: Partial<ImageOptionView> = {}): ImageOptionView => ({ name, kinds: ["linux"], projects: [{ id: "prj_x", name: "Tailcontrol" }], mine, builds: [], ...changes });
-  const images = [option("rust-tailscale", true, { builds: [{ kind: "linux", backend: "proxmox-lxc", build: "build.20261003-021500-3f9c", built: "2026-10-03T02:15:00.000Z" }] }), option("other", false)];
-  assert.equal(imagesText(images, "linux"), " Images: rust-tailscale (this project's, the default), built ahead on proxmox-lxc; standard; other (Tailcontrol).");
-  assert.equal(imagesText([option("other", false)], "linux"), " Images: standard (the default); other (Tailcontrol).");
+  const option = (name: string, mine: boolean, changes: Partial<ImageOptionView> = {}): ImageOptionView => ({ name, kinds: ["linux"], projects: [{ id: "prj_x", name: "Example" }], mine, builds: [], ...changes });
+  const images = [option("rust-tools", true, { builds: [{ kind: "linux", backend: "proxmox-lxc", build: "build.20261003-021500-3f9c", built: "2026-10-03T02:15:00.000Z" }] }), option("other", false)];
+  assert.equal(imagesText(images, "linux"), " Images: rust-tools (this project's, the default), built ahead on proxmox-lxc; standard; other (Example).");
+  assert.equal(imagesText([option("other", false)], "linux"), " Images: standard (the default); other (Example).");
   assert.equal(imagesText(images, "macos"), "");
-  assert.equal(imageWords({ name: "rust-tailscale", state: "baked", build: "build.20261002-021500-3f9c", from: "9123" }), "rust-tailscale, built 2 October");
-  assert.equal(imageWords({ name: "rust-tailscale", state: "done", seconds: 22 }), "rust-tailscale, its script ran as the box started, in 22 s");
+  assert.equal(imageWords({ name: "rust-tools", state: "baked", build: "build.20261002-021500-3f9c", from: "9123" }), "rust-tools, built 2 October");
+  assert.equal(imageWords({ name: "rust-tools", state: "done", seconds: 22 }), "rust-tools, its script ran as the box started, in 22 s");
 });

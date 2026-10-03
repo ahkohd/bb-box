@@ -290,6 +290,8 @@ A refresh of a template does all of this in turn:
 3. Only then does it replace the template. A failure keeps the old template and removes what the refresh made.
 
 To run one by hand, use `npm run refresh -- --backend proxmox-lxc --settings <settings.json> --image <vmid> [--bb-url <url>] [--pinned] [--try]`. With `--try` it builds and checks, then leaves the template as it is.
+
+A project's image is built the same way, in an image box of the kind's template, and kept as a template of its own in the box VMID range, tagged `image.<name>`. Boxes of the project are linked clones of it. A build that a box still uses cannot go until that box is released, so the nightly run removes it then. It needs nothing more than the token has: GPU desktops (`linux-desktop`) are not built, and run the image's script as each box starts.
 `/usr/share/bb-box/template-release` and the packages list stay, for
 people.
 

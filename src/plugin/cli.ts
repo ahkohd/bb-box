@@ -257,7 +257,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const kinds = listOf(options.kinds);
               const projects = listOf(options.project);
               if (!kinds.length || !projects.length || !options["script-file"]) {
-                throw new PluginCliError("Give --kinds, --project and --script-file.", { code: "invalid_input", hint: "bb box image set rust-tailscale --kinds linux --script-file .bb/box-setup.sh --project <id>" });
+                throw new PluginCliError("Give --kinds, --project and --script-file.", { code: "invalid_input", hint: "bb box image set rust-tools --kinds linux --script-file .bb/box-setup.sh --project <id>" });
               }
               const script = await readTextFile(String(options["script-file"]), ctx);
               const check = options["check-file"] ? await readTextFile(String(options["check-file"]), ctx) : undefined;

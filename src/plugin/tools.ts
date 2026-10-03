@@ -546,7 +546,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       "Setting it changes every new box of those kinds in the project, so ask the user first unless they asked for it.",
     presentation: { label: { pending: "Setting the project's image", completed: "Set the project's image" } },
     parameters: z.object({
-      name: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).describe('The image\'s name, such as "rust-tailscale": a lower-case letter first, then letters, digits and "-".'),
+      name: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).describe('The image\'s name, such as "rust-tools": a lower-case letter first, then letters, digits and "-".'),
       kinds: z.array(z.string().min(1)).min(1).describe('The Linux kinds it builds on, such as ["linux", "linux-desktop-cpu"]. box_list shows the kinds.'),
       script: z.string().min(1).describe("The script's text, run as root."),
       check: z.string().optional().describe("A check's text, run as the box user after the script, such as `cargo --version`: the image fails when it fails."),

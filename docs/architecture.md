@@ -1389,37 +1389,62 @@ Nothing expires, so a box must never be forgotten.
 
 ## Images
 
-Planned
-([049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)).
-Today each kind has one image per backend, built by the setup scripts.
+[049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md).
+Each kind has a standard image per backend, built by the setup scripts and
+rebuilt each night; a project can add a script on top of it.
 
 - **The contract.** Every image has the box user with sudo, bb-box's key
   where it is reached over SSH, bb-box's boot units, BB's host app, Docker
   on first use, the desktop and Cua for desktop kinds, nothing of one
-  machine, and its record. The kind's check checks it.
-- **A project's image** is a script run as root on a kind's standard
-  image, one script for every Linux backend. It runs at box start until
-  the image has had two boxes on a backend within 14 days; then bb-box
-  bakes it there. It is built in a box of the base kind, then captured: a
-  template, `docker commit`, or a renamed Tart VM. A project's threads get
-  it by default, and New box and `box_acquire` can choose it.
+  machine, `bb-box-feature`, and its record. The kind's check
+  (`bb-box-check-headless`, `bb-box-check-desktop`) checks it.
+- **The record**, `/usr/share/bb-box/image.json` (`/usr/local/share` on
+  macOS), gives the build's ID and date, contract, apt snapshot, pins'
+  digest, BB app's digest, tools, NVIDIA userspace, the standard build a
+  project's image is on and its script's digest
+  (`src/backends/images.ts`). A copy is readable without starting the
+  image: the LXC template's description, a Docker label, or a file beside
+  the Tart VM.
+- **Freshness.** The doctor judges each image by its record: it warns when
+  an image is old, has another BB app or other pins, and fails one with an
+  older contract or another NVIDIA version than the host's.
+- **Nightly rebuilds** (`src/plugin/images.ts`, `src/core/refresh.ts`).
+  `bb box images refresh`, run each night by a BB script automation,
+  rebuilds the due standard images one at a time, most needed first, with
+  the latest agent CLIs, gh and Chrome that publish checksums
+  (`src/backends/versions.ts`). A Linux image's guest scripts run again in
+  a box of it; Docker's build.sh and Tart's prepare scripts build anew. A
+  trial box of the new build must answer as quickly, pass the kind's check
+  and have BB's app, the record and no older tool before the build
+  replaces the old one under its name. Windows images are not refreshed
+  yet.
+- **A project's image** (`src/core/project-images.ts`) is a script run as
+  root on a kind's standard image, with an optional check run as the box
+  user, kept in the configuration with the path it came from in the
+  project's repository. The script gets `BB_BOX_IMAGE`, `BB_BOX_KIND`,
+  `BB_BOX_BACKEND` and `BB_BOX_ARCH`, and none of the project's secrets.
+- **At start, then baked** (`src/plugin/bakes.ts`). A box of an image with
+  no current build on its backend runs the script as it starts, before it
+  is handed over. Once two of its boxes ran it on a backend within 14 days,
+  or at once for `bake: always`, bb-box builds the image there in the
+  background: a box of the standard build, the script and check,
+  finalizing, a capture and a trial box that passes the check. Later boxes
+  start from the build. A changed script or a rebuilt standard image makes
+  a build out of date at once; the nightly run builds those in use again
+  and removes builds unused for 30 days. Proxmox LXC and Docker bake; Tart,
+  the SSH host pool and GPU desktops run the script at each start.
+- **Choosing.** A project's threads get its image for the kinds it covers;
+  `box_acquire`'s `image`, `bb box acquire --image` and New box can choose
+  another project's image or `standard`, and `box_list` names each kind's
+  images. A box's details say which it has: "rust-tools, built 2 October".
 - **Written by an agent.** A person never writes the script. It lives in
-  the project's repository, `.bb/box-setup.sh` by default. On request, an
-  agent drafts it with `box_image_draft` from the project's
-  `devcontainer.json`, Dockerfile, mise or `.tool-versions`,
-  `rust-toolchain.toml` or Nix files, fills the gaps, and tries it with
-  `box_image_try` in a fresh box until the checks pass. It then registers
-  it with `box_image_set`. A box saved as an image is not stored, as it
-  cannot be built again on a fresh base.
-- **The record**, `/usr/share/bb-box/image.json`, gives the build's date,
-  contract, apt snapshot, BB app's digest, tools, NVIDIA userspace and the
-  script's digest, with a copy readable without starting the image.
-- **Freshness.** The doctor warns when an image is old, has another BB app
-  or other pins, and fails one with an older contract or another NVIDIA
-  version than the host's. `bb box images refresh`, run nightly by a BB
-  automation, rebuilds stale images one at a time: Linux weekly, Windows
-  and macOS monthly, within each host's disk reserve. A trial box from the
-  new build must pass the checks before it replaces the old one.
+  the project's repository, `.bb/box-setup.sh` by default. An agent drafts
+  it with `box_image_draft` from the project's `devcontainer.json`,
+  Dockerfile, mise or version files, `rust-toolchain.toml` or Nix files,
+  or from a box someone set up by hand (`src/core/draft.ts`); tries it with
+  `box_image_try`, which builds it as a bake does and keeps nothing; and
+  registers it with `box_image_set`. New box offers to ask an agent for one
+  when a project has none.
 
 ## Tailnet
 
