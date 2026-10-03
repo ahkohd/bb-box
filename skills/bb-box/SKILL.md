@@ -19,6 +19,7 @@ Every result ends with a `Next:` line that says what to do next.
 | `box_list` | | Lists the thread's boxes and the kinds on offer. |
 | `box_status` | `box` | Shows one box, checking its power state with the backend, and why it last stopped when bb-box did not stop it. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
+| `box_job` | `box`, `job` | Gives the exit code and output of a `box_run` command that went on in its box as a job when bb-box restarted, or the end of its output while it runs. |
 | `box_copy` | `box`, `direction`, `from`, `to?` | Copies one file between the thread's workspace and a box: `to_box` or `from_box`. |
 | `box_stop` | `box` | Stops a box and keeps its disk. Refused while a thread is working on the box, naming it. |
 | `box_start` | `box` | Starts a stopped box again. |
@@ -42,8 +43,12 @@ Limits:
 - `box_run` returns when the script's shell exits, even while something it
   started keeps running. What that writes afterwards is not captured. Start
   a server in the background with its output redirected,
-  `nohup <cmd> >server.log 2>&1 &`. Without the redirect, the server's
-  writes fail once `box_run` returns, and it may stop answering.
+  `nohup <cmd> >server.log 2>&1 &`. Without the redirect, what it writes
+  afterwards is lost.
+- If bb-box restarts mid-command, as for an update, `box_run` waits up to 60 s
+  for the command. One still running then goes on in the box as a job, and
+  `box_run`'s error names it: `box_job` gives its exit code and output once it
+  ends. On Windows the command stops instead.
 - On Windows, commands run in PowerShell 7, and what a command starts with
   `Start-Process`, `Start-Job` or `cmd /c start` ends with it. Start a
   server with `Start-Detached { <cmd> } server.log` instead, which returns

@@ -40,7 +40,7 @@ import {
 } from "../backends/types.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
-import { command, envScript, timedOutExits, type Access, type Session } from "./in-box.ts";
+import { command, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
 import { chooseSize, defaultSize, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
 
@@ -268,7 +268,14 @@ export type BoxErrorCode =
   /** A name for one of your machines that is not a hostname label, or is taken. */
   | "invalid_name"
   /** The box this thread runs on belongs to another owner, who releases or stops it (036). */
-  | "not_owner";
+  | "not_owner"
+  /** bb-box is stopping, as for an update, and takes no new commands (#405). */
+  | "restarting";
+
+/** A job a box_run command left running when bb-box restarted (#405). */
+export type JobResult =
+  | { readonly state: "ended"; readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly truncated: boolean }
+  | { readonly state: "running"; readonly stdout: string; readonly stderr: string };
 
 export class BoxError extends Error {
   readonly code: BoxErrorCode;
@@ -435,6 +442,8 @@ export class Boxes {
   readonly #acquiring = new Map<string, AbortController>();
   /** Reconnects of BB machines after a start or a claim in this process, while they run. */
   readonly #reconnects = new Map<string, Promise<void>>();
+  /** By box, the jobs whose results bb-box has, which its next command removes, and whether a command has pruned old ones since this process started (#405). */
+  readonly #jobs = new Map<string, { readonly received: Set<string>; pruned: boolean }>();
   /** The run of keepSpares in progress, and whether a call asked for another after it. */
   #keeping: Promise<void> | null = null;
   #keepAgain = false;
@@ -1544,6 +1553,8 @@ export class Boxes {
       waitForEnrolment?: boolean;
       /** Called once the env file's contents are worked out, as the command goes to the box. */
       onSend?: () => void;
+      /** A job ID: the command leaves its result in the box, for job(), if it outlives bb-box (#405). */
+      job?: string;
     } = {},
   ): Promise<{ box: BoxRecord; result: RunResult }> {
     const found = await this.get(threadId, ref);
@@ -1555,13 +1566,15 @@ export class Boxes {
     // A transport that already runs commands in the desktop session needs no wrapper.
     const session = options.session === "desktop" && !capabilities.command?.inDesktopSession ? "desktop" : "default";
     const env = await this.#envFile(box);
+    const jobs = options.job && capabilities.os !== "windows" ? this.#jobsOf(box.id) : null;
+    const job = jobs && options.job ? { id: options.job, forget: [...jobs.received], prune: !jobs.pruned } : undefined;
     options.onSend?.();
     // Every box stops a command at its timeout itself; bb-box's own comes a moment later.
     const inBox = options.timeoutMs;
     const result = await this.#reach(
       box,
       (transport) =>
-        transport.run(command(capabilities.os, script, { cwd: options.cwd, session, env, timeoutMs: inBox }), {
+        transport.run(command(capabilities.os, script, { cwd: options.cwd, session, env, timeoutMs: inBox, job }), {
           stdin: options.stdin,
           timeoutMs: inBox === undefined ? options.timeoutMs : inBox + LOCAL_TIMEOUT_GRACE_MS,
           signal: options.signal,
@@ -1569,8 +1582,47 @@ export class Boxes {
         }),
       options.signal,
     );
+    if (jobs && job) {
+      for (const id of job.forget) jobs.received.delete(id);
+      jobs.received.add(job.id);
+      jobs.pruned = true;
+    }
     const stopped = inBox !== undefined && timedOutExits(capabilities.os).includes(result.exitCode ?? -1) && result.durationMs >= inBox;
     return { box, result: stopped ? { ...result, timedOut: true } : result };
+  }
+
+  #jobsOf(boxId: string): { readonly received: Set<string>; pruned: boolean } {
+    let jobs = this.#jobs.get(boxId);
+    if (!jobs) this.#jobs.set(boxId, (jobs = { received: new Set(), pruned: false }));
+    return jobs;
+  }
+
+  /**
+   * Job `id` in a Linux or macOS box, which a command left when bb-box
+   * restarted (#405): once it has ended, its exit code and output, which the
+   * box's next command then removes; while it runs, the end of its output
+   * so far; null when the box has no such job.
+   */
+  async job(threadId: string, ref: string, id: string, options: { signal?: AbortSignal; maxOutputBytes?: number } = {}): Promise<{ box: BoxRecord; job: JobResult | null }> {
+    const box = await this.get(threadId, ref);
+    if (box.capabilities.os === "windows") {
+      throw new BoxError("unsupported", `Box ${box.name} runs Windows, where a command ends with bb-box's connection, so it has no jobs.`);
+    }
+    const maxOutputBytes = options.maxOutputBytes ?? 128 * 1024;
+    const result = await this.#reach(
+      box,
+      (transport) => transport.run(jobScript(id, maxOutputBytes / 2), { timeoutMs: 30_000, signal: options.signal, maxOutputBytes }),
+      options.signal,
+    );
+    if (result.exitCode === 3) return { box, job: null };
+    if (result.exitCode === 4) return { box, job: { state: "running", stdout: result.stdout, stderr: result.stderr } };
+    const newline = result.stdout.indexOf("\n");
+    const exitCode = Number(result.stdout.slice(0, newline));
+    if (result.exitCode !== 0 || newline < 0 || !Number.isInteger(exitCode)) {
+      throw new BoxError("unreachable", `Reading job ${id} in box ${box.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    }
+    this.#jobsOf(box.id).received.add(id);
+    return { box, job: { state: "ended", exitCode, stdout: result.stdout.slice(newline + 1), stderr: result.stderr, truncated: result.truncated } };
   }
 
   /** Where commands in an enrolled box take the thread's access from, if from anywhere. */

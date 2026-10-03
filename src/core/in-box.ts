@@ -2,6 +2,7 @@
 // for Linux and macOS, PowerShell for Windows. Backends never run these; the
 // core sends them through the box's command transport.
 
+import { randomBytes } from "node:crypto";
 import { posix } from "node:path";
 import { DESKTOP_EXITS, desktopScript } from "../transports/powershell.ts";
 import { LOADS_ENV } from "../transports/process.ts";
@@ -91,6 +92,74 @@ export interface CommandOptions {
   readonly env?: string;
   /** Stops the command and everything it started, in the box, after this long. */
   readonly timeoutMs?: number;
+  /** On Linux and macOS, runs the command as a job, whose result outlives bb-box (#405). */
+  readonly job?: JobOptions;
+}
+
+export interface JobOptions {
+  /** The job's ID, from newJobId. */
+  readonly id: string;
+  /** Jobs whose results bb-box has, whose files go first. */
+  readonly forget: readonly string[];
+  /** Also remove the files of jobs older than JOB_DAYS, as bb-box does once per box after it starts. */
+  readonly prune: boolean;
+}
+
+/** Where box_run's commands keep their output and exit status, relative to the box user's home (#405). */
+export const JOBS_DIR = ".local/state/bb-box/jobs";
+/** Days a job's files stay when bb-box does not remove them. */
+export const JOB_DAYS = 7;
+/** A job's ID, as newJobId makes it. */
+export const JOB_ID = /^[0-9a-f]{12}$/;
+
+export function newJobId(): string {
+  return randomBytes(6).toString("hex");
+}
+
+function jobDir(id: string): string {
+  if (!JOB_ID.test(id)) throw new Error(`"${id}" is not a job ID.`);
+  return `"$HOME/${JOBS_DIR}/${id}"`;
+}
+
+/**
+ * Runs `run` with its output and exit status in files in the job's
+ * directory, then passes them on. The files stay, for jobScript, until
+ * bb-box's next command in the box removes them: a write to a connection
+ * bb-box has dropped can still succeed, as `docker exec` takes it, so the
+ * job cannot tell whether bb-box got its result. Where the files cannot be
+ * made, it runs `run` as it is; when the status cannot be written, as on a
+ * full disk, it says the output may be cut short.
+ */
+function inJob(job: JobOptions, run: string): string {
+  const jobs = `"$HOME/${JOBS_DIR}"`;
+  const file = (name: string) => `"$bb_job/${name}"`;
+  const forget = job.forget.map(jobDir).join(" ");
+  return (
+    `bb_run() {\n${run}\n}\n` +
+    `bb_job=${jobDir(job.id)}; ` +
+    `if [ -n "\${HOME:-}" ] && mkdir -p "$bb_job" 2>/dev/null && : >${file("out")} 2>/dev/null; then ` +
+    (forget ? `rm -rf ${forget}; ` : "") +
+    (job.prune ? `find ${jobs} -mindepth 1 -maxdepth 1 -mtime +${JOB_DAYS} -exec rm -rf {} + 2>/dev/null; ` : "") +
+    `(bb_run) >${file("out")} 2>${file("err")}; bb_status=$?; ` +
+    `echo "$bb_status" >${file("status")} 2>/dev/null || bb_full=1; ` +
+    `[ ! -s ${file("out")} ] || cat ${file("out")}; [ ! -s ${file("err")} ] || cat ${file("err")} >&2; ` +
+    `if [ -n "\${bb_full:-}" ]; then rm -rf "$bb_job"; echo "bb-box: the box's disk may be full: the command's output may be cut short." >&2; fi; ` +
+    `exit "$bb_status"; fi; bb_run`
+  );
+}
+
+/**
+ * Reads a job in a Linux or macOS box. Exits 0 once the job has ended, with
+ * its exit status on stdout's first line, then its stdout, and its stderr;
+ * 4 while it runs, with the last `tailBytes` of each stream so far; 3 when
+ * there is no such job (#405).
+ */
+export function jobScript(id: string, tailBytes: number): string {
+  return (
+    `bb_job=${jobDir(id)}; [ -d "$bb_job" ] || exit 3; ` +
+    `if [ -s "$bb_job/status" ]; then { cat "$bb_job/status" "$bb_job/out" && cat "$bb_job/err" >&2; } || exit 5; exit 0; fi; ` +
+    `tail -c ${Math.floor(tailBytes)} "$bb_job/out"; tail -c ${Math.floor(tailBytes)} "$bb_job/err" >&2; exit 4`
+  );
 }
 
 /**
@@ -160,16 +229,18 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
   const cd = options.cwd ? `cd -- ${sh(options.cwd)} || exit 1; ` : "";
   if (os === "macos") {
     // Killing the local ssh leaves the command running in the box, as on Linux.
-    const run = options.timeoutMs === undefined ? script : macTimeout(script, options.timeoutMs);
+    const timed = options.timeoutMs === undefined ? script : macTimeout(script, options.timeoutMs);
+    const run = options.job ? inJob(options.job, timed) : timed;
     return LOADS_ENV + (options.session === "desktop" ? `${write}${macDesktop(`${env}${cd}${run}`)}` : `${write}${env}${cd}${run}`);
   }
   const desktop = options.session === "desktop" ? LINUX_DESKTOP : "";
-  if (options.timeoutMs === undefined) return `${LOADS_ENV}${write}${env}${desktop}${cd}${script}`;
+  const job = (run: string) => (options.job ? inJob(options.job, run) : run);
+  if (options.timeoutMs === undefined) return `${LOADS_ENV}${write}${env}${desktop}${cd}${job(script)}`;
   // Killing the local ssh leaves the command running in the box. GNU timeout
   // gives the script its own process group and stops all of it.
   const shell = `"\${SHELL:-/bin/sh}" -c ${sh(LOADS_ENV + script)}`;
   const timeout = `timeout -k 5 ${options.timeoutMs / 1000} ${shell}`;
-  return `${LOADS_ENV}${write}${env}${desktop}${cd}if command -v timeout >/dev/null 2>&1; then exec ${timeout}; else exec ${shell}; fi`;
+  return `${LOADS_ENV}${write}${env}${desktop}${cd}${job(`if command -v timeout >/dev/null 2>&1; then exec ${timeout}; else exec ${shell}; fi`)}`;
 }
 
 /**
