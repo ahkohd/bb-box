@@ -6,6 +6,7 @@ import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../b
 import { kindAliases, kindInfo } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs, Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
+import type { ImageView } from "./images.ts";
 import { extraFeatures, stopWords, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
@@ -432,6 +433,15 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
 /** "Next:" hints end every tool result, so an agent always knows what it can do. */
 export function next(...hints: string[]): string {
   return hints.length ? `\n\nNext: ${hints.join(" ")}` : "";
+}
+
+/** An image's line in bb box images list: its build and age, why it is due, and its last rebuild. */
+export function imageLine(view: ImageView): string {
+  const record = view.build.record;
+  const age = record ? Math.floor((Date.now() - Date.parse(record.built)) / 86_400_000) : null;
+  const built = record ? `${record.build}, ${age === 0 ? "built today" : `${age} days old`}` : "no record";
+  const last = view.last ? `; last rebuild ${new Date(view.last.at).toISOString().slice(0, 10)} ${view.last.ok ? "passed" : view.last.waiting ? `waited: ${view.last.reason}` : `failed: ${view.last.reason}`}` : "";
+  return `${view.name} (${view.build.kind}): ${built}; ${view.due ? `due, as ${view.due}` : "not due"}${last}.`;
 }
 
 /** What a rebuild of the standard Linux images would take, a line per tool, its architectures together where they agree. */

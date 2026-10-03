@@ -10,7 +10,7 @@ import type { Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, movedText, problemsText, versionsText } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, versionsText } from "./views.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -216,6 +216,58 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const left = await boxes.release(threadId, positionals.box, "released with bb box release");
               if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
               return out(`Released box ${positionals.box}.${idleWords(idle, false)}`);
+            }),
+        }),
+        "images list": cliCommand({
+          summary: "List the standard images bb-box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first.",
+          options: { ...jsonOption, output: { type: "string", description: "Print this image's last rebuild's last lines, as <backend>/<ref>." } },
+          run: ({ options }, ctx) =>
+            guard("Listing the images", async () => {
+              const views = await app.imageJobs.list(ctx.signal);
+              if (options.json) return json(views);
+              if (options.output) {
+                const view = views.find((candidate) => candidate.name === options.output);
+                if (!view) throw new BoxError("not_found", `There is no image ${String(options.output)}.`);
+                return out(view.last?.output.length ? view.last.output.join("\n") : `${view.name} has no rebuild with output yet.`);
+              }
+              if (!views.length) return out("No backend that is on has images bb-box rebuilds.");
+              const running = app.imageJobs.running();
+              return out([...(running ? [`A run has gone on since ${new Date(running).toISOString()}.`] : []), ...views.map(imageLine)].join("\n"));
+            }),
+        }),
+        "images refresh": cliCommand({
+          summary:
+            "Rebuild the standard images that are due (049), one at a time, most needed first, and start none after the time limit. A BB script automation runs it each night. It ends with a line per image, and exits 1 if one failed. Should this command end first, the run goes on.",
+          options: {
+            pinned: { type: "boolean", description: "Build from the repository's pins alone." },
+            hours: { type: "string", description: "Start no image after this many hours: 4 by default." },
+          },
+          run: ({ options }, ctx) =>
+            guard("Refreshing the images", async () => {
+              const hours = options.hours === undefined ? 4 : Number(options.hours);
+              if (!(hours > 0)) throw new Error("Give --hours as a number of hours above 0.");
+              const run = app.imageJobs.refreshAll({ pinned: !!options.pinned, limitMs: hours * 60 * 60_000 });
+              const result = await new Promise<Awaited<typeof run>>((resolve, reject) => {
+                run.then(resolve, reject);
+                ctx.signal?.addEventListener("abort", () => reject(new Error("The command ended; the run goes on, and bb box images list shows its results.")), { once: true });
+              });
+              const text = result.lines.map((line) => `${line.name}: ${line.outcome}, ${line.detail}`).join("\n") || "No image is due.";
+              return { exitCode: result.ok ? 0 : 1, stdout: `${text}\n` };
+            }),
+        }),
+        "images build": cliCommand({
+          summary: "Rebuild one standard image now, due or not, and whatever its last rebuild did (049), and replace it when its trial box passes. --try checks a new build and keeps the old one.",
+          positionals: [{ name: "image", description: "The image, as <backend>/<ref>, from bb box images list.", required: true }],
+          options: { pinned: { type: "boolean", description: "Build from the repository's pins alone." }, try: { type: "boolean", description: "Build and check, then keep the old build." } },
+          run: ({ positionals, options }, ctx) =>
+            guard("Building the image", async () => {
+              const result = await app.imageJobs.build(positionals.image, { pinned: !!options.pinned, try: !!options.try, signal: ctx.signal ?? new AbortController().signal });
+              const lines = [
+                `${result.ok ? "ok" : "FAILED"} in ${result.seconds} s${result.build ? `: ${positionals.image} is now ${result.build.build}` : ""}`,
+                ...result.checks.map((check) => `${check.ok ? "ok  " : "FAIL"} ${check.name}: ${check.detail}`),
+                ...(result.reason ? [result.reason, "", ...result.output.slice(-20)] : []),
+              ];
+              return { exitCode: result.ok ? 0 : 1, stdout: `${lines.join("\n")}\n` };
             }),
         }),
         "images versions": cliCommand({
