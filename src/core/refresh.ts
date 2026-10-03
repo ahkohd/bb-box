@@ -158,32 +158,40 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
     const versions = await (options.versions ?? resolveVersions)(options.setup, { pinned: !!options.pinned, signal });
     for (const tool of versions.tools) if (tool.version !== tool.pinned || tool.kept?.startsWith("upstream")) say(`version: ${tool.name} ${tool.version} for ${tool.arch}${tool.kept ? ` (${tool.kept})` : ""}`);
     await stageSetup(options.setup, join(staged, "setup"), versions);
-    const tar = spawnSync("tar", ["-C", join(staged, "setup"), "-czf", "-", "proxmox-lxc/template", "proxmox-lxc/host/common.sh"], { maxBuffer: 64 * 1024 * 1024 });
-    if (tar.status !== 0) return end(false, null, `tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
+    let captured: ImageBuild;
+    if (images.build) {
+      // A backend whose standard images come from a build script, as Docker's do.
+      say(`building a new build of ${current.ref}`);
+      captured = await images.build(current, join(staged, "setup"), { bbUrl: options.bbUrl, log: say, signal });
+      made.push(captured.ref);
+    } else {
+      const tar = spawnSync("tar", ["-C", join(staged, "setup"), "-czf", "-", "proxmox-lxc/template", "proxmox-lxc/host/common.sh"], { maxBuffer: 64 * 1024 * 1024 });
+      if (tar.status !== 0) return end(false, null, `tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
 
-    // The build.
-    const buildId = newBuildId(now());
-    say(`building ${buildId} in a box of ${current.ref}`);
-    const box: ImageBox = await images.box(current, `refresh of ${current.ref}`, signal);
-    made.push(box.ref);
-    await box.command.writeFile("bb-box-setup.tgz", tar.stdout, { signal });
-    const rest = { stdout: "", stderr: "" };
-    const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
-    const built = await box.command.stream(buildScript(kind, options.bbUrl, buildId), {
-      timeoutMs: options.buildTimeoutMs ?? 90 * 60_000,
-      signal,
-      onOutput: (chunk, from) => {
-        const parts = (rest[from] + decoders[from].decode(chunk, { stream: true })).split(/\r?\n|\r/);
-        rest[from] = parts.pop() ?? "";
-        for (const line of parts) if (line.trim()) say(line);
-      },
-    });
-    for (const left of Object.values(rest)) if (left.trim()) say(left);
-    if (built.exitCode !== 0) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}`);
+      // The build, in a box of the image.
+      const buildId = newBuildId(now());
+      say(`building ${buildId} in a box of ${current.ref}`);
+      const box: ImageBox = await images.box(current, `refresh of ${current.ref}`, signal);
+      made.push(box.ref);
+      await box.command.writeFile("bb-box-setup.tgz", tar.stdout, { signal });
+      const rest = { stdout: "", stderr: "" };
+      const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
+      const built = await box.command.stream(buildScript(kind, options.bbUrl, buildId), {
+        timeoutMs: options.buildTimeoutMs ?? 90 * 60_000,
+        signal,
+        onOutput: (chunk, from) => {
+          const parts = (rest[from] + decoders[from].decode(chunk, { stream: true })).split(/\r?\n|\r/);
+          rest[from] = parts.pop() ?? "";
+          for (const line of parts) if (line.trim()) say(line);
+        },
+      });
+      for (const left of Object.values(rest)) if (left.trim()) say(left);
+      if (built.exitCode !== 0) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}`);
 
-    // The capture.
-    const captured = await images.capture(box, current, "standard", signal);
-    made.splice(made.indexOf(box.ref), 1, captured.ref);
+      // The capture.
+      captured = await images.capture(box, current, "standard", signal);
+      made.splice(made.indexOf(box.ref), 1, captured.ref);
+    }
     say(`captured ${captured.build} as ${captured.ref}`);
 
     // The checks before replacing (049), on a trial box, against a box of the old build.
@@ -202,16 +210,16 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       ok: ms <= baseline.ms + SLOWER_MS,
       detail: `A box of the new build answered in ${(ms / 1000).toFixed(1)} s, of the old in ${(baseline.ms / 1000).toFixed(1)} s.`,
     });
-    const check = BUILDS[kind]!.check;
-    // A desktop's check needs its display, which starts soon after boot.
+    // The backend's own check where it has one, else the template's, whose desktop needs its display, which starts soon after boot.
+    const check = images.check?.(kind) ?? BUILDS[kind]!.check;
     const ran = await trial.command.run(
-      `for i in $(seq 1 60); do [ ! -e /etc/systemd/system/bb-box-display.service ] || [ -s /run/bb-box/display-mode ] && break; sleep 1; done; ${check}`,
+      images.check ? check : `for i in $(seq 1 60); do [ ! -e /etc/systemd/system/bb-box-display.service ] || [ -s /run/bb-box/display-mode ] && break; sleep 1; done; ${check}`,
       { timeoutMs: 10 * 60_000, signal, maxOutputBytes: 256 * 1024 },
     );
     const failed = ran.stdout.split("\n").filter((line) => /\bFAIL\b/.test(line));
     for (const line of ran.stdout.split("\n").filter((line) => line.trim())) say(`check: ${line}`);
     checks.push({
-      name: `the kind's check (${check})`,
+      name: images.check ? "the kind's check" : `the kind's check (${check})`,
       ok: ran.exitCode !== null && !failed.length && ran.stdout.trim() !== "",
       detail: failed.length ? failed.join(" | ").slice(0, 600) : ran.stdout.trim() ? `${ran.stdout.trim().split("\n").length} checks passed.` : `It printed nothing: ${ran.stderr.trim().slice(0, 300)}`,
     });

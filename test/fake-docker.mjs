@@ -5,20 +5,22 @@
 // - host.json: what `docker info` says, and switches: down (the daemon does
 //   not answer), failStart (a container stops as it starts) and neverReady
 //   (a container never writes its ready file).
-// - images.json: each image and its labels. networks.json: each network and
-//   its labels.
+// - images.json: each image and its labels. image-ids.json: each image's ID,
+//   which a tag shares; an image without one has an ID of its name's.
+//   networks.json: each network and its labels.
 // - containers/<name>/: a container. config.json is what `container inspect`
 //   prints; home/ is the box user's home, run/ is /run, var-lib/ is /var/lib
 //   and libexec/ is /usr/local/libexec.
 //
 // `docker exec` runs the command on the test machine as the real user, in the
-// container's home, with /home/box, /run/bb-box/, /var/lib/bb-box/ and
-// /usr/local/libexec/bb-box/ in its arguments made the container's own, in
+// container's home, with /home/box, /run/bb-box/, /var/lib/bb-box/,
+// /usr/share/bb-box/ and /usr/local/libexec/bb-box/ in its arguments made the
+// container's own, in
 // the test process's group of fakes, through the command line $FAKE_GROUP
 // holds, so what it starts ends with the test process, though a timeout kills
 // only this (#320). Every call is logged to log, one JSON array per line.
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import { join } from "node:path";
@@ -179,6 +181,21 @@ function container(command, rest) {
       rmSync(dir(found.Name.slice(1)), { recursive: true, force: true });
       return console.log(rest.at(-1));
     }
+    case "commit": {
+      // The image of a container: its image's labels, the container's, then each --change LABEL.
+      const [ref, tag] = rest.filter((arg, i) => !arg.startsWith("--") && rest[i - 1] !== "--change");
+      const found = find(ref) ?? fail(`Error response from daemon: No such container: ${ref}`);
+      const images = read("images.json", {});
+      const labels = { ...(images[found.Config.Image] ?? {}), ...found.Config.Labels };
+      for (let i = 0; i < rest.length; i++) {
+        const change = rest[i] === "--change" ? rest[++i] : null;
+        const label = change && /^LABEL ([^=]+)=(.*)$/s.exec(change);
+        if (label) labels[label[1]] = JSON.parse(label[2]);
+      }
+      write("images.json", { ...images, [tag]: labels });
+      write("image-ids.json", { ...read("image-ids.json", {}), [tag]: `sha256:${randomBytes(32).toString("hex")}` });
+      return console.log(`sha256:${randomBytes(32).toString("hex")}`);
+    }
     case "logs": {
       const found = find(rest.at(-1)) ?? fail(`Error response from daemon: No such container: ${rest.at(-1)}`);
       const logs = join(dir(found.Name.slice(1)), "logs");
@@ -213,6 +230,7 @@ function exec(rest) {
     text
       .replaceAll("/run/bb-box/", `${join(dir(name), "run", "bb-box")}/`)
       .replaceAll("/var/lib/bb-box/", `${join(dir(name), "var-lib", "bb-box")}/`)
+      .replaceAll("/usr/share/bb-box/", `${join(dir(name), "usr-share", "bb-box")}/`)
       .replaceAll("/usr/local/libexec/bb-box/", `${join(dir(name), "libexec", "bb-box")}/`)
       .replaceAll("/home/box", home);
   const [command, ...commandArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...rest.slice(i + 1).map(own)];
@@ -263,11 +281,50 @@ switch (command) {
     break;
   }
   case "image": {
-    const image = rest.at(-1);
     const images = read("images.json", {});
-    if (rest[0] !== "inspect") fail(`fake docker: unknown command image ${rest[0]}`, 2);
-    if (!(image in images)) fail(`Error response from daemon: No such image: ${image}`);
-    console.log(JSON.stringify(images[image]));
+    const ids = read("image-ids.json", {});
+    const idOf = (name) => ids[name] ?? `sha256:${createHash("sha256").update(name).digest("hex")}`;
+    /** The names of an image, by a name or an ID. */
+    const named = (ref) => (ref in images ? [ref] : Object.keys(images).filter((name) => idOf(name) === ref));
+    const used = (names) => names.find((name) => (names.length === Object.keys(images).filter((other) => idOf(other) === idOf(name)).length) && containersOf(name));
+    const containersOf = (name) => listContainers().some((container) => container.Config.Image === name);
+    const listContainers = () => readdirSync(join(root, "containers")).filter((n) => existsSync(join(root, "containers", n, "config.json"))).map((n) => JSON.parse(readFileSync(join(root, "containers", n, "config.json"), "utf8")));
+    const [sub, ...more] = rest;
+    if (sub === "inspect") {
+      const image = more.at(-1);
+      const [name] = named(image);
+      if (!name) fail(`Error response from daemon: No such image: ${image}`);
+      const format = more[more.indexOf("--format") + 1];
+      console.log(format === "{{.Id}}" ? idOf(name) : JSON.stringify(images[name]));
+    } else if (sub === "tag") {
+      const [source, target] = more;
+      const [name] = named(source);
+      if (!name) fail(`Error response from daemon: No such image: ${source}`);
+      write("images.json", { ...images, [target]: images[name] });
+      write("image-ids.json", { ...ids, [target]: idOf(name) });
+    } else if (sub === "rm") {
+      const ref = more.at(-1);
+      const names = named(ref);
+      if (!names.length) fail(`Error response from daemon: No such image: ${ref}`);
+      // By ID, every name goes, unless a container uses the image; by name, the name goes, as a tag, unless it is the image's last and a container uses it.
+      const gone = ref in images ? [ref] : names;
+      const busy = ref in images ? (used([ref]) ? ref : null) : names.find(containersOf) ?? null;
+      if (busy) fail(`Error response from daemon: conflict: unable to delete ${ref} - image is being used by stopped container`);
+      const left = { ...images };
+      for (const name of gone) delete left[name];
+      write("images.json", left);
+      console.log(`Untagged: ${gone.join(" ")}`);
+    } else if (sub === "ls") {
+      const filters = [];
+      for (let i = 0; i < more.length; i++) if (more[i] === "--filter") filters.push(more[++i].replace(/^label=/, ""));
+      for (const [name, labels] of Object.entries(images)) {
+        const matches = filters.every((filter) => {
+          const [key, ...parts] = filter.split("=");
+          return parts.length ? labels[key] === parts.join("=") : key in labels;
+        });
+        if (matches) console.log(name);
+      }
+    } else fail(`fake docker: unknown command image ${sub}`, 2);
     break;
   }
   default:

@@ -44,7 +44,9 @@ function fake(options: { buildExit?: number; check?: string; app?: string; captu
     probe: async () => true,
     run: async (script) => {
       events.push(`run ${ref} ${script.includes("bb-box-check-headless") ? "check" : script.includes("host-artifact") ? "app" : script}`);
-      const stdout = script.includes("bb-box-check") ? (options.check ?? "docker stopped after boot   ok   docker.socket active\nservices   ok   ssh\n") : script.includes("host-artifact") ? `${options.app ?? APP}\n` : "";
+      // A check that is an echo prints what it echoes.
+      const echoed = /^echo '(.*)'$/.exec(script)?.[1];
+      const stdout = echoed !== undefined ? `${echoed}\n` : script.includes("bb-box-check") ? (options.check ?? "docker stopped after boot   ok   docker.socket active\nservices   ok   ssh\n") : script.includes("host-artifact") ? `${options.app ?? APP}\n` : "";
       return { exitCode: 0, stdout, stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
     },
     stream: async (script, { onOutput }) => {
@@ -147,6 +149,35 @@ test("a failed build, or a failed check, keeps the image and removes what the re
 
   const older = await refresh(fake({ captured: record("build.x", { node: "24.21.0", "claude-code": "2.1.280" }) }));
   assert.match(older.reason!, /no tool older: claude-code 2\.1\.280 is older than 2\.1\.283\./);
+});
+
+test("a refresh on a backend whose standard images come from a build script, as Docker's do, builds with it and checks with the backend's own check", async () => {
+  const made = fake();
+  const staged: string[] = [];
+  const images: BackendImages = {
+    ...made.images,
+    build: async (current, setup, { log }) => {
+      made.events.push(`build from ${current.ref}`);
+      staged.push(setup);
+      log("built bbbox/linux:refresh-x");
+      return { ref: "bbbox/linux:refresh-x", image: "standard", kind: current.kind, build: "build.20261003-021500-3f9c", record: record("build.20261003-021500-3f9c", { node: "24.21.0", "claude-code": "2.1.288" }), current: false };
+    },
+    check: () => "echo 'node ok   v24.21.0'",
+  };
+  const result = await refreshImage({ images, current: CURRENT, setup: SETUP, bbUrl: "https://bb.example.com", bbApp: APP, pinned: true, signal: AbortSignal.timeout(60_000), now: made.now });
+  assert.equal(result.ok, true, result.reason ?? "");
+  assert.deepEqual(made.events, [
+    "build from 9100",
+    "box 7000 from 9100: answer time of build.20260926-060000-a1b2",
+    "remove 7000",
+    "box 7001 from bbbox/linux:refresh-x: trial of build.20261003-021500-3f9c",
+    "run 7001 echo 'node ok   v24.21.0'",
+    "run 7001 app",
+    "remove 7001",
+    "replace 9100 with bbbox/linux:refresh-x",
+  ]);
+  assert.match(staged[0]!, /bb-box-refresh-.*\/setup$/, "a staged copy of setup/");
+  assert.equal(result.checks[1]!.name, "the kind's check");
 });
 
 test("the record's checks: whole, and no tool older or missing than in the old build", () => {

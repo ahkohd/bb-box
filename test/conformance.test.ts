@@ -144,6 +144,7 @@ await conformance({
     display: "the fake Docker host has no desktop to stream",
     "computer-use": "the fake container has no computer-use driver",
     size: "the fake docker runs commands on the test machine",
+    images: "the fake docker runs commands on the test machine, without root",
   },
   timeoutMs: 20_000,
 });

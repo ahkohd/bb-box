@@ -154,6 +154,22 @@ cache. `bb box doctor` judges each image by that label:
 On a BB machine, bb-box builds an image again itself when it has no record,
 an older contract, or another build of BB's app.
 
+A refresh of an image ([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)) works like this:
+
+1. It builds the image again with `build.sh --tag <image>:refresh-<time>`, from a copy of the setup files with the versions a rebuild takes.
+2. It checks a trial container from the new build:
+   - the tools answer;
+   - Docker answers on first use, in a box with Docker;
+   - a desktop's display is up;
+   - the box has BB's app at the recorded digest;
+   - it answers no more than 5 s slower than a container of the old build;
+   - the record is whole, and no tool is older.
+3. Then it moves the image's tag to the new build. The old image goes once no container uses it.
+
+To run one by hand, use `npm run refresh -- --backend docker --settings <settings.json> --image bbbox/linux:1 [--bb-url <url>] [--pinned] [--try]`.
+
+bb-box's image boxes are containers named `bbbox-image-<id>` with the label `bbbox.image-box`. No sweep removes them; the build that made them does. A captured image is `bbbox-image/<name>:<build>`, with its record in its labels.
+
 ## 2. Settings
 
 In BB, on BB Box's settings page, set up the Docker backend and turn it on. Its fields:

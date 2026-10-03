@@ -758,6 +758,71 @@ test("the doctor judges each image by its record's label: contract, age, BB's ap
   assert.match(before.detail, /^For linux boxes\. It has no image record/);
 });
 
+test("image operations on Docker: an image box, its commit as an image with its record, a trial box, a build by build.sh, and the tag moved (049)", async () => {
+  const fake = fakeDockerHost();
+  const scripts: { args: readonly string[]; env: NodeJS.ProcessEnv }[] = [];
+  const newer = JSON.stringify({ contract: 1, image: "standard", kind: "linux", arch: "x86_64", build: "build.20261003-021500-3f9c", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } });
+  const backend = new DockerBackend(dockerConfig(), testContext(), {
+    binary: fake.binary,
+    readyTimeoutMs: 2_000,
+    // As setup/docker/build.sh leaves an image: built under the tag it was given, with its record in a label.
+    script: async (script, args, env, onLine) => {
+      scripts.push({ args, env });
+      const images = JSON.parse(readFileSync(join(fake.root, "images.json"), "utf8"));
+      writeFileSync(join(fake.root, "images.json"), JSON.stringify({ ...images, [args[args.indexOf("--tag") + 1]!]: { "bbbox.image-version": "1", "bbbox.image-record": newer } }));
+      onLine(`built ${script.split("/").slice(-2).join("/")}`);
+      return 0;
+    },
+  });
+  const images = backend.images;
+  const listed = await images.list(signal());
+  const linux = listed.builds.find((build) => build.ref === "bbbox/linux:1")!;
+  assert.deepEqual([linux.image, linux.kind, linux.current, linux.record?.kind], ["standard", "linux", true, "linux"]);
+  assert.deepEqual(listed.builds.map((build) => build.ref), ["bbbox/linux:1", "bbbox/linux-desktop:1", "bbbox/linux-desktop-wayland:1"]);
+  assert.deepEqual(listed.boxes, []);
+
+  // An image box: a container of the image, which no sweep takes.
+  const box = await images.box(linux, "a small image", signal());
+  assert.match(box.ref, /^bbbox-image-[0-9a-f]{12}$/);
+  const made = fake.inspect(box.ref);
+  assert.deepEqual([made.Config.Image, made.Config.Labels["bbbox.image-box"], made.Config.Labels["bbbox.box"], made.Config.Hostname], ["bbbox/linux:1", "test", undefined, "bb-box-image"]);
+  assert.deepEqual(await backend.held(signal()), [], "an image box is no box's");
+  assert.deepEqual((await images.list(signal())).boxes, [box.ref]);
+
+  // Its capture: the record as finalizing leaves it, committed in the image's labels.
+  const record = { contract: 1, image: "small", kind: "linux", arch: "x86_64", build: "build.20261003-030000-abcd", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: {} };
+  assert.equal((await box.command.run(`mkdir -p /usr/share/bb-box/ && printf '%s\\n' '${JSON.stringify(record)}' > /usr/share/bb-box/image.json`)).exitCode, 0);
+  const captured = await images.capture(box, linux, "small", signal());
+  assert.deepEqual([captured.ref, captured.build, captured.current], ["bbbox-image/small:20261003-030000-abcd", "build.20261003-030000-abcd", false]);
+  const labels = JSON.parse(readFileSync(join(fake.root, "images.json"), "utf8"))["bbbox-image/small:20261003-030000-abcd"];
+  assert.deepEqual([JSON.parse(labels["bbbox.image-record"]).build, labels["bbbox.image"], labels["bbbox.kind"], labels["bbbox.image-box"]], ["build.20261003-030000-abcd", "small", "linux", ""]);
+  const commit = fake.calls().find((call) => call.includes("commit"))!;
+  assert.ok(commit.includes("ENV BBBOX_DOCKERD=0"), "Docker is off in the image until a box asks for it");
+  assert.throws(() => fake.inspect(box.ref), "the image box is gone");
+  assert.ok((await images.list(signal())).builds.some((build) => build.ref === captured.ref && build.image === "small" && !build.current));
+
+  // A trial box of the capture, removed; what is not an image's stays.
+  const trial = await images.box(captured, "trial", signal());
+  assert.equal(fake.inspect(trial.ref).Config.Image, "bbbox-image/small:20261003-030000-abcd");
+  await images.remove(trial.ref, signal());
+  await images.remove(captured.ref, signal());
+  assert.deepEqual((await images.list(signal())).builds.map((build) => build.ref), ["bbbox/linux:1", "bbbox/linux-desktop:1", "bbbox/linux-desktop-wayland:1"]);
+  await assert.rejects(images.remove("bbbox/linux:1", signal()), /The image bbbox\/linux:1 is not an image build of this install's/);
+
+  // A new build of the standard image by build.sh, under a tag of its own, then the tag moved.
+  const lines: string[] = [];
+  const built = await images.build!(linux, "/plugin/setup", { bbUrl: "https://bb.example.com", log: (line) => lines.push(line), signal: signal() });
+  assert.match(built.ref, /^bbbox\/linux:refresh-[0-9a-z]+$/);
+  assert.deepEqual(scripts[0]!.args, ["--bb-url", "https://bb.example.com", "--tag", built.ref, "linux"]);
+  assert.deepEqual([built.build, built.current, lines], ["build.20261003-021500-3f9c", false, ["built docker/build.sh"]]);
+  const replaced = await images.replace(built, linux, signal());
+  assert.deepEqual([replaced.ref, replaced.current, replaced.build], ["bbbox/linux:1", true, "build.20261003-021500-3f9c"]);
+  const after = JSON.parse(readFileSync(join(fake.root, "images.json"), "utf8"));
+  assert.equal(JSON.parse(after["bbbox/linux:1"]["bbbox.image-record"]).build, "build.20261003-021500-3f9c");
+  assert.equal(after[built.ref], undefined, "the refresh's tag goes");
+  assert.match(images.check!("linux"), /for tool in node git gh claude codex pi rg fd jj uv/);
+});
+
 test("the doctor warns about a kind the host cannot hold at any preset, less the memory it keeps free (#74)", async () => {
   const { backend } = setup({}, { cpus: 4, memoryMiB: 10240 });
   const report = await backend.doctor(signal());

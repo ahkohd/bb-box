@@ -51,6 +51,10 @@ export const LABELS = {
   bbApp: "bbbox.bb-app",
   /** On a desktop image whose start points Xorg at the GPU placed, so a GPU desktop may be privileged (#283). */
   gpuBusId: "bbbox.gpu-bus-id",
+  /** On a container bb-box builds or tries an image in (049): the install's ID, so no sweep takes it. */
+  imageBox: "bbbox.image-box",
+  /** On an image bb-box captured from an image box (049): the image's name. */
+  image: "bbbox.image",
 } as const;
 
 export interface DockerInfo {
