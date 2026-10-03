@@ -11,7 +11,7 @@ import { warmChecks } from "../backends/warm.ts";
 import { pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { ImageJobs } from "./images.ts";
-import { withImage } from "../core/project-images.ts";
+import { projectImage, withImage } from "../core/project-images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -427,6 +427,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     kv: bb.storage.kv,
     backends,
     general,
+    // A project's image for a kind (049), from the configuration as it is now.
+    image: (projectId, kind) => projectImage(configuration.document, projectId, kind),
     notify,
     recorded(box, deleted) {
       // Fetched while the box starts, for its enrolment.

@@ -629,7 +629,8 @@ export class FakeTransport implements CommandTransport {
 
   async run(script: string, options?: RunOptions): Promise<RunResult> {
     await this.#answer();
-    return this.#line.run(script, { ...options, signal: this.#signal(options?.signal) });
+    // A fake box has no root of its own: what bb-box runs as root runs as the test's user, never through the test machine's sudo.
+    return this.#line.run(script.replaceAll("sudo -n ", ""), { ...options, signal: this.#signal(options?.signal) });
   }
 
   async stream(script: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {

@@ -7,7 +7,7 @@ import { kindAliases, kindInfo } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs, Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { ImageView } from "./images.ts";
-import { extraFeatures, stopWords, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
+import { extraFeatures, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
@@ -388,6 +388,12 @@ function adminLine(capabilities: BoxRecord["capabilities"]): string | null {
 }
 
 /** Everything an agent may want to know about one box. */
+/** A box's project's image (049): its name, and what its script did as the box started. */
+export function imageWords(image: BoxImage): string {
+  const what = { pending: "its script runs as the box starts", running: "running its script", done: `its script ran as the box started${image.seconds !== undefined ? `, in ${image.seconds} s` : ""}`, failed: "its script failed" };
+  return `${image.name}, ${what[image.state]}`;
+}
+
 export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const capabilities = box.capabilities;
   const lines = [
@@ -408,6 +414,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   if (requires.length) lines.push(`Features: ${requires.join(", ")}`);
   const extras = other(extraFeatures(box));
   if (extras.length) lines.push(`Also has: ${extras.join(", ")}`);
+  if (box.image) lines.push(`Image: ${imageWords(box.image)}`);
   if (box.guest?.address) lines.push(`Address: ${box.guest.address}`);
   for (const fact of box.guest?.facts ?? []) lines.push(`${fact.label}: ${fact.value}`);
   if (control && capabilities.displays.length) lines.push(`Desktop control: ${CONTROL_WORDS[control.owner]}`);

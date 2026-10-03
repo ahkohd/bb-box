@@ -7,7 +7,7 @@ import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
 import { BackendError, type Backend, type BoxKind, type BoxSize, type ReleaseHooks } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
@@ -24,12 +24,13 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
   const make = () => new FakeBackend({ root, storage: backendStorage, ...options });
   const world = {
+    root,
     kv,
     backend: make() as FakeBackend,
     /** More backends offering kinds, after the first, for a choice of provider (044). */
@@ -109,6 +110,40 @@ async function until(check: () => Promise<boolean>): Promise<void> {
   }
   assert.fail("timed out waiting");
 }
+
+test("a box of a project with an image runs its script as root, then its check, before it is handed over (049)", async () => {
+  const image = {
+    kinds: ["linux"],
+    script: 'echo "$BB_BOX_IMAGE $BB_BOX_KIND $BB_BOX_BACKEND $BB_BOX_ARCH" > "$HOME/ran"\nfor i in $(seq 1 25); do echo "line $i"; done\n[ ! -e "$HOME/../fail-script" ] || exit 3\n',
+    check: 'test -s "$HOME/ran" && echo checked\n[ ! -e "$HOME/../fail-check" ] || { echo "cargo: not found"; exit 1; }\n',
+    projects: ["prj"],
+  };
+  const world = setup({}, { image: (projectId, kind) => (projectId === "prj" && kind === "linux" ? { name: "rust-tailscale", image } : null) });
+  const asked = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
+  assert.deepEqual(asked.image, { name: "rust-tailscale", state: "pending" });
+  const box = await ready(world.boxes, asked);
+  assert.equal(box.state, "ready", box.error ?? "");
+  assert.deepEqual([box.image?.name, box.image?.state, typeof box.image?.seconds, typeof box.timings.image], ["rust-tailscale", "done", "number", "number"]);
+  const { command } = await world.backend.transports(box.guest!, "linux");
+  assert.equal((await command!.run("cat ran")).stdout, `rust-tailscale linux fake ${box.capabilities.arch}\n`);
+  assert.equal((await command!.run("test -e .bb-box-image")).exitCode, 1, "its files go once it ran");
+
+  // Another project's box, or another kind, has none.
+  const other = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj_other", kind: "linux" }));
+  assert.equal(other.image, undefined);
+
+  // A failing script fails the acquire with its last 20 lines, and the box's guest goes.
+  writeFileSync(join(world.root, "fake", "fail-script"), "");
+  const failed = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }));
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.error, `Running rust-tailscale's script failed: rust-tailscale's script exited with 3. Its last lines:\n${Array.from({ length: 20 }, (_, i) => `line ${i + 6}`).join("\n")}`);
+  assert.deepEqual([failed.guest, failed.image?.state], [null, "failed"]);
+  rmSync(join(world.root, "fake", "fail-script"));
+  writeFileSync(join(world.root, "fake", "fail-check"), "");
+  const unchecked = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }));
+  assert.match(unchecked.error ?? "", /^Running rust-tailscale's script failed: rust-tailscale's check exited with 1\. Its last lines:\nchecked\ncargo: not found$/);
+  assert.equal((await world.backend.held()).filter((guest) => guest.ref === failed.guest?.ref).length, 0);
+});
 
 test("acquire records the box at once and it becomes ready in the background", async () => {
   const world = setup();

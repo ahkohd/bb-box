@@ -26,7 +26,7 @@ const LAST_RUN = "images/last-run";
 const LOCK = "images/lock";
 
 /** The automation that runs the job each night, as the setup guide gives it. */
-export const AUTOMATION = 'bb automation create --project <project> --name "bb-box images" --cron "0 2 * * *" --timezone <zone> --script "bb box images refresh" --timeout 4h';
+export const AUTOMATION = 'bb automation create --project <project> --name "bb-box images" --cron "0 2 * * *" --timezone <zone> --script "bb box images refresh" --timeout 900000';
 
 export interface ImageJobsDeps {
   /** The backends that are on. */
