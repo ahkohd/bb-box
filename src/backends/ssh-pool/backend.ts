@@ -56,7 +56,9 @@ import { sizesCheck } from "../fit.ts";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import type { Arch, Display, DisplayAuth, Route, RunResult, SshAccess } from "../../transports/types.ts";
+import type { Arch, Display, DisplayInput, DisplayInputEvents, DisplayOpened, RunResult, SshAccess } from "../../transports/types.ts";
+import { command as inBoxCommand } from "../../core/in-box.ts";
+import { MacInput, macInputCommand } from "../../core/mac-input.ts";
 import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, parseDisplay, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
@@ -78,6 +80,9 @@ const RESET_POLL_MS = 2_000;
 /** A Mac's claim waits for SSH, the box user at the console and, for a desktop, Cua's socket (047). */
 const MAC_READY_TIMEOUT_MS = 3 * 60_000;
 const MAC_READY_POLL_MS = 1_000;
+/** How long the input helper may take to start in the box user's desktop session. */
+const INPUT_START_MS = 15_000;
+
 /** Screen Sharing, which a Mac's display reaches through the box user's SSH. */
 const SCREEN_SHARING_PORT = 5900;
 /** The Cua Driver setup-mac.sh installs, as Tart's image does, with its socket in the box user's home. */
@@ -735,7 +740,7 @@ export class SshPoolBackend implements Backend {
     const host = access.host.includes(":") ? `[${access.host}]` : access.host;
     const { ssh } = await this.#keys();
     const displays = (machine.os === "macos" ? (offer?.capabilities.displays ?? []) : []).map(
-      (display): Display => ({ ...display, label: "Desktop", open: (signal) => this.#openDisplay(machine, guest, ssh, access, signal) }),
+      (display): Display => ({ ...display, label: "Desktop", open: (signal) => this.#openDisplay(machine, guest, ssh, access, user, signal) }),
     );
     return {
       command: await this.#command(machine, user),
@@ -753,9 +758,11 @@ export class SshPoolBackend implements Backend {
    * signs in to as the box user. The helper's display command gives the
    * password over the admin's SSH at each open, only to the box that holds the
    * Mac. It goes into the sign-in and nowhere else: no error or log quotes
-   * the command's output (047).
+   * the command's output (047). Screen Sharing ignores the viewer's input,
+   * so that goes to core's input helper in the box user's desktop session
+   * (#406).
    */
-  async #openDisplay(machine: SshPoolMachine, guest: Guest, ssh: Ssh, access: SshAccess, signal?: AbortSignal): Promise<{ route: Route; auth: DisplayAuth }> {
+  async #openDisplay(machine: SshPoolMachine, guest: Guest, ssh: Ssh, access: SshAccess, user: string, signal?: AbortSignal): Promise<DisplayOpened> {
     const generation = whole(guest.data?.generation);
     const box = typeof guest.data?.box === "string" ? guest.data.box : null;
     if (generation === null || !box) throw new BackendError("gone", `Machine ${machine.name} does not say which box holds it, so its desktop cannot be shown.`);
@@ -766,7 +773,36 @@ export class SshPoolBackend implements Backend {
     if (!signIn || signIn.user !== access.user) {
       throw new Error(`Machine ${machine.name} did not give box user ${access.user}'s sign-in for its desktop. Run this bb-box's setup/ssh-pool/setup-mac.sh on it with sudo.`);
     }
-    return { route: ssh.route(access, SCREEN_SHARING_PORT), auth: { type: "apple", user: signIn.user, password: signIn.password } };
+    return {
+      route: ssh.route(access, SCREEN_SHARING_PORT),
+      auth: { type: "apple", user: signIn.user, password: signIn.password },
+      input: (events, signal) => this.#macInput(machine, user, events, signal),
+    };
+  }
+
+  /** The input helper in the box user's desktop session, for one viewer (#406). */
+  async #macInput(machine: SshPoolMachine, user: string, events: DisplayInputEvents, signal?: AbortSignal): Promise<DisplayInput> {
+    const failed = `The desktop's input helper did not start on ${machine.name}: box user ${user} may not be signed in to the desktop.`;
+    const why = (error: unknown) => `${failed} ${error instanceof Error ? error.message : String(error)}`;
+    const command = await this.#command(machine, user);
+    const channel = await command.spawn(inBoxCommand("macos", macInputCommand(), { session: "desktop" }), signal).catch((error: unknown) => {
+      throw new Error(why(error));
+    });
+    const input = new MacInput(channel, events);
+    let ended = failed;
+    const started = await Promise.race([
+      input.ready.then(() => true),
+      input.ended.then(
+        () => false,
+        (error: unknown) => ((ended = why(error)), false),
+      ),
+      pause(INPUT_START_MS, signal).then(() => false),
+    ]);
+    if (!started) {
+      await input.close().catch(() => undefined);
+      throw new Error(ended);
+    }
+    return input;
   }
 
   async members(signal?: AbortSignal): Promise<readonly PoolMember[]> {
@@ -867,8 +903,9 @@ export class SshPoolBackend implements Backend {
       const TOOLS = check("tools", "tools"), DOCKER = check("docker", "Docker"), STATE = check("state", "state");
       const FILEVAULT = check("filevault", "FileVault"), SIGNIN = check("signin", "sign-in"), FULL_DISK = check("fulldisk", "Full Disk Access");
       const SCREEN = check("screensharing", "Screen Sharing"), GRANTS = check("grants", "Cua Driver's grants"), XCODE = check("xcode", "Xcode");
+      const INPUT = check("input", "viewer's input");
       const desktop = this.#lists(machine, "macos-desktop");
-      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, XCODE, ...(desktop ? [SCREEN, GRANTS] : [])] : [];
+      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, XCODE, ...(desktop ? [SCREEN, GRANTS, INPUT] : [])] : [];
       const after = [ARCH_CHECK, TOOLS, ...(docker ? [DOCKER] : []), ...macChecks, STATE];
       const rest = [HELPER, ...after];
       const view = views.find((other) => other.machine === machine);
@@ -943,7 +980,7 @@ export class SshPoolBackend implements Backend {
         } else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
       if (mac && !status.mac) skip(...macChecks);
-      else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, XCODE, SCREEN, GRANTS }, { pass, warn, fail });
+      else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, XCODE, SCREEN, GRANTS, INPUT }, { pass, warn, fail });
       // An operator's reset names no install.
       const install = status.owner?.install;
       if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
@@ -1037,14 +1074,14 @@ export class SshPoolBackend implements Backend {
     };
   }
 
-  /** The doctor's checks of what a Mac's boxes need: FileVault off, its box user signed in, Full Disk Access, Xcode when present, Screen Sharing and Cua's grants (047). */
+  /** The doctor's checks of what a Mac's boxes need: FileVault off, its box user signed in, Full Disk Access, Xcode when present, Screen Sharing, Cua's grants and the viewer's input (047). */
   #macChecks(
     status: MachineStatus,
     machine: SshPoolMachine,
     outOfService: boolean,
     grants: MacStatus["grants"],
     xcodeProbe: Probe | null,
-    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "XCODE" | "SCREEN" | "GRANTS", Check>>,
+    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "XCODE" | "SCREEN" | "GRANTS" | "INPUT", Check>>,
     report: Readonly<Record<"pass", (check: Check, detail: string) => void> & Record<"warn" | "fail", (check: Check, detail: string, fix: string) => void>>,
   ): void {
     const mac = status.mac!;
@@ -1095,6 +1132,15 @@ export class SshPoolBackend implements Backend {
       fail(ids.GRANTS, `Cua Driver lacks ${lacking.join(" and ")}, so computer use cannot ${grants?.screenRecording === false ? "see" : "act on"} the desktop.`, `On ${name}, turn on CuaDriver under ${lacking.join(" and under ")}, in System Settings, Privacy and Security.`);
     } else if (grants?.accessibility && grants.screenRecording) pass(ids.GRANTS, "Accessibility and Screen Recording, so computer use works.");
     else warn(ids.GRANTS, "Cua Driver did not say its grants: no box user is at the console, or Cua did not answer.", `Check that the box user is at ${name}'s console and that setup-mac.sh installed Cua Driver there.`);
+    // A one-point pointer move, posted in the box user's session as a viewer's input is, and read back (#406).
+    if (grants?.input) pass(ids.INPUT, "A pointer move posted in the box user's session moved the pointer, so a person can type and click in the desktop's viewer.");
+    else if (grants?.input === false) {
+      fail(
+        ids.INPUT,
+        "A pointer move posted in the box user's session did not move the pointer, so a person cannot type or click in the desktop's viewer.",
+        `On ${name}, turn on osascript and sshd-keygen-wrapper under Accessibility, in System Settings, Privacy and Security, as setup-mac.sh's steps for a person say.`,
+      );
+    } else warn(ids.INPUT, "The Mac did not say whether a viewer's input posts: no box user is at the console, or osascript did not answer.", `Check that the box user is at ${name}'s console.`);
   }
 
   #describe(view: View): string {

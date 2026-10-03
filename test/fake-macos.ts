@@ -15,7 +15,7 @@ const TOOL_NAMES = [
   "id", "dscl", "sysadminctl", "dseditgroup", "createhomedir", "defaults", "launchctl", "sudo", "stat", "sysctl", "sw_vers",
   "uname", "fdesetup", "ioreg", "visudo", "chflags", "chown", "find", "crontab", "ipcs", "ipcrm", "pgrep",
   "pkill", "date", "shutdown", "node", "npm", "git", "gh", "brew", "pmset", "softwareupdate", "mdutil", "xcode-select",
-  "xcodebuild", "xcrun", "DevToolsSecurity", "open", "scutil", "ipconfig", "curl", "shasum",
+  "xcodebuild", "xcrun", "DevToolsSecurity", "open", "scutil", "ipconfig", "curl", "shasum", "osascript",
   "dsmemberutil",
 ];
 /** Where the Data volume's folders appear at the top of a Mac's disk. */

@@ -109,9 +109,12 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
   assert.equal(count(mac, cua), 0);
   const granted = mac.helper(["status", "grants"]);
   assert.equal(granted.status, 0, granted.stderr);
-  assert.deepEqual(["accessibility", "screenrecording"].map((key) => fields(granted.stdout).get(key)), ["1", "0"]);
-  assert.deepEqual(parseStatus(granted.stdout).mac?.grants, { accessibility: true, screenRecording: false });
+  assert.deepEqual(["accessibility", "screenrecording", "input"].map((key) => fields(granted.stdout).get(key)), ["1", "0", "1"]);
+  assert.deepEqual(parseStatus(granted.stdout).mac?.grants, { accessibility: true, screenRecording: false, input: true });
+  assert.equal(count(mac, "launchctl asuser 70000 /usr/bin/sudo -n -H -u bbx-0 -- /usr/bin/osascript -l JavaScript -e"), 1, "the input probe runs in the box user's session");
   assert.equal(count(mac, cua), 1);
+  mac.flag("no-input");
+  assert.equal(fields(mac.helper(["status", "grants"]).stdout).get("input"), "0", "macOS dropped the probe's pointer move");
   for (const args of [["bogus"], ["grants", "xcode"]]) {
     assert.deepEqual(mac.helper(["status", ...args]), { status: 2, stdout: "", stderr: "usage: machine status [grants | xcode]\n" });
   }
@@ -519,7 +522,8 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.ok(result.stdout.includes("\n  192.0.2.30 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMacHostKeyForTests\n"));
   assert.ok(result.stdout.includes("\n1. Turn on Screen Sharing in System Settings, General, Sharing, if it is off."));
   assert.ok(result.stdout.includes("\n2. In System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users."));
-  assert.ok(result.stdout.includes("\n4. If boxes need Xcode or the iOS Simulator, install Xcode in /Applications, then run setup-mac.sh again.\n"));
+  assert.ok(result.stdout.includes("\n4. Under Accessibility, also add and turn on /usr/bin/osascript and /usr/libexec/sshd-keygen-wrapper: select +, press Command-Shift-G and enter each path."));
+  assert.ok(result.stdout.includes("\n5. If boxes need Xcode or the iOS Simulator, install Xcode in /Applications, then run setup-mac.sh again.\n"));
   assert.ok(!result.stdout.includes("Restart the Mac"), "nobody was at the console, so the first box user is signed in");
   assert.ok(!result.stdout.includes("Check these"), result.stdout);
 
@@ -554,7 +558,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   const again = mac.setup(["--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box", "--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherInstall bb-box", "--name", "studio"]);
   assert.equal(again.status, 0, again.stderr);
   assert.ok(again.stdout.includes("\n  studio bbbox-admin@192.0.2.30 macos,macos-desktop\n"));
-  assert.ok(again.stdout.includes("\n4. Restart the Mac, so that it signs in the first box user, bbx-0.\n"), again.stdout);
+  assert.ok(again.stdout.includes("\n5. Restart the Mac, so that it signs in the first box user, bbx-0.\n"), again.stdout);
   assert.equal(mac.file("/private/var/bbbox-admin/.ssh/authorized_keys")!.split("\n").length, 3);
   assert.equal(count(mac, "sysadminctl -addUser bbbox-admin"), 1);
   assert.equal(count(mac, "sudo -u person -H env NONINTERACTIVE=1"), 1, "Homebrew is installed once");

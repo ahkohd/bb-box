@@ -788,10 +788,14 @@ describe("An SSH host pool of Macs (047)", () => {
       [["desktop", "Desktop", "rfb", false]],
     );
     const display = displays[0]!;
-    const first = await display.open();
-    const second = await display.open();
+    const { input, ...first } = await display.open();
+    const { input: _, ...second } = await display.open();
     assert.deepEqual(first.auth, { type: "apple", user: "bbx-0", password: "pw-0f3c9a" });
     assert.deepEqual(second, first);
+    // Screen Sharing ignores the viewer's input, so it goes to the helper in the box user's desktop session (#406).
+    // This fake box user has no desktop session to join, so the helper ends at once, and says so.
+    assert.ok(input, "the display takes the viewer's input");
+    await assert.rejects(input({}), /^Error: The desktop's input helper did not start on m: box user bbx-0 may not be signed in to the desktop\./);
     assert.equal(first.route.type, "command");
     assert.deepEqual(first.route.type === "command" ? first.route.argv.slice(-4) : [], ["ExitOnForwardFailure=yes", "-W", "127.0.0.1:5900", "bbx-0@192.0.2.83"]);
     assert.equal(helperCalls(host).filter((call) => call === "display 0").length, 2, "the helper gives the sign-in for each connection");
@@ -857,7 +861,7 @@ describe("An SSH host pool of Macs (047)", () => {
 
   it("checks in its doctor what a Mac's boxes need, and only the doctor asks for Cua Driver's grants", async () => {
     mac("192.0.2.91");
-    mac("192.0.2.92", { "filevault-on": "", "no-fulldisk": "", "no-screensharing": "", grants: "1,0", autologin: "" });
+    mac("192.0.2.92", { "filevault-on": "", "no-fulldisk": "", "no-screensharing": "", grants: "1,0,0", autologin: "" });
     mac("192.0.2.93", { console: "" });
     mac("192.0.2.94", { node: "", lacks: "gh", memory: "6144" });
     const { backend } = pool("good 192.0.2.91 macos,macos-desktop\nbad 192.0.2.92 macos-desktop\naway 192.0.2.93 macos-desktop\nheadless 192.0.2.94 macos");
@@ -867,16 +871,18 @@ describe("An SSH host pool of Macs (047)", () => {
     const check = (id: string) => doctor.checks.find((other) => other.id === id);
     const status = (name: string) => doctor.checks.filter((other) => other.id.startsWith(`machine.${name}.`)).map((other) => `${other.id.split(".")[2]} ${other.status}`);
     assert.equal(doctor.ok, false);
-    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "xcode ok", "screensharing ok", "grants ok", "state ok", "sizes ok"]);
+    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "xcode ok", "screensharing ok", "grants ok", "input ok", "state ok", "sizes ok"]);
     assert.equal(check("machine.good.arch")?.detail, "macOS 26.0 on arm64.");
     assert.equal(check("machine.good.sizes")?.detail, "good holds macos and macos-desktop boxes at the default sizes.");
     assert.equal(check("machine.good.tools")?.detail, "Everything the helper, enrolment and the thread's GitHub access need, with Node.js 24.21.0.");
-    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "xcode ok", "screensharing fail", "grants fail", "state warn", "sizes ok"]);
+    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "xcode ok", "screensharing fail", "grants fail", "input fail", "state warn", "sizes ok"]);
     assert.match(check("machine.bad.signin")!.detail, /^Box user bbx-0 is at the console, but the automatic login is off/);
     assert.match(check("machine.bad.fulldisk")!.fix!, /^On bad: In System Settings, General, Sharing, select the \(i\) beside Remote Login/);
     assert.equal(check("machine.bad.grants")?.detail, "Cua Driver lacks Screen Recording, so computer use cannot see the desktop.");
+    assert.equal(check("machine.bad.input")?.detail, "A pointer move posted in the box user's session did not move the pointer, so a person cannot type or click in the desktop's viewer.");
+    assert.match(check("machine.bad.input")!.fix!, /^On bad, turn on osascript and sshd-keygen-wrapper under Accessibility/);
     assert.match(check("machine.bad.state")!.detail, /^Out of service: FileVault is on/);
-    assert.deepEqual(status("away").filter((line) => /signin|grants/.test(line)), ["signin fail", "grants warn"]);
+    assert.deepEqual(status("away").filter((line) => /signin|grants|input/.test(line)), ["signin fail", "grants warn", "input warn"]);
     assert.equal(check("machine.away.signin")?.detail, "Box user bbx-0 is not signed in at the console.");
     assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "xcode ok", "state ok", "sizes warn"]);
     assert.equal(check("machine.headless.tools")?.fix, "On headless: Install Node.js 22.19 or newer with Homebrew: brew install node. BB's installer needs it to enrol a box. Install git and gh with Homebrew: brew install git gh.");

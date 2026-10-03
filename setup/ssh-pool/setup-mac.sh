@@ -28,7 +28,7 @@
 #   bbx-0, the automatic login
 # - prints the line for bb-box's machines setting, the host keys, and the
 #   steps for a person at the Mac: Screen Sharing, Full Disk Access for
-#   SSH, Cua Driver's grants, and Xcode
+#   SSH, Cua Driver's grants, the grant for a viewer's input, and Xcode
 #
 # Running it again updates the helper, the template, Cua Driver and the keys,
 # and keeps the reset generation. It replaces the keys, so give every
@@ -226,7 +226,7 @@ elif ! printf '%s\n' "$node" | awk -F. '{ exit !($1 > 22 || ($1 == 22 && $2 >= 1
 fi
 [ -z "$lacks" ] || warn "This Mac lacks $lacks. BB's installer needs npm, and boxes need git and gh for the thread's GitHub access: brew install git gh node."
 
-# The panes for Cua Driver's grants, for the person at the Mac.
+# The panes for Cua Driver's grants and the viewer's input, for the person at the Mac.
 person=${SUDO_USER:-}
 if [ -n "$person" ] && [ "$(value console)" = "$person" ]; then
   sudo -u "$person" open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" >/dev/null 2>&1 || :
@@ -261,7 +261,8 @@ echo
 echo "1. Turn on Screen Sharing in System Settings, General, Sharing, if it is off. Under its options, allow all users, and leave the VNC password off."
 echo "2. In System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users. Without it, the reset cannot remove the protected folders a box's user has, such as ~/Library/Mail."
 echo "3. Turn on CuaDriver under Accessibility and under Screen Recording, in System Settings, Privacy and Security."
-step=4
+echo "4. Under Accessibility, also add and turn on /usr/bin/osascript and /usr/libexec/sshd-keygen-wrapper: select +, press Command-Shift-G and enter each path. A person's keys and pointer in the desktop's viewer reach the box user's session through them, as Screen Sharing ignores them."
+step=5
 if [ "$xcode" = no ]; then
   echo "$step. If boxes need Xcode or the iOS Simulator, install Xcode in /Applications, then run setup-mac.sh again."
   step=$((step + 1))
