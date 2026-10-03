@@ -5,7 +5,8 @@
 # display. setup-mac.sh installs it as /usr/local/libexec/bb-box/machine.
 #
 #   machine status [grants | xcode]
-#                                 grants: also Cua Driver's grants, which take seconds
+#                                 grants: also Cua Driver's grants, and whether a viewer's input
+#                                 posts, which take seconds
 #                                 xcode: finds Xcode's Simulator runtimes again, which takes seconds
 #   machine claim <generation>    stdin: install, box, thread, name, kind, created, key
 #   machine release <generation>  stdin: install, and box unless the box is not known
@@ -220,16 +221,39 @@ remove_ipc() {
   done
 }
 
+# Whether a viewer's input reaches the desktop (#406): the input helper, a
+# JXA script osascript runs in the box user's session over SSH, posts events
+# with CGEventPost, which macOS drops without the Accessibility grant for
+# osascript and sshd-keygen-wrapper. So this posts a one-point pointer move
+# the same way, reads the pointer back, and moves it back. It prints 1 when
+# the pointer moved, else 0.
+INPUT_PROBE='ObjC.import("CoreGraphics");
+function run() {
+  function where() { return $.CGEventGetLocation($.CGEventCreate($())); }
+  function move(to) { $.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent($(), 5, to, 0)); }
+  var at = where();
+  var to = $.CGPointMake(at.x >= 1 ? at.x - 1 : at.x + 1, at.y);
+  move(to);
+  delay(0.2);
+  var now = where();
+  move(at);
+  return Math.round(now.x) === Math.round(to.x) && Math.round(now.y) === Math.round(to.y) ? 1 : 0;
+}'
+
 # Cua Driver's Accessibility and Screen Recording grants, as Cua reports them
 # in the session of the box user at the console: 1 or 0 each, or empty when
 # no box user is there or Cua did not answer. Cua runs with the box user's
 # HOME, where its socket is. Only `status grants` asks, as the pool's doctor
 # does, since the pool reads every Mac's status twice for each box it lends.
 grants() {
-  accessibility='' recording=''
+  accessibility='' recording='' input=''
   user=$(console)
   uid=''
   case $user in "$PREFIX"*) uid=$(attribute "$user" UniqueID) ;; esac
+  if number "$uid"; then
+    moved=$(within 10 launchctl asuser "$uid" /usr/bin/sudo -n -H -u "$user" -- /usr/bin/osascript -l JavaScript -e "$INPUT_PROBE" 2>/dev/null)
+    case $moved in 0 | 1) input=$moved ;; esac
+  fi
   if number "$uid" && answer=$(within 10 launchctl asuser "$uid" /usr/bin/sudo -n -H -u "$user" -- "$CUA" permissions status --json 2>/dev/null); then
     granted() {
       if printf '%s\n' "$answer" | grep -q "\"$1\": *true"; then
@@ -242,6 +266,7 @@ grants() {
   fi
   echo "accessibility=$accessibility"
   echo "screenrecording=$recording"
+  echo "input=$input"
 }
 
 # The version of the Xcode xcode-select chooses, from its Info.plist, or

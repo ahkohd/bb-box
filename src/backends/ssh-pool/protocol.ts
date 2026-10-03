@@ -97,10 +97,12 @@ export interface Xcode {
   readonly runtimes: readonly string[];
 }
 
-/** Each grant, or null when no box user is at the console or Cua did not say. */
+/** Each grant, or null when no box user is at the console or Cua, or osascript, did not say. */
 export interface CuaGrants {
   readonly accessibility: boolean | null;
   readonly screenRecording: boolean | null;
+  /** A viewer's input posts in the box user's session: osascript's Accessibility grant, as a one-point pointer move found (#406). */
+  readonly input: boolean | null;
 }
 
 /** What BB's installer and a box's GitHub access need, beyond the helper's tools. */
@@ -183,7 +185,9 @@ export function parseStatus(stdout: string): MachineStatus {
             fileVault: values.get("filevault") !== "0",
             screenSharing: values.get("screensharing") === "1",
             fullDisk: values.get("fulldisk") === "1",
-            grants: values.has("accessibility") ? { accessibility: granted(values.get("accessibility")), screenRecording: granted(values.get("screenrecording")) } : null,
+            grants: values.has("accessibility")
+              ? { accessibility: granted(values.get("accessibility")), screenRecording: granted(values.get("screenrecording")), input: granted(values.get("input")) }
+              : null,
             xcode: values.has("xcode") ? { version: values.get("xcode") || null, runtimes: listed(values.get("runtimes")) } : null,
           }
         : null,

@@ -23,7 +23,7 @@
 //   console-after    how many more times status says root is at the console
 //   autologin        the automatic login instead of the box user
 //   filevault-on, no-screensharing, no-fulldisk  what status reports instead of off, on and on
-//   grants           Cua's grants for `status grants`, as accessibility,screenrecording, instead of 1,1
+//   grants           the grants for `status grants`, as accessibility,screenrecording,input, instead of 1,1,1
 //   xcode            the Mac's Xcode version instead of no Xcode
 //   runtimes         the Simulator runtimes Xcode has instead of "iOS 26.0,watchOS 26.0" ("" for none)
 //   simctl-fails     `status xcode` fails, as when simctl does not answer
@@ -90,8 +90,8 @@ function macLines(extra) {
   lines.push(`filevault=${flag("filevault-on") !== null ? 1 : 0}`, `screensharing=${flag("no-screensharing") !== null ? 0 : 1}`, `fulldisk=${flag("no-fulldisk") !== null ? 0 : 1}`);
   if (flag("no-status-xcode") === null) lines.push(...(extra === "xcode" ? foundXcode() : knownXcode()));
   if (extra === "grants") {
-    const [accessibility, screenRecording] = (flag("grants") ?? "1,1").split(",");
-    lines.push(`accessibility=${console === user ? accessibility : ""}`, `screenrecording=${console === user ? screenRecording : ""}`);
+    const [accessibility, screenRecording, input = "1"] = (flag("grants") ?? "1,1,1").split(",");
+    lines.push(`accessibility=${console === user ? accessibility : ""}`, `screenrecording=${console === user ? screenRecording : ""}`, `input=${console === user ? input : ""}`);
   }
   return lines;
 }

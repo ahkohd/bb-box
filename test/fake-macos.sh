@@ -407,6 +407,8 @@ case $tool in
     echo 'watchOS 26.0 (26.0 - 23R342) - com.apple.CoreSimulator.SimRuntime.watchOS-26-0'
     ;;
   scutil) echo Mac-Mini ;;
+  # The input probe's one-point move: the pointer moves unless flags/no-input, as without the Accessibility grant.
+  osascript) if flag no-input; then echo 0; else echo 1; fi ;;
   ipconfig) [ "$2" = en0 ] && echo 192.0.2.30 ;;
   # curl -o <file> fetches Cua Driver's archive, from flags/cua.tgz; without -o, Homebrew's installer, from flags/install.sh.
   curl)

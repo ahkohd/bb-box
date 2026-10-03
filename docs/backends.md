@@ -366,9 +366,15 @@ node --test test/conformance.test.ts
   it only in `DisplayAuth` `apple`. It is never in a command line, an
   environment variable, `Guest.data`, plugin storage, an error or the
   doctor's output, and the box's reset removes the user it signs in.
+- Screen Sharing ignores the viewer's input, so the display's `input` is
+  core's `MacInput`: `macInputCommand()` run over the box user's SSH in its
+  desktop session, through 030's wrapper (#406). It posts events with
+  `CGEventPost`, which needs the Accessibility grant for `osascript` and
+  `sshd-keygen-wrapper` that `setup-mac.sh`'s steps for a person give.
 - The doctor asks each Mac with `macos-desktop` for Cua Driver's grants
-  with `status grants`. A survey runs plain `status`, which does not wait
-  for Cua.
+  with `status grants`, which also posts a one-point pointer move the
+  helper's way in the box user's session and reads it back, for the
+  viewer's input. A survey runs plain `status`, which waits for neither.
 - A Mac's `status xcode` lists the Simulator runtimes of the Xcode
   `xcode-select` chooses, and writes its version and them to
   `/var/db/bb-box/xcode`. Only the doctor and `setup-mac.sh` ask, as

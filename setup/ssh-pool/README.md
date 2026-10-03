@@ -453,6 +453,11 @@ person at the Mac or on Screen Sharing:
    protects in a box user's home, such as `~/Library/Mail`.
 3. Turn on CuaDriver under Accessibility and under Screen Recording, in
    Privacy and Security.
+4. Under Accessibility, also add and turn on `/usr/bin/osascript` and
+   `/usr/libexec/sshd-keygen-wrapper`. Screen Sharing ignores a viewer that
+   is not Apple's, so a person's keys and pointer in the desktop's viewer go
+   to a helper that `osascript` runs in the box user's session over SSH
+   (#406).
 
 If someone was signed in when you ran it, restart the Mac, so that it signs
 in `bbx-0`. Then add the line and host keys to bb-box, as for a Linux
@@ -470,6 +475,9 @@ box sizes, the doctor checks that:
 - Xcode, if the Mac has it, has an iOS runtime
 - Screen Sharing is on, for `macos-desktop`
 - Cua Driver has Accessibility and Screen Recording, for `macos-desktop`
+- a viewer's input reaches the desktop, for `macos-desktop`: a one-point
+  pointer move posted the helper's way, in the box user's session, moves
+  the pointer
 
 A Mac with FileVault on, without Full Disk Access, or without its box user
 at the console is out of service, and the doctor says why. A Mac without
