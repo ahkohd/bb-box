@@ -493,15 +493,19 @@ and BB's restarts, as it runs on the Mac.
 - **Needs python3.** The holder runs on `/usr/bin/python3` from Xcode's
   command line tools (`xcode-select --install`), which Homebrew needs anyway.
   Without them, a macOS desktop says how to get them.
-- **Sharing one connection.** The holder sets one pixel format and its own
-  encodings (ZRLE, CopyRect, Raw, DesktopSize, LastRect, Cursor), and keeps
-  one update request outstanding, as a VNC viewer does, since Tart answers
-  requests in order and one for changes only when the screen changes. It keeps
-  the last whole screen and the updates since, so a viewer that joins gets the
-  screen of the moment at once, without asking Tart, and then every update,
-  each viewer on its own ZRLE zlib stream. Viewers' keys, pointer and
+- **Sharing one connection.** The holder keeps one update request outstanding,
+  as a VNC viewer does, since Tart answers requests in order and one for
+  changes only when the screen changes. It keeps the last whole screen and the
+  updates since, so a viewer that joins gets the screen of the moment at once,
+  without asking Tart, and then every update. Viewers' keys, pointer and
   clipboard go to Tart's server as they are; bb-box's relay passes only the
   controlling viewer's.
+- **Colours.** Tart's server sends its own pixel format whatever a client
+  asks, which swapped red and blue in a viewer. So the holder keeps that
+  format, as the server's first message gives it, asks for raw pixels (with
+  CopyRect, DesktopSize, LastRect and the cursor), and puts each pixel's bytes
+  in the viewer's order itself. A viewer gets them as Zlib rects, each on a
+  zlib stream of its own.
 - **What listens where.** Tart prints `127.0.0.1:<port>`, but the server
   listens on every interface of the Mac. While a desktop box runs, anyone on
   the Mac's networks who has that run's password can reach its desktop, and a

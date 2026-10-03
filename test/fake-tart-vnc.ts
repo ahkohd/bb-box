@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { constants, createDeflate, inflateSync } from "node:zlib";
+import { constants, inflateSync } from "node:zlib";
 import { StreamReader, vncResponse } from "../src/core/rfb.ts";
 
 export const u16 = (value: number) => Buffer.from([value >> 8, value & 255]);
@@ -25,15 +25,13 @@ export class FakeTart {
   connections = 0;
   crashed = false;
   received: Buffer[] = [];
-  /** The ZRLE tiles sent so far, in order. */
+  /** The labels of the updates sent so far, in order, which each viewer reads back from its pixels' red bytes. */
   tiles: Buffer[] = [];
   size = { width: 1024, height: 768 };
   /** Set for the next update: a new size. */
   resize: { width: number; height: number } | null = null;
   #socket: Socket | null = null;
   #encodings: number[] = [];
-  #deflate = createDeflate();
-  #compressed: Buffer[] = [];
   #updates = 0;
   /** Requests not yet answered, in order: true for the whole screen. */
   #queue: boolean[] = [];
@@ -42,10 +40,12 @@ export class FakeTart {
   requests: boolean[] = [];
 
   readonly password: string;
+  /** Its own pixel format, which it sends whatever the client asks: blue, green, red, unused in memory, as macOS draws, or red first. */
+  readonly native: "bgrx" | "rgbx";
 
-  constructor(password: string) {
+  constructor(password: string, native: "bgrx" | "rgbx" = "bgrx") {
     this.password = password;
-    this.#deflate.on("data", (chunk: Buffer) => this.#compressed.push(chunk));
+    this.native = native;
     this.server = createServer((socket) => void this.#serve(socket));
   }
 
@@ -117,7 +117,9 @@ export class FakeTart {
       }
       socket.write(u32(0));
       await reader.read(1);
-      socket.write(Buffer.concat([u16(this.size.width), u16(this.size.height), Buffer.alloc(16, 7), u32(4), Buffer.from("fake")]));
+      const shifts = this.native === "bgrx" ? [16, 8, 0] : [0, 8, 16];
+      const format = Buffer.from([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, ...shifts, 0, 0, 0]);
+      socket.write(Buffer.concat([u16(this.size.width), u16(this.size.height), format, u32(4), Buffer.from("fake")]));
       for (;;) {
         const type = (await reader.read(1))[0]!;
         if (type === 0) this.received.push(Buffer.concat([Buffer.from([0]), Buffer.from(await reader.read(19))]));
@@ -145,16 +147,16 @@ export class FakeTart {
     }
   }
 
-  /** One rect's ZRLE data: the tile, through the connection's one zlib stream, up to a sync flush. */
-  async #zrle(tile: Buffer): Promise<Buffer> {
-    this.#deflate.write(tile);
-    await new Promise<void>((resolve) => this.#deflate.flush(constants.Z_SYNC_FLUSH, () => resolve()));
-    await new Promise((resolve) => setImmediate(resolve));
-    const data = Buffer.concat(this.#compressed);
-    this.#compressed = [];
-    return data;
+  /** A pixel in its own format. */
+  pixel(red: number, green: number, blue: number): Buffer {
+    return this.native === "bgrx" ? Buffer.from([blue, green, red, 0]) : Buffer.from([red, green, blue, 0]);
   }
 
+  /**
+   * An update: its label as a row of pixels whose red is each character and
+   * whose green and blue are 0x11 and 0x22, then pure red, green and blue at
+   * (8, 8), and the cursor in the first.
+   */
   async #update(socket: Socket, whole: boolean): Promise<void> {
     this.#updates++;
     const parts: Buffer[] = [];
@@ -163,12 +165,11 @@ export class FakeTart {
       this.resize = null;
       parts.push(rect(0, 0, this.size.width, this.size.height, -223));
     }
-    if (this.#updates === 1) parts.push(rect(0, 0, 2, 2, -239), Buffer.alloc(2 * 2 * 4, 9), Buffer.from([0xc0, 0xc0]));
-    const tile = Buffer.from(`${whole ? "whole" : "change"} ${this.#updates}; `.repeat(20));
-    this.tiles.push(tile);
-    const data = await this.#zrle(tile);
-    parts.push(rect(0, 0, 64, 64, 16), u32(data.length), data);
-    parts.push(rect(8, 8, 1, 1, 0), Buffer.alloc(4, this.#updates));
+    if (this.#updates === 1) parts.push(rect(0, 0, 2, 2, -239), ...Array.from({ length: 4 }, () => this.pixel(200, 100, 50)), Buffer.from([0xc0, 0xc0]));
+    const label = Buffer.from(`${whole ? "whole" : "change"} ${this.#updates}; `);
+    this.tiles.push(label);
+    parts.push(rect(0, 0, label.length, 1, 0), ...[...label].map((char) => this.pixel(char, 0x11, 0x22)));
+    parts.push(rect(8, 8, 3, 1, 0), this.pixel(255, 0, 0), this.pixel(0, 255, 0), this.pixel(0, 0, 255));
     parts.push(rect(0, 0, 0, 0, -224));
     socket.write(Buffer.concat([Buffer.from([0, 0, 0xff, 0xff]), ...parts]));
   }
@@ -179,8 +180,14 @@ export class Viewer {
   readonly socket: Socket;
   readonly reader: StreamReader;
   size = { width: 0, height: 0 };
-  #zrle = Buffer.alloc(0);
+  /** The Zlib rects' compressed bytes so far, one stream, and how much of what they inflate to is read. */
+  #zlib = Buffer.alloc(0);
+  #used = 0;
+  /** The labels read from the updates' pixels, in order. */
   tiles = Buffer.alloc(0);
+  /** The red, green and blue of the last colour row at (8, 8), and of the cursor's first pixel. */
+  colours: number[][] = [];
+  cursorColour: number[] = [];
   cursor = false;
 
   constructor(path: string) {
@@ -204,7 +211,19 @@ export class Viewer {
     this.socket.write(Buffer.concat([Buffer.from([3, 0]), u16(0), u16(0), u16(this.size.width), u16(this.size.height)]));
   }
 
-  /** Reads one whole update; its ZRLE must decode on this viewer's own stream. */
+  /** A rect's pixels, in noVNC's format: red, green, blue, unused. */
+  async #pixels(encoding: number, w: number, h: number): Promise<Buffer> {
+    if (encoding === 0) return Buffer.from(await this.reader.read(w * h * 4));
+    const length = Buffer.from(await this.reader.read(4)).readUInt32BE(0);
+    this.#zlib = Buffer.concat([this.#zlib, Buffer.from(await this.reader.read(length))]);
+    const all = inflateSync(this.#zlib, { finishFlush: constants.Z_SYNC_FLUSH });
+    const pixels = all.subarray(this.#used, this.#used + w * h * 4);
+    this.#used += w * h * 4;
+    assert.equal(pixels.length, w * h * 4, "the Zlib rect inflates to its pixels, on this viewer's own stream");
+    return pixels;
+  }
+
+  /** Reads one whole update. */
   async update(): Promise<{ rects: number }> {
     const head = Buffer.from(await this.reader.read(4));
     assert.equal(head[0], 0, "a FramebufferUpdate");
@@ -212,13 +231,19 @@ export class Viewer {
     for (let i = 0; i < count; i++) {
       const r = Buffer.from(await this.reader.read(12));
       const [w, h, encoding] = [r.readUInt16BE(4), r.readUInt16BE(6), r.readInt32BE(8)];
-      if (encoding === 16) {
-        const length = Buffer.from(await this.reader.read(4)).readUInt32BE(0);
-        this.#zrle = Buffer.concat([this.#zrle, Buffer.from(await this.reader.read(length))]);
-        this.tiles = inflateSync(this.#zrle, { finishFlush: constants.Z_SYNC_FLUSH });
-      } else if (encoding === 0) await this.reader.read(w * h * 4);
-      else if (encoding === -239) {
-        await this.reader.read(w * h * 4 + Math.ceil(w / 8) * h);
+      const [x, y] = [r.readUInt16BE(0), r.readUInt16BE(2)];
+      if (encoding === 0 || encoding === 6) {
+        const pixels = await this.#pixels(encoding, w, h);
+        const rgb = Array.from({ length: w * h }, (_, p) => [pixels[p * 4]!, pixels[p * 4 + 1]!, pixels[p * 4 + 2]!]);
+        if (x === 8 && y === 8) this.colours = rgb;
+        else {
+          assert.ok(rgb.every(([, green, blue]) => green === 0x11 && blue === 0x22), `a label's pixels keep their green and blue: ${JSON.stringify(rgb[0])}`);
+          this.tiles = Buffer.concat([this.tiles, Buffer.from(rgb.map(([red]) => red!))]);
+        }
+      } else if (encoding === -239) {
+        const pixels = Buffer.from(await this.reader.read(w * h * 4));
+        await this.reader.read(Math.ceil(w / 8) * h);
+        this.cursorColour = [pixels[0]!, pixels[1]!, pixels[2]!];
         this.cursor = true;
       } else if (encoding === -223) this.size = { width: w, height: h };
       else assert.fail(`rect encoding ${encoding}`);
