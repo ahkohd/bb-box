@@ -9,6 +9,7 @@ import { providerName } from "../core/provider-name.ts";
 import type { BackendDriver, DoctorReport, GuestOs, MachineAccess } from "../backends/types.ts";
 import { warmChecks } from "../backends/warm.ts";
 import { pinsDigest, type ImageFacts } from "../backends/images.ts";
+import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -87,6 +88,8 @@ export interface BbBox {
   setDockerHost(hostId: string, enabled: boolean): Promise<ApplyResult>;
   /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
   dockerCheck(machine: string, signal?: AbortSignal): Promise<{ hostId: string; name: string; endpoint: string; info: DockerInfo; firstMs: number; againMs: number }>;
+  /** What a rebuild of the standard Linux images would take now (049): upstream's latest of the tools that follow it, or with `pinned` the pins alone. */
+  imageVersions(options: { pinned?: boolean; signal?: AbortSignal }): Promise<Versions>;
   general(): Promise<GeneralConfig>;
   view(box: BoxRecord): BoxView;
   /** Who controls a box's desktop. */
@@ -644,6 +647,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (result.ok && enabled) void dockerImages.ensure(hostId);
       return result;
     },
+    imageVersions: ({ pinned, signal }) => resolveVersions(pins, { pinned: !!pinned, ...(signal ? { signal } : {}) }),
     async dockerCheck(machine, signal) {
       const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];
       const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);

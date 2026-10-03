@@ -5,6 +5,7 @@ import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases, kindInfo } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs, Windowing } from "../backends/types.ts";
+import type { Versions } from "../backends/versions.ts";
 import { extraFeatures, stopWords, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
@@ -431,6 +432,27 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
 /** "Next:" hints end every tool result, so an agent always knows what it can do. */
 export function next(...hints: string[]): string {
   return hints.length ? `\n\nNext: ${hints.join(" ")}` : "";
+}
+
+/** What a rebuild of the standard Linux images would take, a line per tool, its architectures together where they agree. */
+export function versionsText(versions: Versions): string {
+  const lines = new Map<string, { words: string; arches: string[]; why: string }>();
+  for (const tool of versions.tools) {
+    const words = tool.version === tool.pinned ? `${tool.name} ${tool.version}, as pinned` : `${tool.name} ${tool.version}, pinned ${tool.pinned}`;
+    const why = tool.kept ?? (tool.version === tool.pinned ? "nothing newer" : tool.source);
+    const key = `${words}\n${why}`;
+    const line = lines.get(key) ?? { words, arches: [], why };
+    line.arches.push(tool.arch);
+    lines.set(key, line);
+  }
+  const { aptSnapshot } = versions;
+  return [
+    versions.following
+      ? "A rebuild of the standard Linux images now takes, against this bb-box's pins:"
+      : "With --pinned, a rebuild of the standard Linux images takes this bb-box's pins alone:",
+    ...[...lines.values()].map(({ words, arches, why }) => `  ${words}, for ${arches.join(" and ")}: ${why}.`),
+    `  apt snapshot ${aptSnapshot.version}${aptSnapshot.version === aptSnapshot.pinned ? ", as pinned" : `, pinned ${aptSnapshot.pinned}`}.`,
+  ].join("\n");
 }
 
 export function doctorText(view: DoctorView): string {

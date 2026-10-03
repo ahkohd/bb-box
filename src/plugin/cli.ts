@@ -10,7 +10,7 @@ import type { Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, movedText, problemsText } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, movedText, problemsText, versionsText } from "./views.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -216,6 +216,18 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const left = await boxes.release(threadId, positionals.box, "released with bb box release");
               if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
               return out(`Released box ${positionals.box}.${idleWords(idle, false)}`);
+            }),
+        }),
+        "images versions": cliCommand({
+          summary:
+            "Show what a rebuild of the standard Linux images would take now (049): upstream's latest stable Claude Code, Codex, pi, gh and Chrome, each with the SHA-256 it publishes, and the day's apt snapshot, against this bb-box's pins.",
+          options: { ...jsonOption, pinned: { type: "boolean", description: "Take the repository's pins alone, as a build with --pinned does." } },
+          run: ({ options }, ctx) =>
+            guard("Reading the latest versions", async () => {
+              const versions = await app.imageVersions({ pinned: !!options.pinned, signal: ctx.signal });
+              // The pin files are for builds, not people.
+              if (options.json) return json({ ...versions, files: undefined });
+              return out(versionsText(versions));
             }),
         }),
         "docker-check": cliCommand({
