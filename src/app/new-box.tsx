@@ -337,11 +337,11 @@ export function NewBox({
               <OptionCard title="Server" words="Terminal" glyph={TYPE_GLYPHS.server} selected={!picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, false)} onClick={() => pick({ desktop: false })} />
               <OptionCard title="Desktop" words="Screen · Terminal · Computer use" glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
             </div>
-          </FormSection>
-          {displayChoice ? (
-            // The windowing system, shown only when a system has both; X11 by default, so today's boxes are unchanged (048).
-            <FormSection title="Display">
-              <div className="space-y-1.5">
+            {displayChoice ? (
+              // The windowing is a detail of a desktop, as a GPU is of its resources (the operator's notes of 3 October 2026): a dim sub-label under
+              // the cards, then the menu, with plain names and no description. Shown only when a system has both; X11 by default, so today's boxes are unchanged (048).
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Display</p>
                 <MenuSelect
                   label="Display"
                   value={picked.windowing}
@@ -351,10 +351,9 @@ export function NewBox({
                   ]}
                   onChange={(value) => pick({ windowing: value as Windowing })}
                 />
-                {picked.windowing === "wayland" ? <p className="text-2xs leading-snug text-muted-foreground">Apps built only for X11 need an X11 desktop.</p> : null}
               </div>
-            </FormSection>
-          ) : null}
+            ) : null}
+          </FormSection>
           {kind ? (
             <FormSection title="Resources" description={`Configure the box's cores, memory${gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
               <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>

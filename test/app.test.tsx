@@ -1919,15 +1919,16 @@ test("the Display choice shows only when a system offers X11 and Wayland, defaul
   // A server has no windowing, so the Display choice is hidden.
   const types = await screen.findByRole("radiogroup", { name: "Type" });
   expect(screen.queryByRole("combobox", { name: "Display" })).toBeNull();
-  // A desktop offers it, X11 by default, with the GPU still a choice and no Wayland note.
+  // A desktop offers it, X11 by default, with the GPU still a choice. It is a sub-label of Type, not a section of its
+  // own (the operator's notes of 3 October 2026), so it is no heading, and it carries no description.
   fireEvent.click(within(types).getByRole("radio", { name: /^Desktop/ }));
   expect((await screen.findByRole("combobox", { name: "Display" })).textContent).toBe("X11");
+  expect(screen.queryByRole("heading", { name: "Display" })).toBeNull();
   expect(screen.getByRole("combobox", { name: "GPU" })).toBeTruthy();
-  expect(screen.queryByText("Apps built only for X11 need an X11 desktop.")).toBeNull();
-  // Wayland: the note shows, the GPU choice goes (Wayland is CPU-only), and Create makes the Wayland kind.
+  // Wayland: the GPU choice goes (Wayland is CPU-only), still no description, and Create makes the Wayland kind.
   await choose("Display", "Wayland");
-  expect(screen.getByText("Apps built only for X11 need an X11 desktop.")).toBeTruthy();
   expect(screen.queryByRole("combobox", { name: "GPU" })).toBeNull();
+  expect(screen.queryByText(/X11 desktop|XFCE|Sway/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux-desktop-wayland-cpu"]));
 });

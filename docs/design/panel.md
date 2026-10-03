@@ -37,8 +37,9 @@ size ([#58](https://github.com/moonstead/bb-box/issues/58), decision 028).
 
 Kinds follow the operator's decisions of 1 October 2026: a kind is named by
 its OS, and what it has reads as badges or, in the New box form, as the
-steps that name it (System, Architecture, Type, a Display where a
-desktop's system offers both windowings, and a GPU under Resources).
+steps that name it (System, Architecture, Type with a Display under it
+where a desktop's system offers both windowings, and a GPU under
+Resources).
 
 | Kind ID | Box row | New box steps | Icon |
 | --- | --- | --- | --- |
@@ -232,6 +233,7 @@ words are never cut off.
 | Type                                                              |
 | [ [=] Server                   ] [ [#] Desktop                 ]  |
 | [     Terminal                 ] [     Screen · Terminal · Co… ]  |
+|                                                                   |
 | Display                                                           |
 | [ X11             v ]                                             |
 | Resources                                                         |
@@ -286,12 +288,15 @@ bottom sheet still carries the title "New box".
   card of its own. A type the system and architecture lack greys out the
   same way. These are the only glyphs in the form, the server and the
   monitor (`src/app/glyphs.tsx`), drawn in the weight of BB's set.
-- **Display**, between Type and Resources, is a menu of X11 or Wayland,
-  shown only where a desktop's system offers both (048, as the GPU menu
-  shows only where a GPU is a choice). It defaults to X11, so nothing
-  changes for today's boxes; under Wayland a dim line notes that apps
-  built only for X11 need an X11 desktop. Like every section it names no
-  kind: the windowing maps to a kind ID in `box-form.tsx`.
+- **Display** is a detail of a desktop, as a GPU is of its resources, not
+  a section of its own, so its title is never bold (the operator's notes
+  of 3 October 2026). Where a desktop's system offers both windowings
+  (048), a dim sub-label "Display" sits on a line of its own under the
+  Type cards, in the GPU sub-label's style, then one menu, X11 or
+  Wayland, the names plain and with no description under either (the
+  operator took the Wayland note off). It defaults to X11, so nothing
+  changes for today's boxes. Like every step it names no kind: the
+  windowing maps to a kind ID in `box-form.tsx`.
 - **The sections narrow each other.** Each shows every option, and the
   choice is the nearest that exists: picking Windows, which has no server,
   moves Type to Desktop; picking arm64 where only a server exists moves
