@@ -74,7 +74,14 @@ for target in "${targets[@]}"; do
     desktop-wayland) image=bbbox/linux-desktop-wayland:$version ;;
   esac
   # The guest scripts install x86_64 builds of their tools.
-  docker build --platform linux/amd64 --target "$target" --build-arg BB_URL="$bb_url" \
-    --build-arg BB_APP_SHA256="$app_sha256" -t "$image" -f "$here/Dockerfile" "$here/.."
+  build=(docker build --platform linux/amd64 --target "$target" --build-arg BB_URL="$bb_url"
+    --build-arg BB_APP_SHA256="$app_sha256" -t "$image" -f "$here/Dockerfile")
+  "${build[@]}" "$here/.."
+  # Its record (049) in a label, where the plugin's doctor reads it without
+  # starting the image: the image's own, which a second build, all from the
+  # cache, puts on the image.
+  record=$(docker run --rm --quiet --network none --platform linux/amd64 --entrypoint jq "$image" -c . /usr/share/bb-box/image.json) \
+    && [ "${record:0:1}" = "{" ] || { echo "$image has no image record, /usr/share/bb-box/image.json" >&2; exit 1; }
+  "${build[@]}" --quiet --label "bbbox.image-record=$record" "$here/.." >/dev/null
   echo "built $image"
 done

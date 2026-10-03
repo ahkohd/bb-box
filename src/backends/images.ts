@@ -73,6 +73,16 @@ export function parseImageRecord(value: unknown): ImageRecord | null {
   };
 }
 
+/** A record from its JSON text, as a Docker label holds it, or null when it is not one. */
+export function recordFromJson(text: unknown): ImageRecord | null {
+  if (typeof text !== "string" || !text.trim().startsWith("{")) return null;
+  try {
+    return parseImageRecord(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
 /** The record a description carries as its last line that is a JSON object, as build.sh writes it, or null. */
 export function recordInDescription(description: string): ImageRecord | null {
   const line = description
@@ -80,12 +90,7 @@ export function recordInDescription(description: string): ImageRecord | null {
     .map((candidate) => candidate.trim())
     .filter((candidate) => candidate.startsWith("{"))
     .at(-1);
-  if (!line) return null;
-  try {
-    return parseImageRecord(JSON.parse(line));
-  } catch {
-    return null;
-  }
+  return recordFromJson(line);
 }
 
 /** The pins an image is built with: a Linux image's, or a desktop's, which adds the desktop's. */

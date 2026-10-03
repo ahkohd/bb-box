@@ -94,6 +94,19 @@ test("image-record.sh writes a record bb-box reads, with the pins' digest bb-box
   assert.match(record.tools.chrome ?? "", /^\d+\.\d+\.\d+\.\d+$/);
   assert.match(record.tools["cua-driver"] ?? "", /^\d+\.\d+\.\d+$/);
   assert.equal(record.sizeGiB, null, "finalize.sh adds it once the image is clean");
+
+  // Each desktop's kind, by its build's settings. Docker's one X desktop image serves GPU desktops too.
+  for (const [settings, kind] of [
+    ["DESKTOP_GPU=none\n", "linux-desktop-cpu"],
+    ["DESKTOP_GPU=none\nDESKTOP_SESSION=wayland\n", "linux-desktop-wayland-cpu"],
+    ["DESKTOP_GPU=none\nDESKTOP_SESSION=x11\nBOX_RUNTIME=docker\n", "linux-desktop"],
+  ] as const) {
+    writeFileSync(join(build, "build.env"), settings);
+    const again = spawnSync("bash", [join(TEMPLATE, "guest", "image-record.sh"), build, "desktop", out], { env: { PATH: process.env.PATH }, encoding: "utf8" });
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal(JSON.parse(readFileSync(join(out, "image.json"), "utf8")).kind, kind, settings);
+  }
+  assert.equal(readFileSync(join(out, "image.json"), "utf8").split("\n").filter(Boolean).length, 1, "on one line, as a label holds it");
 });
 
 test("an image says what it is and how old", () => {

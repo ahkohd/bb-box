@@ -98,13 +98,18 @@ test("with BB's URL, the images have BB's app, and one with another build of it 
   assert.deepEqual([unasked, none.apps, none.runs.map((each) => each.args)], [[], [null, null], [["linux"]]], "BB with no URL");
 });
 
-test("an image is outdated from another layout, or with another build of BB's app when BB gives one (#95)", () => {
+test("an image is outdated with no record or an older contract, or with another build of BB's app when BB gives one (#95, 049)", () => {
   const app = "b".repeat(64);
-  assert.equal(outdated({ "bbbox.image-version": "1", "bbbox.bb-app": app }, app), false);
-  assert.equal(outdated({ "bbbox.image-version": "1", "bbbox.bb-app": "c".repeat(64) }, app), true);
-  assert.equal(outdated({ "bbbox.image-version": "1", "bbbox.bb-app": "" }, app), true, "built without BB's app");
-  assert.equal(outdated({ "bbbox.image-version": "1", "bbbox.bb-app": "" }, null), false, "BB gives no digest");
-  assert.equal(outdated({ "bbbox.image-version": "0", "bbbox.bb-app": app }, app), true);
+  const labels = (record: Record<string, unknown> | null) => ({
+    "bbbox.image-version": "1",
+    ...(record ? { "bbbox.image-record": JSON.stringify({ contract: 1, kind: "linux", build: "build.x", built: "2026-10-03T00:00:00Z", ...record }) } : {}),
+  });
+  assert.equal(outdated(labels({ bbApp: app }), app), false);
+  assert.equal(outdated(labels({ bbApp: "c".repeat(64) }), app), true);
+  assert.equal(outdated(labels({ bbApp: null }), app), true, "built without BB's app");
+  assert.equal(outdated(labels({ bbApp: null }), null), false, "BB gives no digest");
+  assert.equal(outdated(labels({ bbApp: app, contract: 0 }), app), true, "an older contract");
+  assert.equal(outdated(labels(null), app), true, "built before records");
 });
 
 test("BB's app digest comes from the header of a HEAD request, as build.sh reads it (#95)", async () => {
@@ -168,10 +173,11 @@ const WAYLAND_FREE_GB = 18;
 
 /**
  * Runs build.sh with a docker that says `freeGB` is free, or fails its check
- * with `error`, and builds nothing, and a curl that gives `digest` as BB's
- * app's, gives none ("none"), or fails ("fail").
+ * with `error`, builds nothing, and reads `record` from an image's
+ * /usr/share/bb-box/image.json, and a curl that gives `digest` as BB's app's,
+ * gives none ("none"), or fails ("fail").
  */
-function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none") {
+function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none", record = '{"contract":1,"kind":"linux"}') {
   const dir = tempDir("docker-build");
   const bin = join(dir, "bin");
   mkdirSync(bin);
@@ -182,6 +188,7 @@ function buildWith(freeGB: number, args: readonly string[] = [], error?: string,
     `#!/bin/sh
 printf '%s\\n' "$*" >>'${log}'
 [ "$1" = run ] || exit 0
+case "$*" in *image.json*) printf '%s\\n' "$FAKE_RECORD"; exit 0 ;; esac
 if [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 125; fi
 echo 'Filesystem     1024-blocks    Used Available Capacity Mounted on'
 echo "overlay           65871716 2899792 $FAKE_FREE_KB       5% /"
@@ -199,15 +206,18 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
 `,
   );
   chmodSync(join(bin, "curl"), 0o755);
-  const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), FAKE_DIGEST: digest, ...(error ? { FAKE_ERROR: error } : {}) };
+  const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), FAKE_DIGEST: digest, FAKE_RECORD: record, ...(error ? { FAKE_ERROR: error } : {}) };
   const result = spawnSync("bash", [BUILD_SCRIPT, ...args], { encoding: "utf8", env });
   const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
-  const builds = calls.filter((call) => call.startsWith("build "));
+  // Each target's build, then a second one, from the cache, that labels it with its record (049).
+  const builds = calls.filter((call) => call.startsWith("build ") && !call.includes("bbbox.image-record="));
   return {
     status: result.status,
     stderr: result.stderr,
-    checks: calls.filter((call) => call.startsWith("run ")),
+    checks: calls.filter((call) => call.startsWith("run ") && call.includes("--entrypoint df")),
     builds,
+    labelled: calls.filter((call) => call.includes("bbbox.image-record=")),
+    reads: calls.filter((call) => call.startsWith("run ") && call.includes("image.json")),
     built: builds.map((call) => / --target ([\w-]+) /.exec(call)?.[1]),
     curls: existsSync(`${log}.curl`) ? readFileSync(`${log}.curl`, "utf8").split("\n").filter(Boolean) : [],
   };
@@ -235,6 +245,25 @@ test("build.sh does not start with less disk free than the build needs, and says
   const unseen = buildWith(1, [], "Unable to find image 'ubuntu:24.04' locally");
   assert.deepEqual([unseen.status, unseen.built], [0, ["linux", "desktop", "desktop-wayland"]], "a check that cannot run does not stop the build");
   assert.equal(unseen.stderr, "build.sh could not see how much disk the Docker host has free, so it builds anyway: Unable to find image 'ubuntu:24.04' locally\n");
+});
+
+test("build.sh labels each image with its own record, and stops at an image with none (049)", () => {
+  const record = '{"contract":1,"kind":"linux","build":"build.x"}';
+  const built = buildWith(BUILD_FREE_GB, ["linux", "desktop"], undefined, "none", record);
+  assert.equal(built.status, 0, built.stderr);
+  assert.deepEqual(built.built, ["linux", "desktop"]);
+  assert.deepEqual(built.reads, [
+    "run --rm --quiet --network none --platform linux/amd64 --entrypoint jq bbbox/linux:1 -c . /usr/share/bb-box/image.json",
+    "run --rm --quiet --network none --platform linux/amd64 --entrypoint jq bbbox/linux-desktop:1 -c . /usr/share/bb-box/image.json",
+  ]);
+  assert.equal(built.labelled.length, 2);
+  for (const [i, target] of ["linux", "desktop"].entries()) {
+    // The same build, so all from the cache, with the label.
+    assert.equal(built.labelled[i], `${built.builds[i]!.replace(/ \S+$/, "")} --quiet --label bbbox.image-record=${record} ${built.builds[i]!.split(" ").at(-1)}`, target);
+  }
+
+  const none = buildWith(BUILD_FREE_GB, ["linux", "desktop"], undefined, "none", "");
+  assert.deepEqual([none.status, none.stderr, none.built, none.labelled], [1, "bbbox/linux:1 has no image record, /usr/share/bb-box/image.json\n", ["linux"], []]);
 });
 
 test("build.sh with BB's URL passes on the digest of BB's app that the server gives, and stops when it gives none (#95)", () => {
