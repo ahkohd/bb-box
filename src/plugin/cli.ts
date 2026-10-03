@@ -6,7 +6,7 @@ import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, describeError } from "../core/boxes.ts";
 import type { DoctorReport } from "../backends/types.ts";
-import type { Problem } from "../core/document.ts";
+import type { ImageBake, Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
@@ -68,6 +68,22 @@ const fileArgument = [
 ] as const;
 
 /** A configuration file, read where BB's server runs: the command runs there and gets no input. */
+/** A text file, read on the machine BB's server runs on, from where bb runs for a relative path. */
+async function readTextFile(path: string, ctx: PluginCliContext): Promise<string> {
+  const file = isAbsolute(path) ? path : resolve(ctx.cwd ?? process.cwd(), path);
+  try {
+    return await readFile(file, "utf8");
+  } catch (error) {
+    throw new PluginCliError(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, {
+      code: "invalid_input",
+      hint: "The file is read on the machine BB's server runs on.",
+    });
+  }
+}
+
+/** A comma-separated list, such as linux,linux-desktop-cpu. */
+const listOf = (value: unknown) => String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+
 async function readConfigFile(path: string, ctx: PluginCliContext): Promise<unknown> {
   const file = isAbsolute(path) ? path : resolve(ctx.cwd ?? process.cwd(), path);
   let text: string;
@@ -216,6 +232,80 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const left = await boxes.release(threadId, positionals.box, "released with bb box release");
               if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
               return out(`Released box ${positionals.box}.${idleWords(idle, false)}`);
+            }),
+        }),
+        "image set": cliCommand({
+          summary:
+            "Set a project's image (049): a script run as root on its kinds' standard images, for the boxes of the project's threads, with an optional check run as the box user. bb-box keeps a copy of the files. Setting it changes every new box of those kinds in the project.",
+          positionals: [{ name: "name", description: "The image's name: a lower-case letter first, then letters, digits and \"-\".", required: true }],
+          options: {
+            kinds: { type: "string", description: "The kinds it builds on, comma-separated, such as linux,linux-desktop-cpu." },
+            "script-file": { type: "string", description: "The script, such as .bb/box-setup.sh, read where bb runs." },
+            "check-file": { type: "string", description: "A check run as the box user after the script, such as .bb/box-check.sh." },
+            project: { type: "string", description: "The BB projects whose boxes get it, by ID, comma-separated." },
+            bake: { type: "string", description: "auto (after two boxes in 14 days), always, or never (the script at each start). auto by default." },
+          },
+          run: ({ positionals, options }, ctx) =>
+            guard("Setting the image", async () => {
+              const kinds = listOf(options.kinds);
+              const projects = listOf(options.project);
+              if (!kinds.length || !projects.length || !options["script-file"]) {
+                throw new PluginCliError("Give --kinds, --project and --script-file.", { code: "invalid_input", hint: "bb box image set rust-tailscale --kinds linux --script-file .bb/box-setup.sh --project <id>" });
+              }
+              const script = await readTextFile(String(options["script-file"]), ctx);
+              const check = options["check-file"] ? await readTextFile(String(options["check-file"]), ctx) : undefined;
+              const bake = options.bake === undefined ? undefined : String(options.bake);
+              const result = await app.setImage(positionals.name, {
+                kinds,
+                script,
+                ...(check !== undefined ? { check } : {}),
+                ...(bake !== undefined ? { bake: bake as ImageBake } : {}),
+                projects,
+                source: { script: String(options["script-file"]), ...(options["check-file"] ? { check: String(options["check-file"]) } : {}) },
+                updated: new Date().toISOString(),
+              });
+              if (!result.ok) return result.reason === "problems" ? refused(result.problems, "Nothing was saved. Fix these first:") : { exitCode: 1, stderr: "The configuration kept changing; try again.\n" };
+              return out(`Saved image ${positionals.name} for ${kinds.join(", ")} boxes in ${projects.length === 1 ? "project" : "projects"} ${projects.join(", ")}, at revision ${result.state.revision}.`);
+            }),
+        }),
+        "image remove": cliCommand({
+          summary: "Remove a project's image (049). Boxes of its kinds in its projects start from the standard images again.",
+          positionals: [{ name: "name", description: "The image's name, from bb box image list.", required: true }],
+          run: ({ positionals }) =>
+            guard("Removing the image", async () => {
+              if (!app.configuration.exported().images?.[positionals.name]) throw new BoxError("not_found", `There is no image ${positionals.name}.`);
+              const result = await app.setImage(positionals.name, null);
+              if (!result.ok) return result.reason === "problems" ? refused(result.problems, "Nothing was saved. Fix these first:") : { exitCode: 1, stderr: "The configuration kept changing; try again.\n" };
+              return out(`Removed image ${positionals.name}, at revision ${result.state.revision}.`);
+            }),
+        }),
+        "image list": cliCommand({
+          summary: "List projects' images (049): each one's kinds, projects, how it is baked, and where its script came from.",
+          options: jsonOption,
+          run: ({ options }) =>
+            guard("Listing the images", async () => {
+              const images = app.configuration.exported().images ?? {};
+              if (options.json) return json(images);
+              const names = Object.keys(images).sort();
+              if (!names.length) return out("No project has an image. bb box image set sets one.");
+              return out(
+                names
+                  .map((name) => {
+                    const image = images[name]!;
+                    return `${name}: ${image.kinds.join(", ")} boxes in ${image.projects.join(", ")}; baked ${image.bake ?? "auto"}; script ${image.source?.script ?? "set by hand"}${image.check ? `, check ${image.source?.check ?? "set by hand"}` : ""}${image.updated ? `; set ${image.updated.slice(0, 10)}` : ""}.`;
+                  })
+                  .join("\n"),
+              );
+            }),
+        }),
+        "image show": cliCommand({
+          summary: "Print a project's image's script, and its check, as bb-box keeps them (049).",
+          positionals: [{ name: "name", description: "The image's name, from bb box image list.", required: true }],
+          run: ({ positionals }) =>
+            guard("Showing the image", async () => {
+              const image = app.configuration.exported().images?.[positionals.name];
+              if (!image) throw new BoxError("not_found", `There is no image ${positionals.name}.`);
+              return out(`${image.script.trimEnd()}${image.check ? `\n\n# The check, run as the box user:\n${image.check.trimEnd()}` : ""}`);
             }),
         }),
         "images list": cliCommand({

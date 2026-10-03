@@ -50,6 +50,34 @@ export interface KindConfig {
   readonly spares?: number;
 }
 
+/**
+ * A project's image (049): a script run as root on a kind's standard image,
+ * for the boxes of its projects' threads. Linux for now.
+ */
+export interface ImageConfig {
+  /** The kinds it builds on, such as linux and linux-desktop-cpu. */
+  readonly kinds: readonly string[];
+  /** The script, run as root in a box of the kind's standard image. */
+  readonly script: string;
+  /** Run as the box user after the script: the image fails when it fails. */
+  readonly check?: string;
+  /** When it is built ahead: auto, after two boxes in 14 days; always; or never, so it runs at each start. */
+  readonly bake?: ImageBake;
+  /** The BB projects whose threads' boxes get it. */
+  readonly projects: readonly string[];
+  /** Where the files came from in the project's repository, such as .bb/box-setup.sh. */
+  readonly source?: { readonly script?: string; readonly check?: string };
+  /** When it was set, as an ISO 8601 time. */
+  readonly updated?: string;
+}
+
+export const IMAGE_BAKES = ["auto", "always", "never"] as const;
+export type ImageBake = (typeof IMAGE_BAKES)[number];
+/** An image's name: a lower-case letter first, then letters, digits and "-". "standard" is the kinds' own images. */
+export const IMAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
+/** The largest script or check bb-box keeps. */
+export const IMAGE_SCRIPT_BYTES = 256 * 1024;
+
 export interface GeneralSettings {
   /** 0 means no limit. */
   readonly boxesPerThread?: number;
@@ -64,6 +92,8 @@ export interface ConfigDocument {
   readonly backends: readonly BackendConfig[];
   readonly kinds: Readonly<Record<string, KindConfig>>;
   readonly general: GeneralSettings;
+  /** Projects' images, by name (049). */
+  readonly images?: Readonly<Record<string, ImageConfig>>;
 }
 
 /** Secret values by backend ID and field. Never leaves bb-box. */
@@ -203,8 +233,8 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
     problem("", "The configuration must be a JSON object with backends, kinds and general.");
     return { document: emptyDocument(), secrets, problems };
   }
-  const known = new Set(["schema", "revision", "backends", "kinds", "general"]);
-  for (const key of Object.keys(input)) if (!known.has(key)) problem(key, `There is no "${key}" in the configuration. It has backends, kinds and general.`);
+  const known = new Set(["schema", "revision", "backends", "kinds", "general", "images"]);
+  for (const key of Object.keys(input)) if (!known.has(key)) problem(key, `There is no "${key}" in the configuration. It has backends, kinds, general and images.`);
   if (input.schema !== undefined && input.schema !== SCHEMA) problem("schema", `This bb-box reads schema ${SCHEMA}, not ${String(input.schema)}.`);
   const revision = isWhole(input.revision, 0) ? input.revision : 0;
 
@@ -245,7 +275,56 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
       if (backend) backends.push(backend);
     });
   }
-  return { document: { schema: SCHEMA, revision, backends, kinds, general: general as GeneralSettings }, secrets, problems };
+  const images: Record<string, ImageConfig> = {};
+  if (input.images !== undefined) {
+    if (!isRecord(input.images)) problem("images", "images must be an object with an entry per image, by its name.");
+    else for (const [name, value] of Object.entries(input.images)) {
+      const image = readImage(`images.${name}`, value, problem);
+      if (image) images[name] = image;
+    }
+  }
+  return {
+    document: { schema: SCHEMA, revision, backends, kinds, general: general as GeneralSettings, ...(Object.keys(images).length ? { images } : {}) },
+    secrets,
+    problems,
+  };
+}
+
+/** An image's entry, or undefined when its shape is wrong. */
+function readImage(path: string, value: unknown, problem: (path: string, message: string) => void): ImageConfig | undefined {
+  if (!isRecord(value)) {
+    problem(path, "An image is an object with kinds, script, projects, and optionally check, bake and source.");
+    return undefined;
+  }
+  const strings = (key: string) => (Array.isArray(value[key]) && value[key].every((item: unknown) => typeof item === "string" && item) ? (value[key] as string[]) : null);
+  const kinds = strings("kinds");
+  const projects = strings("projects");
+  let ok = true;
+  const bad = (key: string, message: string) => {
+    problem(`${path}.${key}`, message);
+    ok = false;
+  };
+  if (!kinds?.length) bad("kinds", "Give the kinds it builds on, such as [\"linux\"].");
+  if (!projects?.length) bad("projects", "Give the BB projects whose boxes get it, by their IDs.");
+  if (typeof value.script !== "string" || !value.script.trim()) bad("script", "Give its script: the shell script run as root on the kind's standard image.");
+  if (value.check !== undefined && typeof value.check !== "string") bad("check", "Its check is a shell script, run as the box user.");
+  if (value.bake !== undefined && !(IMAGE_BAKES as readonly unknown[]).includes(value.bake)) bad("bake", `bake is ${IMAGE_BAKES.join(", ")}.`);
+  const source = value.source;
+  if (source !== undefined && !(isRecord(source) && Object.values(source).every((item) => typeof item === "string"))) bad("source", "source gives the files' paths in the repository, as script and check.");
+  if (value.updated !== undefined && (typeof value.updated !== "string" || Number.isNaN(Date.parse(value.updated)))) bad("updated", "updated is an ISO 8601 time.");
+  for (const key of Object.keys(value)) {
+    if (!["kinds", "script", "check", "bake", "projects", "source", "updated"].includes(key)) bad(key, `An image has no "${key}". It has kinds, script, check, bake, projects, source and updated.`);
+  }
+  if (!ok) return undefined;
+  return {
+    kinds: kinds!,
+    script: value.script as string,
+    ...(typeof value.check === "string" && value.check.trim() ? { check: value.check } : {}),
+    ...(value.bake !== undefined ? { bake: value.bake as ImageBake } : {}),
+    projects: projects!,
+    ...(source !== undefined ? { source: source as ImageConfig["source"] & object } : {}),
+    ...(typeof value.updated === "string" ? { updated: value.updated } : {}),
+  };
 }
 
 function readSize(path: string, value: unknown, largest: boolean, problem: (path: string, message: string) => void): SizeChange | undefined {
@@ -651,6 +730,28 @@ export function checkDocument(
 
   for (const [id, count] of inUse.backends) {
     if (count > 0 && !seen.has(id)) problem(`backends.${id}`, `Backend ${id} has ${plural(count, "box")}, so it cannot be removed or renamed. Turn it off and release them first.`);
+  }
+
+  // Projects' images (049): Linux kinds for now, and one image a project's boxes of a kind get.
+  const claimed = new Map<string, string>();
+  for (const [name, image] of Object.entries(document.images ?? {})) {
+    const path = `images.${name}`;
+    if (!IMAGE_NAME.test(name) || name === "standard") problem(path, `Name an image with a lower-case letter first, then letters, digits and "-", up to 40, and not "standard". "${name}" is not one.`);
+    for (const kind of image.kinds) {
+      if (!kinds.includes(kind)) problem(`${path}.kinds`, `There is no kind "${kind}". The kinds are ${kinds.join(", ")}.`);
+      else if (!kind.startsWith("linux")) problem(`${path}.kinds`, `An image's script is a Linux one for now, and ${kind} is not a Linux kind.`);
+    }
+    for (const [key, text] of [["script", image.script], ["check", image.check ?? ""]] as const) {
+      const bytes = new TextEncoder().encode(text).length;
+      if (bytes > IMAGE_SCRIPT_BYTES) problem(`${path}.${key}`, `The ${key} is ${Math.ceil(bytes / 1024)} KiB; bb-box keeps up to ${IMAGE_SCRIPT_BYTES / 1024} KiB.`);
+    }
+    for (const project of image.projects) {
+      for (const kind of image.kinds) {
+        const other = claimed.get(`${project} ${kind}`);
+        if (other) problem(`${path}.kinds`, `Project ${project}'s ${kind} boxes would get both ${other} and ${name}. Give each project one image a kind.`);
+        else claimed.set(`${project} ${kind}`, name);
+      }
+    }
   }
   for (const [id, hosts] of inUse.hosts) {
     const backend = document.backends.find((candidate) => candidate.id === id);

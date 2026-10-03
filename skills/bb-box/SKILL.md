@@ -25,6 +25,7 @@ Every result ends with a `Next:` line that says what to do next.
 | `box_start` | `box` | Starts a stopped box again. |
 | `box_thread` | `box`, `prompt`, `title` | Starts a child thread on a box that is a BB machine, in a worktree of the project cloned onto the box. It is archived with this thread. |
 | `box_release` | `box` | Releases a box. Its disk is deleted. Refused while a thread is working on the box, naming it; an idle thread there loses its machine, and the answer names it. |
+| `box_image_set` | `name`, `kinds`, `script`, `check`, `bake`, `script_path`, `check_path` | Sets this thread's project's image: a script run as root on the standard image of its Linux kinds, so the project's boxes start with what it needs. Commit the files as `.bb/box-setup.sh` and `.bb/box-check.sh` and pass their text and paths. Setting it changes every new box of those kinds in the project, so ask the user first unless they asked for it. |
 | `computer_windows` | `box` | Lists the windows on a desktop box's screen, with their IDs. |
 | `computer_observe` | `box`, `window`, `query?`, `limit?`, `screenshot?` | Reads a window's accessibility tree, with a reference such as `e12` for each element you can act on. |
 | `computer_screenshot` | `box`, `window?` | Returns an image of a window, or of the whole desktop by default. |
@@ -260,6 +261,8 @@ Most take `--json`.
 | `bb box release <box> [--force]` | Releases a box. A box a thread is working on needs `--force`. |
 | `bb box sweep` | Runs the clean-up now. |
 | `bb box install-id` | Shows this install's ID, which it records on its guests. `--set <id>` takes back the ID it had before it lost its storage, once no box holds a guest. |
+| `bb box image set <name> --kinds <kinds> --script-file <file> [--check-file <file>] --project <id> [--bake auto\|always\|never]` | Sets a project's image, as `box_image_set` does, from files. `bb box image list`, `show <name>` and `remove <name>` list, print and remove them. |
+| `bb box images list`, `refresh`, `build <image>` | The standard images bb-box rebuilds each night: what is due, a run, and one image now (`--try` checks without replacing). |
 
 ## Your machines
 

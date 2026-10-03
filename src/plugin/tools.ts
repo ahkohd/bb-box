@@ -465,4 +465,49 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       }
     },
   });
+
+  bb.agents.registerTool({
+    name: "box_image_set",
+    description:
+      "Set this thread's project's image (049): a shell script run as root on the standard image of its kinds, so the project's boxes start with what it needs, such as a language's toolchain. " +
+      "Pass the files' text: commit them in the repository as .bb/box-setup.sh and .bb/box-check.sh, and give their paths. The script runs in a booted box with the network, on any Linux backend, and reads BB_BOX_IMAGE, BB_BOX_KIND, BB_BOX_BACKEND and BB_BOX_ARCH where it must differ. It gets none of the project's secrets. " +
+      "Setting it changes every new box of those kinds in the project, so ask the user first unless they asked for it.",
+    presentation: { label: { pending: "Setting the project's image", completed: "Set the project's image" } },
+    parameters: z.object({
+      name: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).describe('The image\'s name, such as "rust-tailscale": a lower-case letter first, then letters, digits and "-".'),
+      kinds: z.array(z.string().min(1)).min(1).describe('The Linux kinds it builds on, such as ["linux", "linux-desktop-cpu"]. box_list shows the kinds.'),
+      script: z.string().min(1).describe("The script's text, run as root."),
+      check: z.string().optional().describe("A check's text, run as the box user after the script, such as `cargo --version`: the image fails when it fails."),
+      bake: z.enum(["auto", "always", "never"]).optional().describe("auto (the default) builds it ahead once two boxes started within 14 days; always keeps a build; never runs the script at each start."),
+      script_path: z.string().optional().describe("The script's path in the repository, such as .bb/box-setup.sh."),
+      check_path: z.string().optional().describe("The check's path in the repository, such as .bb/box-check.sh."),
+    }),
+    async execute({ name, kinds, script, check, bake, script_path: scriptPath, check_path: checkPath }, { threadId }) {
+      try {
+        const project = await app.projectOf(thread(threadId));
+        if (!project) throw new BoxError("unsupported", "This thread has no BB project, so it has no project's image to set.");
+        // Another project's image of the name is theirs to change.
+        const current = app.configuration.exported().images?.[name];
+        if (current && !current.projects.includes(project)) {
+          throw new BoxError("in_use", `Image ${name} belongs to ${current.projects.join(", ")}, not this thread's project. Pick another name.`);
+        }
+        const result = await app.setImage(name, {
+          kinds,
+          script,
+          ...(check?.trim() ? { check } : {}),
+          ...(bake ? { bake } : {}),
+          projects: current ? current.projects : [project],
+          ...(scriptPath || checkPath ? { source: { ...(scriptPath ? { script: scriptPath } : {}), ...(checkPath ? { check: checkPath } : {}) } } : {}),
+          updated: new Date().toISOString(),
+        });
+        if (!result.ok) {
+          const why = result.reason === "problems" ? result.problems.map((problem) => problem.message).join(" ") : "The configuration kept changing.";
+          return { content: [{ type: "text", text: `The image was not saved: ${why}${next("Fix what it says and call box_image_set again.")}` }], isError: true };
+        }
+        return `Set image ${name} for ${kinds.join(", ")} boxes in this thread's project.${next("Tell the user what changed. bb box image list shows the project's images, and bb box image remove removes one.")}`;
+      } catch (error) {
+        return failure(error, "Setting the project's image");
+      }
+    },
+  });
 }
