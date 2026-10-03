@@ -170,8 +170,14 @@ refuses the background first, and bb-box tries again in the foreground, as
 element because it cannot inject input, `computer.ts` clicks the centre of
 the element's frame instead:
 
-- the frame is in screen pixels, and the window's origin from
-  `list_windows` turns it into window pixels;
+- Cua gives frames in screen pixels, but a GTK 3 app's in the window's
+  own, and says `window` for both, so on a Wayland box bb-box reads a
+  window's frames the way that puts more of them inside the window; the
+  window's origin from `list_windows` then turns the frame into window
+  pixels. A box's kind says whether its desktop is Wayland. Elsewhere
+  frames are always the screen's, and one above or left of the window
+  belongs to an element scrolled out of view, so bb-box leaves them as
+  they are;
 - Cua takes pixels only after a `get_window_state` with a screenshot on
   the same connection, so bb-box reads the window first when its session
   has not;

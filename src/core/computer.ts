@@ -8,6 +8,7 @@
 
 import { createHash } from "node:crypto";
 import type { ByteChannel, GuestOs } from "../transports/types.ts";
+import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { BoxError, type BoxRecord } from "./boxes.ts";
 import type { Owner } from "./control.ts";
 import { driverCommand } from "./in-box.ts";
@@ -511,6 +512,33 @@ function rectOf(value: unknown): Rect | null {
   const width = num(raw.w) ?? num(raw.width);
   const height = num(raw.h) ?? num(raw.height);
   return x === undefined || y === undefined || width === undefined || height === undefined ? null : { x, y, width, height };
+}
+
+/**
+ * A Wayland window's element frames on the screen. Cua gives them in the
+ * screen's pixels, but in the window's own for a GTK 3 app, which does not
+ * know where its window is, and says "window" for both (048). The reading
+ * that puts more of the frames inside the window holds for a frame that both
+ * readings, or neither, put there. Elsewhere frames are always the screen's,
+ * and one above or left of the window is an element scrolled out of it, so
+ * only a Wayland window's frames come here.
+ */
+function screenFrames<K>(frames: ReadonlyMap<K, Rect | null>, window: Rect): Map<K, Rect | null> {
+  const slack = 2;
+  const within = (frame: Rect) =>
+    frame.x >= window.x - slack && frame.y >= window.y - slack && frame.x + frame.width <= window.x + window.width + slack && frame.y + frame.height <= window.y + window.height + slack;
+  const moved = (frame: Rect): Rect => ({ ...frame, x: frame.x + window.x, y: frame.y + window.y });
+  let own = 0;
+  let screen = 0;
+  for (const frame of frames.values()) {
+    if (frame && within(moved(frame))) own++;
+    if (frame && within(frame)) screen++;
+  }
+  const placed = (frame: Rect) => {
+    const asOwn = within(moved(frame));
+    return asOwn === within(frame) ? (own > screen ? moved(frame) : frame) : asOwn ? moved(frame) : frame;
+  };
+  return new Map([...frames].map(([key, frame]) => [key, frame && placed(frame)]));
 }
 
 function inside(rect: Rect, point: Point): boolean {
@@ -1386,7 +1414,7 @@ export class Computer {
       }
       return this.#read(use, id, show, await this.#apart(use, window, twin));
     }
-    const snapshot = this.#snapshot(use.state, window, live.generation, structured, image);
+    const snapshot = this.#snapshot(use, window, live.generation, structured, image);
     const dropped = !!held && (!image || !sameSize(held, image));
     if (dropped) use.state.images.delete(id);
     return { snapshot, image: show ? image : null, dropped: dropped && !show, moved };
@@ -1431,7 +1459,8 @@ export class Computer {
     return `bb-box moved window ${window.id} to (${x}, ${y}) on the screen: it lay within a few pixels of window ${twin.id}, another window of its app, and the desktop gave that window's tree for both.`;
   }
 
-  #snapshot(state: BoxState, window: WindowInfo, generation: number, structured: Json, image: Size | null): Snapshot {
+  #snapshot(use: Use, window: WindowInfo, generation: number, structured: Json, image: Size | null): Snapshot {
+    const { state } = use;
     const bounds = obj(structured.window_bounds);
     const updated: WindowInfo = {
       ...window,
@@ -1518,6 +1547,8 @@ export class Computer {
         taken.add(ref);
       }
     }
+    const given = new Map([...byIndex].map(([index, entry]) => [index, rectOf(entry.frame)]));
+    const frames = kindInfo(currentKindId(use.box.kind)).windowing === "wayland" ? screenFrames(given, updated) : given;
     const elements: Element[] = [];
     const byRef = new Map<string, Element>();
     const elementAt = new Map<number, Element>();
@@ -1537,7 +1568,7 @@ export class Computer {
         fingerprint,
         unique,
         place: counts.get(`p${place}`) === 1 ? place : null,
-        frame: rectOf(entry.frame),
+        frame: frames.get(index) ?? null,
       };
       elements.push(element);
       byRef.set(ref, element);
@@ -1912,7 +1943,7 @@ export class Computer {
       use.state.large.add(window.id);
       return { popups, snapshot: null };
     }
-    return { popups, snapshot: this.#snapshot(use.state, window, live.generation, structured, null) };
+    return { popups, snapshot: this.#snapshot(use, window, live.generation, structured, null) };
   }
 
   /** Reads a popup that opened, when Cua gives the popup's own elements; null when it gives another window's. */
@@ -1926,7 +1957,7 @@ export class Computer {
         this.#outdated(use.state, popup.id);
         return null;
       }
-      return this.#snapshot(use.state, popup, live.generation, structured, null);
+      return this.#snapshot(use, popup, live.generation, structured, null);
     } catch (error) {
       if (error instanceof ComputerError && error.code === "driver") return null;
       throw error;

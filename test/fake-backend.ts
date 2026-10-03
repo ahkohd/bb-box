@@ -165,6 +165,9 @@ export const FAKE_KINDS: readonly BoxKind[] = [
   },
 ];
 
+/** A Wayland desktop, which the plugin knows as one by its kind's ID (048). */
+export const FAKE_WAYLAND_KIND: BoxKind = { ...FAKE_KINDS[1]!, id: "linux-desktop-wayland-cpu", label: "Linux desktop (Wayland)" };
+
 /** A Windows box with no enrolment. Its scripts need FAKE_PWSH as the backend's `shell`. */
 export const FAKE_WINDOWS_KIND: BoxKind = {
   ...FAKE_KINDS[0]!,

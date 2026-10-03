@@ -5,7 +5,8 @@
 // calls. Element tokens hold a prefix of the process's own, so like Cua's
 // they die with the session, and the number of the window's read they came
 // from, so like Cua's they go stale when the window is read again. Element
-// frames are in the screen's pixels. A read stops at max_elements.
+// frames are in the screen's pixels, unless the window has ownFrames. A read
+// stops at max_elements.
 //
 // The desktop has Tasks windows: a list of tasks, each with a "Delete Task N"
 // button, a "New task" field that refuses background typing, an Add button
@@ -34,7 +35,9 @@
 // With wayland, it is like Cua on a Wayland desktop: a click on an element
 // with no action fails, as Cua clicks it through X11, and a click by pixels
 // and typing work only in the foreground. A window with noActions has
-// elements with no actions, as a GTK tab or row has none.
+// elements with no actions, as a GTK tab or row has none. A window with
+// ownFrames gives its elements' frames in its own pixels, as a GTK 3 app on
+// Wayland does.
 
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -62,6 +65,10 @@ export interface FakeWindow {
   maximised?: boolean;
   /** Its elements have no actions. */
   noActions?: boolean;
+  /** Its elements' frames are in its own pixels, as a GTK 3 app's are on Wayland. */
+  ownFrames?: boolean;
+  /** A "Show older tasks" button lies partly above it, scrolled out of view. */
+  olderTasks?: boolean;
 }
 
 export interface FakeDesktop {
@@ -256,6 +263,7 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
     frame: frame(0, 0, window.width, window.height),
     children: [
       { key: "heading", role: "heading", label: "My tasks", actions: [], frame: frame(0, 0, 800, 30), children: [], text: true },
+      ...(window.olderTasks ? [{ key: "older", role: "push button", label: "Show older tasks", actions: ["click"], frame: frame(20, -10, 200, 40), children: [] }] : []),
       {
         key: "list",
         role: "list",
@@ -444,7 +452,7 @@ export class FakeCua {
       enabled: true,
       actions: entry.node.actions,
       parent_index: entry.parent,
-      frame: { x: placed.x + entry.node.frame.x, y: placed.y + entry.node.frame.y, w: entry.node.frame.width, h: entry.node.frame.height },
+      frame: { x: (placed.ownFrames ? 0 : placed.x) + entry.node.frame.x, y: (placed.ownFrames ? 0 : placed.y) + entry.node.frame.y, w: entry.node.frame.width, h: entry.node.frame.height },
     }));
     const dialogs = desktop.windows
       .filter((other) => other.dialogOf === window.id)

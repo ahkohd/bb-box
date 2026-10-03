@@ -1251,6 +1251,13 @@ A box is a resource of its thread and gets what the thread's own machine has.
 - **An element with no action** on Wayland: Cua clicks it through X11, and
   refuses because it cannot inject input. The plugin then clicks the centre
   of the element's frame, in window pixels, and says that it did (048).
+- **Element frames** are in the screen's pixels, except a GTK 3 app's on
+  Wayland, which are in the window's own, as the app does not know where
+  its window is. Cua says `window` for both, and does not scale either when
+  its image of the window is smaller. On a Wayland box, which its kind
+  says, the plugin reads a window's frames the way that puts more of them
+  inside the window. On other desktops it leaves them as they are, as a
+  frame above or left of the window is an element scrolled out of it (048).
 - **A URL** opens in a new browser window, or in a tab of one already open,
   whose title changes. Until the page has a title, Chrome's is its address,
   so the plugin waits up to 10 s for a title that is not. A page with no
