@@ -9,7 +9,9 @@ the claim, the display and the reset. The reset now sets the next user as
 the automatic login before it logs the old one out, the helper writes
 `/etc/kcpassword` itself, and on macOS 27 a userspace restart signs the
 next user in. What a real Mac must still confirm is under
-[the live check](#the-live-check).
+[the live check](#the-live-check). Amended 3 October 2026: a probe found
+that Screen Sharing ignores the viewer's keyboard and pointer, a blocker
+the live check lists with its fallbacks.
 
 ## Context
 
@@ -213,7 +215,8 @@ Boxes are not a security boundary between each other or from the Mac.
 - Type 30 showed the box user's console on macOS 27. If a later macOS
   drops it or stops showing the console, the fallbacks, in order: the VNC
   password with Screen Sharing's `VNCAlwaysStartOnConsole` setting; a VNC
-  server of our own.
+  server of our own. A later probe found that Screen Sharing ignores the
+  viewer's input: see [the blocker](#blocker-the-viewer-cannot-type-or-click).
 
 **Computer use is Cua, granted once per Mac.**
 
@@ -430,6 +433,8 @@ It also found:
 
 A Mac set aside, as under the hardware above, must still confirm:
 
+- a blocker first: that the viewer can type and click, with the fix the
+  stand-in found ([below](#blocker-the-viewer-cannot-type-or-click));
 - the sweep without Full Disk Access, and whether reading one byte of
   `TCC.db` tells whether SSH has it. Tart's image has System Integrity
   Protection off, so root removed the protected folders and read `TCC.db`
@@ -448,6 +453,49 @@ A Mac set aside, as under the hardware above, must still confirm:
 - a full restart's time on real hardware;
 - the timings without a runner on the same Mac, and enrolment, with a BB
   server.
+
+### Blocker: the viewer cannot type or click
+
+Core's probe on the stand-in (macOS 27 under Tart, type 30 as the
+console's user) showed the console and survived reconnects, but Screen
+Sharing ignored the viewer's keyboard and pointer. `screensharingd` logged
+"ignore key event", and `ScreensharingAgent` "viewer did not set keyboard
+source". A pool's Macs take the same path, so their desktops may be
+view-only in bb-box's viewer.
+
+- **What it stops.** A person cannot type or click in a Mac box's
+  desktop, so taking control ([008](008-shared-control.md)) does nothing
+  there. Nor can they answer Cua's 30-day confirmation in the viewer,
+  which this decision relies on without MDM.
+- **What it does not stop.** The agent's computer use, as Cua posts its
+  own events. Tart's macOS boxes, whose screen comes from the
+  Virtualization framework's VNC server, not Screen Sharing.
+
+To resolve, in this order, stopping at the first that works:
+
+1. **A Screen Sharing setting**, which core is testing, such as a user's
+   Control privilege under Remote Management.
+2. **What Apple's client sends.** The log suggests that Apple's Screen
+   Sharing app tells the server its keyboard source after signing in, and
+   noVNC never does. Recording Apple's app through a logging proxy against
+   the stand-in shows the messages. The relay would then send them itself
+   after type 30, out of the viewer's sight, as it already answers the
+   sign-in. Nothing changes on the Mac.
+3. **Input through the box's session (the fallback).** Screen Sharing
+   still gives the picture, and the relay sends the viewer's keyboard and
+   pointer events into the box user's session, where an app with
+   Accessibility posts them. That app is Cua Driver if its API takes key
+   and button presses and releases separately, or else a small helper of
+   ours, granted Accessibility once per Mac with Cua's at setup. It needs
+   no Screen Recording grant and no 30-day confirmation, as Screen Sharing
+   still captures. The relay maps RFB key symbols to macOS key codes.
+4. **A VNC server of our own** in the box user's session, as in the
+   desktop options above, gives the picture, input and resizing. It needs
+   Screen Recording and Accessibility once per Mac, a LaunchAgent in the
+   home template as Cua Driver has, and each new user's 30-day
+   confirmation of screen capture. A view-only viewer cannot answer that,
+   so it needs MDM's `forceBypassScreenCaptureAlert` or a person at the
+   Mac. It is the most work and the most grants, so it comes last.
 
 ## Plan
 

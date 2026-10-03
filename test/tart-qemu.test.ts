@@ -11,7 +11,7 @@ import { ownerText } from "../src/backends/tart/host.ts";
 import { parseQemuState } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE } from "../src/backends/windows.ts";
-import { FAKE_MAC, FAKE_WINDOWS_IMAGE, addImage, addWindowsImage, fakeMacTools, fakeQemu, tartConfig } from "./fake-mac.ts";
+import { FAKE_MAC, FAKE_WINDOWS_IMAGE, addImage, addWindowsImage, fakeMacTools, fakeQemu, imageRecord, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const MAC = FAKE_MAC;
@@ -213,9 +213,12 @@ test("reads QEMU's VMs and its checks from the state script", () => {
   );
   assert.deepEqual(
     { version: state.version, hvf: state.hvf, firmware: state.firmware, image: state.image },
-    { version: "11.1.0", hvf: true, firmware: "/opt/qemu/share/qemu/edk2-aarch64-code.fd", image: { build: "2", readOnly: true, diskGiB: 64 } },
+    { version: "11.1.0", hvf: true, firmware: "/opt/qemu/share/qemu/edk2-aarch64-code.fd", image: { build: "2", readOnly: true, diskGiB: 64, record: null } },
   );
-  assert.deepEqual(parseQemuState("@qemu-image\n2 writable\n").image, { build: "2", readOnly: false, diskGiB: null }, "a disk whose size qemu-img did not read");
+  assert.deepEqual(parseQemuState("@qemu-image\n2 writable\n").image, { build: "2", readOnly: false, diskGiB: null, record: null }, "a disk whose size qemu-img did not read");
+  // The build's record (049), from image.json beside its disk.
+  const recorded = parseQemuState('@qemu-image\n2 read-only 1024\n@qemu-record\n{"contract":1,"kind":"windows-arm64-desktop","build":"build.20261003-021500","built":"2026-10-03T02:15:00Z"}\n');
+  assert.deepEqual([recorded.image?.record?.kind, recorded.image?.record?.build], ["windows-arm64-desktop", "build.20261003-021500"]);
   assert.deepEqual(parseQemuState("@owners\n"), { version: "", vms: new Map(), hvf: false, firmware: null, image: null });
 });
 
@@ -580,7 +583,27 @@ test("the doctor checks QEMU, the Hypervisor framework, the firmware and the Win
   assert.equal(report.summary, "Tart 2.30.0 and QEMU 11.1.0 on mac1");
   assert.equal(check("host.mac1")?.detail, "macOS 27.0 on Apple silicon, Tart 2.30.0.");
   assert.deepEqual([check("qemu.mac1")?.status, check("qemu.mac1")?.detail], ["ok", "QEMU 11.1.0, with the Hypervisor framework and its UEFI firmware."]);
-  assert.deepEqual([check(`image.mac1.${KIND}`)?.status, check(`image.mac1.${KIND}`)?.detail], ["ok", "bb-box-windows, build 1."]);
+  assert.equal(check(`image.mac1.${KIND}`)?.status, "ok");
+  assert.match(check(`image.mac1.${KIND}`)!.detail, /^bb-box-windows, build 1\. Standard image build\.20261003-021500, built \d+ \w+ \(today\): fake OS\.$/);
+
+  // The build's record (049), beside its disk: older than twice the month Windows images are rebuilt in.
+  const day = 24 * 60 * 60 * 1000;
+  writeFileSync(join(build, "image.json"), imageRecord(KIND, { built: new Date(Date.now() - 61 * day).toISOString() }));
+  report = await backend.doctor(signal());
+  assert.equal(check(`image.mac1.${KIND}`)?.status, "warn");
+  assert.match(check(`image.mac1.${KIND}`)!.detail, / It is 61 days old, more than 60, so its tools and packages are behind\.$/);
+  assert.equal(
+    check(`image.mac1.${KIND}`)?.fix,
+    "Build it again on mac1 with setup/tart/prepare-windows-image.sh --iso <ISO> --iso-sha256 <its SHA-256> --key '<bb-box's public key>' --name bb-box-windows --replace.",
+  );
+  writeFileSync(join(build, "image.json"), imageRecord(KIND, { contract: 0 }));
+  report = await backend.doctor(signal());
+  assert.deepEqual([report.ok, check(`image.mac1.${KIND}`)?.status], [false, "fail"]);
+  rmSync(join(build, "image.json"));
+  report = await backend.doctor(signal());
+  assert.equal(check(`image.mac1.${KIND}`)?.status, "warn");
+  assert.match(check(`image.mac1.${KIND}`)!.detail, /^bb-box-windows, build 1\. It has no image record/);
+  writeFileSync(join(build, "image.json"), imageRecord(KIND));
 
   chmodSync(join(build, "disk.qcow2"), 0o644);
   report = await backend.doctor(signal());

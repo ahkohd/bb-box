@@ -23,6 +23,7 @@
 // so a process that took the pid after the Mac restarted is not taken for it.
 
 import { quote } from "../../transports/process.ts";
+import { recordFromJson, type ImageRecord } from "../images.ts";
 import { named, parseFields, script, sections } from "./host.ts";
 
 /** The ports VMs take on the Mac's loopback, below macOS's ephemeral ports. */
@@ -106,6 +107,7 @@ echo @qemu-image
 b=$(cd "$q/images/"${quote(image)}"/current" 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] && {
   mode=read-only; [ -w "$b/disk.qcow2" ] && mode=writable
   echo "$(basename "$b") $mode $(qbytes "$b/disk.qcow2")"
+  echo @qemu-record; tr -d '\n' < "$b/image.json" 2>/dev/null; echo
 }
 `}`;
 }
@@ -133,10 +135,11 @@ export interface QemuState {
   /** QEMU's UEFI firmware, or null when it is missing. */
   readonly firmware: string | null;
   /**
-   * The Windows image's current build, whether its disk is read-only, and the
-   * disk's size in GiB, null when qemu-img did not say; null when it has none.
+   * The Windows image's current build, whether its disk is read-only, the
+   * disk's size in GiB, null when qemu-img did not say, and its record (049),
+   * null when it has none; null when it has no build.
    */
-  readonly image: { readonly build: string; readonly readOnly: boolean; readonly diskGiB: number | null } | null;
+  readonly image: { readonly build: string; readonly readOnly: boolean; readonly diskGiB: number | null; readonly record: ImageRecord | null } | null;
 }
 
 /** A VM's config, or the part after a line `@config`; null when it is not whole. */
@@ -163,7 +166,7 @@ export function parseQemuState(text: string): QemuState {
     vms,
     hvf: parts.get("hvf")?.trim() === "1",
     firmware: parts.get("qemu-firmware")?.trim() || null,
-    image: build ? { build, readOnly: mode === "read-only", diskGiB: size > 0 ? Math.ceil(size / 2 ** 30) : null } : null,
+    image: build ? { build, readOnly: mode === "read-only", diskGiB: size > 0 ? Math.ceil(size / 2 ** 30) : null, record: recordFromJson(parts.get("qemu-record")?.trim()) } : null,
   };
 }
 

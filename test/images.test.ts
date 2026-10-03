@@ -4,12 +4,13 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinsDigest, recordInDescription, type ImageRecord } from "../src/backends/images.ts";
+import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinLines, pinsDigest, recordInDescription, type ImageRecord } from "../src/backends/images.ts";
 import { tempDir } from "./helpers.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-10-03T12:00:00Z");
-const TEMPLATE = fileURLToPath(new URL("../setup/proxmox-lxc/template/", import.meta.url));
+const SETUP = fileURLToPath(new URL("../setup/", import.meta.url));
+const TEMPLATE = join(SETUP, "proxmox-lxc", "template");
 
 /** A record as finalize.sh writes it, built `days` before NOW. */
 function record(days = 1, changes: Partial<ImageRecord> = {}): ImageRecord {
@@ -65,10 +66,17 @@ test("a record reads from its JSON and from a description's last JSON line (049)
   });
 });
 
-test("the pins' digest is finalize.sh's: the files' SHA-256, one after another", async () => {
-  const digest = (...files: string[]) => spawnSync("sh", ["-c", `cat ${files.join(" ")} | sha256sum | cut -d' ' -f1`], { cwd: TEMPLATE, encoding: "utf8" }).stdout.trim();
-  assert.equal(await pinsDigest(TEMPLATE, "linux"), digest("pins.json", "apt-snapshot"));
-  assert.equal(await pinsDigest(TEMPLATE, "linux-desktop"), digest("pins.json", "apt-snapshot", "desktop-pins.tsv"));
+test("the pins' digest is the build's: Linux's files, or a script's pin lines, as the build hashes them", async () => {
+  const digest = (cwd: string, command: string) => spawnSync("sh", ["-c", `${command} | sha256sum | cut -d' ' -f1`], { cwd, encoding: "utf8" }).stdout.trim();
+  assert.equal(await pinsDigest(SETUP, "linux"), digest(TEMPLATE, "cat pins.json apt-snapshot"));
+  assert.equal(await pinsDigest(SETUP, "linux-desktop"), digest(TEMPLATE, "cat pins.json apt-snapshot desktop-pins.tsv"));
+  // What each script runs to record its pins.
+  const lines = "grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)='";
+  for (const [set, script] of [["macos", "tart/prepare-image.sh"], ["windows", "proxmox-qemu/build.sh"], ["windows-arm64", "tart/prepare-windows-image.sh"]] as const) {
+    assert.equal(await pinsDigest(SETUP, set), digest(SETUP, `${lines} ${script}`), set);
+    assert.ok(readFileSync(join(SETUP, script), "utf8").includes(lines), `${script} hashes its pin lines so`);
+  }
+  assert.equal(pinLines("A=1\nCUA_VERSION=0.30.4\n# CUA_SHA256=x\nCUA_SHA256=abc\nVS_URL=https://x\n"), "CUA_VERSION=0.30.4\nCUA_SHA256=abc\nVS_URL=https://x\n");
   assert.equal(await pinsDigest("/nonexistent", "linux"), null);
 });
 
@@ -88,12 +96,25 @@ test("image-record.sh writes a record bb-box reads, with the pins' digest bb-box
   assert.ok(record);
   assert.deepEqual(
     [record.contract, record.kind, record.build, record.aptSnapshot, record.nvidia, record.pins],
-    [IMAGE_CONTRACT, "linux-desktop", "build.20261003-021500-3f9c", "20260926T060000Z", "580.142", await pinsDigest(TEMPLATE, "linux-desktop")],
+    [IMAGE_CONTRACT, "linux-desktop", "build.20261003-021500-3f9c", "20260926T060000Z", "580.142", await pinsDigest(SETUP, "linux-desktop")],
   );
   assert.equal(record.tools.node, JSON.parse(readFileSync(join(TEMPLATE, "pins.json"), "utf8")).tools.find((tool: { name: string }) => tool.name === "node").version);
   assert.match(record.tools.chrome ?? "", /^\d+\.\d+\.\d+\.\d+$/);
   assert.match(record.tools["cua-driver"] ?? "", /^\d+\.\d+\.\d+$/);
   assert.equal(record.sizeGiB, null, "finalize.sh adds it once the image is clean");
+
+  // Each desktop's kind, by its build's settings. Docker's one X desktop image serves GPU desktops too.
+  for (const [settings, kind] of [
+    ["DESKTOP_GPU=none\n", "linux-desktop-cpu"],
+    ["DESKTOP_GPU=none\nDESKTOP_SESSION=wayland\n", "linux-desktop-wayland-cpu"],
+    ["DESKTOP_GPU=none\nDESKTOP_SESSION=x11\nBOX_RUNTIME=docker\n", "linux-desktop"],
+  ] as const) {
+    writeFileSync(join(build, "build.env"), settings);
+    const again = spawnSync("bash", [join(TEMPLATE, "guest", "image-record.sh"), build, "desktop", out], { env: { PATH: process.env.PATH }, encoding: "utf8" });
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal(JSON.parse(readFileSync(join(out, "image.json"), "utf8")).kind, kind, settings);
+  }
+  assert.equal(readFileSync(join(out, "image.json"), "utf8").split("\n").filter(Boolean).length, 1, "on one line, as a label holds it");
 });
 
 test("an image says what it is and how old", () => {

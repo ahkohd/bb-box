@@ -58,6 +58,18 @@ To build it again, for example for a newer ISO, add `--replace`. The new
 template is built and checked in another VM and only then takes the old one's
 place. Boxes cloned from the old one keep running on LVM-thin.
 
+The template's record
+([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md))
+gives the contract it keeps, its build ID and time, the edition, the SHA-256
+of `build.sh`'s pin lines (`NAME_VERSION=`, `NAME_SHA256=` and `NAME_URL=`)
+and each tool's version. The first logon writes it to `C:\bb-box\image.json`,
+and `build.sh` puts it on the second line of the template's description.
+`bb box doctor`'s "Image of" check for each template fails when the
+template keeps an older contract than bb-box needs. It warns when the
+template has no record (built before records), is more than 60 days old, or
+was built with other pins than the plugin's own `build.sh`. Its fix is the
+`build.sh windows <vmid> --replace` command.
+
 ## What the template has
 
 - Windows 11, not generalized: every box is a linked clone of the same

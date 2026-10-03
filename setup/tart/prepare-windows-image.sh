@@ -18,7 +18,9 @@
 # C++, LLVM and Rust), boots it once as a box boots, and checks a clone
 # of it as the backend uses a box, saved and restored. The image is then
 # ~/.bb-box/qemu/images/<name>/build.<time>, with a read-only disk.qcow2 and
-# vars.fd, and the link `current` names it. About 30 minutes, and about 40 GiB
+# vars.fd, and the link `current` names it. Its record (049) is in the image,
+# C:\bb-box\image.json, which the first logon writes, and beside it,
+# image.json in the build's directory, where bb-box's doctor reads it. About 30 minutes, and about 40 GiB
 # beyond --reserve-gib (50 GiB, as the backend's tart-reserve-disk-gib): the
 # build stops rather than leave less free. --delete-iso deletes the ISO once
 # Setup has copied Windows from it, which gives its space back. --replace
@@ -131,6 +133,10 @@ free=$(kib)
   die "$((free / 1048576)) GiB is free; the build needs 40 GiB beyond the $reserve_gib GiB it leaves free (--reserve-gib)"
 
 build=build.$(date -u +%Y%m%d-%H%M%S)
+# The image's record (049). The pins' SHA-256 is of this script's pin lines.
+record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
+  "$build" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$edition" "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-windows-image.sh" | shasum -a 256 | cut -d' ' -f1)" \
+  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$VIRTIO_VERSION")
 d=$images/$build.new
 # Kept on a failure, to look at: the screen and QEMU's output.
 png=$images/$build.png
@@ -283,6 +289,7 @@ pin() { printf '"%s": {"version": "%s", "sha256": "%s", "url": "%s"}' "$1" "$2" 
   pin llvm "$LLVM_VERSION" "$LLVM_SHA256" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-woa64.msi"
   printf ',\n  '
   pin rustup "$RUSTUP_VERSION" "$RUSTUP_SHA256" "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/aarch64-pc-windows-msvc/rustup-init.exe"
+  printf ',\n  "record": "%s"' "$(json "$record")"
   printf '\n}\n'
 } >"$a/bb-box/build.json"
 hdiutil makehybrid -quiet -iso -joliet -default-volume-name BBBOXANSWER -o "$w/answer.iso" "$a"
@@ -542,6 +549,7 @@ printf 'built=%s\niso=%s\niso-sha256=%s\nedition=%s\nvirtio-win=%s\npwsh=%s\ngit
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$iso")" "$iso_sha256" "$edition" "$VIRTIO_VERSION" "$PWSH_VERSION" "$GIT_VERSION" \
   "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$(qemu-system-aarch64 --version | head -n 1)" "$machine" "$(printf '%s\n' "$key" | awk '{ print "key=" $2 }')" \
   >"$d/info"
+printf '%s\n' "$record" >"$d/image.json"
 mv "$d" "$images/$build"
 d=
 ln -s "$build" "$images/current.new"

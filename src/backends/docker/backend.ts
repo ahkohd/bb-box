@@ -47,6 +47,7 @@ import {
 import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
+import { judgeImage, recordFromJson } from "../images.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
@@ -807,8 +808,15 @@ export class DockerBackend implements Backend {
         push(...limits, "ok", "Docker limits each box's CPU and memory.");
       }
 
+      // What images are judged by (049).
+      const judging = Promise.all([
+        this.#context.images?.pins("linux") ?? null,
+        this.#context.images?.pins("linux-desktop") ?? null,
+        this.#context.images?.bbApp(signal) ?? null,
+      ]).catch(() => [null, null, null] as const);
       for (const image of images) {
-        const kinds = DOCKER_KINDS.filter((kind) => this.#config.images[kind] === image).join(", ");
+        const serves = DOCKER_KINDS.filter((kind) => this.#config.images[kind] === image);
+        const kinds = serves.join(", ");
         const id = `image.${image}`;
         const name = `Image ${image}`;
         const result = await this.#cli.run(["image", "inspect", "--format", "{{json .Config.Labels}}", image], { timeoutMs: 30_000, signal });
@@ -820,6 +828,7 @@ export class DockerBackend implements Backend {
         const gpuDesktops = image === this.#config.images["linux-desktop"];
         if (gpuDesktops) this.#gpuBusId = labels[LABELS.gpuBusId] === "1";
         const built = labels[LABELS.imageVersion];
+        const record = recordFromJson(labels[LABELS.imageRecord]);
         if (built === IMAGE_VERSION && gpuDesktops && !this.#gpuBusId && this.#config.docker && !info.rootless) {
           push(
             id,
@@ -828,8 +837,15 @@ export class DockerBackend implements Backend {
             "Built before GPU desktops could have Docker, so they have none: its start cannot point Xorg at the GPU placed in a privileged container (#283).",
             this.#buildFix("Build it again with this bb-box's setup/docker/build.sh to give GPU desktops Docker."),
           );
-        } else if (built === IMAGE_VERSION) {
-          push(id, name, "ok", `For ${kinds} boxes, built by setup/docker/build.sh (layout ${IMAGE_VERSION}).`);
+        } else if (record || built === IMAGE_VERSION) {
+          // Its record's contract replaces the layout version (049).
+          const [linuxPins, desktopPins, app] = await judging;
+          const judged = judgeImage(
+            record,
+            { os: "linux", pins: serves.includes("linux") ? linuxPins : desktopPins, bbApp: app },
+            this.#buildFix("Build it again with this bb-box's setup/docker/build.sh --bb-url <BB's server URL>."),
+          );
+          push(id, name, judged.status, `For ${kinds} boxes. ${judged.detail}`, judged.fix);
         } else {
           push(
             id,

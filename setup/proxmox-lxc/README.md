@@ -236,6 +236,21 @@ Everything a build downloads is checked against a pinned SHA-256 and kept in
 To update a tool, change its pins (URL and SHA-256, for each architecture)
 and rebuild.
 
+A rebuild bb-box runs itself
+([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md))
+takes these from upstream instead of the pins:
+
+- **The tools that follow upstream.** It takes the latest stable Claude Code (its latest channel), Codex, pi, gh and Chrome. Each comes with the SHA-256 its upstream publishes: Claude Code's release manifest, the GitHub release asset's digest, or Google's stable Packages index.
+- **The apt snapshot.** It takes the day's snapshot.
+
+A tool keeps its pin when its upstream cannot be read or has nothing newer,
+so a build never goes back past the pins. Node, the other tools, Cua
+Driver, the desktop stack and NVIDIA's userspace stay pinned, and change
+with bb-box releases. The image's record keeps the SHA-256 of the
+repository's pins, so its doctor check still says the image was built with
+this bb-box's pins. `bb box images versions` shows what a rebuild would take
+now; `--pinned` shows the pins alone, as a build with `--pinned` takes them.
+
 Each build writes the image's record, `/usr/share/bb-box/image.json`
 ([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)):
 the contract it keeps, its kind, build ID and time, the OS and apt snapshot,
@@ -449,6 +464,26 @@ its own ACLs and its user's, so both get the same ones. The token cannot
 touch guests outside the pool, pass host devices through, or set container
 features other than nesting. Run the script again after an update that adds
 a privilege: it changes the role in place and keeps the token.
+
+What the token allows for images
+([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)):
+
+- **It can refresh a template from a box of it.** It can clone the
+  template, make the clone a template, write its tags and description
+  (where the image's record goes) and set its protection. It can also clear
+  the old template's protection, delete it, and clone the new one into its
+  VMID. On LVM-thin, a linked clone keeps working after its origin is
+  deleted. All this is in pool `<pool>`, with the privileges above.
+- **It cannot build a template from nothing.** It cannot create a container
+  from Ubuntu's container template. That needs `Datastore.AllocateSpace` and
+  `Datastore.Audit` on the storage the container template is on, which the
+  token does not have.
+- **It cannot give a container host devices.** A GPU desktop template's
+  device lines need root, and so do container features other than nesting.
+
+So a new template, a GPU template for another GPU and a contract change
+still need `template/build.sh` as root on the host. bb-box refreshes the
+templates that exist.
 
 The token is written to `BBBOX_TOKEN_FILE` (mode 0600) with the API URL,
 node and the SHA-256 fingerprint of the host's certificate. The script never

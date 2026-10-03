@@ -14,6 +14,7 @@
 import { spawn } from "node:child_process";
 import { LABELS } from "../backends/docker/cli.ts";
 import { IMAGE_VERSION } from "../backends/docker/config.ts";
+import { IMAGE_CONTRACT, recordFromJson } from "../backends/images.ts";
 
 /** What build.sh builds: its target, by the image it tags. */
 export const BUILT_IMAGES: Readonly<Record<string, "linux" | "desktop" | "desktop-wayland">> = {
@@ -60,9 +61,14 @@ export interface DockerImagesDeps {
   now?(): number;
 }
 
-/** Whether an image with `labels` is from another layout, or, with `app` not null, has another build of BB's app. */
+/**
+ * Whether an image with `labels` needs building again: it has no record
+ * (049) or an older contract, or, with `app` not null, another build of BB's
+ * app.
+ */
 export function outdated(labels: Readonly<Record<string, unknown>>, app: string | null): boolean {
-  return labels[LABELS.imageVersion] !== IMAGE_VERSION || (app !== null && labels[LABELS.bbApp] !== app);
+  const record = recordFromJson(labels[LABELS.imageRecord]);
+  return !record || record.contract < IMAGE_CONTRACT || (app !== null && record.bbApp !== app);
 }
 
 /** The digest of BB's app on the server at `url`, from the header build.sh reads, or null when it gives none. */

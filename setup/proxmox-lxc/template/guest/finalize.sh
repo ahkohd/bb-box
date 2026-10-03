@@ -78,7 +78,7 @@ rm -f /var/lib/dbus/machine-id
 # its layers', which Docker gives.
 if ! grep -qx runtime=docker "$out/template-release"; then
   size=$(df -B1 --output=used / | tail -1 | awk '{ printf "%.1f", $1 / 1073741824 }')
-  jq --argjson size "$size" '.sizeGiB = $size' "$out/image.json" >"$out/image.json.new"
+  jq -c --argjson size "$size" '.sizeGiB = $size' "$out/image.json" >"$out/image.json.new"
   mv "$out/image.json.new" "$out/image.json"
   chmod 0644 "$out/image.json"
 fi

@@ -36,3 +36,11 @@ rm -f "/home/$user/bb-app.tgz"
 for f in bin/bb-app bin/bb lib/node_modules/bb-app/host-daemon/dist/daemon-bundle.mjs; do
   [ -e "$data_dir/npm/$f" ] || die "bb-app is missing $f"
 done
+# An image's record (049) says which build of BB's app it has. A Docker
+# image's has one already, as its app comes in a layer after it.
+record=/usr/share/bb-box/image.json
+if [ -f "$record" ]; then
+  jq -c --arg app "$digest" '.bbApp = $app' "$record" >"$record.new"
+  chmod 0644 "$record.new"
+  mv "$record.new" "$record"
+fi

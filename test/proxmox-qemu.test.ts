@@ -62,8 +62,8 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
   const context = testContext(storage, "test", { id: "proxmox-qemu", warm });
   const config = qemuConfig(values);
   const fakes: QemuBackendOptions = { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
-  const make = () => {
-    const backend = new ProxmoxQemuBackend(config, context, { ...fakes, ...options });
+  const make = (on = context) => {
+    const backend = new ProxmoxQemuBackend(config, on, { ...fakes, ...options });
     made.push(backend);
     return backend;
   };
@@ -600,6 +600,8 @@ test("doctor passes on a complete setup, and warns that a template from build.sh
       ["proxmox.sizes", "Box sizes", "ok"],
       ["proxmox.pool", "Resource pool", "ok"],
       ["template.9104", "Windows template 9104", "ok"],
+      // Built before images had records (049).
+      ["template.9104.image", "Image of Windows template 9104", "warn"],
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
       ["ssh.key", "SSH key", "warn"],
@@ -612,6 +614,25 @@ test("doctor passes on a complete setup, and warns that a template from build.sh
   const stored = await storage.get<{ privateKey: string; publicKey: string }>("ssh-key");
   assert.ok(stored?.privateKey.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"));
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE KEY|s3cret-token-value/);
+});
+
+test("doctor judges each Windows template's image by the record in its description (049)", async () => {
+  const { proxmox, context, make } = setup({ "windows-templates": "9104 9105" });
+  const day = 24 * 60 * 60 * 1000;
+  const pins = "w".repeat(64);
+  const images = { pins: async (set: string) => (set === "windows" ? pins : null), bbApp: async () => "a".repeat(64) };
+  const record = (days: number, changes: Record<string, unknown> = {}) =>
+    JSON.stringify({ contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: "build.20261003-021500-3f9c", built: new Date(Date.now() - days * day).toISOString(), os: "Windows 11 Pro", pins, bbApp: null, tools: { pwsh: "7.6.6" }, ...changes });
+  proxmox.guests.get(9104)!.config.description = `bb-box windows template, built 2026-10-03 from win11.iso: Windows 11 Pro.\n${record(2)}`;
+  proxmox.guests.get(9105)!.config.description = `bb-box windows template, built 2026-08-01 from win11.iso: Windows 11 Pro.\n${record(61, { pins: "o".repeat(64) })}`;
+  const report = await make({ ...context, images }).doctor();
+  const image = (vmid: number) => report.checks.find((check) => check.id === `template.${vmid}.image`)!;
+  // BB's app does not run on Windows, so a record without it is whole.
+  assert.deepEqual([image(9104).status, image(9104).fix], ["ok", null]);
+  assert.match(image(9104).detail, /^Standard image build\.20261003-021500-3f9c, built \d+ \w+ \(2 days ago\): Windows 11 Pro, pwsh 7\.6\.6\.$/);
+  assert.equal(image(9105).status, "warn");
+  assert.match(image(9105).detail, /It is 61 days old, more than 60, .* It was built with other pins than this bb-box's/);
+  assert.equal(image(9105).fix, "Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on pve: build.sh windows 9105 --replace.");
 });
 
 test("doctor passes the key from the settings", async () => {

@@ -136,8 +136,23 @@ has an outage, the build retries for a few minutes, then fails; run it again
 later.
 
 Building all three takes about 15 minutes, mostly downloads. The images are
-`bbbox/linux:1`, `bbbox/linux-desktop:1` and `bbbox/linux-desktop-wayland:1`,
-and the `1` is the images' layout version, which `bb box doctor` checks.
+`bbbox/linux:1`, `bbbox/linux-desktop:1` and `bbbox/linux-desktop-wayland:1`.
+
+Each image has its record, `/usr/share/bb-box/image.json`
+([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)).
+It gives the contract the image keeps, its build and when it was built, the
+OS and apt snapshot, the SHA-256 of the pins it was built with, the digest of
+BB's app in it, and each tool's version. `build.sh` copies it to the
+image's `bbbox.image-record` label by building the image again, all from the
+cache. `bb box doctor` judges each image by that label:
+
+- it fails when the image keeps an older contract than bb-box needs;
+- it warns when the image has no record (built before records), is more than
+  14 days old, has another build of BB's app than BB's server gives, or was
+  built with other pins than the plugin's own.
+
+On a BB machine, bb-box builds an image again itself when it has no record,
+an older contract, or another build of BB's app.
 
 ## 2. Settings
 

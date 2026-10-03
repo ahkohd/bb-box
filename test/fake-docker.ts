@@ -49,10 +49,16 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
   const script = new URL("./fake-docker.mjs", import.meta.url).pathname;
   writeFileSync(binary, `#!/bin/sh\nFAKE_DOCKER_ROOT='${root}' exec '${process.execPath}' '${script}' "$@"\n`);
   chmodSync(binary, 0o755);
-  const label = { "bbbox.image-version": "1" };
+  // As setup/docker/build.sh labels its images: the layout, and a fresh record (049).
+  const record = (kind: string) => JSON.stringify({ contract: 1, image: "standard", kind, arch: "x86_64", build: "build.fake", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } });
+  const label = (kind: string) => ({ "bbbox.image-version": "1", "bbbox.image-record": record(kind) });
   writeFileSync(
     join(root, "images.json"),
-    JSON.stringify({ "bbbox/linux:1": label, "bbbox/linux-desktop:1": { ...label, "bbbox.gpu-bus-id": "1" }, "bbbox/linux-desktop-wayland:1": label }),
+    JSON.stringify({
+      "bbbox/linux:1": label("linux"),
+      "bbbox/linux-desktop:1": { ...label("linux-desktop"), "bbbox.gpu-bus-id": "1" },
+      "bbbox/linux-desktop-wayland:1": label("linux-desktop-wayland-cpu"),
+    }),
   );
   let values = { ...host };
   writeFileSync(join(root, "host.json"), JSON.stringify(values));

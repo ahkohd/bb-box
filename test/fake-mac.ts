@@ -44,10 +44,16 @@ export function fakeQemu(home: string): void {
   }
 }
 
-/** Puts a build of a Windows image in a fake Mac's home, its disk read-only, and makes it the current one. */
+/** A fresh image record (049), as the prepare scripts write one. */
+export function imageRecord(kind: string, changes: Record<string, unknown> = {}): string {
+  return JSON.stringify({ contract: 1, image: "standard", kind, arch: "arm64", build: "build.20261003-021500", built: new Date().toISOString(), os: "fake OS", tools: {}, ...changes });
+}
+
+/** Puts a build of a Windows image in a fake Mac's home, its disk read-only, with its record, and makes it the current one. */
 export function addWindowsImage(home: string, build = "1", name = FAKE_WINDOWS_IMAGE): string {
   const image = join(home, ".bb-box", "qemu", "images", name);
   mkdirSync(join(image, build), { recursive: true });
+  writeFileSync(join(image, build, "image.json"), `${imageRecord("windows-arm64-desktop")}\n`);
   writeFileSync(join(image, build, "disk.qcow2"), "base disk");
   chmodSync(join(image, build, "disk.qcow2"), 0o444);
   writeFileSync(join(image, build, "vars.fd"), "variables");
@@ -56,10 +62,12 @@ export function addWindowsImage(home: string, build = "1", name = FAKE_WINDOWS_I
   return join(image, build);
 }
 
-/** Puts a Tart VM in a fake Mac's home, as the setup guide leaves an image. */
+/** Puts a Tart VM in a fake Mac's home, as the setup guide leaves an image, with its record beside it. */
 export function addImage(home: string, name = FAKE_IMAGE, os = "darwin"): void {
   mkdirSync(join(home, ".tart", "vms", name), { recursive: true });
   writeFileSync(join(home, ".tart", "vms", name, "config.json"), JSON.stringify({ os, cpuCount: 4, memorySize: 8 * GiB, macAddress: "02:00:00:00:00:01" }));
+  mkdirSync(join(home, ".bb-box", "tart", "images"), { recursive: true });
+  writeFileSync(join(home, ".bb-box", "tart", "images", `${name}.json`), `${imageRecord(os === "darwin" ? "macos" : "linux-arm64")}\n`);
 }
 
 export function tartConfig(values: Record<string, unknown> = {}): TartConfig {
