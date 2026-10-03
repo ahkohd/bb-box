@@ -22,6 +22,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Mark a machine offline when it stops checking in](#13-mark-a-machine-offline-when-it-stops-checking-in) | draft | a machine that goes with no word, such as a PC that restarts, shows as connected for about 16 minutes, so bb-box judges it by when BB last heard from it |
 | [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | draft | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
 | [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | draft | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text |
+| [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | draft | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
 
 ## 1. BB's host app on Windows
 
@@ -598,6 +599,34 @@ is not found ("Cannot read /tmp/…: ENOENT").
 server runs on. Agents use `box_image_set` and `box_image_try`, which take
 the text, and `bb box image try <name>` tries an image already set, with no
 file.
+
+## 16. Alert dialogs that do not fly in from the corner
+
+**What bb-box needs.** Its confirms (Release, Stop anyway, Remove) to move
+as BB's own dialogs do, so that a plugin's dialog is not the odd one out.
+The operator's note of 3 October 2026 on the release modal: "the way it
+animates in is weird".
+
+**What BB does now.** shared-ui's `alert-dialog.tsx`, and the plugin
+registry's copy that every plugin scaffolds from, give `AlertDialogContent`
+shadcn's `zoom-in-95` plus `slide-in-from-left-1/2` and
+`slide-in-from-top-[48%]` on top of the `-50%` translate centring. The two
+slides were a Tailwind v3 workaround for that centring, when translate was
+part of `transform`. On Tailwind v4, where `translate` is its own property,
+they stack on it, and the box flies in diagonally from the top left, and
+out the same way. BB's own confirms (ThreadDeleteDialog, ConfirmDeleteDialog
+and the rest) use shared-ui's `DialogContent`, which has no slide: a fade
+and a 95% zoom from the centre over 200 ms, the same on close.
+
+**What we ask.** Give `AlertDialogContent` in shared-ui and in the registry
+`DialogContent`'s motion: drop the four slide classes, keep
+`duration-200`, the fade and the 95% zoom, and add
+`motion-reduce:data-[state=open]:animate-none` and its closed twin so the
+dialog just appears and disappears under `prefers-reduced-motion`.
+
+**Until then.** bb-box's copy carries that motion ([#453](https://github.com/moonstead/bb-box/pull/453)),
+with a note in `components/ui/alert-dialog.tsx` that avoids spelling the
+dropped class names, since Tailwind scans comments and would emit them.
 
 ## Checked, no request needed
 
