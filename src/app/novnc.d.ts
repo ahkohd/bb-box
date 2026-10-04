@@ -23,6 +23,12 @@ declare module "@novnc/novnc" {
     sendKey(keysym: number, code: string | null, down?: boolean): void;
     /** Every key from the keyboard handler, before it is sent; a subclass may map it. */
     _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void;
+    /** Puts the box's cursor, as last sent, on the canvas; called at connect and on each cursor the box sends. A subclass may decide otherwise. */
+    _refreshCursor(): void;
+    /** The box's cursor as last sent: none (no pixels) until it sends one. */
+    _cursorImage: { rgbaPixels: Uint8Array; hotx: number; hoty: number; w: number; h: number };
+    _rfbConnectionState: string;
+    _canvas: HTMLCanvasElement;
     blur(): void;
     /** The size of the element it draws in, which it asks the box for, floored; a subclass may measure it otherwise. */
     _screenSize(): { w: number; h: number };
