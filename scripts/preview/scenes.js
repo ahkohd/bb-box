@@ -623,6 +623,24 @@ export const scenes = {
   },
   "terminal-stopped": { slot: "terminal", chrome: terminalChrome("wild-cove"), width: 720, height: 420, props: { threadId: THREAD, params: { box: "box_4" } }, rpc: rpc([stopped]) },
   "desktop-connecting": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([desktop]) },
+  "desktop-menu": {
+    slot: "desktop",
+    chrome: desktopChrome("bold-heron"),
+    width: 720,
+    height: 480,
+    props: { threadId: THREAD, params: { box: "box_2" } },
+    // This tab holds control: the holder is read when the RPC answers, by which time the tab's viewer ID is in sessionStorage.
+    rpc: rpc([{ ...desktop, control: { owner: "human", get holder() { return sessionStorage.getItem("bb-box:viewer:box_2") ?? "viewer"; }, takenFrom: null } }]),
+    after: async (root) => {
+      await wait(300);
+      try {
+        openMenu(root, "Desktop actions");
+      } catch (error) {
+        throw new Error(`${error}; buttons=${JSON.stringify([...root.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent.trim()))}`);
+      }
+      await wait(300);
+    },
+  },
   "desktop-stopped": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([{ ...desktop, state: "stopped" }]) },
   "desktop-released": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([]) },
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },

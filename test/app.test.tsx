@@ -1538,7 +1538,7 @@ test("what the box copies reaches this computer's clipboard and says Copied; the
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
   act(() => void novnc.FakeRfb.made[1]!.dispatchEvent(new Event("connect")));
   menu = await openMenu(windows.getByRole("button", { name: "Desktop actions" }));
-  expect(within(menu).queryByRole("menuitem", { name: "Paste from this computer" })).toBeNull();
+  expect(within(menu).getByRole("menuitem", { name: "Paste from this computer" }).getAttribute("aria-disabled")).toBe("true");
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
   expect(await windows.findByText(/does not report its clipboard to viewers/)).toBeTruthy();
 });
