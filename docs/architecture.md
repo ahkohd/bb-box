@@ -314,24 +314,32 @@ held for 250 ms: the last frame of a pane opening is not lost.
   reports the box's clipboard as it changes, which the viewer with control
   fetches over RPC, since the relay cannot put a message into the server's
   stream without parsing it.
-- The clipboard in the viewer (4 October 2026). Cmd+V, or Ctrl+V off a Mac,
-  on the desktop takes the text from the browser's paste event, which needs
-  no clipboard permission, sends it as ClientCutText and presses the box's
-  own paste chord, Ctrl+V or Cmd+V; the menu's "Paste from this computer"
-  reads the clipboard on the click and falls back to a field. What the box
-  copies comes back as ServerCutText, which noVNC gives only to the viewer
-  with control (view-only viewers drop it), or over the RPC above where the
-  box's input reports it; the viewer writes it to this computer's clipboard
-  where the browser allows, and "Copy to this computer" does so on a click.
-  From a Mac browser the viewer sends Cmd as Ctrl to a Linux or Windows
-  box. Whether a server moves the clipboard is the server's: TigerVNC
-  and wayvnc do, both ways; QEMU's console does so only through the SPICE
-  guest agent, which the Windows boxes do not have; Tart's VNC server, through
-  the holder, neither takes a viewer's cut text nor sends its own (measured on
-  4 October 2026 on a macOS 27 box: a paste left the guest's pasteboard
-  unchanged, and a guest copy reached no viewer; Tart shares the pasteboard
-  only with its own host); a pool Mac's own input does both. For Windows and
-  Tart the viewer says so in both directions and leaves Cmd+V to noVNC.
+- The clipboard in the viewer (4 October 2026). Cmd+V, or Ctrl+V off a Mac, on
+  the desktop takes the text from the browser's paste event, which needs no
+  clipboard permission, sends it as ClientCutText and presses the box's own
+  paste chord, Ctrl+V or Cmd+V; the menu's "Paste from this computer" reads
+  the clipboard on the click and falls back to a field. What the box copies
+  comes back as ServerCutText, which noVNC gives only to the viewer with
+  control (view-only viewers drop it), or over the RPC above where the box's
+  input reports it; the viewer writes it to this computer's clipboard where
+  the browser allows, and "Copy to this computer" does so on a click. From a
+  Mac browser the viewer sends Cmd as Ctrl to a Linux or Windows box. Whether
+  a server moves the clipboard is the server's: TigerVNC and wayvnc do, both
+  ways; QEMU's console does so only through the SPICE guest agent, which the
+  Windows boxes do not have; Tart's VNC server, through the holder, neither
+  takes a viewer's cut text nor sends its own (measured on 4 October 2026 on a
+  macOS 27 box: a paste left the guest's pasteboard unchanged, and a guest
+  copy reached no viewer; Tart shares the pasteboard only with its own host);
+  a pool Mac's own input does both. So for a display that says `clipboard:
+  "commands"`, as Tart's macOS desktop does, bb-box moves it itself for the
+  viewer with control (#464): the viewer sends its text over RPC, as UTF-8,
+  and bb-box puts it on the pasteboard with `pbcopy` in the box user's desktop
+  session before the viewer presses Cmd+V; the viewer with control asks for
+  the box's clipboard over RPC every 2 s while its tab has the focus, and
+  bb-box reads it with `pbpaste` there. Each takes one command over SSH. An
+  empty pasteboard, or one with no text, leaves this computer's clipboard as
+  it is. For Windows the viewer says it moves none in either direction and
+  leaves the paste chord to noVNC.
 - wayvnc, which streams a Wayland desktop (048), offers no VNC password,
   so the relay signs in there with type 30 too, as the user `box`.
 - Windows uses RFB through Proxmox's console: nothing to install in the

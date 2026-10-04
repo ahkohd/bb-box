@@ -6,8 +6,9 @@
 // kept in plugin storage for the plugin's next instance (045).
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { Boxes } from "../core/boxes.ts";
+import type { BoxRecord, Boxes } from "../core/boxes.ts";
 import { Control, RECONNECT_MS, STALE_MS, type KeptControl, type ViewerConnection } from "../core/control.ts";
+import { MAC_CLIPBOARD } from "../core/in-box.ts";
 import { RfbRelay, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Display } from "../transports/types.ts";
 
@@ -15,6 +16,10 @@ export const DESKTOP_ROUTE = "/desktop";
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
 /** Each person's control, for the plugin's next instance (045). */
 const KEPT_KEY = "desktop-control";
+/** The most text bb-box reads from a desktop's clipboard with its own commands (#464): more is left for the box's own copy. */
+const MAX_CLIPBOARD_BYTES = 4 * 1024 * 1024;
+/** How long reading or writing a box's clipboard with a command may take. */
+const CLIPBOARD_TIMEOUT_MS = 10_000;
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const isCount = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0;
@@ -49,11 +54,18 @@ export interface Desktops {
   /** Where the panel opens the viewer's WebSocket, on the BB server's origin. */
   readonly path: string;
   /**
-   * The box's clipboard text as its desktop's own input last reported it,
-   * with a count that changes with it, for the viewer with control to copy
-   * (#406). Null before any.
+   * The box's clipboard text, with a count that changes with it, for the
+   * viewer with control to copy: as its desktop's own input last reported it
+   * (#406), or, where the desktop's server moves none, read in the box now
+   * for that viewer (#464). Null before any.
    */
-  clipboard(boxId: string): { readonly text: string; readonly serial: number } | null;
+  clipboard(boxId: string, viewer?: string): Promise<{ readonly text: string; readonly serial: number } | null>;
+  /**
+   * Puts the viewer's text on the box's clipboard, where the desktop's server
+   * moves none (#464). Only the viewer with control may; rejects with why
+   * the box did not take it.
+   */
+  paste(boxId: string, viewer: string, text: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -158,6 +170,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const relays = new Set<RfbRelay>();
   const clipboards = new Map<string, { text: string; serial: number }>();
   let clipboardSerial = 0;
+  /** The box, when it is running and its desktop's clipboard goes through bb-box's commands. */
+  const byCommands = async (boxId: string): Promise<BoxRecord | null> => {
+    const box = await boxes.find(boxId);
+    return box?.state === "ready" && box.capabilities.displays[0]?.clipboard === "commands" ? box : null;
+  };
 
   // Control people had as the last instance stopped. BB starts this one first, so the viewers connect again once that one stops.
   void (async () => {
@@ -248,7 +265,28 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   return {
     control,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
-    clipboard: (boxId) => clipboards.get(boxId) ?? null,
+    async clipboard(boxId, viewer) {
+      const box = viewer && control.mayInput(boxId, viewer) ? await byCommands(boxId) : null;
+      if (box) {
+        const read = await boxes.runOwn(box, MAC_CLIPBOARD.read, { session: "desktop", timeoutMs: CLIPBOARD_TIMEOUT_MS, maxOutputBytes: MAX_CLIPBOARD_BYTES }).catch(() => null);
+        // An empty pasteboard, or one with no text, such as an image, leaves this computer's clipboard as it is.
+        const text = read?.exitCode === 0 && !read.truncated ? read.stdout : "";
+        if (text && text !== clipboards.get(boxId)?.text) clipboards.set(boxId, { text, serial: ++clipboardSerial });
+      }
+      return clipboards.get(boxId) ?? null;
+    },
+    async paste(boxId, viewer, text) {
+      if (!control.mayInput(boxId, viewer)) throw new Error("Only the tab with control of the desktop can paste into it. Take control, then paste again.");
+      const box = await byCommands(boxId);
+      if (!box) throw new Error("This desktop takes a viewer's clipboard through its own server, so bb-box does not paste into it.");
+      const written = await boxes.runOwn(box, MAC_CLIPBOARD.write, { session: "desktop", stdin: text, timeoutMs: CLIPBOARD_TIMEOUT_MS, maxOutputBytes: 64 * 1024 });
+      if (written.exitCode !== 0) {
+        const why = written.stderr.trim().split("\n").at(-1) || `pbcopy exited with code ${written.exitCode}`;
+        throw new Error(`Box ${box.name} did not take the text for its clipboard: ${why}`);
+      }
+      // The box has the viewer's text, so the next read finds no change to copy back.
+      clipboards.set(boxId, { text, serial: clipboards.get(boxId)?.serial ?? ++clipboardSerial });
+    },
     async dispose() {
       await control.dispose();
       await Promise.all([...relays].map((relay) => relay.close()));

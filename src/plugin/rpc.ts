@@ -74,9 +74,14 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         await app.desktops.control.take(box.id, viewer);
         return box;
       }),
-    async desktopClipboard({ threadId, box: ref }) {
+    async desktopClipboard({ threadId, box: ref, viewer }) {
       const box = await desktopBox(threadId, ref);
-      return app.desktops.clipboard(box.id);
+      return app.desktops.clipboard(box.id, viewer);
+    },
+    async desktopPaste({ threadId, box: ref, viewer, text }) {
+      const box = await desktopBox(threadId, ref);
+      await app.desktops.paste(box.id, viewer, text);
+      return null;
     },
     handBack: ({ threadId, box: ref }) =>
       change("Handing back control", async () => {

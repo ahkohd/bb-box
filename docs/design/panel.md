@@ -508,33 +508,33 @@ titled after the box.
   text with a status dot. On the right the one action that matters now,
   and a menu with the rest ("Open in a browser tab", "Reconnect", "Open
   thread" on the Boxes page, and the clipboard items below).
-- **Clipboard** (the operator's notes of 4 October 2026: "paste to the
-  remote desktop does not work", "should we have a menu with Paste and
-  Copy?"): with control, Cmd+V (Ctrl+V off a Mac) on the desktop pastes
-  this computer's text where the box's cursor is. The keydown is kept from
-  noVNC, and the browser's paste event brings the text with no permission
-  asked; the viewer puts it on the box's clipboard and presses the box's
-  own chord, Ctrl+V, or Cmd+V on macOS. From a Mac browser, Cmd stands for
-  Ctrl in a Linux or Windows box, so Cmd+C, Cmd+A, Cmd+Z and the rest are
-  the box's shortcuts too. What is copied in the box reaches the viewer
-  with control as the desktop's cut text (or over RPC where the box's own
-  input reports it) and goes to this computer's clipboard where the
-  browser allows. The menu has "Paste from this computer" (reads the
-  clipboard on the click, a gesture; where the frame still refuses, a
-  field to paste into) and "Copy to this computer" (writes it on the click;
-  where refused, the text to copy by hand). Both items are listed whenever
-  the box shows, greyed until the connection is up, and Paste until this
-  tab has control, so a person sees there is a paste to take. Paste's icon
-  is the plugin's own clipboard glyph with an arrow into it
-  (`src/app/glyphs.tsx`), since BB's set has no clipboard icon and a
-  missing name falls back to a lightning bolt (the operator's note of
-  4 October 2026); it pairs with BB's Copy. The toolbar says "Pasted" or
-  "Copied" for two seconds. Where nothing has come from the box, the
-  message says why: take control first, copy in the box first, or, for
-  Windows and for a macOS VM on Tart, that the desktop's server moves the
-  clipboard in neither direction (QEMU's console only with the SPICE guest
-  agent; Tart's VNC server not at all, measured 4 October 2026). wayvnc
-  and TigerVNC move it both ways, measured the same day.
+- **Clipboard** (the operator's notes of 4 October 2026: "paste to the remote
+  desktop does not work", "should we have a menu with Paste and Copy?"): with
+  control, Cmd+V (Ctrl+V off a Mac) on the desktop pastes this computer's text
+  where the box's cursor is. The keydown is kept from noVNC, and the browser's
+  paste event brings the text with no permission asked; the viewer puts it on
+  the box's clipboard and presses the box's own chord, Ctrl+V, or Cmd+V on
+  macOS. From a Mac browser, Cmd stands for Ctrl in a Linux or Windows box, so
+  Cmd+C, Cmd+A, Cmd+Z and the rest are the box's shortcuts too. What is copied
+  in the box reaches the viewer with control as the desktop's cut text (or
+  over RPC where the box's own input reports it) and goes to this computer's
+  clipboard where the browser allows. The menu has "Paste from this computer"
+  (reads the clipboard on the click, a gesture; where the frame still refuses,
+  a field to paste into) and "Copy to this computer" (writes it on the click;
+  where refused, the text to copy by hand). Both items are listed whenever the
+  box shows, greyed until the connection is up, and Paste until this tab has
+  control, so a person sees there is a paste to take. Paste's icon is the
+  plugin's own clipboard glyph with an arrow into it (`src/app/glyphs.tsx`),
+  since BB's set has no clipboard icon and a missing name falls back to a
+  lightning bolt (the operator's note of 4 October 2026); it pairs with BB's
+  Copy. The toolbar says "Pasted" or "Copied" for two seconds. Where nothing
+  has come from the box, the message says why: take control first, copy in the
+  box first, or, for Windows, that the desktop's server moves the clipboard in
+  neither direction (QEMU's console only with the SPICE guest agent). wayvnc
+  and TigerVNC move it both ways, measured 4 October 2026. Tart's VNC server
+  moves it in neither direction, measured the same day, so on a macOS VM on
+  Tart bb-box moves it with `pbcopy` and `pbpaste` in the box's desktop
+  session, and the viewer's text goes over RPC as UTF-8 (#464).
 - **Control** (decisions 008 and 020):
 
   | Who | Text | Action |

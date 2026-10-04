@@ -52,6 +52,17 @@ function ps(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+/**
+ * A macOS box's pasteboard as UTF-8 text: `read` prints it, `write` sets it
+ * from stdin (#464). Run in the box user's desktop session, whose pasteboard
+ * the desktop shows. pbcopy and pbpaste take their encoding from the locale,
+ * which a command through `launchctl asuser` lacks.
+ */
+export const MAC_CLIPBOARD = {
+  read: "LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 exec pbpaste",
+  write: "LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 exec pbcopy",
+} as const;
+
 /** Where a command runs: as the transport runs it, or in the box's logged-in desktop session. */
 export type Session = "default" | "desktop";
 

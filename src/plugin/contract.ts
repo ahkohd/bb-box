@@ -75,7 +75,10 @@ export interface ThreadResult {
 const thread = z.object({ threadId: z.string().min(1) });
 const oneBox = thread.extend({ box: z.string().min(1) });
 /** The viewer ID names one viewer, such as a panel tab, of a box's desktop. */
-const viewer = oneBox.extend({ viewer: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) });
+const viewerId = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
+/** The longest text, in UTF-16 code units, that a paste through bb-box's own commands carries (#464). */
+export const MAX_PASTE_LENGTH = 1_000_000;
+const viewer = oneBox.extend({ viewer: viewerId });
 const boxResult = z.custom<BoxResult>();
 const forceable = oneBox.extend({ force: z.boolean().optional() });
 /** One of your machines, by ID or name. */
@@ -109,8 +112,13 @@ export const contract = defineRpcContract({
   desktop: { input: oneBox, output: z.custom<DesktopState>() },
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },
-  /** The box's clipboard text as its desktop's own input last reported it, for the viewer with control to copy (#406). */
-  desktopClipboard: { input: oneBox, output: z.object({ text: z.string(), serial: z.number() }).nullable() },
+  /**
+   * The box's clipboard text, for the viewer with control to copy: as its desktop's own input last reported it (#406),
+   * or read in the box for that viewer where the desktop's server moves none (#464).
+   */
+  desktopClipboard: { input: oneBox.extend({ viewer: viewerId.optional() }), output: z.object({ text: z.string(), serial: z.number() }).nullable() },
+  /** Puts the viewer with control's text on the box's clipboard, where the desktop's server moves none (#464). */
+  desktopPaste: { input: viewer.extend({ text: z.string().max(MAX_PASTE_LENGTH) }), output: z.null() },
   /** Every box across threads, servers as well as desktops, and your machines (036), for the Boxes page. */
   allBoxes: { input: z.null(), output: z.custom<BoxEntry[]>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */

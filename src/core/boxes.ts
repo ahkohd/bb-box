@@ -1716,6 +1716,28 @@ export class Boxes {
   }
 
   /**
+   * Runs a short script of bb-box's own in the box, as for a desktop's
+   * clipboard (#464): with no wait for enrolment and without writing the
+   * thread's environment first, so it takes one round trip. "desktop" runs
+   * it in the box's logged-in desktop session.
+   */
+  async runOwn(box: BoxRecord, script: string, options: { session?: Session; stdin?: string | Uint8Array; timeoutMs: number; maxOutputBytes?: number; signal?: AbortSignal }): Promise<RunResult> {
+    const capabilities = box.capabilities;
+    const session = options.session === "desktop" && !capabilities.command?.inDesktopSession ? "desktop" : "default";
+    return this.#reach(
+      box,
+      (transport) =>
+        transport.run(command(capabilities.os, script, { session, timeoutMs: options.timeoutMs }), {
+          stdin: options.stdin,
+          timeoutMs: options.timeoutMs + LOCAL_TIMEOUT_GRACE_MS,
+          signal: options.signal,
+          maxOutputBytes: options.maxOutputBytes,
+        }),
+      options.signal,
+    );
+  }
+
+  /**
    * Job `id` in a Linux or macOS box, which a command left when bb-box
    * restarted (#405): once it has ended, its exit code and output, which the
    * box's next command then removes; while it runs, the end of its output

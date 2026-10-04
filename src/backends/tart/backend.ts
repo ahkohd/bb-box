@@ -347,7 +347,8 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         gpu: false,
         features: [],
         command: SSH_COMMAND,
-        displays: [{ id: "desktop", protocol: "rfb", resizable: false }],
+        // Tart's VNC server shares the pasteboard with its host only (#464).
+        displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }],
         computerUse: cua,
         enrol: true,
       },
