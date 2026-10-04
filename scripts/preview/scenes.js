@@ -628,6 +628,19 @@ export const scenes = {
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
   "boxes-page": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "boxes-page-empty": { slot: "boxes-page", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
+  "boxes-page-add": {
+    slot: "boxes-page",
+    width: 900,
+    height: 980,
+    props: { subPath: "" },
+    rpc: rpc([box(), desktop], { machines: MACHINES }),
+    threads: { [THREAD]: "bb-box: UI/UX design and panel" },
+    after: async (root) => {
+      // The page's plus opens the same form as settings' Add machine, with the Name step (the operator, 4 October 2026).
+      click(root, "button", "Add machine");
+      await wait(400);
+    },
+  },
   "boxes-page-starting": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([], { machines: MACHINES }) },
   "settings-machines-empty": { slot: "settings", width: 860, height: 420, props: {}, rpc: rpc([]) },
