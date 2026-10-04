@@ -1072,7 +1072,6 @@ function BoxList() {
     <div className="h-full overflow-y-auto p-4 md:p-5">
       <div className="mx-auto w-full max-w-3xl space-y-4">
         <div className="flex items-center justify-end gap-1">
-          <IconButton label="BB Box settings" icon="Settings" onClick={() => void navigate.openUrl(SETTINGS_PATH)} />
           {kinds.length ? <NewBox kinds={kinds} make={add} machine plus profile={(backend) => rpc.call("provider", { backend })} /> : null}
         </div>
         {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
@@ -1132,6 +1131,17 @@ function BoxList() {
             </div>
           </div>
         ) : null}
+        {/* Where the page's content ends, left-aligned with the lists, in the style of the form's footer link (the operator, 5 October 2026); the plus stays alone at the top. */}
+        <div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => void navigate.openUrl(SETTINGS_PATH)}
+          >
+            <Icon name="Settings" className="size-3.5" aria-hidden />
+            BB Box settings
+          </button>
+        </div>
         {machineActions.dialogs}
         <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void actOn(inUse?.threadId ?? "")(found.method, found.box, true)} />
       </div>
