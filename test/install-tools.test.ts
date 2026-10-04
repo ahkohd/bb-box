@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
-import { arch } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { arch, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -55,4 +55,17 @@ test("install-tools.sh runs again on a built image, as a refresh does: it keeps 
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /demo already exists$/m);
   assert.equal(run(), "theirs");
+});
+
+test("the desktop scripts' check for a newer Chrome passes where Chrome is not installed yet, as on a fresh image (049)", () => {
+  const dir = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/", import.meta.url));
+  const bin = mkdtempSync(join(tmpdir(), "bb-box-dpkg-"));
+  // dpkg-query as for a package it has never seen.
+  writeFileSync(join(bin, "dpkg-query"), "#!/bin/sh\necho \"dpkg-query: no packages found matching $3\" >&2\nexit 1\n", { mode: 0o755 });
+  for (const script of ["customize-desktop.sh", "customize-desktop-wayland.sh"]) {
+    const line = readFileSync(join(dir, script), "utf8").split("\n").find((one) => one.startsWith("installed=$(dpkg-query"));
+    assert.ok(line, script);
+    const ran = spawnSync("bash", ["-c", `set -Eeuo pipefail; ${line}; echo "installed=[$installed]"`], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" });
+    assert.deepEqual([ran.status, ran.stdout], [0, "installed=[]\n"], `${script}: ${ran.stderr}`);
+  }
 });
