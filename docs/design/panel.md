@@ -562,6 +562,16 @@ that request's round trip (#353).
   primary colour, so it is clear which tab sends input. Resizing is
   automatic while you hold control; handing back puts the desktop back to
   the agent's size.
+- **Pointer** (the operator's note of 4 October 2026: a Linux desktop hid
+  the pointer without control; Windows and macOS did not): without
+  control, the local arrow over the desktop, always, whatever the box
+  sends; with control, the box's own cursor shape, as noVNC puts it on the
+  canvas, but never an invisible one: when the box sends none, or an empty
+  one, as TigerVNC and wayvnc do while the box's pointer is hidden, the
+  arrow shows instead. noVNC itself puts the box's cursor on the canvas
+  in every state and turns an empty one into no pointer at all, which is
+  what hid it; the viewer's subclass decides instead, and asks for a
+  refresh when control changes.
 - **Connection**: connecting shows a spinner and "Connecting…" in the
   toolbar; a lost connection shows "Disconnected" with a warning dot, a
   "Reconnect" button, and a notice on the screen area: "The connection to

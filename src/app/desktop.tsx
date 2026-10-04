@@ -84,6 +84,33 @@ class Viewer extends RFB {
     }
     super._handleKeyEvent(keysym, code, down, numlock, capslock);
   }
+
+  /**
+   * The pointer over the desktop (the operator's note of 4 October 2026: a Linux desktop hid it without control). noVNC
+   * puts the box's cursor on the canvas whatever the state, and an empty one, as TigerVNC and wayvnc send while the box's
+   * pointer is hidden, makes the local pointer invisible. Without control the local arrow, always; with control the
+   * box's shape, unless it has no visible pixel, which is the arrow too.
+   */
+  override _refreshCursor(): void {
+    if (this._rfbConnectionState !== "connecting" && this._rfbConnectionState !== "connected") return;
+    if (this.viewOnly || !visibleCursor(this._cursorImage)) {
+      this._canvas.style.cursor = "default";
+      return;
+    }
+    super._refreshCursor();
+  }
+
+  /** noVNC refreshes the cursor at connect and on each cursor the box sends, not when view-only changes: the viewer asks here. */
+  refreshCursor(): void {
+    this._refreshCursor();
+  }
+}
+
+/** Whether a cursor image has a visible pixel. */
+function visibleCursor(image: { rgbaPixels: Uint8Array; w: number; h: number } | undefined): boolean {
+  if (!image || image.w <= 0 || image.h <= 0) return false;
+  for (let index = 3; index < image.rgbaPixels.length; index += 4) if (image.rgbaPixels[index]) return true;
+  return false;
 }
 
 /** Where the Boxes page shows one box, for a new browser tab. */
@@ -289,6 +316,7 @@ export class DesktopSession implements Kept {
     client.viewOnly = !this.#mine;
     client.resizeSession = this.#mine && this.#resizable;
     client.commandAsControl = macBrowser() && this.guestOs !== "macos";
+    client.refreshCursor();
     if (this.#mine) client.focus({ preventScroll: true });
   }
 

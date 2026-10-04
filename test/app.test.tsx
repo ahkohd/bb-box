@@ -73,6 +73,16 @@ const novnc = vi.hoisted(() => {
     _handleKeyEvent(keysym: number, code: string, down: boolean) {
       this.keyEvents.push({ keysym, code, down });
     }
+    /** noVNC's canvas and cursor state: the box's cursor is none until it sends one; the connection state is connected throughout. */
+    _canvas = document.createElement("canvas");
+    _cursorImage = { rgbaPixels: new Uint8Array(), hotx: 0, hoty: 0, w: 0, h: 0 };
+    _rfbConnectionState = "connected";
+    cursorRefreshes = 0;
+    /** As noVNC's own: the box's cursor goes on the canvas (a keyword stands in for its image URL, which jsdom's CSS would reject), an empty one as "none". */
+    _refreshCursor() {
+      this.cursorRefreshes++;
+      this._canvas.style.cursor = this._cursorImage.w && this._cursorImage.h ? "crosshair" : "none";
+    }
     disconnect() {
       this.disconnected = true;
     }
@@ -1589,6 +1599,43 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
   } finally {
     platform.mockRestore();
   }
+});
+
+test("the pointer over the desktop: the local arrow without control whatever the box sends, the box's cursor with control, and never an invisible one", async () => {
+  const { handlers } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]! as unknown as FakeClient & { _canvas: HTMLCanvasElement; _cursorImage: { rgbaPixels: Uint8Array; hotx: number; hoty: number; w: number; h: number }; _refreshCursor(): void };
+  act(() => void client.dispatchEvent(new Event("connect")));
+  // Without control: the arrow, even once the box sends a cursor of its own, and even an empty one.
+  expect(client._canvas.style.cursor).toBe("default");
+  const arrow = { rgbaPixels: new Uint8Array([0, 0, 0, 255]), hotx: 0, hoty: 0, w: 1, h: 1 };
+  const hidden = { rgbaPixels: new Uint8Array([0, 0, 0, 0]), hotx: 0, hoty: 0, w: 1, h: 1 };
+  client._cursorImage = arrow;
+  client._refreshCursor();
+  expect(client._canvas.style.cursor).toBe("default");
+  client._cursorImage = hidden;
+  client._refreshCursor();
+  expect(client._canvas.style.cursor).toBe("default");
+  // With control: the box's cursor, as noVNC puts it; an empty one, or none, is the arrow instead.
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  client._cursorImage = arrow;
+  client._refreshCursor();
+  expect(client._canvas.style.cursor).toBe("crosshair");
+  client._cursorImage = hidden;
+  client._refreshCursor();
+  expect(client._canvas.style.cursor).toBe("default");
+  client._cursorImage = { rgbaPixels: new Uint8Array(), hotx: 0, hoty: 0, w: 0, h: 0 };
+  client._refreshCursor();
+  expect(client._canvas.style.cursor).toBe("default");
+  // Handing back puts the arrow back at once, without waiting for the box to send a cursor.
+  client._cursorImage = arrow;
+  client._refreshCursor();
+  expect(client._canvas.style.cursor).toBe("crosshair");
+  fireEvent.click(slot.getByRole("button", { name: "Hand back to the agent" }));
+  await slot.findByText("The agent has control.");
+  expect(client._canvas.style.cursor).toBe("default");
 });
 
 test("a desktop tab shows the box through the relay, and takes and hands back control", async () => {
