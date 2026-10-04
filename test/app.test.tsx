@@ -378,7 +378,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   const find = (ref: string) => boxes.find((candidate) => candidate.id === ref || candidate.name === ref) ?? null;
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
-    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? null, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
+    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktopClipboard: () => null,
@@ -1772,6 +1772,29 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   expect(slot.getByText("Starting")).toBeTruthy();
 });
 
+test("the Boxes page's plus adds one of your machines with settings' Add machine form, and the new machine shows under Your machines", async () => {
+  const { handlers, changes } = server([box()], { machines: [machine()] });
+  // The page lists your machines from allBoxes; here they come from the harness's machines, so a machine added shows up.
+  const yours = () => (handlers["machines.list"] as () => { machines: MachineEntry[] })().machines.map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" as const }));
+  const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, allBoxes: () => [...yours(), ...(handlers.allBoxes as () => BoxEntryLike[])()] };
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  expect(await list.findByText("Your machines")).toBeTruthy();
+  expect(list.getByText("2 boxes")).toBeTruthy();
+  // The plus at the top right, as the Box panel's, named Add machine (the operator, 4 October 2026): the same form, machine mode, with the Name step.
+  fireEvent.click(list.getByRole("button", { name: "Add machine" }));
+  expect(await screen.findByText("Of the kinds whose boxes join BB.")).toBeTruthy();
+  const name = screen.getByRole("textbox", { name: "Name" });
+  fireEvent.change(name, { target: { value: "build-2" } });
+  expect(submitButton().textContent).toBe("Add machine");
+  fireEvent.click(submitButton());
+  await waitFor(() => expect(changes).toEqual(["machines.add linux build-2"]));
+  // It shows under Your machines, starting, and the count follows.
+  expect(await list.findByText("build-2")).toBeTruthy();
+  expect(list.getByText("3 boxes")).toBeTruthy();
+  expect(list.getAllByText(/build-1|build-2|calm-otter/).map((node) => node.textContent)).toEqual(["build-1", "build-2", "calm-otter"]);
+});
+
 test("the Boxes page lists your machines first, without Open thread, and shows a machine's terminal", async () => {
   const { handlers } = server([desktopBox()], { machines: [machine()] });
   const mine = { threadId: "operator", box: desktopBox({ id: "box_m1", name: "build-1" }), owner: "yours" as const };
@@ -1791,16 +1814,18 @@ test("the Boxes page lists your machines first, without Open thread, and shows a
   await waitFor(() => expect(FakeSocket.made.at(-1)?.url).toContain("box=box_m1"));
 });
 
-test("the panel shows the box this thread runs on first, without Release or Stop, and says where they are", async () => {
+test("the panel lists the box this thread runs on first in the one list, with a This thread badge, without Release or Stop, and says where they are", async () => {
   const yours = desktopBox({ id: "box_m1", name: "build-1" });
   const { handlers } = server([box()], { runsOn: { box: yours, owner: "yours", threadId: null } });
   const slot = panel(handlers);
-  expect(await slot.findByText("This thread runs on it")).toBeTruthy();
-  expect(slot.getByText("build-1")).toBeTruthy();
-  expect(slot.getByText("Yours")).toBeTruthy();
+  expect(await slot.findByText("build-1")).toBeTruthy();
+  // No heading and no card of its own (the operator, 4 October 2026): one list, the machine first, and the count counts it.
+  expect(slot.queryByText("This thread runs on it")).toBeNull();
+  expect(slot.getByText("This thread")).toBeTruthy();
+  expect(slot.queryByText("Yours")).toBeNull();
   expect(slot.getByText(/Remove or stop it in/)).toBeTruthy();
   expect(slot.getByRole("link", { name: "BB Box's settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
-  expect(slot.getByText("1 box")).toBeTruthy();
+  expect(slot.getByText("2 boxes")).toBeTruthy();
   const rows = slot.getAllByRole("button", { name: /: details$/ }).map((node) => node.getAttribute("aria-label"));
   expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
   expect(slot.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
@@ -1808,10 +1833,49 @@ test("the panel shows the box this thread runs on first, without Release or Stop
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open desktop in a browser tab", "Open terminal", "Copy address", "Check now"]);
 
   cleanup();
+  // Only the machine it runs on, no boxes of its own: the list, not the empty state.
+  const only = panel(server([], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers);
+  expect(await only.findByText("build-1")).toBeTruthy();
+  expect(only.queryByText("No boxes yet")).toBeNull();
+  expect(only.getByText("1 box")).toBeTruthy();
+
+  cleanup();
   const theirs = panel(server([], { runsOn: { box: yours, owner: "thread", threadId: "thr_other" } }).handlers);
   expect(await theirs.findByText(/Held by/)).toBeTruthy();
   expect(await theirs.findByRole("button", { name: "UI thread" })).toBeTruthy();
-  expect(theirs.queryByText("Yours")).toBeNull();
+  expect(theirs.getByText("This thread")).toBeTruthy();
+  expect(theirs.queryByText("No boxes yet")).toBeNull();
+});
+
+test("the bare Desktop and Terminal tabs count the box this thread runs on: alone it opens straight away, with others it is listed first (036)", async () => {
+  const yours = desktopBox({ id: "box_m1", name: "build-1" });
+  const desktopAction = app.threadPanelActions.find((candidate) => candidate.id === "desktop");
+  const terminalAction = app.threadPanelActions.find((candidate) => candidate.id === "terminal");
+  // Alone: the thread's own boxes have no desktop, so the machine's desktop opens straight away.
+  const alone = renderSlot(desktopAction!, { threadId: THREAD, params: null }, { rpc: server([box()], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers, pluginId: "bb-box" });
+  expect(await alone.findByText("Connecting to the desktop…")).toBeTruthy();
+  await waitFor(() => expect(new URL(novnc.FakeRfb.made.at(-1)!.url).searchParams.get("box")).toBe("box_m1"));
+  cleanup();
+  // With a desktop of the thread's own: a chooser, the machine first with its badge.
+  const many = renderSlot(desktopAction!, { threadId: THREAD, params: null }, { rpc: server([desktopBox()], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers, pluginId: "bb-box" });
+  expect(await many.findByText("build-1")).toBeTruthy();
+  expect(many.getByText("bold-heron")).toBeTruthy();
+  expect(many.getByText("This thread")).toBeTruthy();
+  expect(many.getAllByRole("button", { name: "Open" })).toHaveLength(2);
+  fireEvent.click(many.getAllByRole("button", { name: "Open" })[0]!);
+  expect(many.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "build-1", params: { box: "box_m1" } } }]);
+  cleanup();
+  // The Terminal tab: alone, the machine's terminal opens straight away.
+  const terminal = renderSlot(terminalAction!, { threadId: THREAD, params: null }, { rpc: server([box({ terminal: false })], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers, pluginId: "bb-box" });
+  expect(await terminal.findByText("Connecting…")).toBeTruthy();
+  await waitFor(() => expect(new URL(FakeSocket.made.at(-1)!.url).searchParams.get("box")).toBe("box_m1"));
+  cleanup();
+  // With a box of the thread's own: a chooser, the machine first.
+  const both = renderSlot(terminalAction!, { threadId: THREAD, params: null }, { rpc: server([box()], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers, pluginId: "bb-box" });
+  expect(await both.findByText("build-1")).toBeTruthy();
+  expect(both.getByText("This thread")).toBeTruthy();
+  fireEvent.click(both.getAllByRole("button", { name: "Open" })[0]!);
+  expect(both.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "terminal", title: "Terminal: build-1", params: { box: "box_m1" } } }]);
 });
 
 test("an arm64 kind carries an arm64 badge, and macOS, always arm64, does not (040); the form offers arm64 when a kind has it", async () => {

@@ -17,7 +17,7 @@ import { DelayedLoading } from "@/components/ui/delayed-loading";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { BoxResult, Contract, PanelState, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BoxRow, type BoxAction } from "./box-row.tsx";
+import { BoxRow, type BoxAction, type Held } from "./box-row.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
 import { IMAGE_REQUEST, NewBox, type SizeRequest } from "./new-box.tsx";
@@ -44,6 +44,11 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   const runsOn = state?.runsOn ?? null;
   const titles = useThreadTitles(runsOn?.threadId ? [runsOn.threadId] : []);
   const now = useNow(boxes.some(isMoving) || (runsOn !== null && isMoving(runsOn.box)));
+  // One list (the operator, 4 October 2026): the box this thread runs on first, with a "This thread" badge, then the thread's own.
+  const rows: { box: BoxView; held: Held | null }[] = [
+    ...(runsOn ? [{ box: runsOn.box, held: { owner: runsOn.owner, threadId: runsOn.threadId, threadTitle: runsOn.threadId ? (titles[runsOn.threadId] ?? null) : null } }] : []),
+    ...boxes.map((box) => ({ box, held: null })),
+  ];
 
   const settle = async (result: Promise<BoxResult>, onThreads?: (threads: readonly ThreadOnBox[]) => void): Promise<string | null> => {
     let refused: string | null;
@@ -92,7 +97,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
       </DelayedLoading>
     );
   }
-  if (!state.kinds.length && !boxes.length) {
+  if (!state.kinds.length && !rows.length) {
     return (
       <EmptyPanel title="BB Box is not set up yet">
         <p className="mt-1">Set a backend up in its settings and turn it on.</p>
@@ -108,7 +113,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{boxes.length ? `${boxes.length} ${boxes.length === 1 ? "box" : "boxes"}` : null}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{rows.length ? `${rows.length} ${rows.length === 1 ? "box" : "boxes"}` : null}</span>
         {state.kinds.length ? (
           <NewBox
             kinds={state.kinds}
@@ -124,27 +129,11 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
           {problem}
         </p>
       ) : null}
-      {runsOn ? (
-        <div className="space-y-1.5">
-          <p className="text-xs font-medium text-foreground">This thread runs on it</p>
-          <div className="rounded-lg border border-border bg-card px-4 py-1">
-            <BoxRow
-              box={runsOn.box}
-              threadId={threadId}
-              open={open === runsOn.box.id}
-              onToggle={() => setOpen((current) => (current === runsOn.box.id ? null : runsOn.box.id))}
-              act={act}
-              now={now}
-              held={{ owner: runsOn.owner, threadId: runsOn.threadId, threadTitle: runsOn.threadId ? (titles[runsOn.threadId] ?? null) : null }}
-            />
-          </div>
-        </div>
-      ) : null}
-      {boxes.length ? (
+      {rows.length ? (
         <div className="rounded-lg border border-border bg-card px-4 py-1">
           <div className="divide-y divide-border">
-            {boxes.map((box) => (
-              <BoxRow key={box.id} box={box} threadId={threadId} open={open === box.id} onToggle={() => setOpen((current) => (current === box.id ? null : box.id))} act={act} now={now} />
+            {rows.map(({ box, held }) => (
+              <BoxRow key={box.id} box={box} threadId={threadId} open={open === box.id} onToggle={() => setOpen((current) => (current === box.id ? null : box.id))} act={act} now={now} held={held} />
             ))}
           </div>
         </div>

@@ -359,7 +359,7 @@ function rpc(boxes, options = {}) {
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
     state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
-    desktop: ({ box: ref }) => ({ box: find(ref), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
+    desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     allBoxes: () => [
       ...(options.machines ?? []).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
       ...boxes.map((candidate) => ({ threadId: THREAD, box: candidate, owner: "thread" })),
@@ -407,6 +407,7 @@ export const scenes = {
   "panel-nobackend": { slot: "boxes", chrome: boxesChrome, rpc: rpc([], { kinds: [] }) },
   "panel-list": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting, desktop, stopped]) },
   "panel-runs-on": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },
+  "panel-runs-on-only": { slot: "boxes", chrome: boxesChrome, rpc: rpc([], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },
   "panel-list-narrow": {
     slot: "boxes",
     chrome: boxesChrome,
@@ -627,6 +628,19 @@ export const scenes = {
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
   "boxes-page": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "boxes-page-empty": { slot: "boxes-page", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
+  "boxes-page-add": {
+    slot: "boxes-page",
+    width: 900,
+    height: 980,
+    props: { subPath: "" },
+    rpc: rpc([box(), desktop], { machines: MACHINES }),
+    threads: { [THREAD]: "bb-box: UI/UX design and panel" },
+    after: async (root) => {
+      // The page's plus opens the same form as settings' Add machine, with the Name step (the operator, 4 October 2026).
+      click(root, "button", "Add machine");
+      await wait(400);
+    },
+  },
   "boxes-page-starting": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([], { machines: MACHINES }) },
   "settings-machines-empty": { slot: "settings", width: 860, height: 420, props: {}, rpc: rpc([]) },

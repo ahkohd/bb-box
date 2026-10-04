@@ -110,6 +110,7 @@ export function NewBox({
   kinds,
   make,
   machine = false,
+  plus = false,
   profile,
   askForImage,
   images = [],
@@ -121,6 +122,8 @@ export function NewBox({
   images?: readonly ImageOptionView[];
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
   machine?: boolean;
+  /** With `machine`, the Box panel's plus instead of the labelled button: the Boxes page's "Add machine" (the operator, 4 October 2026). */
+  plus?: boolean;
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
   /** Asks an agent to make the project a box image (049), when it has none. */
@@ -314,7 +317,7 @@ export function NewBox({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      {machine ? (
+      {machine && !plus ? (
         <PopoverTrigger asChild>
           <Button type="button" variant="outline" size="sm" className="h-7" disabled={!kinds.length}>
             <Icon name="Plus" aria-hidden />
@@ -326,12 +329,12 @@ export function NewBox({
           <Tooltip>
             <TooltipTrigger asChild>
               <PopoverTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label="New box" disabled={!kinds.length}>
+                <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={machine ? "Add machine" : "New box"} disabled={!kinds.length}>
                   <Icon name="Plus" className="size-4" aria-hidden />
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>New box</TooltipContent>
+            <TooltipContent>{machine ? "Add machine" : "New box"}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
       )}

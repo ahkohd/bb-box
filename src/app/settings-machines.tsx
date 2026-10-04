@@ -21,7 +21,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { cn } from "@/lib/utils";
 import type { BoxResult, Contract, MachineEntry, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
-import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, osName, StatusDot, useLive, useNow } from "./common.tsx";
+import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, OPERATOR, osName, StatusDot, useLive, useNow } from "./common.tsx";
 import { DESKTOP_PAGE, desktopSubPath } from "./desktop.tsx";
 import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { Section } from "./settings-fields.tsx";
@@ -29,8 +29,6 @@ import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 import { MonitorGlyph, ServerGlyph, TerminalGlyph } from "./glyphs.tsx";
 
-/** The reserved thread your machines belong to (036). */
-export const OPERATOR = "operator";
 
 type Guarded = "remove" | "stop";
 

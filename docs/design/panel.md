@@ -450,21 +450,27 @@ bottom sheet still carries the title "New box".
 ### The box this thread runs on
 
 A thread that runs on a box's BB machine, one of your machines (036) or
-another thread's, shows that box first, under the caption "This thread
-runs on it", in a card of its own above the thread's boxes; the count
-above the list counts the thread's own. The row is the box row with a
-"Yours" badge for your machine, and without Stop, Start, Release or "New
-thread on this box": a line under its status says where those are,
-"Remove or stop it in BB Box's settings." (a link), or names the thread
-that holds it, "Held by <title>", which opens that thread. Open desktop,
-Open terminal, Copy address and Check now stay.
+another thread's, lists that box first in the one list, with a small dim
+"This thread" badge beside its Desktop and VM badges, in the badges'
+style; the count above the list counts it. There is no heading and no card
+of its own (the operator, 4 October 2026: "This thread runs on it" read
+oddly above an empty state saying the thread had no boxes). The row offers
+no Release, Stop, Start or "New thread on this box": a line under its
+status says where those are, "Remove or stop it in BB Box's settings." (a
+link to Your machines), or names the thread that holds it, "Held by
+<title>", which opens that thread. Open desktop, Open terminal, Copy
+address and Check now stay. The bare Desktop and Terminal tabs count it
+too: it is listed first, and when it is the only desktop, or the only box
+with a terminal, the bare tab opens it straight away.
 
 ### Empty states
 
 - **No boxes**: BB's dashed empty panel: "No boxes yet", then "A computer
   for this thread." The operator asked for that line to stay this simple
   (1 October 2026). The toolbar's plus is the action; the panel does not
-  repeat it.
+  repeat it. It shows only when there is nothing at all to list: a thread
+  on one of your machines with no boxes of its own sees that machine's
+  row, not this.
 - **No backend on**: "BB Box is not set up yet. Set a backend up in its
   settings and turn it on." with an "Open BB Box settings" button that goes
   to the plugin's settings page. No "New box" button.
@@ -644,8 +650,14 @@ boxes follow under "Threads". Opening a desktop shows the same viewer with
 a back arrow in the toolbar, at `<thread>/<box>`; a box's terminal shows
 the same way at `<thread>/<box>/terminal`, which is how the settings page
 opens a machine's terminal, since it has no thread panel to open a tab in.
-Empty: "No boxes" — "No thread has a box, and you have no machines. Make
-one from a thread's Box panel."
+At the top right sits the same plus as the Box panel's, "Add machine": it
+opens the New box form in machine mode, with the optional Name, as
+settings' Add machine does (the operator, 4 October 2026: "I should be
+able to add a new box there too, not have to go to settings"); the new
+machine shows under Your machines as it starts and once it is ready. The
+count on the left counts every row. Settings' Add machine stays as it is.
+Empty: "No boxes" — "No thread has a box, and you have no machines. Add
+one with the plus, or from a thread's Box panel."
 
 ## Copy
 
