@@ -70,6 +70,10 @@ export function BoxRow({
   act,
   now,
   held = null,
+  opens,
+  meta = [],
+  extra = null,
+  threading: offersThread = true,
 }: {
   box: BoxView;
   threadId: string;
@@ -79,11 +83,21 @@ export function BoxRow({
   now: number;
   /** Set for the box this thread runs on (036): a "BB machine" badge among the others, no Release, Stop or Start, and a line saying where those are. */
   held?: Held | null;
+  /** Where the desktop and terminal open, when not in this thread's panel tabs: the Boxes page opens them on the page. */
+  opens?: { readonly desktop: (box: BoxView) => void; readonly terminal: (box: BoxView) => void };
+  /** Last words on the status line, such as the Boxes page's who has control and thread title. */
+  meta?: readonly (string | null)[];
+  /** A quick action before the menu, such as the Boxes page's Open thread. */
+  extra?: ReactNode;
+  /** "New thread on this box…": a child of `threadId`'s thread. Off on the Boxes page, where "this thread" names none. */
+  threading?: boolean;
 }) {
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
-  const openDesktop = useOpenDesktop();
-  const openTerminal = useOpenTerminal();
+  const openInPanel = useOpenDesktop();
+  const terminalInPanel = useOpenTerminal();
+  const openDesktop = opens?.desktop ?? openInPanel;
+  const openTerminal = opens?.terminal ?? terminalInPanel;
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [confirming, setConfirming] = useState(false);
   const rpc = useRpc<Contract>();
@@ -142,11 +156,14 @@ export function BoxRow({
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
           <StatusDot tone={status.tone} />
           <Meta
-            items={status.items.map((item, index) => (
-              <span key={index} className={cn(item.tone === "fg" && "text-foreground", item.tone === "warn" && "text-warning-text", item.tone === "danger" && "text-destructive-text")}>
-                {item.text}
-              </span>
-            ))}
+            items={[
+              ...status.items.map((item, index) => (
+                <span key={index} className={cn(item.tone === "fg" && "text-foreground", item.tone === "warn" && "text-warning-text", item.tone === "danger" && "text-destructive-text")}>
+                  {item.text}
+                </span>
+              )),
+              ...meta,
+            ]}
           />
         </div>
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
@@ -202,6 +219,7 @@ export function BoxRow({
         {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => openTerminal(box)} /> : null}
         {!held && box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} /> : null}
         {!held && box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} /> : null}
+        {extra}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={`${box.name} actions`}>
@@ -233,13 +251,13 @@ export function BoxRow({
                 Copy address
               </DropdownMenuItem>
             ) : null}
-            {!held && ready && box.enrol.state === "enrolled" ? (
+            {offersThread && !held && ready && box.enrol.state === "enrolled" ? (
               <DropdownMenuItem onSelect={() => setThreading({ prompt: "", starting: false, error: null })}>
                 <Icon name="MessageSquarePlus" fallback="Plus" aria-hidden />
                 New thread on this box…
               </DropdownMenuItem>
             ) : null}
-            {(box.desktop && ready) || canOpenTerminal(box) || box.address || (!held && ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
+            {(box.desktop && ready) || canOpenTerminal(box) || box.address || (offersThread && !held && ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
             {!held && box.canStopStart && ready ? (
               <DropdownMenuItem onSelect={() => void run("stop")}>
                 <Icon name="Square" aria-hidden />

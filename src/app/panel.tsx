@@ -2,22 +2,13 @@
 
 import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { DelayedLoading } from "@/components/ui/delayed-loading";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { BoxResult, Contract, PanelState, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { BoxRow, type BoxAction, type Held } from "./box-row.tsx";
+import { InUseDialog, ProblemLine, type InUse } from "./box-actions.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
 import { IMAGE_REQUEST, NewBox, type SizeRequest } from "./new-box.tsx";
@@ -35,7 +26,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   const [open, setOpen] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   /** A release or stop left alone because threads run on the box, until the user says. */
-  const [inUse, setInUse] = useState<{ method: "release" | "stop"; box: BoxView; threads: readonly ThreadOnBox[] } | null>(null);
+  const [inUse, setInUse] = useState<InUse<"release" | "stop"> | null>(null);
   useEffect(() => {
     setProblem(null);
     setOpen(null);
@@ -123,11 +114,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
           />
         ) : null}
       </div>
-      {problem ? (
-        <p role="alert" className="text-xs leading-snug text-destructive-text">
-          {problem}
-        </p>
-      ) : null}
+      <ProblemLine problem={problem} onDismiss={() => setProblem(null)} />
       {rows.length ? (
         <div className="rounded-lg border border-border bg-card px-4 py-1">
           <div className="divide-y divide-border">
@@ -141,27 +128,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
           <p className="mt-1">A computer for this thread.</p>
         </EmptyPanel>
       )}
-      <AlertDialog open={inUse !== null} onOpenChange={(open) => !open && setInUse(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {inUse?.method === "stop" ? "Stop" : "Release"} {inUse?.box.name} anyway?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {inUse ? `${inUse.threads.map((thread) => thread.title ?? thread.id).join(", ")} ${inUse.threads.length === 1 ? "is" : "are"} working on it, and would lose ${inUse.threads.length === 1 ? "its" : "their"} machine.` : null}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => inUse && void act(inUse.method, inUse.box, true)}
-            >
-              {inUse?.method === "stop" ? "Stop anyway" : "Release anyway"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(found.method, found.box, true)} />
     </div>
   );
 }

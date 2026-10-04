@@ -164,8 +164,9 @@ After the state come the size ("4 cores · 8 GiB · 32 GiB"; the disk is left
 out when it is the base disk), "GPU" or "CPU" for a desktop, and for a
 desktop someone controls, "You have control" or "Someone else has control"
 in foreground text. A refused change ("Stopping the box failed: the host did
-not answer.") shows as a second line in destructive text until the next
-change.
+not answer.") shows under the toolbar as a line in destructive text, with
+Dismiss, until dismissed or the next change (the operator's note of
+4 October 2026, as the desktop's red line got with #468).
 
 ### Details
 
@@ -688,17 +689,25 @@ plugin declares it in `bb.branding.experimental_icons`, as BB resolves a
 plugin's icons by name (the operator's note of 5 October 2026, when an
 undeclared name had shown the monitor).
 
-Each row carries the actions the box can take, as quick icon buttons:
-"Open desktop" for a ready desktop box, "Open terminal" once the box has
-one, "Open desktop in a browser tab" where a desktop exists, and "Open
-thread" for a thread's box. Your machines (036) come first, under
-"Machines" (the operator, 4 October 2026), titled by machine name and
-without "Open thread" or a "BB machine" badge, since every row there is
-one; the threads' boxes follow under "Threads". Opening a desktop shows the same viewer with
+Every row can be managed there (the operator, 5 October 2026). A thread's
+box is the Box panel's row (`BoxRow`): its quick actions and its menu, Stop
+or Start, Check now and "Release…", which asks first, and asks "Release …
+anyway?" when another thread is working on the box, as the panel does; the
+page acts as the box's thread, through the same RPCs and their in-use guard.
+"New thread on this box…" is left out there, since "this thread" names
+none. The row keeps "Open thread" beside its menu, and its status line ends
+with who has control of a desktop and the thread's title. Your machines
+(036) come first, under "Machines" (the operator, 4 October 2026), as
+settings' rows (`MachineRow`): the threads working on each, Stop or Start,
+and "Remove…" with settings' warnings, plus "Open desktop in a browser
+tab"; there is no "Open thread" or "BB machine" badge, since every row
+there is one. The threads' boxes follow under "Threads". A refusal is a red
+line with Dismiss. Opening a desktop shows the same viewer with
 a back arrow in the toolbar, at `<thread>/<box>`; a box's terminal shows
 the same way at `<thread>/<box>/terminal`, which is how the settings page
 opens a machine's terminal, since it has no thread panel to open a tab in.
-At the top right sits the same plus as the Box panel's, "Add machine": it
+At the top right sit a settings button, "BB Box settings", which opens
+Settings > BB Box, and the same plus as the Box panel's, "Add machine": it
 opens the New box form in machine mode, with the optional Name, as
 settings' Add machine does (the operator, 4 October 2026: "I should be
 able to add a new box there too, not have to go to settings"); the new
