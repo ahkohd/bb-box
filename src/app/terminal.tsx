@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Contract, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, message, Notice, StatusDot, useLive, useNow, type Tone } from "./common.tsx";
+import { Badge, BOXES_ACTION, EmptyPanel, forThread, IconButton, message, Notice, StatusDot, useLive, useNow, type Tone } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { BoxLine } from "./desktop.tsx";
 import { XTERM_CSS } from "./xterm-css.ts";
@@ -268,7 +268,9 @@ function TerminalChooser({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
   const open = useOpenTerminal();
   const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
-  const boxes = state?.boxes.filter((box) => box.terminal) ?? [];
+  // The box this thread runs on counts too (the operator, 4 October 2026): listed first, and alone it opens straight away.
+  const runsOn = state?.runsOn?.box.terminal ? state.runsOn.box : null;
+  const boxes = [...(runsOn ? [runsOn] : []), ...(state?.boxes.filter((box) => box.terminal) ?? [])];
   useNow(
     boxes.some((box) => box.state === "acquiring" || box.state === "starting"),
     1000,
@@ -292,6 +294,7 @@ function TerminalChooser({ threadId }: { threadId: string }) {
               <BoxLine
                 key={box.id}
                 box={box}
+                badge={box.id === runsOn?.id ? <Badge>This thread</Badge> : undefined}
                 actions={
                   <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => open(box)}>
                     Open

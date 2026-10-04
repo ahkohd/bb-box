@@ -77,7 +77,7 @@ export function BoxRow({
   onToggle: () => void;
   act: (method: BoxAction, box: BoxView) => Promise<void>;
   now: number;
-  /** Set for the box this thread runs on: its row offers no Release or Stop, and says where they are. */
+  /** Set for the box this thread runs on (036): a "This thread" badge, no Release, Stop or Start, and a line saying where those are. */
   held?: Held | null;
 }) {
   const pluginId = experimental_usePluginId();
@@ -137,7 +137,7 @@ export function BoxRow({
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
             <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{osName(box.os)}</span>
             <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
-            {held?.owner === "yours" ? <Badge>Yours</Badge> : null}
+            {held ? <Badge>This thread</Badge> : null}
           </span>
         </button>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
