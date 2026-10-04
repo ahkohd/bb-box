@@ -507,7 +507,26 @@ titled after the box.
   text-xs`): the monitor glyph, the box's name, then the state in muted
   text with a status dot. On the right the one action that matters now,
   and a menu with the rest ("Open in a browser tab", "Reconnect", "Open
-  thread" on the Boxes page).
+  thread" on the Boxes page, and the clipboard items below).
+- **Clipboard** (the operator's notes of 4 October 2026: "paste to the
+  remote desktop does not work", "should we have a menu with Paste and
+  Copy?"): with control, Cmd+V (Ctrl+V off a Mac) on the desktop pastes
+  this computer's text where the box's cursor is. The keydown is kept from
+  noVNC, and the browser's paste event brings the text with no permission
+  asked; the viewer puts it on the box's clipboard and presses the box's
+  own chord, Ctrl+V, or Cmd+V on macOS. From a Mac browser, Cmd stands for
+  Ctrl in a Linux or Windows box, so Cmd+C, Cmd+A, Cmd+Z and the rest are
+  the box's shortcuts too. What is copied in the box reaches the viewer
+  with control as the desktop's cut text (or over RPC where the box's own
+  input reports it) and goes to this computer's clipboard where the
+  browser allows. The menu has "Paste from this computer" (reads the
+  clipboard on the click, a gesture; where the frame still refuses, a
+  field to paste into) and "Copy to this computer" (writes it on the click;
+  where refused, the text to copy by hand). The toolbar says "Pasted" or
+  "Copied" for two seconds. Where nothing has come from the box, the
+  message says why: take control first, copy in the box first, or, for
+  Windows, that QEMU's console sends the clipboard only with the SPICE
+  guest agent.
 - **Control** (decisions 008 and 020):
 
   | Who | Text | Action |

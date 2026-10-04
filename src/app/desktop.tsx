@@ -6,7 +6,17 @@ import RFB from "@novnc/novnc";
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
@@ -26,6 +36,25 @@ const MAX_RETRY_MS = 15_000;
 const CLIPBOARD_POLL_MS = 2_000;
 /** How long the viewer's size must hold before the desktop is asked for it again. */
 export const SETTLE_MS = 250;
+/** How long the paste chord waits after the text is sent, so a server that fetches the text (the extended clipboard) has it before the paste. */
+export const PASTE_CHORD_DELAY_MS = 150;
+/** How long a Cmd+V or Ctrl+V waits for the browser's paste event before the box pastes its own clipboard. */
+const PASTE_EVENT_WAIT_MS = 150;
+/** How long "Copied" and "Pasted" show in the toolbar. */
+const FLASH_MS = 2_000;
+const XK_CONTROL_L = 0xffe3;
+const XK_META_L = 0xffe7;
+const XK_META_R = 0xffe8;
+const XK_SUPER_L = 0xffeb;
+const XK_SUPER_R = 0xffec;
+const XK_V = 0x76;
+
+/** Whether the browser runs on a Mac, where Cmd is the shortcut key. */
+function macBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const platform = (navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? "";
+  return /Mac|iPhone|iPad/.test(platform);
+}
 
 /**
  * noVNC measures its screen in fractional pixels and asks the box for the
@@ -35,9 +64,25 @@ export const SETTLE_MS = 250;
  * pixels, as the request is made, a size that holds is asked for once.
  */
 class Viewer extends RFB {
+  /**
+   * Cmd stands for Ctrl in the box: a Mac browser showing a Linux or Windows
+   * desktop, where Cmd+C, Cmd+V, Cmd+A, Cmd+Z and the rest are the box's
+   * Ctrl shortcuts, not Super ones (the operator's note of 4 October 2026).
+   */
+  commandAsControl = false;
+
   override _screenSize(): { w: number; h: number } {
     const size = super._screenSize();
     return { w: Math.floor(size.w), h: Math.floor(size.h) };
+  }
+
+  override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
+    if (this.commandAsControl && (keysym === XK_META_L || keysym === XK_META_R || keysym === XK_SUPER_L || keysym === XK_SUPER_R)) {
+      // The code too: with QEMU's key events the box takes the scancode, not the keysym.
+      super._handleKeyEvent(XK_CONTROL_L, "ControlLeft", down, numlock, capslock);
+      return;
+    }
+    super._handleKeyEvent(keysym, code, down, numlock, capslock);
   }
 }
 
@@ -111,7 +156,7 @@ export class DesktopSession implements Kept {
   connection: Connection = { state: "connecting" };
   readonly #url: string;
   readonly #listeners = new Set<() => void>();
-  #client: RFB | null = null;
+  #client: Viewer | null = null;
   #failures = 0;
   #retry: ReturnType<typeof setTimeout> | undefined;
   #refused: string | null = null;
@@ -122,6 +167,19 @@ export class DesktopSession implements Kept {
   #settle: ReturnType<typeof setTimeout> | undefined;
   /** The viewer's size as last observed, so the first observation, at mount, is not taken for a move. */
   #lastSize: string | null = null;
+  /** The box's OS: the paste chord is Cmd+V on macOS and Ctrl+V elsewhere, and a Mac browser's Cmd stands for Ctrl there. */
+  guestOs = "linux";
+  /** The box's clipboard text as its desktop sent it (ServerCutText), which noVNC gives only to the viewer with control. */
+  onClipboard?: (text: string) => void;
+  /** A Cmd+V or Ctrl+V the viewer took: the text pasted, or null when the browser's clipboard had none and the box pasted its own. */
+  onPaste?: (text: string | null) => void;
+  /** Whether the box takes a viewer's clipboard at all; where not, a Cmd+V is left to noVNC as it was. */
+  pasteAllowed?: () => boolean;
+  /** When a Cmd+V or Ctrl+V was taken from noVNC and the browser's paste event is awaited. */
+  #pasteArmed: number | null = null;
+  #pasteWait: ReturnType<typeof setTimeout> | undefined;
+  #chord: ReturnType<typeof setTimeout> | undefined;
+  readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
 
   constructor(url: string) {
     this.#url = url;
@@ -149,6 +207,10 @@ export class DesktopSession implements Kept {
             this.#settle = setTimeout(() => this.#nudge(), SETTLE_MS);
           });
     this.#observer?.observe(this.element);
+    // Cmd+V (Ctrl+V elsewhere) while this tab has control pastes this computer's text: the browser's paste event
+    // carries it with no permission asked, so the keydown is kept from noVNC and left to the browser (4 October 2026).
+    this.element.addEventListener("keydown", (event) => this.#interceptPaste(event), true);
+    document.addEventListener("paste", this.#onPasteEvent, true);
     this.connect();
   }
 
@@ -170,6 +232,12 @@ export class DesktopSession implements Kept {
     client.scaleViewport = true;
     client.viewOnly = !this.#mine;
     client.resizeSession = this.#mine && this.#resizable;
+    client.commandAsControl = macBrowser() && this.guestOs !== "macos";
+    client.addEventListener("clipboard", (event: Event) => {
+      if (this.#client !== client) return;
+      const text = (event as CustomEvent<{ text?: string }>).detail?.text;
+      if (typeof text === "string") this.onClipboard?.(text);
+    });
     client.addEventListener("connect", () => {
       if (this.#client !== client) return;
       this.#failures = 0;
@@ -216,12 +284,68 @@ export class DesktopSession implements Kept {
     if (!client || this.connection.state !== "connected") return;
     client.viewOnly = !this.#mine;
     client.resizeSession = this.#mine && this.#resizable;
+    client.commandAsControl = macBrowser() && this.guestOs !== "macos";
     if (this.#mine) client.focus({ preventScroll: true });
+  }
+
+  /** The box's OS, for the paste chord and the Cmd mapping. */
+  setGuest(os: string): void {
+    this.guestOs = os;
+    this.#apply();
   }
 
   /** Puts text on the box's clipboard, as a viewer's paste does. */
   sendClipboard(text: string): void {
     if (this.connection.state === "connected") this.#client?.clipboardPasteFrom(text);
+  }
+
+  /** Puts text on the box's clipboard, then presses the box's own paste chord, Ctrl+V or Cmd+V, where the cursor is. */
+  paste(text: string): void {
+    if (this.connection.state !== "connected" || !this.#client) return;
+    this.#client.clipboardPasteFrom(text);
+    this.#pressPaste();
+  }
+
+  /** The box's paste chord, after a short wait for the text to land; the modifier is pressed whether or not the person holds its browser twin. */
+  #pressPaste(): void {
+    clearTimeout(this.#chord);
+    this.#chord = setTimeout(() => {
+      const client = this.#client;
+      if (!client || this.connection.state !== "connected") return;
+      const modifier = this.guestOs === "macos" ? { keysym: XK_META_L, code: "MetaLeft" } : { keysym: XK_CONTROL_L, code: "ControlLeft" };
+      client.sendKey(modifier.keysym, modifier.code, true);
+      client.sendKey(XK_V, "KeyV", true);
+      client.sendKey(XK_V, "KeyV", false);
+      client.sendKey(modifier.keysym, modifier.code, false);
+    }, PASTE_CHORD_DELAY_MS);
+  }
+
+  /** A Cmd+V (Ctrl+V off a Mac) on the desktop while this tab has control: kept from noVNC, left to the browser, whose paste event brings the text. */
+  #interceptPaste(event: KeyboardEvent): void {
+    if (!this.#mine || this.connection.state !== "connected" || this.pasteAllowed?.() === false) return;
+    if (event.key.toLowerCase() !== "v" || event.altKey || event.shiftKey) return;
+    if (!(macBrowser() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
+    event.stopPropagation();
+    this.#pasteArmed = Date.now();
+    clearTimeout(this.#pasteWait);
+    // No paste event follows when the clipboard has no text: the box pastes its own then.
+    this.#pasteWait = setTimeout(() => {
+      if (this.#pasteArmed === null) return;
+      this.#pasteArmed = null;
+      this.#pressPaste();
+      this.onPaste?.(null);
+    }, PASTE_EVENT_WAIT_MS);
+  }
+
+  #takePaste(event: ClipboardEvent): void {
+    if (this.#pasteArmed === null) return;
+    this.#pasteArmed = null;
+    clearTimeout(this.#pasteWait);
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    event.preventDefault();
+    if (text) this.paste(text);
+    else this.#pressPaste();
+    this.onPaste?.(text || null);
   }
 
   /** The viewer's size has held: noVNC asks for it once, if the desktop differs and this viewer may resize it. */
@@ -234,6 +358,9 @@ export class DesktopSession implements Kept {
     this.#disposed = true;
     clearTimeout(this.#retry);
     clearTimeout(this.#settle);
+    clearTimeout(this.#pasteWait);
+    clearTimeout(this.#chord);
+    document.removeEventListener("paste", this.#onPasteEvent, true);
     this.#observer?.disconnect();
     const client = this.#client;
     this.#client = null;
@@ -274,11 +401,28 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const session = useRef<DesktopSession | null>(null);
   const mineNow = useRef(false);
   mineNow.current = mine;
+  const boxNow = useRef(box);
+  boxNow.current = box;
   const key = `desktop:${boxId}:${viewer}`;
   // A kept session shows at once, before the box's state has loaded; the state can only confirm or end it.
   const [connection, setConnection] = useState<Connection>(() => keptFree<DesktopSession>(key)?.connection ?? { state: "connecting" });
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /** The box's clipboard text as last seen: from its desktop's cut text, or the RPC where its input reports it. */
+  const [boxClipboard, setBoxClipboard] = useState<string | null>(null);
+  /** "Copied" or "Pasted", for a moment, in the toolbar. */
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const flashFor = (words: string) => {
+    setFlash(words);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), FLASH_MS);
+  };
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  /** The field to paste into when this computer's clipboard cannot be read here: null closed, else its text. */
+  const [pasteField, setPasteField] = useState<string | null>(null);
+  /** The box's text shown to copy by hand, when this computer's clipboard cannot be written here. */
+  const [copyField, setCopyField] = useState<string | null>(null);
   const ready = showing && path !== null;
   const pathNow = useRef(path);
   pathNow.current = path;
@@ -295,12 +439,26 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     const current = claimed.session;
     screen.appendChild(current.element);
     session.current = current;
+    // The box's clipboard, as its desktop sends it to the viewer with control, goes to this computer's when the browser lets it.
+    current.onClipboard = (text) => {
+      setBoxClipboard(text);
+      navigator.clipboard?.writeText?.(text).then(
+        () => flashFor("Copied"),
+        () => undefined,
+      );
+    };
+    current.onPaste = (text) => {
+      if (text) flashFor("Pasted");
+    };
+    current.pasteAllowed = () => !boxNow.current || noClipboardOnWindows(boxNow.current) === null;
     const unsubscribe = current.subscribe(() => setConnection(current.connection));
     setConnection(current.connection);
     // It rested while the box was away, or lost its connection while hidden.
     if (current.connection.state === "disconnected") current.reconnect();
     return () => {
       unsubscribe();
+      current.onClipboard = undefined;
+      current.onPaste = undefined;
       current.element.remove();
       session.current = null;
       if (!claimed.kept) {
@@ -326,6 +484,10 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   useLayoutEffect(() => {
     session.current?.setControl(mine, resizable);
   }, [mine, resizable, connection]);
+  const guestOs = box?.os ?? null;
+  useLayoutEffect(() => {
+    if (guestOs) session.current?.setGuest(guestOs);
+  }, [guestOs, connection]);
 
   // A box that stops or goes takes its stream with it.
   useEffect(() => {
@@ -360,6 +522,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       seen = latest.serial;
       if (first) return;
       sent = latest.text;
+      setBoxClipboard(latest.text);
       await navigator.clipboard?.writeText?.(latest.text).catch(() => undefined);
     };
     toBox();
@@ -388,6 +551,50 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const handBack = () => act(() => rpc.call("handBack", { threadId, box: boxId }));
   const start = () => act(() => rpc.call("start", { threadId, box: boxId }));
   const reconnect = () => session.current?.reconnect();
+  /** Puts text on the box's clipboard and pastes it where the cursor is, then says so; on Windows, says why it will not land. */
+  const pasteText = (text: string) => {
+    const windows = box ? noClipboardOnWindows(box) : null;
+    if (windows) {
+      setProblem(windows);
+      return;
+    }
+    session.current?.paste(text);
+    flashFor("Pasted");
+  };
+  /** The menu's Paste: this computer's clipboard, read on the click, which is a gesture; where the frame still refuses, a field to paste into. */
+  const pasteFromComputer = async () => {
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      setPasteField("");
+      return;
+    }
+    if (!text) {
+      setProblem("This computer's clipboard has no text.");
+      return;
+    }
+    pasteText(text);
+  };
+  /** The menu's Copy: the box's clipboard as last seen, or fetched now where its input reports it, written to this computer's on the click. */
+  const copyToComputer = async () => {
+    let text = boxClipboard;
+    if (text === null) {
+      const latest = await rpc.call("desktopClipboard", { threadId, box: boxId }).catch(() => null);
+      text = latest?.text ?? null;
+      if (text !== null) setBoxClipboard(text);
+    }
+    if (text === null) {
+      if (box) setProblem(nothingFromBox(box, mine));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      flashFor("Copied");
+    } catch {
+      setCopyField(text);
+    }
+  };
 
   // The toolbar's state: a dot and a few words.
   let tone: Tone = "busy";
@@ -421,6 +628,11 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
         </span>
+        {flash ? (
+          <span role="status" className="text-muted-foreground">
+            {flash}
+          </span>
+        ) : null}
         <span className="ml-auto flex items-center gap-1.5">
           {showing && !mine ? (
             <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
@@ -461,6 +673,21 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                     <Icon name="ArrowReloadHorizontal" aria-hidden />
                     Reconnect
                   </DropdownMenuItem>
+                ) : null}
+                {showing && connection.state === "connected" ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    {mine ? (
+                      <DropdownMenuItem onSelect={() => void pasteFromComputer()}>
+                        <Icon name="ClipboardPaste" fallback="Clipboard" aria-hidden />
+                        Paste from this computer
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem onSelect={() => void copyToComputer()}>
+                      <Icon name="Copy" aria-hidden />
+                      Copy to this computer
+                    </DropdownMenuItem>
+                  </>
                 ) : null}
                 {box.control?.owner === "human" && !mine ? (
                   <DropdownMenuItem onSelect={() => void handBack()}>
@@ -524,8 +751,55 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           </Notice>
         ) : null}
       </div>
+      <AlertDialog open={pasteField !== null} onOpenChange={(open) => !open && setPasteField(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Paste into {box?.name ?? "the box"}</AlertDialogTitle>
+            <AlertDialogDescription>This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea aria-label="Text to paste" value={pasteField ?? ""} onChange={(event) => setPasteField(event.target.value)} rows={4} autoFocus />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={!pasteField}
+              onClick={() => {
+                if (pasteField) pasteText(pasteField);
+                setPasteField(null);
+              }}
+            >
+              Paste into the box
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={copyField !== null} onOpenChange={(open) => !open && setCopyField(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Copied in {box?.name ?? "the box"}</AlertDialogTitle>
+            <AlertDialogDescription>This computer's clipboard cannot be written here. Select the text and copy it.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
+}
+
+/** A Windows box through QEMU's console carries the clipboard in neither direction: QEMU moves it only through the SPICE guest agent, which the box does not have. */
+function noClipboardOnWindows(box: BoxView): string | null {
+  return box.os === "windows" ? `${box.name}'s desktop does not report its clipboard to viewers, nor take theirs: Windows through QEMU's console moves it only with the SPICE guest agent, which the box does not have.` : null;
+}
+
+/** Why nothing has come from the box's clipboard: its desktop's server may not send it, or sends it only to the viewer with control. */
+function nothingFromBox(box: BoxView, mine: boolean): string {
+  const windows = noClipboardOnWindows(box);
+  if (windows) return windows;
+  if (!mine) return "Nothing has come from the box's clipboard yet. Its desktop sends it to the viewer with control: take control, then copy in the box.";
+  return "Nothing has come from the box's clipboard yet. Copy something in the box first.";
 }
 
 function parseParams(params: unknown): string | null {
