@@ -27,7 +27,7 @@ import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { Section } from "./settings-fields.tsx";
 import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
-import { MonitorGlyph, ServerGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 
 type Guarded = "remove" | "stop";
@@ -92,12 +92,6 @@ export function MachinesSection() {
       {state && !machines.length ? (
         <EmptyPanel>Add a box as a BB machine of your own. It shows in BB's machine list and new-thread picker, and stays until you remove it here.</EmptyPanel>
       ) : null}
-      {machines.length ? (
-        // A project with a repository needs a source on a machine once, which BB's picker sets up (036).
-        <p className="pb-2 text-2xs leading-snug text-subtle-foreground/75">
-          To use one for a project with a repository, pick it in BB's new-thread picker.
-        </p>
-      ) : null}
       {machines.map((entry) => (
         <MachineRow key={entry.box.id} entry={entry} now={now} busy={busy} onStop={() => void act("stop", entry.box)} onStart={() => void act("start", entry.box)} onRemove={() => setRemoving(entry.box)} />
       ))}
@@ -159,7 +153,7 @@ function MachineRow({ entry, now, busy, onStop, onStart, onRemove }: { entry: Ma
   return (
     <div data-resource-row className={cn("grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3 first:pt-0 last:pb-0", box.state === "releasing" && "opacity-60")}>
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-        {box.desktop ? <MonitorGlyph /> : <ServerGlyph />}
+        <BoxGlyph />
       </span>
       <div className="min-w-0">
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">

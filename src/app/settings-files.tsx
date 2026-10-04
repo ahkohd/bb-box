@@ -2,6 +2,7 @@
 // its content, which is a secret. The page shows whether each content is
 // set, and takes a new one or removes the file, but never shows a content.
 
+import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,13 +30,22 @@ export function BoxFilesSection({ files, problems, save }: { files: readonly Box
     }
   };
   return (
+    // One line (the operator, 4 October 2026: "Can this be shortened?"); the details are in the docs. Add file sits in the
+    // header as Machines' Add machine does, and the card shows only with something in it: no empty box with a lone button.
     <Section
       title="Files for every box"
-      description="bb-box writes each into the home of every Linux and macOS box as it joins BB, and into running boxes when you change them, readable by the box user only: for example pi's .pi/agent/models.json. A content can hold an API key, so it is kept as a secret and never shown again."
+      description="Copied into each Linux and macOS box's home. Contents are kept secret."
+      action={
+        <Button type="button" variant="outline" size="sm" className="h-7" disabled={busy || editing !== null} onClick={() => setEditing({ index: null, path: "", content: "" })}>
+          <Icon name="Plus" aria-hidden />
+          Add file
+        </Button>
+      }
+      plain={!files.length && !editing && !problems.length}
     >
-      <div className="flex flex-col gap-2">
+      <>
         {files.map((file, index) => (
-          <div key={file.path} className="flex items-center justify-between gap-3">
+          <div key={file.path} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
             <code className="min-w-0 truncate text-xs text-foreground">{file.path}</code>
             <div className="flex shrink-0 items-center gap-1.5">
               <span className="text-xs text-subtle-foreground">{isSet(file) ? "Set" : "Not set"}</span>
@@ -49,7 +59,7 @@ export function BoxFilesSection({ files, problems, save }: { files: readonly Box
           </div>
         ))}
         {editing ? (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 py-2 first:pt-0 last:pb-0">
             <Input
               aria-label="Path under the box user's home"
               className="h-8 font-mono text-xs"
@@ -88,19 +98,13 @@ export function BoxFilesSection({ files, problems, save }: { files: readonly Box
               </Button>
             </div>
           </div>
-        ) : (
-          <div>
-            <Button type="button" variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => setEditing({ index: null, path: "", content: "" })}>
-              Add a file
-            </Button>
-          </div>
-        )}
+        ) : null}
         {problems.map((problem) => (
-          <p key={problem.path} role="alert" className="text-xs text-destructive-text">
+          <p key={problem.path} role="alert" className="py-2 text-xs text-destructive-text first:pt-0 last:pb-0">
             {problem.message}
           </p>
         ))}
-      </div>
+      </>
     </Section>
   );
 }
