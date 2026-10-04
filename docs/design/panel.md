@@ -531,8 +531,10 @@ titled after the box.
   4 October 2026); it pairs with BB's Copy. The toolbar says "Pasted" or
   "Copied" for two seconds. Where nothing has come from the box, the
   message says why: take control first, copy in the box first, or, for
-  Windows, that QEMU's console sends the clipboard only with the SPICE
-  guest agent.
+  Windows and for a macOS VM on Tart, that the desktop's server moves the
+  clipboard in neither direction (QEMU's console only with the SPICE guest
+  agent; Tart's VNC server not at all, measured 4 October 2026). wayvnc
+  and TigerVNC move it both ways, measured the same day.
 - **Control** (decisions 008 and 020):
 
   | Who | Text | Action |
