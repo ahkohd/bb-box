@@ -1529,7 +1529,7 @@ test("when this computer's clipboard cannot be read, the menu's Paste offers a f
   expect(client.pasted).toEqual(["typed into the field"]);
 });
 
-test("what the box copies reaches this computer's clipboard and says Copied; the menu's Copy writes it on the click, and says why when nothing came", async () => {
+test("what the box copies reaches this computer's clipboard quietly; the menu's Copy writes it on the click and says Copied, or says why when nothing came", async () => {
   const { writeText } = fakeClipboard(() => Promise.resolve(""));
   const { handlers } = server([desktopBox()]);
   const slot = desktopTab(handlers);
@@ -1541,14 +1541,15 @@ test("what the box copies reaches this computer's clipboard and says Copied; the
   // Nothing yet: Copy says to copy in the box first.
   let menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
-  expect(await slot.findByText("Nothing has come from the box's clipboard yet. Copy something in the box first.")).toBeTruthy();
-  // The box's cut text, as noVNC gives it to the viewer with control.
+  expect((await slot.findByText("Nothing has come from the box's clipboard yet. Copy something in the box first.")).getAttribute("role")).toBe("status");
+  // The box's cut text, as noVNC gives it to the viewer with control: it can come with no copy of the person's, so no note.
   act(() => void client.dispatchEvent(new CustomEvent("clipboard", { detail: { text: "from the box" } })));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith("from the box"));
-  expect(await slot.findByText("Copied")).toBeTruthy();
+  expect(slot.queryByText("Copied")).toBeNull();
   menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
   await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+  expect(await slot.findByText("Copied")).toBeTruthy();
 
   cleanup();
   dropAllKept();
@@ -1561,6 +1562,47 @@ test("what the box copies reaches this computer's clipboard and says Copied; the
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
   expect(await windows.findByText(/does not report its clipboard to viewers/)).toBeTruthy();
 
+});
+
+test("clipboard outcomes are toolbar notes that go after about 3 s, never from taking control; a paste the box refused is a lasting problem with Dismiss", async () => {
+  fakeClipboard(() => Promise.resolve(""));
+  const { handlers } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands" } })]);
+  const refusing: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    desktopPaste: () => {
+      throw new Error("Box mac-8 did not take the text for its clipboard: no desktop session.");
+    },
+  };
+  const slot = desktopTab(refusing, "box_8");
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+  act(() => void client.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  // Taking control tried this computer's empty clipboard, and says nothing of it.
+  expect(slot.queryByRole("status")).toBeNull();
+  expect(slot.queryByRole("alert")).toBeNull();
+
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Paste from this computer" }));
+    const note = await slot.findByText("This computer's clipboard has no text.");
+    expect(note.getAttribute("role")).toBe("status");
+    expect(slot.queryByRole("alert")).toBeNull();
+    act(() => void vi.advanceTimersByTime(3_000));
+    expect(slot.queryByText("This computer's clipboard has no text.")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+
+  // A Ctrl+V (Cmd+V on a Mac) whose text the box refused needs action: it stays, in red, until dismissed.
+  keyOnCanvas(slot, { key: "v", ctrlKey: true });
+  act(() => void document.dispatchEvent(pasteEvent("for the box")));
+  const problem = await slot.findByRole("alert");
+  expect(problem.textContent).toBe("Box mac-8 did not take the text for its clipboard: no desktop session.");
+  expect(slot.queryByText("Pasted")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Dismiss" }));
+  expect(slot.queryByRole("alert")).toBeNull();
 });
 
 test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb-box: Paste and Cmd+V send the text as UTF-8 by RPC, then press Cmd+V, and Copy reads the box's (#464)", async () => {
