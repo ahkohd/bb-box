@@ -706,14 +706,17 @@ line with Dismiss. Opening a desktop shows the same viewer with
 a back arrow in the toolbar, at `<thread>/<box>`; a box's terminal shows
 the same way at `<thread>/<box>/terminal`, which is how the settings page
 opens a machine's terminal, since it has no thread panel to open a tab in.
-At the top right sit a settings button, "BB Box settings", which opens
-Settings > BB Box, and the same plus as the Box panel's, "Add machine": it
+At the top right sits the same plus as the Box panel's, "Add machine", alone: it
 opens the New box form in machine mode, with the optional Name, as
 settings' Add machine does (the operator, 4 October 2026: "I should be
 able to add a new box there too, not have to go to settings"); the new
 machine shows under Machines as it starts and once it is ready. Nothing
 stands on the left: the box count went with the Box panel's. Settings' Add
 machine stays as it is.
+Where the content ends, under the lists and left-aligned with them, a dim
+link with the gear, "BB Box settings", opens Settings > BB Box, in the
+style of the New box form's footer link (the operator, 5 October 2026, who
+moved it there from beside the plus).
 Empty: "No boxes" — "No thread has a box, and you have no machines. Add
 one with the plus, or from a thread's Box panel."
 

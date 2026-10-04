@@ -2193,11 +2193,14 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
 });
 
-test("the Boxes page's top row has a settings button beside the plus, which opens Settings > BB Box", async () => {
+test("the Boxes page ends with a dim BB Box settings link under the lists, which opens Settings > BB Box; the plus stays alone at the top", async () => {
   const list = boxesPage(server([box()]).handlers);
   await list.findByText("calm-otter");
   const settingsButton = list.getByRole("button", { name: "BB Box settings" });
-  expect(settingsButton.parentElement?.querySelector('button[aria-label="Add machine"]')).toBeTruthy();
+  // Not beside the plus: under the lists, after the last row.
+  expect(settingsButton.closest("div")?.querySelector('button[aria-label="Add machine"]')).toBeNull();
+  const lastRow = list.getByRole("button", { name: "calm-otter: details" });
+  expect(lastRow.compareDocumentPosition(settingsButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   fireEvent.click(settingsButton);
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "/settings/plugins/bb-box" });
 });
