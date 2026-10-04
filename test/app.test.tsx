@@ -1470,7 +1470,8 @@ test("a macOS box keeps Cmd, and the menu's Paste reads this computer's clipboar
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
   fakeClipboard(() => Promise.resolve("from the menu"));
   try {
-    const { handlers } = server([desktopBox({ os: "macos", kind: "macos-desktop", kindLabel: "macOS desktop" })]);
+    // A pool Mac (real), whose own input takes the clipboard; a Tart VM would say its server moves none.
+    const { handlers } = server([desktopBox({ os: "macos", nature: "real", kind: "macos-desktop", kindLabel: "macOS desktop" })]);
     const slot = desktopTab(handlers);
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
     const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
@@ -1541,6 +1542,16 @@ test("what the box copies reaches this computer's clipboard and says Copied; the
   expect(within(menu).getByRole("menuitem", { name: "Paste from this computer" }).getAttribute("aria-disabled")).toBe("true");
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
   expect(await windows.findByText(/does not report its clipboard to viewers/)).toBeTruthy();
+
+  cleanup();
+  dropAllKept();
+  // A macOS VM on Tart: its VNC server moves the clipboard in neither direction either.
+  const tart = desktopTab(server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false } })]).handlers, "box_8");
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(3));
+  act(() => void novnc.FakeRfb.made[2]!.dispatchEvent(new Event("connect")));
+  menu = await openMenu(tart.getByRole("button", { name: "Desktop actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
+  expect(await tart.findByText(/Tart's VNC server moves it in neither direction/)).toBeTruthy();
 });
 
 test("a desktop tab shows the box through the relay, and takes and hands back control", async () => {

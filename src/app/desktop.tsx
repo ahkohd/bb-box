@@ -450,7 +450,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     current.onPaste = (text) => {
       if (text) flashFor("Pasted");
     };
-    current.pasteAllowed = () => !boxNow.current || noClipboardOnWindows(boxNow.current) === null;
+    current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
     const unsubscribe = current.subscribe(() => setConnection(current.connection));
     setConnection(current.connection);
     // It rested while the box was away, or lost its connection while hidden.
@@ -553,7 +553,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const reconnect = () => session.current?.reconnect();
   /** Puts text on the box's clipboard and pastes it where the cursor is, then says so; on Windows, says why it will not land. */
   const pasteText = (text: string) => {
-    const windows = box ? noClipboardOnWindows(box) : null;
+    const windows = box ? noClipboardThroughServer(box) : null;
     if (windows) {
       setProblem(windows);
       return;
@@ -788,14 +788,20 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   );
 }
 
-/** A Windows box through QEMU's console carries the clipboard in neither direction: QEMU moves it only through the SPICE guest agent, which the box does not have. */
-function noClipboardOnWindows(box: BoxView): string | null {
-  return box.os === "windows" ? `${box.name}'s desktop does not report its clipboard to viewers, nor take theirs: Windows through QEMU's console moves it only with the SPICE guest agent, which the box does not have.` : null;
+/**
+ * Why a box's desktop server moves no clipboard either way, or null where it does. A Windows box through QEMU's console:
+ * QEMU moves it only through the SPICE guest agent, which the box does not have. A macOS VM on Tart: its VNC server
+ * neither takes a viewer's cut text nor sends its own (measured on 4 October 2026); a pool Mac's own input does both.
+ */
+function noClipboardThroughServer(box: BoxView): string | null {
+  if (box.os === "windows") return `${box.name}'s desktop does not report its clipboard to viewers, nor take theirs: Windows through QEMU's console moves it only with the SPICE guest agent, which the box does not have.`;
+  if (box.os === "macos" && box.nature === "virtual") return `${box.name}'s desktop does not report its clipboard to viewers, nor take theirs: Tart's VNC server moves it in neither direction.`;
+  return null;
 }
 
 /** Why nothing has come from the box's clipboard: its desktop's server may not send it, or sends it only to the viewer with control. */
 function nothingFromBox(box: BoxView, mine: boolean): string {
-  const windows = noClipboardOnWindows(box);
+  const windows = noClipboardThroughServer(box);
   if (windows) return windows;
   if (!mine) return "Nothing has come from the box's clipboard yet. Its desktop sends it to the viewer with control: take control, then copy in the box.";
   return "Nothing has come from the box's clipboard yet. Copy something in the box first.";
