@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { IconButton, isArm64Badge, KindBadges, lacksDocker, Meta, osName, relativeTime, SETTINGS_PATH, StatusDot } from "./common.tsx";
-import { pageHref, useOpenDesktop } from "./desktop.tsx";
+import { pageUrl, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
@@ -233,7 +233,7 @@ export function BoxRow({
                   <MonitorGlyph />
                   Open desktop
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void navigate.openUrl(pageHref(pluginId, threadId, box.id))}>
+                <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, threadId, box.id))}>
                   <Icon name="ExternalLink" aria-hidden />
                   Open desktop in a browser tab
                 </DropdownMenuItem>

@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, OPERATOR, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, OPERATOR, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
@@ -119,6 +119,11 @@ function visibleCursor(image: { rgbaPixels: Uint8Array; w: number; h: number } |
 /** Where the Boxes page shows one box, for a new browser tab. */
 export function pageHref(pluginId: string, threadId: string, boxId: string): string {
   return `/plugins/${encodeURIComponent(pluginId)}/${DESKTOP_PAGE}/${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
+}
+
+/** The same place as a full URL, for `openUrl`, which opens only http(s) URLs (by BB's browser preference) and returns false for a path. */
+export function pageUrl(pluginId: string, threadId: string, boxId: string): string {
+  return new URL(pageHref(pluginId, threadId, boxId), window.location.origin).href;
 }
 
 /** The params of a box's desktop tab. */
@@ -437,7 +442,7 @@ function controlText(box: BoxView, mine: boolean, taken: boolean, resizable: boo
 }
 
 /** A box's desktop, live, with its control bar. */
-export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: string; boxId: string; newTab: boolean; onBack?: { label: string; go: () => void } }) {
+export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -682,7 +687,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
-        {onBack ? <IconButton label={onBack.label} icon="ArrowLeft" onClick={onBack.go} className="-ml-1" /> : null}
+        {onBack ? <BackControl back={onBack} /> : null}
         <MonitorGlyph className="text-muted-foreground" />
         <span className="font-medium text-foreground">{box?.name ?? "Desktop"}</span>
         <span className={cn("inline-flex min-w-0 items-center gap-1.5", mine || taken ? "text-foreground" : "text-muted-foreground")}>
@@ -719,7 +724,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-max min-w-40 max-w-72" mobileTitle={box.name}>
                 {newTab ? (
-                  <DropdownMenuItem onSelect={() => void navigate.openUrl(pageHref(pluginId, threadId, box.id))}>
+                  <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, threadId, box.id))}>
                     <Icon name="ExternalLink" aria-hidden />
                     Open in a browser tab
                   </DropdownMenuItem>
@@ -977,7 +982,8 @@ export function BoxesPage({ subPath }: { subPath: string }) {
   // A view opened from the settings page goes back there: a machine of yours is not on the Boxes list the same way.
   const fromSettings = rest.at(-1) === "from-settings";
   const parts = fromSettings ? rest.slice(0, -1) : rest;
-  const back = fromSettings ? { label: "Back to settings", go: () => void navigate.openUrl(SETTINGS_PATH) } : { label: "Back to boxes", go: () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" }) };
+  // Settings is a place in BB's app, so its way back is a link (see IconLink); the page's list is this plugin's own panel.
+  const back: BackTo = fromSettings ? { label: "Back to settings", href: SETTINGS_PATH } : { label: "Back to boxes", go: () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" }) };
   if (threadId && boxId && parts.length === 1 && parts[0] === "terminal") {
     return <BoxTerminal key={`${threadId}/${boxId}/terminal`} threadId={threadId} boxId={boxId} onBack={back} />;
   }
@@ -1131,16 +1137,9 @@ function BoxList() {
             </div>
           </div>
         ) : null}
-        {/* Where the page's content ends, left-aligned with the lists, in the style of the form's footer link (the operator, 5 October 2026); the plus stays alone at the top. */}
+        {/* Where the page's content ends, left-aligned with the lists: the gear alone, named in its tooltip (the operator, 5 October 2026); the plus stays alone at the top. */}
         <div>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            onClick={() => void navigate.openUrl(SETTINGS_PATH)}
-          >
-            <Icon name="Settings" className="size-3.5" aria-hidden />
-            BB Box settings
-          </button>
+          <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="-ml-1.5" />
         </div>
         {machineActions.dialogs}
         <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void actOn(inUse?.threadId ?? "")(found.method, found.box, true)} />

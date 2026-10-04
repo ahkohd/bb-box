@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import type { Contract, MachineEntry, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
 import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, OPERATOR, osName, StatusDot, useLive, useNow } from "./common.tsx";
-import { DESKTOP_PAGE, desktopSubPath, pageHref } from "./desktop.tsx";
+import { DESKTOP_PAGE, desktopSubPath, pageUrl } from "./desktop.tsx";
 import { ProblemLine, useMachineActions } from "./box-actions.tsx";
 import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { Section } from "./settings-fields.tsx";
@@ -127,7 +127,7 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
               </DropdownMenuItem>
             ) : null}
             {from === "boxes" && box.desktop && ready ? (
-              <DropdownMenuItem onSelect={() => void navigate.openUrl(pageHref(pluginId, OPERATOR, box.id))}>
+              <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, OPERATOR, box.id))}>
                 <Icon name="ExternalLink" aria-hidden />
                 Open desktop in a browser tab
               </DropdownMenuItem>
