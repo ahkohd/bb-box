@@ -48,6 +48,16 @@ bash "$build/guest/baseline.sh" "$build" $docker_packages $extra_packages
 node_prefix=$(dirname "$(dirname "$(readlink -f /usr/local/bin/node)")")
 install -d -m 0755 "$node_prefix/etc"
 printf 'prefix=/usr/local\nupdate-notifier=false\nfund=false\n' >"$node_prefix/etc/npmrc"
+# The box user's own global packages go in its ~/.local, whose bin is first on
+# the PATH of its commands, terminals and BB's daemon: `npm install -g`, as BB's
+# updater runs it for an agent CLI, needs no root, and the command it installs
+# takes over from the pinned one in /usr/local/bin. sudo sets HOME to /root, so
+# `sudo npm install -g` still uses /usr/local.
+home=$(getent passwd "$user" | cut -d: -f6)
+runuser -u "$user" -- mkdir -p "$home/.local/bin" "$home/.local/lib"
+{ grep -v '^prefix=' "$home/.npmrc" 2>/dev/null || :; echo "prefix=$home/.local"; } >"$home/.npmrc.new"
+mv "$home/.npmrc.new" "$home/.npmrc"
+chown "$user:$(id -gn "$user")" "$home/.npmrc"
 # pnpm and Yarn through Corepack, which fetches the version a project's
 # packageManager field names on first use. It does not ask first: an agent's
 # terminal cannot answer. Corepack ships with Node.js 24 but not with Node.js
@@ -286,6 +296,8 @@ for command in git git-lfs gh node npm npx pnpm yarn python3 pip3 uv uvx rg fd j
   runuser -u "$user" -- env PATH="$box_path" sh -c 'command -v "$1" >/dev/null' sh "$command" ||
     die "$command is not on $user's PATH"
 done
+[ "$(runuser -u "$user" -- env HOME="$home" npm config get prefix)" = "$home/.local" ] || die "npm's global prefix for $user is not $home/.local"
+[ "$(env HOME=/root npm config get prefix)" = /usr/local ] || die "npm's global prefix for root is not /usr/local"
 docker compose version >/dev/null
 docker buildx version >/dev/null
 echo "customize-base: done"
