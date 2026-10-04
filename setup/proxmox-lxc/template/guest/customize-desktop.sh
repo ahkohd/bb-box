@@ -214,6 +214,8 @@ PartOf=bb-box-display.service
 User=$user
 Group=$user
 WorkingDirectory=~
+# The PATH and variables the box user's commands have, as ~/.local/bin for npm's and uv's commands.
+EnvironmentFile=-/etc/environment
 Environment=DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority XDG_RUNTIME_DIR=/run/user/$uid
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus XDG_SESSION_TYPE=x11
 Environment=XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce

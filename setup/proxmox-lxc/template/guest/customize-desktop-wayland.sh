@@ -183,6 +183,8 @@ Upholds=bb-box-vnc.service
 [Service]
 User=$user
 Group=$user
+# The PATH and variables the box user's commands have, as ~/.local/bin for npm's and uv's commands.
+EnvironmentFile=-/etc/environment
 EnvironmentFile=-/etc/bb-box/desktop.env
 Environment=XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus
 RuntimeDirectory=bb-box
