@@ -9,6 +9,7 @@
 
 import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
 import { isSecret, type BackendDriver, type BackendPart, type BoxSize, type FieldDescriptor, type FieldValue } from "../backends/types.ts";
+import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
 import { PRESETS, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
 
 export const SCHEMA = 1;
@@ -83,6 +84,8 @@ export interface GeneralSettings {
   readonly boxesPerThread?: number;
   readonly enrol?: boolean;
   readonly defaultKind?: string;
+  /** Files for every box (#455): paths under the box user's home, whose contents are secrets. */
+  readonly files?: readonly BoxFileSetting[];
 }
 
 export interface ConfigDocument {
@@ -240,7 +243,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol and defaultKind.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind and files.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -253,7 +256,10 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "defaultKind") {
           if (typeof value === "string" && value) general[key] = value;
           else problem("general.defaultKind", "Name the default kind, such as linux.");
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol and defaultKind.`);
+        } else if (key === "files") {
+          const files = readFiles(value, problem, secrets);
+          if (files) general[key] = files;
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind and files.`);
       }
     }
   }
@@ -288,6 +294,43 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
     secrets,
     problems,
   };
+}
+
+/**
+ * The files for every box: each path, checked, and its content into the
+ * general secrets' changes. No problem quotes a content.
+ */
+function readFiles(value: unknown, problem: (path: string, message: string) => void, secrets: Record<string, Record<string, string | null>>): BoxFileSetting[] | undefined {
+  if (!Array.isArray(value)) {
+    problem("general.files", "files is a list of files, each a path under the box user's home and its content.");
+    return undefined;
+  }
+  if (value.length > MAX_BOX_FILES) problem("general.files", `Give at most ${MAX_BOX_FILES} files for every box.`);
+  const changes: Record<string, string | null> = {};
+  const files: BoxFileSetting[] = [];
+  const seen = new Set<string>();
+  value.slice(0, MAX_BOX_FILES).forEach((entry, index) => {
+    const at = `general.files.${index}`;
+    if (!isRecord(entry) || typeof entry.path !== "string") {
+      problem(at, "A file is an object with a path and its content.");
+      return;
+    }
+    const path = entry.path.trim();
+    const wrong = pathProblem(path);
+    if (wrong) return problem(`${at}.path`, wrong);
+    if (seen.has(path)) return problem(`${at}.path`, `${path} is in the list twice.`);
+    seen.add(path);
+    const content = entry.content;
+    if (content === undefined || isSecretState(content)) {
+      if (isSecretState(content) && !content.set) changes[contentKey(path)] = null;
+    } else if (content === null || content === "") changes[contentKey(path)] = null;
+    else if (typeof content !== "string") return problem(`${at}.content`, `${path}'s content is a secret: give it as text, null to clear it, or {"set": true} to keep it.`);
+    else if (Buffer.byteLength(content) > MAX_BOX_FILE_BYTES) return problem(`${at}.content`, `${path}'s content is over ${MAX_BOX_FILE_BYTES / 1024 / 1024} MiB.`);
+    else changes[contentKey(path)] = content;
+    files.push({ path });
+  });
+  if (Object.keys(changes).length) secrets[GENERAL_SECRETS] = changes;
+  return files;
 }
 
 /** An image's entry, or undefined when its shape is wrong. */
@@ -554,9 +597,17 @@ function unknownBackend(
   };
 }
 
-/** The secrets once a draft's changes are applied. Only backends in the document keep theirs. */
+/** The secrets once a draft's changes are applied. Only backends in the document keep theirs, and only its files theirs. */
 export function withSecretChanges(stored: Secrets, changes: SecretChanges, document: ConfigDocument): Secrets {
   const next: Record<string, Record<string, string>> = {};
+  const files: Record<string, string> = {};
+  for (const file of document.general.files ?? []) {
+    const key = contentKey(file.path);
+    const change = changes[GENERAL_SECRETS]?.[key];
+    const value = change === undefined ? stored[GENERAL_SECRETS]?.[key] : change;
+    if (typeof value === "string") files[key] = value;
+  }
+  if (Object.keys(files).length) next[GENERAL_SECRETS] = files;
   for (const backend of document.backends) {
     const values: Record<string, string> = { ...stored[backend.id] };
     for (const [field, value] of Object.entries(changes[backend.id] ?? {})) {
@@ -609,8 +660,10 @@ export function backendPart(backend: BackendConfig, driver: BackendDriver<any>, 
 
 /** The document as it leaves bb-box: each secret field as whether it is set. */
 export function exported(document: ConfigDocument, secrets: Secrets, drivers: readonly BackendDriver<any>[]): ConfigDocument {
+  const files = document.general.files?.map((file) => ({ path: file.path, content: { set: secrets[GENERAL_SECRETS]?.[contentKey(file.path)] !== undefined } }));
   return {
     ...document,
+    general: { ...document.general, ...(files ? { files } : {}) },
     backends: document.backends.map((backend) => {
       const driver = drivers.find((candidate) => candidate.type === backend.type);
       const fields: Record<string, FieldValue | SecretState> = {};
@@ -623,10 +676,12 @@ export function exported(document: ConfigDocument, secrets: Secrets, drivers: re
   };
 }
 
-/** The document as stored: no secret field. */
+/** The document as stored: no secret field, and of the files for every box only their paths. */
 export function withoutSecrets(document: ConfigDocument, drivers: readonly BackendDriver<any>[]): ConfigDocument {
+  const files = document.general.files?.map((file) => ({ path: file.path }));
   return {
     ...document,
+    general: { ...document.general, ...(files ? { files } : {}) },
     backends: document.backends.map((backend) => {
       const driver = drivers.find((candidate) => candidate.type === backend.type);
       const fields: Record<string, FieldValue> = {};

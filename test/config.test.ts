@@ -955,3 +955,60 @@ test("the configuration takes several Docker backends, one per host, and still o
   const lxc = { id: "proxmox-lxc", type: "proxmox-lxc", enabled: false, fields: {} };
   assert.match(problems([lxc, { ...lxc, id: "proxmox-lxc:two" }])[0]?.message ?? "", /bb-box runs one Proxmox LXC backend for now/);
 });
+
+test("files for every box: paths checked, contents kept as secrets only, and never in a problem, an export or the stored document (#455)", () => {
+  const SECRET = '{"providers":{"example":{"apiKey":"sk-secret-value"}}}';
+  const draft = readDraft(
+    {
+      general: {
+        files: [
+          { path: ".pi/agent/models.json", content: SECRET },
+          { path: ".config/tool/settings.json", content: "plain" },
+        ],
+      },
+    },
+    DRIVERS,
+  );
+  assert.deepEqual(draft.problems, []);
+  assert.deepEqual(draft.document.general.files, [{ path: ".pi/agent/models.json" }, { path: ".config/tool/settings.json" }], "the document holds the paths only");
+  const secrets = withSecretChanges({}, draft.secrets, draft.document);
+  assert.deepEqual(secrets["@general"], { "file:.pi/agent/models.json": SECRET, "file:.config/tool/settings.json": "plain" });
+  const shown = exported(draft.document, secrets, DRIVERS);
+  assert.deepEqual(shown.general.files, [
+    { path: ".pi/agent/models.json", content: { set: true } },
+    { path: ".config/tool/settings.json", content: { set: true } },
+  ]);
+  assert.ok(!JSON.stringify(shown).includes("sk-secret-value"), "the export says only that a content is set");
+
+  // The page sends the export back with one change: the rest keep their contents, a removed file loses its own.
+  const again = readDraft({ general: { files: [{ path: ".pi/agent/models.json", content: { set: true } }] } }, DRIVERS);
+  const kept = withSecretChanges(secrets, again.secrets, again.document);
+  assert.deepEqual(kept["@general"], { "file:.pi/agent/models.json": SECRET });
+  const cleared = readDraft({ general: { files: [{ path: ".pi/agent/models.json", content: null }] } }, DRIVERS);
+  assert.equal(withSecretChanges(kept, cleared.secrets, cleared.document)["@general"], undefined);
+  assert.deepEqual(withSecretChanges(kept, {}, readDraft({}, DRIVERS).document)["@general"], undefined, "no files, no contents");
+
+  // Paths outside the home, or not plain, are refused, and no problem quotes a content.
+  const bad = readDraft(
+    {
+      general: {
+        files: [
+          { path: "/etc/passwd", content: SECRET },
+          { path: "~/.ssh/authorized_keys", content: SECRET },
+          { path: ".pi/../.ssh/key", content: SECRET },
+          { path: "a b/c", content: SECRET },
+          { path: ".pi/agent/models.json", content: SECRET },
+          { path: ".pi/agent/models.json", content: SECRET },
+          { path: ".ok", content: 42 },
+        ],
+      },
+    },
+    DRIVERS,
+  );
+  assert.deepEqual(
+    bad.problems.map((problem) => problem.path),
+    ["general.files.0.path", "general.files.1.path", "general.files.2.path", "general.files.3.path", "general.files.5.path", "general.files.6.content"],
+  );
+  assert.ok(!JSON.stringify(bad.problems).includes("sk-secret-value"));
+  assert.match(bad.problems[0]!.message, /not under the box user's home/);
+});

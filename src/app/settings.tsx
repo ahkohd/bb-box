@@ -17,6 +17,7 @@ import { BackendForm, BackendRow, backendId, type BackendRowModel } from "./sett
 import { Section } from "./settings-fields.tsx";
 import { KindForm, KindRow, kindRowModel } from "./settings-kinds.tsx";
 import { DockerHostsSection } from "./settings-docker-hosts.tsx";
+import { BoxFilesSection } from "./settings-files.tsx";
 import { MachinesSection } from "./settings-machines.tsx";
 
 const STALE = "Someone saved the configuration first. It has been reloaded; make your change again.";
@@ -232,6 +233,11 @@ export function SettingsSection() {
           <Switch aria-label="Enrol boxes as BB machines" checked={general.enrol} disabled={busy === "general"} onCheckedChange={(enrol) => void applyNow("general", withGeneral(document, { enrol: enrol === state.defaults.general.enrol ? undefined : enrol }))} />
         </GeneralRow>
       </Section>
+      <BoxFilesSection
+        files={document.general.files ?? []}
+        problems={state.problems.filter((problem) => problem.path.startsWith("general.files"))}
+        save={async (files) => (await apply(withGeneral(document, { files: files.length ? files : undefined }))).saved}
+      />
     </div>
   );
 }

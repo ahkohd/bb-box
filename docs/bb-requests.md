@@ -23,6 +23,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | draft | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
 | [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | draft | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text |
 | [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | draft | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
+| [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | draft | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
 
 ## 1. BB's host app on Windows
 
@@ -627,6 +628,31 @@ dialog just appears and disappears under `prefers-reduced-motion`.
 **Until then.** bb-box's copy carries that motion ([#453](https://github.com/moonstead/bb-box/pull/453)),
 with a note in `components/ui/alert-dialog.tsx` that avoids spelling the
 dropped class names, since Tailwind scans comments and would emit them.
+
+## 17. Carry providers' own config to every machine
+
+**What bb-box needs.** A provider that BB runs on a box to find the same
+config there as on the machine where the operator set it up. pi reads its
+custom providers and models from `~/.pi/agent/models.json`, and its defaults
+from `~/.pi/agent/settings.json`, on the machine it runs on. A box has
+neither, so a pi thread on a box lacks the providers and models the operator
+added on their own machine, and cannot use them.
+
+**What BB does now.** It carries a thread's Git credentials and BB's machine
+variables to every machine it runs a thread on, but not a provider's own
+config files, so each machine needs them copied by hand.
+
+**What we ask.** Carry each provider's own config to every machine BB runs the
+provider on, as BB carries Git credentials and machine variables: for pi,
+`models.json` and `settings.json`, and the like for other providers.
+`models.json` can hold API keys, so BB keeps them as secrets and never shows
+them.
+
+**Until then.** bb-box's general settings have "Files for every box": paths
+under the box user's home and their contents, kept as secrets, which bb-box
+writes into every Linux and macOS box as it joins BB, and into running boxes
+when they change (#455). Windows boxes, and machines that are not boxes, still
+need the files copied by hand.
 
 ## Checked, no request needed
 

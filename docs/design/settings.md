@@ -258,6 +258,11 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
 | Boxes per thread: the most one thread may hold. 0 means no limit. | a number field |
 | Enrol boxes as BB machines: a ready box joins BB, so threads and terminals can use it and it gets the thread's credentials. | a switch |
 
+Files for every box (#455) follows General: each file's path under the box
+user's home, "Set" or "Not set", and Replace and Remove; "Add a file" opens
+a path field and a text area for the content, which is a secret and never
+shown again. Each change saves at once.
+
 ## States and copy
 
 | Where | Text |
@@ -273,18 +278,18 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
 
 ## As built
 
-The page is one settings section with three blocks, Backends, Kinds and
-General, titled as BB titles a plugin's sections. It reads `config.get` once
-and on each change signal, and writes with `config.apply` against the
-revision it read. A row's switch, a kind's switch and the general settings
-save at once, each as the saved document with that one change. A backend's
-setup area and a kind's editor hold their edits until Save, and send the
-saved document with that backend or kind replaced, so two open forms never
-overwrite each other. A stale revision reloads the page and says so; the
-open form keeps its edits. `config.check` with the backend's ID runs the
-doctor against the form without saving. The code is in
-`src/app/settings.tsx`, `settings-backends.tsx`, `settings-kinds.tsx`,
-`settings-fields.tsx` and the helpers in `config.ts`.
+The page is one settings section with four blocks, Backends, Kinds, General
+and Files for every box, titled as BB titles a plugin's sections. It reads
+`config.get` once and on each change signal, and writes with `config.apply`
+against the revision it read. A row's switch, a kind's switch and the general
+settings save at once, each as the saved document with that one change. A
+backend's setup area and a kind's editor hold their edits until Save, and send
+the saved document with that backend or kind replaced, so two open forms never
+overwrite each other. A stale revision reloads the page and says so; the open
+form keeps its edits. `config.check` with the backend's ID runs the doctor
+against the form without saving. The code is in `src/app/settings.tsx`,
+`settings-backends.tsx`, `settings-kinds.tsx`, `settings-fields.tsx`,
+`settings-files.tsx` and the helpers in `config.ts`.
 
 ## A possible BB request
 
