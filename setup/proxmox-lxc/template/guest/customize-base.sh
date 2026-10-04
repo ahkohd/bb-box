@@ -167,9 +167,9 @@ usermod -aG docker,adm,sudo "$user"
 # /usr/local, from root's own npmrc: sudo sets HOME to /root. The box user's
 # prefix is in the global npmrc rather than ~/.npmrc, which npm also reads as a
 # project's when a command runs in the home directory, sudo's too.
-home=$(getent passwd "$user" | cut -d: -f6)
-runuser -u "$user" -- mkdir -p "$home/.local/bin" "$home/.local/lib"
-printf 'prefix=%s/.local\nupdate-notifier=false\nfund=false\n' "$home" >"$node_prefix/etc/npmrc"
+box_home=$(getent passwd "$user" | cut -d: -f6)
+runuser -u "$user" -- mkdir -p "$box_home/.local/bin" "$box_home/.local/lib"
+printf 'prefix=%s/.local\nupdate-notifier=false\nfund=false\n' "$box_home" >"$node_prefix/etc/npmrc"
 { grep -v '^prefix=' /root/.npmrc 2>/dev/null || :; echo "prefix=/usr/local"; } >/root/.npmrc.new
 mv /root/.npmrc.new /root/.npmrc
 passwd -l "$user" >/dev/null
@@ -299,7 +299,7 @@ for command in git git-lfs gh node npm npx pnpm yarn python3 pip3 uv uvx rg fd j
   runuser -u "$user" -- env PATH="$box_path" sh -c 'command -v "$1" >/dev/null' sh "$command" ||
     die "$command is not on $user's PATH"
 done
-[ "$(runuser -u "$user" -- env HOME="$home" npm config get prefix)" = "$home/.local" ] || die "npm's global prefix for $user is not $home/.local"
+[ "$(runuser -u "$user" -- env HOME="$box_home" npm config get prefix)" = "$box_home/.local" ] || die "npm's global prefix for $user is not $box_home/.local"
 [ "$(env HOME=/root npm config get prefix)" = /usr/local ] || die "npm's global prefix for root is not /usr/local"
 docker compose version >/dev/null
 docker buildx version >/dev/null
