@@ -44,20 +44,11 @@ extra_packages="openssh-server sudo systemd-resolved less nano vim neovim iputil
 [ "$runtime" != docker ] || extra_packages=${extra_packages/systemd-resolved/systemd}
 # shellcheck disable=SC2086
 bash "$build/guest/baseline.sh" "$build" $docker_packages $extra_packages
-# npm's global packages. The box user's go in its ~/.local, whose bin is first
-# on the PATH of its commands, terminals and BB's daemon: `npm install -g`, as
-# BB's updater runs it for an agent CLI, needs no root, and the command it
-# installs takes over from the pinned one in /usr/local/bin. Root's go in
-# /usr/local, from root's own npmrc: sudo sets HOME to /root. The box user's
-# prefix is in the global npmrc rather than ~/.npmrc, which npm also reads as a
-# project's when a command runs in the home directory, sudo's too.
-home=$(getent passwd "$user" | cut -d: -f6)
-runuser -u "$user" -- mkdir -p "$home/.local/bin" "$home/.local/lib"
+# npm's global packages go where they land on PATH; the box user's own are set
+# up once it exists, below.
 node_prefix=$(dirname "$(dirname "$(readlink -f /usr/local/bin/node)")")
 install -d -m 0755 "$node_prefix/etc"
-printf 'prefix=%s/.local\nupdate-notifier=false\nfund=false\n' "$home" >"$node_prefix/etc/npmrc"
-{ grep -v '^prefix=' /root/.npmrc 2>/dev/null || :; echo "prefix=/usr/local"; } >/root/.npmrc.new
-mv /root/.npmrc.new /root/.npmrc
+printf 'prefix=/usr/local\nupdate-notifier=false\nfund=false\n' >"$node_prefix/etc/npmrc"
 # pnpm and Yarn through Corepack, which fetches the version a project's
 # packageManager field names on first use. It does not ask first: an agent's
 # terminal cannot answer. Corepack ships with Node.js 24 but not with Node.js
@@ -169,6 +160,18 @@ fi
 # install". Its rule asks for a password, but sudoers reads sudoers.d last, so
 # the user's own NOPASSWD rule below wins.
 usermod -aG docker,adm,sudo "$user"
+# npm's global packages. The box user's go in its ~/.local, whose bin is first
+# on the PATH of its commands, terminals and BB's daemon: `npm install -g`, as
+# BB's updater runs it for an agent CLI, needs no root, and the command it
+# installs takes over from the pinned one in /usr/local/bin. Root's go in
+# /usr/local, from root's own npmrc: sudo sets HOME to /root. The box user's
+# prefix is in the global npmrc rather than ~/.npmrc, which npm also reads as a
+# project's when a command runs in the home directory, sudo's too.
+home=$(getent passwd "$user" | cut -d: -f6)
+runuser -u "$user" -- mkdir -p "$home/.local/bin" "$home/.local/lib"
+printf 'prefix=%s/.local\nupdate-notifier=false\nfund=false\n' "$home" >"$node_prefix/etc/npmrc"
+{ grep -v '^prefix=' /root/.npmrc 2>/dev/null || :; echo "prefix=/usr/local"; } >/root/.npmrc.new
+mv /root/.npmrc.new /root/.npmrc
 passwd -l "$user" >/dev/null
 passwd -l root >/dev/null
 # sudo resets the environment, which drops the DEBIAN_FRONTEND bb-box's
