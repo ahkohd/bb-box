@@ -1,4 +1,4 @@
-// "Your machines" on the settings page (036): boxes you own, kept as BB
+// "Machines" on the settings page (036): boxes you own, kept as BB
 // machines. One row per machine with its state, badges and the threads on
 // it; Open desktop, Terminal, Stop or Start, and Remove, which ask before
 // taking a machine from a thread that is working on it (034); and "Add
@@ -82,7 +82,7 @@ export function MachinesSection() {
   };
 
   return (
-    <Section title="Your machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} machine profile={(backend) => rpc.call("provider", { backend })} />} plain={!machines.length}>
+    <Section title="Machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} machine profile={(backend) => rpc.call("provider", { backend })} />} plain={!machines.length}>
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
       {problem ? (
         <p role="alert" className="py-2 text-xs leading-snug text-destructive-text">

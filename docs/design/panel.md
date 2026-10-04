@@ -107,7 +107,7 @@ tab (1 October 2026): one tab, one place for the thread's boxes.
 
 ```
 +------------------------------------------------------------+
-| 3 boxes                                                [+] |   toolbar
+|                                                        [+] |   toolbar
 +------------------------------------------------------------+
 | [o] quiet-fern  Linux [LXC]                            ...  |   row
 |     (spinner) Starting · 1.4 s · 2 cores · 4 GiB · 16 GiB   |
@@ -124,10 +124,10 @@ tab (1 October 2026): one tab, one place for the thread's boxes.
 +------------------------------------------------------------+
 ```
 
-- **Toolbar**: a count on the left in muted text ("3 boxes"; nothing when
-  there are none) and a plus on the right: BB's ghost icon button, with
+- **Toolbar**: the plus on the right, alone: BB's ghost icon button, with
   the tooltip and accessible name "New box" (the operator asked for the
-  button without a label or border, 1 October 2026).
+  button without a label or border, 1 October 2026, and for the box count
+  that stood on the left to go, 4 October 2026).
 - **List**: BB's list panel (`rounded-lg border bg-card px-4`), one row per
   box, divided by hairlines, newest last so a new box appears where the eye
   is after pressing the button.
@@ -451,13 +451,15 @@ bottom sheet still carries the title "New box".
 
 A thread that runs on a box's BB machine, one of your machines (036) or
 another thread's, lists that box first in the one list, with a small dim
-"This thread" badge beside its Desktop and VM badges, in the badges'
-style; the count above the list counts it. There is no heading and no card
-of its own (the operator, 4 October 2026: "This thread runs on it" read
-oddly above an empty state saying the thread had no boxes). The row offers
+"BB machine" badge last among its kind badges, one of that group so its
+gap is the others' (the operator, 4 October 2026: "This thread" did not
+make sense, and sat too far from the badges before it). There is no
+heading and no card of its own (the operator, the same day: "This thread
+runs on it" read oddly above an empty state saying the thread had no
+boxes). The row offers
 no Release, Stop, Start or "New thread on this box": a line under its
 status says where those are, "Remove or stop it in BB Box's settings." (a
-link to Your machines), or names the thread that holds it, "Held by
+link to the settings' Machines), or names the thread that holds it, "Held by
 <title>", which opens that thread. Open desktop, Open terminal, Copy
 address and Check now stay. The bare Desktop and Terminal tabs count it
 too: it is listed first, and when it is the only desktop, or the only box
@@ -644,9 +646,10 @@ would resolve (the plugin's id is not "bb-box"), so BB draws the cube.
 Each row carries the actions the box can take, as quick icon buttons:
 "Open desktop" for a ready desktop box, "Open terminal" once the box has
 one, "Open desktop in a browser tab" where a desktop exists, and "Open
-thread" for a thread's box. Your machines (036) come first, under "Your
-machines", titled by machine name and without "Open thread"; the threads'
-boxes follow under "Threads". Opening a desktop shows the same viewer with
+thread" for a thread's box. Your machines (036) come first, under
+"Machines" (the operator, 4 October 2026), titled by machine name and
+without "Open thread" or a "BB machine" badge, since every row there is
+one; the threads' boxes follow under "Threads". Opening a desktop shows the same viewer with
 a back arrow in the toolbar, at `<thread>/<box>`; a box's terminal shows
 the same way at `<thread>/<box>/terminal`, which is how the settings page
 opens a machine's terminal, since it has no thread panel to open a tab in.
@@ -654,8 +657,9 @@ At the top right sits the same plus as the Box panel's, "Add machine": it
 opens the New box form in machine mode, with the optional Name, as
 settings' Add machine does (the operator, 4 October 2026: "I should be
 able to add a new box there too, not have to go to settings"); the new
-machine shows under Your machines as it starts and once it is ready. The
-count on the left counts every row. Settings' Add machine stays as it is.
+machine shows under Machines as it starts and once it is ready. Nothing
+stands on the left: the box count went with the Box panel's. Settings' Add
+machine stays as it is.
 Empty: "No boxes" — "No thread has a box, and you have no machines. Add
 one with the plus, or from a thread's Box panel."
 

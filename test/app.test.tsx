@@ -620,7 +620,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   const slot = panel(handlers);
 
   expect(await slot.findByText("calm-otter")).toBeTruthy();
-  expect(slot.getByText("2 boxes")).toBeTruthy();
+  expect(slot.queryByText(/^\d+ box(es)?$/)).toBeNull();
   expect(slot.getByText("bold-heron")).toBeTruthy();
   expect(slot.getAllByText("Ready in 2.1 s")).toHaveLength(2);
   expect(slot.getAllByText("BB machine in 5.3 s")).toHaveLength(2);
@@ -688,7 +688,6 @@ test("the panel makes a box by steps, System, Architecture, Type and Resources, 
   expect(await slot.findByText("new-box")).toBeTruthy();
   expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}']);
   expect(slot.getByText("Starting")).toBeTruthy();
-  expect(slot.getByText("1 box")).toBeTruthy();
   expect(JSON.parse(window.localStorage.getItem("bb-box:new-box") ?? "{}")).toEqual({ kind: "linux-desktop", size: "large" });
   await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
 
@@ -1688,7 +1687,7 @@ test("the settings page lists your machines with their threads and actions, and 
   const { handlers, changes } = server([], { machines: [machine(), machine({ id: "box_m2", name: "scratch", desktop: false, display: null, gpu: false, state: "stopped" }, [])] });
   const slot = settings(handlers);
   expect(await slot.findByText("build-1")).toBeTruthy();
-  expect(slot.getByText("Your machines")).toBeTruthy();
+  expect(slot.getByText("Machines")).toBeTruthy();
   expect(slot.getByText("Working: Fix the login form · 1 more")).toBeTruthy();
   expect(slot.getByText("scratch")).toBeTruthy();
   // Said once for the section, not under each machine.
@@ -1742,15 +1741,16 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   expect(slot.getByText("Starting")).toBeTruthy();
 });
 
-test("the Boxes page's plus adds one of your machines with settings' Add machine form, and the new machine shows under Your machines", async () => {
+test("the Boxes page's plus adds one of your machines with settings' Add machine form, and the new machine shows under Machines", async () => {
   const { handlers, changes } = server([box()], { machines: [machine()] });
   // The page lists your machines from allBoxes; here they come from the harness's machines, so a machine added shows up.
-  const yours = () => (handlers["machines.list"] as () => { machines: MachineEntry[] })().machines.map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" as const }));
+  const yours = () => (handlers["machines.list"] as (input: null) => { machines: MachineEntry[] })(null).machines.map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" as const }));
   const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, allBoxes: () => [...yours(), ...(handlers.allBoxes as () => BoxEntryLike[])()] };
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
-  expect(await list.findByText("Your machines")).toBeTruthy();
-  expect(list.getByText("2 boxes")).toBeTruthy();
+  expect(await list.findByText("Machines")).toBeTruthy();
+  expect(list.queryByText(/^\d+ box(es)?$/)).toBeNull();
+  expect(list.queryByText("BB machine")).toBeNull();
   // The plus at the top right, as the Box panel's, named Add machine (the operator, 4 October 2026): the same form, machine mode, with the Name step.
   fireEvent.click(list.getByRole("button", { name: "Add machine" }));
   expect(await screen.findByText("Of the kinds whose boxes join BB.")).toBeTruthy();
@@ -1759,9 +1759,8 @@ test("the Boxes page's plus adds one of your machines with settings' Add machine
   expect(submitButton().textContent).toBe("Add machine");
   fireEvent.click(submitButton());
   await waitFor(() => expect(changes).toEqual(["machines.add linux build-2"]));
-  // It shows under Your machines, starting, and the count follows.
+  // It shows under Machines, starting.
   expect(await list.findByText("build-2")).toBeTruthy();
-  expect(list.getByText("3 boxes")).toBeTruthy();
   expect(list.getAllByText(/build-1|build-2|calm-otter/).map((node) => node.textContent)).toEqual(["build-1", "build-2", "calm-otter"]);
 });
 
@@ -1771,7 +1770,7 @@ test("the Boxes page lists your machines first, without Open thread, and shows a
   const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, allBoxes: () => [...(handlers.allBoxes as () => BoxEntryLike[])(), mine] };
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
-  expect(await list.findByText("Your machines")).toBeTruthy();
+  expect(await list.findByText("Machines")).toBeTruthy();
   const rows = list.getAllByRole("button", { name: "Open desktop" });
   expect(rows).toHaveLength(2);
   expect(list.getAllByRole("button", { name: "Open thread" })).toHaveLength(1);
@@ -1784,18 +1783,18 @@ test("the Boxes page lists your machines first, without Open thread, and shows a
   await waitFor(() => expect(FakeSocket.made.at(-1)?.url).toContain("box=box_m1"));
 });
 
-test("the panel lists the box this thread runs on first in the one list, with a This thread badge, without Release or Stop, and says where they are", async () => {
+test("the panel lists the box this thread runs on first in the one list with a BB machine badge, no heading and no count, without Release or Stop, and says where they are", async () => {
   const yours = desktopBox({ id: "box_m1", name: "build-1" });
   const { handlers } = server([box()], { runsOn: { box: yours, owner: "yours", threadId: null } });
   const slot = panel(handlers);
   expect(await slot.findByText("build-1")).toBeTruthy();
-  // No heading and no card of its own (the operator, 4 October 2026): one list, the machine first, and the count counts it.
+  // No heading, no card of its own and no count (the operator, 4 October 2026): one list, the machine first, its badge "BB machine" among the others.
   expect(slot.queryByText("This thread runs on it")).toBeNull();
-  expect(slot.getByText("This thread")).toBeTruthy();
+  expect(slot.getByText("BB machine")).toBeTruthy();
   expect(slot.queryByText("Yours")).toBeNull();
   expect(slot.getByText(/Remove or stop it in/)).toBeTruthy();
   expect(slot.getByRole("link", { name: "BB Box's settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
-  expect(slot.getByText("2 boxes")).toBeTruthy();
+  expect(slot.queryByText(/^\d+ box(es)?$/)).toBeNull();
   const rows = slot.getAllByRole("button", { name: /: details$/ }).map((node) => node.getAttribute("aria-label"));
   expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
   expect(slot.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
@@ -1807,13 +1806,12 @@ test("the panel lists the box this thread runs on first in the one list, with a 
   const only = panel(server([], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers);
   expect(await only.findByText("build-1")).toBeTruthy();
   expect(only.queryByText("No boxes yet")).toBeNull();
-  expect(only.getByText("1 box")).toBeTruthy();
 
   cleanup();
   const theirs = panel(server([], { runsOn: { box: yours, owner: "thread", threadId: "thr_other" } }).handlers);
   expect(await theirs.findByText(/Held by/)).toBeTruthy();
   expect(await theirs.findByRole("button", { name: "UI thread" })).toBeTruthy();
-  expect(theirs.getByText("This thread")).toBeTruthy();
+  expect(theirs.getByText("BB machine")).toBeTruthy();
   expect(theirs.queryByText("No boxes yet")).toBeNull();
 });
 
@@ -1826,11 +1824,11 @@ test("the bare Desktop and Terminal tabs count the box this thread runs on: alon
   expect(await alone.findByText("Connecting to the desktop…")).toBeTruthy();
   await waitFor(() => expect(new URL(novnc.FakeRfb.made.at(-1)!.url).searchParams.get("box")).toBe("box_m1"));
   cleanup();
-  // With a desktop of the thread's own: a chooser, the machine first with its badge.
+  // With a desktop of the thread's own: a chooser, the machine first.
   const many = renderSlot(desktopAction!, { threadId: THREAD, params: null }, { rpc: server([desktopBox()], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers, pluginId: "bb-box" });
   expect(await many.findByText("build-1")).toBeTruthy();
   expect(many.getByText("bold-heron")).toBeTruthy();
-  expect(many.getByText("This thread")).toBeTruthy();
+  expect(many.getByText("BB machine")).toBeTruthy();
   expect(many.getAllByRole("button", { name: "Open" })).toHaveLength(2);
   fireEvent.click(many.getAllByRole("button", { name: "Open" })[0]!);
   expect(many.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "build-1", params: { box: "box_m1" } } }]);
@@ -1843,7 +1841,7 @@ test("the bare Desktop and Terminal tabs count the box this thread runs on: alon
   // With a box of the thread's own: a chooser, the machine first.
   const both = renderSlot(terminalAction!, { threadId: THREAD, params: null }, { rpc: server([box()], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers, pluginId: "bb-box" });
   expect(await both.findByText("build-1")).toBeTruthy();
-  expect(both.getByText("This thread")).toBeTruthy();
+  expect(both.getByText("BB machine")).toBeTruthy();
   fireEvent.click(both.getAllByRole("button", { name: "Open" })[0]!);
   expect(both.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "terminal", title: "Terminal: build-1", params: { box: "box_m1" } } }]);
 });

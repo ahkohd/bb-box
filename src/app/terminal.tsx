@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Contract, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { Badge, BOXES_ACTION, EmptyPanel, forThread, IconButton, message, Notice, StatusDot, useLive, useNow, type Tone } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, message, Notice, StatusDot, useLive, useNow, type Tone } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { BoxLine } from "./desktop.tsx";
 import { XTERM_CSS } from "./xterm-css.ts";
@@ -294,7 +294,7 @@ function TerminalChooser({ threadId }: { threadId: string }) {
               <BoxLine
                 key={box.id}
                 box={box}
-                badge={box.id === runsOn?.id ? <Badge>This thread</Badge> : undefined}
+                machine={box.id === runsOn?.id}
                 actions={
                   <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => open(box)}>
                     Open

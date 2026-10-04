@@ -10,7 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
-import { Badge, BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, OPERATOR, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, OPERATOR, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
@@ -549,7 +549,7 @@ export function DesktopPanel({ threadId, params }: { threadId: string; params: u
 }
 
 /** A box as a row: its glyph, name, kind, state (and who has control, for a desktop), with its actions. */
-export function BoxLine({ box, meta, badge, actions }: { box: BoxView; meta?: string | null; badge?: React.ReactNode; actions?: React.ReactNode }) {
+export function BoxLine({ box, meta, machine = false, actions }: { box: BoxView; meta?: string | null; /** The BB machine the thread runs on (036): its badge. */ machine?: boolean; actions?: React.ReactNode }) {
   const status = statusOf(box, Date.now());
   const control = box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null;
   return (
@@ -559,8 +559,7 @@ export function BoxLine({ box, meta, badge, actions }: { box: BoxView; meta?: st
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
           <span className="truncate text-xs text-muted-foreground">{osName(box.os)}</span>
-          <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
-          {badge}
+          <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={machine} />
         </span>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
           <StatusDot tone={status.tone} />
@@ -606,7 +605,7 @@ function DesktopChooser({ threadId }: { threadId: string }) {
               <BoxLine
                 key={box.id}
                 box={box}
-                badge={box.id === runsOn?.id ? <Badge>This thread</Badge> : undefined}
+                machine={box.id === runsOn?.id}
                 actions={
                   <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => open(box)}>
                     Open
@@ -682,7 +681,7 @@ function BoxList() {
   const navigate = useBbNavigate();
   const pluginId = experimental_usePluginId();
   const { value: all, error, refresh } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
-  // The plus adds one of your machines here too (the operator, 4 October 2026), the same form as settings' Add machine; it then shows under Your machines.
+  // The plus adds one of your machines here too (the operator, 4 October 2026), the same form as settings' Add machine; it then shows under Machines.
   const { value: machines, refresh: refreshMachines } = useLive<{ machines: MachineEntry[]; kinds: KindView[] }>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
   const kinds = machines?.kinds ?? [];
   const [problem, setProblem] = useState<string | null>(null);
@@ -732,8 +731,7 @@ function BoxList() {
   return (
     <div className="h-full overflow-y-auto p-4 md:p-5">
       <div className="mx-auto w-full max-w-3xl space-y-4">
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{entries.length ? `${entries.length} ${entries.length === 1 ? "box" : "boxes"}` : null}</span>
+        <div className="flex items-center justify-end gap-2">
           {kinds.length ? <NewBox kinds={kinds} make={add} machine plus profile={(backend) => rpc.call("provider", { backend })} /> : null}
         </div>
         {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
@@ -745,7 +743,7 @@ function BoxList() {
         {all && !entries.length ? <EmptyPanel title="No boxes">No thread has a box, and you have no machines. Add one with the plus, or from a thread's Box panel.</EmptyPanel> : null}
         {yours.length ? (
           <div className="space-y-2">
-            <h3 className="text-xs font-medium text-foreground">Your machines</h3>
+            <h3 className="text-xs font-medium text-foreground">Machines</h3>
             {card(yours, true)}
           </div>
         ) : null}

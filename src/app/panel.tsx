@@ -112,8 +112,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   }
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{rows.length ? `${rows.length} ${rows.length === 1 ? "box" : "boxes"}` : null}</span>
+      <div className="flex items-center justify-end gap-2">
         {state.kinds.length ? (
           <NewBox
             kinds={state.kinds}
