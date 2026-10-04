@@ -10,7 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
+import { Badge, BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
@@ -548,7 +548,7 @@ export function DesktopPanel({ threadId, params }: { threadId: string; params: u
 }
 
 /** A box as a row: its glyph, name, kind, state (and who has control, for a desktop), with its actions. */
-export function BoxLine({ box, meta, actions }: { box: BoxView; meta?: string | null; actions?: React.ReactNode }) {
+export function BoxLine({ box, meta, badge, actions }: { box: BoxView; meta?: string | null; badge?: React.ReactNode; actions?: React.ReactNode }) {
   const status = statusOf(box, Date.now());
   const control = box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null;
   return (
@@ -559,6 +559,7 @@ export function BoxLine({ box, meta, actions }: { box: BoxView; meta?: string | 
           <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
           <span className="truncate text-xs text-muted-foreground">{osName(box.os)}</span>
           <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
+          {badge}
         </span>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
           <StatusDot tone={status.tone} />
@@ -581,7 +582,9 @@ function DesktopChooser({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
   const open = useOpenDesktop();
   const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
-  const desktops = state?.boxes.filter((box) => box.desktop) ?? [];
+  // The box this thread runs on counts too (the operator, 4 October 2026): listed first, and alone it opens straight away.
+  const runsOn = state?.runsOn?.box.desktop ? state.runsOn.box : null;
+  const desktops = [...(runsOn ? [runsOn] : []), ...(state?.boxes.filter((box) => box.desktop) ?? [])];
   useNow(desktops.some((box) => box.state === "acquiring" || box.state === "starting"), 1000);
   if (desktops.length === 1) return <DesktopViewer key={desktops[0]!.id} threadId={threadId} boxId={desktops[0]!.id} newTab />;
   return (
@@ -602,6 +605,7 @@ function DesktopChooser({ threadId }: { threadId: string }) {
               <BoxLine
                 key={box.id}
                 box={box}
+                badge={box.id === runsOn?.id ? <Badge>This thread</Badge> : undefined}
                 actions={
                   <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => open(box)}>
                     Open
