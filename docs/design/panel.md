@@ -522,7 +522,13 @@ titled after the box.
   browser allows. The menu has "Paste from this computer" (reads the
   clipboard on the click, a gesture; where the frame still refuses, a
   field to paste into) and "Copy to this computer" (writes it on the click;
-  where refused, the text to copy by hand). The toolbar says "Pasted" or
+  where refused, the text to copy by hand). Both items are listed whenever
+  the box shows, greyed until the connection is up, and Paste until this
+  tab has control, so a person sees there is a paste to take. Paste's icon
+  is the plugin's own clipboard glyph with an arrow into it
+  (`src/app/glyphs.tsx`), since BB's set has no clipboard icon and a
+  missing name falls back to a lightning bolt (the operator's note of
+  4 October 2026); it pairs with BB's Copy. The toolbar says "Pasted" or
   "Copied" for two seconds. Where nothing has come from the box, the
   message says why: take control first, copy in the box first, or, for
   Windows, that QEMU's console sends the clipboard only with the SPICE

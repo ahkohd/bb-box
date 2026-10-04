@@ -45,6 +45,17 @@ export function ServerGlyph(props: Props) {
   );
 }
 
+/** Paste into the box: a clipboard with an arrow into it, since BB's set has no clipboard; it pairs with BB's Copy (the operator's note of 4 October 2026). */
+export function PasteGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="5" y="4" width="14" height="17.5" rx="2" />
+      <rect x="9" y="2.5" width="6" height="3" rx="1" />
+      <path d="M12 9.5v7.5M9.5 14.5 12 17l2.5-2.5" />
+    </Stroked>
+  );
+}
+
 /** A box with a desktop: a monitor. */
 export function MonitorGlyph(props: Props) {
   return (

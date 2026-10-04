@@ -25,7 +25,7 @@ import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
 import { NewBox, type SizeRequest } from "./new-box.tsx";
-import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
@@ -674,16 +674,15 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                     Reconnect
                   </DropdownMenuItem>
                 ) : null}
-                {showing && connection.state === "connected" ? (
+                {showing ? (
                   <>
                     <DropdownMenuSeparator />
-                    {mine ? (
-                      <DropdownMenuItem onSelect={() => void pasteFromComputer()}>
-                        <Icon name="ClipboardPaste" fallback="Clipboard" aria-hidden />
-                        Paste from this computer
-                      </DropdownMenuItem>
-                    ) : null}
-                    <DropdownMenuItem onSelect={() => void copyToComputer()}>
+                    {/* Both wait for the connection; Paste for control too, so the item says there is one to take. */}
+                    <DropdownMenuItem disabled={!mine || connection.state !== "connected"} onSelect={() => void pasteFromComputer()}>
+                      <PasteGlyph />
+                      Paste from this computer
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={connection.state !== "connected"} onSelect={() => void copyToComputer()}>
                       <Icon name="Copy" aria-hidden />
                       Copy to this computer
                     </DropdownMenuItem>

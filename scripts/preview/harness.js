@@ -87,6 +87,12 @@ class FakeTerminalSocket {
     this.url = url;
     this.readyState = 0;
     this.binaryType = "blob";
+    // noVNC checks a channel for these before it assigns them, so the desktop scenes need them here too (they rendered nothing without).
+    this.onopen = null;
+    this.onclose = null;
+    this.onmessage = null;
+    this.onerror = null;
+    this.protocol = "";
     const terminal = scene?.terminal ?? {};
     setTimeout(() => {
       if (terminal.fail) {
