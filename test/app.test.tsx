@@ -701,7 +701,8 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
     "Release…",
   ]);
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Open desktop in a browser tab" }));
-  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "/plugins/bb-box/desktop/thr_panel/box_2" });
+  // A full URL: BB's openUrl opens only http(s) URLs, by the person's browser preference, and returns false for a path.
+  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: new URL("/plugins/bb-box/desktop/thr_panel/box_2", window.location.origin).href });
 });
 
 test("the panel makes a box by steps, System, Architecture, Type and Resources, and remembers the kind", async () => {
@@ -2193,17 +2194,20 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
 });
 
-test("the Boxes page ends with a dim BB Box settings link under the lists, which opens Settings > BB Box; the plus stays alone at the top", async () => {
+test("the Boxes page ends with the BB Box settings gear under the lists, a link to Settings > BB Box; the plus stays alone at the top", async () => {
   const list = boxesPage(server([box()]).handlers);
   await list.findByText("calm-otter");
-  const settingsButton = list.getByRole("button", { name: "BB Box settings" });
-  // Not beside the plus: under the lists, after the last row.
-  expect(settingsButton.closest("div")?.querySelector('button[aria-label="Add machine"]')).toBeNull();
+  // A link, not a button calling openUrl: openUrl takes only http(s) URLs and did nothing with this app path (5 October 2026).
+  const settingsLink = list.getByRole("link", { name: "BB Box settings" });
+  expect(settingsLink.getAttribute("href")).toBe("/settings/plugins/bb-box");
+  // The gear alone, no text; under the lists, after the last row, not beside the plus.
+  expect(settingsLink.textContent).toBe("");
+  expect(settingsLink.closest("div")?.querySelector('button[aria-label="Add machine"]')).toBeNull();
   const lastRow = list.getByRole("button", { name: "calm-otter: details" });
-  expect(lastRow.compareDocumentPosition(settingsButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  fireEvent.click(settingsButton);
-  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "/settings/plugins/bb-box" });
+  expect(lastRow.compareDocumentPosition(settingsLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(list.queryByRole("button", { name: "BB Box settings" })).toBeNull();
 });
+
 
 test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss", async () => {
   const failure = "Stopping the box failed: the host did not answer.";
@@ -2238,8 +2242,8 @@ test("the Boxes page lists your machines first, without Open thread, and shows a
   expect(names[0]).toBe("build-1");
 
   const terminal = renderSlot(page!, { subPath: "operator/box_m1/terminal/from-settings" }, { rpc: withMine, pluginId: "bb-box" });
-  fireEvent.click(await terminal.findByRole("button", { name: "Back to settings" }));
-  expect(terminal.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "/settings/plugins/bb-box" });
+  // Back to settings is a link to the app's settings page, for the same reason.
+  expect((await terminal.findByRole("link", { name: "Back to settings" })).getAttribute("href")).toBe("/settings/plugins/bb-box");
   await waitFor(() => expect(FakeSocket.made.at(-1)?.url).toContain("box=box_m1"));
 });
 

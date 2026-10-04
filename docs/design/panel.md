@@ -713,10 +713,15 @@ able to add a new box there too, not have to go to settings"); the new
 machine shows under Machines as it starts and once it is ready. Nothing
 stands on the left: the box count went with the Box panel's. Settings' Add
 machine stays as it is.
-Where the content ends, under the lists and left-aligned with them, a dim
-link with the gear, "BB Box settings", opens Settings > BB Box, in the
-style of the New box form's footer link (the operator, 5 October 2026, who
-moved it there from beside the plus).
+Where the content ends, under the lists and left-aligned with them, the
+gear alone, named "BB Box settings" in its tooltip and accessible name,
+links to Settings > BB Box (the operator, 5 October 2026, who moved it
+there from beside the plus, then asked for no text label). It is a link,
+not a button calling `openUrl`: BB's `openUrl` opens only http(s) URLs, by
+the person's browser preference, and returns false for an app path, so the
+first version did nothing; `UrlLink` routes an app path in the app. The
+viewer's "Back to settings" is a link for the same reason, and "Open
+desktop in a browser tab" passes `openUrl` the full URL.
 Empty: "No boxes" — "No thread has a box, and you have no machines. Add
 one with the plus, or from a thread's Box panel."
 

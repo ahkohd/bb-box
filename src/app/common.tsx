@@ -3,7 +3,7 @@
 // BB's style.
 
 import type { BoxForm } from "../backends/types.ts";
-import { experimental_Icon as Icon, useRealtime, useRealtimeConnectionState } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useRealtime, useRealtimeConnectionState, UrlLink } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -187,6 +187,36 @@ export function IconButton({
       </Tooltip>
     </TooltipProvider>
   );
+}
+
+/**
+ * IconButton's look, as a link: for a place in BB's app, such as its settings. BB's `openUrl` takes only http(s) URLs
+ * and returns false for an app path, so a button calling it with one does nothing; `UrlLink` routes an app path in the
+ * app, as a real anchor (5 October 2026, when the Boxes page's settings button did nothing).
+ */
+export function IconLink({ label, icon, href, className }: { label: string; icon: string | ReactNode; href: string; className?: string }) {
+  return (
+    <TooltipProvider delayDuration={250}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button asChild variant="ghost" size="icon" className={cn("size-7 p-0 text-muted-foreground hover:text-foreground", className)}>
+            <UrlLink href={href} aria-label={label}>
+              {typeof icon === "string" ? <Icon name={icon} className="size-4" aria-hidden /> : icon}
+            </UrlLink>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/** A toolbar's way back: an action, or a place in BB's app, which is a link (see IconLink). */
+export type BackTo = { readonly label: string; readonly go: () => void } | { readonly label: string; readonly href: string };
+
+/** The back arrow at a toolbar's start. */
+export function BackControl({ back }: { back: BackTo }) {
+  return "href" in back ? <IconLink label={back.label} icon="ArrowLeft" href={back.href} className="-ml-1" /> : <IconButton label={back.label} icon="ArrowLeft" onClick={back.go} className="-ml-1" />;
 }
 
 /** bb-box's settings page in BB. */

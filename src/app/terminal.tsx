@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Contract, DesktopState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, message, Notice, StatusDot, useLive, useNow, type Tone } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, message, Notice, StatusDot, useLive, useNow, type Tone, BackControl, type BackTo } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { BoxLine } from "./desktop.tsx";
 import { XTERM_CSS } from "./xterm-css.ts";
@@ -310,7 +310,7 @@ function TerminalChooser({ threadId }: { threadId: string }) {
 }
 
 /** One box's terminal; `onBack` adds a back arrow, for the Boxes page. */
-export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; boxId: string; onBack?: { label: string; go: () => void } }) {
+export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; boxId: string; onBack?: BackTo }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const { value: state, error, refresh } = useLive<DesktopState>(`${threadId}/${boxId}/terminal`, () => rpc.call("desktop", { threadId, box: boxId }), forThread(threadId));
@@ -402,7 +402,7 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
-        {onBack ? <IconButton label={onBack.label} icon="ArrowLeft" onClick={onBack.go} className="-ml-1" /> : null}
+        {onBack ? <BackControl back={onBack} /> : null}
         <TerminalGlyph className="text-muted-foreground" />
         <span className="font-medium text-foreground">{box?.name ?? "Terminal"}</span>
         <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
