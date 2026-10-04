@@ -11,9 +11,11 @@ import { warmChecks } from "../backends/warm.ts";
 import { pinsDigest, type ImageFacts } from "../backends/images.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { ImageBakes } from "./bakes.ts";
+import { BoxFiles } from "./box-files.ts";
 import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
+import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
@@ -357,6 +359,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     machines,
     images,
   });
+  // The files for every box (#455), once the boxes are there.
+  let files: BoxFiles | null = null;
   const configuration = await Configuration.load({
     kv,
     backends,
@@ -372,6 +376,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       void boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
       // A warm count, a switch or the room kept free may have changed: tops the pools up now, not at the next sweep (#355).
       for (const backend of backends.active()) void backend.maintain?.().catch((error) => logError(`maintain ${backend.id}`, error));
+      void files?.settingsChanged().catch((error) => logError("write the files for every box", error));
     },
     logError,
   });
@@ -472,6 +477,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         // Its shells are gone with it; their tabs hear why.
         void terminals?.end(box.id, deleted ? "The box was released." : box.state === "stopped" || box.state === "stopping" ? "The box stopped." : "The box is no longer running.");
       }
+      // A box that joins BB, or starts again, gets the files for every box it lacks.
+      files?.recorded(box, deleted);
     },
     async thread(threadId): Promise<ThreadAnswer> {
       try {
@@ -504,6 +511,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
     log: (message) => bb.log.info(message),
   });
+  files = new BoxFiles({ boxes, files: () => boxFilesOf(configuration.document.general.files, configuration.secrets), logError });
+  void files.started().catch((error) => logError("write the files for every box", error));
   enrolment = new Enrolment({
     boxes,
     hosts: () => bb.sdk.hosts as unknown as HostApi,
@@ -843,6 +852,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Images",
           report: { ok: true, summary: "bb-box rebuilds the standard images each night.", checks: imageChecks, notes: [] },
+        });
+      }
+      const fileChecks = files?.checks() ?? [];
+      if (fileChecks.length) {
+        sections.push({
+          title: "Files for every box",
+          report: { ok: true, summary: "bb-box writes them into each Linux and macOS box as it joins BB or starts, and into running boxes when they change.", checks: fileChecks, notes: [] },
         });
       }
       const small = presetMemoryChecks((await general()).sizes);

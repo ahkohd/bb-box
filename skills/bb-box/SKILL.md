@@ -350,9 +350,9 @@ Backends, each with a switch,
 its state in words and a setup area with the driver's fields, hosts,
 write-only secrets and a check that runs the doctor against the form;
 Kinds, each with a switch, its presets, largest size, warm counts and
-spares; and
-General, the default kind, boxes per thread and enrolment. The design is in
-`docs/design/settings.md`.
+spares;
+General, the default kind, boxes per thread and enrolment; and Files for
+every box. The design is in `docs/design/settings.md`.
 
 ## Configuration
 
@@ -382,9 +382,10 @@ The document has three parts:
   the kind's own disk), its `default` preset, its `largest` custom size and
   `spares`, the boxes to keep ready and enrolled for the next acquire at the
   default size (0 to 10, 0 by default). Parts left out keep bb-box's own.
-- `general`: `boxesPerThread` (0 means no limit), `enrol` (adds ready boxes
-  to BB as machines, `true` by default) and `defaultKind` (`linux` by
-  default).
+- `general`: `boxesPerThread` (0 means no limit), `enrol` (adds ready boxes to
+  BB as machines, `true` by default), `defaultKind` (`linux` by default) and
+  `files`, the files for every box: each a `path` under the box user's home
+  and its `content`, a secret.
 
 For example:
 
@@ -395,6 +396,16 @@ For example:
   "general": { "boxesPerThread": 4 }
 }
 ```
+
+Files for every box carry the config a provider reads from its machine, which
+BB does not carry there, such as pi's `.pi/agent/models.json` with its custom
+providers and models. bb-box writes each into the home of every Linux and
+macOS box as it joins BB or starts again, and into running boxes when the list
+or a content changes, readable by the box user only and written over what the
+box has. A file taken off the list stays in the boxes that have it. Windows
+boxes get none yet. A content can hold an API key, so it is a secret:
+write-only, and in no log, error or tool output. `bb box doctor` says how many
+are set and whether the last write worked.
 
 Turning a backend or a kind off stops new boxes only: boxes already made keep
 working and can be released. A backend that is on, or has boxes, cannot be

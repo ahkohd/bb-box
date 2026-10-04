@@ -1480,7 +1480,8 @@ bb-box's configuration is one checked document in its plugin storage
 - The document lists the backends in the order the registry tries them,
   each with its fields, switch, warm counts per kind and hosts; the kinds,
   each with its switch, presets, default preset and largest size; and the
-  general settings: boxes per thread, enrolment and the default kind.
+  general settings: boxes per thread, enrolment, the default kind and the
+  files for every box.
 - Hosts set up alike are a list inside one backend, tried in order. Separate
   backends of one type are for configurations that differ in kind; the
   first keeps the type as its ID, another is `<type>:<name>`.
@@ -1500,6 +1501,18 @@ bb-box's configuration is one checked document in its plugin storage
   template.
 - Secrets are stored apart from the document and are write-only: the page
   and the CLI say whether each is set.
+- The files for every box (#455) are a short list, each a path under the box
+  user's home, such as pi's `.pi/agent/models.json`, and its content, for the
+  config a provider reads from its machine and BB does not carry there (BB
+  request 17). A content can hold an API key, so it is a secret, kept with the
+  backends' and never in a log, an error, a box record or a tool's output; the
+  document holds the paths. bb-box writes the files into each Linux and macOS
+  box that is running and a BB machine and lacks them as they are now: as it
+  joins BB, as it starts again after missing a change, and when the list or a
+  content changes. Each is the box user's, mode 600, its folders made, written
+  over what the box has. A file taken off the list stays in the boxes that
+  have it. Windows boxes get none yet. The doctor says how many are set and
+  whether the last write worked.
 - The settings page and `bb box config show | check | apply <file>` use the
   same RPC: `config.get`, `config.check(draft, {test})` and
   `config.apply(draft, revision)`. Every write is checked, and a revision
@@ -1517,7 +1530,7 @@ bb-box's configuration is one checked document in its plugin storage
 | Which guest belongs to which box and thread | the provider (tags, names), or a marker on a real machine | backend | the plugin's storage being lost |
 | Pool membership | the backend's `PoolStore` | backend | as above for tags; plugin storage otherwise |
 | Configuration | plugin storage, one document | operator | exported by `bb box config show --json`; deleted by `bb plugin remove` |
-| Provider credentials, and the tailnet key (planned, 050) | plugin storage, apart from the configuration | operator | never shown in output, logs or errors, nor sent to the browser |
+| Provider credentials, the contents of the files for every box, and the tailnet key (planned, 050) | plugin storage, apart from the configuration | operator | never shown in output, logs or errors, nor sent to the browser |
 | bb-box's SSH key | plugin storage; its public key is installed by setup | core | |
 | The install ID | plugin storage, and on every guest | core | the plugin's storage being lost: the doctor shows the old ID and an operator command restores it |
 | The thread's Git credentials and variables | BB | BB | resolved by BB each time they are used; read from BB's daemon in the box by each command, never written to disk or to bb-box's storage |

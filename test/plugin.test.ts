@@ -3,7 +3,7 @@
 // and settings.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
@@ -500,6 +500,44 @@ test("box_job gives a job's output while it runs and its exit code once it ends,
   assert.equal(isError(gone), true);
   assert.match(text(gone), new RegExp(`^Box ${box.name} has no job ${job}: its result was read already, or it ended more than 7 days ago\\.`));
   await assert.rejects(tool("box_job", { box: box.name, job: "../../x" }));
+});
+
+test("files for every box go into a Linux box's home as it joins BB, mode 600, into running boxes when they change, and into a stopped one as it starts, never into a log (#455)", async (t) => {
+  const { harness, app, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const SECRET = '{"providers":{"example":{"apiKey":"sk-secret-value"}}}';
+  const before = app.configuration.exported();
+  const set = await app.configuration.apply({ ...before, general: { ...before.general, files: [{ path: ".pi/agent/models.json", content: SECRET }] } }, before.revision);
+  assert.ok(set.ok, JSON.stringify(set.ok ? null : set));
+  assert.ok(!JSON.stringify(set).includes("sk-secret-value"), "the answer to the write says only that it is set");
+
+  await tool("box_acquire", {});
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+  const file = join(home, ".pi", "agent", "models.json");
+  await until("the file in the box", async () => existsSync(file) && readFileSync(file, "utf8") === SECRET);
+  assert.equal(statSync(file).mode & 0o777, 0o600, "the box user's alone");
+
+  // A change of the content reaches the running box.
+  const now = app.configuration.exported();
+  await app.configuration.apply({ ...now, general: { ...now.general, files: [{ path: ".pi/agent/models.json", content: "{}" }] } }, now.revision);
+  await until("the new content", async () => readFileSync(file, "utf8") === "{}");
+
+  // A box stopped through a change gets it as it starts again.
+  await tool("box_stop", { box: box.name });
+  const then = app.configuration.exported();
+  await app.configuration.apply({ ...then, general: { ...then.general, files: [{ path: ".pi/agent/models.json", content: "[]" }] } }, then.revision);
+  assert.equal(readFileSync(file, "utf8"), "{}", "nothing goes into a stopped box");
+  const started = await tool("box_start", { box: box.name });
+  assert.ok(!isError(started), text(started));
+  await until("the content as it starts", async () => readFileSync(file, "utf8") === "[]");
+
+  const doctor = await app.doctor();
+  const section = doctor.sections.find((candidate) => candidate.title === "Files for every box");
+  assert.match(section?.report.checks[0]?.detail ?? "", new RegExp(`^1 file set; the last write, into box ${box.name} at .+ UTC, worked\\.$`));
+  const logs = harness.inspection.logEntries.map((entry) => entry.message).join("\n");
+  assert.ok(!logs.includes("sk-secret-value") && !JSON.stringify(doctor).includes("sk-secret-value"), "no log or doctor line holds the content");
 });
 
 test("box_copy takes relative paths under the workspace and the box user's home, and names files after their source", async (t) => {

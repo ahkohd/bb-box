@@ -1276,6 +1276,36 @@ test("the general settings save at once, leaving out a value at its default", as
   expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3, enrol: false });
 });
 
+test("files for every box show each path and whether it is set, never a content, and save at once, sending a kept file's path alone (#455)", async () => {
+  // As saved: config.get gives the document last applied.
+  applied = { schema: 1, revision: 3, backends: [], kinds: {}, general: { files: [{ path: ".pi/agent/models.json", content: { set: true } }] } };
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers);
+  expect(await slot.findByText(".pi/agent/models.json")).toBeTruthy();
+  expect(slot.getByText("Set")).toBeTruthy();
+  const sent = (at: number) => JSON.parse(changes[at]!.slice(changes[at]!.indexOf("{"))).general.files;
+
+  fireEvent.click(slot.getByRole("button", { name: "Add a file" }));
+  fireEvent.change(slot.getByRole("textbox", { name: "Path under the box user's home" }), { target: { value: " .config/tool/config.toml " } });
+  fireEvent.change(slot.getByRole("textbox", { name: "The file's content" }), { target: { value: "key = 1" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(sent(0)).toEqual([{ path: ".pi/agent/models.json" }, { path: ".config/tool/config.toml", content: "key = 1" }]);
+  await waitFor(() => expect(slot.queryByRole("textbox", { name: "The file's content" })).toBeNull());
+  expect(slot.queryByText(/key = 1/)).toBeNull();
+
+  // Replace keeps the path; Remove sends the rest, each by its path alone.
+  fireEvent.click(slot.getAllByRole("button", { name: "Replace" })[0]!);
+  expect((slot.getByRole("textbox", { name: "Path under the box user's home" }) as HTMLInputElement).disabled).toBe(true);
+  fireEvent.change(slot.getByRole("textbox", { name: "The file's content" }), { target: { value: "{}" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(sent(1)).toEqual([{ path: ".pi/agent/models.json", content: "{}" }, { path: ".config/tool/config.toml" }]);
+  fireEvent.click(slot.getAllByRole("button", { name: "Remove" })[1]!);
+  await waitFor(() => expect(changes).toHaveLength(3));
+  expect(sent(2)).toEqual([{ path: ".pi/agent/models.json" }]);
+});
+
 function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") {
   const action = app.threadPanelActions.find((candidate) => candidate.id === "desktop");
   return renderSlot(action!, { threadId: THREAD, params: { box: boxId } }, { rpc: handlers, pluginId: "bb-box" });
