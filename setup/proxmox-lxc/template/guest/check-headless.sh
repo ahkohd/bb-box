@@ -14,6 +14,8 @@ t "https reach" curl -sS -o /dev/null -m 10 -w '%{http_code}' https://example.co
 # template /dev/net/tun, and a VM has its own.
 t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'
 t "PATH" sh -c 'echo $PATH'
+# BB's updater runs `npm install -g` as the box user for an agent CLI.
+t "npm -g as the box user" sh -c 'p=$(npm config get prefix); [ "$p" = "$HOME/.local" ] && [ -w "$p/lib" ] && case ":$PATH:" in *":$p/bin:"*) echo "$p" ;; *) echo "$p/bin is not on PATH"; exit 1 ;; esac'
 t "tools" sh -c 'for c in node npm pnpm yarn uv gh rg fd jj git-lfs claude codex pi docker psql redis-cli sqlite3 tree vim nvim; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; node --version; uv --version; claude --version | head -1'
 # A new box installs packages without `apt-get update` first.
 t "apt package lists" sh -c 'v=$(apt-cache policy cowsay | awk "/Candidate:/ { print \$2 }"); [ -n "$v" ] && [ "$v" != "(none)" ] && echo "cowsay $v installable, lists from $(date -u +%F -r "$(ls -t /var/lib/apt/lists/*_InRelease | head -1)")"'

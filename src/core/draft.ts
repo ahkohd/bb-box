@@ -134,7 +134,7 @@ echo "== local"
 # Not npm's links for its globals, which come next.
 newer /usr/local/bin /usr/local/sbin /opt | while read -r p; do case $(readlink -f "$p") in /usr/local/lib/node_modules/*) ;; *) echo "$p" ;; esac; done
 echo "== npm"
-for d in $(newer /usr/local/lib/node_modules); do [ -f "$d/package.json" ] && node -p 'const p = require(process.argv[1]); p.name + "@" + p.version' "$d/package.json" 2>/dev/null; done
+for d in $(newer /usr/local/lib/node_modules ~/.local/lib/node_modules; for s in /usr/local/lib/node_modules/@* ~/.local/lib/node_modules/@*; do [ -d "$s" ] && newer "$s"; done); do [ -f "$d/package.json" ] && node -p 'const p = require(process.argv[1]); p.name + "@" + p.version' "$d/package.json" 2>/dev/null; done
 echo "== mise"
 [ -f ~/.config/mise/config.toml ] && cat ~/.config/mise/config.toml
 echo "== rust"
@@ -142,8 +142,8 @@ echo "== rust"
 echo "== uv"
 command -v uv >/dev/null && uv tool list 2>/dev/null | sed -n 's/^\([A-Za-z0-9_.-]*\) v.*/\1/p'
 echo "== home-bin"
-# Not BB's own CLI, which enrolment writes there, nor uv's tools.
-newer ~/.local/bin | while read -r p; do case $(readlink -f "$p") in "$HOME"/.local/bin/bb | "$HOME"/.bb-machines/* | "$HOME"/.local/share/uv/*) ;; *) echo "$p" ;; esac; done
+# Not BB's own CLI, which enrolment writes there, nor uv's tools, nor npm's links for its globals.
+newer ~/.local/bin | while read -r p; do case $(readlink -f "$p") in "$HOME"/.local/bin/bb | "$HOME"/.bb-machines/* | "$HOME"/.local/share/uv/* | "$HOME"/.local/lib/node_modules/*) ;; *) echo "$p" ;; esac; done
 exit 0
 `;
 
