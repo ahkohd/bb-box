@@ -5,24 +5,14 @@
 // machine", the New box popover with a name.
 
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useState } from "react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { BoxResult, Contract, MachineEntry, ThreadOnBox } from "../plugin/contract.ts";
+import type { Contract, MachineEntry, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
 import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, OPERATOR, osName, StatusDot, useLive, useNow } from "./common.tsx";
-import { DESKTOP_PAGE, desktopSubPath } from "./desktop.tsx";
+import { DESKTOP_PAGE, desktopSubPath, pageHref } from "./desktop.tsx";
+import { ProblemLine, useMachineActions } from "./box-actions.tsx";
 import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { Section } from "./settings-fields.tsx";
 import { statusOf } from "./status.ts";
@@ -30,7 +20,6 @@ import { canOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 
-type Guarded = "remove" | "stop";
 
 /** The threads on a machine, in a few words: the working ones named first. */
 export function threadsWords(threads: readonly ThreadOnBox[]): string | null {
@@ -51,104 +40,47 @@ export function MachinesSection() {
   const machines = state?.machines ?? [];
   const kinds = state?.kinds ?? [];
   const now = useNow(machines.some((entry) => isMoving(entry.box)));
-  const [problem, setProblem] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  /** A remove or stop left alone because threads work on the machine, until the user says. */
-  const [inUse, setInUse] = useState<{ method: Guarded; box: BoxView; threads: readonly ThreadOnBox[] } | null>(null);
-  const [removing, setRemoving] = useState<BoxView | null>(null);
-
-  const settle = async (result: Promise<BoxResult>, onThreads?: (threads: readonly ThreadOnBox[]) => void): Promise<string | null> => {
+  // Start, Stop and Remove with their warnings, shared with the Boxes page's Machines.
+  const { act, busy, problem, setProblem, askRemove, dialogs } = useMachineActions(refresh);
+  const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
     let refused: string | null;
     try {
-      const answer = await result;
-      refused = answer.error;
-      if (answer.threads?.length) onThreads?.(answer.threads);
+      refused = (await rpc.call("machines.add", { kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) })).error;
     } catch (caught) {
       refused = message(caught);
     }
     await refresh();
     return refused;
   };
-  const add = (kind: string, size?: SizeRequest, name?: string, on?: string | string[]) => settle(rpc.call("machines.add", { kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) }));
-  const act = async (method: Guarded | "start", box: BoxView, force = false) => {
-    setBusy(`${method}:${box.id}`);
-    try {
-      const input = { box: box.id, ...(method !== "start" && force ? { force: true } : {}) };
-      const call = method === "remove" ? rpc.call("machines.remove", input) : method === "stop" ? rpc.call("machines.stop", input) : rpc.call("machines.start", input);
-      setProblem(await settle(call, method === "start" ? undefined : (threads) => setInUse({ method, box, threads })));
-    } finally {
-      setBusy(null);
-    }
-  };
 
   return (
     <Section title="Machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} machine profile={(backend) => rpc.call("provider", { backend })} />} plain={!machines.length}>
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-      {problem ? (
-        <p role="alert" className="py-2 text-xs leading-snug text-destructive-text">
-          {problem}
-        </p>
-      ) : null}
+      <ProblemLine problem={problem} onDismiss={() => setProblem(null)} className="py-2" />
       {state && !machines.length ? (
         <EmptyPanel>Add a box as a BB machine of your own. It shows in BB's machine list and new-thread picker, and stays until you remove it here.</EmptyPanel>
       ) : null}
       {machines.map((entry) => (
-        <MachineRow key={entry.box.id} entry={entry} now={now} busy={busy} onStop={() => void act("stop", entry.box)} onStart={() => void act("start", entry.box)} onRemove={() => setRemoving(entry.box)} />
+        <MachineRow key={entry.box.id} entry={entry} now={now} busy={busy} onStop={() => void act("stop", entry.box)} onStart={() => void act("start", entry.box)} onRemove={() => askRemove(entry.box)} />
       ))}
-      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {removing?.nature === "real"
-                ? "Its machine leaves BB, and it is reset and returned to its pool. Anything in the box user's home will be deleted."
-                : "Its machine leaves BB, and its disk and everything on it will be deleted. Copy out anything you want to keep first."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                if (removing) void act("remove", removing);
-              }}
-            >
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={inUse !== null} onOpenChange={(open) => !open && setInUse(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {inUse?.method === "stop" ? "Stop" : "Remove"} {inUse?.box.name} anyway?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {inUse ? `${inUse.threads.map((thread) => thread.title ?? thread.id).join(", ")} ${inUse.threads.length === 1 ? "is" : "are"} working on it, and would lose ${inUse.threads.length === 1 ? "its" : "their"} machine.` : null}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => inUse && void act(inUse.method, inUse.box, true)}>
-              {inUse?.method === "stop" ? "Stop anyway" : "Remove anyway"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {dialogs}
     </Section>
   );
 }
 
-/** One of your machines as a row: name, OS and badges, state and threads, and its actions. */
-function MachineRow({ entry, now, busy, onStop, onStart, onRemove }: { entry: MachineEntry; now: number; busy: string | null; onStop: () => void; onStart: () => void; onRemove: () => void }) {
+/**
+ * One of your machines as a row: name, OS and badges, state and threads, and its actions. In settings its desktop and
+ * terminal open with a way back to settings; on the Boxes page, back to the page, and its menu offers a browser tab too.
+ */
+export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from = "settings" }: { entry: MachineEntry; now: number; busy: string | null; onStop: () => void; onStart: () => void; onRemove: () => void; from?: "settings" | "boxes" }) {
   const { box, threads } = entry;
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
   const status = statusOf(box, now);
   const ready = box.state === "ready";
-  const openDesktop = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "desktop", "settings") });
-  const openTerminal = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "terminal", "settings") });
+  const back = from === "settings" ? "settings" : undefined;
+  const openDesktop = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "desktop", back) });
+  const openTerminal = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "terminal", back) });
   const acting = busy !== null && busy.endsWith(`:${box.id}`);
   return (
     <div data-resource-row className={cn("grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3 first:pt-0 last:pb-0", box.state === "releasing" && "opacity-60")}>
@@ -192,6 +124,12 @@ function MachineRow({ entry, now, busy, onStop, onStart, onRemove }: { entry: Ma
               <DropdownMenuItem onSelect={openDesktop}>
                 <MonitorGlyph />
                 Open desktop
+              </DropdownMenuItem>
+            ) : null}
+            {from === "boxes" && box.desktop && ready ? (
+              <DropdownMenuItem onSelect={() => void navigate.openUrl(pageHref(pluginId, OPERATOR, box.id))}>
+                <Icon name="ExternalLink" aria-hidden />
+                Open desktop in a browser tab
               </DropdownMenuItem>
             ) : null}
             {canOpenTerminal(box) ? (

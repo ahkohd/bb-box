@@ -566,6 +566,17 @@ export const scenes = {
       await wait(300);
     },
   },
+  "panel-stop-refused": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 420,
+    rpc: { ...rpc([box(), desktop]), stop: () => ({ box: null, error: "Stopping the box failed: the host did not answer." }) },
+    after: async (root) => {
+      // A refused change: a red line under the toolbar, with Dismiss.
+      click(root, "button", "Stop");
+      await wait(400);
+    },
+  },
   "panel-refused": {
     slot: "boxes",
     chrome: boxesChrome,
@@ -646,6 +657,19 @@ export const scenes = {
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
   "boxes-page": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
   "boxes-page-empty": { slot: "boxes-page", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
+  "boxes-page-menu": {
+    slot: "boxes-page",
+    width: 900,
+    height: 760,
+    props: { subPath: "" },
+    rpc: rpc([box(), desktop], { machines: MACHINES }),
+    threads: { [THREAD]: "bb-box: UI/UX design and panel" },
+    after: async (root) => {
+      // A thread's box on the page has the Box panel's menu (the operator, 5 October 2026).
+      openMenu(root, "calm-otter actions");
+      await wait(300);
+    },
+  },
   "boxes-page-add": {
     slot: "boxes-page",
     width: 900,

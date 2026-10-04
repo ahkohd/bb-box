@@ -2103,6 +2103,117 @@ test("the Boxes page's plus adds one of your machines with settings' Add machine
   expect(list.getAllByText(/build-1|build-2|calm-otter/).map((node) => node.textContent)).toEqual(["build-1", "build-2", "calm-otter"]);
 });
 
+/** The Boxes page, with thread titles from the SDK. */
+function boxesPage(handlers: PluginRpcTestHandlers<Contract>) {
+  const [page] = app.navPanels;
+  return renderSlot(page!, { subPath: "" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+}
+
+test("the Boxes page manages a thread's boxes with the Box panel's menu: Stop, Start, Release with its question, as that thread", async () => {
+  const { handlers, changes } = server([box(), box({ id: "box_6", name: "swift-fox", state: "stopped" })]);
+  const list = boxesPage(handlers);
+  expect(await list.findByText("calm-otter")).toBeTruthy();
+  // The panel's menu, without "New thread on this box…", whose "this thread" names none here; the Open thread arrow stays.
+  let menu = await openMenu(list.getByRole("button", { name: "calm-otter actions" }));
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Copy address", "Stop", "Check now", "Release…"]);
+  fireEvent.keyDown(menu, { key: "Escape" });
+  expect(list.getAllByRole("button", { name: "Open thread" })).toHaveLength(2);
+  // A stopped box offers Start.
+  menu = await openMenu(list.getByRole("button", { name: "swift-fox actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Start" }));
+  await waitFor(() => expect(changes).toEqual(["start box_6"]));
+  // Release asks first, as the panel does, and acts as the box's thread.
+  menu = await openMenu(list.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Release…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("Release calm-otter?")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
+  await waitFor(() => expect(changes).toEqual(["start box_6", "release box_1"]));
+  expect(list.inspection.rpcCalls.find((call) => call.method === "release")?.input).toEqual({ threadId: THREAD, box: "box_1" });
+  await waitFor(() => expect(list.queryByText("calm-otter")).toBeNull());
+});
+
+test("on the Boxes page, a box another thread is working on is released only after 'Release anyway?'", async () => {
+  const { handlers, changes } = server([box()], { inUse: [{ id: "thr_worker", title: "Build the app", running: true }] });
+  const list = boxesPage(handlers);
+  await list.findByText("calm-otter");
+  const menu = await openMenu(list.getByRole("button", { name: "calm-otter actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Release…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
+  const dialog = await screen.findByRole("alertdialog", {}, { timeout: 2000 });
+  await within(dialog).findByText("Release calm-otter anyway?");
+  expect(within(dialog).getByText("Build the app is working on it, and would lose its machine.")).toBeTruthy();
+  expect(changes).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Release anyway" }));
+  await waitFor(() => expect(changes).toEqual(["release (forced) box_1"]));
+  expect(list.inspection.rpcCalls.filter((call) => call.method === "release").at(-1)?.input).toEqual({ threadId: THREAD, box: "box_1", force: true });
+});
+
+test("the Boxes page's Machines have settings' rows and warnings: Stop, Start and Remove, each asking when threads work there", async () => {
+  const { handlers, changes } = server([], { machines: [machine(), machine({ id: "box_m2", name: "scratch", desktop: false, display: null, state: "stopped" }, [])] });
+  const list = boxesPage(handlers);
+  expect(await list.findByText("Machines")).toBeTruthy();
+  expect(list.getByText(/Working: Fix the login form/)).toBeTruthy();
+  // A machine's desktop opens on the page, with the way back to the page, not settings.
+  fireEvent.click(list.getAllByRole("button", { name: "Open desktop" })[0]!);
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "operator/box_m1" } });
+  // Remove asks with settings' words, then again, since a thread works there.
+  let menu = await openMenu(list.getByRole("button", { name: "build-1 actions" }));
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toContain("Open desktop in a browser tab");
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove…" }));
+  let dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("Remove build-1?")).toBeTruthy();
+  expect(within(dialog).getByText(/Its machine leaves BB, and its disk and everything on it will be deleted/)).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+  dialog = await screen.findByRole("alertdialog", {}, { timeout: 2000 });
+  await within(dialog).findByText("Remove build-1 anyway?");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(changes).toEqual([]);
+  // Stop asks too; Stop anyway goes on.
+  fireEvent.click(list.getAllByRole("button", { name: "Stop" })[0]!);
+  dialog = await screen.findByRole("alertdialog");
+  await within(dialog).findByText("Stop build-1 anyway?");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Stop anyway" }));
+  await waitFor(() => expect(changes).toEqual(["machines.stop (forced) box_m1"]));
+  // A stopped machine offers Start; one nobody works on is removed after the first question.
+  menu = await openMenu(list.getByRole("button", { name: "scratch actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Start" }));
+  await waitFor(() => expect(changes).toEqual(["machines.stop (forced) box_m1", "machines.start box_m2"]));
+  menu = await openMenu(list.getByRole("button", { name: "scratch actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
+});
+
+test("the Boxes page's top row has a settings button beside the plus, which opens Settings > BB Box", async () => {
+  const list = boxesPage(server([box()]).handlers);
+  await list.findByText("calm-otter");
+  const settingsButton = list.getByRole("button", { name: "BB Box settings" });
+  expect(settingsButton.parentElement?.querySelector('button[aria-label="Add machine"]')).toBeTruthy();
+  fireEvent.click(settingsButton);
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "/settings/plugins/bb-box" });
+});
+
+test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss", async () => {
+  const failure = "Stopping the box failed: the host did not answer.";
+  const slot = panel(server([box()], { failWith: failure }).handlers);
+  await slot.findByText("calm-otter");
+  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
+  expect(await slot.findByRole("alert")).toBeTruthy();
+  expect(slot.getByRole("alert").textContent).toBe(failure);
+  fireEvent.click(slot.getByRole("button", { name: "Dismiss" }));
+  await waitFor(() => expect(slot.queryByRole("alert")).toBeNull());
+
+  cleanup();
+  const list = boxesPage(server([box()], { failWith: failure }).handlers);
+  await list.findByText("calm-otter");
+  fireEvent.click(list.getByRole("button", { name: "Stop" }));
+  expect((await list.findByRole("alert")).textContent).toBe(failure);
+  fireEvent.click(list.getByRole("button", { name: "Dismiss" }));
+  await waitFor(() => expect(list.queryByRole("alert")).toBeNull());
+});
+
 test("the Boxes page lists your machines first, without Open thread, and shows a machine's terminal", async () => {
   const { handlers } = server([desktopBox()], { machines: [machine()] });
   const mine = { threadId: "operator", box: desktopBox({ id: "box_m1", name: "build-1" }), owner: "yours" as const };
