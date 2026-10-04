@@ -40,8 +40,8 @@ export const SETTLE_MS = 250;
 export const PASTE_CHORD_DELAY_MS = 150;
 /** How long a Cmd+V or Ctrl+V waits for the browser's paste event before the box pastes its own clipboard. */
 const PASTE_EVENT_WAIT_MS = 150;
-/** How long "Copied" and "Pasted" show in the toolbar. */
-const FLASH_MS = 2_000;
+/** How long a clipboard note, such as "Copied" or "Pasted", shows in the toolbar at least. */
+const FLASH_MS = 3_000;
 const XK_CONTROL_L = 0xffe3;
 const XK_META_L = 0xffe7;
 const XK_META_R = 0xffe8;
@@ -460,13 +460,18 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const [problem, setProblem] = useState<string | null>(null);
   /** The box's clipboard text as last seen: from its desktop's cut text, or the RPC where its input reports it. */
   const [boxClipboard, setBoxClipboard] = useState<string | null>(null);
-  /** "Copied" or "Pasted", for a moment, in the toolbar. */
+  /**
+   * A clipboard outcome of the person's own paste or copy, for a moment, in
+   * the toolbar: "Pasted", "Copied", or why nothing went. Never from an
+   * automatic attempt, and never a lasting problem line, which is for
+   * failures that need action. A sentence stays a little longer, to be read.
+   */
   const [flash, setFlash] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const flashFor = (words: string) => {
     setFlash(words);
     clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlash(null), FLASH_MS);
+    flashTimer.current = setTimeout(() => setFlash(null), Math.max(FLASH_MS, words.split(" ").length * 300));
   };
   useEffect(() => () => clearTimeout(flashTimer.current), []);
   /** The field to paste into when this computer's clipboard cannot be read here: null closed, else its text. */
@@ -489,13 +494,11 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     const current = claimed.session;
     screen.appendChild(current.element);
     session.current = current;
-    // The box's clipboard, as its desktop sends it to the viewer with control, goes to this computer's when the browser lets it.
+    // The box's clipboard, as its desktop sends it to the viewer with control, goes to this computer's when the browser lets it,
+    // with no note: it can come with no copy of the person's, as when they take control.
     current.onClipboard = (text) => {
       setBoxClipboard(text);
-      navigator.clipboard?.writeText?.(text).then(
-        () => flashFor("Copied"),
-        () => undefined,
-      );
+      navigator.clipboard?.writeText?.(text).catch(() => undefined);
     };
     current.onPaste = (text) => {
       if (text) flashFor("Pasted");
@@ -611,7 +614,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const pasteText = (text: string) => {
     const windows = box ? noClipboardThroughServer(box) : null;
     if (windows) {
-      setProblem(windows);
+      flashFor(windows);
       return;
     }
     session.current?.paste(text);
@@ -626,7 +629,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       return;
     }
     if (!text) {
-      setProblem("This computer's clipboard has no text.");
+      flashFor("This computer's clipboard has no text.");
       return;
     }
     pasteText(text);
@@ -640,7 +643,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       if (text !== null) setBoxClipboard(text);
     }
     if (text === null) {
-      if (box) setProblem(nothingFromBox(box, mine));
+      if (box) flashFor(nothingFromBox(box, mine));
       return;
     }
     try {
@@ -684,7 +687,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           <span className="min-w-0">{words}</span>
         </span>
         {flash ? (
-          <span role="status" className="text-muted-foreground">
+          <span role="status" className="min-w-0 text-muted-foreground">
             {flash}
           </span>
         ) : null}
@@ -755,9 +758,14 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         </span>
       </div>
       {problem ? (
-        <p role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive-text">
-          {problem}
-        </p>
+        <div className="flex items-start gap-2 border-b border-border px-3 py-1.5 text-xs">
+          <p role="alert" className="min-w-0 flex-1 text-destructive-text">
+            {problem}
+          </p>
+          <Button type="button" variant="ghost" size="sm" className="-my-1 h-6 px-2 text-xs" onClick={() => setProblem(null)}>
+            Dismiss
+          </Button>
+        </div>
       ) : null}
       <div className="relative min-h-0 flex-1 bg-muted">
         <div ref={target} className="absolute inset-0" data-testid="desktop-screen" />

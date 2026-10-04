@@ -527,14 +527,21 @@ titled after the box.
   plugin's own clipboard glyph with an arrow into it (`src/app/glyphs.tsx`),
   since BB's set has no clipboard icon and a missing name falls back to a
   lightning bolt (the operator's note of 4 October 2026); it pairs with BB's
-  Copy. The toolbar says "Pasted" or "Copied" for two seconds. Where nothing
-  has come from the box, the message says why: take control first, copy in the
-  box first, or, for Windows, that the desktop's server moves the clipboard in
-  neither direction (QEMU's console only with the SPICE guest agent). wayvnc
-  and TigerVNC move it both ways, measured 4 October 2026. Tart's VNC server
-  moves it in neither direction, measured the same day, so on a macOS VM on
-  Tart bb-box moves it with `pbcopy` and `pbpaste` in the box's desktop
-  session, and the viewer's text goes over RPC as UTF-8 (#464).
+  Copy. After the person's own paste or copy, by Cmd+V or the menu, the
+  toolbar says how it went in a muted note that goes after about three
+  seconds, a little longer for a sentence: "Pasted", "Copied", "This
+  computer's clipboard has no text", or, where nothing has come from the box,
+  why. Taking control and the tab gaining the focus move the clipboard with no
+  note. Only a failure that needs action, such as a paste the box refused, is
+  a lasting line in red under the toolbar, with Dismiss (the operator's note
+  of 4 October 2026). Where nothing has come from the box, the note says why:
+  take control first, copy in the box first, or, for Windows, that the
+  desktop's server moves the clipboard in neither direction (QEMU's console
+  only with the SPICE guest agent). wayvnc and TigerVNC move it both ways,
+  measured 4 October 2026. Tart's VNC server moves it in neither direction,
+  measured the same day, so on a macOS VM on Tart bb-box moves it with
+  `pbcopy` and `pbpaste` in the box's desktop session, and the viewer's text
+  goes over RPC as UTF-8 (#464).
 - **Control** (decisions 008 and 020):
 
   | Who | Text | Action |
