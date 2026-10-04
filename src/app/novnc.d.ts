@@ -19,6 +19,10 @@ declare module "@novnc/novnc" {
     focus(options?: FocusOptions): void;
     /** Sends text as the viewer's clipboard: ClientCutText. */
     clipboardPasteFrom(text: string): void;
+    /** Sends a key by keysym and DOM code; without `down`, a press and a release. Nothing while view-only. */
+    sendKey(keysym: number, code: string | null, down?: boolean): void;
+    /** Every key from the keyboard handler, before it is sent; a subclass may map it. */
+    _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void;
     blur(): void;
     /** The size of the element it draws in, which it asks the box for, floored; a subclass may measure it otherwise. */
     _screenSize(): { w: number; h: number };

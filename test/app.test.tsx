@@ -12,7 +12,7 @@ import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
-import { SETTLE_MS } from "../src/app/desktop.tsx";
+import { PASTE_CHORD_DELAY_MS, SETTLE_MS } from "../src/app/desktop.tsx";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
@@ -53,6 +53,25 @@ const novnc = vi.hoisted(() => {
     set resizeSession(value: boolean) {
       this.#resizeSession = value;
       if (value) this.resizeChecks++;
+    }
+    /** Keys sent with sendKey, in order. */
+    keys: { keysym: number; code: string | null; down: boolean }[] = [];
+    /** Text sent as the viewer's clipboard. */
+    pasted: string[] = [];
+    /** What the keyboard handler's events became, after the viewer's own mapping. */
+    keyEvents: { keysym: number; code: string; down: boolean }[] = [];
+    sendKey(keysym: number, code: string | null, down?: boolean) {
+      if (down === undefined) {
+        this.keys.push({ keysym, code, down: true }, { keysym, code, down: false });
+        return;
+      }
+      this.keys.push({ keysym, code, down });
+    }
+    clipboardPasteFrom(text: string) {
+      this.pasted.push(text);
+    }
+    _handleKeyEvent(keysym: number, code: string, down: boolean) {
+      this.keyEvents.push({ keysym, code, down });
     }
     disconnect() {
       this.disconnected = true;
@@ -1343,6 +1362,158 @@ test("once the tab's size holds, a desktop in your control asks for it once; whi
   expect([client!.resizeChecks, observer.disconnected]).toEqual([held + 1, true]);
 });
 
+/** This computer's clipboard, as the tests stand in for it. */
+function fakeClipboard(readText: () => Promise<string>) {
+  const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { readText, writeText }, configurable: true });
+  return { writeText };
+}
+
+/** A keydown on the desktop's canvas, as noVNC would see it. */
+function keyOnCanvas(slot: ReturnType<typeof desktopTab>, init: KeyboardEventInit) {
+  const screen = slot.getByTestId("desktop-screen").firstElementChild!;
+  const canvas = document.createElement("canvas");
+  screen.appendChild(canvas);
+  const reached = vi.fn();
+  canvas.addEventListener("keydown", reached);
+  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+  canvas.dispatchEvent(event);
+  return { event, reached };
+}
+
+function pasteEvent(text: string) {
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: { getData: (type: string) => (type === "text/plain" ? text : "") } });
+  return event;
+}
+
+type FakeClient = { pasted: string[]; keys: { keysym: number; code: string | null; down: boolean }[]; keyEvents: { keysym: number; code: string; down: boolean }[]; _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void } & EventTarget;
+
+test("with control, Cmd+V on a Mac pastes this computer's text into a Linux box with the box's Ctrl+V, and Cmd stands for Ctrl there", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
+  try {
+    const { handlers } = server([desktopBox()]);
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    // Before control, a Cmd+V is noVNC's to drop.
+    expect(keyOnCanvas(slot, { key: "v", metaKey: true }).reached).toHaveBeenCalledTimes(1);
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    // Cmd is Ctrl in the box: noVNC's Meta becomes Control_L, code and all, so QEMU's scancode follows too.
+    client._handleKeyEvent(0xffe7, "MetaLeft", true, null, null);
+    client._handleKeyEvent(0x63, "KeyC", true, null, null);
+    expect(client.keyEvents).toEqual([
+      { keysym: 0xffe3, code: "ControlLeft", down: true },
+      { keysym: 0x63, code: "KeyC", down: true },
+    ]);
+    // Cmd+V: kept from noVNC, left to the browser, whose paste event brings the text; the box gets it, then its own Ctrl+V.
+    vi.useFakeTimers();
+    const { event, reached } = keyOnCanvas(slot, { key: "v", metaKey: true });
+    expect(reached).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+    const paste = pasteEvent("hello from the Mac");
+    act(() => void document.dispatchEvent(paste));
+    expect(paste.defaultPrevented).toBe(true);
+    expect(client.pasted).toEqual(["hello from the Mac"]);
+    expect(client.keys).toEqual([]);
+    act(() => void vi.advanceTimersByTime(PASTE_CHORD_DELAY_MS));
+    expect(client.keys).toEqual([
+      { keysym: 0xffe3, code: "ControlLeft", down: true },
+      { keysym: 0x76, code: "KeyV", down: true },
+      { keysym: 0x76, code: "KeyV", down: false },
+      { keysym: 0xffe3, code: "ControlLeft", down: false },
+    ]);
+    expect(slot.getByText("Pasted")).toBeTruthy();
+    // A paste event meant for a field elsewhere is not the desktop's.
+    const elsewhere = pasteEvent("for the composer");
+    act(() => void document.dispatchEvent(elsewhere));
+    expect(elsewhere.defaultPrevented).toBe(false);
+    expect(client.pasted).toEqual(["hello from the Mac"]);
+  } finally {
+    platform.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+test("a macOS box keeps Cmd, and the menu's Paste reads this computer's clipboard on the click and presses the box's Cmd+V", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
+  fakeClipboard(() => Promise.resolve("from the menu"));
+  try {
+    const { handlers } = server([desktopBox({ os: "macos", kind: "macos-desktop", kindLabel: "macOS desktop" })]);
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    client._handleKeyEvent(0xffe7, "MetaLeft", true, null, null);
+    expect(client.keyEvents).toEqual([{ keysym: 0xffe7, code: "MetaLeft", down: true }]);
+    const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
+    await waitFor(() => expect(client.pasted).toEqual(["from the menu"]));
+    expect(await slot.findByText("Pasted")).toBeTruthy();
+    // The chord follows after its short wait, on real timers here.
+    await waitFor(() => expect(client.keys).toHaveLength(4));
+    expect(client.keys.map((key) => `${key.code}:${key.down ? "down" : "up"}`)).toEqual(["MetaLeft:down", "KeyV:down", "KeyV:up", "MetaLeft:up"]);
+  } finally {
+    platform.mockRestore();
+  }
+});
+
+test("when this computer's clipboard cannot be read, the menu's Paste offers a field whose text goes to the box", async () => {
+  fakeClipboard(() => Promise.reject(new Error("Read permission denied.")));
+  const { handlers } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+  act(() => void client.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("Paste into bold-heron")).toBeTruthy();
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Text to paste" }), { target: { value: "typed into the field" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Paste into the box" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(client.pasted).toEqual(["typed into the field"]);
+});
+
+test("what the box copies reaches this computer's clipboard and says Copied; the menu's Copy writes it on the click, and says why when nothing came", async () => {
+  const { writeText } = fakeClipboard(() => Promise.resolve(""));
+  const { handlers } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+  act(() => void client.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  // Nothing yet: Copy says to copy in the box first.
+  let menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
+  expect(await slot.findByText("Nothing has come from the box's clipboard yet. Copy something in the box first.")).toBeTruthy();
+  // The box's cut text, as noVNC gives it to the viewer with control.
+  act(() => void client.dispatchEvent(new CustomEvent("clipboard", { detail: { text: "from the box" } })));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith("from the box"));
+  expect(await slot.findByText("Copied")).toBeTruthy();
+  menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+
+  cleanup();
+  dropAllKept();
+  // A Windows box through QEMU's console: the message says the console does not send it.
+  const windows = desktopTab(server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false } })]).handlers, "box_7");
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
+  act(() => void novnc.FakeRfb.made[1]!.dispatchEvent(new Event("connect")));
+  menu = await openMenu(windows.getByRole("button", { name: "Desktop actions" }));
+  expect(within(menu).queryByRole("menuitem", { name: "Paste from this computer" })).toBeNull();
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
+  expect(await windows.findByText(/does not report its clipboard to viewers/)).toBeTruthy();
+});
+
 test("a desktop tab shows the box through the relay, and takes and hands back control", async () => {
   const { handlers, changes } = server([desktopBox()]);
   const slot = desktopTab(handlers);
@@ -1745,7 +1916,7 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
 test("the Boxes page's plus adds one of your machines with settings' Add machine form, and the new machine shows under Your machines", async () => {
   const { handlers, changes } = server([box()], { machines: [machine()] });
   // The page lists your machines from allBoxes; here they come from the harness's machines, so a machine added shows up.
-  const yours = () => (handlers["machines.list"] as () => { machines: MachineEntry[] })().machines.map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" as const }));
+  const yours = () => (handlers["machines.list"] as (input: null) => { machines: MachineEntry[] })(null).machines.map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" as const }));
   const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, allBoxes: () => [...yours(), ...(handlers.allBoxes as () => BoxEntryLike[])()] };
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
