@@ -25,6 +25,7 @@ import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
 import type { FieldView } from "../src/plugin/configuration.ts";
+import packageJson from "../package.json";
 
 /** noVNC's RFB, recording each client the viewer makes. */
 const novnc = vi.hoisted(() => {
@@ -633,6 +634,12 @@ test("the app registers the Boxes panel, a desktop tab, the Boxes page and the B
   ]);
   expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["boxes", "Boxes", "desktop"]]);
   expect(app.settingsSections.map((section) => section.id)).toEqual(["configuration"]);
+  // BB resolves a plugin's icons by the names it declares: the Boxes page's is the cube, and every plugin icon used is declared.
+  expect(app.navPanels[0]!.icon).toBe("bb-box/box");
+  const declared = Object.keys((packageJson as { bb: { branding: { experimental_icons: Record<string, string> } } }).bb.branding.experimental_icons);
+  const used = [...app.navPanels, ...app.threadPanelActions].flatMap((slot) => (typeof slot.icon === "string" && slot.icon.startsWith("bb-box/") ? [slot.icon.slice("bb-box/".length)] : []));
+  expect(used.filter((name) => !declared.includes(name))).toEqual([]);
+  expect(declared).toContain("box");
 });
 
 test("the status line says the state, the timings, BB enrolment and the display", () => {

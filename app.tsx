@@ -31,9 +31,10 @@ export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "boxes",
     title: "Boxes",
-    // No icon of its own resolves (the plugin's id is not "bb-box"), so BB draws
-    // the branding cube, which suits Boxes. The operator settled on the cube.
-    icon: "bb-box/monitor",
+    // bb-box's cube, declared as "box" in package.json's experimental_icons:
+    // BB resolves a plugin's icons by name, so the name must be one it declares.
+    // The operator settled on the cube.
+    icon: "bb-box/box",
     path: DESKTOP_PAGE,
     component: BoxesPage,
   });
