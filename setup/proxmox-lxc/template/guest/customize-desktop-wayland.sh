@@ -58,7 +58,7 @@ gpui_packages="clang cmake libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev 
 chrome=$(check chrome)
 # A refresh of a built image (049) may have a newer Chrome already, which
 # Google's apt source brought: keep it rather than go back to the pin.
-installed=$(dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed //p')
+installed=$(dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed //p' || true)
 if [ -n "$installed" ] && dpkg --compare-versions "$installed" ge "$(dpkg-deb -f "$chrome" Version)"; then
   echo "customize-desktop-wayland: keeping Chrome $installed, as new as the pin or newer"
   chrome=

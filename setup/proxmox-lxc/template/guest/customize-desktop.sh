@@ -62,8 +62,9 @@ tigervnc=$(check tigervnc)
 virtualgl=$(check virtualgl)
 chrome=$(check chrome)
 # A refresh of a built image (049) may have a newer Chrome already, which
-# Google's apt source brought: keep it rather than go back to the pin.
-installed=$(dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed //p')
+# Google's apt source brought: keep it rather than go back to the pin. A
+# build from a fresh image, as Tart's, has none yet.
+installed=$(dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed //p' || true)
 if [ -n "$installed" ] && dpkg --compare-versions "$installed" ge "$(dpkg-deb -f "$chrome" Version)"; then
   echo "customize-desktop: keeping Chrome $installed, as new as the pin or newer"
   chrome=
