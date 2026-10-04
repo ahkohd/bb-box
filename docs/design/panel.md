@@ -650,8 +650,14 @@ boxes follow under "Threads". Opening a desktop shows the same viewer with
 a back arrow in the toolbar, at `<thread>/<box>`; a box's terminal shows
 the same way at `<thread>/<box>/terminal`, which is how the settings page
 opens a machine's terminal, since it has no thread panel to open a tab in.
-Empty: "No boxes" — "No thread has a box, and you have no machines. Make
-one from a thread's Box panel."
+At the top right sits the same plus as the Box panel's, "Add machine": it
+opens the New box form in machine mode, with the optional Name, as
+settings' Add machine does (the operator, 4 October 2026: "I should be
+able to add a new box there too, not have to go to settings"); the new
+machine shows under Your machines as it starts and once it is ready. The
+count on the left counts every row. Settings' Add machine stays as it is.
+Empty: "No boxes" — "No thread has a box, and you have no machines. Add
+one with the plus, or from a thread's Box panel."
 
 ## Copy
 

@@ -1742,6 +1742,29 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   expect(slot.getByText("Starting")).toBeTruthy();
 });
 
+test("the Boxes page's plus adds one of your machines with settings' Add machine form, and the new machine shows under Your machines", async () => {
+  const { handlers, changes } = server([box()], { machines: [machine()] });
+  // The page lists your machines from allBoxes; here they come from the harness's machines, so a machine added shows up.
+  const yours = () => (handlers["machines.list"] as () => { machines: MachineEntry[] })().machines.map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" as const }));
+  const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, allBoxes: () => [...yours(), ...(handlers.allBoxes as () => BoxEntryLike[])()] };
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  expect(await list.findByText("Your machines")).toBeTruthy();
+  expect(list.getByText("2 boxes")).toBeTruthy();
+  // The plus at the top right, as the Box panel's, named Add machine (the operator, 4 October 2026): the same form, machine mode, with the Name step.
+  fireEvent.click(list.getByRole("button", { name: "Add machine" }));
+  expect(await screen.findByText("Of the kinds whose boxes join BB.")).toBeTruthy();
+  const name = screen.getByRole("textbox", { name: "Name" });
+  fireEvent.change(name, { target: { value: "build-2" } });
+  expect(submitButton().textContent).toBe("Add machine");
+  fireEvent.click(submitButton());
+  await waitFor(() => expect(changes).toEqual(["machines.add linux build-2"]));
+  // It shows under Your machines, starting, and the count follows.
+  expect(await list.findByText("build-2")).toBeTruthy();
+  expect(list.getByText("3 boxes")).toBeTruthy();
+  expect(list.getAllByText(/build-1|build-2|calm-otter/).map((node) => node.textContent)).toEqual(["build-1", "build-2", "calm-otter"]);
+});
+
 test("the Boxes page lists your machines first, without Open thread, and shows a machine's terminal", async () => {
   const { handlers } = server([desktopBox()], { machines: [machine()] });
   const mine = { threadId: "operator", box: desktopBox({ id: "box_m1", name: "build-1" }), owner: "yours" as const };

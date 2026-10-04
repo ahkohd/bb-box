@@ -8,12 +8,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { BoxResult, BoxEntry, Contract, DesktopState, PanelState } from "../plugin/contract.ts";
-import type { BoxView } from "../plugin/views.ts";
-import { Badge, BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
+import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
+import type { BoxView, KindView } from "../plugin/views.ts";
+import { Badge, BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, OPERATOR, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
+import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 export const DESKTOP_ACTION = "desktop";
@@ -680,7 +681,22 @@ function BoxList() {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
   const pluginId = experimental_usePluginId();
-  const { value: all, error } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
+  const { value: all, error, refresh } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
+  // The plus adds one of your machines here too (the operator, 4 October 2026), the same form as settings' Add machine; it then shows under Your machines.
+  const { value: machines, refresh: refreshMachines } = useLive<{ machines: MachineEntry[]; kinds: KindView[] }>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
+  const kinds = machines?.kinds ?? [];
+  const [problem, setProblem] = useState<string | null>(null);
+  const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
+    let refused: string | null;
+    try {
+      refused = (await rpc.call("machines.add", { kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) })).error;
+    } catch (caught) {
+      refused = message(caught);
+    }
+    await Promise.all([refresh(), refreshMachines()]);
+    setProblem(refused);
+    return refused;
+  };
   const entries = all ?? [];
   const yours = entries.filter((entry) => entry.owner === "yours");
   const threads = entries.filter((entry) => entry.owner !== "yours");
@@ -716,8 +732,17 @@ function BoxList() {
   return (
     <div className="h-full overflow-y-auto p-4 md:p-5">
       <div className="mx-auto w-full max-w-3xl space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{entries.length ? `${entries.length} ${entries.length === 1 ? "box" : "boxes"}` : null}</span>
+          {kinds.length ? <NewBox kinds={kinds} make={add} machine plus profile={(backend) => rpc.call("provider", { backend })} /> : null}
+        </div>
         {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-        {all && !entries.length ? <EmptyPanel title="No boxes">No thread has a box, and you have no machines. Make one from a thread's Box panel.</EmptyPanel> : null}
+        {problem ? (
+          <p role="alert" className="text-xs leading-snug text-destructive-text">
+            {problem}
+          </p>
+        ) : null}
+        {all && !entries.length ? <EmptyPanel title="No boxes">No thread has a box, and you have no machines. Add one with the plus, or from a thread's Box panel.</EmptyPanel> : null}
         {yours.length ? (
           <div className="space-y-2">
             <h3 className="text-xs font-medium text-foreground">Your machines</h3>

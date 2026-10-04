@@ -91,6 +91,9 @@ export function useLive<T>(key: string, load: () => Promise<T>, relevant: (paylo
 }
 
 /** A change signal for one thread, or for every thread. */
+/** The reserved thread your machines belong to (036). */
+export const OPERATOR = "operator";
+
 export function forThread(threadId: string) {
   return (payload: unknown) => {
     const changed = (payload as { threadId?: unknown } | null)?.threadId;
