@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { Badge, IconButton, isArm64Badge, KindBadges, lacksDocker, Meta, osName, relativeTime, SETTINGS_PATH, StatusDot } from "./common.tsx";
+import { IconButton, isArm64Badge, KindBadges, lacksDocker, Meta, osName, relativeTime, SETTINGS_PATH, StatusDot } from "./common.tsx";
 import { pageHref, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
@@ -77,7 +77,7 @@ export function BoxRow({
   onToggle: () => void;
   act: (method: BoxAction, box: BoxView) => Promise<void>;
   now: number;
-  /** Set for the box this thread runs on (036): a "This thread" badge, no Release, Stop or Start, and a line saying where those are. */
+  /** Set for the box this thread runs on (036): a "BB machine" badge among the others, no Release, Stop or Start, and a line saying where those are. */
   held?: Held | null;
 }) {
   const pluginId = experimental_usePluginId();
@@ -136,8 +136,7 @@ export function BoxRow({
           <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
             <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{osName(box.os)}</span>
-            <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} />
-            {held ? <Badge>This thread</Badge> : null}
+            <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={held !== null} />
           </span>
         </button>
         <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">

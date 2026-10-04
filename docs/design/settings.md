@@ -42,7 +42,7 @@ plugin's own on-off switch, which BB draws). Each section has BB's section
 title and description, and a card with rows divided by hairlines, as BB's
 Machines page does.
 
-### Your machines
+### Machines
 
 First on the page, since they are the operator's own objects (036,
 [#144](https://github.com/moonstead/bb-box/issues/144)): boxes you own,
@@ -50,7 +50,7 @@ kept as BB machines, under your name in BB's machine list, sidebar and
 new-thread picker.
 
 ```
-Your machines                                               [+ Add machine]
+Machines                                                    [+ Add machine]
 Boxes of your own, kept as BB machines.
 +----------------------------------------------------------------------------+
 | [#] build-1  Linux [Desktop] [GPU] [LXC]                [#] [>_] [stop] ... |

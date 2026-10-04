@@ -233,6 +233,7 @@ export function KindBadges({
   arm64 = false,
   forms,
   ready = false,
+  machine = false,
   className,
 }: {
   desktop?: boolean;
@@ -244,9 +245,11 @@ export function KindBadges({
   forms: readonly BoxForm[];
   /** A spare is ready (032). */
   ready?: boolean;
+  /** The BB machine this thread runs on (036), in the Box panel and the bare Desktop and Terminal choosers. One of the group, so its gap is the others' (the operator, 4 October 2026). */
+  machine?: boolean;
   className?: string;
 }) {
-  if (!desktop && !gpu && !noDocker && !arm64 && !forms.length && !ready) return null;
+  if (!desktop && !gpu && !noDocker && !arm64 && !forms.length && !ready && !machine) return null;
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
       {desktop ? <Badge>Desktop</Badge> : null}
@@ -257,6 +260,7 @@ export function KindBadges({
         <Badge key={form}>{formBadge(form)}</Badge>
       ))}
       {ready ? <Badge>Ready now</Badge> : null}
+      {machine ? <Badge>BB machine</Badge> : null}
     </span>
   );
 }
