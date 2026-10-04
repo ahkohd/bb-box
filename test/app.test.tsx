@@ -1311,7 +1311,7 @@ test("files for every box show each path and whether it is set, never a content,
   expect(slot.getByText("Set")).toBeTruthy();
   const sent = (at: number) => JSON.parse(changes[at]!.slice(changes[at]!.indexOf("{"))).general.files;
 
-  fireEvent.click(slot.getByRole("button", { name: "Add a file" }));
+  fireEvent.click(slot.getByRole("button", { name: "Add file" }));
   fireEvent.change(slot.getByRole("textbox", { name: "Path under the box user's home" }), { target: { value: " .config/tool/config.toml " } });
   fireEvent.change(slot.getByRole("textbox", { name: "The file's content" }), { target: { value: "key = 1" } });
   fireEvent.click(slot.getByRole("button", { name: "Save" }));
@@ -1940,7 +1940,8 @@ test("the settings page lists your machines with their threads and actions, and 
   expect(slot.getByText("Working: Fix the login form · 1 more")).toBeTruthy();
   expect(slot.getByText("scratch")).toBeTruthy();
   // Said once for the section, not under each machine.
-  expect(slot.getAllByText("To use one for a project with a repository, pick it in BB's new-thread picker.")).toHaveLength(1);
+  // No line inside the list about the new-thread picker (the operator, 4 October 2026).
+  expect(slot.queryByText(/pick it in BB's new-thread picker/)).toBeNull();
   expect(slot.getByRole("button", { name: "Open desktop" })).toBeTruthy();
   expect(slot.getByRole("button", { name: "Open terminal" })).toBeTruthy();
   expect(slot.getByRole("button", { name: "Stop" })).toBeTruthy();

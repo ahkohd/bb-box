@@ -53,7 +53,7 @@ new-thread picker.
 Machines                                                    [+ Add machine]
 Boxes of your own, kept as BB machines.
 +----------------------------------------------------------------------------+
-| [#] build-1  Linux [Desktop] [GPU] [LXC]                [#] [>_] [stop] ... |
+| [o] build-1  Linux [Desktop] [GPU] [LXC]                [#] [>_] [stop] ... |
 |     (green) Ready in 2.2 s · BB machine in 5.3 s · 4 cores · 8 GiB         |
 |             · Working: Fix the login form · 1 more                          |
 | [=] scratch  Linux [LXC]                                      [start] ...   |
@@ -61,7 +61,8 @@ Boxes of your own, kept as BB machines.
 +----------------------------------------------------------------------------+
 ```
 
-- One row per machine, the panel's box row: glyph, name, the OS and badges,
+- One row per machine, the panel's box row: the cube glyph (#412, on every
+  box row; the type reads in the badges), name, the OS and badges,
   the status line with its start-up times, and the threads on its machine,
   the working ones named first ("Working: a, b · 1 more"; "Thread: a" when
   none is working).
@@ -93,8 +94,10 @@ Boxes of your own, kept as BB machines.
   BB's dashed empty panel on its own, with no card around it: one border
   spanning the section like the other cards, its text on a narrow centred
   measure, in the subtle foreground (the operator's notes of 1 October
-  2026). The hint above the rows reads "To use one for a
-  project with a repository, pick it in BB's new-thread picker."
+  2026). No hint sits inside the list: the line about BB's new-thread
+  picker went on the operator's note of 4 October 2026 ("I think we
+  should remove this"); the docs say how a project with a repository
+  uses a machine.
 - The section reads `machines.list` and refetches on the "operator"
   signal; `machines.add`, `machines.remove`, `machines.stop` and
   `machines.start` do the rest.
@@ -258,10 +261,15 @@ What a thread can ask for. A kind is offered when it is on and a backend has it.
 | Boxes per thread: the most one thread may hold. 0 means no limit. | a number field |
 | Enrol boxes as BB machines: a ready box joins BB, so threads and terminals can use it and it gets the thread's credentials. | a switch |
 
-Files for every box (#455) follows General: each file's path under the box
-user's home, "Set" or "Not set", and Replace and Remove; "Add a file" opens
-a path field and a text area for the content, which is a secret and never
-shown again. Each change saves at once.
+Files for every box (#455) follows General, with one line under its title,
+"Copied into each Linux and macOS box's home. Contents are kept secret."
+(the operator, 4 October 2026: "Can this be shortened?"; the details live
+here and in the architecture). "+ Add file" sits in the section header's
+right, as Machines' Add machine does; the card below lists each file's path
+under the box user's home, "Set" or "Not set", and Replace and Remove, and
+shows only with something in it, so an empty section is its header alone.
+Add file opens a path field and a text area for the content, which is a
+secret and never shown again. Each change saves at once.
 
 ## States and copy
 
