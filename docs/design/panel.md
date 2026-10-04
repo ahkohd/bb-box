@@ -680,12 +680,13 @@ back is instant (1 October 2026). The app bundle keeps them
 
 ## The Boxes page
 
-The sidebar entry, "Boxes", lists every box across threads, servers as
-well as desktops, as rows: the box glyph (the cube, on every row), name,
-the OS and badges, then the state, who has control for a
-desktop, and the thread's title. Its icon is BB's branding cube, which
-suits a page of boxes; the plugin names no icon of its own, since none
-would resolve (the plugin's id is not "bb-box"), so BB draws the cube.
+The sidebar entry, "Boxes", lists every box across threads, servers as well as
+desktops, as rows: the box glyph (the cube, on every row), name, the OS and
+badges, then the state, who has control for a desktop, and the thread's title.
+Its icon is bb-box's cube, `bb-box/box`, which suits a page of boxes; the
+plugin declares it in `bb.branding.experimental_icons`, as BB resolves a
+plugin's icons by name (the operator's note of 5 October 2026, when an
+undeclared name had shown the monitor).
 
 Each row carries the actions the box can take, as quick icon buttons:
 "Open desktop" for a ready desktop box, "Open terminal" once the box has
