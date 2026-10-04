@@ -395,12 +395,20 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     return result(updated);
   };
   const find = (ref: string) => boxes.find((candidate) => candidate.id === ref || candidate.name === ref) ?? null;
+  /** A box's clipboard where bb-box moves it with commands (#464): as the viewer pasted, or as the box copied. */
+  let boxClipboard: { text: string; serial: number } | null = null;
+  const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
-    desktopClipboard: () => null,
+    desktopClipboard: () => boxClipboard,
+    desktopPaste: ({ box: ref, viewer, text }) => {
+      changes.push(`desktopPaste ${ref} ${viewer} ${text}`);
+      boxClipboard = { text, serial: boxClipboard?.serial ?? 1 };
+      return null;
+    },
     images: () => options.images ?? [],
     allBoxes: () => boxes.map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
     // Your machines (036): `options.machines` to start with, kept as the tests add, stop, start and remove them.
@@ -494,7 +502,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
       return { result: { ok: true, state: configState(options.config ?? {}), problems: [] }, hosts: dockerHosts };
     },
   };
-  return { handlers, changes, asked };
+  return { handlers, changes, asked, copyInBox };
 }
 
 let applied: ConfigDocument | null = null;
@@ -591,7 +599,7 @@ function desktopBox(overrides: Partial<BoxView> = {}): BoxView {
     kindLabel: "Linux desktop",
     desktop: true,
     gpu: true,
-    display: { protocol: "rfb", resizable: true },
+    display: { protocol: "rfb", resizable: true, clipboard: null },
     control: { owner: "agent", holder: null },
     facts: [
       { label: "GPU", value: "GPU-0a1b" },
@@ -1330,7 +1338,7 @@ function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") 
 }
 
 test("a desktop that cannot be resized says only that you have control, and noVNC does not resize it", async () => {
-  const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false } })]);
+  const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null } })]);
   const slot = desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
   const [client] = novnc.FakeRfb.made;
@@ -1470,7 +1478,7 @@ test("a macOS box keeps Cmd, and the menu's Paste reads this computer's clipboar
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
   fakeClipboard(() => Promise.resolve("from the menu"));
   try {
-    // A pool Mac (real), whose own input takes the clipboard; a Tart VM would say its server moves none.
+    // A pool Mac (real), whose own input takes the clipboard as noVNC sends it.
     const { handlers } = server([desktopBox({ os: "macos", nature: "real", kind: "macos-desktop", kindLabel: "macOS desktop" })]);
     const slot = desktopTab(handlers);
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
@@ -1535,7 +1543,7 @@ test("what the box copies reaches this computer's clipboard and says Copied; the
   cleanup();
   dropAllKept();
   // A Windows box through QEMU's console: the message says the console does not send it.
-  const windows = desktopTab(server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false } })]).handlers, "box_7");
+  const windows = desktopTab(server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null } })]).handlers, "box_7");
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
   act(() => void novnc.FakeRfb.made[1]!.dispatchEvent(new Event("connect")));
   menu = await openMenu(windows.getByRole("button", { name: "Desktop actions" }));
@@ -1543,15 +1551,44 @@ test("what the box copies reaches this computer's clipboard and says Copied; the
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
   expect(await windows.findByText(/does not report its clipboard to viewers/)).toBeTruthy();
 
-  cleanup();
-  dropAllKept();
-  // A macOS VM on Tart: its VNC server moves the clipboard in neither direction either.
-  const tart = desktopTab(server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false } })]).handlers, "box_8");
-  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(3));
-  act(() => void novnc.FakeRfb.made[2]!.dispatchEvent(new Event("connect")));
-  menu = await openMenu(tart.getByRole("button", { name: "Desktop actions" }));
-  fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
-  expect(await tart.findByText(/Tart's VNC server moves it in neither direction/)).toBeTruthy();
+});
+
+test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb-box: Paste and Cmd+V send the text as UTF-8 by RPC, then press Cmd+V, and Copy reads the box's (#464)", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
+  const { writeText } = fakeClipboard(() => Promise.resolve("héllo, wörld ✓ 日本"));
+  try {
+    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands" } })]);
+    const slot = desktopTab(handlers, "box_8");
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    const viewer = new URL(novnc.FakeRfb.made[0]!.url).searchParams.get("viewer");
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    // Taking control sends this computer's clipboard to the box, by RPC and not as noVNC's Latin-1 cut text.
+    await waitFor(() => expect(changes).toContain(`desktopPaste box_8 ${viewer} héllo, wörld ✓ 日本`));
+
+    const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
+    await waitFor(() => expect(client.keys).toHaveLength(4));
+    expect(client.keys.map((key) => `${key.code}:${key.down ? "down" : "up"}`)).toEqual(["MetaLeft:down", "KeyV:down", "KeyV:up", "MetaLeft:up"]);
+    expect(await slot.findByText("Pasted")).toBeTruthy();
+    expect(changes.filter((change) => change.startsWith("desktopPaste"))).toHaveLength(2);
+
+    // Cmd+V on the desktop: the browser's paste event's text goes the same way.
+    keyOnCanvas(slot, { key: "v", metaKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("ünïcode → box")));
+    await waitFor(() => expect(changes).toContain(`desktopPaste box_8 ${viewer} ünïcode → box`));
+    await waitFor(() => expect(client.keys).toHaveLength(8));
+    expect(client.pasted).toEqual([]);
+
+    // What the box copies comes back through the RPC, and Copy writes it here.
+    copyInBox("from the Mac ✓");
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Copy to this computer" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("from the Mac ✓"));
+  } finally {
+    platform.mockRestore();
+  }
 });
 
 test("a desktop tab shows the box through the relay, and takes and hands back control", async () => {

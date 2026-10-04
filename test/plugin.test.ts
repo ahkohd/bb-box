@@ -2310,6 +2310,66 @@ async function desktopBox(options: { computer?: SetupOptions["computer"]; kind?:
   return { ...started, box, file };
 }
 
+test("a macOS desktop whose server moves no clipboard has it through pbcopy and pbpaste in the box, as UTF-8, for the viewer with control only (#464)", async (t) => {
+  // The pasteboard, as a Mac's pbcopy and pbpaste have it, kept in a file in the box's home.
+  const bin = tempDir("pasteboard");
+  const shims: Record<string, string> = {
+    pbcopy: `printf %s "$LC_ALL" > "$HOME/pasteboard-locale"; cat > "$HOME/pasteboard"`,
+    pbpaste: `cat "$HOME/pasteboard" 2>/dev/null`,
+  };
+  for (const [name, script] of Object.entries(shims)) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const { displays, command } = FAKE_KINDS[1]!.capabilities;
+  // A fake box has no launchctl asuser, so its commands count as in the desktop session already; in-box's wrapper is 030's.
+  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ ...displays[0]!, resizable: false, clipboard: "commands" as const }] };
+  const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities };
+  const { harness, app, box, tool } = await desktopBox({ kind });
+  t.after(() => harness.lifecycle.dispose());
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+  const viewer = "viewer-one-0001";
+  const clipboard = (viewer?: string) => harness.behavior.callRpc("desktopClipboard", { threadId: THREAD, box: box.id, ...(viewer ? { viewer } : {}) }) as Promise<{ text: string; serial: number } | null>;
+
+  // Before control, nothing is pasted, and nothing is read.
+  await assert.rejects(harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer, text: "early" }), /Only the tab with control of the desktop can paste into it/);
+  writeFileSync(join(home, "pasteboard"), "copied before");
+  assert.equal(await clipboard(viewer), null);
+
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await until("the viewer to join", async () => app.desktops.control.connected(box.id, viewer));
+  assert.equal(((await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null }).error, null);
+
+  const first = await clipboard(viewer);
+  assert.equal(first?.text, "copied before");
+  const pasted = "héllo, wörld ✓ 日本\nline two";
+  assert.equal(await harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer, text: pasted }), null);
+  assert.equal(readFileSync(join(home, "pasteboard"), "utf8"), pasted, "byte for byte, as UTF-8");
+  assert.equal(readFileSync(join(home, "pasteboard-locale"), "utf8"), "en_US.UTF-8");
+  assert.equal((await clipboard(viewer))?.serial, first!.serial, "the viewer's own paste does not come back as a copy");
+
+  writeFileSync(join(home, "pasteboard"), "copied in the box ✓");
+  const copied = await clipboard(viewer);
+  assert.deepEqual(copied, { text: "copied in the box ✓", serial: copied!.serial });
+  assert.ok(copied!.serial > first!.serial);
+  // An empty pasteboard, as when the box copies an image, leaves the last text; a caller without control reads nothing new.
+  writeFileSync(join(home, "pasteboard"), "");
+  assert.deepEqual(await clipboard(viewer), copied);
+  writeFileSync(join(home, "pasteboard"), "not for others");
+  assert.deepEqual(await clipboard("viewer-two-0002"), copied);
+  assert.deepEqual(await clipboard(), copied);
+  await assert.rejects(harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer: "viewer-two-0002", text: "x" }), /Only the tab with control/);
+  await session.close();
+});
+
 test("an agent reads a desktop box's window, acts on references and is told what changed", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());

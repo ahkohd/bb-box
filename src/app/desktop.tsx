@@ -171,8 +171,12 @@ export class DesktopSession implements Kept {
   guestOs = "linux";
   /** The box's clipboard text as its desktop sent it (ServerCutText), which noVNC gives only to the viewer with control. */
   onClipboard?: (text: string) => void;
-  /** A Cmd+V or Ctrl+V the viewer took: the text pasted, or null when the browser's clipboard had none and the box pasted its own. */
+  /** A paste, from a Cmd+V or Ctrl+V the viewer took or the menu: the text pasted, or null when the browser's clipboard had none and the box pasted its own. */
   onPaste?: (text: string | null) => void;
+  /** A paste the box did not take, with why. */
+  onPasteFailed?: (error: unknown) => void;
+  /** Puts the viewer's text on the box's clipboard bb-box's own way, where the desktop's server moves none (#464); null leaves it to noVNC. */
+  putClipboard?: (text: string) => Promise<unknown> | null;
   /** Whether the box takes a viewer's clipboard at all; where not, a Cmd+V is left to noVNC as it was. */
   pasteAllowed?: () => boolean;
   /** When a Cmd+V or Ctrl+V was taken from noVNC and the browser's paste event is awaited. */
@@ -296,14 +300,29 @@ export class DesktopSession implements Kept {
 
   /** Puts text on the box's clipboard, as a viewer's paste does. */
   sendClipboard(text: string): void {
-    if (this.connection.state === "connected") this.#client?.clipboardPasteFrom(text);
+    if (this.connection.state !== "connected") return;
+    const put = this.putClipboard?.(text);
+    if (put) put.catch(() => undefined);
+    else this.#client?.clipboardPasteFrom(text);
   }
 
-  /** Puts text on the box's clipboard, then presses the box's own paste chord, Ctrl+V or Cmd+V, where the cursor is. */
+  /** Puts text on the box's clipboard, then presses the box's own paste chord, Ctrl+V or Cmd+V, where the cursor is, and says so with onPaste or onPasteFailed. */
   paste(text: string): void {
     if (this.connection.state !== "connected" || !this.#client) return;
-    this.#client.clipboardPasteFrom(text);
-    this.#pressPaste();
+    const put = this.putClipboard?.(text);
+    if (!put) {
+      this.#client.clipboardPasteFrom(text);
+      this.#pressPaste();
+      this.onPaste?.(text);
+      return;
+    }
+    put.then(
+      () => {
+        this.#pressPaste();
+        this.onPaste?.(text);
+      },
+      (error: unknown) => this.onPasteFailed?.(error),
+    );
   }
 
   /** The box's paste chord, after a short wait for the text to land; the modifier is pressed whether or not the person holds its browser twin. */
@@ -343,9 +362,12 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#pasteWait);
     const text = event.clipboardData?.getData("text/plain") ?? "";
     event.preventDefault();
-    if (text) this.paste(text);
-    else this.#pressPaste();
-    this.onPaste?.(text || null);
+    if (text) {
+      this.paste(text);
+      return;
+    }
+    this.#pressPaste();
+    this.onPaste?.(null);
   }
 
   /** The viewer's size has held: noVNC asks for it once, if the desktop differs and this viewer may resize it. */
@@ -450,6 +472,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     current.onPaste = (text) => {
       if (text) flashFor("Pasted");
     };
+    current.onPasteFailed = (error) => setProblem(message(error));
+    // A desktop whose server moves no clipboard, as Tart's macOS VMs: bb-box puts the text there itself, as UTF-8 (#464).
+    current.putClipboard = (text) => (boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text }) : null);
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
     const unsubscribe = current.subscribe(() => setConnection(current.connection));
     setConnection(current.connection);
@@ -459,6 +484,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       unsubscribe();
       current.onClipboard = undefined;
       current.onPaste = undefined;
+      current.onPasteFailed = undefined;
+      current.putClipboard = undefined;
       current.element.remove();
       session.current = null;
       if (!claimed.kept) {
@@ -496,7 +523,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
 
   // The clipboard, both ways, while this tab has control: the browser's goes
   // to the box when the tab gets the focus, and the box's comes back when it
-  // changes there, as a macOS desktop's input reports it (#406).
+  // changes there, as a macOS desktop's input reports it (#406), or as bb-box
+  // reads it in a desktop whose server moves none (#464).
   const connected = connection.state === "connected";
   useEffect(() => {
     if (!mine || !connected) return;
@@ -515,7 +543,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     };
     const fromBox = async () => {
       if (!document.hasFocus()) return;
-      const latest = await rpc.call("desktopClipboard", { threadId, box: boxId }).catch(() => null);
+      const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => null);
       if (stopped || !latest || latest.serial === seen) return;
       // The first answer is what the box had before: only later changes are copied.
       const first = seen === null;
@@ -534,7 +562,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       window.removeEventListener("focus", toBox);
       clearInterval(timer);
     };
-  }, [mine, connected, rpc, threadId, boxId]);
+  }, [mine, connected, rpc, threadId, boxId, viewer]);
 
   const act = async (task: () => Promise<BoxResult>) => {
     setActing(true);
@@ -559,7 +587,6 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       return;
     }
     session.current?.paste(text);
-    flashFor("Pasted");
   };
   /** The menu's Paste: this computer's clipboard, read on the click, which is a gesture; where the frame still refuses, a field to paste into. */
   const pasteFromComputer = async () => {
@@ -580,7 +607,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const copyToComputer = async () => {
     let text = boxClipboard;
     if (text === null) {
-      const latest = await rpc.call("desktopClipboard", { threadId, box: boxId }).catch(() => null);
+      const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => null);
       text = latest?.text ?? null;
       if (text !== null) setBoxClipboard(text);
     }
@@ -789,13 +816,12 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
 }
 
 /**
- * Why a box's desktop server moves no clipboard either way, or null where it does. A Windows box through QEMU's console:
- * QEMU moves it only through the SPICE guest agent, which the box does not have. A macOS VM on Tart: its VNC server
- * neither takes a viewer's cut text nor sends its own (measured on 4 October 2026); a pool Mac's own input does both.
+ * Why a box's desktop moves no clipboard either way, or null where it does. A Windows box through QEMU's console: QEMU
+ * moves it only through the SPICE guest agent, which the box does not have. A macOS VM on Tart, whose VNC server moves
+ * none (measured on 4 October 2026), has it through bb-box's own commands (#464); a pool Mac through its own input.
  */
 function noClipboardThroughServer(box: BoxView): string | null {
   if (box.os === "windows") return `${box.name}'s desktop does not report its clipboard to viewers, nor take theirs: Windows through QEMU's console moves it only with the SPICE guest agent, which the box does not have.`;
-  if (box.os === "macos" && box.nature === "virtual") return `${box.name}'s desktop does not report its clipboard to viewers, nor take theirs: Tart's VNC server moves it in neither direction.`;
   return null;
 }
 

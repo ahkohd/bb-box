@@ -60,6 +60,13 @@ export interface DisplayCapability {
   readonly id: string;
   readonly protocol: DisplayProtocol;
   readonly resizable: boolean;
+  /**
+   * "commands" when the display's stream server moves no clipboard, so
+   * bb-box moves it for the viewer with control with commands in the box's
+   * desktop session: pbcopy and pbpaste on macOS (#464). Left out, the
+   * stream server or the display's own input moves it, if anything does.
+   */
+  readonly clipboard?: "commands";
 }
 
 /**
