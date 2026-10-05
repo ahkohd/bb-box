@@ -2194,7 +2194,7 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
 });
 
-test("the Boxes page's top row has the settings gear, then the plus at the far right, a gap apart; the gear is a link to Settings > BB Box", async () => {
+test("the Boxes page's top row has the settings gear, then the plus at the far right, as a pair; the gear is a link to Settings > BB Box", async () => {
   const [page] = app.navPanels;
   expect(page!.headerContent).toBeUndefined();
   const list = boxesPage(server([box()]).handlers);
@@ -2202,13 +2202,13 @@ test("the Boxes page's top row has the settings gear, then the plus at the far r
   const gear = list.getByRole("link", { name: "BB Box settings" });
   expect(gear.getAttribute("href")).toBe("/settings/plugins/bb-box");
   expect(gear.textContent).toBe("");
-  // One row: the gear first, the plus last, with a gap between them.
+  // One row: the gear first, the plus last, BB's gap between icon buttons in a group.
   const plus = list.getByRole("button", { name: "Add machine" });
   const row = plus.closest("div.flex")!;
   expect(row.contains(gear)).toBe(true);
   expect(gear.compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(row.className).toContain("justify-end");
-  expect(row.className).toContain("gap-3");
+  expect(row.className).toContain("gap-1");
   // Before the lists, not under them.
   expect(gear.compareDocumentPosition(list.getByRole("button", { name: "calm-otter: details" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
