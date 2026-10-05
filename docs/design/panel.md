@@ -715,8 +715,9 @@ stands on the left: the box count went with the Box panel's. Settings' Add
 machine stays as it is.
 The settings gear, "BB Box settings" in its tooltip and accessible name,
 links to Settings > BB Box. It sits in the page's top row, then the plus at
-the far right, where the Box panel's plus sits, with a small gap so the gear
-is not hit by mistake (the operator, 5 October 2026, after trying it under
+the far right, where the Box panel's plus sits, the two a pair with BB's
+gap between icon buttons in a group, `gap-1` as in its sidebar header (the
+operator, 5 October 2026, for whom 12 px read as two things, after trying it under
 the lists and in BB's title bar; BB offers a nav page a place in that bar
 only on its right, and none beside the title, docs/bb-requests.md #18). It is a link,
 not a button calling `openUrl`: BB's `openUrl` opens only http(s) URLs, by

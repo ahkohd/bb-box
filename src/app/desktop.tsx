@@ -1077,10 +1077,10 @@ function BoxList() {
   return (
     <div className="h-full overflow-y-auto p-4 md:p-5">
       <div className="mx-auto w-full max-w-3xl space-y-4">
-        {/* The settings gear, then the plus at the far right, where the Box panel's plus sits, with a gap so the gear is not hit by
-            mistake (the operator, 5 October 2026). A link: BB's openUrl does nothing with an app path. BB offers no place beside the
-            page's title for it (docs/bb-requests.md #18). */}
-        <div className="flex items-center justify-end gap-3">
+        {/* The settings gear, then the plus at the far right, where the Box panel's plus sits: a pair, BB's gap between icon
+            buttons in a group, as its sidebar header's (the operator, 5 October 2026, for whom 12 px read as two things). A link:
+            BB's openUrl does nothing with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
+        <div className="flex items-center justify-end gap-1">
           <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} />
           {kinds.length ? <NewBox kinds={kinds} make={add} machine plus profile={(backend) => rpc.call("provider", { backend })} /> : null}
         </div>
