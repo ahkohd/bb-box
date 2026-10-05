@@ -764,22 +764,20 @@ link=$(readlink "$cache/$tag" 2>/dev/null || true); old=\${link##*/}
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 # An anonymous pull token, from the realm the registry names, as ghcr.io gives one.
 set --
-realm=$(curl -sS -m 20 -o /dev/null -D - "https://$reg/v2/" 2>/dev/null | tr -d '
-' | sed -n 's/^[Ww][Ww][Ww]-[Aa]uthenticate: *Bearer realm="\([^"]*\)".*service="\([^"]*\)".*/?service=/p')
+realm=$(curl -sS -m 20 -o /dev/null -D - "https://$reg/v2/" 2>/dev/null | tr -d '\r' | sed -n 's/^[Ww][Ww][Ww]-[Aa]uthenticate: *Bearer realm="\([^"]*\)".*service="\([^"]*\)".*/\1?service=\2/p')
 if [ -n "$realm" ]; then
-  token=$(curl -fsS -m 20 "$realm&scope=repository:$repo:pull" 2>/dev/null | sed -n 's/.*"token" *: *"\([^"]*\)".*//p')
+  token=$(curl -fsS -m 20 "$realm&scope=repository:$repo:pull" 2>/dev/null | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
   [ -z "$token" ] || set -- -H "Authorization: Bearer $token"
 fi
 if ! curl -fsS -m 30 -D "$tmp/headers" -o "$tmp/manifest" "$@" -H 'Accept: application/vnd.oci.image.manifest.v1+json' "https://$reg/v2/$repo/manifests/$tag" 2>/dev/null; then
   echo "base: $reg did not answer for $ref, so its cached copy is used"; exit 0
 fi
-new=$(tr -d '
-' <"$tmp/headers" | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | tail -n 1)
+new=$(tr -d '\r' <"$tmp/headers" | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | tail -n 1)
 [ -n "$new" ] || { echo "base: $reg gave no digest for $ref, so its cached copy is used"; exit 0; }
 [ "$new" != "$old" ] || { echo "base: $ref is current"; exit 0; }
-size=$(tr ',' '
-' <"$tmp/manifest" | sed -n 's/.*"org.cirruslabs.tart.uncompressed-disk-size" *: *"\([0-9]*\)".*//p' | head -n 1)
-free=$(df -k "\${TART_HOME:-$HOME/.tart}" | awk 'NR == 2 { print $4 }')
+size=$(tr ',' '\n' <"$tmp/manifest" | sed -n 's/.*"org.cirruslabs.tart.uncompressed-disk-size" *: *"\([0-9]*\)".*/\1/p' | head -n 1)
+free=$({ df -k "\${TART_HOME:-$HOME/.tart}" 2>/dev/null || df -k "$HOME"; } | awk 'NR == 2 { print $4 }')
+free=\${free:-0}
 if [ "$free" -lt $(( \${size:-0} / 1024 + reserve * 1048576 )) ]; then
   echo "base: no room to pull $ref: its disk is $(( \${size:-0} / 1073741824 )) GiB, and $(( free / 1048576 - reserve )) GiB is free beyond the $reserve GiB reserve." >&2
   exit 3
@@ -804,8 +802,7 @@ named=$(for l in "$cache"/*; do [ -L "$l" ] && readlink "$l"; done | sed 's|.*/|
 for d in "$cache"/sha256:*; do
   [ -d "$d" ] || continue
   digest=\${d##*/}
-  ! printf '%s
-' "$named" | grep -qx "$digest" || continue
+  ! printf '%s\n' "$named" | grep -qx "$digest" || continue
   if tart delete "$reg/$repo@$digest" >/dev/null 2>&1; then echo "base: removed the old cached $reg/$repo@$digest"; else echo "base: could not remove $reg/$repo@$digest" >&2; fi
 done
 `);

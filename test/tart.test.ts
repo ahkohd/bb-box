@@ -635,7 +635,7 @@ test("the doctor judges each Tart image by the record beside it (049)", async ()
   const check = (kind: string) => report.checks.find((candidate) => candidate.id === `image.mac1.${kind}`)!;
   for (const kind of ["macos", "macos-desktop"]) {
     assert.equal(check(kind).status, "ok", kind);
-    assert.match(check(kind).detail, /^bb-box-macos, 4 cores and 8 GiB as prepared\. Standard image build\.20261003-021500, built \d+ \w+ \(today\): fake OS\.$/);
+    assert.match(check(kind).detail, /^bb-box-macos, 4 cores and 8 GiB as prepared\. Standard image build\.20261003-021500, built \d+ \w+ \(today\): fake OS, xcode 27\.0, ios-simulator 27\.0, metal 32023\.598\.$/);
   }
   const linux = check("linux-arm64");
   assert.equal(linux.status, "warn");
