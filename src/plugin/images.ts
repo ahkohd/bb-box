@@ -227,12 +227,14 @@ export class ImageJobs {
           lines.push({ name: view.name, outcome: "skipped", detail: `its last rebuild failed and nothing it is built from has changed; bb box images build ${view.name} tries again` });
           continue;
         }
-        // Room for the build's boxes, as for any two boxes of the kind at its default size (049).
+        // Room for the build's boxes, as for any boxes of the kind at its default size (049): a build box and a trial box, or
+        // the trial box alone where the backend builds without a box, as Docker's build script does.
         if (backend.kinds().some((kind) => kind.id === view.build.kind)) {
           const size = defaultSize(kindSizes(view.build.kind));
-          const room = await backend.capacity(view.build.kind, size, [{ kind: view.build.kind, size }], signal).catch(() => null);
+          const boxless = !!backend.images?.build;
+          const room = await backend.capacity(view.build.kind, size, boxless ? [] : [{ kind: view.build.kind, size }], signal).catch(() => null);
           if (room && !room.ok) {
-            const reason = `no room for its build and trial boxes: ${room.message ?? "the host is full"}`;
+            const reason = `no room for its ${boxless ? "trial box" : "build and trial boxes"}: ${room.message ?? "the host is full"}`;
             await this.#record(view.name, { at: this.#now(), ok: false, waiting: true, reason, build: view.build.build, seconds: 0, output: [], from });
             lines.push({ name: view.name, outcome: "waiting", detail: reason });
             continue;

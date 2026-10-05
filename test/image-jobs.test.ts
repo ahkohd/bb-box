@@ -32,14 +32,17 @@ const record = (days: number, changes: Partial<ImageRecord> = {}): ImageRecord =
 const build = (ref: string, kind: string, rec: ImageRecord | null, changes: Partial<ImageBuild> = {}): ImageBuild => ({ ref, image: "standard", kind, build: rec?.build ?? null, record: rec, current: true, ...changes });
 
 /** A backend with image operations whose builds are `builds`, and room unless `full`. */
-function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; full?: string } = {}) {
+function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; full?: string; boxless?: boolean } = {}) {
   const removed: string[] = [];
+  /** The boxes each room check counted besides the one asked about. */
+  const pending: number[] = [];
   const images: BackendImages = {
     list: async () => ({ builds, boxes: options.boxes ?? [] }),
     box: async () => assert.fail("the job does not make boxes itself"),
     capture: async () => assert.fail("the job does not capture"),
     replace: async () => assert.fail("the job does not replace"),
     remove: async (ref) => void removed.push(ref),
+    ...(options.boxless ? { build: async () => assert.fail("the job does not build") } : {}),
   };
   const capacity: Capacity = { ok: !options.full, message: options.full ?? null, warm: null, hosts: [] };
   const made = {
@@ -48,9 +51,9 @@ function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; 
     nature: "virtual",
     images,
     kinds: () => [...new Set(builds.map((one) => one.kind))].map((kind) => ({ id: kind })),
-    capacity: async () => capacity,
+    capacity: async (_kind: string, _size: unknown, others: readonly unknown[] = []) => (pending.push(others.length), capacity),
   } as unknown as Backend;
-  return { backend: made, removed };
+  return { backend: made, removed, pending };
 }
 
 const versions = (async () => ({ resolvedAt: "", following: true, aptSnapshot: { pinned: "", version: "" }, tools: [{ name: "node", arch: "x86_64", pinned: "24.21.0", version: "24.21.0", source: "", kept: null }], files: { "pins.json": "", "desktop-pins.tsv": "", "apt-snapshot": "" } })) as unknown as () => Promise<Versions>;
@@ -164,6 +167,13 @@ test("a failed image is tried again once BB's app changes, and an image waits wh
   const check = (await waiting.job.checks()).find((one) => one.id === "images.proxmox-lxc/9101")!;
   assert.match(check.detail, /waited: no room for its build and trial boxes: The node has 2 GiB of memory free\. It waits for the next night\.$/);
   assert.equal(result.ok, true, "waiting is not failing");
+  assert.deepEqual(full.pending, [1], "room for a build box beside the trial box");
+
+  // A backend that builds without a box, as Docker's build script does, needs room for the trial box alone.
+  const docker = backend("docker", [build("bbbox/linux:1", "linux", record(10))], { full: "The host has 2 GiB of memory free.", boxless: true });
+  const alone = await jobs([docker.backend]).job.refreshAll();
+  assert.deepEqual([alone.lines[0]!.outcome, alone.lines[0]!.detail], ["waiting", "no room for its trial box: The host has 2 GiB of memory free."]);
+  assert.deepEqual(docker.pending, [0]);
 });
 
 test("a run starts no image after its time limit, and one run at a time", async () => {

@@ -1434,16 +1434,17 @@ rebuilt each night; a project can add a script on top of it.
 - **Freshness.** The doctor judges each image by its record: it warns when
   an image is old, has another BB app or other pins, and fails one with an
   older contract or another NVIDIA version than the host's.
-- **Nightly rebuilds** (`src/plugin/images.ts`, `src/core/refresh.ts`).
-  `bb box images refresh`, run each night by a BB script automation,
-  rebuilds the due standard images one at a time, most needed first, with
-  the latest agent CLIs, gh and Chrome that publish checksums
-  (`src/backends/versions.ts`). A Linux image's guest scripts run again in
-  a box of it; Docker's build.sh and Tart's prepare scripts build anew. A
-  trial box of the new build must answer as quickly, pass the kind's check
-  and have BB's app, the record and no older tool before the build
-  replaces the old one under its name. Windows images are not refreshed
-  yet.
+- **Nightly rebuilds** (`src/plugin/images.ts`, `src/core/refresh.ts`). `bb
+  box images refresh`, run each night by a BB script automation, rebuilds the
+  due standard images one at a time, most needed first, with the latest agent
+  CLIs, gh and Chrome that publish checksums (`src/backends/versions.ts`). A
+  Linux image's guest scripts run again in a box of it; Docker's build.sh and
+  Tart's prepare scripts build anew. A trial box of the new build must answer
+  as quickly, pass the kind's check and have BB's app, the record and no older
+  tool before the build replaces the old one under its name. An image waits
+  for the next night when its host has no room for a build box and a trial box
+  at the kind's default size, or for the trial box alone where the build needs
+  no box, as Docker's build.sh does. Windows images are not refreshed yet.
 - **A project's image** (`src/core/project-images.ts`) is a script run as
   root on a kind's standard image, with an optional check run as the box
   user, kept in the configuration with the path it came from in the
