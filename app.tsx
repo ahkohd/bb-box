@@ -4,7 +4,7 @@
 
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { BOXES_ACTION } from "./src/app/common.tsx";
-import { DESKTOP_ACTION, DESKTOP_PAGE, DesktopPanel, BoxesPage, BoxesPageHeader } from "./src/app/desktop.tsx";
+import { DESKTOP_ACTION, DESKTOP_PAGE, DesktopPanel, BoxesPage } from "./src/app/desktop.tsx";
 import { BoxesPanel } from "./src/app/panel.tsx";
 import { NewBoxInputs } from "./src/app/new-box-inputs.tsx";
 import { SettingsSection } from "./src/app/settings.tsx";
@@ -37,8 +37,6 @@ export default definePluginApp((app) => {
     icon: "bb-box/box",
     path: DESKTOP_PAGE,
     component: BoxesPage,
-    // The settings gear, in BB's title bar: the slot sits on the bar's right, before BB's own buttons.
-    headerContent: BoxesPageHeader,
   });
   app.slots.settingsSection({
     id: "configuration",
