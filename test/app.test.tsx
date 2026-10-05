@@ -2194,21 +2194,25 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
 });
 
-test("the Boxes page's settings gear sits in BB's title bar, through the nav panel's headerContent, as a link to Settings > BB Box", async () => {
+test("the Boxes page's top row has the settings gear, then the plus at the far right, a gap apart; the gear is a link to Settings > BB Box", async () => {
   const [page] = app.navPanels;
-  expect(page!.headerContent).toBeTruthy();
-  // The title bar's slot: the gear alone, a link, with its name in the tooltip and accessible name.
-  const header = renderSlot({ ...page!, component: page!.headerContent! }, { subPath: "" }, { rpc: server([box()]).handlers, pluginId: "bb-box" });
-  const settingsLink = header.getByRole("link", { name: "BB Box settings" });
-  expect(settingsLink.getAttribute("href")).toBe("/settings/plugins/bb-box");
-  expect(settingsLink.textContent).toBe("");
-  cleanup();
-  // The page itself has no gear any more, under the lists or beside the plus.
+  expect(page!.headerContent).toBeUndefined();
   const list = boxesPage(server([box()]).handlers);
   await list.findByText("calm-otter");
-  expect(list.queryByRole("link", { name: "BB Box settings" })).toBeNull();
-  expect(list.queryByRole("button", { name: "BB Box settings" })).toBeNull();
+  const gear = list.getByRole("link", { name: "BB Box settings" });
+  expect(gear.getAttribute("href")).toBe("/settings/plugins/bb-box");
+  expect(gear.textContent).toBe("");
+  // One row: the gear first, the plus last, with a gap between them.
+  const plus = list.getByRole("button", { name: "Add machine" });
+  const row = plus.closest("div.flex")!;
+  expect(row.contains(gear)).toBe(true);
+  expect(gear.compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(row.className).toContain("justify-end");
+  expect(row.className).toContain("gap-3");
+  // Before the lists, not under them.
+  expect(gear.compareDocumentPosition(list.getByRole("button", { name: "calm-otter: details" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
+
 
 
 

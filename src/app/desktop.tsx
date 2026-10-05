@@ -116,15 +116,6 @@ function visibleCursor(image: { rgbaPixels: Uint8Array; w: number; h: number } |
   return false;
 }
 
-/**
- * The Boxes page's part of BB's title bar (`headerContent`): the settings gear, a link to Settings > BB Box, with
- * the tooltip "BB Box settings" (the operator, 5 October 2026). SDK 0.5.29 offers this slot on the bar's right,
- * before BB's own buttons, and none beside the title (docs/bb-requests.md #18).
- */
-export function BoxesPageHeader() {
-  return <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} />;
-}
-
 /** Where the Boxes page shows one box, for a new browser tab. */
 export function pageHref(pluginId: string, threadId: string, boxId: string): string {
   return `/plugins/${encodeURIComponent(pluginId)}/${DESKTOP_PAGE}/${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
@@ -1086,7 +1077,11 @@ function BoxList() {
   return (
     <div className="h-full overflow-y-auto p-4 md:p-5">
       <div className="mx-auto w-full max-w-3xl space-y-4">
-        <div className="flex items-center justify-end gap-1">
+        {/* The settings gear, then the plus at the far right, where the Box panel's plus sits, with a gap so the gear is not hit by
+            mistake (the operator, 5 October 2026). A link: BB's openUrl does nothing with an app path. BB offers no place beside the
+            page's title for it (docs/bb-requests.md #18). */}
+        <div className="flex items-center justify-end gap-3">
+          <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} />
           {kinds.length ? <NewBox kinds={kinds} make={add} machine plus profile={(backend) => rpc.call("provider", { backend })} /> : null}
         </div>
         {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
