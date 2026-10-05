@@ -27,10 +27,13 @@ xcrun -f metal >/dev/null || die "Xcode has no Metal compiler"
 # The newest iOS runtime and iPhone, booted once and removed.
 runtime=$(xcrun simctl list runtimes | awk '/^iOS / && !/unavailable/ { id = $NF } END { print id }')
 [ -n "$runtime" ] || die "Xcode has no iOS Simulator runtime"
-device=$(xcrun simctl list devicetypes | sed -n 's/^\(iPhone [^(]*\) (\(.*\))$/\2/p' | tail -n 1)
-[ -n "$device" ] || die "Xcode has no iPhone Simulator device type"
+# The last iPhone listed that the runtime runs: not every one listed does.
+udid=
+for device in $(xcrun simctl list devicetypes | sed -n 's/^iPhone [^(]* (\(.*\))$/\1/p' | tail -r); do
+  udid=$(xcrun simctl create bb-box-warm-up "$device" "$runtime" 2>/dev/null) && break
+done
+[ -n "$udid" ] || die "no iPhone Simulator device type runs on $runtime"
 started=$(date +%s)
-udid=$(xcrun simctl create bb-box-warm-up "$device" "$runtime")
 xcrun simctl boot "$udid"
 xcrun simctl bootstatus "$udid" -b >/dev/null
 xcrun simctl shutdown "$udid"
