@@ -713,10 +713,12 @@ able to add a new box there too, not have to go to settings"); the new
 machine shows under Machines as it starts and once it is ready. Nothing
 stands on the left: the box count went with the Box panel's. Settings' Add
 machine stays as it is.
-Where the content ends, under the lists and left-aligned with them, the
-gear alone, named "BB Box settings" in its tooltip and accessible name,
-links to Settings > BB Box (the operator, 5 October 2026, who moved it
-there from beside the plus, then asked for no text label). It is a link,
+The settings gear, "BB Box settings" in its tooltip and accessible name,
+sits in BB's title bar over the page, a link to Settings > BB Box (the
+operator, 5 October 2026, who moved it from beside the plus to under the
+lists and then into the header). SDK 0.5.29 gives a nav page one place in
+that bar, `headerContent`, on its right before BB's own buttons, and none
+beside the title, so it sits there (docs/bb-requests.md #18). It is a link,
 not a button calling `openUrl`: BB's `openUrl` opens only http(s) URLs, by
 the person's browser preference, and returns false for an app path, so the
 first version did nothing; `UrlLink` routes an app path in the app. The

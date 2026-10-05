@@ -2194,19 +2194,22 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
 });
 
-test("the Boxes page ends with the BB Box settings gear under the lists, a link to Settings > BB Box; the plus stays alone at the top", async () => {
+test("the Boxes page's settings gear sits in BB's title bar, through the nav panel's headerContent, as a link to Settings > BB Box", async () => {
+  const [page] = app.navPanels;
+  expect(page!.headerContent).toBeTruthy();
+  // The title bar's slot: the gear alone, a link, with its name in the tooltip and accessible name.
+  const header = renderSlot({ ...page!, component: page!.headerContent! }, { subPath: "" }, { rpc: server([box()]).handlers, pluginId: "bb-box" });
+  const settingsLink = header.getByRole("link", { name: "BB Box settings" });
+  expect(settingsLink.getAttribute("href")).toBe("/settings/plugins/bb-box");
+  expect(settingsLink.textContent).toBe("");
+  cleanup();
+  // The page itself has no gear any more, under the lists or beside the plus.
   const list = boxesPage(server([box()]).handlers);
   await list.findByText("calm-otter");
-  // A link, not a button calling openUrl: openUrl takes only http(s) URLs and did nothing with this app path (5 October 2026).
-  const settingsLink = list.getByRole("link", { name: "BB Box settings" });
-  expect(settingsLink.getAttribute("href")).toBe("/settings/plugins/bb-box");
-  // The gear alone, no text; under the lists, after the last row, not beside the plus.
-  expect(settingsLink.textContent).toBe("");
-  expect(settingsLink.closest("div")?.querySelector('button[aria-label="Add machine"]')).toBeNull();
-  const lastRow = list.getByRole("button", { name: "calm-otter: details" });
-  expect(lastRow.compareDocumentPosition(settingsLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(list.queryByRole("link", { name: "BB Box settings" })).toBeNull();
   expect(list.queryByRole("button", { name: "BB Box settings" })).toBeNull();
 });
+
 
 
 test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss", async () => {

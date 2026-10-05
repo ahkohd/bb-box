@@ -194,7 +194,7 @@ frame.style.flexDirection = "column";
 root.style.flex = "1";
 root.style.minHeight = "0";
 chrome.innerHTML = scene.chrome ?? "";
-if (!scene.chrome) chrome.remove();
+if (!scene.chrome && !(scene.slot === "boxes-page")) chrome.remove();
 
 // The cross-thread Boxes page is slot "boxes-page"; the per-thread Box panel is
 // the thread-panel action whose id is "boxes" (BOXES_ACTION), so a "boxes" scene
@@ -206,6 +206,13 @@ const slot =
       ? slots.navPanels[0]
       : slots.threadPanelActions.find((action) => action.id === scene.slot);
 root.className = slot.layout === "flush" ? "flush" : scene.slot === "boxes-page" ? "" : "padded";
+// BB's title bar over a nav page, as PluginPanelHeader draws it: the icon and title on the left, the panel's
+// headerContent on the right, then BB's own buttons (two dim placeholders here).
+if (scene.slot === "boxes-page") {
+  chrome.className = "titlebar";
+  chrome.innerHTML = `<span class="title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>${slot.title}</span><span class="spacer"></span><span class="header-content" data-bb-plugin="bb-box"></span><span class="bb-button">×</span><span class="bb-button">▢</span>`;
+  if (slot.headerContent) ReactDOMClient.createRoot(chrome.querySelector(".header-content")).render(h(slot.headerContent, { subPath: scene.props?.subPath ?? "" }));
+}
 const reactRoot = ReactDOMClient.createRoot(root);
 reactRoot.render(h(slot.component, scene.props ?? { threadId: THREAD, params: null }));
 await new Promise((resolve) => setTimeout(resolve, 300));

@@ -15,6 +15,12 @@
   #chrome { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); }
   #chrome .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: var(--state-active); color: var(--foreground); }
   #chrome .pill svg { width: 14px; height: 14px; }
+  #chrome.titlebar { padding: 6px 12px; }
+  #chrome.titlebar .title { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--foreground); }
+  #chrome.titlebar .title svg { width: 16px; height: 16px; color: var(--muted-foreground); }
+  #chrome.titlebar .spacer { flex: 1; }
+  #chrome.titlebar .header-content { display: inline-flex; align-items: center; gap: 8px; }
+  #chrome.titlebar .bb-button { display: inline-flex; width: 28px; justify-content: center; color: var(--muted-foreground); opacity: 0.6; }
   #root.padded { padding: 16px; }
   #root.flush { height: 100%; }
   [data-icon-root] { display: inline-block; }
