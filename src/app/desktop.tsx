@@ -116,6 +116,15 @@ function visibleCursor(image: { rgbaPixels: Uint8Array; w: number; h: number } |
   return false;
 }
 
+/**
+ * The Boxes page's part of BB's title bar (`headerContent`): the settings gear, a link to Settings > BB Box, with
+ * the tooltip "BB Box settings" (the operator, 5 October 2026). SDK 0.5.29 offers this slot on the bar's right,
+ * before BB's own buttons, and none beside the title (docs/bb-requests.md #18).
+ */
+export function BoxesPageHeader() {
+  return <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} />;
+}
+
 /** Where the Boxes page shows one box, for a new browser tab. */
 export function pageHref(pluginId: string, threadId: string, boxId: string): string {
   return `/plugins/${encodeURIComponent(pluginId)}/${DESKTOP_PAGE}/${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
@@ -1137,10 +1146,6 @@ function BoxList() {
             </div>
           </div>
         ) : null}
-        {/* Where the page's content ends, left-aligned with the lists: the gear alone, named in its tooltip (the operator, 5 October 2026); the plus stays alone at the top. */}
-        <div>
-          <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="-ml-1.5" />
-        </div>
         {machineActions.dialogs}
         <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void actOn(inUse?.threadId ?? "")(found.method, found.box, true)} />
       </div>

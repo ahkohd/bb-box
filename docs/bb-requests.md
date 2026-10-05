@@ -24,6 +24,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | draft | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text |
 | [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | draft | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
 | [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | draft | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
+| [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | draft | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
 
 ## 1. BB's host app on Windows
 
@@ -653,6 +654,25 @@ under the box user's home and their contents, kept as secrets, which bb-box
 writes into every Linux and macOS box as it joins BB, and into running boxes
 when they change (#455). Windows boxes, and machines that are not boxes, still
 need the files copied by hand.
+
+## 18. A nav page's title-bar action beside its title
+
+**What bb-box needs.** The Boxes page's settings gear in BB's title bar
+right after the page's title, "Boxes", small and dim like the title's own
+icon (the operator's note of 5 October 2026).
+
+**What BB does now.** `PluginNavPanelRegistration.headerContent` (plugin
+SDK 0.5.29) renders a plugin's component in the title bar, but on its right:
+`PluginPanelHeaderActions` puts it before the pane's own actions and the
+right-panel toggle, while `PluginPanelHeaderCenter` owns the icon and title
+on the left and takes nothing from the plugin.
+
+**What we ask.** A slot beside the title, such as `titleAccessory`: a small
+component rendered right after the title in `PluginPanelHeaderCenter`,
+contained as `headerContent` is, for an icon button or a short status.
+
+**Until then.** The gear is bb-box's `headerContent`, at the bar's right,
+before BB's buttons.
 
 ## Checked, no request needed
 
