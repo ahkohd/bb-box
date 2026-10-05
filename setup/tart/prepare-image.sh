@@ -17,7 +17,9 @@ set -eu
 CUA_VERSION=0.30.4
 CUA_SHA256=e270ea67388d794505031b0a15d8b58994c67e18e754a43634d7732251f595df
 
-from=ghcr.io/cirruslabs/macos-tahoe-base:latest
+# Cirrus Labs' image with Xcode, the iOS Simulator and the Metal toolchain
+# (#475). Pinned to its Xcode: a new Xcode is a decision, not a refresh.
+from=ghcr.io/cirruslabs/macos-golden-gate-xcode:27
 name=bb-box-macos
 key=
 bb_url=
@@ -86,6 +88,9 @@ boot
 step "customising $build"
 tart exec -i "$build" env BBBOX_SSH_PUBLIC_KEY="$key" CUA_VERSION="$CUA_VERSION" CUA_SHA256="$CUA_SHA256" BB_URL="$bb_url" /bin/sh -s \
   <"$here/guest/customize.sh"
+step "setting Xcode up in $build"
+tart exec -i "$build" /bin/sh -s <"$here/guest/xcode.sh" >"$work/xcode.txt" || { cat "$work/xcode.txt"; die "setting Xcode up failed"; }
+grep -v '^[a-z-]*=' "$work/xcode.txt" || :
 # The pins' SHA-256 is of this script's pin lines, as bb-box hashes them.
 step "recording $build_id in $build"
 os=$(tart exec "$build" sw_vers -productVersion)
@@ -93,8 +98,10 @@ node=$(tart exec "$build" /bin/zsh -c 'node --version' 2>/dev/null | tr -d 'v\r'
 app=$(tart exec "$build" /bin/sh -c 'cat "$HOME"/.bb-machines/*/host-artifact.sha256 2>/dev/null | head -n 1') || app=
 pins=$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-image.sh" | shasum -a 256 | cut -d' ' -f1)
 quoted() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf null; fi; }
+# Xcode's, the iOS Simulator's and Metal's versions, where the base has Xcode.
+xcode_tools=$(for tool in xcode ios-simulator metal; do v=$(sed -n "s/^$tool=//p" "$work/xcode.txt"); [ -z "$v" ] || printf ',"%s":"%s"' "$tool" "$v"; done)
 record=$(printf '{"contract":1,"image":"standard","kind":"macos","arch":"arm64","build":"%s","built":"%s","base":null,"os":"macOS %s","aptSnapshot":null,"pins":"%s","bbApp":%s,"tools":{"cua-driver":"%s"%s},"nvidia":null,"layer":null,"sizeGiB":null}' \
-  "$build_id" "$built" "$os" "$pins" "$(quoted "$app")" "$CUA_VERSION" "${node:+,\"node\":\"$node\"}")
+  "$build_id" "$built" "$os" "$pins" "$(quoted "$app")" "$CUA_VERSION" "${node:+,\"node\":\"$node\"}$xcode_tools")
 printf '%s\n' "$record" | tart exec -i "$build" sudo -n sh -c 'mkdir -p /usr/local/share/bb-box && cat >/usr/local/share/bb-box/image.json && chmod 0644 /usr/local/share/bb-box/image.json'
 step "shutting $build down"
 shutdown

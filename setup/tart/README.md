@@ -79,8 +79,8 @@ Measured on a Mac with an M4 Max, macOS 27 on the host and in the VM, Tart
   output of `tart run`, so check a newer release with the conformance suite
   (`npm run conformance -- --backend tart --settings <file>`) before relying
   on it.
-- Disk: the base image takes about 37 GiB and the prepared image about 1.5
-  GiB more. A box adds what it writes: about 2.5 GiB after its first boot,
+- Disk: the base image, with Xcode, takes about 80 GiB, and the prepared
+  image a few GiB more. A box adds what it writes: about 2.5 GiB after its first boot,
   and about 3 GiB more while it is suspended (its memory, for an 8 GiB VM).
   bb-box keeps the reserve in its settings free.
 - Memory: each box takes the memory of its size: 8, 16 or 32 GiB for the
@@ -146,20 +146,20 @@ The same key goes into the image (section 3), for the VM's user.
 Run `prepare-image.sh` on the Mac as the host user. It clones a Cirrus Labs
 base image, boots it, customises it from inside, shuts it down, grants Cua
 Driver its permissions offline, boots it again to check them, and leaves a
-stopped Tart VM named `bb-box-macos`. It takes about a minute and a half
-once the base image is pulled; the pull itself is about 34 GB.
+stopped Tart VM named `bb-box-macos`. It takes a few minutes once the base
+image is pulled, most of them booting an iPhone Simulator once; the pull
+itself is about 69 GB.
 
 ```sh
-tart pull ghcr.io/cirruslabs/macos-tahoe-base:latest
+tart pull ghcr.io/cirruslabs/macos-golden-gate-xcode:27
 ./prepare-image.sh --key 'ssh-ed25519 AAAA... bb-box' \
-  --from ghcr.io/cirruslabs/macos-tahoe-base:latest \
   --bb-url https://bb.example.com
 ```
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--key` | (required) | bb-box's public key, from `bb box doctor`. Give it again for each key the VM's user should accept |
-| `--from` | `ghcr.io/cirruslabs/macos-tahoe-base:latest` | The image to start from: an OCI image or a local Tart VM, no newer than the Mac's macOS. For macOS 27, `ghcr.io/cirruslabs/macos-golden-gate-base:latest` |
+| `--from` | `ghcr.io/cirruslabs/macos-golden-gate-xcode:27` | The image to start from: an OCI image or a local Tart VM, no newer than the Mac's macOS. With Xcode 27, for macOS 27 (#475). `ghcr.io/cirruslabs/macos-golden-gate-base:latest` has the Command Line Tools alone, in about half the disk; the doctor warns that its boxes have no XCTest, Metal compiler or iOS Simulator |
 | `--name` | `bb-box-macos` | The image to make |
 | `--bb-url` | none | BB's server URL, to pre-install BB's host app, so a box enrols without downloading it |
 | `--replace` | off | Replace an image of that name. Boxes cloned from the old one keep running |
@@ -167,8 +167,11 @@ tart pull ghcr.io/cirruslabs/macos-tahoe-base:latest
 What the image has:
 
 - Cirrus Labs' base: user `admin` with automatic login and passwordless
-  sudo, Homebrew, Git, Node 24, Xcode's command line tools and Tart's guest
-  agent.
+  sudo, Homebrew, Git, Node 24, Xcode 27 with the iOS Simulator and the Metal
+  toolchain, and Tart's guest agent.
+- Xcode's licence accepted and its first launch run, and an iPhone Simulator
+  booted once (`guest/xcode.sh`), so a box's first Simulator boot is quick.
+  The record lists Xcode's, the iOS Simulator's and Metal's versions.
 - bb-box's key for `admin`, and SSH that takes keys only. `admin`'s password
   is still `admin`, for the console only.
 - The login PATH, Homebrew and Node for SSH commands (`~/.zshenv`): SSH
@@ -374,6 +377,7 @@ bb-box refreshes the macOS and Linux images itself
 ([049](../../docs/decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)), on each Mac in turn:
 
 1. **The build.** It copies its setup files, with the versions a rebuild takes, to `~/.bb-box/tart/setup-<time>` on the Mac. It runs the image's prepare script there over SSH, as the user bb-box logs in as, with bb-box's key and BB's URL, under a name of its own (`bb-box-img-refresh-<time>`). A macOS image starts from the base the image was prepared from. The copy goes afterwards.
+   Before that, when the registry has moved the base's tag since Tart cached it, it pulls the base again, if the Mac has room for its disk beyond the disk reserve; otherwise the refresh fails and says so. A refresh that replaces the image then removes the base's cached copies no tag names (#475).
 2. **The trial box.** It checks a trial box from the new build:
    - a Linux image's own check, after its display is up, or for macOS the tools and Cua Driver;
    - BB's app at the recorded digest;

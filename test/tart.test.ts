@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
-import { crashSummary, endReason, parseEnded, parseState, parseVnc, type RunEnd } from "../src/backends/tart/host.ts";
+import { baseScript, crashSummary, endReason, parseEnded, parseState, parseVnc, pruneBaseScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
@@ -625,7 +627,8 @@ test("the doctor judges each Tart image by the record beside it (049)", async ()
   const [linuxPins, macosPins, app] = ["l", "m", "a"].map((letter) => letter.repeat(64));
   const images = { pins: async (set: string) => (set === "linux" ? linuxPins! : set === "macos" ? macosPins! : "x".repeat(64)), bbApp: async () => app! };
   const records = join(mac, ".bb-box", "tart", "images");
-  writeFileSync(join(records, "bb-box-macos.json"), imageRecord("macos", { pins: macosPins, bbApp: app }));
+  const xcode = { xcode: "27.0", "ios-simulator": "27.0", metal: "32023.598" };
+  writeFileSync(join(records, "bb-box-macos.json"), imageRecord("macos", { pins: macosPins, bbApp: app, tools: xcode }));
   writeFileSync(join(records, "bb-box-linux.json"), imageRecord("linux-arm64", { pins: "o".repeat(64), bbApp: null, built: new Date(Date.now() - 15 * day).toISOString() }));
   const backend = make({ ...context, images });
   let report = await backend.doctor();
@@ -638,6 +641,12 @@ test("the doctor judges each Tart image by the record beside it (049)", async ()
   assert.equal(linux.status, "warn");
   assert.match(linux.detail, /It is 15 days old, more than 14, .* It has no build of BB's app, .* It was built with other pins than this bb-box's/);
   assert.equal(linux.fix, "Build it again on mac1 with setup/tart/prepare-linux-image.sh --key '<bb-box's public key>' --name bb-box-linux --bb-url <BB's server URL> --replace.");
+
+  // A macOS image without Xcode warns (#475).
+  writeFileSync(join(records, "bb-box-macos.json"), imageRecord("macos", { pins: macosPins, bbApp: app }));
+  report = await backend.doctor();
+  assert.equal(check("macos").status, "warn");
+  assert.match(check("macos").detail, /It has no Xcode, so its boxes have no XCTest, Metal compiler or iOS Simulator \(#475\)\.$/);
 
   rmSync(join(records, "bb-box-macos.json"));
   report = await backend.doctor();
@@ -719,4 +728,68 @@ test("a VM that changes hands gets its new owner in its owner file, and its new 
   // Another box's ID is refused: the owner file is left alone.
   await assert.rejects(backend.relabel(guest, { ...box, boxId: "bxother" }, "build-1", signal()), /does not name box bxother/);
   await backend.release(guest, releasing);
+});
+
+test("a refresh's base is pulled when the registry has moved its tag, room allowing, and the old cached copy goes after (#475)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "bb-box-base-"));
+  const bin = join(dir, "bin");
+  const cache = join(dir, "tart", "cache", "OCIs", "ghcr.io", "acme", "macos-xcode");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(join(cache, "sha256:old"), { recursive: true });
+  symlinkSync(join(cache, "sha256:old"), join(cache, "27"));
+  // The registry: a token challenge, then the manifest with the tag's digest and its disk's size.
+  writeFileSync(
+    join(bin, "curl"),
+    [
+      "#!/bin/sh",
+      'case "$*" in',
+      '  *"/v2/ "*|*"/v2/") printf \'HTTP/2 401\\r\\nwww-authenticate: Bearer realm="https://ghcr.io/token",service="ghcr.io"\\r\\n\\r\\n\' ;;',
+      '  *token*) echo \'{"token":"anon"}\' ;;',
+      '  *manifests*) while [ $# -gt 0 ]; do case $1 in -D) h=$2; shift 2 ;; -o) o=$2; shift 2 ;; *) shift ;; esac; done',
+      '    printf \'HTTP/2 200\\r\\ndocker-content-digest: %s\\r\\n\' "$(cat "$DIGEST")" > "$h"',
+      '    printf \'{"annotations":{"org.cirruslabs.tart.uncompressed-disk-size":"%s"}}\' "$SIZE" > "$o" ;;',
+      "esac",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  // tart: a pull moves the tag to the new digest; a delete removes a digest's copy.
+  writeFileSync(
+    join(bin, "tart"),
+    [
+      "#!/bin/sh",
+      'echo "$*" >> "$TART_HOME/calls"',
+      `c=$TART_HOME/cache/OCIs/ghcr.io/acme/macos-xcode`,
+      'case $1 in',
+      '  pull) d=$(cat "$DIGEST"); mkdir -p "$c/$d"; ln -sfn "$c/$d" "$c/27" ;;',
+      '  delete) rm -rf "$c/${2##*@}" ;;',
+      "esac",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const digest = join(dir, "digest");
+  const run = (body: string, size: string) =>
+    spawnSync("sh", ["-c", body], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, TART_HOME: join(dir, "tart"), DIGEST: digest, SIZE: size }, encoding: "utf8" });
+  const calls = () => (existsSync(join(dir, "tart", "calls")) ? readFileSync(join(dir, "tart", "calls"), "utf8").trim().split("\n") : []);
+
+  writeFileSync(digest, "sha256:old");
+  assert.match(run(baseScript("ghcr.io/acme/macos-xcode:27", 60), "1000").stdout, /base: ghcr\.io\/acme\/macos-xcode:27 is current/);
+  assert.deepEqual(calls(), []);
+
+  // Moved, but its disk does not fit beyond the reserve.
+  writeFileSync(digest, "sha256:new");
+  const full = run(baseScript("ghcr.io/acme/macos-xcode:27", 60), String(1024 ** 5));
+  assert.equal(full.status, 3);
+  assert.match(full.stderr, /base: no room to pull ghcr\.io\/acme\/macos-xcode:27: its disk is 1048576 GiB, and -?\d+ GiB is free beyond the 60 GiB reserve\./);
+  assert.deepEqual(calls(), []);
+
+  const pulled = run(baseScript("ghcr.io/acme/macos-xcode:27", 0), "1000");
+  assert.equal(pulled.status, 0, pulled.stderr);
+  assert.match(pulled.stdout, /base: pulling ghcr\.io\/acme\/macos-xcode:27, sha256:new, in place of sha256:old\nbase: pulled/);
+  assert.deepEqual(calls(), ["pull ghcr.io/acme/macos-xcode:27"]);
+
+  // After the replace: the copy no tag names goes, the tag's stays.
+  const pruned = run(pruneBaseScript("ghcr.io/acme/macos-xcode:27"), "0");
+  assert.match(pruned.stdout, /base: removed the old cached ghcr\.io\/acme\/macos-xcode@sha256:old/);
+  assert.deepEqual([existsSync(join(cache, "sha256:old")), existsSync(join(cache, "sha256:new"))], [false, true]);
+  assert.match(run(baseScript("bb-box-macos", 60), "0").stdout, /base: bb-box-macos is a local VM/);
 });
