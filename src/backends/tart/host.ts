@@ -740,6 +740,74 @@ echo replaced
 `);
 }
 
+/** String.raw for shell, where \${…} is the shell's own \${…}, not the template's. */
+const sh = (strings: TemplateStringsArray, ...values: unknown[]) => String.raw(strings, ...values).replaceAll("\\${", "${");
+
+/** Splits a registry reference, such as ghcr.io/cirruslabs/macos-golden-gate-xcode:27, into $reg, $repo, $tag and Tart's $cache directory for it. */
+const BASE_PARTS = sh`reg=\${ref%%/*}; rest=\${ref#*/}
+case $rest in *:*) repo=\${rest%:*}; tag=\${rest##*:} ;; *) repo=$rest; tag=latest ;; esac
+cache=\${TART_HOME:-$HOME/.tart}/cache/OCIs/$reg/$repo`;
+
+/**
+ * Brings a refresh's base image up to date in Tart's cache (#475). A clone
+ * from a registry reference takes Tart's cached copy, which a later push to
+ * the tag leaves behind, so when the registry's digest for it is not the
+ * cached one, it pulls it, if the disk has room for the image's disk beyond
+ * \`reserveGiB\`. A local VM, a reference by digest, or a registry that does
+ * not answer leaves the base as it is. Prints "base: …" lines; no room exits 3.
+ */
+export function baseScript(ref: string, reserveGiB: number): string {
+  return script(sh`ref=${quote(ref)}; reserve=${reserveGiB}
+case $ref in *@*) echo "base: $ref is pinned by digest"; exit 0 ;; */*) ;; *) echo "base: $ref is a local VM"; exit 0 ;; esac
+${BASE_PARTS}
+link=$(readlink "$cache/$tag" 2>/dev/null || true); old=\${link##*/}
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# An anonymous pull token, from the realm the registry names, as ghcr.io gives one.
+set --
+realm=$(curl -sS -m 20 -o /dev/null -D - "https://$reg/v2/" 2>/dev/null | tr -d '\r' | sed -n 's/^[Ww][Ww][Ww]-[Aa]uthenticate: *Bearer realm="\([^"]*\)".*service="\([^"]*\)".*/\1?service=\2/p')
+if [ -n "$realm" ]; then
+  token=$(curl -fsS -m 20 "$realm&scope=repository:$repo:pull" 2>/dev/null | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
+  [ -z "$token" ] || set -- -H "Authorization: Bearer $token"
+fi
+if ! curl -fsS -m 30 -D "$tmp/headers" -o "$tmp/manifest" "$@" -H 'Accept: application/vnd.oci.image.manifest.v1+json' "https://$reg/v2/$repo/manifests/$tag" 2>/dev/null; then
+  echo "base: $reg did not answer for $ref, so its cached copy is used"; exit 0
+fi
+new=$(tr -d '\r' <"$tmp/headers" | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | tail -n 1)
+[ -n "$new" ] || { echo "base: $reg gave no digest for $ref, so its cached copy is used"; exit 0; }
+[ "$new" != "$old" ] || { echo "base: $ref is current"; exit 0; }
+size=$(tr ',' '\n' <"$tmp/manifest" | sed -n 's/.*"org.cirruslabs.tart.uncompressed-disk-size" *: *"\([0-9]*\)".*/\1/p' | head -n 1)
+free=$({ df -k "\${TART_HOME:-$HOME/.tart}" 2>/dev/null || df -k "$HOME"; } | awk 'NR == 2 { print $4 }')
+free=\${free:-0}
+if [ "$free" -lt $(( \${size:-0} / 1024 + reserve * 1048576 )) ]; then
+  echo "base: no room to pull $ref: its disk is $(( \${size:-0} / 1073741824 )) GiB, and $(( free / 1048576 - reserve )) GiB is free beyond the $reserve GiB reserve." >&2
+  exit 3
+fi
+echo "base: pulling $ref, $new\${old:+, in place of $old}"
+tart pull "$ref" >"$tmp/pull" 2>&1 || { echo "base: tart pull $ref failed: $(tail -n 1 "$tmp/pull")" >&2; exit 1; }
+echo "base: pulled $ref"
+`);
+}
+
+/**
+ * Removes the cached copies of a refresh's base that no tag names any more
+ * (#475): after a pull moved the tag, the old copy only takes disk, as images
+ * cloned from it are copies of their own. Prints "base: …" lines.
+ */
+export function pruneBaseScript(ref: string): string {
+  return script(sh`ref=${quote(ref)}
+case $ref in *@*) exit 0 ;; */*) ;; *) exit 0 ;; esac
+${BASE_PARTS}
+[ -d "$cache" ] || exit 0
+named=$(for l in "$cache"/*; do [ -L "$l" ] && readlink "$l"; done | sed 's|.*/||')
+for d in "$cache"/sha256:*; do
+  [ -d "$d" ] || continue
+  digest=\${d##*/}
+  ! printf '%s\n' "$named" | grep -qx "$digest" || continue
+  if tart delete "$reg/$repo@$digest" >/dev/null 2>&1; then echo "base: removed the old cached $reg/$repo@$digest"; else echo "base: could not remove $reg/$repo@$digest" >&2; fi
+done
+`);
+}
+
 /** Removes an image's notes beside it, images/<vm> and images/<vm>.json, once its VM has gone. */
 export function forgetImageScript(vm: string): string {
   return script(String.raw`vm=${quote(vm)}

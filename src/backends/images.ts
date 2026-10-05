@@ -226,6 +226,9 @@ export function judgeImage(
   if (facts.pins && record.pins !== facts.pins) {
     warnings.push("It was built with other pins than this bb-box's, so it lacks what a bb-box update brought.");
   }
+  if (facts.os === "macos" && !record.tools.xcode) {
+    warnings.push("It has no Xcode, so its boxes have no XCTest, Metal compiler or iOS Simulator (#475).");
+  }
   const problems = [...failures, ...warnings];
   return {
     status: failures.length ? "fail" : warnings.length ? "warn" : "ok",

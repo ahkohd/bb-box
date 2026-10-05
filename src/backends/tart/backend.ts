@@ -84,6 +84,8 @@ import {
   deleteScript,
   forgetImageScript,
   replaceScript,
+  baseScript,
+  pruneBaseScript,
   discardStateScript,
   holdScript,
   relabelScript,
@@ -176,13 +178,20 @@ const RECORD_PATH: Readonly<Record<string, string>> = { linux: "/usr/share/bb-bo
 
 /**
  * A macOS box's checks as its user (049), as its image has no check of its
- * own: the tools and Cua Driver, a line per check, with ok or FAIL.
+ * own: the tools and Cua Driver, and Xcode where its record says it has it
+ * (#475), a line per check, with ok or FAIL.
  */
 export const MAC_CHECK = String.raw`t() { name=$1; shift; if out=$("$@" 2>&1); then echo "$name ok   $(echo "$out" | head -n 1)"; else echo "$name FAIL $(echo "$out" | head -n 1)"; fi; }
 t node node --version
 t git git --version
 t cua-driver /usr/local/bin/cua-driver --version
-t "image record" test -s /usr/local/share/bb-box/image.json`;
+t "image record" test -s /usr/local/share/bb-box/image.json
+if grep -q '"xcode"' /usr/local/share/bb-box/image.json 2>/dev/null; then
+  t xcode xcodebuild -version
+  t "xcode licence and first launch" sh -c 'xcodebuild -license check && xcodebuild -checkFirstLaunchStatus'
+  t metal xcrun -f metal
+  t "ios simulator" sh -c 'xcrun simctl list runtimes | grep -m 1 "^iOS "'
+fi`;
 
 /** The check a trial box of each kind runs: a Linux image's own, after its display is up, or macOS's above. */
 function tartCheck(kind: string): string {
@@ -2092,7 +2101,15 @@ export class TartBackend implements Backend {
     const source = this.#imageRef(build.ref);
     if (!current.current || build.current || target.host !== source.host) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is not a build on its Mac.`);
     await this.#run(target.host, replaceScript(source.vm, target.vm), { timeoutMs: 10 * 60_000, signal });
+    // The base's copies no tag names, as a pull before the build left them (#475).
+    const from = await this.#baseOf(target.host, target.vm, signal).catch(() => "");
+    if (from) await this.#run(target.host, pruneBaseScript(from), { timeoutMs: 10 * 60_000, signal }).catch((error: unknown) => this.#context.logError("remove an old base", error));
     return { ...build, ref: current.ref, image: "standard", current: true };
+  }
+
+  /** The base an image was prepared from, as its prepare script noted it beside it, or "". */
+  async #baseOf(host: TartHost, image: string, signal?: AbortSignal): Promise<string> {
+    return (await this.#run(host, `exec /bin/sh -c ${quote(`sed -n 's/^from=//p' "$HOME/.bb-box/tart/images/${image}" 2>/dev/null | head -n 1`)}`, { signal })).stdout.trim();
   }
 
   /** Removes an image box, a captured build or a refresh's build of this install's, and nothing else. */
@@ -2130,7 +2147,12 @@ export class TartBackend implements Backend {
     await this.#run(host, claimScript(vm, owner), { signal: options.signal });
     try {
       await mac.writeFile(`${dir}.tgz`, tar.stdout, { signal: options.signal });
-      const from = os === "macos" ? (await this.#run(host, `exec /bin/sh -c ${quote(`sed -n 's/^from=//p' "$HOME/.bb-box/tart/images/${image}" 2>/dev/null | head -n 1`)}`)).stdout.trim() : "";
+      const from = await this.#baseOf(host, image, options.signal);
+      // A newer push to the base's tag is pulled first, room allowing (#475).
+      if (from) {
+        const pulled = await this.#run(host, baseScript(from, this.#config.reserve.diskGiB), { timeoutMs: 3 * 60 * 60_000, signal: options.signal });
+        for (const line of pulled.stdout.split("\n")) if (line.trim()) options.log(line);
+      }
       const args = [
         os === "macos" ? "./prepare-image.sh" : "./prepare-linux-image.sh",
         ...(current.kind === "linux-arm64-desktop-cpu" ? ["--desktop"] : []),
