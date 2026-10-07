@@ -946,6 +946,8 @@ export class Boxes {
         continue;
       }
       if (this.#holdsNothing(spare)) {
+        // An image's spare that failed to start: its build is not tried for a spare again for a day (#440).
+        if (spare.state === "failed" && spare.image?.from) await this.#spareFailed(spare.image.name, spare.backend, spare.kind, spare.image.from);
         await this.#forget(spare);
         continue;
       }
