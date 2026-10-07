@@ -311,13 +311,18 @@ becomes a BB machine again once it runs and answers.
 ```sh
 npm run typecheck
 npm test
+npm run reference
 npm run build
 node scripts/smoke.ts <settings.json>
 npm run conformance -- --backend <type> --settings <settings.json>
 ```
 
 The tests and scripts need Node 22.18 or later, which runs TypeScript
-directly. `scripts/preview/` renders the built panels outside BB, with BB's
+directly. GitHub runs the typecheck and the tests on each pull request.
+The tests fail when [the reference](docs/reference/README.md) is out of
+date, a link between Markdown files is broken, or the skill does not name
+an agent tool: `npm run reference` writes the reference again from the code.
+`scripts/preview/` renders the built panels outside BB, with BB's
 theme and fixtures, for screenshots: serve the repository root and open
 `scripts/preview/index.html#panel-list`, or run `node scripts/preview/shoot.mjs`
 on a machine with Chrome. The tests run against a fake Proxmox API, a fake
