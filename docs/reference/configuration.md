@@ -81,6 +81,7 @@ Projects' images, by name (049).
 | [`ssh-pool`](#ssh-pool) | SSH host pool | linux, macos, macos-desktop |
 | [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop |
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
+| [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu |
 
 ### proxmox-lxc
 
@@ -132,6 +133,7 @@ Fields left empty take proxmox-lxc's, a set at a time: `url`, `token-id`, `token
 | `ssh-private-key` | SSH private key | string, secret | credentials |  | Paste BBBOX_SSH_KEY, the private key build.sh put in the template, or leave it empty to use Proxmox LXC's. With neither, bb-box makes a key, which the template does not accept until you add its public key. |
 | `pool` | Resource pool | string | boxes | `bbbox` | Boxes are made in this pool. The token needs rights on it. |
 | `windows-templates` | Windows templates | string | boxes | `9104` | VMIDs of the Windows templates windows-desktop boxes are linked clones of, separated by spaces or commas. setup/proxmox-qemu/build.sh builds one. A new box is cloned from the least used. |
+| `windows-enrol` | Windows boxes as BB machines (trial) | boolean | boxes | `false` | A trial of Windows boxes that join BB, so threads and terminals can use them (#539). Off unless you are trying it. |
 | `bridge` | Network bridge | string | advanced | `vmbr200` | The bridge boxes attach to. |
 | `subnet` | Subnet | string | advanced | `10.200.0.0/24` | The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP. |
 | `gateway` | Gateway | string | advanced | `10.200.0.1` | The host's address on the bridge. |
@@ -199,3 +201,21 @@ Setup: [setup/docker/README.md](../../setup/docker/README.md).
 | `network` | Network | string | advanced | `bbbox` | The Docker network bb-box makes for its boxes, apart from the host's other containers. |
 | `boxes` | Most boxes | number | advanced | `10` | The most bb-box containers on the host at once, running or stopped, counting those of every bb-box install that uses it. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | A new box is refused if the host would have less memory than this left, after the memory limits of the running boxes. |
+
+### microsandbox
+
+microsandbox: Linux boxes, with or without a desktop, as microVMs that start in under a second, on a Linux host with KVM. bb-box installs its own msb there.
+
+Setup: [setup/microsandbox/README.md](../../setup/microsandbox/README.md).
+
+| Field | Label | Type | Group | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `host` | Host | string | connection |  | The Linux host with KVM that runs the boxes: ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there, in a folder of its own. |
+| `linux-image` | Linux image | string | boxes | `bbbox/linux:1` | The image linux boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off. |
+| `desktop-image` | Desktop image | string | boxes | `bbbox/linux-desktop:1` | The image linux-desktop-cpu boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off. |
+| `docker` | Docker in boxes | boolean | boxes | `true` | Give each box its own Docker daemon, started by its first docker command, with its data on a disk of the box's own. Each box has its own kernel, so this needs no privilege on the host. |
+| `docker-disk-gib` | Docker disk (GiB) | number | advanced | `64` | The most each box's Docker disk may grow to. It takes only what Docker writes, and goes with the box. |
+| `disk-gib` | Root disk (GiB) | number | advanced | `32` | The most a box's root disk may grow to when no disk size is asked for. It takes only what the box writes. |
+| `network` | Network profiles | string | advanced | `public,private` | msb's network profiles for each box, comma-separated: public reaches the internet, private the host's local networks and tailnet, where BB's server often is. |
+| `boxes` | Most boxes | number | advanced | `20` | The most bb-box microVMs on the host at once, running or stopped, counting those of every bb-box install that uses it. |
+| `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | A new box is refused if the host would have less memory than this left, after the memory of the running boxes. |

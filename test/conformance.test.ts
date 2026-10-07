@@ -1,15 +1,17 @@
 // Runs the backend conformance suite against the fake backend, in both
 // natures, against the Proxmox LXC backend on a fake Proxmox and fake SSH,
-// against the Tart backend on a fake Mac, and against the Docker backend on a
-// fake Docker host.
+// against the Tart backend on a fake Mac, against the Docker backend on a
+// fake Docker host, and against the microsandbox backend on a fake msb host.
 
 import { DockerBackend } from "../src/backends/docker/backend.ts";
+import { MsbBackend } from "../src/backends/microsandbox/backend.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import type { CommandTransport } from "../src/transports/types.ts";
 import { conformance, type ConformanceBb } from "./conformance/suite.ts";
 import { FakeBackend } from "./fake-backend.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
+import { fakeMsbHost, msbConfig } from "./fake-msb.ts";
 import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
@@ -147,6 +149,25 @@ await conformance({
     "computer-use": "the fake container has no computer-use driver",
     size: "the fake docker runs commands on the test machine",
     images: "the fake docker runs commands on the test machine, without root",
+  },
+  timeoutMs: 20_000,
+});
+
+// A box's microVM is named from its box ID, so the microsandbox backend has no ref to reuse.
+const msb = fakeMsbHost();
+const msbSettings = msbConfig();
+await conformance({
+  name: "microsandbox on a fake msb host",
+  storage: new MemoryStorage(),
+  create: (storage, installId) => new MsbBackend(msbSettings, testContext(storage, installId), { dir: msb.dir, script: msb.script, readyTimeoutMs: 20_000 }),
+  bb: fakeBb(),
+  skip: {
+    arch: "the fake msb runs commands on the test machine",
+    docker: "the fake msb runs commands on the test machine",
+    display: "the fake msb host has no desktop to stream",
+    "computer-use": "the fake microVM has no computer-use driver",
+    size: "the fake msb runs commands on the test machine",
+    images: "the microsandbox backend builds no images yet",
   },
   timeoutMs: 20_000,
 });

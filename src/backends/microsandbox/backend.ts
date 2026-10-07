@@ -1,0 +1,791 @@
+// The microsandbox backend (053): Linux boxes as libkrun microVMs, run by
+// bb-box's msb on one Linux host with KVM: BB's server, one over ssh://, or
+// a BB machine through bb-box's msb relay (cli.ts). Commands, file copies
+// and the desktop's stream all go through `msb exec` (transport.ts), so
+// bb-box needs no network path to a box, as for Docker (031).
+//
+// - msb: bb-box installs the release it pins, checked by SHA-256, in a
+//   folder of its own on the host, the first time it needs it (release.ts).
+// - Images: bb-box never pulls one. It imports each kind's image from
+//   Docker on the host, where setup/docker/build.sh builds it, with
+//   `docker save` and `msb load`, and again when Docker's image changes.
+// - Acquire: the box's microVM is named bbbox-<box ID>, so it is claimed
+//   before anything is made. It is made with its owner in its labels, at
+//   its size, with /run a tmpfs, Docker's data on an ext4 disk of its own,
+//   and the network profiles that reach BB's server. Neither `msb create`
+//   nor `msb start` runs the image's command, setup/docker/start, so the
+//   backend starts it through `msb exec` at each boot, and waits for the
+//   /run/bb-box/ready it writes.
+// - Capacity: the host's memory, less a reserve and the memory of the
+//   running bb-box microVMs; its cores; and a most-boxes setting, counting
+//   every install's. msb reserves no memory, so this is what the boxes may
+//   take, not what they hold.
+// - Every call that acts on a microVM inspects it first and acts only on one
+//   whose labels name this install and the box (018).
+
+import type { CheckId } from "../../core/checks.ts";
+import { performance } from "node:perf_hooks";
+import { MIN_DESKTOP, type Display } from "../../transports/types.ts";
+import {
+  BackendError,
+  type AcquireHooks,
+  type Backend,
+  type BackendContext,
+  type BoxIdentity,
+  type BoxKind,
+  type BoxOwner,
+  type BoxSize,
+  type BoxTransports,
+  type Capacity,
+  type CommandCapability,
+  type DoctorCheck,
+  type DoctorReport,
+  type GuestOs,
+  type Guest,
+  type HeldGuest,
+  type HostCapacity,
+  type Limit,
+  type PowerState,
+  type ReleaseHooks,
+} from "../types.ts";
+import { sizesCheck } from "../fit.ts";
+import { CUA_DRIVER } from "../docker/backend.ts";
+import { judgeImage, recordFromJson } from "../images.ts";
+import { MsbCli, MsbError, NOT_FOUND, type MsbCliOptions, type SandboxInfo } from "./cli.ts";
+import { MSB_KINDS, type MsbConfig, type MsbKind } from "./config.ts";
+import { MSB_VERSION, scriptValues } from "./release.ts";
+import { BOX_USER, MsbTransport } from "./transport.ts";
+
+/** A box is ready in under a second, a desktop in about one; an import of its image can come first. */
+const READY_TIMEOUT_MS = 60_000;
+const READY_FILE = "/run/bb-box/ready";
+/** The image's command, which neither `msb create` nor `msb start` runs. */
+const START = "/usr/local/sbin/bb-box-start";
+/** On /run, a tmpfs: the image's command was started at this boot. */
+const STARTED = "/run/bb-box-started";
+const VNC_PORT = 5900;
+const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
+const MiB_PER_GiB = 1024;
+/** How long the host's facts from the status script serve capacity checks. */
+const FACTS_MS = 60_000;
+
+const MSB_COMMAND: CommandCapability = { transport: "msb", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
+
+/** The bb-box labels on a box's microVM, from its creation. */
+export const LABELS = {
+  backend: "bbbox.backend",
+  install: "bbbox.install",
+  box: "bbbox.box",
+  thread: "bbbox.thread",
+  name: "bbbox.name",
+  kind: "bbbox.kind",
+  created: "bbbox.created",
+  /** On an image setup/docker/build.sh made: its record, as JSON (049). */
+  imageRecord: "bbbox.image-record",
+} as const;
+
+export interface MsbBackendOptions extends MsbCliOptions {
+  /** The longest an acquire may take, instead of the kind's. */
+  readonly readyTimeoutMs?: number;
+}
+
+/** What the status script says of the host. */
+export interface HostFacts {
+  readonly installed: string | null;
+  readonly os: string;
+  readonly arch: string;
+  readonly kernel: string;
+  readonly cpus: number;
+  readonly memoryMiB: number;
+  /** ok, missing or denied. */
+  readonly kvm: string;
+  readonly lxc: boolean;
+  readonly reflink: boolean;
+  readonly freeGiB: number;
+  readonly usedGiB: number;
+  /** Docker's version on the host, or null without Docker. */
+  readonly docker: string | null;
+  readonly dir: string;
+}
+
+export function parseFacts(stdout: string): HostFacts {
+  const values = scriptValues(stdout);
+  const kib = (key: string) => Number(values[key]) || 0;
+  return {
+    installed: values.installed || null,
+    os: values.os ?? "",
+    arch: values.arch ?? "",
+    kernel: values.kernel ?? "",
+    cpus: Number(values.cpus) || 0,
+    memoryMiB: Math.floor(kib("memory_kib") / 1024),
+    kvm: values.kvm ?? "missing",
+    lxc: values.lxc === "1",
+    reflink: values.reflink === "1",
+    freeGiB: Math.round((kib("free_kib") / 1024 ** 2) * 10) / 10,
+    usedGiB: Math.round((kib("used_kib") / 1024 ** 2) * 10) / 10,
+    docker: values.docker || null,
+    dir: values.dir ?? "",
+  };
+}
+
+/** A microVM bb-box is making, counted against the host until msb lists it. */
+interface Placing {
+  readonly name: string;
+  readonly memoryMiB: number;
+}
+
+interface HostState {
+  readonly facts: HostFacts;
+  /** Every bb-box microVM on the host, of every install, with its cores and memory. */
+  readonly boxes: readonly { readonly name: string; readonly status: string; readonly cpus: number; readonly memoryMiB: number }[];
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function formatMiB(value: number): string {
+  return value >= MiB_PER_GiB ? `${Math.round((value / MiB_PER_GiB) * 10) / 10} GiB` : `${value} MiB`;
+}
+
+/** The microVM of a box. Box IDs are letters and digits; anything else becomes "-". */
+export function sandboxName(boxId: string): string {
+  return `bbbox-${boxId.replace(/[^A-Za-z0-9_.-]/g, "-")}`;
+}
+
+/** A box's name as a hostname, so the shell prompt and BB's machine name agree with it. */
+export function hostnameOf(name: string): string {
+  const cleaned = name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 63)
+    .replace(/-+$/, "");
+  return cleaned || "box";
+}
+
+function powerOf(status: string): PowerState {
+  const word = status.toLowerCase();
+  if (word === "running") return "running";
+  if (word === "stopped" || word === "crashed" || word === "created" || word === "exited") return "stopped";
+  return "unknown";
+}
+
+function sizeOf(sandbox: SandboxInfo): BoxSize | null {
+  if (!sandbox.cpus || !sandbox.memoryMiB) return null;
+  return { cores: sandbox.cpus, memoryMiB: sandbox.memoryMiB, diskGiB: sandbox.diskGiB };
+}
+
+function dataOf(sandbox: SandboxInfo): Record<string, string> {
+  const box = sandbox.labels[LABELS.box];
+  return box ? { box } : {};
+}
+
+function ownerOf(labels: Readonly<Record<string, string>>): BoxOwner | null {
+  const boxId = labels[LABELS.box];
+  const threadId = labels[LABELS.thread];
+  if (!boxId || !threadId) return null;
+  const created = Number(labels[LABELS.created]);
+  return {
+    boxId,
+    threadId,
+    name: labels[LABELS.name] || null,
+    kind: labels[LABELS.kind] || null,
+    createdAt: Number.isFinite(created) && created > 0 ? created : null,
+  };
+}
+
+/** The kinds a config offers: those with an image. A box has Docker when the setting is on (041). */
+export function msbKinds(config: MsbConfig): BoxKind[] {
+  const docker = config.docker ? ["docker"] : [];
+  const kinds: Record<MsbKind, BoxKind> = {
+    linux: {
+      id: "linux",
+      label: "Linux",
+      description: "A Linux microVM for builds, backend services and the agent's own work.",
+      requires: [],
+      capabilities: { os: "linux", arch: "x86_64", gpu: false, features: docker, command: MSB_COMMAND, displays: [], computerUse: null, enrol: true },
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    },
+    "linux-desktop-cpu": {
+      id: "linux-desktop-cpu",
+      label: "Linux desktop",
+      description:
+        "A Linux desktop drawn by the CPU, for computer use and browsers when no GPU is needed or free. Graphics are slower; WebGL and Vulkan still work.",
+      requires: [],
+      capabilities: {
+        os: "linux",
+        arch: "x86_64",
+        gpu: false,
+        features: docker,
+        command: MSB_COMMAND,
+        // Xtigervnc takes a viewer's SetDesktopSize, as in a Docker box.
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        computerUse: CUA_DRIVER,
+        enrol: true,
+      },
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    },
+  };
+  return MSB_KINDS.filter((kind) => config.images[kind]).map((kind) => kinds[kind]);
+}
+
+/** The host for people: a BB machine's name, an ssh:// host, or BB's server. */
+function hostWords(config: MsbConfig, context: BackendContext): string {
+  if (config.machine) return context.machines?.name(config.machine) ?? `BB machine ${config.machine}`;
+  if (config.host) return config.host.slice(6).replace(/^[^@]*@/, "");
+  return "BB's server";
+}
+
+export class MsbBackend implements Backend {
+  readonly id: string;
+  readonly nature = "virtual" as const;
+  readonly #config: MsbConfig;
+  readonly #context: BackendContext;
+  readonly #options: MsbBackendOptions;
+  readonly #kinds: BoxKind[];
+  readonly #cli: MsbCli;
+  /** The host's facts, as the status script last gave them, and when. */
+  #facts: { at: number; facts: HostFacts } | null = null;
+  /** msb installed at the pinned release, once checked or done this run. */
+  #installed: Promise<void> | null = null;
+  /** Imports under way, by image, so two acquires wait for one. */
+  readonly #importing = new Map<string, Promise<void>>();
+  readonly #placing = new Map<string, Placing>();
+  #placement: Promise<unknown> = Promise.resolve();
+
+  constructor(config: MsbConfig, context: BackendContext, options: MsbBackendOptions = {}) {
+    this.id = context.id;
+    this.#config = config;
+    this.#context = context;
+    this.#options = options;
+    this.#kinds = msbKinds(config);
+    this.#cli = new MsbCli(config.host, config.machine, context.machines, options);
+  }
+
+  get label(): string {
+    return this.#config.host ? `microsandbox on ${this.#host}` : "microsandbox";
+  }
+
+  get hosts(): readonly string[] {
+    return this.#config.host ? [this.#host] : [];
+  }
+
+  /** A BB machine's OS as BB has it; Linux for any other host, as msb's Linux kinds need one. */
+  get hostOs(): GuestOs | null {
+    if (this.#config.machine) return this.#context.machines?.platform?.(this.#config.machine) ?? null;
+    return "linux";
+  }
+
+  get #host(): string {
+    return hostWords(this.#config, this.#context);
+  }
+
+  kinds(): BoxKind[] {
+    return this.#kinds;
+  }
+
+  #kind(id: string): BoxKind {
+    const kind = this.#kinds.find((candidate) => candidate.id === id);
+    if (!kind) throw new BackendError("unsupported", `${this.label} does not offer ${id} boxes.`);
+    return kind;
+  }
+
+  // The host's side: msb, its facts and its images.
+
+  /** The host's facts, from the status script, at most FACTS_MS old unless `fresh`. */
+  async #hostFacts(signal?: AbortSignal, fresh = false): Promise<HostFacts> {
+    if (!fresh && this.#facts && Date.now() - this.#facts.at < FACTS_MS) return this.#facts.facts;
+    const result = await this.#cli.script("status", [], signal);
+    if (result.exitCode !== 0) throw this.#cli.error(`The status script on ${this.#host}`, result);
+    const facts = parseFacts(result.stdout);
+    this.#facts = { at: Date.now(), facts };
+    return facts;
+  }
+
+  /** Installs the pinned msb on the host when it lacks it, once per run of bb-box. */
+  #install(signal?: AbortSignal): Promise<void> {
+    this.#installed ??= (async () => {
+      const facts = await this.#hostFacts(signal);
+      if (facts.installed === MSB_VERSION) return;
+      const result = await this.#cli.script("install", [], signal);
+      if (result.exitCode !== 0) throw this.#cli.error(`Installing msb ${MSB_VERSION} on ${this.#host}`, result);
+      this.#facts = null;
+    })();
+    this.#installed.catch(() => (this.#installed = null));
+    return this.#installed;
+  }
+
+  /** Storage key of the Docker image ID an msb image was imported from. */
+  #importedKey(image: string): string {
+    return `imported/${image}`;
+  }
+
+  /**
+   * Imports `image` from Docker on the host when msb lacks it, or when
+   * Docker's image is not the one imported (`refresh`), one import of an
+   * image at a time.
+   */
+  #import(image: string, refresh: boolean, signal?: AbortSignal): Promise<void> {
+    const running = this.#importing.get(image);
+    if (running) return running;
+    const work = (async () => {
+      await this.#install(signal);
+      const present = (await this.#cli.imageLabels(image, signal)) !== null;
+      if (present && !refresh) return;
+      const ids = scriptValues((await this.#cli.script("images", [image], signal)).stdout);
+      const docker = ids[`docker:${image}`] || null;
+      const imported = await this.#context.storage.get<string>(this.#importedKey(image));
+      if (present && (!docker || docker === imported)) return;
+      if (!docker) {
+        throw new Error(`${this.#host} has no image ${image}, in msb or in Docker, and bb-box never pulls one. Build it there with setup/docker/build.sh (setup/microsandbox/README.md).`);
+      }
+      const result = await this.#cli.script("import", [image], signal);
+      if (result.exitCode !== 0) throw this.#cli.error(`Importing ${image} from Docker on ${this.#host}`, result);
+      await this.#context.storage.set(this.#importedKey(image), scriptValues(result.stdout).imported || docker);
+    })().finally(() => this.#importing.delete(image));
+    this.#importing.set(image, work);
+    return work;
+  }
+
+  /** Installs msb and imports each kind's image anew when Docker's has changed. */
+  async maintain(signal?: AbortSignal): Promise<void> {
+    if (this.#config.machine && (await this.#context.machines?.connected(this.#config.machine)) !== true) return;
+    await this.#install(signal);
+    for (const image of new Set(MSB_KINDS.map((kind) => this.#config.images[kind]).filter((image): image is string => image !== null))) {
+      await this.#import(image, true, signal).catch((error) => this.#context.logError(`import ${image}`, error));
+    }
+  }
+
+  // Capacity and placement.
+
+  async #state(signal?: AbortSignal): Promise<HostState> {
+    await this.#install(signal);
+    const [facts, all] = await Promise.all([this.#hostFacts(signal), this.#cli.status(signal)]);
+    return { facts, boxes: all.filter((box) => box.name.startsWith("bbbox-")) };
+  }
+
+  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+    this.#kind(kind);
+    const machine = this.#config.machine;
+    if (machine && (await this.#context.machines?.connected(machine)) !== true) {
+      return { ok: false, message: `${this.#host} is offline in BB.`, warm: null, hosts: [{ host: this.#host, ok: false, limits: [] }] };
+    }
+    let state: HostState;
+    try {
+      state = await this.#state(signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return { ok: false, message: `${this.#host} did not answer: ${message(error)}`, warm: null, hosts: [{ host: this.#host, ok: false, limits: [] }] };
+    }
+    const placed = [...this.#placing.values()];
+    const unplaced = {
+      count: Math.max(0, pending.length - placed.length),
+      memoryMiB: Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - placed.reduce((sum, other) => sum + other.memoryMiB, 0)),
+    };
+    const room = this.#room(state, size, unplaced);
+    return { ok: room.why === null, message: room.why === null ? null : this.#full(kind, room.why), warm: null, hosts: [room.capacity] };
+  }
+
+  #room(state: HostState, size: BoxSize, unplaced = { count: 0, memoryMiB: 0 }): { capacity: HostCapacity; why: string | null } {
+    const { facts, boxes } = state;
+    const host = this.#host;
+    const listed = new Set(boxes.map((box) => box.name));
+    const running = boxes.filter((box) => powerOf(box.status) === "running");
+    const holding = new Set(running.map((box) => box.name));
+    const placing = [...this.#placing.values()];
+    const guests = boxes.length + placing.filter((other) => !listed.has(other.name)).length + unplaced.count;
+    const memoryUsed =
+      running.reduce((sum, box) => sum + box.memoryMiB, 0) + placing.filter((other) => !holding.has(other.name)).reduce((sum, other) => sum + other.memoryMiB, 0) + unplaced.memoryMiB;
+    const memoryFree = facts.memoryMiB - memoryUsed;
+    const reserve = this.#config.reserveMemoryMiB;
+    const limits: Limit[] = [
+      { resource: "guests", used: guests, total: this.#config.boxes, reserve: 0, unit: "count" },
+      { resource: "memory", used: memoryUsed, total: facts.memoryMiB, reserve, unit: "MiB" },
+    ];
+    let why: string | null = null;
+    if (facts.cpus && size.cores > facts.cpus) {
+      why = `${host} has ${facts.cpus} cores, fewer than the ${size.cores} asked for. Ask for at most ${facts.cpus} cores`;
+    } else if (guests >= this.#config.boxes) {
+      why = `${host} has ${guests} of the ${this.#config.boxes} bb-box microVMs it may have, counting stopped boxes and other installs' boxes. Release a box, or raise the most boxes in bb-box's settings`;
+    } else if (memoryFree - size.memoryMiB < reserve) {
+      const box = `a box with ${formatMiB(size.memoryMiB)}`;
+      why =
+        size.memoryMiB > memoryFree
+          ? `${host} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Ask for less memory or release a box`
+          : `${host} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve)} free, so ${box} does not fit. ` +
+            (memoryFree > reserve ? "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings" : "Release a box, or lower the memory kept free in bb-box's settings");
+    } else if (size.diskGiB !== null && size.diskGiB > facts.freeGiB) {
+      why = `${host} has ${facts.freeGiB} GiB free, less than the ${size.diskGiB} GiB disk asked for. Ask for a smaller disk`;
+    }
+    return { capacity: { host, ok: why === null, limits }, why };
+  }
+
+  #full(kind: string, why: string): string {
+    return `${this.label} cannot take this ${kind} box: ${why}.`;
+  }
+
+  #place(box: BoxIdentity, signal: AbortSignal): Promise<void> {
+    const placed = this.#placement.then(async () => {
+      const room = this.#room(await this.#state(signal), box.size);
+      if (room.why !== null) throw new BackendError("no_capacity", this.#full(box.kind, room.why));
+      this.#placing.set(box.boxId, { name: sandboxName(box.boxId), memoryMiB: box.size.memoryMiB });
+    });
+    this.#placement = placed.catch(() => undefined);
+    return placed;
+  }
+
+  // A box's life.
+
+  async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    const kind = this.#kind(box.kind);
+    const image = this.#config.images[box.kind as MsbKind]!;
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs);
+    const name = sandboxName(box.boxId);
+    const step = async <T>(stepName: string, run: () => Promise<T>): Promise<T> => {
+      const started = performance.now();
+      try {
+        return await run();
+      } finally {
+        hooks.timing(stepName, Math.round(performance.now() - started));
+      }
+    };
+    if (previous?.ref === name) this.#placing.set(box.boxId, { name, memoryMiB: box.size.memoryMiB });
+    else await step("place", () => this.#place(box, signal));
+    const guest = (size: BoxSize | null = null): Guest => ({ ref: name, host: this.#host, address: null, size, data: { box: box.boxId } });
+    try {
+      await hooks.claim(guest());
+      await step("image", () => this.#import(image, false, signal));
+      await step("create", () => this.#create(box, image, signal));
+      await hooks.starting();
+      await step("ready", () => this.#ready(name, deadline, signal));
+      const made = await this.#cli.inspect(name, signal);
+      if (!made) throw new Error(`The microVM ${name} went from ${this.#host} as it started.`);
+      const ready = guest(sizeOf(made));
+      await hooks.claim(ready);
+      return ready;
+    } catch (error) {
+      await this.#remove(name, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
+      throw error;
+    } finally {
+      this.#placing.delete(box.boxId);
+    }
+  }
+
+  /**
+   * Makes and boots the box's microVM, labelled with its owner. When one of
+   * that name is there already, it goes on with it if it is this box's, as
+   * after a restart, and fails if not. A record a failed create left, which
+   * msb lists nowhere, is replaced (053).
+   */
+  async #create(box: BoxIdentity, image: string, signal: AbortSignal): Promise<void> {
+    const name = sandboxName(box.boxId);
+    const labels: Record<string, string> = {
+      [LABELS.backend]: "microsandbox",
+      [LABELS.install]: this.#context.installId,
+      [LABELS.box]: box.boxId,
+      [LABELS.thread]: box.threadId,
+      [LABELS.name]: box.name,
+      [LABELS.kind]: box.kind,
+      [LABELS.created]: String(box.createdAt),
+    };
+    const args = (replace: boolean) => [
+      "create", image,
+      "--name", name,
+      "--pull", "never",
+      "--quiet",
+      ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
+      "--hostname", hostnameOf(box.name),
+      "--cpus", String(box.size.cores),
+      "--memory", `${box.size.memoryMiB}M`,
+      "--root-disk", `${box.size.diskGiB ?? this.#config.diskGiB}G`,
+      "--tmpfs", "/run",
+      "--net", this.#config.network,
+      // Docker's data on an ext4 disk of the box's own, as overlayfs cannot sit on msb's root (053).
+      ...(this.#config.docker ? ["--mount-owned", `/var/lib/docker:kind=disk,size=${this.#config.dockerDiskGiB}G`, "--env", "BBBOX_DOCKERD=1"] : []),
+      ...(replace ? ["--replace"] : []),
+    ];
+    const result = await this.#cli.run(args(false), { timeoutMs: 120_000, signal });
+    if (result.exitCode === 0) return this.#launch(name, signal);
+    if (/already exists/i.test(result.stderr)) {
+      const found = await this.#cli.inspect(name, signal);
+      if (found) {
+        if (!this.#ours(found, box.boxId)) throw new Error(`The microVM ${name} on ${this.#host} belongs to another box, so bb-box left it alone.`);
+        if (powerOf(found.status) !== "running") return this.#boot(name, signal);
+        return this.#launch(name, signal);
+      }
+      const again = await this.#cli.run(args(true), { timeoutMs: 120_000, signal });
+      if (again.exitCode === 0) return this.#launch(name, signal);
+      throw this.#cli.error("msb create", again);
+    }
+    throw this.#cli.error("msb create", result);
+  }
+
+  /** Starts a stopped microVM, then its image's command. */
+  async #boot(name: string, signal?: AbortSignal): Promise<void> {
+    await this.#cli.ok(["start", "--quiet", name], { timeoutMs: 120_000, signal });
+    await this.#launch(name, signal);
+  }
+
+  /** Starts the image's command as root, detached, once per boot: neither `msb create` nor `msb start` runs it (053). */
+  async #launch(name: string, signal?: AbortSignal): Promise<void> {
+    const script = `[ -e ${STARTED} ] || { : >${STARTED}; setsid -f ${START} >/run/bb-box-start.log 2>&1 </dev/null; }`;
+    await this.#cli.ok(["exec", name, "--", "/bin/sh", "-c", script], { timeoutMs: 30_000, signal });
+  }
+
+  async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
+    const started = performance.now();
+    await this.#remove(guest.ref, this.#boxOf(guest), signal);
+    hooks.timing("delete", Math.round(performance.now() - started));
+  }
+
+  async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
+    let found: SandboxInfo | null;
+    try {
+      found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return "unknown";
+    }
+    return found ? powerOf(found.status) : null;
+  }
+
+  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void> {
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    let at = performance.now();
+    const mark = (step: string) => {
+      const now = performance.now();
+      timing?.(step, Math.round(now - at));
+      at = now;
+    };
+    if (powerOf(found.status) !== "running") await this.#boot(guest.ref, signal);
+    else await this.#launch(guest.ref, signal);
+    mark("boot");
+    await this.#ready(guest.ref, deadline, signal);
+    mark("ready");
+  }
+
+  async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    if (powerOf(found.status) !== "running") return;
+    const graceful = await this.#cli.run(["stop", "--quiet", "--timeout", "10", guest.ref], { timeoutMs: 60_000, signal });
+    if (graceful.exitCode !== 0) await this.#cli.ok(["stop", "--quiet", "--force", guest.ref], { timeoutMs: 60_000, signal });
+  }
+
+  /** A box's new owner and name, as when a spare becomes yours (036), on its labels. The hostname inside stays. */
+  async relabel(guest: Guest, box: BoxIdentity, _from: string, signal?: AbortSignal): Promise<void> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) return;
+    await this.#cli.ok(["modify", guest.ref, "--label", `${LABELS.thread}=${box.threadId}`, "--label", `${LABELS.name}=${box.name}`], { timeoutMs: 30_000, signal });
+  }
+
+  async held(signal?: AbortSignal): Promise<HeldGuest[]> {
+    const listed = await this.#cli.list({ [LABELS.backend]: "microsandbox", [LABELS.install]: this.#context.installId }, signal);
+    const found = await Promise.all(listed.map((entry) => this.#cli.inspect(entry.name, signal)));
+    return found
+      .filter((sandbox): sandbox is SandboxInfo => sandbox !== null && sandbox.labels[LABELS.install] === this.#context.installId)
+      .map((sandbox) => ({
+        ref: sandbox.name,
+        host: this.#host,
+        address: null,
+        size: sizeOf(sandbox),
+        data: dataOf(sandbox),
+        owner: ownerOf(sandbox.labels),
+        power: powerOf(sandbox.status),
+      }));
+  }
+
+  async transports(guest: Guest, kind: string): Promise<BoxTransports> {
+    await this.#cli.prepare();
+    const command = new MsbTransport(this.#cli, guest.ref);
+    const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
+    const displays = (capabilities?.displays ?? []).map(
+      (display): Display => ({
+        ...display,
+        label: "Desktop",
+        open: async (signal) => {
+          const password = await this.#vncPassword(command, signal);
+          return { route: await command.route(VNC_PORT, signal), auth: password ? { type: "vnc-password", password } : { type: "none" } };
+        },
+        minSize: MIN_DESKTOP,
+      }),
+    );
+    // No SSH server is reached in a box, so only BB's server reaches it, through msb exec.
+    return { command, displays, access: null };
+  }
+
+  async doctor(signal?: AbortSignal): Promise<DoctorReport> {
+    const checks: DoctorCheck[] = [];
+    const notes: string[] = [`This install's ID is ${this.#context.installId}. Its microVMs carry the label ${LABELS.install}=${this.#context.installId}.`];
+    const push = (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix: string | null = null) => checks.push({ id, name, status, detail, fix });
+    const skip = (id: CheckId, name: string) => push(id, name, "skipped", "Skipped until the checks above pass.");
+    const images = [...new Set(MSB_KINDS.map((kind) => this.#config.images[kind]).filter((image): image is string => image !== null))];
+    const hostName = `Host ${this.#host}`;
+
+    let facts: HostFacts | null = null;
+    try {
+      await this.#cli.prepare(signal);
+      facts = await this.#hostFacts(signal, true);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const fix = this.#config.machine
+        ? `Check that ${this.#host} is connected in BB.`
+        : this.#config.host
+          ? `Check that the user BB runs as logs in to ${this.#host} over SSH without a prompt.`
+          : "Check that sh runs for the user BB runs as.";
+      push("microsandbox.host", hostName, "fail", message(error), fix);
+    }
+    if (facts) {
+      const about = `${facts.os} ${facts.arch}, kernel ${facts.kernel}, ${facts.cpus} cores, ${formatMiB(facts.memoryMiB)}, ${facts.freeGiB} GiB free`;
+      if (facts.os !== "Linux") push("microsandbox.host", hostName, "fail", `${about}. bb-box runs msb on Linux hosts for now; Macs come later.`, "Use a Linux host with KVM.");
+      else if (facts.arch !== "x86_64") push("microsandbox.host", hostName, "fail", `${about}. The images are x86_64.`, "Use an x86_64 host.");
+      else push("microsandbox.host", hostName, "ok", `${about}.`);
+
+      if (facts.installed === MSB_VERSION) push("microsandbox.msb", "msb", "ok", `msb ${MSB_VERSION}, as bb-box pins it, in ${facts.dir}.`);
+      else
+        push(
+          "microsandbox.msb",
+          "msb",
+          "warn",
+          facts.installed ? `msb ${facts.installed} is in ${facts.dir}; this bb-box pins ${MSB_VERSION}.` : `msb is not installed in ${facts.dir} yet.`,
+          `bb-box installs msb ${MSB_VERSION} there, checked by its SHA-256, with the next box or within a few minutes. It needs curl and tar on the host.`,
+        );
+
+      const kvmFix = `Let the user BB runs as on ${this.#host} use /dev/kvm: add it to the kvm group, then restart its services (sudo systemctl restart user@$(id -u).service) so BB's daemon has the group.`;
+      if (facts.kvm === "ok") push("microsandbox.kvm", "KVM", "ok", "/dev/kvm is there, and BB's user may use it.");
+      else if (facts.kvm === "denied") push("microsandbox.kvm", "KVM", "fail", "/dev/kvm is there, but BB's user may not use it, so no box starts.", kvmFix);
+      else push("microsandbox.kvm", "KVM", "fail", `${this.#host} has no /dev/kvm, so no box starts.`, "Use a Linux host with KVM: the machine itself, or a VM with nested virtualisation on.");
+
+      if (facts.lxc) {
+        push(
+          "microsandbox.lxc",
+          "LXC",
+          "warn",
+          `${this.#host} is an LXC container. Its seccomp filter refuses FICLONE, so msb's snapshots and flat roots fail there (053). Boxes work.`,
+          "Run msb on a VM or the machine itself, for spares from snapshots or forks later.",
+        );
+      }
+      notes.push(
+        `msb's state and images take ${facts.usedGiB} GiB in ${facts.dir}/home on ${this.#host}. ${facts.reflink ? "Its disk copies share blocks (reflinks)." : "Its file system has no reflinks, so msb copies a box's disk to fork or snapshot it."}`,
+      );
+
+      const docker = facts.docker;
+      const [linuxPins, desktopPins, app] = await Promise.all([
+        this.#context.images?.pins("linux") ?? null,
+        this.#context.images?.pins("linux-desktop") ?? null,
+        this.#context.images?.bbApp(signal) ?? null,
+      ]).catch(() => [null, null, null] as const);
+      const ids = images.length ? scriptValues((await this.#cli.script("images", images, signal).catch(() => ({ stdout: "" }))).stdout) : {};
+      for (const image of images) {
+        const serves = MSB_KINDS.filter((kind) => this.#config.images[kind] === image);
+        const id = `image.${image}` as const;
+        const name = `Image ${image}`;
+        const labels = facts.installed ? await this.#cli.imageLabels(image, signal).catch(() => null) : null;
+        const inDocker = ids[`docker:${image}`] || null;
+        if (!labels) {
+          if (inDocker) push(id, name, "warn", `msb on ${this.#host} has no ${image} yet. Docker there has it.`, `bb-box imports it from Docker with the first ${serves.join(" or ")} box, or within a few minutes.`);
+          else
+            push(
+              id,
+              name,
+              "fail",
+              `${this.#host} has no image ${image}, in msb${docker ? " or in Docker" : ", and has no Docker to import it from"}. bb-box never pulls images.`,
+              "Build it on the host with setup/docker/build.sh, and bb-box imports it into msb (setup/microsandbox/README.md).",
+            );
+          continue;
+        }
+        const imported = await this.#context.storage.get<string>(this.#importedKey(image));
+        const judged = judgeImage(recordFromJson(labels[LABELS.imageRecord]), { os: "linux", pins: serves.includes("linux") ? linuxPins : desktopPins, bbApp: app }, "Build it again on the host with setup/docker/build.sh, and bb-box imports it.");
+        const behind = inDocker && imported && inDocker !== imported ? " Docker has a newer build, which bb-box imports within a few minutes." : "";
+        push(id, name, judged.status, `For ${serves.join(", ")} boxes. ${judged.detail}${behind}`, judged.fix);
+      }
+
+      let state: HostState | null = null;
+      try {
+        state = facts.installed ? { facts, boxes: (await this.#cli.status(signal)).filter((box) => box.name.startsWith("bbbox-")) } : { facts, boxes: [] };
+      } catch (error) {
+        if (signal?.aborted) throw error;
+      }
+      if (state) {
+        const room = this.#room(state, this.#context.kind(this.#kinds[0]?.id ?? "linux").defaultSize);
+        push(
+          "microsandbox.capacity",
+          `Room on ${this.#host}`,
+          room.why === null ? "ok" : "warn",
+          room.why ?? room.capacity.limits.map((limit) => `${limit.resource} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}`).join(", "),
+          room.why === null ? null : "Release a box, or change the most boxes or the memory kept free in bb-box's settings.",
+        );
+      }
+      const sizes = sizesCheck({
+        id: "microsandbox.sizes",
+        name: "Box sizes",
+        host: this.#host,
+        has: `${facts.cpus} cores and ${formatMiB(facts.memoryMiB)} memory`,
+        keepsMiB: this.#config.reserveMemoryMiB,
+        kinds: this.#kinds.map((kind) => ({ kind: kind.id, settings: this.#context.kind(kind.id), largest: { cores: facts!.cpus || Infinity, memoryMiB: facts!.memoryMiB - this.#config.reserveMemoryMiB, diskGiB: null } })),
+      });
+      if (sizes) checks.push(sizes);
+    } else {
+      skip("microsandbox.msb", "msb");
+      skip("microsandbox.kvm", "KVM");
+      for (const image of images) skip(`image.${image}`, `Image ${image}`);
+    }
+
+    const ok = checks.every((check) => check.status !== "fail");
+    const first = checks.find((check) => check.status === "fail");
+    return { ok, summary: ok ? `msb ${MSB_VERSION} on ${this.#host}` : `${first!.name}: ${first!.detail}`, checks, notes };
+  }
+
+  // Helpers.
+
+  #boxOf(guest: Guest): string | null {
+    return typeof guest.data?.box === "string" ? guest.data.box : null;
+  }
+
+  #gone(guest: Guest): BackendError {
+    return new BackendError("gone", `The microVM ${guest.ref} no longer exists on ${guest.host ?? this.#host}.`);
+  }
+
+  #ours(sandbox: SandboxInfo, boxId: string | null): boolean {
+    const labels = sandbox.labels;
+    if (labels[LABELS.backend] !== "microsandbox" || labels[LABELS.install] !== this.#context.installId) return false;
+    const box = labels[LABELS.box];
+    return !!box && (boxId !== null ? box === boxId : sandboxName(box) === sandbox.name);
+  }
+
+  /** The microVM `ref` when its labels name this install and the box, or null. */
+  async #owned(ref: string, boxId: string | null, signal?: AbortSignal): Promise<SandboxInfo | null> {
+    const found = await this.#cli.inspect(ref, signal);
+    return found && this.#ours(found, boxId) ? found : null;
+  }
+
+  /** Removes the box's microVM and its disks, if it is this install's and the box's. */
+  async #remove(ref: string, boxId: string | null, signal?: AbortSignal): Promise<void> {
+    const found = await this.#owned(ref, boxId, signal);
+    if (!found) return;
+    const result = await this.#cli.run(["remove", "--force", "--quiet", ref], { timeoutMs: 120_000, signal });
+    if (result.exitCode !== 0 && !NOT_FOUND.test(result.stderr)) throw this.#cli.error("msb remove", result);
+  }
+
+  /** Waits for the image's command to say the box is up, in one `msb exec`. */
+  async #ready(name: string, deadline: number, signal?: AbortSignal): Promise<void> {
+    const seconds = Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
+    const script = `i=0; while [ ! -e ${READY_FILE} ]; do i=$((i+1)); [ "$i" -le ${seconds * 10} ] || exit 3; sleep 0.1; done`;
+    const result = await this.#cli.run(["exec", "--stream", "-u", BOX_USER, name, "--", "/bin/sh", "-c", script], { timeoutMs: (seconds + 30) * 1000, signal });
+    if (result.exitCode === 0) return;
+    if (signal?.aborted) throw signal.reason;
+    const found = await this.#cli.inspect(name, signal).catch(() => null);
+    if (found && powerOf(found.status) !== "running") throw new Error(`The microVM ${name} stopped as it started (${found.status}).`);
+    if (result.exitCode !== 3) throw new MsbError(`msb exec could not wait for ${name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    throw new Error(`The microVM ${name} was not ready within ${seconds} s.`);
+  }
+
+  async #vncPassword(command: MsbTransport, signal?: AbortSignal): Promise<string | null> {
+    const result = await command.run(`cat ${VNC_PASSWORD_FILE} 2>/dev/null || :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
+    if (result.exitCode !== 0) throw new Error(`Cannot read the desktop's VNC password through msb exec: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    return result.stdout.trim() || null;
+  }
+}
