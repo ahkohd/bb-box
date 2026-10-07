@@ -317,6 +317,16 @@ test("a try runs the script as a build does, then the check and the kind's check
   assert.ok(lxc.ran.some((one) => one.script.includes(`BB_BOX_IMAGE='rust' BB_BOX_KIND='linux' BB_BOX_BACKEND='proxmox-lxc'`)));
 });
 
+test("a try whose script passed but a later check failed says which check failed first, so the agent fixes the right thing", () => {
+  const base = { ok: false, backend: "proxmox-lxc", kind: "linux", seconds: 25, reason: null, output: [] } as const;
+  const script = { name: "the script and the check, in the build box", ok: true, detail: "6 s, with finalizing" };
+  const onBuild = { name: "the check, on a box of the build", ok: false, detail: "exit code 3: no /tmp/marker" };
+  assert.match(tryText({ ...base, checks: [script, onBuild] } as never), /^The script passed on proxmox-lxc \(linux\), in 25 s, as a build runs it, but this failed: the check, on a box of the build\.\n/);
+  const kinds = { name: "the kind's check (bb-box-check-headless)", ok: false, detail: "ssh: FAIL" };
+  assert.match(tryText({ ...base, checks: [script, { ...onBuild, ok: true }, kinds] } as never), /, but this failed: the kind's check \(bb-box-check-headless\)\.\n/);
+  assert.match(tryText({ ...base, checks: [{ ...script, ok: false }] } as never), /^The script failed on proxmox-lxc \(linux\), in 25 s, as a build runs it\.\n/);
+});
+
 test("a try's check line says ok with its time, or FAIL with its exit code and the line that says why, never the check's own output on a pass", () => {
   const ran = { exitCode: 0, timedOut: false, durationMs: 1234, stdout: " __________\n< image ok >\n                ||     ||\n" };
   assert.equal(checkDetail(ran), "passed in 1.2 s");
