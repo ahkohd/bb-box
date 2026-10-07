@@ -2,8 +2,9 @@
 
 This backend runs `windows-desktop` boxes as Windows 11 VMs on a Proxmox VE
 host. A box is a linked clone of a template you build once, installed
-unattended from your own ISO. A new box takes about CLONE_SECONDS; the warm
-pool keeps boxes hibernated, and one of those is ready in under 10 s.
+unattended from your own ISO. The warm pool keeps boxes hibernated, and one of
+those is ready in under 10 s. A new clone takes about a minute, sometimes
+more, mostly Windows booting.
 
 The backend shares the Proxmox LXC backend's host settings, bridge, pool, API
 token and SSH key. How bb-box drives a box is in the
