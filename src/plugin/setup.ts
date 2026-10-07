@@ -220,6 +220,8 @@ export interface SetupOptions {
   readonly controlStaleMs?: number;
   /** How long a deploy waits for box_run's commands still running (#405). */
   readonly drainMs?: number;
+  /** How long box_run waits before a command goes on as a job (#486). */
+  readonly runWaitMs?: number;
   /** How long a viewer holding control has to connect again after the box ended its connection. */
   readonly controlReconnectMs?: number;
   /** How long a terminal session stays with no tab showing it. */
@@ -987,7 +989,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
   };
 
-  registerTools(bb, api, { drainMs: options.drainMs });
+  registerTools(bb, api, { drainMs: options.drainMs, runWaitMs: options.runWaitMs });
   registerComputerTools(bb, api);
   registerRpc(bb, api);
   registerCli(bb, api);

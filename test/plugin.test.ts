@@ -52,7 +52,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -291,6 +291,7 @@ async function start(
     controlReconnectMs: options.controlReconnectMs,
     controlStaleMs: options.controlStaleMs,
     drainMs: options.drainMs,
+    runWaitMs: options.runWaitMs,
   };
   const app = await setup(bb, setupOptions);
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
@@ -469,6 +470,30 @@ test("a deploy lets box_run's commands finish and takes no new ones, and a comma
   assert.ok(text(stopped).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends.`), text(stopped));
   await disposing;
   assert.equal(readFileSync(join(home, ".local/state/bb-box/jobs", job, "out"), "utf8"), "long\n", "the command's output is in the box");
+});
+
+test("box_run returns before BB ends a tool call: a Linux command goes on as a job with its output so far, and a Windows one is stopped with its output and why (#486)", async (t) => {
+  const linux = await start({ "fake-enabled": true, "enrol-boxes": false }, { runWaitMs: 1_000 });
+  t.after(() => linux.harness.lifecycle.dispose());
+  await linux.tool("box_acquire", {});
+  const box = await only(linux.app);
+  const long = await linux.tool("box_run", { box: box.name, command: "echo started; sleep 2; echo finished", timeout_seconds: 600 });
+  assert.equal(isError(long), false, text(long));
+  const job = /as job ([0-9a-f]{12})/.exec(text(long))?.[1];
+  assert.ok(job, text(long));
+  assert.match(text(long), /^The command still runs in box \S+ after 1 s, and goes on there as job [0-9a-f]{12}: BB ends a tool call at about five minutes, so box_run returns before then\. The end of its output so far:\n\nstdout:\nstarted\n/);
+  await until("the job to end", async () => /ended with exit code 0/.test(text(await linux.tool("box_job", { box: box.name, job: job! }))));
+  // A short command is answered as before.
+  assert.match(text(await linux.tool("box_run", { box: box.name, command: "echo quick" })), /^Exit code 0/);
+
+  const windows = await start({ "fake-enabled": true, "enrol-boxes": false }, { kinds: [FAKE_WINDOWS_KIND], shell: FAKE_PWSH, runWaitMs: 1_000 });
+  t.after(() => windows.harness.lifecycle.dispose());
+  const name = /Box (\S+) \(/.exec(text(await windows.tool("box_acquire", { kind: "windows" })))![1]!;
+  const cut = await windows.tool("box_run", { box: name, command: "echo started; sleep 5", timeout_seconds: 600 });
+  assert.equal(isError(cut), true);
+  // The fake's shell keeps no output from a command it stops; a Windows box's does, which the live check covers.
+  assert.match(text(cut), /^Timed out in box \S+ after 1\.\d s\./);
+  assert.ok(text(cut).endsWith("Next: BB ends a tool call at about five minutes, so box_run stops a Windows command after 1 s, as Windows has no jobs yet. Start a long one with Start-Detached { <cmd> } job.log, then read job.log with box_run."), text(cut));
 });
 
 test("box_job gives a job's output while it runs and its exit code once it ends, and the box's next command removes it (#405)", async (t) => {

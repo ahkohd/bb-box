@@ -9,7 +9,7 @@ import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
-import { DRAIN_MS, Drain, Restarted } from "./drain.ts";
+import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, tryText, type KindView } from "./views.ts";
 
@@ -18,6 +18,13 @@ export const RUN_OUTPUT_BYTES = 32 * 1024;
 /** Largest file box_copy moves. */
 export const COPY_MAX_BYTES = 16 * 1024 * 1024;
 const RUN_TIMEOUT_S = 10 * 60;
+/**
+ * How long box_run waits for a command (#486). BB ends a tool call at about
+ * five minutes with "terminated", without telling the plugin, so box_run
+ * returns before then: a Linux or macOS command goes on as a job, and a
+ * Windows one, which ends with bb-box's connection, is stopped then.
+ */
+export const RUN_WAIT_MS = 270_000;
 const RUN_TIMEOUT_MAX_S = 60 * 60;
 
 const HINTS: Record<BoxErrorCode, string> = {
@@ -139,7 +146,8 @@ function ownerWords(box: BoxRecord): string {
 
 export const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
 
-export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number } = {}): void {
+export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number; runWaitMs?: number } = {}): void {
+  const runWaitMs = options.runWaitMs ?? RUN_WAIT_MS;
   const { boxes } = app;
   // Registered after the core's hooks, so it runs first, while boxes and
   // backends still work (#405).
@@ -268,6 +276,16 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
+  /** A command still running when box_run stopped waiting (#486): it goes on as a job, with its output so far. */
+  const detached = async (owner: string, box: BoxRecord, job: string, signal: AbortSignal): Promise<PluginAgentToolResult> => {
+    const head = `The command still runs in box ${box.name} after ${Math.round(runWaitMs / 1000)} s, and goes on there as job ${job}: BB ends a tool call at about five minutes, so box_run returns before then.`;
+    const so = await boxes.job(owner, box.id, job, { signal, maxOutputBytes: RUN_OUTPUT_BYTES }).catch(() => null);
+    // It may have ended as box_run stopped waiting: then that is its result.
+    if (so?.job?.state === "ended") return `${outputText(`Exit code ${so.job.exitCode} in box ${box.name}, as job ${job}.`, so.job)}${next("Run more with box_run.")}`;
+    const text = so?.job?.state === "running" ? outputText(`${head} The end of its output so far:`, so.job) : head;
+    return `${text}${next(`Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends.`)}`;
+  };
+
   bb.agents.registerTool({
     name: "box_run",
     description:
@@ -284,40 +302,50 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         .max(RUN_TIMEOUT_MAX_S)
         .optional()
         .describe(
-          `Seconds before the command, and everything it started, is stopped. Defaults to ${RUN_TIMEOUT_S}. box_run returns when the script's shell exits. Start a server in the background with its output redirected, so it keeps working after that: nohup <cmd> >server.log 2>&1 &, or on Windows Start-Detached { <cmd> } server.log`,
+          `Seconds before the command, and everything it started, is stopped. Defaults to ${RUN_TIMEOUT_S}. box_run returns when the script's shell exits, or after ${RUN_WAIT_MS / 1000} s, as BB ends a tool call at about five minutes: a Linux or macOS command still running then goes on as a job for box_job, and a Windows one is stopped then, so start a long one with Start-Detached. Start a server in the background with its output redirected, so it keeps working after that: nohup <cmd> >server.log 2>&1 &, or on Windows Start-Detached { <cmd> } server.log`,
         ),
       stdin: z.string().optional().describe("Text to send to the command's standard input."),
       desktop: z.boolean().optional().describe("Run in the box's desktop session so it can open windows. Desktop boxes only."),
     }),
     async execute({ box: ref, command, cwd, timeout_seconds, stdin, desktop }, { threadId, signal }) {
       const job = newJobId();
-      let target: BoxRecord | undefined;
+      let target: { owner: string; box: BoxRecord } | undefined;
       try {
         const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
-        target = found;
-        const { box, result } = await drain.run(signal, (signal) =>
-          boxes.run(owner, found.id, command, {
-            cwd,
-            stdin,
-            timeoutMs: (timeout_seconds ?? RUN_TIMEOUT_S) * 1000,
-            session: desktop ? "desktop" : "default",
-            signal,
-            maxOutputBytes: RUN_OUTPUT_BYTES,
-            job,
-          }),
+        target = { owner, box: found };
+        // Windows has no jobs yet (#414): its command is stopped at the wait's end, with its output so far.
+        const windows = found.capabilities.os === "windows";
+        const asked = (timeout_seconds ?? RUN_TIMEOUT_S) * 1000;
+        const cut = windows && asked > runWaitMs;
+        const { box, result } = await drain.run(
+          signal,
+          (signal) =>
+            boxes.run(owner, found.id, command, {
+              cwd,
+              stdin,
+              timeoutMs: cut ? runWaitMs : asked,
+              session: desktop ? "desktop" : "default",
+              signal,
+              maxOutputBytes: RUN_OUTPUT_BYTES,
+              job,
+            }),
+          { detachMs: windows ? undefined : runWaitMs },
         );
         const text = runText(box, result);
-        const background = box.capabilities.os === "windows" ? "Start-Detached { <cmd> } job.log" : "nohup <cmd> >job.log 2>&1 &";
-        const hints = result.timedOut
-          ? [`Give timeout_seconds more time, or start a long job in the background with ${background} and check on it.`]
-          : [`Run more with box_run, or copy results out with box_copy (direction from_box).`];
+        const background = windows ? "Start-Detached { <cmd> } job.log" : "nohup <cmd> >job.log 2>&1 &";
+        const hints = !result.timedOut
+          ? [`Run more with box_run, or copy results out with box_copy (direction from_box).`]
+          : cut
+            ? [`BB ends a tool call at about five minutes, so box_run stops a Windows command after ${Math.round(runWaitMs / 1000)} s, as Windows has no jobs yet. Start a long one with Start-Detached { <cmd> } job.log, then read job.log with box_run.`]
+            : [`Give timeout_seconds more time, or start a long job in the background with ${background} and check on it.`];
         return result.exitCode === 0 && !result.timedOut
           ? `${text}${next(...hints)}`
           : { content: [{ type: "text", text: `${text}${next(...hints)}` }], isError: result.timedOut };
       } catch (error) {
         // A command that fails while bb-box stops may go on too.
         const stopping = drain.closed && !(error instanceof BoxError && error.code === "restarting");
-        if (target && (error instanceof Restarted || stopping)) return restarted(target, job, error instanceof Restarted);
+        if (target && error instanceof Detached) return detached(target.owner, target.box, job, signal);
+        if (target && (error instanceof Restarted || stopping)) return restarted(target.box, job, error instanceof Restarted);
         return failure(error, "Running the command");
       }
     },

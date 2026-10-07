@@ -25,6 +25,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | draft | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
 | [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | draft | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
 | [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | draft | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
+| [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | draft | `box_run` returns after 270 s: a Linux or macOS command goes on as a job for `box_job`, and a Windows one is stopped (#486) |
 
 ## 1. BB's host app on Windows
 
@@ -673,6 +674,28 @@ contained as `headerContent` is, for an icon button or a short status.
 
 **Until then.** The gear is bb-box's `headerContent`, at the bar's right,
 before BB's buttons.
+
+## 19. Tool calls longer than five minutes
+
+**What bb-box needs.** A tool call that runs as long as its tool says, such as
+`box_run` with `timeout_seconds` up to 3600, or else to be told when BB gives
+up on one.
+
+**What BB does now.** An agent's call to a plugin tool ends after about 300 s
+with only "terminated", the message of an HTTP response whose body stalled for
+five minutes, Node's default. The plugin's call is not aborted: its signal
+stays live and the command goes on, so the plugin cannot say what happened,
+and its eventual answer goes nowhere (measured on 7 October 2026 with a 330 s
+`box_run` on a Linux box, and in #486 on Windows).
+
+**What we ask.** Keep a tool call's request open while the plugin works, by
+sending keep-alive bytes or progress, up to a stated limit; or abort the
+plugin's signal with a reason when BB ends the call, and document the limit.
+
+**Until then.** `box_run` returns after 270 s. A Linux or macOS command still
+running then goes on in its box as a job, and the answer names it with its
+output so far for `box_job`. A Windows command is stopped then, with its
+output so far, as Windows boxes have no jobs yet (#414).
 
 ## Checked, no request needed
 
