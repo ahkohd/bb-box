@@ -345,7 +345,8 @@ A box is a resource of its thread and gets what the thread's machine has.
   `git` takes GitHub credentials from `gh`, and fetches GitHub's SSH URLs
   over HTTPS.
 - **Child threads.** A child thread can run on an enrolled box
-  (`box_thread`), and BB's new-thread screen can start a thread on a new
+  (`box_thread`), with its parent's agent and model when the box has that
+  agent's CLI (#561). BB's new-thread screen can start a thread on a new
   box, which goes with the thread
   ([033](decisions/033-a-thread-can-start-on-a-new-box.md)).
 - **Your machines.** Boxes you own, kept as BB machines under names you
