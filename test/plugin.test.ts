@@ -485,7 +485,7 @@ test("a deploy lets box_run's commands finish and takes no new ones, and a comma
   assert.equal(isError(stopped), true);
   const job = /It goes on there as job ([0-9a-f]{12})\./.exec(text(stopped))?.[1];
   assert.ok(job, text(stopped));
-  assert.ok(text(stopped).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends.`), text(stopped));
+  assert.ok(text(stopped).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is back within a minute; until then the box may not answer.`), text(stopped));
   await disposing;
   assert.equal(readFileSync(join(home, ".local/state/bb-box/jobs", job, "out"), "utf8"), "long\n", "the command's output is in the box");
 });
@@ -531,7 +531,7 @@ test("a command whose box stops answering as bb-box stops for a deploy, as a Doc
   assert.equal(isError(answer), true);
   const job = /It may go on there as job ([0-9a-f]{12})\./.exec(text(answer))?.[1];
   assert.ok(job, text(answer));
-  assert.ok(text(answer).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends.`), text(answer));
+  assert.ok(text(answer).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is back within a minute; until then the box may not answer.`), text(answer));
 });
 
 test("box_job gives a job's output while it runs and its exit code once it ends, and the box's next command removes it (#405)", async (t) => {

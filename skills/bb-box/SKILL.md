@@ -51,7 +51,9 @@ Limits:
 - If bb-box restarts mid-command, as for an update, `box_run` waits up to 60 s
   for the command. One still running then goes on in the box as a job, and
   `box_run`'s error names it: `box_job` gives its exit code and output once it
-  ends.
+  ends. bb-box is back within a minute. Until then a box on Docker on a BB
+  machine may not answer: wait about 30 s and try again, and do not release
+  it, since its commands and jobs go on.
 - BB ends a tool call at about five minutes, so `box_run` returns after 270 s.
   A command still running then goes on as a job: the answer names it and gives
   its output so far, and `box_job` gives the rest. On Windows too, since a job

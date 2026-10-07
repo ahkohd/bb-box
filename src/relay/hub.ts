@@ -24,6 +24,13 @@ export const IDLE_MS = 5 * 60_000;
  * machine that slept: a new connection asks BB about the machine first.
  */
 export const STALE_MS = 20_000;
+/**
+ * How long after its relay was lost, or bb-box started, a machine's relay
+ * counts as coming back (#415). At a deploy, BB stops the machine's worker,
+ * and bb-box's relay with it, and the new instance's first relay opens once
+ * BB has started the worker again: about 30 s (7 October 2026).
+ */
+export const REOPEN_MS = 2 * 60_000;
 
 /** The parts of BB's plugin WebSocket the hub uses. */
 export interface RelaySocket {
@@ -94,6 +101,11 @@ export class RelayHub {
   readonly #machines = new Map<string, Machine>();
   readonly #pending = new Map<string, Pending>();
   #disposed = false;
+  /** Each machine's open relay, the machines whose relay has opened, and when one was last lost or failed to open (#415). */
+  readonly #current = new Map<string, Mux>();
+  readonly #everOpened = new Set<string>();
+  readonly #lostAt = new Map<string, number>();
+  readonly #startedAt = Date.now();
 
   constructor(deps: RelayHubDeps) {
     this.#deps = deps;
@@ -164,8 +176,14 @@ export class RelayHub {
             pingMs: this.#deps.pingMs,
             deadMs: this.#deps.deadMs,
             onClose: (reason) => {
+              // An older relay can end after a newer one opened: only the machine's current one is lost.
+              const current = this.#current.get(pending.hostId) === mux;
+              if (current) {
+                this.#current.delete(pending.hostId);
+                this.#lostAt.set(pending.hostId, Date.now());
+              }
               const machine = this.#machines.get(pending.hostId);
-              if (machine) {
+              if (machine && current) {
                 machine.relay = null;
                 this.#stopIdle(machine);
               }
@@ -173,6 +191,8 @@ export class RelayHub {
             },
           },
         );
+        this.#current.set(pending.hostId, mux);
+        this.#everOpened.add(pending.hostId);
         pending.resolve(mux);
       },
       onMessage: (_socket: RelaySocket, data: string | Uint8Array) => {
@@ -187,6 +207,18 @@ export class RelayHub {
    * Ends the machine's relay, as when BB says its worker exited, so the next
    * connection finds out at once rather than when the pings stop.
    */
+  /**
+   * Whether the relay to a machine is coming back (#415): none is open, and
+   * the last was lost or failed to open, or bb-box started with none yet, less
+   * than REOPEN_MS ago, as at a deploy. A box there that does not answer
+   * then is to be waited for, not released.
+   */
+  reopening(hostId: string, now = Date.now()): boolean {
+    if (this.#current.has(hostId)) return false;
+    const since = Math.max(this.#lostAt.get(hostId) ?? 0, this.#everOpened.has(hostId) ? 0 : this.#startedAt);
+    return since > 0 && now - since < REOPEN_MS;
+  }
+
   drop(hostId: string, reason: string): void {
     void this.#machines.get(hostId)?.relay?.then(
       (mux) => mux.close(reason),
@@ -269,6 +301,7 @@ export class RelayHub {
     const opening = this.#open(machine.hostId);
     machine.relay = opening;
     opening.catch(() => {
+      this.#lostAt.set(machine.hostId, Date.now());
       if (machine.relay === opening) machine.relay = null;
     });
     return opening;
