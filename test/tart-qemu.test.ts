@@ -168,6 +168,10 @@ test("offers windows-arm64-desktop only with a Windows image, as a Windows deskt
   });
   assert.equal(kind.readyTimeoutMs, 3 * 60_000);
   assert.match(kind.description, /x64 apps run under Windows' emulation, more slowly; x64 drivers do not/);
+  // Its boxes join BB only on trial, as on Proxmox QEMU (#539), and the macOS and Linux kinds as ever.
+  const trial = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-windows-enrol": true }), testContext()).kinds();
+  assert.equal(trial.find((candidate) => candidate.id === KIND)?.capabilities.enrol, true);
+  assert.ok(trial.filter((candidate) => candidate.id !== KIND).every((candidate) => candidate.capabilities.enrol));
 });
 
 test("reads QEMU's VMs and its checks from the state script", () => {

@@ -1,14 +1,14 @@
-// Windows boxes as BB machines: a trial, off unless the Proxmox QEMU
-// backend's setting is on (#539). BB's bootstrap runs its POSIX installer,
-// install.sh, whatever the machine's OS, and install.sh runs only on macOS
-// and Linux. A provider's machine gets no Windows enrolment command, and
-// install.ps1 serves only manual enrolments. So bb-box makes a Windows box's
-// machine with BB's manual provider, and runs that machine's enrolment
+// Windows boxes as BB machines: a trial, off unless the setting of the
+// Proxmox QEMU or Tart backend is on (#539). BB's bootstrap runs its POSIX
+// installer, install.sh, whatever the machine's OS, and install.sh runs only
+// on macOS and Linux. A provider's machine gets no Windows enrolment command,
+// and install.ps1 serves only manual enrolments. So bb-box makes a Windows
+// box's machine with BB's manual provider, and runs that machine's enrolment
 // command in its Windows form, `windowsCommand`, which fetches install.ps1
-// with the machine's credential (enrol.ts). It runs in the box user's
-// desktop session, where BB's daemon has to run, not in SSH's session 0. The
-// command holds the credential, so it goes as the script's stdin, not in its
-// text. A reconnect runs BB's reconnect command the same way.
+// with the machine's credential (enrol.ts). It runs in the box user's desktop
+// session, where BB's daemon has to run, not in SSH's session 0. The command
+// holds the credential, so it goes as the script's stdin, not in its text. A
+// reconnect runs BB's reconnect command the same way.
 //
 // Node.js 22.19 or newer, which BB's Windows installer needs, is installed
 // first when missing: a pinned portable build, checked by its SHA-256, in the
