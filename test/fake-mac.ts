@@ -9,9 +9,11 @@ const GiB = 2 ** 30;
 export const FAKE_MAC = "192.0.2.20";
 export const FAKE_IMAGE = "bb-box-macos";
 export const FAKE_WINDOWS_IMAGE = "bb-box-windows";
+/** The fake Mac's disk, whatever the test machine has free: 1 TiB, with 500 GiB free. */
+export const FAKE_DISK_GIB = { size: 1024, free: 500 };
 
 /**
- * Puts the fake tart, arp, sysctl, sw_vers and uname in a fake Mac's
+ * Puts the fake tart, arp, sysctl, sw_vers, uname and df in a fake Mac's
  * ~/.nix-profile/bin, where the host scripts look for tart before the PATH.
  * Not on the test's own PATH: on a Mac whose /bin/sh is zsh, /etc/zshenv may
  * reset it.
@@ -24,6 +26,9 @@ export function fakeMacTools(home: string): void {
     writeFileSync(join(bin, tool), `#!/bin/sh\nexec '${process.execPath}' '${script}' ${tool} "$@"\n`);
     chmodSync(join(bin, tool), 0o755);
   }
+  const KiB = (gib: number) => gib * 2 ** 20;
+  writeFileSync(join(bin, "df"), `#!/bin/sh\necho 'Filesystem 1024-blocks Used Available Capacity Mounted on'\necho 'fake ${KiB(FAKE_DISK_GIB.size)} ${KiB(FAKE_DISK_GIB.size - FAKE_DISK_GIB.free)} ${KiB(FAKE_DISK_GIB.free)} 50% /'\n`);
+  chmodSync(join(bin, "df"), 0o755);
 }
 
 /** Gives a fake Mac Xcode's command line tools, as far as `xcode-select -p` tells: the VNC holder runs on the test machine's own /usr/bin/python3. */

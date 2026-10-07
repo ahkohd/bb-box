@@ -3,7 +3,7 @@
 // guest that the fake ssh reaches at its port on the Mac's loopback.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
@@ -11,7 +11,7 @@ import { ownerText } from "../src/backends/tart/host.ts";
 import { parseQemuState } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE } from "../src/backends/windows.ts";
-import { FAKE_MAC, FAKE_WINDOWS_IMAGE, addImage, addWindowsImage, fakeMacTools, fakeQemu, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, addImage, addWindowsImage, fakeMacTools, fakeQemu, imageRecord, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const MAC = FAKE_MAC;
@@ -356,11 +356,9 @@ test("a Windows box that asks for a disk no larger than the image's keeps the im
 });
 
 test("a Windows box's disk may grow by what the Mac has free beyond the disk kept free; a macOS box keeps its image's", async () => {
-  const { mac, context } = setup();
-  const { bavail, bsize } = statfsSync(mac);
+  const { context } = setup();
   // 4 GiB above what is kept free.
-  const reserve = Math.floor((Number(bavail) * Number(bsize)) / 2 ** 30) - 4;
-  assert.ok(reserve > 0, "the test needs 5 GiB of disk free");
+  const reserve = FAKE_DISK_GIB.free - 4;
   const backend = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": reserve }), context, FAKES);
   made.push(backend);
   const disk = (diskGiB: number | null): BoxSize => ({ ...SMALL, diskGiB });
@@ -375,10 +373,8 @@ test("a Windows box's disk may grow by what the Mac has free beyond the disk kep
 });
 
 test("a Windows fill needs its memory free on disk beyond the disk kept free, for its save; a box does not", async () => {
-  const { mac, qemu, context } = setup({}, {}, WARM);
-  const { bavail, bsize } = statfsSync(mac);
-  const free = Math.floor((Number(bavail) * Number(bsize)) / 2 ** 30);
-  assert.ok(free > 12, "the test needs 13 GiB of disk free");
+  const { qemu, context } = setup({}, {}, WARM);
+  const free = FAKE_DISK_GIB.free;
   const reserving = (gib: number) => {
     const backend = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": gib }), context, FAKES);
     made.push(backend);
