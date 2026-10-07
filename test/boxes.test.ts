@@ -9,10 +9,12 @@ import { BackendError, type Backend, type BoxKind, type BoxSize, type ReleaseHoo
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
+import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
+import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
 import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
@@ -765,8 +767,35 @@ test("the access check says whether the env file set any of the names, or else w
     spawnSync("sh", ["-c", accessCheck("linux", { names: ["GH_TOKEN", "MACHINE_VAR"], parent: daemon.parent, required: ["GH_TOKEN"] })!], { env: { PATH: process.env.PATH, ...env } }).status;
   assert.equal(required({ MACHINE_VAR: "value-machine" }), ACCESS_CHECK_EXITS.waiting);
   assert.equal(required({ MACHINE_VAR: "value-machine", GH_TOKEN: "value-token" }), ACCESS_CHECK_EXITS.found);
-  assert.equal(accessCheck("windows", { names: ["GH_TOKEN"], parent: daemon.parent }), null);
   assert.equal(accessCheck("linux", { names: ["not a name"], parent: daemon.parent }), null);
+});
+
+test("in a Windows box, the env file takes the thread's access through a reader it compiles once, and the check and setup have Windows forms (#560)", () => {
+  const access = { names: ["GH_TOKEN", "not a name", "MACHINE_VAR"], parent: "host-daemon/dist/daemon-bundle", required: ["GH_TOKEN"] };
+  const own = "$env:BB_BOX_NAME = 'calm-otter'\r\n";
+  assert.equal(envScript("windows", { BB_BOX_NAME: "calm-otter" }), own, "a box that is not a BB machine sets its own variables only");
+  const file = envScript("windows", { BB_BOX_NAME: "calm-otter" }, access);
+  assert.ok(file.startsWith(own), file);
+  assert.ok(file.includes(`[${READER_TYPE}]::Read('host-daemon/dist/daemon-bundle', [string[]]@('GH_TOKEN', 'MACHINE_VAR'))`), "only valid names, sorted");
+  // The reader's source rides in the env file, packed, and is compiled under its own name.
+  const packed = /FromBase64String\('([A-Za-z0-9+/=]+)'\)/.exec(file)?.[1];
+  assert.ok(packed, "the packed source");
+  assert.equal(gunzipSync(Buffer.from(packed, "base64")).toString("utf8"), READER_SOURCE);
+  assert.ok(READER_SOURCE.includes(`public static class ${READER_TYPE} {`));
+  assert.ok(file.includes(`'bb-box', '${READER_TYPE}.dll'`));
+  assert.equal(envScript("windows", {}, { ...access, names: ["not a name"] }), "\r\n", "no names, no reader");
+
+  const check = accessCheck("windows", access)!;
+  assert.ok(check.startsWith("if ([Environment]::GetEnvironmentVariable('GH_TOKEN')) { exit 0 }"), "GH_TOKEN is required");
+  assert.ok(check.includes(`if ([${READER_TYPE}]::Daemon('host-daemon/dist/daemon-bundle')) { exit ${ACCESS_CHECK_EXITS.waiting} }`));
+  assert.ok(check.trimEnd().endsWith(`exit ${ACCESS_CHECK_EXITS.noDaemon}`));
+  assert.ok(accessCheck("windows", { names: ["A_VAR", "B_VAR"], parent: "p" })!.startsWith("if ([Environment]::GetEnvironmentVariable('A_VAR') -or [Environment]::GetEnvironmentVariable('B_VAR'))"), "any name, when none is required");
+
+  const setup = accessSetup("windows");
+  assert.ok(setup.includes("& gh auth setup-git"));
+  assert.ok(setup.includes("--add credential.https://github.com.helper '!gh auth git-credential'"));
+  assert.ok(setup.includes("url.https://github.com/.insteadOf git@github.com: '^git@github\\.com:$'"));
+  assert.ok(setup.includes("url.https://github.com/.insteadOf ssh://git@github.com/ '^ssh://git@github\\.com/$'"));
 });
 
 test("in a macOS box, the env file takes the thread's access from the daemon's newest worker with the most names, as on Linux", () => {
@@ -869,7 +898,6 @@ test("access setup puts the env file above ~/.bashrc's early return, once, and k
     result.stdout,
     `640\n${HOOK}\ncase $- in *i*) ;; *) return;; esac\nexport MINE=1\n${box.name}`,
   );
-  assert.equal(accessSetup("windows"), null);
 
   // A date that cannot give nanoseconds leaves the time out, and the script's exit code as it was.
   const { result: untimed } = await world.boxes.run(THREAD, box.name, `date() { echo 1700000000N; }\n${accessSetup("linux")!}`);

@@ -335,8 +335,10 @@ A box is a resource of its thread and gets what the thread's machine has.
   variables to its daemon in the box. Each command bb-box runs, and each
   SSH session through the box's `~/.bashrc` (`~/.zshenv` on macOS), takes
   `GH_TOKEN`, the git identity and BB's machine variables from a process of
-  that daemon as it starts: from `/proc` on Linux, and from `ps -E` on
-  macOS ([BB request 8](bb-requests.md#8-give-a-machines-own-commands-its-variables)).
+  that daemon as it starts: from `/proc` on Linux, from `ps -E` on macOS,
+  and through each process's PEB on Windows, on trial, for bb-box's own
+  commands only (#560;
+  [BB request 8](bb-requests.md#8-give-a-machines-own-commands-its-variables)).
   The values never reach the disk. bb-box's host entry keeps a process
   with the current values running in a worker of the daemon
   (`src/host/access.ts`), so commands always find one. A project's own
