@@ -274,7 +274,7 @@ class Holder:
         pixels[0::4] = data[red::4]
         pixels[1::4] = data[green::4]
         pixels[2::4] = data[blue::4]
-        return bytes(pixels)
+        return pixels
 
     def draw(self, x, y, width, height, pixels):
         # A rect's pixels on the screen, as far as the screen goes.
