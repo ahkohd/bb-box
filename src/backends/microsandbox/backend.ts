@@ -66,6 +66,8 @@ const STARTED = "/run/bb-box-started";
 const VNC_PORT = 5900;
 const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 const MiB_PER_GiB = 1024;
+/** A Docker disk this old with no microVM of its name is a leftover, which the upkeep removes. */
+const ORPHAN_DISK_S = 15 * 60;
 /** How long the host's facts from the status script serve capacity checks. */
 const FACTS_MS = 60_000;
 
@@ -105,6 +107,8 @@ export interface HostFacts {
   readonly usedGiB: number;
   /** Docker's version on the host, or null without Docker. */
   readonly docker: string | null;
+  /** Whether the host has mkfs.ext4, with which bb-box makes each box's Docker disk. */
+  readonly mkfs: boolean;
   readonly dir: string;
 }
 
@@ -124,6 +128,7 @@ export function parseFacts(stdout: string): HostFacts {
     freeGiB: Math.round((kib("free_kib") / 1024 ** 2) * 10) / 10,
     usedGiB: Math.round((kib("used_kib") / 1024 ** 2) * 10) / 10,
     docker: values.docker || null,
+    mkfs: values.mkfs === "1",
     dir: values.dir ?? "",
   };
 }
@@ -355,6 +360,36 @@ export class MsbBackend implements Backend {
     for (const image of new Set(MSB_KINDS.map((kind) => this.#config.images[kind]).filter((image): image is string => image !== null))) {
       await this.#import(image, true, signal).catch((error) => this.#context.logError(`import ${image}`, error));
     }
+    await this.#sweepDisks(signal).catch((error) => this.#context.logError("remove leftover Docker disks", error));
+  }
+
+  /**
+   * Removes the Docker disks that no microVM has, of any install, left by an
+   * acquire that stopped part way: only those older than ORPHAN_DISK_S, so
+   * an acquire making its box now keeps its own.
+   */
+  async #sweepDisks(signal?: AbortSignal): Promise<void> {
+    const disks = scriptValues((await this.#cli.script("disks", [], signal)).stdout);
+    const old = Object.entries(disks).filter(([, age]) => Number(age) > ORPHAN_DISK_S).map(([name]) => name);
+    if (!old.length) return;
+    const boxes = new Set((await this.#cli.list({}, signal)).map((sandbox) => sandbox.name));
+    const gone = old.filter((name) => !boxes.has(name));
+    for (let at = 0; at < gone.length; at += 4) await this.#cli.script("undisk", gone.slice(at, at + 4), signal);
+  }
+
+  /**
+   * The box's Docker disk: one bb-box makes, ext4 left for the kernel to
+   * initialise, which takes milliseconds, where msb's own disk for a box
+   * formats it whole, about 1 s of each create with 20 at once. Without
+   * mkfs.ext4 on the host, msb's own.
+   */
+  async #dockerDisk(name: string, signal?: AbortSignal): Promise<string[]> {
+    const disk = `/var/lib/docker:kind=disk,size=${this.#config.dockerDiskGiB}G`;
+    if (!(await this.#hostFacts(signal)).mkfs) return ["--mount-owned", disk];
+    const result = await this.#cli.script("disk", [name, String(this.#config.dockerDiskGiB)], signal);
+    const file = scriptValues(result.stdout).disk;
+    if (result.exitCode !== 0 || !file) throw this.#cli.error(`Making ${name}'s Docker disk on ${this.#host}`, result);
+    return ["--mount-disk", `${file}:/var/lib/docker`];
   }
 
   // Capacity and placement.
@@ -466,6 +501,8 @@ export class MsbBackend implements Backend {
       return ready;
     } catch (error) {
       await this.#remove(name, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
+      // The box's own disk, which bb-box may have made before msb made the box.
+      await this.#cli.script("undisk", [name]).catch((cause) => this.#context.logError("release after a failed acquire", cause));
       throw error;
     } finally {
       this.#placing.delete(box.boxId);
@@ -489,6 +526,8 @@ export class MsbBackend implements Backend {
       [LABELS.kind]: box.kind,
       [LABELS.created]: String(box.createdAt),
     };
+    // Docker's data on an ext4 disk of the box's own, as overlayfs cannot sit on msb's root (053).
+    const docker = this.#config.docker ? [...(await this.#dockerDisk(name, signal)), "--env", "BBBOX_DOCKERD=1"] : [];
     const args = (replace: boolean) => [
       "create", image,
       "--name", name,
@@ -501,8 +540,7 @@ export class MsbBackend implements Backend {
       "--root-disk", `${box.size.diskGiB ?? this.#config.diskGiB}G`,
       "--tmpfs", "/run",
       "--net", this.#config.network,
-      // Docker's data on an ext4 disk of the box's own, as overlayfs cannot sit on msb's root (053).
-      ...(this.#config.docker ? ["--mount-owned", `/var/lib/docker:kind=disk,size=${this.#config.dockerDiskGiB}G`, "--env", "BBBOX_DOCKERD=1"] : []),
+      ...docker,
       ...(replace ? ["--replace"] : []),
     ];
     const result = await this.#cli.run(args(false), { timeoutMs: 120_000, signal });
@@ -659,6 +697,15 @@ export class MsbBackend implements Backend {
       else if (facts.kvm === "denied") push("microsandbox.kvm", "KVM", "fail", "/dev/kvm is there, but BB's user may not use it, so no box starts.", kvmFix);
       else push("microsandbox.kvm", "KVM", "fail", `${this.#host} has no /dev/kvm, so no box starts.`, "Use a Linux host with KVM: the machine itself, or a VM with nested virtualisation on.");
 
+      if (this.#config.docker && !facts.mkfs) {
+        push(
+          "microsandbox.disks",
+          "Docker disks",
+          "warn",
+          `${this.#host} has no mkfs.ext4, so msb formats each box's Docker disk whole, which makes boxes slower to start: about 1 s more each with 20 at once.`,
+          "Install e2fsprogs on the host.",
+        );
+      }
       if (facts.lxc) {
         push(
           "microsandbox.lxc",
@@ -768,6 +815,8 @@ export class MsbBackend implements Backend {
     if (!found) return;
     const result = await this.#cli.run(["remove", "--force", "--quiet", ref], { timeoutMs: 120_000, signal });
     if (result.exitCode !== 0 && !NOT_FOUND.test(result.stderr)) throw this.#cli.error("msb remove", result);
+    const undisk = await this.#cli.script("undisk", [ref], signal);
+    if (undisk.exitCode !== 0) throw this.#cli.error(`Removing ${ref}'s Docker disk`, undisk);
   }
 
   /** Waits for the image's command to say the box is up, in one `msb exec`. */

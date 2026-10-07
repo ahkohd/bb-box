@@ -782,7 +782,13 @@ by [setup/microsandbox](../setup/microsandbox/README.md)
   size is asked for. `/run` is a tmpfs, and its network profiles are
   `public,private`, which reach BB's server on a private or tailnet address.
 - With Docker on, as by default, `/var/lib/docker` is an ext4 disk of the
-  box's own, as overlayfs cannot sit on `msb`'s root, and the image's start
+  box's own, as overlayfs cannot sit on `msb`'s root. bb-box makes it in
+  its folder's `disks`, sparse, with its inode tables and journal left for
+  the kernel to initialise (3 ms, about 5 MB), passes it with
+  `--mount-disk`, and deletes it with the box; the upkeep removes one left
+  by an acquire that stopped part way. `msb`'s own disk for a box formats
+  it whole, which made 20 creates at once 2 to 3 s slower; bb-box uses it
+  only on a host without `mkfs.ext4`. The image's start
   script starts `dockerd` with the first `docker` command
   ([041](decisions/041-every-linux-box-has-docker.md)). It needs no
   privilege on the host: each box has its own kernel.

@@ -40,7 +40,10 @@ export const MSB_HOME_MAX = 57;
 export const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 
 /** The scripts a host runs for bb-box, by name. */
-export type MsbScript = "install" | "status" | "images" | "import";
+export type MsbScript = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks";
+
+/** A box's Docker disk's name: its microVM's. */
+export const DISK_NAME = /^bbbox-[A-Za-z0-9_.-]{1,80}$/;
 
 /** Sets `dir` to bb-box's msb folder: BBBOX_MSB_DIR, or MSB_DEFAULT_DIR. */
 const PRELUDE = `set -eu
@@ -142,7 +145,8 @@ else
 fi
 mkdir -p "$dir/home"
 echo "free_kib=$(df -Pk "$dir/home" | awk 'NR==2 {print $4}')"
-echo "used_kib=$(du -sk "$dir/home" 2>/dev/null | cut -f1)"
+echo "used_kib=$(du -sk "$dir/home" "$dir/disks" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+if PATH=$PATH:/sbin:/usr/sbin command -v mkfs.ext4 >/dev/null; then echo "mkfs=1"; else echo "mkfs=0"; fi
 probe=$(mktemp "$dir/home/.reflink.XXXXXX")
 echo bb-box >"$probe"
 if cp --reflink=always "$probe" "$probe.copy" 2>/dev/null || cp -c "$probe" "$probe.copy" 2>/dev/null; then echo "reflink=1"; else echo "reflink=0"; fi
@@ -162,6 +166,35 @@ done
    * reference, with `docker save` and `msb load`. Prints Docker's ID of what
    * it imported.
    */
+  /**
+   * Makes box $1's Docker disk, $2 GiB, sparse, as ext4 with its inode
+   * tables and journal left for the kernel to initialise: 3 ms and about
+   * 5 MB, where msb's own disk for a box formats it whole. Prints its path.
+   */
+  disk: () => `${PRELUDE}PATH=$PATH:/sbin:/usr/sbin
+mkdir -p "$dir/disks"
+file=$dir/disks/$1.ext4
+if [ ! -e "$file" ]; then
+  truncate -s "$2G" "$file.new"
+  mkfs.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 "$file.new"
+  mv "$file.new" "$file"
+fi
+echo "disk=$file"
+`,
+
+  /** Removes the Docker disks of the boxes named. */
+  undisk: () => `${PRELUDE}for name in "$@"; do rm -f "$dir/disks/$name.ext4" "$dir/disks/$name.ext4.new"; done
+`,
+
+  /** Each box's Docker disk, `<name>=<age in seconds>`. */
+  disks: () => `${PRELUDE}now=$(date +%s)
+for file in "$dir"/disks/*.ext4; do
+  [ -e "$file" ] || continue
+  name=$(basename "$file" .ext4)
+  echo "$name=$(( now - $(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file") ))"
+done
+`,
+
   import: () => `${PRELUDE}image=$1
 [ -x "$msb" ] || { echo "msb is not installed in $dir." >&2; exit 2; }
 id=$(docker image inspect --format '{{.Id}}' "$image") || { echo "Docker on this host has no image $image to import." >&2; exit 2; }
@@ -179,6 +212,9 @@ export function msbScript(name: MsbScript): string {
 export function scriptArgsOk(name: string, args: readonly string[]): name is MsbScript {
   if (name === "install" || name === "status") return args.length === 0;
   if (name === "import") return args.length === 1 && IMAGE_REF.test(args[0]!);
+  if (name === "disk") return args.length === 2 && DISK_NAME.test(args[0]!) && /^[1-9][0-9]{0,3}$/.test(args[1]!);
+  if (name === "undisk") return args.length >= 1 && args.length <= 4 && args.every((arg) => DISK_NAME.test(arg));
+  if (name === "disks") return args.length === 0;
   if (name === "images") return args.length >= 1 && args.length <= 4 && args.every((arg) => IMAGE_REF.test(arg));
   return false;
 }

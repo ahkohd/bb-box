@@ -31,7 +31,9 @@ the boxes. How bb-box drives a box is in the
   distributions, in the `kvm` group. On a BB machine that is the user BB's
   app runs as; over SSH, the user bb-box logs in as; on BB's server, the user
   BB runs as.
-- `curl` and `tar` on the host, with which bb-box installs `msb`.
+- `curl` and `tar` on the host, with which bb-box installs `msb`, and
+  `mkfs.ext4` (e2fsprogs), with which it makes each box's Docker disk. Without
+  it, boxes start more slowly.
 - Docker on the host, to build the images, as for the Docker backend: about
   28 GB free to build both. bb-box imports them from Docker into `msb`.
 - Disk for `msb`: about 6 GB for both images once imported, and what each box
@@ -125,6 +127,8 @@ about 2 s. It keeps `msb`, its state and the images in a folder of its own:
 | --- | --- |
 | A BB machine | `microsandbox` in bb-box's data folder on the machine, such as `~/.bb-machines/<BB server>/plugins/bb-box/host-data/microsandbox` |
 | Over SSH, or BB's server | `~/.local/share/bb-box/microsandbox` |
+
+Each box's Docker disk is in the folder's `disks`, and goes with the box.
 
 `msb` needs a short path for its sockets, so when the folder's is long,
 `msb` reaches it through a link, `/tmp/bb-box-msb-<uid>`. bb-box never uses
