@@ -26,7 +26,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -46,6 +46,8 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
     notified: [] as string[],
     errors: [] as string[],
     enrolled: [] as string[],
+    /** The IDs of the boxes enrolled, in order: a new spare can take a claimed one's name. */
+    enrolledIds: [] as string[],
     unenrolled: [] as string[],
     reconnected: [] as string[],
     boxes: null as unknown as Boxes,
@@ -78,6 +80,7 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
       },
       enrol: async (box, options) => {
         world.enrolled.push(options?.restored ? `${box.name}, restored` : box.name);
+        world.enrolledIds.push(box.id);
         await world.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId: `host-${box.id}`, error: null } }));
       },
       unenrol: async (box) => {
@@ -1754,10 +1757,31 @@ test("a kind's spares are made and enrolled ahead, and an acquire of the kind at
   const after = await world.boxes.list(SPARES);
   assert.ok(!after.some((spare) => spare.id === box.id));
   assert.equal(world.enrolled.length, 3);
-  assert.ok(!world.enrolled.slice(2).includes(box.name));
+  // By ID: the new spare's name is free to be the claimed box's, which left the spares.
+  assert.ok(!world.enrolledIds.slice(2).includes(box.id));
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }), /already has 1 boxes/);
   assert.equal((await world.boxes.list(SPARES)).length, 2, "a claim keeps to the thread's limit");
   assert.deepEqual(world.errors, []);
+});
+
+test("a new spare's name avoids a box a thread claimed with that name, so no two live boxes, or their BB machines, share one (#539)", async () => {
+  // Every name is drawn from the same bytes, so a new name meets each name it could take; box IDs stay random.
+  const { randomBytes } = await import("node:crypto");
+  const world = setup({}, { enrolWaitMs: 5_000, random: (bytes) => (bytes === 2 ? new Uint8Array(2) : randomBytes(bytes)) });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
+  assert.equal(box.id, spare!.id);
+  assert.equal(box.name, spare!.name);
+  await until(async () => (await world.boxes.list(SPARES)).some((other) => other.enrol.state === "enrolled"));
+  const [next] = await world.boxes.list(SPARES);
+  assert.notEqual(next!.id, box.id);
+  assert.notEqual(next!.name, box.name, "the new spare's name is not the claimed box's");
+  // A thread's new box avoids the spare's name too.
+  const other = await world.boxes.acquire({ threadId: "thr_two", projectId: "prj", kind: "linux", size: { preset: "medium" } });
+  assert.ok(![box.name, next!.name].includes(other.name), other.name);
 });
 
 test("a claimed spare whose BB machine BB shows disconnected reconnects, and its commands wait for that (#128)", async () => {

@@ -1139,6 +1139,12 @@ export class TartBackend implements Backend {
     if (os === "macos") await this.#clock(host, address, signal);
   }
 
+  /** A stop suspends a macOS VM, and saves a Windows one through QEMU, which frees its memory and its slot. A Linux VM shuts down. */
+  keepsSession(kind: string): boolean {
+    const os = this.kinds().find((candidate) => candidate.id === kind)?.capabilities.os;
+    return os === "macos" || os === "windows";
+  }
+
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
     const host = this.#hostOf(guest);
     // A Linux VM shuts itself down, and the Mac waits for it; one that cannot be asked is stopped.

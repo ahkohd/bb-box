@@ -106,6 +106,8 @@ export interface FakeBackendOptions {
   readonly warm?: (kind: string) => number;
   /** The $SHELL that runs guests' scripts, such as FAKE_PWSH. The user's login shell by default. */
   readonly shell?: string;
+  /** Whether a stop keeps a guest's session, by kind, as a hibernate does (#539). Not by default. */
+  readonly keepsSession?: (kind: string) => boolean;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -208,6 +210,7 @@ export class FakeBackend implements Backend {
   startFacts: readonly GuestFact[] | null = null;
   readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void) => Promise<Started | void>;
   readonly stop?: (guest: Guest) => Promise<void>;
+  readonly keepsSession?: (kind: string) => boolean;
   readonly members?: () => Promise<readonly PoolMember[]>;
   readonly returnToService?: (ref: string) => Promise<void>;
   readonly stamp?: (boxId: string, guest: Guest) => Promise<Guest>;
@@ -253,6 +256,7 @@ export class FakeBackend implements Backend {
         if (this.startFacts) return { facts: this.startFacts };
       };
       this.stop = (guest) => this.#power(guest, "stopped");
+      if (options.keepsSession) this.keepsSession = options.keepsSession;
     }
     if (this.nature === "real") {
       this.restores = "home";
@@ -470,6 +474,8 @@ export class FakeBackend implements Backend {
 
   /** What relabel was asked: the box's ID, its new owner and name, and the name it had. */
   readonly relabels: { boxId: string; threadId: string; name: string; from: string }[] = [];
+  /** Each relabelled guest's power then, as Proxmox refuses to retag a hibernated VM. */
+  readonly relabelPowers: (PowerState | null)[] = [];
 
   /** Whether a guest comes from what the kind is offered from now; unset assumes so. */
   asOffered?: (guest: Guest, kind: string, createdAt: number) => Promise<boolean>;
@@ -477,8 +483,9 @@ export class FakeBackend implements Backend {
   /** How long relabel takes. */
   relabelMs = 0;
 
-  async relabel(_guest: Guest, box: BoxIdentity, from: string): Promise<void> {
+  async relabel(guest: Guest, box: BoxIdentity, from: string): Promise<void> {
     this.relabels.push({ boxId: box.boxId, threadId: box.threadId, name: box.name, from });
+    this.relabelPowers.push(await this.power(guest));
     // A timer can fire a little early by the wall clock, which core times it with.
     const end = Date.now() + this.relabelMs;
     while (Date.now() < end) await new Promise((resolve) => setTimeout(resolve, end - Date.now()));

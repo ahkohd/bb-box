@@ -20,7 +20,7 @@ import { backendPart, checkDocument, exported, generalConfig, readDraft, upgrade
 import { CLEARED_KEY, COPY_KEY, DOCUMENT_KEY, SECRETS_KEY, SIZES_ADOPTED_KEY, fromSettings, type MovedCopy } from "../src/core/move.ts";
 import { boundedDoctor, type ApplyResult, type CheckResult, type ConfigState } from "../src/plugin/configuration.ts";
 import { setup, type BbBox } from "../src/plugin/setup.ts";
-import { FakeBackend, fakeDriver } from "./fake-backend.ts";
+import { FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { KEY, MemoryStorage, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_config";
@@ -127,7 +127,7 @@ function lxcLike(root: string, built: FakeBackend[]): BackendDriver<any> {
  * Starts the plugin with the fake backend, a Proxmox LXC driver whose
  * backends are fake ones, and the SSH host pool, as the plugin's drivers.
  */
-async function start(settings: Record<string, PluginSettingValue>, options: { faults?: Faults; seed?: Record<string, unknown>; drivers?: BackendDriver<any>[] } = {}) {
+async function start(settings: Record<string, PluginSettingValue>, options: { faults?: Faults; seed?: Record<string, unknown>; drivers?: BackendDriver<any>[]; fake?: Partial<FakeBackendOptions> } = {}) {
   const root = tempDir("config");
   const threads = new Map([[THREAD, makeThreadResponse({ id: THREAD, projectId: "prj_config", environmentId: "env_config" })]]);
   const { bb, harness } = createFakePluginHost({
@@ -162,7 +162,7 @@ async function start(settings: Record<string, PluginSettingValue>, options: { fa
       return driver.create(config, context);
     },
   });
-  const drivers = [fakeDriver(root, world), recorded(lxcLike(root, world.built)), recorded(sshPoolDriver), recorded(tartDriver), ...(options.drivers ?? [])];
+  const drivers = [fakeDriver(root, world, options.fake), recorded(lxcLike(root, world.built)), recorded(sshPoolDriver), recorded(tartDriver), ...(options.drivers ?? [])];
   const options_ = { drivers, daemonParent: join(root, "no-daemon") };
   const begin = (on: BbPluginApi, faults: Faults = {}) => setup(withFaults(on, faults, world.handles), options_);
   let app: BbBox | null = null;
@@ -851,6 +851,20 @@ test("a backend reads its warm counts, kinds and hosts live from the configurati
   await app().configuration.state();
   assert.equal(context.warm("linux"), 0, "an off kind keeps no warm guests");
   assert.equal(context.kind("linux").enabled, false);
+});
+
+test("where a stop keeps a guest's session, a kind's spares take its warm guests' places, as they wait stopped (#539)", async () => {
+  const { rpc, app, world } = await start({ "fake-enabled": true, "enrol-boxes": false }, { fake: { keepsSession: (kind) => kind === "linux" } });
+  const context = world.contexts.at(-1)!;
+  const base = app().configuration.exported();
+  const draft = { ...base, kinds: { linux: { spares: 1 }, "linux-desktop": { spares: 1 } }, backends: [{ ...base.backends[0], warm: { linux: 2, "linux-desktop": 2 } }] };
+  assert.ok((await rpc<ApplyResult>("config.apply", { draft, revision: 1 })).ok);
+  await app().configuration.state();
+  assert.equal(context.warm("linux"), 1, "a spare takes a warm guest's place");
+  assert.equal(context.warm("linux-desktop"), 2, "not where a stop ends the session");
+  assert.ok((await rpc<ApplyResult>("config.apply", { draft: { ...draft, kinds: { linux: { spares: 3 } } }, revision: 2 })).ok);
+  await app().configuration.state();
+  assert.equal(context.warm("linux"), 0);
 });
 
 test("a host with boxes cannot be removed or renamed", async () => {
