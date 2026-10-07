@@ -5,13 +5,17 @@ Status: accepted, 30 September 2026. Partly supersedes
 [012](012-offers-may-add-features.md): offers agree on the features a kind
 requires and may add more, and Docker inside a box is a feature. Partly
 superseded by [015](015-computer-use-through-cua-driver.md): `computerUse`
-names the driver, and command transports gain `spawn`. Partly superseded
-by [016](016-changes-from-building-v1.md): guests carry facts to show, and a
+names the driver, and command transports gain `spawn`. Partly superseded by
+[016](016-changes-from-building-v1.md): guests carry facts to show, and a
 driver's setup is a guide with a list of scripts. Partly superseded by
 [028](028-a-box-size-is-chosen-when-it-is-made.md): a box's size is chosen
 when it is made, and `capacity` is asked about that size. Extended by
 [044](044-a-box-can-be-asked-for-on-one-provider.md): an acquire may name
-the provider, or the providers, to try.
+the provider, or the providers, to try. Extended by
+[018](018-guests-name-their-install-and-box.md): guests name their install
+and their box; by [020](020-control-belongs-to-a-viewer.md): control belongs
+to one viewer; and by [021](021-desktop-resize-through-the-backend.md): a
+display may resize through its backend.
 
 ## Context
 
@@ -36,7 +40,7 @@ Tart, a physical Mac and Windows on Proxmox QEMU found these gaps:
 
 ## Decision
 
-Adopt [Interface v1](../architecture.md#interface-v1):
+Adopt [Interface v1](../architecture.md#the-backend-interface):
 
 - Kind IDs are shared words. An offer is a backend and a kind, and the
   registry takes the first offer with capacity in the order of settings.

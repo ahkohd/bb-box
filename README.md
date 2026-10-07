@@ -79,7 +79,7 @@ If a box says 'Could not join BB', it cannot reach BB's address from inside its 
   - [Tart](setup/tart/README.md)
   - [SSH host pool](setup/ssh-pool/README.md)
 - [Reference](docs/reference/README.md): the command line, agent tools, configuration, kinds and health checks, made from the code
-- [Architecture](docs/architecture.md), and [writing a backend](docs/backends.md)
+- [Architecture](docs/architecture.md), and [developing bb-box and writing a backend](docs/development.md)
 - [Decision records](docs/decisions), [research notes](docs/research) and [design specs](docs/design)
 - [What bb-box asks of BB](docs/bb-requests.md)
 
@@ -90,7 +90,7 @@ npm run typecheck
 npm test
 ```
 
-The tests need Node 22.18 or later, which runs TypeScript directly. They use fakes of each provider, so they need no host. To check a backend against a real provider, and to write a new one, see [writing a backend](docs/backends.md).
+The tests need Node 22.18 or later, which runs TypeScript directly. They use fakes of each provider, so they need no host. To check a backend against a real provider, and to write a new one, see [developing bb-box](docs/development.md).
 
 ## Third-party code
 

@@ -3,6 +3,12 @@
 How a box becomes a BB machine, how long that takes, and whether a warm box
 can be enrolled before a thread claims it.
 
+Research, 30 September 2026: a note of what was known and measured then, not
+the current design, which is in [the architecture](../architecture.md).
+Settled by [014](../decisions/014-enrol-through-machine-providers.md),
+[017](../decisions/017-boxes-clear-bb-daemon-state-at-boot.md) and
+[032](../decisions/032-spare-boxes-are-enrolled-ahead.md).
+
 Status: a recommendation from BB's source, measured on a real Proxmox LXC
 host and in Docker containers. Checked against BB 0.44.0 (server protocol
 219) on 30 September 2026.

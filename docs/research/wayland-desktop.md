@@ -4,6 +4,11 @@ What a Linux desktop box on Wayland needs: a headless compositor, a stream
 the relay can show, computer use, and apps drawn natively on Wayland, on the
 GPU and on the CPU (#45).
 
+Research, 2 October 2026: a note of what was known and measured then, not
+the current design, which is in [the architecture](../architecture.md).
+Settled by
+[048](../decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md).
+
 Status: measured on 2 October 2026. Decided in
 [048](../decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md).
 

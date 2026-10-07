@@ -7,7 +7,9 @@ reference is found again. Extended by
 [038](038-the-agent-can-take-control-back.md): the agent can take control
 back when asked. Partly superseded by
 [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
-Cua's daemon on Windows runs elevated.
+Cua's daemon on Windows runs elevated. Extended by
+[048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md):
+Cua Driver on Wayland, with a fallback for element clicks.
 
 ## Context
 

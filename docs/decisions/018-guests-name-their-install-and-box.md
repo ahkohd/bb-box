@@ -1,7 +1,9 @@
 # 018: Guests name their install and their box
 
-Status: accepted, 30 September 2026. Extends
-[011](011-interface-v1.md) and [016](016-changes-from-building-v1.md).
+Status: accepted, 30 September 2026. Extends [011](011-interface-v1.md) and
+[016](016-changes-from-building-v1.md). Extended by
+[019](019-lost-records-are-restored-from-guests.md): the sweep restores lost
+records from guests.
 
 ## Context
 

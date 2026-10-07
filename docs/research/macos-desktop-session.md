@@ -3,6 +3,11 @@
 How bb-box runs a command in a Mac box user's logged-in desktop session, so
 that the run tool's `session: "desktop"` works on macOS (issue #57).
 
+Research, 1 October 2026: a note of what was known and measured then, not
+the current design, which is in [the architecture](../architecture.md).
+Settled by
+[030](../decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md).
+
 Status: recommendation made and measured, accepted as
 [030](../decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md),
 and built.
