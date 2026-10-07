@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { z } from "zod";
-import { BoxError, OPERATOR, SPARES, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { BoxError, OPERATOR, SPARES, describeError, isAcquiring, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
 import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../core/copy.ts";
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
@@ -15,7 +15,7 @@ import { describeSize } from "../core/sizes.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, tryText, type KindView } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -244,8 +244,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           return `Acquiring box ${box.name} (${box.kind}${asked ? `, ${describeSize(asked)}` : ""}).${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
         }
         const settled = await ready(app, box, signal);
-        if (!settled) {
-          return `Box ${box.name} is still starting.${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
+        // Not ready when the kind's wait ran out, or bb-box restarted first.
+        if (!settled || isAcquiring(settled)) {
+          return `${startingWords(box, !!settled && boxes.stopping)}${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
         }
         if (settled.state === "failed") {
           return {

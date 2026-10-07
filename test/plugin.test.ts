@@ -2358,6 +2358,25 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   assert.match((await harness.behavior.runCli(["release", box.name, "--thread", THREAD])).stdout ?? "", /Released box/);
 });
 
+for (const via of ["bb box acquire", "box_acquire"] as const) {
+  test(`${via} says when bb-box restarts before the box is ready, and the next bb-box goes on with it (#533)`, async (t) => {
+    const { harness, app, world, tool } = await start();
+    let disposing: Promise<void> | null = null;
+    t.after(() => disposing ?? harness.lifecycle.dispose());
+    let open!: () => void;
+    world.backend!.gate = new Promise<void>((resolve) => (open = resolve));
+    const acquiring = via === "box_acquire" ? tool("box_acquire", { kind: "linux" }).then(text) : harness.behavior.runCli(["acquire", "linux", "--thread", THREAD]).then((ran) => ran.stdout ?? "");
+    const box = await until("the box's guest", async () => (await app.boxes.list(THREAD)).find((box) => box.guest));
+    disposing = harness.lifecycle.dispose();
+    await until("bb-box to stop", async () => app.boxes.stopping);
+    open();
+    const said = await acquiring;
+    const restarted = `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, within a minute.`;
+    if (via === "box_acquire") assert.equal(said, `${restarted}\n\nNext: Call box_status with box "${box.name}" to see when it is ready.`);
+    else assert.ok(said.startsWith(`Box ${box.name} (`) && said.endsWith(`\n\n${restarted} Follow it with: bb box status ${box.name} --thread ${THREAD}\n`), said);
+  });
+}
+
 test("bb box install-id shows the install's ID, and --set takes an old one back once no box holds a guest", async (t) => {
   const { bb, harness, app, world } = await start();
   t.after(() => harness.lifecycle.dispose());

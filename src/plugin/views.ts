@@ -454,6 +454,14 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
 }
 
 /** "Next:" hints end every tool result, so an agent always knows what it can do. */
+/**
+ * Why a box that an acquire stopped waiting for is not ready yet. A restart
+ * ends the wait, and the next bb-box goes on acquiring the box (#533).
+ */
+export function startingWords(box: BoxRecord, restarted: boolean): string {
+  return restarted ? `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, within a minute.` : `Box ${box.name} is still starting.`;
+}
+
 export function next(...hints: string[]): string {
   return hints.length ? `\n\nNext: ${hints.join(" ")}` : "";
 }
