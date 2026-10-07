@@ -132,6 +132,7 @@ Fields left empty take proxmox-lxc's, a set at a time: `url`, `token-id`, `token
 | `ssh-private-key` | SSH private key | string, secret | credentials |  | Paste BBBOX_SSH_KEY, the private key build.sh put in the template, or leave it empty to use Proxmox LXC's. With neither, bb-box makes a key, which the template does not accept until you add its public key. |
 | `pool` | Resource pool | string | boxes | `bbbox` | Boxes are made in this pool. The token needs rights on it. |
 | `windows-templates` | Windows templates | string | boxes | `9104` | VMIDs of the Windows templates windows-desktop boxes are linked clones of, separated by spaces or commas. setup/proxmox-qemu/build.sh builds one. A new box is cloned from the least used. |
+| `windows-enrol` | Windows boxes as BB machines (trial) | boolean | boxes | `false` | A trial of Windows boxes that join BB, so threads and terminals can use them (#539). Off unless you are trying it. |
 | `bridge` | Network bridge | string | advanced | `vmbr200` | The bridge boxes attach to. |
 | `subnet` | Subnet | string | advanced | `10.200.0.0/24` | The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP. |
 | `gateway` | Gateway | string | advanced | `10.200.0.1` | The host's address on the bridge. |
