@@ -363,6 +363,20 @@ function rawText(result: McpResult): string {
     .join(" ");
 }
 
+/**
+ * A click Cua made, which another process's window then came in front of,
+ * as Explorer's hidden-icons panel or an app's tray menu does (#484). On
+ * Windows, Cua checks after a click that the window it clicked, or one of
+ * its process's, is in front, and says it failed when not, though the click
+ * landed. bb-box takes it as done, and says which window came forward.
+ */
+export function landedElsewhere(result: McpResult): { forward: number | null } | null {
+  const raw = rawText(result);
+  if (!result.isError || !/\bwas not foreground after the click\b/i.test(raw)) return null;
+  const forward = /\bactual foreground HWND (0x[0-9a-f]+|\d+)/i.exec(raw);
+  return { forward: forward ? Number(forward[1]) : null };
+}
+
 /** Cua's code for a refusal, such as "foreground_unavailable". */
 function codeOf(result: McpResult): string | undefined {
   const structured = obj(result.structuredContent);
@@ -873,14 +887,18 @@ export class Computer {
       // An element Cua cannot click as an element is clicked at its centre (048).
       const centre = step.tool === "click" && target.element?.frame ? cannotInject : undefined;
       let { result, foreground } = await this.#deliver(use, step.tool, { ...target.args, ...step.args }, input.action !== "set_value", centre);
-      const byPosition = !!result.isError;
+      let elsewhere = landedElsewhere(result);
+      const byPosition = !!result.isError && !elsewhere;
       let before = target.snapshot;
       if (byPosition) ({ result, foreground, snapshot: before } = await this.#centre(use, target, step.args));
+      elsewhere ??= landedElsewhere(result);
       const done = `${step.done} ${target.label}${byPosition ? " at its centre" : ""}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? POINTER : ""}.${byPosition ? ` ${BY_POSITION}` : ""}`;
       const lines = [target.coordinates ? `${done} ${target.coordinates}` : done];
+      if (elsewhere) lines.push(await this.#cameForward(use, elsewhere.forward));
       const cause: Cause = { element: watch?.element ?? target.element, right: input.action === "right_click" };
       const seen = watch ? await this.#settle(use, watch, cause) : await this.#changes(use, before!, { popups: { ...cause, result } });
-      return { text: [...lines, ...seen.parts].join("\n\n"), hints: seen.hints };
+      const forward = elsewhere?.forward;
+      return { text: [...lines, ...seen.parts].join("\n\n"), hints: forward == null ? seen.hints : [`Call computer_observe with window ${forward} to act in what came in front.`, ...seen.hints] };
     });
   }
 
@@ -1303,7 +1321,7 @@ export class Computer {
         foreground = true;
       }
     }
-    if (result.isError && !handled?.(result)) {
+    if (result.isError && !handled?.(result) && !(tool === "click" && landedElsewhere(result))) {
       const code = codeOf(result);
       const id = num(args.window_id);
       if (code === "stale_element_token" && id !== undefined) this.#outdated(use.state, id);
@@ -1384,6 +1402,13 @@ export class Computer {
       use.state.windows.set(window.id, window);
     }
     return windows;
+  }
+
+  /** What came in front after a click, as a tray menu or Explorer's overflow panel does (#484). */
+  async #cameForward(use: Use, id: number | null): Promise<string> {
+    const window = id === null ? undefined : (await this.#listWindows(use).catch(() => null))?.get(id);
+    const which = window ? windowLine(window) : id === null ? "another window" : `window ${id}`;
+    return `The click landed, and ${which} came in front, such as a menu or panel of another app. Observe it to act in it; clicking the same place again may close it.`;
   }
 
   async #window(use: Use, id: number): Promise<WindowInfo> {

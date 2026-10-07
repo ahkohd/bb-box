@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ComputerError, chord, explain, launchArgs, pngSize } from "../src/core/computer.ts";
+import { ComputerError, chord, explain, landedElsewhere, launchArgs, pngSize } from "../src/core/computer.ts";
 import { driverCommand } from "../src/core/in-box.ts";
 import { McpClosedError, McpError, McpSession } from "../src/core/mcp.ts";
 import { openRoute } from "../src/transports/route.ts";
@@ -46,6 +46,13 @@ test("pngSize reads a PNG's size from its header, and nothing from anything else
   assert.deepEqual(pngSize(png(1568, 882)), { width: 1568, height: 882 });
   assert.equal(pngSize(Buffer.from("not an image at all, not even close").toString("base64")), null);
   assert.equal(pngSize(""), null);
+});
+
+test("a click Cua on Windows made, but found another process's window in front of, is told apart from one it did not make (#484)", () => {
+  const result = (text: string) => ({ content: [{ type: "text", text }], isError: true });
+  assert.deepEqual(landedElsewhere(result("Exact target HWND 0x100e6 or a verified same-process post-action window was not foreground after the click (actual foreground HWND 0x70052).")), { forward: 0x70052 });
+  assert.equal(landedElsewhere(result("foreground_unavailable: window 0x1000122 did not become the active, focused window within 1.5s; no input was sent.")), null);
+  assert.equal(landedElsewhere({ ...result("was not foreground after the click"), isError: false }), null);
 });
 
 test("explain says why the desktop refused in bb-box's words, without Cua's codes, tools or hex window IDs", () => {

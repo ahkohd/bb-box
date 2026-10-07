@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
@@ -35,6 +35,11 @@ function absolute(path: string): string {
   return path;
 }
 
+/** As BB's file API reads: a path outside the root it is given is refused (#482). */
+function withinRoot(path: string, rootPath: string | undefined): void {
+  if (rootPath && relative(rootPath, path).startsWith("..")) throw Object.assign(new Error(`HTTP 400: Path "${path}" escapes read root`), { status: 400 });
+}
+
 function notFound(what: string): Error {
   return Object.assign(new Error(`${what} not found`), { status: 404, code: "not_found" });
 }
@@ -59,11 +64,15 @@ async function start(
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
   mkdirSync(workspace, { recursive: true });
+  // The thread's storage folder, $BB_THREAD_STORAGE (#482).
+  const storage = join(root, "thread-storage", THREAD);
+  mkdirSync(storage, { recursive: true });
   const threads = new Map<string, Thread>([[THREAD, makeThreadResponse({ id: THREAD, projectId: PROJECT, environmentId: "env_one" })]]);
   const hosts = new Map<string, Host>();
   const world = {
     root,
     workspace,
+    storage,
     threads,
     hosts,
     backend: null as FakeBackend | null,
@@ -144,6 +153,7 @@ async function start(
           return makeThreadResponse({ id: (args as { threadId: string }).threadId, projectId: PROJECT });
         },
         list: async ({ hostId }: { hostId?: string }) => (hostId ? (world.onHost.get(hostId) ?? []) : []) as never,
+        storageLocation: async () => ({ hostId: world.workspaceHost, storageRootPath: storage }),
         spawn: async (args: unknown) => {
           world.spawned.push(args);
           return makeThreadResponse({ id: `thr_child${world.spawned.length}`, projectId: PROJECT });
@@ -252,7 +262,8 @@ async function start(
         },
       },
       files: {
-        read: async ({ path }: { path: string }) => {
+        read: async ({ path, rootPath }: { path: string; rootPath?: string }) => {
+          withinRoot(path, rootPath);
           // As BB's file API: a file over 25 MB is refused whole (#485).
           const size = statSync(absolute(path)).size;
           if (size > 25 * 1000 * 1000) throw Object.assign(new Error(`HTTP 413: File size ${size} bytes exceeds the 25 MB limit`), { status: 413 });
@@ -562,6 +573,31 @@ test("box_copy takes relative paths under the workspace and the box user's home,
   assert.equal(readFileSync(join(world.workspace, "both.txt"), "utf8"), "notes\nnotes\n");
   await tool("box_copy", { box: box.name, direction: "from_box", from: "both.txt", to: join(world.root, "outside.txt") });
   assert.equal(readFileSync(join(world.root, "outside.txt"), "utf8"), "notes\nnotes\n");
+});
+
+test("box_copy takes files in the thread's storage folder both ways, by its variable or its path (#482)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const { name } = await only(app);
+  mkdirSync(join(world.storage, "prof"));
+  writeFileSync(join(world.storage, "prof", "check.mjs"), "stored\n");
+
+  const byPath = await tool("box_copy", { box: name, direction: "to_box", from: join(world.storage, "prof", "check.mjs") });
+  assert.ok(!isError(byPath), text(byPath));
+  assert.match(text(byPath), /\(7 bytes\) to check\.mjs in box/);
+  assert.ok(!isError(await tool("box_copy", { box: name, direction: "to_box", from: "$BB_THREAD_STORAGE/prof/check.mjs", to: "again.mjs" })));
+  assert.match(text(await tool("box_run", { box: name, command: "cat check.mjs again.mjs > both.txt" })), /Exit code 0/);
+
+  const back = await tool("box_copy", { box: name, direction: "from_box", from: "both.txt", to: "${BB_THREAD_STORAGE}/out/both.txt" });
+  assert.ok(!isError(back), text(back));
+  assert.match(text(back), /in this thread's storage folder\./);
+  assert.equal(readFileSync(join(world.storage, "out", "both.txt"), "utf8"), "stored\nstored\n");
+  // A path in neither folder is still the workspace's, and BB refuses to read one outside it.
+  writeFileSync(join(world.root, "other.txt"), "x");
+  const outside = await tool("box_copy", { box: name, direction: "to_box", from: join(world.root, "other.txt") });
+  assert.ok(isError(outside));
+  assert.match(text(outside), /escapes read root/);
 });
 
 test("a file too large for box_copy is refused with how to move it in parts, both ways, and the parts join to the file (#485)", async (t) => {
@@ -2398,6 +2434,28 @@ test("a macOS desktop whose server moves no clipboard has it through pbcopy and 
   assert.deepEqual(await clipboard(), copied);
   await assert.rejects(harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer: "viewer-two-0002", text: "x" }), /Only the tab with control/);
   await session.close();
+});
+
+test("a click that opened another process's panel, which Cua on Windows calls a failed foreground check, is done, and names the panel (#484)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const add = refOf(tree, '"Add"');
+  editDesktop(file, (desktop) => {
+    desktop.trayMenus = true;
+  });
+  const clicked = await tool("computer_act", { box: box.name, action: "click", ref: add });
+  assert.equal(isError(clicked), false, text(clicked));
+  assert.match(text(clicked), /^Clicked e\d+ \(push button 'Add'\)\.\n\nThe click landed, and window (\d+): explorer "Notification overflow", 200 by 120 came in front, such as a menu or panel of another app\. Observe it to act in it; clicking the same place again may close it\./);
+  assert.match(text(clicked), /\n\nNext: Call computer_observe with window \d+ to act in what came in front\./);
+  const calls = readDesktop(file).calls.filter((call) => call.tool === "click");
+  assert.equal(calls.length, 1, "no second click, by position, that would close the panel again");
+
+  // A click by position on the desktop, as on the taskbar's hidden-icons arrow, the same.
+  await tool("computer_screenshot", { box: box.name });
+  const onDesktop = await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 1500, y: 870 });
+  assert.equal(isError(onDesktop), false, text(onDesktop));
+  assert.match(text(onDesktop), /\n\nThe click landed, and window \d+: explorer "Notification overflow", 200 by 120 came in front/);
 });
 
 test("an agent reads a desktop box's window, acts on references and is told what changed", async (t) => {
