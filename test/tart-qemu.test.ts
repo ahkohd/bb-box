@@ -3,7 +3,7 @@
 // guest that the fake ssh reaches at its port on the Mac's loopback.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
@@ -856,4 +856,53 @@ test("the window namer titles only visible, unowned, top-level windows with no t
   // A title the app set, even of spaces, has a length: only an empty one is named.
   assert.match(NAME_WINDOWS_SCRIPT, /!IsWindowVisible\(window\) \|\| GetWindow\(window, 4\) != IntPtr\.Zero \|\| GetWindowTextLength\(window\) != 0/);
   assert.match(NAME_WINDOWS_SCRIPT, /\$bbDll = .*'windows-[0-9a-f]{12}\.dll'/, "compiled once, and kept, as the display helper is");
+});
+
+test("a Windows image's operations on a Mac (#450): a box of its build, a capture as a build of its own, a trial box, and the build made current", async () => {
+  const { ssh, backend, qemu, owners } = setup();
+  const images = backend.images;
+  const record = JSON.stringify({ contract: 1, image: "standard", kind: KIND, arch: "arm64", build: "build.20261007-020000-abcd", built: "2026-10-07T02:00:00Z", os: "Windows 11", tools: { pwsh: "7.6.0" } });
+  // The guest's record, as a refresh leaves it in C:\bb-box\image.json.
+  ssh.powershell(GUEST, ['case "$1" in', `  *image.json*) echo '${record}';;`, '  *) exec sh -c "$1";;', "esac", ""].join("\n"));
+  const dir = join(qemu, "images", FAKE_WINDOWS_IMAGE);
+
+  const current = (await images.list()).builds.find((build) => build.kind === KIND)!;
+  assert.deepEqual([current.ref, current.image, current.current], [`mac1/${FAKE_WINDOWS_IMAGE}`, "standard", true]);
+  assert.equal(images.check?.(KIND).includes('t "image record"'), true, "a Windows kind's own check");
+
+  // An image box: an overlay on the current build, marked as one.
+  const box = await images.box(current, "refresh of the image", AbortSignal.timeout(30_000));
+  const vm = box.ref.slice("mac1/".length);
+  assert.match(readFileSync(join(qemu, "vms", vm, "config"), "utf8"), /^image=bb-box-windows\nbuild=1\n/);
+  assert.match(readFileSync(join(owners, vm), "utf8"), /\nimage-box=refresh of the image\n/);
+  assert.deepEqual((await images.list()).boxes, [box.ref]);
+
+  // Its capture: powered down, its disk and its base flattened into a build of its own, read-only, beside the image's others.
+  const captured = await images.capture(box, current, "standard", AbortSignal.timeout(30_000));
+  assert.deepEqual([captured.ref, captured.build, captured.current], [`mac1/${FAKE_WINDOWS_IMAGE}@build.20261007-020000-abcd`, "build.20261007-020000-abcd", false]);
+  const built = join(dir, "build.20261007-020000-abcd");
+  assert.match(readFileSync(join(built, "disk.qcow2"), "utf8"), /^flattened from overlay on .*\/1\/disk\.qcow2/);
+  assert.equal(statSync(join(built, "disk.qcow2")).mode & 0o222, 0, "read-only");
+  assert.equal(JSON.parse(readFileSync(join(built, "image.json"), "utf8")).build, "build.20261007-020000-abcd");
+  assert.ok(existsSync(join(built, "vars.fd")));
+  assert.ok(!existsSync(join(qemu, "vms", vm)) && !existsSync(join(owners, vm)), "the box is the build now");
+  const listed = await images.list();
+  assert.deepEqual(listed.builds.filter((build) => build.kind === KIND).map((build) => [build.ref, build.current]), [[`mac1/${FAKE_WINDOWS_IMAGE}`, true], [captured.ref, false]]);
+
+  // A trial box of the build, then removed.
+  const trial = await images.box(captured, "trial", AbortSignal.timeout(30_000));
+  assert.match(readFileSync(join(qemu, "vms", trial.ref.slice("mac1/".length), "config"), "utf8"), /\nbuild=build\.20261007-020000-abcd\n/);
+  await images.remove(trial.ref, AbortSignal.timeout(30_000));
+
+  // The replace: current names the build, which is no refresh's any more, and the old build, which no VM uses, goes.
+  const replaced = await images.replace(captured, current, AbortSignal.timeout(30_000));
+  assert.deepEqual([replaced.ref, replaced.current, replaced.build], [`mac1/${FAKE_WINDOWS_IMAGE}`, true, "build.20261007-020000-abcd"]);
+  assert.equal(realpathSync(join(dir, "current")), realpathSync(built));
+  assert.ok(!existsSync(join(built, "owner")));
+  assert.ok(!existsSync(join(dir, "1")), "the old build goes");
+  await assert.rejects(images.remove(`mac1/${FAKE_WINDOWS_IMAGE}@build.20261007-020000-abcd`, AbortSignal.timeout(30_000)), /is not a refresh's build of this install's/);
+  // A box made now is an overlay on the new build.
+  const guest = await backend.acquire(identity(), null, hooks().value, AbortSignal.timeout(60_000));
+  assert.match(readFileSync(join(qemu, "vms", guest.ref, "config"), "utf8"), /\nbuild=build\.20261007-020000-abcd\n/);
+  await backend.release(guest, { resetting: async () => {}, timing: () => {} });
 });
