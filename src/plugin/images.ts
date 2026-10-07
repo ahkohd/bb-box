@@ -91,6 +91,7 @@ function osOf(kind: string): "linux" | "macos" | "windows" {
   return kind.startsWith("macos") ? "macos" : kind.startsWith("windows") ? "windows" : "linux";
 }
 function pinSet(kind: string): PinSet {
+  if (osOf(kind) === "windows") return kind.includes("arm64") ? "windows-arm64" : "windows";
   return osOf(kind) === "macos" ? "macos" : kind.includes("desktop") ? "linux-desktop" : "linux";
 }
 
@@ -106,7 +107,7 @@ export class ImageJobs {
     return (this.#deps.now ?? Date.now)();
   }
 
-  /** The standard builds bb-box can refresh, on each backend that is on: Linux and macOS, as Windows is later. */
+  /** The standard builds bb-box can refresh, on each backend that is on: Linux and macOS, and Windows where the backend refreshes it (054). */
   async #standard(signal?: AbortSignal): Promise<{ backend: Backend; build: ImageBuild }[]> {
     const found: { backend: Backend; build: ImageBuild }[] = [];
     for (const backend of this.#deps.backends()) {
@@ -115,7 +116,7 @@ export class ImageJobs {
         this.#deps.log?.(`images: ${backend.id} did not list its images: ${error instanceof Error ? error.message : String(error)}`);
         return { builds: [] as ImageBuild[] };
       });
-      for (const build of builds) if (build.current && build.image === "standard" && osOf(build.kind) !== "windows") found.push({ backend, build });
+      for (const build of builds) if (build.current && build.image === "standard" && (osOf(build.kind) !== "windows" || backend.images.windows)) found.push({ backend, build });
     }
     return found;
   }
@@ -152,6 +153,8 @@ export class ImageJobs {
 
   /** What an image is built from now: its pins, BB's app, the versions a rebuild takes, and its current build. */
   #from(build: ImageBuild, pins: string | null, app: string | null, versions: Versions | null): string {
+    // A Windows image takes its pins alone, and Windows' updates, which come monthly (054).
+    if (osOf(build.kind) === "windows") return createHash("sha256").update(JSON.stringify({ pins, month: new Date(this.#now()).toISOString().slice(0, 7), current: build.build })).digest("hex").slice(0, 16);
     const tools = versions?.tools.filter((tool) => tool.arch === (build.record?.arch === "arm64" ? "arm64" : "x86_64")).map((tool) => `${tool.name}@${tool.version}`) ?? [];
     return createHash("sha256").update(JSON.stringify({ pins, app, tools, current: build.build })).digest("hex").slice(0, 16);
   }

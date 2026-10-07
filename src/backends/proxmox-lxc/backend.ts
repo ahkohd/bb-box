@@ -84,6 +84,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
+import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -190,7 +191,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
       gpu: false,
       features: ["docker"],
       command: SSH_COMMAND,
-      displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
       computerUse: CUA_DRIVER,
       enrol: true,
     },
@@ -917,20 +918,23 @@ export class ProxmoxLxcBackend implements Backend {
     // wayvnc offers Apple's sign-in, not a VNC password (048).
     const wayland = offer?.flavour === "desktop-wayland-cpu";
     const displays = (capabilities?.displays ?? []).map(
-      (display): Display => ({
-        ...display,
-        label: "Desktop",
-        open: async (signal) => {
-          const password = await this.#vncPassword(command, signal);
-          return {
-            route: { type: "tcp", host: access.host, port: VNC_PORT },
-            auth: !password ? { type: "none" } : wayland ? { type: "apple", user: WAYVNC_USER, password } : { type: "vnc-password", password },
-          };
-        },
-        ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
-        ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal) } : {}),
-        minSize: MIN_DESKTOP,
-      }),
+      (display): Display =>
+        display.protocol === "selkies"
+          ? selkiesDisplay((port) => command.route(port))
+          : {
+              ...display,
+              label: "Desktop",
+              open: async (signal) => {
+                const password = await this.#vncPassword(command, signal);
+                return {
+                  route: { type: "tcp", host: access.host, port: VNC_PORT },
+                  auth: !password ? { type: "none" } : wayland ? { type: "apple", user: WAYVNC_USER, password } : { type: "vnc-password", password },
+                };
+              },
+              ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
+              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal) } : {}),
+              minSize: MIN_DESKTOP,
+            },
     );
     return {
       command,

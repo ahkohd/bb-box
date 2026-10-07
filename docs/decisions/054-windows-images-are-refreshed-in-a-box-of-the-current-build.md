@@ -47,6 +47,11 @@ replaces the current build.
   add Node.js (#539), which BB's installer for Windows needs. The record's
   pins digest stays the build script's, so the doctor judges a refreshed
   build as it judges one from the ISO.
+- A replace keeps the template it replaces as a rollback: a template at
+  a free VMID of bb-box's range, made before anything changes, until the
+  next successful replace of that template removes it. Rebuilding a
+  Windows template from the ISO takes about an hour as root on the host,
+  and a rollback is a setting away: list its VMID as the Windows template.
 - There is no sysprep: a box of the new build is the old one's clone,
   with its updates, as 039 has it. The capture shuts the box down.
 - The trial box runs `setup/windows/check.ps1`, the template's check,
@@ -66,3 +71,5 @@ for a new Windows release or a broken image.
   fresh install from the ISO starts that over.
 - The pins in `setup/windows/pins.json` and in the build scripts must
   agree until the build scripts read `pins.json` themselves.
+- Each Windows template takes one more VMID of bb-box's range, for its
+  rollback, while it has one.

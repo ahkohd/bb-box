@@ -51,6 +51,7 @@ import {
 import { sizesCheck } from "../fit.ts";
 import { CUA_DRIVER } from "../docker/backend.ts";
 import { judgeImage, recordFromJson } from "../images.ts";
+import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { MsbCli, MsbError, NOT_FOUND, type MsbCliOptions, type SandboxInfo } from "./cli.ts";
 import { MSB_KINDS, type MsbConfig, type MsbKind } from "./config.ts";
 import { MSB_VERSION, scriptValues } from "./release.ts";
@@ -244,7 +245,7 @@ export function msbKinds(config: MsbConfig): BoxKind[] {
         features: docker,
         command: MSB_COMMAND,
         // Xtigervnc takes a viewer's SetDesktopSize, as in a Docker box.
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
         computerUse: CUA_DRIVER,
         enrol: true,
       },
@@ -674,15 +675,18 @@ export class MsbBackend implements Backend {
     const command = new MsbTransport(this.#cli, guest.ref);
     const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
     const displays = (capabilities?.displays ?? []).map(
-      (display): Display => ({
-        ...display,
-        label: "Desktop",
-        open: async (signal) => {
-          const password = await this.#vncPassword(command, signal);
-          return { route: await command.route(VNC_PORT, signal), auth: password ? { type: "vnc-password", password } : { type: "none" } };
-        },
-        minSize: MIN_DESKTOP,
-      }),
+      (display): Display =>
+        display.protocol === "selkies"
+          ? selkiesDisplay((port, signal) => command.route(port, signal))
+          : {
+              ...display,
+              label: "Desktop",
+              open: async (signal) => {
+                const password = await this.#vncPassword(command, signal);
+                return { route: await command.route(VNC_PORT, signal), auth: password ? { type: "vnc-password", password } : { type: "none" } };
+              },
+              minSize: MIN_DESKTOP,
+            },
     );
     // No SSH server is reached in a box, so only BB's server reaches it, through msb exec.
     return { command, displays, access: null };
