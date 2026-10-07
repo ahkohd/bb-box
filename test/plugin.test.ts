@@ -13,6 +13,7 @@ import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get
 import { DRIVERS } from "../src/backends/index.ts";
 import type { BackendDriver, BoxKind } from "../src/backends/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
+import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
@@ -710,8 +711,9 @@ test("box_copy streams a file too large for BB's file API through the thread's m
 test("a Windows box on trial enrols as a machine of BB's manual provider, which bb-box owns: release, a failure and the sweep remove it, and a start reconnects only a disconnected one (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
   // A box's PowerShell that runs the desktop session's command as BB's installer would, and exits 0.
+  // Its access check finds no BB daemon (#560); anything else fails.
   const shell = join(tempDir("windows-shell"), "pwsh");
-  writeFileSync(shell, '#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; esac\nexit 1\n');
+  writeFileSync(shell, `#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; esac\nexit 1\n`);
   chmodSync(shell, 0o755);
   const { bb, harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell });
   t.after(() => harness.lifecycle.dispose());

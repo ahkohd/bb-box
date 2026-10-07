@@ -16,7 +16,7 @@ is a log: bb-box does not file these with BB.
 | [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | not met | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
 | [Find a machine by its key](#6-find-a-machine-by-its-key) | not met | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
 | [Reach a port on a machine](#7-reach-a-port-on-a-machine) | not met | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already; Docker on a BB machine goes through a relay of bb-box's own, on a route with `auth: "none"` guarded by a one-time secret |
-| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | not met | bb-box keeps a BB terminal on each box and reads the thread's variables and GH_TOKEN from BB's processes there: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
+| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | not met | bb-box's host entry keeps a process with the thread's variables and GH_TOKEN on each box, and commands read them from BB's processes there: from `/proc` on Linux, inexactly from `ps -E` on macOS, and through each process's PEB on Windows |
 | [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | not met | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
 | [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | not known | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
 | [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | not met | a box has its thread's project variables only while a thread of the project runs on it |
@@ -439,9 +439,9 @@ need a restart to pass on a changed token or variable.
   but leaves a backslash as it is, so it cannot read exactly a value that
   holds a backslash and three digits, or a space followed by a name and
   `=`.
-- On Windows, which has neither `/proc` nor `ps -E`, the gap: once
-  request 1 lets a Windows box enrol, it would get the variables the same
-  way.
+- On Windows, which has neither `/proc` nor `ps -E`, bb-box's reader of
+  each process's environment block through its PEB, at offsets Windows
+  does not document, compiled in each box.
 - bb-box's dependence on where BB installs its daemon
   (`host-daemon/dist/daemon-bundle`), which a BB release can change.
 
@@ -449,8 +449,11 @@ need a restart to pass on a changed token or variable.
 each enrolled box, since BB's own workers come and go
 (`src/host/access.ts`). Linux boxes read the environment of the
 processes below the daemon from `/proc`, and macOS boxes parse `ps -E`,
-choosing the process the same way (`src/core/in-box.ts`). Windows boxes
-get none of the variables.
+choosing the process the same way (`src/core/in-box.ts`). Windows boxes,
+on trial, read each process's environment block through its PEB, with a
+small C# reader that the first command compiles in the box, and their held
+process is Node, as Windows has no `sleep` (`src/core/windows-access.ts`,
+#560).
 
 ## 9. Open BB's terminal on a machine from a plugin
 
