@@ -907,15 +907,25 @@ test("a Windows image's operations on a Mac (#450): a box of its build, a captur
   assert.match(readFileSync(join(qemu, "vms", trial.ref.slice("mac1/".length), "config"), "utf8"), /\nbuild=build\.20261007-020000-abcd\n/);
   await images.remove(trial.ref, AbortSignal.timeout(30_000));
 
-  // The replace: current names the build, which is no refresh's any more, and the old build, which no VM uses, goes.
+  // The replace: current names the build, which is no refresh's any more, and the build before stays as the rollback, though no VM uses it.
   const replaced = await images.replace(captured, current, AbortSignal.timeout(30_000));
   assert.deepEqual([replaced.ref, replaced.current, replaced.build], [`mac1/${FAKE_WINDOWS_IMAGE}`, true, "build.20261007-020000-abcd"]);
   assert.equal(realpathSync(join(dir, "current")), realpathSync(built));
   assert.ok(!existsSync(join(built, "owner")));
-  assert.ok(!existsSync(join(dir, "1")), "the old build goes");
+  assert.equal(realpathSync(join(dir, "rollback")), realpathSync(join(dir, "1")), "the build before is the rollback");
+  assert.ok(existsSync(join(dir, "1", "disk.qcow2")));
   await assert.rejects(images.remove(`mac1/${FAKE_WINDOWS_IMAGE}@build.20261007-020000-abcd`, AbortSignal.timeout(30_000)), /is not a refresh's build of this install's/);
   // A VM made from the image's current build now is an overlay on the new build.
   const next = await images.box(replaced, "after the replace", AbortSignal.timeout(30_000));
   assert.match(readFileSync(join(qemu, "vms", next.ref.slice("mac1/".length), "config"), "utf8"), /^image=bb-box-windows\nbuild=build\.20261007-020000-abcd\n/);
   await images.remove(next.ref, AbortSignal.timeout(30_000));
+
+  // The next replace: the build it replaces is the rollback now, and the rollback before, which no VM uses, goes.
+  const later = join(dir, "build.20261108-020000-abcd");
+  mkdirSync(later);
+  for (const file of ["disk.qcow2", "vars.fd", "image.json"]) writeFileSync(join(later, file), "later");
+  await images.replace({ ...captured, ref: `mac1/${FAKE_WINDOWS_IMAGE}@build.20261108-020000-abcd`, build: "build.20261108-020000-abcd" }, replaced, AbortSignal.timeout(30_000));
+  assert.equal(realpathSync(join(dir, "current")), realpathSync(later));
+  assert.equal(realpathSync(join(dir, "rollback")), realpathSync(built), "the build it replaced is the rollback");
+  assert.ok(!existsSync(join(dir, "1")), "the rollback before goes");
 });
