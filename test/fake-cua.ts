@@ -98,6 +98,8 @@ export interface FakeDesktop {
   menusInWindow?: boolean;
   /** Cua is on Wayland. */
   wayland?: boolean;
+  /** As Cua on Windows: a window with no title is neither listed nor read (#365). */
+  untitledUnlisted?: boolean;
   /**
    * A click opens another process's panel, as a Windows tray icon does, and
    * Cua on Windows then says the click failed its foreground check (#484).
@@ -377,6 +379,9 @@ export class FakeCua {
 
   #window(desktop: FakeDesktop, args: Args): FakeWindow | Result {
     const window = desktop.windows.find((candidate) => candidate.id === args.window_id);
+    if (window && desktop.untitledUnlisted && !window.title.trim() && window.menuOf === undefined) {
+      return text(`No window with window_id ${window.id} exists. Call \`list_windows({"pid": ${window.pid}})\` for candidates.`, { code: "window_not_found" }, true);
+    }
     if (!window || (args.pid !== undefined && window.pid !== args.pid)) {
       return text(`window_id ${String(args.window_id)} is stale or no longer running; refresh list_windows.`, { code: "stale_window" }, true);
     }
@@ -460,7 +465,7 @@ export class FakeCua {
 
   #listWindows(): Result {
     const desktop = this.#load();
-    const windows = desktop.windows.filter((window) => window.menuOf === undefined).map((window) => this.#windowJson(window));
+    const windows = desktop.windows.filter((window) => window.menuOf === undefined && !(desktop.untitledUnlisted && !window.title.trim())).map((window) => this.#windowJson(window));
     return text(`${windows.length} windows.`, { windows });
   }
 
@@ -750,7 +755,7 @@ export class FakeCua {
       const wide = name === "wide";
       setTimeout(() => {
         this.#change((later) => {
-          const title = name === "editor" ? "Untitled 1 - Editor" : name;
+          const title = name === "editor" ? "Untitled 1 - Editor" : name === "untitled" ? "" : name;
           later.windows.push({ id, pid, app: name, title, x: 0, y: 0, width: wide ? 4000 : 640, height: wide ? 200 : 480, onScreen: true });
         });
       }, 200);

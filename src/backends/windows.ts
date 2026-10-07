@@ -102,24 +102,24 @@ public static class BbDisplay {
   }
 }`;
 
-/** Named for its source, so a new source compiles afresh. */
-const DISPLAY_DLL = `display-${createHash("sha256").update(DISPLAY_SOURCE).digest("hex").slice(0, 12)}.dll`;
-
 /**
- * Loads BbDisplay as $bbDisplay, from a file in the box user's local app
- * data, compiling it there first if it is missing. Add-Type takes up to 3 s
- * in a new PowerShell, and loading the file a few milliseconds. Scripts that
- * compile at once each write a file of their own, and the first to move it
- * into place wins.
+ * Loads class `type` of C# `source` as $`variable`, from a file in the box
+ * user's local app data named for the source, so a new source compiles
+ * afresh, compiling it there first if it is missing. Add-Type takes up to
+ * 3 s in a new PowerShell, and loading the file a few milliseconds. Scripts
+ * that compile at once each write a file of their own, and the first to move
+ * it into place wins.
  */
-const DISPLAY_HELPER = String.raw`$ErrorActionPreference = 'Stop'
-$bbDll = [IO.Path]::Combine([Environment]::GetFolderPath('LocalApplicationData'), 'bb-box', '${DISPLAY_DLL}')
+function helper(name: string, source: string, type: string, variable: string): string {
+  const dll = `${name}-${createHash("sha256").update(source).digest("hex").slice(0, 12)}.dll`;
+  return String.raw`$ErrorActionPreference = 'Stop'
+$bbDll = [IO.Path]::Combine([Environment]::GetFolderPath('LocalApplicationData'), 'bb-box', '${dll}')
 if (-not (Test-Path -LiteralPath $bbDll)) {
   $bbTemp = "$bbDll.$PID"
   New-Item -ItemType Directory -Force -Path (Split-Path $bbDll) | Out-Null
   try {
     Add-Type -OutputAssembly $bbTemp -TypeDefinition @'
-${DISPLAY_SOURCE}
+${source}
 '@
     [IO.File]::Move($bbTemp, $bbDll)
   } catch {
@@ -128,7 +128,78 @@ ${DISPLAY_SOURCE}
     Remove-Item -LiteralPath $bbTemp -ErrorAction Ignore
   }
 }
-$bbDisplay = [Reflection.Assembly]::LoadFile($bbDll).GetType('BbDisplay')`;
+$${variable} = [Reflection.Assembly]::LoadFile($bbDll).GetType('${type}')`;
+}
+
+/** Loads BbDisplay as $bbDisplay (helper). */
+const DISPLAY_HELPER = helper("display", DISPLAY_SOURCE, "BbDisplay", "bbDisplay");
+
+/**
+ * Gives each window a person sees that has no title the title "<app>
+ * (untitled)": visible, unowned, top-level, neither cloaked nor a tool
+ * window, larger than a pixel, and not Cua's. Cua on Windows lists and reads
+ * only windows with a title (#365). A title the app set, even of spaces, is
+ * left alone. It sets the title as SetWindowText would, but gives up on an
+ * app that does not answer within a second. Returns "<handle>\t<title>" for
+ * each window it named.
+ */
+const NAMER_SOURCE = String.raw`using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+public static class BbWindows {
+  delegate bool EnumProc(IntPtr window, IntPtr data);
+  [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr data);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, uint command);
+  [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr window);
+  [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr window, int index);
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wParam, string lParam, uint flags, uint timeout, out IntPtr result);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+
+  public static string Name() {
+    var named = new List<string>();
+    EnumWindows((window, data) => {
+      if (!IsWindowVisible(window) || GetWindow(window, 4) != IntPtr.Zero || GetWindowTextLength(window) != 0) return true;
+      int style = GetWindowLong(window, -20);
+      // WS_EX_TOOLWINDOW, unless WS_EX_APPWINDOW, as the taskbar is.
+      if ((style & 0x80) != 0 && (style & 0x40000) == 0) return true;
+      int cloaked;
+      if (DwmGetWindowAttribute(window, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
+      Rect rect;
+      if (!GetWindowRect(window, out rect) || rect.Right - rect.Left <= 1 || rect.Bottom - rect.Top <= 1) return true;
+      uint pid;
+      GetWindowThreadProcessId(window, out pid);
+      string app;
+      try { app = Process.GetProcessById((int)pid).ProcessName; } catch { return true; }
+      if (app == "cua-driver") return true;
+      string title = app + " (untitled)";
+      IntPtr result;
+      // WM_SETTEXT, with SMTO_ABORTIFHUNG.
+      if (SendMessageTimeout(window, 0x000C, IntPtr.Zero, title, 0x0002, 1000, out result) != IntPtr.Zero) named.Add(window.ToInt64() + "\t" + title);
+      return true;
+    }, IntPtr.Zero);
+    return string.Join("\n", named);
+  }
+}`;
+
+/** Names untitled windows in the box user's desktop session (NAMER_SOURCE), and prints what it named. */
+export const NAME_WINDOWS_SCRIPT = `${helper("windows", NAMER_SOURCE, "BbWindows", "bbWindows")}
+$bbNamed = $bbWindows::Name()
+if ($bbNamed) { [Console]::Out.WriteLine($bbNamed) }`;
+
+/** The windows NAME_WINDOWS_SCRIPT named, by handle, with their new titles. */
+export function parseNamed(stdout: string): { id: number; title: string }[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => /^(\d+)\t(.+)$/.exec(line.trim()))
+    .filter((match): match is RegExpExecArray => !!match)
+    .map((match) => ({ id: Number(match[1]), title: match[2]! }));
+}
 
 /**
  * Sets the desktop to `width` by `height`, or the listed mode that best

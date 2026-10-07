@@ -116,9 +116,11 @@ have clearly finished.
   window ID or window `"desktop"`.
 - When an app refuses input in the background, bb-box uses the real pointer
   or keyboard, and says so. The desktop's focus may then have moved.
-- On Windows, `computer_windows` lists only windows with a title. An app that
-  draws everything itself, such as a GPUI app, has no accessibility tree:
-  drive it with `computer_screenshot` and pixel actions.
+- On Windows, a window with no title gets the title "<app> (untitled)", as
+  Cua reaches only windows with one: `computer_launch` names it at once, and
+  `computer_windows` lists it from its next call on, and each says so. An
+  app that draws everything itself, such as a GPUI app, has no accessibility
+  tree: drive it with `computer_screenshot` and pixel actions.
 
 ## BB machines
 
