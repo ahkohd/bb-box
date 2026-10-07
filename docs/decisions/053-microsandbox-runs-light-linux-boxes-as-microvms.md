@@ -237,6 +237,18 @@ with Tart's Linux VMs, which serve Linux on a Mac now
   3.9 GiB RSS each, 2.3 to 2.8 GB as macOS counts a footprint. msb has no
   Mac host in bb-box yet, so there is no enrolled msb run to set beside it.
 
+### What it means
+
+- On a Linux host, microsandbox buys isolation and fast removal, not speed
+  or memory: a kernel per box, so Docker in a box with no privileged
+  container and Chrome with its own sandbox, and 20 boxes removed in
+  0.3 s against Docker's 2.9 s. Docker made boxes about twice as fast, and
+  shares the image's files in the host's page cache where each microVM
+  holds its own.
+- On a Mac, microsandbox is the clear win over Tart for Linux boxes: 20 at
+  once ready in 1 to 3 s, where one Tart Linux VM takes about 9 s and
+  holds several times the memory.
+
 ### A Linux host without nesting
 
 To come: a Proxmox LXC box with `/dev/kvm` passed in, as the spike's, with
