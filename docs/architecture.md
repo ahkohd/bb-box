@@ -1707,9 +1707,9 @@ Notes:
     one down.
 - **microsandbox** runs our OCI images unchanged as microVMs, on Linux
   with KVM or a Mac, in under a second, reached through `msb exec` as
-  Docker is through `docker exec`. It is not built until one of
-  [053](decisions/053-microsandbox-is-a-later-backend-not-built-now.md)'s
-  conditions holds.
+  Docker is through `docker exec`. It is being built
+  ([053](decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)), with
+  msb run on a BB machine through bb-box's host entry.
 - **Clouds and Crabbox** fit as virtual backends with SSH and instance
   tags; a cloud's capacity is its quota.
 
