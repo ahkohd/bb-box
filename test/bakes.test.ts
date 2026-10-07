@@ -6,7 +6,7 @@ import type { Backend, BackendImages, ImageBox, ImageBuild } from "../src/backen
 import type { BoxImage, BoxRecord } from "../src/core/boxes.ts";
 import type { ImageConfig } from "../src/core/document.ts";
 import { BoxError } from "../src/core/boxes.ts";
-import { ImageBakes, bakeScript, scriptHash, type Bake } from "../src/plugin/bakes.ts";
+import { ImageBakes, bakeScript, checkDetail, scriptHash, type Bake } from "../src/plugin/bakes.ts";
 import { tryText } from "../src/plugin/views.ts";
 import type { RunResult } from "../src/transports/types.ts";
 import { MemoryStorage } from "./helpers.ts";
@@ -310,10 +310,20 @@ test("a try runs the script as a build does, then the check and the kind's check
     ],
   );
   assert.equal(result.checks[2]!.detail, "2 checks passed");
+  assert.match(result.checks[1]!.detail, /^passed in \d+\.\d s$/, "the time, not the check's last line of output");
   assert.deepEqual(lxc.removed, ["7001", "7000"], "the trial box, then the build");
   assert.deepEqual(await storage.list("images/"), [], "a try keeps nothing");
   assert.match(tryText(result), /^The script passed on proxmox-lxc \(linux\), in \d+ s, as a build runs it\.\n- the script and the check, in the build box: ok, \d+ s, with finalizing\n/);
   assert.ok(lxc.ran.some((one) => one.script.includes(`BB_BOX_IMAGE='rust' BB_BOX_KIND='linux' BB_BOX_BACKEND='proxmox-lxc'`)));
+});
+
+test("a try's check line says ok with its time, or FAIL with its exit code and the line that says why, never the check's own output on a pass", () => {
+  const ran = { exitCode: 0, timedOut: false, durationMs: 1234, stdout: " __________\n< image ok >\n                ||     ||\n" };
+  assert.equal(checkDetail(ran), "passed in 1.2 s");
+  assert.equal(checkDetail({ ...ran, exitCode: 127, stdout: "checking\nbash: line 3: cargo: command not found\n\n" }), "exit code 127: bash: line 3: cargo: command not found");
+  assert.equal(checkDetail({ ...ran, exitCode: 1, stdout: "x".repeat(300) }), `exit code 1: ${"x".repeat(199)}…`);
+  assert.equal(checkDetail({ ...ran, exitCode: null, timedOut: true, stdout: "" }), "out of time after 10 minutes");
+  assert.equal(checkDetail({ ...ran, exitCode: 2, stdout: "" }), "exit code 2");
 });
 
 test("a try with keep leaves a box of its build, or of the build box a failing script left, and the build goes with that box (#451)", async () => {

@@ -138,6 +138,19 @@ export function scriptHash(image: ImageConfig): string {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 /** Runs an image's check as the box user in a box of its build. */
+/**
+ * How a check went, in a few words for the try's line: its time when it
+ * passed, else its exit code and its output's last line, which says why. Its
+ * output on a pass, such as a version or a picture, is not the line's.
+ */
+export function checkDetail(ran: { exitCode: number | null; timedOut: boolean; durationMs: number; stdout: string }): string {
+  if (ran.exitCode === 0) return `passed in ${(ran.durationMs / 1000).toFixed(1)} s`;
+  const why = ran.stdout.split("\n").map((line) => line.trim()).filter(Boolean).at(-1) ?? "";
+  const short = why.length > 200 ? `${why.slice(0, 199)}…` : why;
+  const how = ran.timedOut ? `out of time after ${Math.round(CHECK_MS / 60_000)} minutes` : `exit code ${ran.exitCode}`;
+  return short ? `${how}: ${short}` : how;
+}
+
 async function imageCheck(box: ImageBox, check: string, signal: AbortSignal) {
   await box.command.writeFile(".bb-box-image/check.sh", new TextEncoder().encode(check), { mode: "0700", signal });
   return box.command.run(`${LOAD_ENVIRONMENT} bash "$HOME/.bb-box-image/check.sh" 2>&1; s=$?; rm -rf "$HOME/.bb-box-image"; exit $s`, { timeoutMs: CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
@@ -438,8 +451,7 @@ export class ImageBakes {
       checks.push({ name: input.check ? "the script and the check, in the build box" : "the script, in the build box", ok: true, detail: `${Math.round(built.ms / 1000)} s, with finalizing` });
       if (input.check) {
         const checked = await imageCheck(built.trial, input.check, signal);
-        const last = checked.stdout.trim().split("\n").at(-1) ?? "";
-        checks.push({ name: "the check, on a box of the build", ok: checked.exitCode === 0, detail: checked.exitCode === 0 ? last || "passed" : `exit code ${checked.exitCode}: ${last}` });
+        checks.push({ name: "the check, on a box of the build", ok: checked.exitCode === 0, detail: checkDetail(checked) });
       }
       const kindCheck = trialCheck(images, input.kind);
       const ran = await built.trial.command.run(kindCheck.script, { timeoutMs: CHECK_MS, signal, maxOutputBytes: 256 * 1024 });
