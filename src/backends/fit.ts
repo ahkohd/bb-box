@@ -3,6 +3,7 @@
 // of the kind only at a smaller size asked for, and one too small for every
 // preset only at a custom size, so the doctor warns and says which fit.
 
+import type { CheckId } from "../core/checks.ts";
 import { describeSize, fits, formatMiB } from "../core/sizes.ts";
 import type { BoxSize, DoctorCheck, KindSettings } from "./types.ts";
 
@@ -14,7 +15,7 @@ export interface KindRoom {
 }
 
 export interface HostRoom {
-  readonly id: string;
+  readonly id: CheckId;
   readonly name: string;
   /** The host as the doctor names it. */
   readonly host: string;

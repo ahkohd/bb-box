@@ -112,7 +112,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "credentials",
     default: "",
   },
-  [QEMU_KEYS.tokenSecret]: { type: "string", label: "API token secret", secret: true, group: "credentials" },
+  [QEMU_KEYS.tokenSecret]: { type: "string", label: "API token secret", description: "The secret of the API token, from the setup guide's token file.", secret: true, group: "credentials" },
   [QEMU_KEYS.sshPrivateKey]: {
     type: "string",
     label: "SSH private key",
@@ -172,7 +172,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "advanced",
     default: QEMU_DEFAULTS.vmidFirst,
   },
-  [QEMU_KEYS.vmidLast]: { type: "number", label: "Last box VMID", group: "advanced", default: QEMU_DEFAULTS.vmidLast },
+  [QEMU_KEYS.vmidLast]: { type: "number", label: "Last box VMID", description: "The end of the range boxes take VMIDs from.", group: "advanced", default: QEMU_DEFAULTS.vmidLast },
   [QEMU_KEYS.sshUser]: {
     type: "string",
     label: "SSH user",

@@ -17,6 +17,7 @@
 // - Every call that acts on a container inspects it first and acts only on
 //   one whose labels name this install and the box (018).
 
+import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { hostname as localHostname } from "node:os";
@@ -817,9 +818,9 @@ export class DockerBackend implements Backend {
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {
     const checks: DoctorCheck[] = [];
     const notes: string[] = [`This install's ID is ${this.#context.installId}. Its containers carry the label ${LABELS.install}=${this.#context.installId}.`];
-    const push = (id: string, name: string, status: DoctorCheck["status"], detail: string, fix: string | null = null) =>
+    const push = (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix: string | null = null) =>
       checks.push({ id, name, status, detail, fix });
-    const skip = (id: string, name: string) => push(id, name, "skipped", "Skipped until the checks above pass.");
+    const skip = (id: CheckId, name: string) => push(id, name, "skipped", "Skipped until the checks above pass.");
     const images = [...new Set(DOCKER_KINDS.map((kind) => this.#config.images[kind]).filter((image): image is string => image !== null))];
 
     const version = await this.#cli.run(["--version"], { timeoutMs: 15_000, signal }).catch((error: unknown) => error as Error);
@@ -905,7 +906,7 @@ export class DockerBackend implements Backend {
       for (const image of images) {
         const serves = DOCKER_KINDS.filter((kind) => this.#config.images[kind] === image);
         const kinds = serves.join(", ");
-        const id = `image.${image}`;
+        const id = `image.${image}` as const;
         const name = `Image ${image}`;
         const result = await this.#cli.run(["image", "inspect", "--format", IMAGE_FORMAT, image], { timeoutMs: 30_000, signal });
         if (result.exitCode !== 0) {

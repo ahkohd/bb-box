@@ -259,7 +259,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "For example bbbox@pve!plugin. The setup guide lists the privileges it needs.",
     default: "",
   },
-  [LXC_KEYS.tokenSecret]: { type: "string", label: "Proxmox LXC: API token secret", secret: true },
+  [LXC_KEYS.tokenSecret]: { type: "string", label: "Proxmox LXC: API token secret", description: "The secret of the API token, from the setup guide's token file.", secret: true },
   [LXC_KEYS.tlsFingerprint]: {
     type: "string",
     label: "Proxmox LXC: TLS fingerprint",
@@ -302,7 +302,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "Boxes take VMIDs from this range. Keep other guests out of it.",
     default: LXC_DEFAULTS.vmidFirst,
   },
-  [LXC_KEYS.vmidLast]: { type: "number", label: "Proxmox LXC: last box VMID", default: LXC_DEFAULTS.vmidLast },
+  [LXC_KEYS.vmidLast]: { type: "number", label: "Proxmox LXC: last box VMID", description: "The end of the range boxes take VMIDs from.", default: LXC_DEFAULTS.vmidLast },
   [LXC_KEYS.bridge]: {
     type: "string",
     label: "Proxmox LXC: network bridge",

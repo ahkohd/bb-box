@@ -32,6 +32,7 @@
 // away, is retired rather than claimed. Guests of other installs, or with no
 // install, count against capacity but are otherwise left alone.
 
+import type { CheckId } from "../../core/checks.ts";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest } from "../proxmox/api.ts";
@@ -227,7 +228,7 @@ const FLAVOUR_NAMES: Readonly<Record<LxcFlavour, string>> = {
 };
 
 /** A doctor check's stable ID and its name. */
-type Check = readonly [id: string, name: string];
+type Check = readonly [id: CheckId, name: string];
 const API: Check = ["proxmox.api", "Proxmox API"];
 const NODE: Check = ["proxmox.node", "Node"];
 const MEMORY: Check = ["proxmox.memory", "Node memory"];
@@ -1047,7 +1048,7 @@ export class ProxmoxLxcBackend implements Backend {
                 { os: "linux", pins: pinSet(listed.flavour) === "linux" ? linuxPins : desktopPins, bbApp, hostNvidia: nvidia },
                 `Rebuild it with the setup guide's template/build.sh, as root on ${node}: build.sh ${REBUILD[listed.flavour](template)} --replace.`,
               );
-              checks.push({ id: `${name[0]}.image`, name: `Image of ${name[1]}`, ...judged });
+              checks.push({ id: `template.${template}.image`, name: `Image of ${name[1]}`, ...judged });
             }
           }
         } catch (error) {

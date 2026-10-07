@@ -37,7 +37,8 @@
     "smoke": "node scripts/smoke.ts",
     "conformance": "node scripts/conformance.ts",
     "refresh": "node scripts/refresh.ts",
-    "test:app": "vitest run"
+    "test:app": "vitest run",
+    "reference": "node scripts/reference.ts"
   },
   "dependencies": {
     "@novnc/novnc": "1.7.0",

@@ -339,6 +339,7 @@ package, in `node_modules/@novnc/novnc` after `npm install`.
 
 ## Documentation
 
+- [Reference](docs/reference/README.md): the CLI, agent tools, configuration, kinds and health checks, made from the code
 - [Architecture](docs/architecture.md)
 - [Backend interface](docs/backends.md)
 - [Decision records](docs/decisions)
