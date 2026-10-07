@@ -818,9 +818,9 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
   it on release or stop. Built so far: Proxmox LXC templates have
   `/dev/net/tun`.
 - **microsandbox**
-  ([053](decisions/053-microsandbox-is-a-later-backend-not-built-now.md))
-  would run the same OCI images as Docker as microVMs, on Linux with KVM or
-  a Mac. It is not built until one of 053's conditions holds.
+  ([053](decisions/053-microsandbox-is-a-later-backend-not-built-now.md)),
+  being built as a backend, runs the same OCI images as Docker as microVMs,
+  on Linux with KVM or a Mac.
 - **Clouds** fit as virtual backends with SSH and instance tags, where a
   cloud's capacity is its quota. A cloud VM that runs Linux works today as
   a Docker host or a pool machine.
