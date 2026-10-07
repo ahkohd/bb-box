@@ -821,9 +821,12 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
   ([053](decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)),
   being built as a backend, runs the same OCI images as Docker as microVMs,
   on Linux with KVM or a Mac.
-- **Clouds** fit as virtual backends with SSH and instance tags, where a
-  cloud's capacity is its quota. A cloud VM that runs Linux works today as
-  a Docker host or a pool machine.
+- **Clouds**
+  ([055](decisions/055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md)):
+  a cloud VM that runs Linux works today as a Docker host, through BB, or
+  as a pool machine. Next, a cloud backend makes Docker and microsandbox
+  hosts on Hetzner Cloud, then AWS, and places boxes on them; a cloud VM
+  per box comes later, for Windows and GPU desktops.
 
 ## The conformance suite and the doctor
 

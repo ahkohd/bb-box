@@ -6,7 +6,9 @@ backend reaches a BB machine's Docker without SSH. Checked after it was
 built: on a Windows PC, the relay reaches Docker Desktop's socket in WSL,
 and privileged boxes there start and enrol (#233). Extended by
 [049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md):
-Docker images are rebuilt through the same relay.
+Docker images are rebuilt through the same relay. Extended by
+[055](055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md):
+a cloud VM is a Docker host through the same relay.
 
 ## Context
 
