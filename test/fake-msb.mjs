@@ -65,11 +65,12 @@ function create(rest) {
   if (host.ghost === name && !values["--replace"]) fail(`sandbox already exists: sandbox '${name}' already exists; remove it, start the stopped sandbox, or recreate with .replace()`);
   if (load(name) && !values["--replace"]) fail(`sandbox already exists: sandbox '${name}' already exists; remove it, start the stopped sandbox, or recreate with .replace()`);
   const images = read("images.json", {});
-  if (!(image in images)) fail(`image not found: ${image}`);
+  // Docker's own image, which a builder microVM runs, is pulled by digest.
+  if (!(image in images) && !image.startsWith("docker:")) fail(`image not found: ${image}`);
   rmSync(dir(name), { recursive: true, force: true });
   mkdirSync(join(dir(name), "home"), { recursive: true });
   mkdirSync(join(dir(name), "run", "bb-box"), { recursive: true });
-  const labels = { ...images[image] };
+  const labels = { ...(images[image] ?? {}) };
   for (const label of many["--label"]) {
     const [key, ...value] = label.split("=");
     labels[key] = value.join("=");
@@ -110,6 +111,13 @@ function exec(rest) {
   }
   const name = rest[i];
   const sandbox = found(name);
+  // A builder's commands, which need Docker and the network: logged, not run.
+  if (name.startsWith("bb-box-builder-")) {
+    appendFileSync(join(root, "builder"), `${rest.slice(i + 2).join(" ")}\n`);
+    process.stdin.resume();
+    process.stdin.on("end", () => process.exit(host.failBuild && rest.join(" ").includes("build.sh") ? 1 : 0));
+    return;
+  }
   if (sandbox.status !== "Running") fail(`sandbox '${name}' is not running (status: ${sandbox.status})`);
   const command = rest.slice(i + 2);
   // The upkeep's reclaim, which needs root and the guest's /proc: logged, not run.

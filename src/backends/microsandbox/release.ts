@@ -40,7 +40,10 @@ export const MSB_HOME_MAX = 57;
 export const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 
 /** The scripts a host runs for bb-box, by name. */
-export type MsbScript = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks";
+export type MsbScript = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "transfer";
+
+/** A builder microVM's name (#build in backend.ts). */
+export const BUILDER_NAME = /^bb-box-builder-[a-z0-9]{1,32}$/;
 
 /** A box's Docker disk's name: its microVM's. */
 export const DISK_NAME = /^bbbox-[A-Za-z0-9_.-]{1,80}$/;
@@ -140,7 +143,8 @@ if [ "$(uname -s)" = Linux ]; then
 else
   echo "cpus=$(sysctl -n hw.ncpu)"
   echo "memory_kib=$(( $(sysctl -n hw.memsize) / 1024 ))"
-  echo "kvm=ok"
+  # The Hypervisor framework, which msb uses on a Mac.
+  if [ "$(sysctl -n kern.hv_support 2>/dev/null)" = 1 ]; then echo "kvm=ok"; else echo "kvm=missing"; fi
   echo "lxc=0"
 fi
 mkdir -p "$dir/home"
@@ -195,6 +199,14 @@ for file in "$dir"/disks/*.ext4; do
 done
 `,
 
+  /**
+   * Moves image $2 from Docker in builder microVM $1 into msb on the host,
+   * under the same reference, with `docker save` there and `msb load` here.
+   */
+  transfer: () => `${PRELUDE}"$msb" exec "$1" -- docker save "$2" | "$msb" load --quiet --tag "$2"
+echo "transferred=$2"
+`,
+
   import: () => `${PRELUDE}image=$1
 [ -x "$msb" ] || { echo "msb is not installed in $dir." >&2; exit 2; }
 id=$(docker image inspect --format '{{.Id}}' "$image") || { echo "Docker on this host has no image $image to import." >&2; exit 2; }
@@ -215,6 +227,7 @@ export function scriptArgsOk(name: string, args: readonly string[]): name is Msb
   if (name === "disk") return args.length === 2 && DISK_NAME.test(args[0]!) && /^[1-9][0-9]{0,3}$/.test(args[1]!);
   if (name === "undisk") return args.length >= 1 && args.length <= 4 && args.every((arg) => DISK_NAME.test(arg));
   if (name === "disks") return args.length === 0;
+  if (name === "transfer") return args.length === 2 && BUILDER_NAME.test(args[0]!) && IMAGE_REF.test(args[1]!);
   if (name === "images") return args.length >= 1 && args.length <= 4 && args.every((arg) => IMAGE_REF.test(arg));
   return false;
 }

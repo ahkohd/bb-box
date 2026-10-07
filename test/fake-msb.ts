@@ -104,6 +104,11 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
         const disks = existsSync(join(dir, "disks")) ? readdirSync(join(dir, "disks")) : [];
         return { exitCode: 0, stdout: disks.map((file) => `${file.replace(/\.ext4$/, "")}=${Math.round((Date.now() - statSync(join(dir, "disks", file)).mtimeMs) / 1000)}\n`).join(""), stderr: "" };
       }
+      if (name === "transfer") {
+        const kind = args[1]!.includes("desktop") ? "linux-arm64-desktop-cpu" : "linux-arm64";
+        writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[1]!]: imageLabels(kind, "build.builder") }));
+        return { exitCode: 0, stdout: `transferred=${args[1]}\n`, stderr: "" };
+      }
       if (name === "images") return { exitCode: 0, stdout: args.map((ref) => `docker:${ref}=${docker.get(ref)?.id ?? ""}\n`).join(""), stderr: "" };
       const image = docker.get(args[0]!);
       if (!image) return { exitCode: 2, stdout: "", stderr: `Docker on this host has no image ${args[0]} to import.\n` };
