@@ -2645,6 +2645,25 @@ test("a dialog is named with its window, and an action that closes a window says
   assert.doesNotMatch(after, /list item/);
 });
 
+test("on Wayland, a window that closes and gives way to another of its app's says it closed, and names the other (#402)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.wayland = true;
+  });
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Clear all"') }));
+  const dialog = text(await tool("computer_observe", { box: box.name, window: 101 }));
+  // Cua then reads window 101 as window 100, with no title or bounds of its own.
+  const cleared = text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(dialog, '"Clear"') }));
+  assert.match(cleared, /\n\nWindow 101 closed\. Its app's window 100: tasks "Tasks", \d+ by \d+, is open\.\n\nNext: Call computer_observe with window 100 to read it\.$/);
+  assert.doesNotMatch(cleared, /What changed in window 101/);
+  const again = await tool("computer_observe", { box: box.name, window: 101 });
+  assert.match(text(again), /has no window 101|Window 101 has closed/);
+  const typed = await tool("computer_type", { box: box.name, window: 101, text: "x" });
+  assert.ok(isError(typed));
+});
+
 test("pixels count only against the agent's latest image of the window or the desktop", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());

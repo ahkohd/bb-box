@@ -40,7 +40,8 @@
 // and typing work only in the foreground. A window with noActions has
 // elements with no actions, as a GTK tab or row has none. A window with
 // ownFrames gives its elements' frames in its own pixels, as a GTK 3 app on
-// Wayland does.
+// Wayland does. A read of a window that has closed gives another of its
+// app's windows' tree, with no title, bounds or app (#402).
 
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -465,7 +466,10 @@ export class FakeCua {
 
   #state(args: Args): Result {
     const desktop = this.#load();
-    const window = this.#window(desktop, args);
+    let window = this.#window(desktop, args);
+    // As Cua on Sway: a window it no longer lists reads as another of its app's windows, with no title, bounds or app of its own (#402).
+    const standIn = !("id" in window) && desktop.wayland ? desktop.windows.find((other) => other.pid === args.pid && other.menuOf === undefined) : undefined;
+    if (standIn) window = standIn;
     if (!("id" in window)) return window;
     this.#reads.set(window.id, (this.#reads.get(window.id) ?? 0) + 1);
     const owner = desktop.windows.find((other) => other.id === window.menuOf);
@@ -493,7 +497,7 @@ export class FakeCua {
       .filter((other) => other.dialogOf === window.id)
       .map((dialog) => ({ window_id: dialog.id, title: dialog.title, transient_for: window.id, modal: true, bounds: { x: dialog.x, y: dialog.y, width: dialog.width, height: dialog.height } }));
     const structured: Record<string, unknown> = {
-      window_id: window.id,
+      window_id: standIn ? args.window_id : window.id,
       pid: window.pid,
       element_count: elements.length,
       // As on macOS and Windows, where Cua cannot prove that nothing is missing.
@@ -502,9 +506,7 @@ export class FakeCua {
       ...(truncated ? { truncation_reason: "node_budget" } : {}),
       elements,
       snapshot_id: `${this.#prefix}-${Date.now()}`,
-      app_name: window.app,
-      window_title: window.title,
-      window_bounds: { x: window.x, y: window.y, width: window.width, height: window.height },
+      ...(standIn ? {} : { app_name: window.app, window_title: window.title, window_bounds: { x: window.x, y: window.y, width: window.width, height: window.height } }),
       dialogs,
       popups: desktop.windows.filter((other) => other.menuOf === window.id).map((menu) => ({ ...this.#windowJson(menu), override_redirect: true })),
       tree_markdown: markdown(flat),

@@ -1460,6 +1460,12 @@ export class Computer {
       throw new ComputerError("driver", `bb-box could not read window ${id}: ${explain(result)}`, "Call computer_windows to check the window, then try again.");
     }
     const structured = obj(result.structuredContent);
+    // Cua on Sway reads a window it no longer lists as another of its app's,
+    // with no title or bounds of its own (#402): one not listed has closed.
+    if (!popup && structured.window_title === undefined && structured.window_bounds === undefined && !(await this.#listWindows(use)).has(id)) {
+      this.#lost(use.state, id);
+      throw new ComputerError("stale", `Window ${id} has closed.`, "Call computer_windows to see the windows open now.");
+    }
     if (popup && !fills(structured, popup.window)) {
       this.#outdated(use.state, id);
       throw new ComputerError(
@@ -1940,9 +1946,7 @@ export class Computer {
     try {
       read = await this.#read(use, id, false);
     } catch (error) {
-      if (error instanceof ComputerError && error.code === "stale") {
-        return { parts: [`Window ${id} closed.`], hints: ["Call computer_windows to see the windows open now."], changed: true, after: null };
-      }
+      if (error instanceof ComputerError && error.code === "stale") return this.#gone(use, before.window);
       return unread(error, `Call computer_observe with window ${id}.`);
     }
     const after = read.snapshot;
@@ -1989,6 +1993,14 @@ export class Computer {
     hints.push(`Call computer_observe with window ${id} for the whole tree.`);
     if (after.dialogs.length) hints.push("Observe a dialog by its window ID to act in it.");
     return { parts, hints, changed, after };
+  }
+
+  /** A window that closed after an action, and the window of its app that took its place, as when a dialog gives way to the app's main window (#402). */
+  async #gone(use: Use, window: WindowInfo): Promise<Changes> {
+    const now = await this.#listWindows(use).catch(() => null);
+    const next = [...(now?.values() ?? [])].filter((other) => other.pid === window.pid && other.id !== window.id && other.width > 1 && other.height > 1).sort((a, b) => b.z - a.z)[0];
+    if (!next) return { parts: [`Window ${window.id} closed.`], hints: ["Call computer_windows to see the windows open now."], changed: true, after: null };
+    return { parts: [`Window ${window.id} closed. Its app's ${windowLine(next)}, is open.`], hints: [`Call computer_observe with window ${next.id} to read it.`], changed: true, after: null };
   }
 
   /**
