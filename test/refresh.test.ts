@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { ImageRecord } from "../src/backends/images.ts";
+import { pinsDigest, type ImageRecord } from "../src/backends/images.ts";
 import type { BackendImages, ImageBox, ImageBuild } from "../src/backends/types.ts";
 import { buildScript, recordChecks, refreshImage } from "../src/core/refresh.ts";
 import type { CommandTransport, RunResult } from "../src/transports/types.ts";
@@ -202,4 +204,126 @@ test("the build script runs the guest scripts as build.sh does for each kind", (
   assert.doesNotMatch(linux, /customize-desktop|DESKTOP_/);
   assert.match(linux, /finalize\.sh \S+ linux$/m);
   assert.throws(() => buildScript("macos", null, "build.x"), /bb-box refreshes no macos image/);
+});
+
+const WINDOWS_OLD = record("build.20260901-020000-77aa", { pwsh: "7.6.6", git: "2.56.0", "cua-driver": "0.30.4" }, { kind: "windows-desktop", os: "Windows 11 Pro", aptSnapshot: null, bbApp: null, sizeGiB: null });
+const WINDOWS: ImageBuild = { ref: "9200", image: "standard", kind: "windows-desktop", build: WINDOWS_OLD.build, record: WINDOWS_OLD, current: true };
+
+/**
+ * A fake backend with Windows boxes: refresh.ps1 exits with each of `exits`
+ * in turn, and each restart moves the box's boot time on.
+ */
+function fakeWindows(exits: number[]) {
+  const made = fake();
+  let boots = 0;
+  const left = [...exits];
+  const windowsCommand = (ref: string): CommandTransport => ({
+    probe: async () => true,
+    run: async (script) => {
+      const what = script.includes("LastBootUpTime") ? "booted" : script.startsWith("Restart-Computer") ? "restart" : script.startsWith("Remove-Item") ? "clean" : script.includes("Check 'Node.js") ? "check.ps1" : script;
+      made.events.push(`run ${ref} ${what}`);
+      if (what === "restart") boots++;
+      const stdout = what === "booted" ? `boot ${boots}\n` : what === "check.ps1" ? "ok    PowerShell 7 over SSH  7.6.6\nok    Node.js 22.19 or later on PATH  node v24.21.0, npm 11.6.2\n" : "";
+      return { exitCode: 0, stdout, stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
+    },
+    stream: async (script, { onOutput }) => {
+      made.events.push(`stream ${ref}`);
+      assert.equal(script, "& 'C:\\bb-box\\build\\refresh.ps1' -Pins 'C:\\bb-box\\build\\pins.json' -Record 'C:\\bb-box\\build\\image.json'; exit $LASTEXITCODE");
+      const exit = left.shift() ?? 0;
+      onOutput(new TextEncoder().encode(exit === 3010 ? "12:00:00 a restart, then this again\n" : exit ? "12:00:00 FAILED: no network\n" : "12:00:00 Done\n"), "stdout");
+      return { exitCode: exit, timedOut: false };
+    },
+    writeFile: async (path, data) => {
+      made.events.push(`write ${ref} ${path}`);
+      made.written.set(path, data);
+    },
+    readFile: async () => new Uint8Array(),
+  });
+  const images: BackendImages = {
+    ...made.images,
+    box: async (build, label) => {
+      const box = await made.images.box(build, label, AbortSignal.timeout(1000));
+      return { ref: box.ref, command: windowsCommand(box.ref) };
+    },
+    capture: async (box, from, image) => {
+      made.events.push(`capture ${box.ref} from ${from.ref} as ${image}`);
+      const written = JSON.parse(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\image.json"))) as ImageRecord;
+      return { ref: box.ref, image, kind: from.kind, build: written.build, record: written, current: false };
+    },
+    // Tart's builds its Linux and macOS images with a script: a Windows refresh still takes a box.
+    build: async () => assert.fail("a Windows refresh does not build with the backend's script"),
+  };
+  const run = () =>
+    refreshImage({ images, current: WINDOWS, setup: SETUP, bbUrl: "https://bb.example.com", bbApp: APP, signal: AbortSignal.timeout(60_000), now: made.now, restart: { timeoutMs: 1_000, pollMs: 0 } });
+  return { ...made, run };
+}
+
+test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it while Windows asks, then captures, checks with check.ps1 and replaces (054)", async () => {
+  const made = fakeWindows([3010, 0]);
+  const result = await made.run();
+  assert.equal(result.ok, true, result.reason ?? "");
+  assert.deepEqual(made.events, [
+    "box 7000 from 9200: refresh of 9200",
+    "write 7000 C:\\bb-box\\build\\refresh.ps1",
+    "write 7000 C:\\bb-box\\build\\pins.json",
+    "write 7000 C:\\bb-box\\build\\image.json",
+    "stream 7000",
+    "run 7000 booted",
+    "run 7000 restart",
+    "run 7000 booted",
+    "stream 7000",
+    "run 7000 clean",
+    "capture 7000 from 9200 as standard",
+    "box 7001 from 9200: answer time of build.20260901-020000-77aa",
+    "remove 7001",
+    `box 7002 from 7000: trial of ${result.build!.build}`,
+    "run 7002 check.ps1",
+    "remove 7002",
+    "replace 9200 with 7000",
+  ]);
+  assert.deepEqual(result.checks.map((check) => [check.name, check.ok]), [
+    ["answers as quickly", true],
+    ["the kind's check (check.ps1)", true],
+    ["the record", true],
+    ["no tool older", true],
+  ]);
+  assert.ok(result.output.includes("restarting the box (round 1 of 5)"));
+
+  const pins = JSON.parse(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\pins.json"))) as { tools: { name: string; arch: string; version: string }[] };
+  assert.ok(pins.tools.length > 5 && pins.tools.every((pin) => pin.arch === "x86_64"), "the x86_64 pins alone");
+  const written = result.build!.record!;
+  assert.match(written.build, /^build\.\d{8}-\d{6}-[0-9a-f]{4}$/);
+  assert.deepEqual([written.kind, written.arch, written.os, written.pins], ["windows-desktop", "x86_64", "Windows 11 Pro", await pinsDigest(SETUP, "windows")]);
+  assert.equal(written.tools.node, "24.21.0");
+  assert.equal(written.tools.pwsh, pins.tools.find((pin) => pin.name === "pwsh")!.version);
+  assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\refresh.ps1")), readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8"));
+});
+
+test("a Windows refresh that fails, or that Windows keeps asking to restart, keeps the image", async () => {
+  const failed = fakeWindows([1]);
+  const result = await failed.run();
+  assert.equal(result.reason, "The build failed with exit code 1: 12:00:00 FAILED: no network");
+  assert.ok(!failed.events.some((event) => event.startsWith("capture")));
+  assert.equal(failed.events.at(-1), "remove 7000");
+
+  const restarts = fakeWindows([3010, 3010, 3010, 3010, 3010]);
+  const looped = await restarts.run();
+  assert.equal(looped.reason, "Windows still wanted a restart after 5 rounds of updates.");
+  assert.equal(restarts.events.filter((event) => event === "run 7000 restart").length, 4);
+});
+
+test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {
+  const pins = (JSON.parse(readFileSync(join(SETUP, "windows", "pins.json"), "utf8")) as { tools: { name: string; arch: string; version: string; url: string; sha256: string }[] }).tools;
+  const names: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node" };
+  for (const [script, arch] of [["proxmox-qemu/build.sh", "x86_64"], ["tart/prepare-windows-image.sh", "arm64"]] as const) {
+    const lines = Object.fromEntries([...readFileSync(join(SETUP, script), "utf8").matchAll(/^([A-Z0-9]+)_(VERSION|SHA256)=(\S+)$/gm)].map((match) => [`${match[1]}_${match[2]}`, match[3]!]));
+    const ours = pins.filter((pin) => pin.arch === arch);
+    assert.deepEqual(ours.map((pin) => pin.name).sort(), Object.values(names).sort(), `${arch}: one pin per tool`);
+    for (const [prefix, name] of Object.entries(names)) {
+      const pin = ours.find((one) => one.name === name)!;
+      assert.equal(pin.version, lines[`${prefix}_VERSION`], `${script}'s ${name} version`);
+      assert.equal(pin.sha256.toUpperCase(), lines[`${prefix}_SHA256`]?.toUpperCase(), `${script}'s ${name} SHA-256`);
+      assert.ok(pin.url.startsWith("https://") && (name === "vs-buildtools" || pin.url.includes(pin.version)), `${name}'s URL names its version`);
+    }
+  }
 });

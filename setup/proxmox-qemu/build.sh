@@ -8,7 +8,7 @@
 # agent, OpenSSH with PowerShell 7 and the plugin's key, Cua Driver, build
 # tools (Visual Studio Build Tools for C++, LLVM and Rust), and user box logged
 # on automatically. Then it makes the VM a template, not generalized, and
-# checks a linked clone of it over SSH with check.ps1. About 50 minutes, nearly
+# checks a linked clone of it over SSH with ../windows/check.ps1. About 50 minutes, nearly
 # all of it Windows Setup, OpenSSH from Windows Update and the build tools.
 #
 # Options: --replace  <vmid> may be a bb-box Windows template already. The new
@@ -66,6 +66,9 @@ LLVM_VERSION=23.1.2
 LLVM_SHA256=E9D9141524F2C9FE4BF9F37012EFE34F0AA745617BE9E21FFACE9104703C55E5
 RUSTUP_VERSION=1.29.1
 RUSTUP_SHA256=6F4BEF66261261FCB43131BE8720BAB817D403A09EDEC7455C371974B90BDB7E
+# Node.js, which BB's installer for Windows needs (#539), as Linux boxes have it.
+NODE_VERSION=24.21.0
+NODE_SHA256=158F7685B44DE51F6C0DF1D153526CBCD3E1BC739A8DFC607721CEF75DE9E541
 
 for tool in genisoimage jq python3 ssh scp; do command -v "$tool" >/dev/null || die "$tool is required"; done
 [ -f "$BBBOX_SSH_KEY.pub" ] || die "no plugin key at $BBBOX_SSH_KEY.pub: run ../proxmox-lxc/host/setup-host.sh"
@@ -90,10 +93,10 @@ thin=
 record=$(jq -cn --arg build "$build" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg os "$BBBOX_WINDOWS_EDITION" \
   --arg pins "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/build.sh" | sha256sum | cut -d' ' -f1)" \
   --arg pwsh "$PWSH_VERSION" --arg git "$GIT_VERSION" --arg gh "$GH_VERSION" --arg cua "$CUA_VERSION" \
-  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" \
+  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" \
   '{contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: $build, built: $built, base: null, os: $os,
     aptSnapshot: null, pins: $pins, bbApp: null,
-    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup},
+    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node},
     nvidia: null, layer: null, sizeGiB: null}')
 linked_clones() { # vmid
   { grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null ||
@@ -183,6 +186,8 @@ json.dump({
              "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-win64.msi"},
     "rustup": {"version": "$RUSTUP_VERSION", "sha256": "$RUSTUP_SHA256",
                "url": "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/x86_64-pc-windows-msvc/rustup-init.exe"},
+    "node": {"version": "$NODE_VERSION", "sha256": "$NODE_SHA256",
+             "url": "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-win-x64.zip"},
 }, open(sys.argv[1], "w"), indent=2)
 EOF
 genisoimage -quiet -J -r -V BBBOXANSWER -o "$answer_iso" "$work/answer"
@@ -285,7 +290,7 @@ log "a clone's clock is $offset s off the host's"
 [ "${offset#-}" -le 120 ] || die "a clone's clock is $offset s off the host's"
 wait_for "a clone's desktop has Cua" 300 1 desktop_up || die "Cua did not start in a clone's desktop session"
 scp -q -i "$BBBOX_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-  "$here/check.ps1" "box@$BBBOX_BUILD_ADDRESS:C:/bb-box/check.ps1"
+  "$here/../windows/check.ps1" "box@$BBBOX_BUILD_ADDRESS:C:/bb-box/check.ps1"
 checked=0
 ssh_box '& C:\bb-box\check.ps1' || checked=$?
 # The warm pool hibernates boxes and resumes them (039), so the clone must too.
@@ -306,7 +311,7 @@ qm destroy "$check_vm" --purge 1 >/dev/null
 check_vm=
 [ "$checked" = 0 ] || die "the check failed (above)"
 
-description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION.
+description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION, Node.js $NODE_VERSION.
 $record"
 # The pool's ACL lets the plugin's token delete guests in it; protection keeps
 # it from deleting templates. Clones inherit the flag, so the plugin clears it

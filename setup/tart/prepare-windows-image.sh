@@ -89,6 +89,8 @@ LLVM_VERSION=23.1.2
 LLVM_SHA256=72FD68D6DC22723EF55FBB150033BF38C8E860A2B4015DDC59DAD841DB1A30C8
 RUSTUP_VERSION=1.29.1
 RUSTUP_SHA256=01AA49CF9574A8BD0AE52005D7DE2590E8F27181DED6748236E702C92AEF826D
+NODE_VERSION=24.21.0
+NODE_SHA256=8779B1BDE1D39F8D420E3B57AA657B39891AF434D3DE44A919044CEC06785921
 # The drivers Setup needs for the disk, and Windows for the network and display.
 VIRTIO_VERSION=0.1.302
 VIRTIO_SHA256=303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d
@@ -134,9 +136,9 @@ free=$(kib)
 
 build=build.$(date -u +%Y%m%d-%H%M%S)
 # The image's record (049). The pins' SHA-256 is of this script's pin lines.
-record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
+record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
   "$build" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$edition" "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-windows-image.sh" | shasum -a 256 | cut -d' ' -f1)" \
-  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$VIRTIO_VERSION")
+  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$NODE_VERSION" "$VIRTIO_VERSION")
 d=$images/$build.new
 # Kept on a failure, to look at: the screen and QEMU's output.
 png=$images/$build.png
@@ -269,7 +271,7 @@ awk -v clock="$here/windows/check-clock.ps1" '
   drop { if ($0 == "}") drop = 0; next }
   { print }
   END { if (n != 1 || drop) exit 1 }
-' "$template/check.ps1" >"$w/check.ps1" || die "../proxmox-qemu/check.ps1 has changed: adapt this script to it"
+' "$here/../windows/check.ps1" >"$w/check.ps1" || die "../windows/check.ps1 has changed: adapt this script to it"
 json() { printf '%s' "$1" | sed 's/[\\"]/\\&/g'; }
 pin() { printf '"%s": {"version": "%s", "sha256": "%s", "url": "%s"}' "$1" "$2" "$3" "$4"; }
 {
@@ -289,6 +291,8 @@ pin() { printf '"%s": {"version": "%s", "sha256": "%s", "url": "%s"}' "$1" "$2" 
   pin llvm "$LLVM_VERSION" "$LLVM_SHA256" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-woa64.msi"
   printf ',\n  '
   pin rustup "$RUSTUP_VERSION" "$RUSTUP_SHA256" "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/aarch64-pc-windows-msvc/rustup-init.exe"
+  printf ',\n  '
+  pin node "$NODE_VERSION" "$NODE_SHA256" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-win-arm64.zip"
   printf ',\n  "record": "%s"' "$(json "$record")"
   printf '\n}\n'
 } >"$a/bb-box/build.json"

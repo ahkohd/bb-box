@@ -103,6 +103,18 @@ Remove-Item $msi -Force
 # Plain output for agents' commands, as the backend's command prelude asks too.
 [Environment]::SetEnvironmentVariable('NO_COLOR', '1', 'Machine')
 
+Step "Node.js $($build.node.version)"
+# BB's installer for Windows needs it (#539), and Linux boxes have it.
+$zip = 'C:\bb-box\node.zip'
+Get-Pinned $build.node.url $build.node.sha256 $zip
+$dir = 'C:\Program Files\nodejs'
+Expand-Archive $zip -DestinationPath C:\bb-box\node -Force
+Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+Move-Item (Get-ChildItem C:\bb-box\node -Directory | Select-Object -First 1).FullName $dir
+Remove-Item C:\bb-box\node, $zip -Recurse -Force
+$path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+if ($path -notlike "*$dir*") { [Environment]::SetEnvironmentVariable('Path', "$path;$dir", 'Machine') }
+
 Step "Visual Studio Build Tools $($build.vs.version): $($build.vs.components -join ', ')"
 # The C++ build tools and the Windows SDK, which Rust's MSVC toolchain links
 # with. A fixed-version bootstrapper installs that version's components.

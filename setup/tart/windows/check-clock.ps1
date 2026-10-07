@@ -1,5 +1,5 @@
 # The check prepare-windows-image.sh puts in the Windows template's check.ps1
-# (../../proxmox-qemu/check.ps1) in place of its address check, as a box on a
+# (../../windows/check.ps1) in place of its address check, as a box on a
 # Mac takes its address from QEMU: that clock.ps1 ran.
 Check 'clock from QEMU in UTC, synced' {
   $rtc = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation').RealTimeIsUniversal

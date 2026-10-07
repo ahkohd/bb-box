@@ -1,5 +1,6 @@
 # Checks a box made from the Windows template, over SSH as box, the way the
-# backend reaches it. build.sh runs it on a linked clone of a new template.
+# backend reaches it. The build scripts run it on a clone of a new image, and
+# a refresh (054) on a trial box of a new build.
 # Prints one line per check and exits 1 if any fails.
 $failed = 0
 function Check($name, [scriptblock]$test) {
@@ -26,6 +27,10 @@ Check 'SSH session elevated' {
 Check 'git and gh on PATH' {
   $git = git --version; $gh = gh --version | Select-Object -First 1
   if (-not $git -or -not $gh) { throw 'missing' }; "$git; $gh"
+}
+Check 'Node.js 22.19 or later on PATH' {
+  $v = node --version; $n = npm --version
+  if (-not $v -or [version]($v.TrimStart('v')) -lt [version]'22.19') { throw "node $v" }; "node $v, npm $n"
 }
 Check 'NO_COLOR set' { if ($env:NO_COLOR -ne '1') { throw "NO_COLOR is '$env:NO_COLOR'" }; 'NO_COLOR=1' }
 Check 'C++ build tools and SDK' {
