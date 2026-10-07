@@ -3,19 +3,23 @@
 
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { z } from "zod";
 import { BoxError, OPERATOR, SPARES, describeError, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../core/copy.ts";
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
-import type { GuestOs, RunResult } from "../transports/types.ts";
+import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
-/** Largest file box_copy moves. */
+/** Largest file box_copy moves through BB's file API; a larger one streams through the worker on the thread's machine (#492). */
 export const COPY_MAX_BYTES = 16 * 1024 * 1024;
 const RUN_TIMEOUT_S = 10 * 60;
 /**
@@ -127,38 +131,14 @@ export function storageFile(path: string, storage: { hostId: string; path: strin
   return inside.startsWith("..") || paths.isAbsolute(inside) ? null : { hostId: storage.hostId, path: full, rootPath: storage.path, stored: true };
 }
 
-/**
- * Why a file is too large for box_copy, and how to move it in parts (#485).
- * BB's file API takes a file whole, up to 25 MB (BB request 20), so box_copy
- * moves up to 16 MiB, which base64 keeps under it; a larger file goes as
- * parts the agent splits on one side and joins on the other.
- */
-export function tooLargeToCopy(path: string, size: number | null, direction: "to_box" | "from_box", os: GuestOs): string {
-  const name = (os === "windows" ? win32 : posix).basename(path);
-  const parts = `${name}.part-`;
-  const limit = `box_copy moves files up to ${COPY_MAX_BYTES / 1024 / 1024} MiB, as BB's file API takes a file whole and refuses one over 25 MB`;
-  const what = `${path}${size === null ? " is too large" : ` is ${size} bytes`}; ${limit}.`;
-  const splitHere = `split -b 15m ${path} ${path}.part-`;
-  const joinHere = `cat ${parts}* > ${name}`;
-  if (os === "windows") {
-    const join = `$o = [IO.File]::Create("${name}"); Get-ChildItem ${parts}* | Sort-Object Name | ForEach-Object { $b = [IO.File]::ReadAllBytes($_.FullName); $o.Write($b, 0, $b.Length) }; $o.Close()`;
-    const split = `$i = [IO.File]::OpenRead("${name}"); $b = New-Object byte[] 15MB; $n = 0; while (($r = $i.Read($b, 0, $b.Length)) -gt 0) { $o = [IO.File]::Create(("${parts}{0:d3}" -f $n++)); $o.Write($b, 0, $r); $o.Close() }; $i.Close()`;
-    return direction === "to_box"
-      ? `${what} Move it in parts: run ${splitHere} on this side, box_copy each part, then join them in the box with box_run: ${join}. Compare its Get-FileHash with sha256sum here.`
-      : `${what} Move it in parts: split it in the box with box_run: ${split}. box_copy each part, then join them on this side: ${joinHere}. Compare its sha256sum with Get-FileHash in the box.`;
-  }
-  const hash = os === "macos" ? "shasum -a 256" : "sha256sum";
-  return direction === "to_box"
-    ? `${what} Move it in parts: run ${splitHere} on this side, box_copy each part, then join them in the box with box_run: ${joinHere} && rm ${parts}*. Compare ${hash} on both sides.`
-    : `${what} Move it in parts: split it in the box with box_run: split -b 15m ${path} ${parts}. box_copy each part, then join them on this side: ${joinHere}. Compare ${hash} on both sides.`;
+/** Whether BB's file API refused a file for its size: it takes a file whole, up to 25 MB (#485, BB request 20). */
+function refusedForSize(error: unknown): boolean {
+  return /\b413\b|exceeds the \d+ ?MB limit/.test(error instanceof Error ? error.message : String(error));
 }
 
-/** BB's file API refusing a file for its size, with the size where it says it. */
-function refusedForSize(error: unknown): { size: number | null } | null {
-  const text = error instanceof Error ? error.message : String(error);
-  if (!/\b413\b|exceeds the \d+ ?MB limit/.test(text)) return null;
-  const size = /File size (\d+) bytes/.exec(text);
-  return { size: size ? Number(size[1]) : null };
+/** The words for a copy's bytes and SHA-256. */
+function summed(sum: FileSum): string {
+  return `${sum.bytes} bytes, SHA-256 ${sum.sha256}`;
 }
 
 /** The box's transport runs in the box user's home, so a relative path is under it; so is one that starts with ~/. */
@@ -449,7 +429,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   bb.agents.registerTool({
     name: "box_copy",
     description:
-      "Copy one file, up to 16 MiB, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box; a larger one goes in parts, as the error says. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
+      "Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. A file over 16 MiB streams through bb-box's worker on the thread's machine, and its SHA-256 is checked at both ends. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
     presentation: { label: { pending: "Copying a file", completed: "Copied a file" } },
     parameters: z.object({
       box: boxParam,
@@ -474,18 +454,59 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           const source = await local(from);
           const target = boxPath(to ?? pathsOf(source.rootPath ?? null).basename(source.path));
           const file = await bb.sdk.files.read({ hostId: source.hostId, path: source.path, rootPath: source.rootPath, signal }).catch((error: unknown) => {
-            const refused = refusedForSize(error);
-            throw refused ? new Error(tooLargeToCopy(source.path, refused.size, direction, found.capabilities.os)) : error;
+            if (refusedForSize(error)) return null;
+            throw error;
           });
-          if (!("content" in file)) throw new Error(`BB did not return the contents of ${source.path}.`);
-          if (file.sizeBytes > COPY_MAX_BYTES) throw new Error(tooLargeToCopy(source.path, file.sizeBytes, direction, found.capabilities.os));
-          const box = await boxes.writeFile(owner, found.id, target, bytes(file.content, file.contentEncoding), { signal });
-          return `Copied ${source.path} (${file.sizeBytes} bytes) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
+          if (file) {
+            if (!("content" in file)) throw new Error(`BB did not return the contents of ${source.path}.`);
+            const box = await boxes.writeFile(owner, found.id, target, bytes(file.content, file.contentEncoding), { signal });
+            return `Copied ${source.path} (${file.sizeBytes} bytes) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
+          }
+          // Too large for BB's file API: the worker on the file's machine streams it to a part file in the box, which replaces the target once the two SHA-256s match (#492).
+          const { box, result } = await boxes.reach(
+            owner,
+            found.id,
+            async (transport, box) => {
+              const os = box.capabilities.os;
+              try {
+                const { done, result: written } = await app.files.copy(source.hostId, { file: source.path, root: source.rootPath, direction: "send" }, (channel) => writePart(transport, os, target, channel.iterator({ destroyOnReturn: false }), signal), signal);
+                if (done.bytes !== written.bytes || done.sha256 !== written.sha256) {
+                  throw new Error(`The copy of ${source.path} did not arrive whole: ${summed(done)} went, and the box has ${summed(written)}. Try again.`);
+                }
+                await settlePart(transport, os, target, true, signal);
+                return written;
+              } catch (error) {
+                await settlePart(transport, os, target, false).catch(() => undefined);
+                throw error;
+              }
+            },
+            signal,
+          );
+          return `Copied ${source.path} (${summed(result)}) to ${target} in box ${box.name}, streamed through the thread's machine.${next(`Use it with box_run (box "${box.name}").`)}`;
         }
         const target = await local(to ?? (found.capabilities.os === "windows" ? win32 : posix).basename(from));
-        const { box, data } = await boxes.readFile(owner, found.id, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal }).catch((error: unknown) => {
-          throw error instanceof Error && /is larger than \d+ bytes/.test(error.message) ? new Error(tooLargeToCopy(from, null, direction, found.capabilities.os)) : error;
+        const small = await boxes.readFile(owner, found.id, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal }).catch((error: unknown) => {
+          if (error instanceof Error && /is larger than \d+ bytes/.test(error.message)) return null;
+          throw error;
         });
+        if (!small) {
+          // Too large for BB's file API: the box gives the file's size and SHA-256, then streams it to the worker on the target's machine, which keeps it only if they match (#492).
+          const { box, result } = await boxes.reach(
+            owner,
+            found.id,
+            async (transport, box) => {
+              const os = box.capabilities.os;
+              const sum = await boxFileSum(transport, os, boxPath(from), signal);
+              const send = (channel: NodeJS.WritableStream) =>
+                readStream(transport, os, boxPath(from), (data) => pipeline(Readable.fromWeb(data as NodeReadableStream<Uint8Array>), channel), signal);
+              await app.files.copy(target.hostId, { file: target.path, root: target.rootPath, direction: "receive", expect: sum }, send, signal);
+              return sum;
+            },
+            signal,
+          );
+          return `Copied ${from} (${summed(result)}) from box ${box.name} to ${target.path} in ${target.stored ? "this thread's storage folder" : "the workspace"}, streamed through the thread's machine.${next("Read it with your usual file tools.")}`;
+        }
+        const { box, data } = small;
         await bb.sdk.files.write({
           hostId: target.hostId,
           path: target.path,
