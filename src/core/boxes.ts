@@ -30,6 +30,7 @@ import {
   type BoxSize,
   type BoxTransports,
   type Capacity,
+  type DoctorCheck,
   type Guest,
   type HeldGuest,
   type KindCapabilities,
@@ -838,6 +839,37 @@ export class Boxes {
       else count.making++;
     }
     return counts;
+  }
+
+  /** Each project's image's spares (#440), by "<image>|<backend>|<kind>": ready to claim, or being made. */
+  async imageSpareCounts(): Promise<Record<string, { readonly ready: number; readonly making: number }>> {
+    const counts: Record<string, { ready: number; making: number }> = {};
+    for (const spare of await this.list(SPARES)) {
+      if (!isActive(spare) || !spare.image) continue;
+      const count = (counts[`${spare.image.name}|${spare.backend}|${spare.kind}`] ??= { ready: 0, making: 0 });
+      if (await this.#claimable(spare)) count.ready++;
+      else count.making++;
+    }
+    return counts;
+  }
+
+  /** The doctor's line for each image's spare the upkeep holds off, as a box of its build failed to start (#440). */
+  async imageSpareChecks(): Promise<DoctorCheck[]> {
+    const checks: DoctorCheck[] = [];
+    for (const key of await this.#deps.kv.list("spares/image-failed/")) {
+      const failed = await this.#deps.kv.get<{ ref: string; at: number }>(key);
+      if (!failed || this.#now() - failed.at >= SPARE_RETRY_MS) continue;
+      const [name = "", backend = "", kind = ""] = key.slice("spares/image-failed/".length).split("/");
+      const when = (at: number) => new Date(at).toISOString().slice(0, 16).replace("T", " ");
+      checks.push({
+        id: `spares.image.${name}.${backend}.${kind}`,
+        name: `Spare of ${name} for ${kind} on ${backend}`,
+        status: "warn",
+        detail: `A spare from its build ${failed.ref} failed to start at ${when(failed.at)} UTC, so bb-box keeps none of that build until ${when(failed.at + SPARE_RETRY_MS)} UTC. Its boxes start from the build meanwhile.`,
+        fix: "The failed box's error is in bb box list --all. A new build of the image, as a changed script or the nightly rebuild makes, is tried at once.",
+      });
+    }
+    return checks;
   }
 
   /** Whether a spare can be claimed now: ready, answering, enrolled when it enrols, and with no task running. */

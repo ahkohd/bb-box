@@ -5,7 +5,9 @@ Status: accepted, 30 September 2026. Partly supersedes
 Extends [011](011-interface-v1.md) and
 [020](020-control-belongs-to-a-viewer.md). Extended by
 [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
-Windows' console resizes through the backend.
+Windows' console resizes through the backend. Extended by
+[048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md):
+the backend resizes a Wayland display.
 
 ## Context
 

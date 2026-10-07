@@ -1,9 +1,14 @@
 # 006: The Linux GPU desktop runs Xorg with NVIDIA's driver, streamed by x0vncserver
 
-Status: accepted, 30 September 2026. Research:
-[the GPU in a desktop box](../research/gpu-desktop.md). Partly superseded by
+Status: accepted, 30 September 2026. Research: [the GPU in a desktop
+box](../research/gpu-desktop.md). Partly superseded by
 [021](021-desktop-resize-through-the-backend.md): the screen resizes with
-`xrandr --fb`, so the backend resizes it for the viewer.
+`xrandr --fb`, so the backend resizes it for the viewer. Extended by
+[020](020-control-belongs-to-a-viewer.md): a GPU desktop that fell back to
+the CPU is retried on another GPU; and by
+[048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md):
+a Wayland desktop on the GPU needs a host setting that this decision's Xorg
+path does not.
 
 ## Context
 

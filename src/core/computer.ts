@@ -35,6 +35,14 @@ const OPEN_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 30_000;
 const LAUNCH_WAIT_MS = 10_000;
 const LAUNCH_POLL_MS = 250;
+/**
+ * After an action on a window that changed nothing in it, how long bb-box
+ * waits before it looks once more whether the window has gone, as a dialog
+ * closes a moment after its button is pressed.
+ */
+const LATE_CLOSE_MS = 250;
+/** computer_windows starts the namer of untitled windows at most this often, unless the window list changed (#365). */
+const NAME_EVERY_MS = 15_000;
 /** How long a URL's window may keep a placeholder title while its page loads. */
 const PAGE_WAIT_MS = 10_000;
 /** How long an action on the desktop may take to open, close or retitle a window. */
@@ -319,6 +327,8 @@ interface BoxState {
   readonly large: Set<number>;
   /** The namer of untitled windows on a Windows box, while it runs; one at a time (#365). */
   naming: Promise<void> | null;
+  /** When computer_windows last started the namer, and the windows Cua listed then. */
+  lastNaming: { readonly at: number; readonly windows: string } | null;
   /** Titles the namer gave in the background, by window ID, until computer_windows says so. */
   readonly titled: Map<number, string>;
 }
@@ -800,10 +810,11 @@ export class Computer {
   /** Lists the desktop's windows. */
   windows(box: BoxRecord, signal?: AbortSignal): Promise<ComputerResult> {
     return this.#run(box, signal, async (use) => {
+      const listed = await this.#listWindows(use);
       // The namer takes a second or more in the desktop session, so it runs in
       // the background: a window it names is listed from the next call on.
-      this.#nameLater(use);
-      const windows = [...(await this.#listWindows(use)).values()].filter((window) => window.width > 1 && window.height > 1);
+      this.#nameLater(use, listed);
+      const windows = [...listed.values()].filter((window) => window.width > 1 && window.height > 1);
       if (!windows.length) {
         return { text: `Box ${box.name}'s desktop has no windows.`, hints: ["Open an app with computer_launch."] };
       }
@@ -831,10 +842,19 @@ export class Computer {
     }
   }
 
-  /** Starts the namer in the background, unless it runs already, keeping what it names for computer_windows to say (#365). */
-  #nameLater(use: Use): void {
+  /**
+   * Starts the namer in the background, keeping what it names for
+   * computer_windows to say (#365): unless it runs already, or ran less than
+   * NAME_EVERY_MS ago and Cua lists the same windows as then, as agents call
+   * computer_windows often and each run starts a PowerShell in the box.
+   */
+  #nameLater(use: Use, listed: ReadonlyMap<number, WindowInfo>): void {
     const { state, box } = use;
     if (box.capabilities.os !== "windows" || !this.#deps.nameWindows || state.naming) return;
+    const windows = [...listed.keys()].sort((a, b) => a - b).join();
+    const last = state.lastNaming;
+    if (last && Date.now() - last.at < NAME_EVERY_MS && last.windows === windows) return;
+    state.lastNaming = { at: Date.now(), windows };
     state.naming = this.#deps
       .nameWindows(box)
       .then((named) => {
@@ -950,7 +970,7 @@ export class Computer {
       const lines = [target.coordinates ? `${done} ${target.coordinates}` : done];
       if (elsewhere) lines.push(await this.#cameForward(use, elsewhere.forward));
       const cause: Cause = { element: watch?.element ?? target.element, right: input.action === "right_click" };
-      const seen = watch ? await this.#settle(use, watch, cause) : await this.#changes(use, before!, { popups: { ...cause, result } });
+      const seen = watch ? await this.#settle(use, watch, cause) : await this.#changes(use, before!, { popups: { ...cause, result }, late: true });
       const forward = elsewhere?.forward;
       // What came in front may be among the windows that opened, whose hint says to observe it already.
       const told = forward == null || seen.hints.some((hint) => hint.includes(`computer_observe with window ${forward} `));
@@ -1010,7 +1030,7 @@ export class Computer {
     if (!before) {
       return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${args.window_id} to see it.`] };
     }
-    const changed = await this.#changes(use, before, { readBack, popups: { element: null, right: false, result: null } });
+    const changed = await this.#changes(use, before, { readBack, popups: { element: null, right: false, result: null }, late: true });
     return { text: [...lines, ...changed.parts].join("\n\n"), hints: changed.hints };
   }
 
@@ -1187,6 +1207,7 @@ export class Computer {
         popups: new Map(),
         large: new Set(),
         naming: null,
+        lastNaming: null,
         titled: new Map(),
       };
       this.#boxes.set(boxId, state);
@@ -2005,7 +2026,7 @@ export class Computer {
   async #changes(
     use: Use,
     before: Snapshot,
-    options: { readBack?: string | null; popups?: Cause & { result: McpResult | null } } = {},
+    options: { readBack?: string | null; popups?: Cause & { result: McpResult | null }; late?: boolean } = {},
   ): Promise<Changes> {
     const id = before.window.id;
     let read: Read;
@@ -2013,6 +2034,15 @@ export class Computer {
       read = await this.#read(use, id, false);
     } catch (error) {
       if (error instanceof ComputerError && error.code === "stale") return this.#gone(use, before.window);
+      // A window closing as it is read can fail the read with no reason, as on Windows: look once more.
+      if (options.late && !use.signal?.aborted) {
+        await sleep(LATE_CLOSE_MS, use.signal);
+        const now = await this.#listWindows(use).catch(() => null);
+        if (now && !now.has(id)) {
+          this.#lost(use.state, id);
+          return this.#gone(use, before.window);
+        }
+      }
       return unread(error, `Call computer_observe with window ${id}.`);
     }
     const after = read.snapshot;
@@ -2046,6 +2076,16 @@ export class Computer {
     if (retitled) parts.push(`The window's title is now "${after.window.title}".`);
     const dialogs = (snapshot: Snapshot) => snapshot.dialogs.map((dialog) => dialog.id).join();
     const changed = news || listed.length > 0 || retitled || dialogs(after) !== dialogs(before) || read.dropped;
+    // An action whose window closes a moment later, as a dialog's button does, read it before it went.
+    if (!changed && options.late) {
+      await sleep(LATE_CLOSE_MS, use.signal);
+      // A list that fails leaves the answer as it was: nothing changed.
+      const now = await this.#listWindows(use).catch(() => null);
+      if (now && !now.has(id)) {
+        this.#lost(use.state, id);
+        return this.#gone(use, before.window);
+      }
+    }
     if (!changed) parts.push(`Nothing changed in window ${id}'s tree.`);
     if (options.readBack) {
       const line = after.lines.find((candidate) => candidate.element?.ref === options.readBack);

@@ -1,10 +1,11 @@
 # 013: Docker boxes run unprivileged, without systemd
 
-Status: accepted, 30 September 2026. Partly superseded by
-[031](031-docker-boxes-are-reached-through-docker-exec.md): no sshd, bb-box
-starts BB's daemon, and linux-docker has no systemd. Partly superseded by
-[041](041-every-linux-box-has-docker.md): boxes are privileged by default,
-so they have Docker.
+Status: accepted, 30 September 2026. Superseded by
+[031](031-docker-boxes-are-reached-through-docker-exec.md) and
+[041](041-every-linux-box-has-docker.md), except that Docker boxes still run
+without systemd and `access.dockerHost` is still null. 031: no sshd, and
+bb-box starts BB's daemon. 041: boxes are privileged by default, so they
+have Docker.
 
 ## Context
 

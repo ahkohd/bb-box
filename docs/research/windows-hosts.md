@@ -4,6 +4,11 @@ Which backends could run boxes on a Windows machine, driven from BB's server
 over OpenSSH and PowerShell as the Tart backend drives a Mac over SSH:
 Hyper-V, WSL2 and Docker Desktop. Issue #158.
 
+Research, 1 October 2026: a note of what was known and measured then, not
+the current design, which is in [the architecture](../architecture.md).
+Built as [setup/docker-wsl](../../setup/docker-wsl/README.md) (#158), with
+no decision record.
+
 Status: recommendation confirmed by measurement on 1 October 2026, in a
 Windows 11 Pro VM on Proxmox with nested virtualisation (8 cores, 16 GiB).
 The first option is built: [setup/docker-wsl/](../../setup/docker-wsl/README.md)

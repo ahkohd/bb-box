@@ -2709,6 +2709,18 @@ test("on Windows, computer_windows and computer_launch give a window with no tit
   assert.match(text(await tool("computer_observe", { box: box.name, window: untitled })), new RegExp(`^Window ${untitled}: gpui-example "gpui-example \\(untitled\\)"`));
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.doesNotMatch(text(await tool("computer_windows", { box: box.name })), /bb-box gave/, "said once, and a title the window has is left alone");
+  // Within 15 s, the namer runs again only when Cua's window list changed. Each check waits for the namer before to end.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  let calls = asked;
+  await tool("computer_windows", { box: box.name });
+  assert.equal(asked, calls, "the same windows: not again");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  editDesktop(file, (desktop) => {
+    desktop.windows.push({ id: desktop.nextWindow++, pid: desktop.nextPid++, app: "notes", title: "Notes", x: 0, y: 0, width: 300, height: 200, onScreen: true });
+  });
+  calls = asked;
+  await tool("computer_windows", { box: box.name });
+  assert.equal(asked, calls + 1, "a window more: again");
 
   // An app whose window has no title, launched: Cua lists it once it has one.
   const launched = text(await tool("computer_launch", { box: box.name, app: "untitled" }));
@@ -2716,6 +2728,31 @@ test("on Windows, computer_windows and computer_launch give a window with no tit
   const before = asked;
   await tool("computer_observe", { box: box.name, window: untitled });
   assert.equal(asked, before, "only computer_windows and computer_launch name windows");
+});
+
+test("a dialog that closes a moment after its button is clicked says it closed, not that nothing changed or that it could not be read", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  // As a GTK dialog, whose read just after the click finds it unchanged; then as on Windows, whose read of it fails.
+  for (const unreadable of [false, true]) {
+    editDesktop(file, (desktop) => {
+      desktop.closesLate = true;
+      desktop.closingUnreadable = unreadable;
+    });
+    const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+    text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Clear all"') }));
+    const dialog = text(await tool("computer_windows", { box: box.name })).match(/window (\d+): tasks "Clear all tasks\?"/)![1]!;
+    const read = text(await tool("computer_observe", { box: box.name, window: Number(dialog) }));
+    const cleared = text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(read, '"Clear"') }));
+    assert.match(cleared, new RegExp(`\\n\\nWindow ${dialog} closed\\. Its app's window 100: tasks "Tasks", \\d+ by \\d+, is open\\.\\n\\nNext: Call computer_observe with window 100 to read it\\.$`), cleared);
+    assert.doesNotMatch(cleared, /Nothing changed|could not read/);
+  }
+  // An action that changes nothing, in a window that stays, still says so.
+  const after = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const started = Date.now();
+  const unchanged = text(await tool("computer_act", { box: box.name, action: "scroll", ref: refOf(after, '"Clear all"'), direction: "down" }));
+  assert.match(unchanged, /Nothing changed in window 100's tree\./);
+  assert.ok(Date.now() - started >= 250, "after a look at the windows 250 ms later");
 });
 
 test("pixels count only against the agent's latest image of the window or the desktop", async (t) => {

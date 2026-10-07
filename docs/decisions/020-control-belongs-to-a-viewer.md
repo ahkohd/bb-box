@@ -10,8 +10,10 @@ a box that ends the holder's connection gives its viewer 5 s to connect
 again. Extended by
 [045](045-a-persons-control-lasts-through-a-restart-of-the-plugin.md): the
 viewer that holds control keeps it through a restart of the plugin, and a
-desktop it resized gets its size back if it does not connect again within
-60 s, after a crash too.
+desktop it resized gets its size back if it does not connect again within 60
+s, after a crash too. Extended by
+[021](021-desktop-resize-through-the-backend.md): a desktop whose VNC server
+cannot resize is resized by its backend.
 
 ## Context
 

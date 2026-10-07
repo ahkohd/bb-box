@@ -5,6 +5,10 @@ accessibility tree, acting on elements, typing, clicking, scrolling, launching
 apps and taking screenshots, on Linux now and Windows and macOS later, and
 waiting while you hold control.
 
+Research, 30 September 2026: a note of what was known and measured then, not
+the current design, which is in [the architecture](../architecture.md).
+Settled by [015](../decisions/015-computer-use-through-cua-driver.md).
+
 Status: recommendation made, measured on a local Linux desktop; Windows and
 macOS checked from source and documentation only. Checked on 30 September
 2026.

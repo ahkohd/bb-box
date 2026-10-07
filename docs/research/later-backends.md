@@ -4,9 +4,15 @@ A sketch of the Docker, SSH host pool, Windows on Proxmox QEMU, physical Mac
 and Tart backends, to test that bb-box's backend interface fits them before
 the core is built out.
 
+Research, 30 September 2026: a note of what was known and measured then, not
+the current design, which is in [the architecture](../architecture.md).
+Settled by [011](../decisions/011-interface-v1.md) and
+[016](../decisions/016-changes-from-building-v1.md), and since by each
+backend's own decision.
+
 Status: done. Docker was measured here; the other four were researched from
 their sources and documentation. The interface changes it found are now
-[Interface v1](../architecture.md#interface-v1)
+[Interface v1](../architecture.md#the-backend-interface)
 ([011](../decisions/011-interface-v1.md)), with the review's changes in
 [012](../decisions/012-offers-may-add-features.md) and
 [013](../decisions/013-docker-boxes-run-unprivileged.md) (#5). The last
@@ -598,7 +604,7 @@ others, which bb-box does not do.
 ### Adopted in Interface v1
 
 The changes this research proposed, as they are now in
-[Interface v1](../architecture.md#interface-v1):
+[Interface v1](../architecture.md#the-backend-interface):
 
 | Change | Needed by |
 | --- | --- |

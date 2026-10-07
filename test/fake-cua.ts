@@ -100,6 +100,12 @@ export interface FakeDesktop {
   wayland?: boolean;
   /** As Cua on Windows: a window with no title is neither listed nor read (#365). */
   untitledUnlisted?: boolean;
+  /** A dialog's button closes it 100 ms after the click, as a GTK dialog does, not at once. */
+  closesLate?: boolean;
+  /** Meanwhile a read of the closing dialog fails with no reason, as Cua on Windows does. */
+  closingUnreadable?: boolean;
+  /** Dialogs closing late, by window ID. */
+  closing?: number[];
   /**
    * A click opens another process's panel, as a Windows tray icon does, and
    * Cua on Windows then says the click failed its foreground check (#484).
@@ -476,6 +482,7 @@ export class FakeCua {
     const standIn = !("id" in window) && desktop.wayland ? desktop.windows.find((other) => other.pid === args.pid && other.menuOf === undefined) : undefined;
     if (standIn) window = standIn;
     if (!("id" in window)) return window;
+    if (desktop.closingUnreadable && desktop.closing?.includes(window.id)) return text("", undefined, true);
     this.#reads.set(window.id, (this.#reads.get(window.id) ?? 0) + 1);
     const owner = desktop.windows.find((other) => other.id === window.menuOf);
     const placed = owner
@@ -631,8 +638,14 @@ export class FakeCua {
     } else if (node.key === "clear" && window.dialogOf === undefined) {
       desktop.windows.push({ id: desktop.nextWindow++, pid: window.pid, app: window.app, title: "Clear all tasks?", x: 300, y: 300, width: 300, height: 150, onScreen: true, dialogOf: window.id });
     } else if (window.dialogOf !== undefined && (node.key === "clear" || node.key === "cancel")) {
-      if (node.key === "clear") desktop.tasks[window.dialogOf] = [];
-      desktop.windows = desktop.windows.filter((other) => other.id !== window.id);
+      const close = (later: FakeDesktop) => {
+        if (node.key === "clear") later.tasks[window.dialogOf!] = [];
+        later.windows = later.windows.filter((other) => other.id !== window.id);
+      };
+      if (desktop.closesLate) {
+        desktop.closing = [...(desktop.closing ?? []), window.id];
+        setTimeout(() => this.#change(close), 100);
+      } else close(desktop);
     }
   }
 

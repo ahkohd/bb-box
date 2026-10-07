@@ -25,8 +25,8 @@ server protocol 219). They are drafts until filed with BB.
 | [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | draft | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
 | [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | draft | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
 | [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | draft | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
-| [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | draft | `box_run` returns after 270 s: a Linux or macOS command goes on as a job for `box_job`, and a Windows one is stopped (#486) |
-| [Move large files through the file API](#20-move-large-files-through-the-file-api) | draft | `box_copy` moves files up to 16 MiB; a larger one, such as an installer or a build artifact, goes in parts the agent splits and joins by hand (#485) |
+| [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | draft | `box_run` returns after 270 s, and a command still running goes on as a job for `box_job`; a Windows command in the desktop session, which has no job, is stopped (#486, #414) |
+| [Move large files through the file API](#20-move-large-files-through-the-file-api) | draft | `box_copy` moves a file over 16 MiB through bb-box's own worker on the machine that holds it, which needs that machine connected to BB (#492) |
 | [Stop a plugin's machine workers after its tool calls](#21-stop-a-plugins-machine-workers-after-its-tool-calls) | draft | a command in a Docker box on a BB machine loses its box first at a deploy, so `box_run` waits up to 10 s to see that bb-box is stopping before it names the job (#415) |
 
 ## 1. BB's host app on Windows

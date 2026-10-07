@@ -792,6 +792,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const images = Object.entries(configuration.document.images ?? {});
       if (!images.length) return [];
       const names = await projectNames.get("all").catch(() => new Map<string, string>());
+      const spareCounts = await boxes.imageSpareCounts();
       const options: ImageOptionView[] = [];
       for (const [name, image] of images) {
         options.push({
@@ -800,6 +801,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           projects: image.projects.map((id) => ({ id, name: names.get(id) ?? id })),
           mine: !!project && image.projects.includes(project),
           builds: await imageBakes.builds(name),
+          spares: Object.entries(spareCounts)
+            .filter(([key]) => key.startsWith(`${name}|`))
+            .map(([key, count]) => {
+              const [, backend = "", kind = ""] = key.split("|");
+              return { backend, kind, ...count };
+            }),
         });
       }
       return options.sort((a, b) => Number(b.mine) - Number(a.mine) || a.name.localeCompare(b.name));
@@ -894,7 +901,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
         });
       }
-      const imageChecks = [...(await imageJobs.checks(signal)), ...(await imageBakes.checks())];
+      const imageChecks = [...(await imageJobs.checks(signal)), ...(await imageBakes.checks()), ...(await boxes.imageSpareChecks())];
       if (imageChecks.length) {
         sections.push({
           title: "Images",

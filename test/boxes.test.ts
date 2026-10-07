@@ -1850,6 +1850,7 @@ test("a project's box claims a spare of its image's current build, made ahead, a
   const [spare] = await world.boxes.list(SPARES);
   assert.deepEqual([spare?.image, spare?.enrol.state, started], [{ name: "rust", state: "baked", build: "build.rust-1", from: "rust-1" }, "enrolled", ["rust-1"]]);
   assert.deepEqual(readied, [], "a spare's own start is no use of its image");
+  assert.deepEqual(await world.boxes.imageSpareCounts(), { "rust|fake|linux": { ready: 1, making: 0 } });
   assert.deepEqual(await world.boxes.spareCounts(), {}, "an image's spare is not its kind's");
 
   // A kind's box makes its own guest; the project's box takes the spare at once.
@@ -1891,6 +1892,9 @@ test("an image's spare goes when its build changes or the image is not in use, a
     await world.boxes.idle();
   }
   assert.equal(started.filter((from) => from === "broken").length, 1, "made once, not in a loop");
+  const [check] = await world.boxes.imageSpareChecks();
+  assert.deepEqual([check?.name, check?.status], ["Spare of rust for linux on fake", "warn"]);
+  assert.match(check!.detail, /^A spare from its build broken failed to start at \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC, so bb-box keeps none of that build until .* UTC\. Its boxes start from the build meanwhile\.$/);
   build.ref = "rust-3";
   await world.boxes.keepSpares();
   await world.boxes.idle();

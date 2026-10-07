@@ -8,7 +8,9 @@ without a desktop. Partly superseded by
 Extended by [040](040-linux-on-arm64-has-kinds-of-its-own.md): where an
 architecture goes in a kind's ID. Partly superseded by
 [041](041-every-linux-box-has-docker.md): `linux-docker` is an alias of
-`linux` with the feature `docker`.
+`linux` with the feature `docker`. Extended by
+[048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md):
+new desktop kinds, named by its rule.
 
 ## Context
 
