@@ -82,6 +82,8 @@ async function start(
     bootstraps: [] as string[],
     /** The script BB's installer runs in the box. */
     installer: "echo installed > bb-installed",
+    /** False: BB gives no Windows enrolment command (#539). */
+    windowsEnrolment: true,
     /** BB's machine calls never answer, as for a plugin that is stopping. */
     silent: false,
     /** How many more machine creates BB refuses, not knowing bb-box's provider, as while the plugin restarts. */
@@ -207,7 +209,7 @@ async function start(
         // A machine's enrolment and reconnect commands, with their Windows forms (#539).
         experimental_getEnrollmentCommand: async ({ hostId }: { hostId: string }) => {
           world.events.push(`enrolment command ${hostId}`);
-          return { command: `sh enrol ${hostId}`, windowsCommand: `& enrol ${hostId}`, expiresAt: Date.now() + 60_000 };
+          return world.windowsEnrolment ? { command: `sh enrol ${hostId}`, windowsCommand: `& enrol ${hostId}`, expiresAt: Date.now() + 60_000 } : null;
         },
         experimental_reconnect: async ({ hostId }: { hostId: string }) => {
           world.events.push(`reconnect command ${hostId}`);
@@ -691,18 +693,31 @@ test("box_copy streams a file too large for BB's file API through the thread's m
   await until("the lease to go", async () => worker.experimental_getRetainedWorkerLeaseCount() === 0);
 });
 
-test("a Windows box on trial enrols with BB's Windows enrolment command in its desktop session, not BB's POSIX bootstrap (#539)", async (t) => {
+test("a Windows box on trial runs BB's Windows installer for BB's bootstrap: its Windows enrolment command, else install.ps1 with the request's bundle, else it says what BB sent (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
-  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell: FAKE_PWSH });
-  t.after(() => harness.lifecycle.dispose());
-  await tool("box_acquire", { kind: "windows" });
-  const box = await only(app);
-  await until("the enrolment to end", async () => (await app.boxes.find(box.id))?.enrol.state === "failed");
-  const failed = (await app.boxes.find(box.id))!;
-  assert.ok(world.events.includes(`enrolment command host-${box.id}`), world.events.join("\n"));
-  assert.deepEqual(world.bootstraps, [], "BB's POSIX installer is not run on Windows");
-  // The fake box's PowerShell runs no script: it says a desktop command went through a scheduled task, and exits 1.
-  assert.match(failed.enrol.error!, new RegExp(`BB's Windows installer in box ${box.name} exited with 1:\\s+a scheduled task`));
+  const bundle = JSON.stringify({ hostId: "host-x", serverUrl: "https://bb.example.com", headers: { "X-BB-Enrollment": "secret-enrolment-credential" } });
+  // BB's bootstrap request, as the fake's `sh -c` script: the bundle in a variable, then install.sh with --bootstrap-env.
+  const request = `BB_BOOTSTRAP='${bundle}' exec sh -s -- --bootstrap-env BB_BOOTSTRAP`;
+  for (const [windowsEnrolment, installer, said] of [
+    [true, request, "running BB's Windows enrolment command, in the box user's desktop session"],
+    [false, request, "running install.ps1 with the bundle of BB's request, as BB gave no Windows enrolment command"],
+    [false, "exec sh -s -- --bootstrap-env BB_BOOTSTRAP", "BB gave no Windows enrolment command, and its request sets no BB_BOOTSTRAP: sh -c exec sh -s -- --bootstrap-env BB_BOOTSTRAP"],
+  ] as const) {
+    const { harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell: FAKE_PWSH });
+    world.windowsEnrolment = windowsEnrolment;
+    world.installer = installer;
+    await tool("box_acquire", { kind: "windows" });
+    const box = await only(app);
+    await until("the enrolment to end", async () => (await app.boxes.find(box.id))?.enrol.state === "failed");
+    const error = (await app.boxes.find(box.id))!.enrol.error!;
+    assert.deepEqual(world.bootstraps, [box.id], "BB's bootstrap makes the bundle");
+    assert.ok(world.events.includes(`enrolment command host-${box.id}`), world.events.join("\n"));
+    assert.ok(error.includes(said), error);
+    assert.doesNotMatch(error, /secret-enrolment-credential/);
+    // The fake box's PowerShell runs no script: it says a desktop command went through a scheduled task, and exits 1.
+    if (installer === request) assert.match(error, /a scheduled task/);
+    await harness.lifecycle.dispose();
+  }
 });
 
 test("box_copy names a file from a Windows box after its source", async (t) => {
@@ -2380,6 +2395,25 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   assert.match(missing.stderr ?? "", /no box "nope".*\(not_found\)/);
   assert.match((await harness.behavior.runCli(["release", box.name, "--thread", THREAD])).stdout ?? "", /Released box/);
 });
+
+for (const via of ["bb box acquire", "box_acquire"] as const) {
+  test(`${via} says when bb-box restarts before the box is ready, and the next bb-box goes on with it (#533)`, async (t) => {
+    const { harness, app, world, tool } = await start();
+    let disposing: Promise<void> | null = null;
+    t.after(() => disposing ?? harness.lifecycle.dispose());
+    let open!: () => void;
+    world.backend!.gate = new Promise<void>((resolve) => (open = resolve));
+    const acquiring = via === "box_acquire" ? tool("box_acquire", { kind: "linux" }).then(text) : harness.behavior.runCli(["acquire", "linux", "--thread", THREAD]).then((ran) => ran.stdout ?? "");
+    const box = await until("the box's guest", async () => (await app.boxes.list(THREAD)).find((box) => box.guest));
+    disposing = harness.lifecycle.dispose();
+    await until("bb-box to stop", async () => app.boxes.stopping);
+    open();
+    const said = await acquiring;
+    const restarted = `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, within a minute.`;
+    if (via === "box_acquire") assert.equal(said, `${restarted}\n\nNext: Call box_status with box "${box.name}" to see when it is ready.`);
+    else assert.ok(said.startsWith(`Box ${box.name} (`) && said.endsWith(`\n\n${restarted} Follow it with: bb box status ${box.name} --thread ${THREAD}\n`), said);
+  });
+}
 
 test("bb box install-id shows the install's ID, and --set takes an old one back once no box holds a guest", async (t) => {
   const { bb, harness, app, world } = await start();

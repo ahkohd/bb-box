@@ -285,17 +285,39 @@ Its fix gives the prepare script's command that builds the image again.
 
 1. In BB, release the backend's boxes, and remove the Macs and the backend on
    BB Box's settings page.
-2. On each Mac, as the host user, delete bb-box's VMs and files:
+2. On each Mac, as the host user, stop and delete bb-box's VMs and images:
 
    ```sh
-   tart list                     # bb-box's VMs are named bb-box-...
+   tart list                     # bb-box's VMs and images: bb-box-...
+   tart stop <name>              # for each one running
    tart delete <name>            # for each of them
+   ```
+
+   `tart delete` refuses a running VM, but deletes a suspended one as it is.
+   An image the Tart settings name otherwise needs its own `tart delete`.
+3. Windows boxes are QEMU processes, not Tart VMs, and their disks are in
+   `~/.bb-box`. Stop each one, then delete bb-box's files, the Windows image
+   and its downloads with them:
+
+   ```sh
+   ls ~/.bb-box/qemu/vms                          # one folder for each box
+   kill "$(cat ~/.bb-box/qemu/vms/<vm>/pid)"      # for each of them
    rm -rf ~/.bb-box
    ```
 
-3. Remove bb-box's key from `~/.ssh/authorized_keys`.
-4. As an administrator, delete the host user, and uninstall Tart and QEMU if
-   nothing else uses them.
+4. Delete the base images Tart pulled, about 81 GB for macOS with Xcode.
+   When nothing else on the Mac uses Tart, `tart prune --entries caches`
+   deletes them all. Otherwise run `tart delete` for each
+   `ghcr.io/cirruslabs/...` that `tart list` shows, with its `@sha256:` entry.
+5. Remove bb-box's key from `~/.ssh/authorized_keys`.
+6. As an administrator, if the Mac served only bb-box: turn sleep back on
+   with `sudo pmset -a sleep <minutes>`, turn Remote Login off with
+   `sudo systemsetup -setremotelogin off`, delete the host user, and
+   uninstall Tart and QEMU.
+
+bb-box installs no launch agents or daemons on the Mac. Its VNC holders end
+with their VMs: `pgrep -fl 'bb-box.*holder.py'` shows none once the VMs have
+stopped.
 
 ## When it goes wrong
 
