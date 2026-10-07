@@ -43,6 +43,25 @@ export const hostContract = defineRpcContract({
     output: z.object({ endpoint: z.string() }).strict(),
   },
   /**
+   * Runs one of bb-box's msb scripts on the machine (053,
+   * src/backends/microsandbox/release.ts): install the pinned msb, report on
+   * the machine, or import an image from Docker there. `dir` is bb-box's
+   * msb folder, in the plugin's data folder.
+   */
+  microsandbox: {
+    input: z.object({ script: z.enum(["install", "status", "import"]), args: z.array(z.string().max(512)).max(4) }).strict(),
+    output: z.object({ dir: z.string(), exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string() }).strict(),
+  },
+  /**
+   * Opens the msb relay (053): a WebSocket out to bb-box's route at `path`,
+   * with `secret`, each of whose channels is one run of bb-box's msb on the
+   * machine (src/relay/msb.ts). Says where bb-box's msb folder is.
+   */
+  msbRelay: {
+    input: z.object({ secret: z.string().regex(/^[0-9a-f]{32}$/), path: z.string().regex(/^\/api\/v1\/plugins\/[^?#]+$/) }).strict(),
+    output: z.object({ dir: z.string() }).strict(),
+  },
+  /**
    * Copies one file over a WebSocket out to bb-box's route at `path`, with
    * `secret` (#492): `send` streams `file` to bb-box, `receive` writes what
    * bb-box streams to it. `file` is absolute, and within `root` when given.

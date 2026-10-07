@@ -645,6 +645,25 @@ export interface MachineAccess {
   platform?(hostId: string): GuestOs | null;
   /** Whether BB shows the machine connected now and has heard from it lately, with no call to it. Null when BB has no such machine. */
   connected(hostId: string): Promise<boolean | null>;
+  /** bb-box's msb on BB machine `hostId`, which its host entry runs there (053). */
+  msb?(hostId: string): MsbAccess;
+}
+
+/** The scripts bb-box runs on an msb host (src/backends/microsandbox/release.ts). */
+export type MsbScriptName = "install" | "status" | "import";
+
+/** How a backend runs bb-box's msb on a BB machine, through bb-box's msb relay (053). */
+export interface MsbAccess {
+  /**
+   * The command line on BB's server that runs the machine's msb with
+   * `args`, on a PTY there with `tty`: stdin, stdout, stderr and the exit
+   * status are the run's. It is the same each time; await `ready` first.
+   */
+  argv(args: readonly string[], options?: { readonly tty?: boolean }): [string, ...string[]];
+  /** Listens on the machine's relay socket, and fails at once, saying so, when BB shows the machine offline. */
+  ready(signal?: AbortSignal): Promise<void>;
+  /** Runs one of bb-box's msb scripts on the machine. */
+  script(name: MsbScriptName, args: readonly string[], signal?: AbortSignal): Promise<{ readonly dir: string; readonly exitCode: number | null; readonly stdout: string; readonly stderr: string }>;
 }
 
 /** A kind as the configuration has it now (028, 029). Its sizes are the same on every backend. */

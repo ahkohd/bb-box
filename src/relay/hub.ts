@@ -1,6 +1,8 @@
-// The server's end of the Docker API relay (042). For each BB machine that
-// is a Docker host, bb-box listens on a unix socket that only BB's user can
-// use, and the docker CLI takes it as the host. Each connection to it is a
+// The server's end of the Docker API relay (042), and of the msb relay
+// (053), which is the same with another route and host call. For each BB
+// machine that is a Docker host, bb-box listens on a unix socket that only
+// BB's user can use, and the docker CLI takes it as the host; for an msb
+// host, bb-box's msb client connects to it. Each connection to it is a
 // channel on one WebSocket for the machine, which the machine's worker opens
 // out to bb-box's route with a one-time secret that a host call gives it.
 // The relay opens when a connection needs it, and closes after IDLE_MS with
@@ -50,6 +52,14 @@ export interface RelayHubDeps {
   offline?(hostId: string): Promise<string | null>;
   logError(operation: string, error: unknown): void;
   log?(message: string): void;
+  /** What the relay carries, for its messages: "Docker" by default, or "msb". */
+  readonly what?: string;
+  /**
+   * Answers a connection that the relay cannot carry, with the reason, in
+   * what the client reads: by default an HTTP error, which the docker CLI
+   * shows as "Error response from daemon".
+   */
+  readonly refuse?: (socket: Socket, reason: string) => void;
   /** Where the sockets go; a private directory of its own by default. */
   readonly dir?: string;
   readonly acceptMs?: number;
@@ -106,9 +116,13 @@ export class RelayHub {
   readonly #everOpened = new Set<string>();
   readonly #lostAt = new Map<string, number>();
   readonly #startedAt = Date.now();
+  readonly #what: string;
+  readonly #refuse: (socket: Socket, reason: string) => void;
 
   constructor(deps: RelayHubDeps) {
     this.#deps = deps;
+    this.#what = deps.what ?? "Docker";
+    this.#refuse = deps.refuse ?? refuse;
     this.#ownDir = !deps.dir;
     this.#dir = deps.dir ?? mkdtempSync(join(tmpdir(), "bb-box-relay-"));
     chmodSync(this.#dir, 0o700);
@@ -122,7 +136,7 @@ export class RelayHub {
 
   /** The docker CLI's host for machine `hostId`, listening once this resolves. */
   async endpoint(hostId: string): Promise<string> {
-    if (this.#disposed) throw new Error("The Docker relay has stopped.");
+    if (this.#disposed) throw new Error(`The ${this.#what} relay has stopped.`);
     const address = this.address(hostId);
     const known = this.#machines.get(hostId);
     if (known) {
@@ -187,7 +201,7 @@ export class RelayHub {
                 machine.relay = null;
                 this.#stopIdle(machine);
               }
-              this.#deps.log?.(`The Docker relay to BB machine ${pending.hostId} closed: ${reason}.`);
+              this.#deps.log?.(`The ${this.#what} relay to BB machine ${pending.hostId} closed: ${reason}.`);
             },
           },
         );
@@ -199,7 +213,7 @@ export class RelayHub {
         if (typeof data !== "string") mux?.receive(data);
       },
       onClose: () => mux?.close("the machine's side closed"),
-      onError: (_socket: RelaySocket, error: Error) => this.#deps.logError("docker relay", error),
+      onError: (_socket: RelaySocket, error: Error) => this.#deps.logError(`${this.#what.toLowerCase()} relay`, error),
     };
   }
 
@@ -226,13 +240,13 @@ export class RelayHub {
     );
   }
 
-  /** Closes the machine's relay and socket, as when it is no longer a Docker host. */
+  /** Closes the machine's relay and socket, as when it is no longer a Docker or msb host. */
   async forget(hostId: string): Promise<void> {
     const machine = this.#machines.get(hostId);
     if (!machine) return;
     this.#machines.delete(hostId);
     this.#stopIdle(machine);
-    (await machine.relay?.catch(() => null))?.close("bb-box no longer uses this machine for Docker");
+    (await machine.relay?.catch(() => null))?.close(`bb-box no longer uses this machine for ${this.#what}`);
     for (const socket of machine.sockets) socket.destroy();
     await new Promise<void>((resolve) => machine.server.close(() => resolve()));
     rmSync(machine.path, { force: true });
@@ -240,7 +254,7 @@ export class RelayHub {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
-    for (const pending of this.#pending.values()) pending.reject(new Error("The Docker relay has stopped."));
+    for (const pending of this.#pending.values()) pending.reject(new Error(`The ${this.#what} relay has stopped.`));
     this.#pending.clear();
     await Promise.all([...this.#machines.keys()].map((hostId) => this.forget(hostId)));
     if (this.#ownDir) rmSync(this.#dir, { recursive: true, force: true });
@@ -257,7 +271,7 @@ export class RelayHub {
         try {
           channel = mux.open();
         } catch (error) {
-          refuse(socket, message(error));
+          this.#refuse(socket, message(error));
           return;
         }
         this.#stopIdle(machine);
@@ -273,11 +287,11 @@ export class RelayHub {
         channel.once("data", () => (answered = true));
         channel.on("error", (error) => {
           if (answered || socket.destroyed) return void socket.destroy();
-          this.#deps.log?.(`Docker on BB machine ${machine.hostId} did not answer: ${error.message}`);
-          refuse(socket, error.message);
+          this.#deps.log?.(`${this.#what} on BB machine ${machine.hostId} did not answer: ${error.message}`);
+          this.#refuse(socket, error.message);
         });
       },
-      (error) => refuse(socket, message(error)),
+      (error) => this.#refuse(socket, message(error)),
     );
   }
 
@@ -340,7 +354,7 @@ export class RelayHub {
       this.#pending.delete(secret);
     }
     const mux = await accepted;
-    this.#deps.log?.(`Opened the Docker relay to BB machine ${hostId}.`);
+    this.#deps.log?.(`Opened the ${this.#what} relay to BB machine ${hostId}.`);
     return mux;
   }
 
@@ -354,7 +368,7 @@ export class RelayHub {
       machine.idle = null;
       if (mux.closed || mux.channels) return;
       const keep = await this.#deps.keep(machine.hostId).catch((error) => {
-        this.#deps.logError("docker relay", error);
+        this.#deps.logError(`${this.#what.toLowerCase()} relay`, error);
         return true;
       });
       if (keep) this.#startIdle(machine, mux);
