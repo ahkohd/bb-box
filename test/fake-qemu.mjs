@@ -105,6 +105,10 @@ function qemu() {
       case "quit":
         setTimeout(() => end(0), 20);
         return [answer({}), event("SHUTDOWN")];
+      // The guest shuts down, as Windows does at an ACPI power button, unless the Mac's ~/.fake-qemu-no-powerdown says it ignores it.
+      case "system_powerdown":
+        if (!existsSync(join(home, ".fake-qemu-no-powerdown"))) setTimeout(() => end(0), 100);
+        return [answer({}), event("POWERDOWN")];
       default:
         return [JSON.stringify({ error: { class: "CommandNotFound", desc: `The command ${execute} has not been found` } })];
     }
@@ -135,6 +139,12 @@ function qemuImg() {
   const [command, ...rest] = args;
   // The arguments that are neither an option nor its value.
   const [file, size] = rest.filter((arg, i) => !arg.startsWith("-") && !["-f", "-F", "-b"].includes(rest[i - 1]));
+  // convert -O qcow2 <overlay> <file>: a disk of its own, from the overlay and its base.
+  if (command === "convert") {
+    const [source, target] = rest.filter((arg, i) => !arg.startsWith("-") && rest[i - 1] !== "-O");
+    if (!source || !target || !existsSync(source)) fail(`qemu-img: Could not open '${source}'`);
+    return writeFileSync(target, `flattened from ${readFileSync(source, "utf8")}`);
+  }
   if (command === "info" && file) {
     if (!existsSync(file)) fail(`qemu-img: Could not open '${file}': No such file or directory`);
     const gib = Number(/^size (\d+)G$/m.exec(readFileSync(file, "utf8"))?.[1] ?? 64);

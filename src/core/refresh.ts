@@ -287,6 +287,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       const digest = await pinsDigest(options.setup, arch === "arm64" ? "windows-arm64" : "windows");
       if (!digest) return end(false, null, "bb-box could not read the Windows build script's pins.");
       windowsCheck = await readFile(join(options.setup, "windows", "check.ps1"), "utf8");
+      windowsCheck = images.adaptCheck?.(kind, windowsCheck, options.setup) ?? windowsCheck;
       const buildId = newBuildId(now());
       const files: [string, string][] = [
         ["refresh.ps1", await readFile(join(options.setup, "windows", "refresh.ps1"), "utf8")],
