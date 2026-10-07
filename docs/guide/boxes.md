@@ -1,0 +1,87 @@
+# The Box panel and the Boxes page
+
+The Box panel shows one thread's boxes. The Boxes page shows every box you have: your machines, and each thread's boxes. Both let you open a box's desktop or terminal, and stop, start or release it.
+
+## The Box panel
+
+Open a thread and select the **Box** tab in its right panel. Each box is a row. The plus at the top right makes a new box for the thread: see [making a box](making-a-box.md).
+
+![The Box panel with 3 boxes: one starting, one ready desktop and one stopped](../design/mockups/built/panel-list-light.png)
+
+When the thread has no boxes, the panel says 'No boxes yet'. When no backend is set up, it says 'BB Box is not set up yet' and links to BB Box's settings.
+
+### What a row tells you
+
+A row starts with the box's name and its system, such as Linux. Badges then say what the box is:
+
+- Desktop: it has a screen you can see and use
+- GPU: its desktop is drawn by a graphics card
+- No Docker: it is a Linux box without Docker
+- arm64: it runs on an ARM processor, which some programs do not support
+- Container, LXC, VM or Physical: what kind of computer it is
+- BB machine: it is the machine this thread runs on
+
+The line under the name says how the box is doing:
+
+| What it says | What it means |
+| --- | --- |
+| Starting, with a time | the box is being made or started |
+| Ready in 2.2 s | the box is ready, and took that long to start |
+| Joining BB… | the box is becoming a BB machine, which takes a few seconds |
+| BB machine in 5.3 s | the box is a BB machine, so the thread's commands and terminals can use it |
+| This thread's machine | the box was made for the thread to run on, from BB's new-thread screen |
+| Could not join BB | the box works, but it is not a BB machine |
+| Stopped | the box is off and keeps its disk |
+| Stopping… or Releasing… | the box is stopping, or going for good |
+| Failed | the box could not start, and a red line under it says why |
+| Gone | someone deleted the box outside BB Box |
+
+The line also gives the box's cores, memory and disk. For a desktop, it says when someone has control: 'You have control' or 'Another viewer has control'. 'Display on the CPU' means a GPU desktop is drawn without its graphics card.
+
+Select a row to see its details. They give the box's address, size, backend and system, and whether it is a BB machine. They also say how long each step took to start it, and when it was made.
+
+### What you can do with a box
+
+The buttons on a row open the box's desktop or terminal, and stop or start the box where its backend can. The menu at the end of the row has these and more:
+
+- Open desktop in a browser tab: shows the desktop on a page of its own
+- Copy address: copies the box's network address
+- New thread on this box…: starts a child thread that works on this box in its own copy of the project, and is archived with this thread
+- Check now: asks the backend for the box's state again
+- Release…: deletes the box
+
+![A box's menu in the Box panel](../design/mockups/built/panel-menu-light.png)
+
+### Releasing a box
+
+Releasing a box deletes it and everything on its disk, so copy out anything you want to keep first. On a physical machine, releasing resets the machine and returns it to its pool. Everything in the box user's home is deleted.
+
+Release asks you first. If another thread is working on the box, it asks again, for example 'Release calm-otter anyway?', and names the threads that would lose their machine. Stop asks the same way.
+
+### The machine a thread runs on
+
+A thread can run on a box rather than on your computer. That box is the first row, with a BB machine badge. Its row has no Release, Stop or Start. Instead, a line says where those are: in BB Box's settings for one of your machines, or in the thread that holds the box.
+
+### When something goes wrong
+
+If BB Box cannot do what you asked, it says why in a red line under the plus. For example, it cannot stop a box whose host does not answer. The line stays until you select **Dismiss** or do something else.
+
+## The Boxes page
+
+Select **Boxes** in BB's sidebar. The page lists your machines first, under Machines, and then every thread's boxes, under Threads.
+
+![The Boxes page with 2 machines and 2 thread boxes](../design/mockups/built/boxes-page-light.png)
+
+A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. The arrow beside its menu opens its thread. Its status line ends with the thread's title. 'New thread on this box…' is only in the Box panel.
+
+A desktop or terminal you open from the page shows on the page, with a back arrow to the list.
+
+The gear at the top right opens BB Box's settings. The plus beside it adds one of your machines.
+
+## Your machines
+
+A machine is a box of your own, kept as a BB machine. It belongs to no thread. It shows in BB's machine list and in the new-thread picker, so you can start threads on it, and it stays until you remove it.
+
+You can add a machine from the plus on the Boxes page, or from **Add machine** in Settings, BB Box, Machines. The form is the same as for a new box, with a name at the end. The name is optional: leave it empty and BB Box picks one. A name uses lowercase letters, digits and hyphens, starts with a letter, does not end with a hyphen, and is at most 32 characters.
+
+A machine's row lists the threads working on it. You can stop, start and remove it from the Boxes page or from settings. Removing a machine deletes it, as releasing a box does. If a thread is working on the machine, Remove and Stop ask again before they go on.

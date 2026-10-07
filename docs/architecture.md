@@ -1465,7 +1465,7 @@ rebuilt each night; a project can add a script on top of it.
   finalizing, a capture and a trial box that passes the check. Later boxes
   start from the build. A changed script or a rebuilt standard image makes
   a build out of date at once; the nightly run builds those in use again
-  and removes builds unused for 30 days. Proxmox LXC and Docker bake; Tart,
+  and removes builds unused for 30 days. Proxmox LXC, Docker and Tart bake;
   the SSH host pool and GPU desktops run the script at each start.
 - **Choosing.** A project's threads get its image for the kinds it covers;
   `box_acquire`'s `image`, `bb box acquire --image` and New box can choose
@@ -1705,8 +1705,13 @@ Notes:
     They do not count against the two-VM limit, and a clone answers SSH in
     about 5.5 s. Tart cannot resume a suspended Linux VM, so `stop` shuts
     one down.
-- **Clouds, microsandbox and Crabbox** fit as virtual backends with SSH and
-  instance tags; a cloud's capacity is its quota.
+- **microsandbox** runs our OCI images unchanged as microVMs, on Linux
+  with KVM or a Mac, in under a second, reached through `msb exec` as
+  Docker is through `docker exec`. It is not built until one of
+  [053](decisions/053-microsandbox-is-a-later-backend-not-built-now.md)'s
+  conditions holds.
+- **Clouds and Crabbox** fit as virtual backends with SSH and instance
+  tags; a cloud's capacity is its quota.
 
 ## Conformance suite and setup
 
