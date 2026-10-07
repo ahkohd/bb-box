@@ -130,6 +130,11 @@ about 2 s. It keeps `msb`, its state and the images in a folder of its own:
 
 Each box's Docker disk is in the folder's `disks`, and goes with the box.
 
+A box keeps the files it reads cached in its own memory, which the host
+cannot share. Every 3 minutes bb-box has each idle box drop that cache, so
+the host gets the memory back: an idle box that has joined BB holds about
+0.5 GiB.
+
 `msb` needs a short path for its sockets, so when the folder's is long,
 `msb` reaches it through a link, `/tmp/bb-box-msb-<uid>`. bb-box never uses
 your own `~/.microsandbox`.

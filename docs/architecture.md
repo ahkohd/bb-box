@@ -809,6 +809,13 @@ by [setup/microsandbox](../setup/microsandbox/README.md)
   running bb-box microVMs, its cores, and a most-boxes budget counting every
   install's. `msb` reserves no memory, so an idle box holds about 100 MiB of
   what it is counted at. There is no warm pool yet.
+- A guest keeps its page cache in its own RAM, which the host cannot share
+  or take back, and enrolment fills it. At each boot bb-box sets the guest's
+  `page_reporting_order` to 0, so it reports free memory to `msb` in pages
+  rather than 2 MiB blocks, and each upkeep, every 3 minutes, has each
+  running box whose load is under half its cores and with over 256 MiB
+  cached drop its caches and compact its memory. An enrolled idle box then
+  held 0.5 to 0.65 GiB of the host, where it held 1.6 to 1.9 GiB.
 
 ### SSH host pool
 

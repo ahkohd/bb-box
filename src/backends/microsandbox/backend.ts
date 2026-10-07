@@ -63,6 +63,25 @@ const READY_FILE = "/run/bb-box/ready";
 const START = "/usr/local/sbin/bb-box-start";
 /** On /run, a tmpfs: the image's command was started at this boot. */
 const STARTED = "/run/bb-box-started";
+/**
+ * The guest reports free memory to msb in blocks of 2^order pages, 2 MiB
+ * by default, and msb gives the host those blocks back. A busy guest's
+ * free memory is in smaller pieces, so at 0 the host gets more of it.
+ */
+const REPORTING_ORDER = "/sys/module/page_reporting/parameters/page_reporting_order";
+/**
+ * Run as root in an idle box, one whose load is under half its cores, by
+ * the upkeep: a guest keeps its page cache in its own RAM, which the host
+ * cannot share or take back, and enrolment fills it. An idle box with more
+ * than 256 MiB cached drops it and compacts its memory, so its free pages
+ * go back to the host (053).
+ */
+export const RECLAIM = String.raw`read busy _ </proc/loadavg
+awk -v busy="$busy" -v cores="$(nproc)" 'BEGIN { exit !(busy + 0 < cores / 2) }' || exit 0
+cached=$(awk '/^Cached:/ { print $2 }' /proc/meminfo)
+[ "$cached" -ge 262144 ] || exit 0
+sync; echo 3 >/proc/sys/vm/drop_caches; echo 1 >/proc/sys/vm/compact_memory 2>/dev/null
+echo "reclaimed_kib=$cached"`;
 const VNC_PORT = 5900;
 const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 const MiB_PER_GiB = 1024;
@@ -361,6 +380,20 @@ export class MsbBackend implements Backend {
       await this.#import(image, true, signal).catch((error) => this.#context.logError(`import ${image}`, error));
     }
     await this.#sweepDisks(signal).catch((error) => this.#context.logError("remove leftover Docker disks", error));
+    await this.#reclaim(signal).catch((error) => this.#context.logError("reclaim idle boxes' memory", error));
+  }
+
+  /** Has each running, idle box of this install give its page cache back to the host (RECLAIM). Returns the KiB dropped. */
+  async #reclaim(signal?: AbortSignal): Promise<number> {
+    const running = (await this.#cli.list({ [LABELS.backend]: "microsandbox", [LABELS.install]: this.#context.installId }, signal)).filter((box) => powerOf(box.status) === "running");
+    let dropped = 0;
+    for (let at = 0; at < running.length; at += 4) {
+      const results = await Promise.all(
+        running.slice(at, at + 4).map((box) => this.#cli.run(["exec", box.name, "--", "/bin/sh", "-c", RECLAIM], { timeoutMs: 60_000, signal }).catch(() => null)),
+      );
+      for (const result of results) dropped += Number(scriptValues(result?.stdout ?? "").reclaimed_kib) || 0;
+    }
+    return dropped;
   }
 
   /**
@@ -567,7 +600,7 @@ export class MsbBackend implements Backend {
 
   /** Starts the image's command as root, detached, once per boot: neither `msb create` nor `msb start` runs it (053). */
   async #launch(name: string, signal?: AbortSignal): Promise<void> {
-    const script = `[ -e ${STARTED} ] || { : >${STARTED}; setsid -f ${START} >/run/bb-box-start.log 2>&1 </dev/null; }`;
+    const script = `echo 0 >${REPORTING_ORDER} 2>/dev/null; [ -e ${STARTED} ] || { : >${STARTED}; setsid -f ${START} >/run/bb-box-start.log 2>&1 </dev/null; }`;
     await this.#cli.ok(["exec", name, "--", "/bin/sh", "-c", script], { timeoutMs: 30_000, signal });
   }
 
