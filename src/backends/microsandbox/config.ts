@@ -1,14 +1,15 @@
 // The microsandbox backend's fields in bb-box's configuration (029), parsed
 // into a typed config (053). The backend runs boxes as libkrun microVMs with
 // bb-box's msb on one Linux host with KVM: BB's server, one over ssh://, or
-// a BB machine through bb-box's msb relay. Each kind runs one of the images
-// setup/docker/build.sh builds, imported into msb from Docker on the host.
+// a BB machine through bb-box's msb relay; a Mac with Apple silicon runs the
+// arm64 kinds. Each kind runs one of the images setup/docker/build.sh builds,
+// imported into msb from Docker on the host, or built in a microVM there.
 
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 import { BB_MACHINE } from "../docker/config.ts";
 import { IMAGE_REF } from "./release.ts";
 
-export const MSB_KINDS = ["linux", "linux-desktop-cpu"] as const;
+export const MSB_KINDS = ["linux", "linux-desktop-cpu", "linux-arm64", "linux-arm64-desktop-cpu"] as const;
 export type MsbKind = (typeof MSB_KINDS)[number];
 
 export interface MsbConfig {
@@ -16,7 +17,11 @@ export interface MsbConfig {
   readonly host: string | null;
   /** The BB machine's ID when the host is one, else null. */
   readonly machine: string | null;
-  /** The image of each kind, or null when the kind is off. */
+  /**
+   * The image of each kind, or null when the kind is off. A host offers the
+   * kinds of its architecture: x86_64 the first two, arm64, as a Mac, the
+   * arm64 ones (040).
+   */
   readonly images: Readonly<Record<MsbKind, string | null>>;
   /** Whether each box has Docker, on an ext4 disk of its own: on unless set (041). */
   readonly docker: boolean;
@@ -40,6 +45,8 @@ export interface MsbConfig {
 export const MSB_DEFAULTS = {
   linuxImage: "bbbox/linux:1",
   desktopImage: "bbbox/linux-desktop:1",
+  arm64Image: "bbbox/linux:1-arm64",
+  arm64DesktopImage: "bbbox/linux-desktop:1-arm64",
   dockerDiskGiB: 64,
   diskGiB: 32,
   // BB's server is often on a private or tailnet address, which msb's
@@ -57,6 +64,8 @@ export const MSB_KEYS = {
   host: "host",
   linuxImage: "linux-image",
   desktopImage: "desktop-image",
+  arm64Image: "linux-arm64-image",
+  arm64DesktopImage: "desktop-arm64-image",
   docker: "docker",
   dockerDiskGiB: "docker-disk-gib",
   diskGiB: "disk-gib",
@@ -88,6 +97,22 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     description: "The image linux-desktop-cpu boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.",
     group: "boxes",
     default: MSB_DEFAULTS.desktopImage,
+  },
+  [MSB_KEYS.arm64Image]: {
+    type: "string",
+    label: "Linux image on arm64",
+    description:
+      "The image linux-arm64 boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off.",
+    group: "boxes",
+    default: MSB_DEFAULTS.arm64Image,
+  },
+  [MSB_KEYS.arm64DesktopImage]: {
+    type: "string",
+    label: "Desktop image on arm64",
+    description:
+      "The image linux-arm64-desktop-cpu boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off.",
+    group: "boxes",
+    default: MSB_DEFAULTS.arm64DesktopImage,
   },
   [MSB_KEYS.docker]: {
     type: "boolean",
@@ -168,13 +193,17 @@ export function parseMsbPart(part: BackendPart): ParsedBackend<MsbConfig> {
   }
   const linux = text(values, MSB_KEYS.linuxImage, MSB_DEFAULTS.linuxImage);
   const desktop = text(values, MSB_KEYS.desktopImage, MSB_DEFAULTS.desktopImage);
+  const arm64 = text(values, MSB_KEYS.arm64Image, MSB_DEFAULTS.arm64Image);
+  const arm64Desktop = text(values, MSB_KEYS.arm64DesktopImage, MSB_DEFAULTS.arm64DesktopImage);
   for (const [key, what, image] of [
     [MSB_KEYS.linuxImage, "linux", linux],
     [MSB_KEYS.desktopImage, "desktop", desktop],
+    [MSB_KEYS.arm64Image, "arm64 linux", arm64],
+    [MSB_KEYS.arm64DesktopImage, "arm64 desktop", arm64Desktop],
   ] as const) {
     if (image && !IMAGE_REF.test(image)) problem(key, `microsandbox: the ${what} image "${image}" is not an image reference bb-box can use.`);
   }
-  if (!linux && !desktop) problem(MSB_KEYS.linuxImage, "microsandbox: give a linux or a desktop image.");
+  if (!linux && !desktop && !arm64 && !arm64Desktop) problem(MSB_KEYS.linuxImage, "microsandbox: give a linux or a desktop image.");
   const docker = values[MSB_KEYS.docker] !== false;
   const whole = (key: string, fallback: number, least: number, what: string) => {
     const value = number(values, key, fallback);
@@ -202,7 +231,7 @@ export function parseMsbPart(part: BackendPart): ParsedBackend<MsbConfig> {
     config: {
       host: host || null,
       machine: BB_MACHINE.exec(host)?.[1] ?? null,
-      images: { linux: linux || null, "linux-desktop-cpu": desktop || null },
+      images: { linux: linux || null, "linux-desktop-cpu": desktop || null, "linux-arm64": arm64 || null, "linux-arm64-desktop-cpu": arm64Desktop || null },
       docker,
       dockerDiskGiB,
       diskGiB,

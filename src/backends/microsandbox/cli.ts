@@ -140,7 +140,7 @@ export class MsbCli {
         throw new MsbError(error instanceof Error ? error.message : String(error), true);
       }
     }
-    const timeoutMs = name === "import" ? 30 * 60_000 : name === "install" ? 10 * 60_000 : 60_000;
+    const timeoutMs = name === "import" || name === "transfer" ? 30 * 60_000 : name === "install" ? 10 * 60_000 : 60_000;
     const command = this.host
       ? [this.#options.ssh ?? "ssh", "-o", "BatchMode=yes", "-T", ...sshTarget(this.host), `sh -c ${quote(msbScript(name))} bb-box-msb ${args.map(quote).join(" ")}`]
       : ["sh", "-c", msbScript(name), "bb-box-msb", ...args];

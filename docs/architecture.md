@@ -824,10 +824,21 @@ never the default: it stays last in the backend order, so a box gets a
 microVM only when it asks for this backend.
 
 
-- bb-box runs its own `msb` on one Linux host with KVM: BB's server, one
-  over `ssh://`, or a BB machine through the msb relay. It installs the
-  release it pins, 0.7.7, checked by its SHA-256, in a folder of its own
-  there, with `msb`'s state and images, the first time it needs it.
+- bb-box runs its own `msb` on one host: Linux with KVM, or a Mac with
+  Apple silicon on the Hypervisor framework; BB's server, one over `ssh://`,
+  or a BB machine through the msb relay. It installs the release it pins,
+  0.7.7, checked by its SHA-256, in a folder of its own there, with `msb`'s
+  state and images, the first time it needs it.
+- A host offers the kinds of its architecture, from its facts, kept in
+  storage for the next start: `linux` and `linux-desktop-cpu` on x86_64,
+  `linux-arm64` and `linux-arm64-desktop-cpu` (040) on arm64, as a Mac.
+- On a host without Docker to import an image from, as a Mac, bb-box builds
+  it there in a builder microVM, `bb-box-builder-<id>`, from `docker:dind`
+  pinned by digest, with `setup/docker/build.sh --arch` for the host's
+  architecture, moves it into `msb` (`docker save` in the builder, `msb load`
+  on the host), and removes the builder. One build runs at a time; a box of
+  its kind is refused as `no_capacity` until it is done, so the registry
+  tries the next offer, such as Tart.
 - A box is a microVM named `bbbox-<box ID>`, with labels set at creation
   that name the backend, install, box, thread, name and kind; `msb modify`
   changes the thread and name when the box changes hands. Its size is

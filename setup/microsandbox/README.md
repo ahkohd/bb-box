@@ -101,6 +101,27 @@ about 20 s, at the first box of each kind, or by its upkeep within a few
 minutes. It imports an image again when Docker's has changed. A host that is
 also a Docker backend's shares these images with it.
 
+A host without Docker, such as a Mac, needs no step here: bb-box builds each
+image there itself, in a microVM of its own, `bb-box-builder-<id>`, from
+Docker's `docker:dind` image, pinned by digest, the only image bb-box pulls.
+It runs `setup/docker/build.sh` for the host's architecture inside, moves the
+image into `msb`, and removes the builder. The linux image took about 3
+minutes on a Mac; it needs 80 GiB free while it builds, and the first box of
+a kind is refused, saying so, until its image is built.
+
+### On a Mac
+
+A Mac with Apple silicon runs the arm64 kinds, `linux-arm64` and
+`linux-arm64-desktop-cpu` (040), from `bbbox/linux:1-arm64` and
+`bbbox/linux-desktop:1-arm64`, beside Tart's VMs of the same kinds and after
+them in the backend order. msb uses the Hypervisor framework, so the Mac
+needs nothing installed: reach it as a BB machine, `bb:<machine ID>`, or over
+`ssh://` as Tart's backend does. bb-box keeps `msb`, its state and the
+images in its data folder on the Mac, about 2.4 GiB with the linux image and
+6 GiB with both. A Mac has no `mkfs.ext4`, so each box's Docker disk is
+`msb`'s own. A Mac does not take back memory a box has used, so count each
+box at its full size there.
+
 ### 3. Configure bb-box
 
 On BB Box's settings page in BB, set up the microsandbox backend: fill in its
@@ -111,6 +132,8 @@ fields, press Check, then Save and turn on.
 | `host` | empty | `bb:<machine ID>` for a BB machine, which bb-box reaches through BB, or `ssh://user@host`. Empty uses the machine that runs BB |
 | `linux-image` | `bbbox/linux:1` | The image of linux boxes. Empty turns them off |
 | `desktop-image` | `bbbox/linux-desktop:1` | The image of linux-desktop-cpu boxes. Empty turns them off |
+| `linux-arm64-image` | `bbbox/linux:1-arm64` | The image of linux-arm64 boxes, on an arm64 host such as a Mac. Empty turns them off |
+| `desktop-arm64-image` | `bbbox/linux-desktop:1-arm64` | The image of linux-arm64-desktop-cpu boxes, on an arm64 host. Empty turns them off |
 | `docker` | on | Each box has a Docker daemon of its own, with its data on an ext4 disk of the box's own. Off, boxes have no Docker |
 | `docker-disk-gib` | 64 | The most each box's Docker disk may grow to |
 | `disk-gib` | 32 | The most a box's root disk may grow to, when no disk size is asked for |

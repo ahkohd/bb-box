@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { dockerKinds } from "../src/backends/docker/backend.ts";
 import { offerChecks } from "../src/backends/index.ts";
-import { MsbBackend, msbKinds, parseFacts, sandboxName } from "../src/backends/microsandbox/backend.ts";
+import { BUILDER_IMAGE, MsbBackend, msbKinds, parseFacts, sandboxName } from "../src/backends/microsandbox/backend.ts";
 import { MsbCli } from "../src/backends/microsandbox/cli.ts";
 import { parseMsbPart } from "../src/backends/microsandbox/config.ts";
 import { microsandboxDriver } from "../src/backends/microsandbox/index.ts";
@@ -53,7 +53,7 @@ test("parses the fields, with the guide's defaults, and refuses what it cannot u
   assert.deepEqual(msbConfig(), {
     host: null,
     machine: null,
-    images: { linux: "bbbox/linux:1", "linux-desktop-cpu": "bbbox/linux-desktop:1" },
+    images: { linux: "bbbox/linux:1", "linux-desktop-cpu": "bbbox/linux-desktop:1", "linux-arm64": "bbbox/linux:1-arm64", "linux-arm64-desktop-cpu": "bbbox/linux-desktop:1-arm64" },
     docker: true,
     dockerDiskGiB: 64,
     diskGiB: 32,
@@ -175,12 +175,54 @@ test("installs msb on a host that lacks it, once, and imports a kind's image fro
   assert.equal(fake.scripts.filter(([name]) => name === "import").length, 3, "nothing new, nothing imported");
 });
 
-test("refuses a kind whose image neither msb nor Docker has, without pulling it, and leaves nothing", async () => {
+test("a kind whose image neither msb nor Docker has is refused for now, and bb-box builds the image in a builder microVM, pulling only Docker's own, pinned, and removes the builder (053)", async () => {
   const { fake, backend } = setup({}, { imported: false });
   fake.docker.delete("bbbox/linux:1");
-  await assert.rejects(backend.acquire(identity(), null, hooks().hooks, signal()), /has no image bbbox\/linux:1, in msb or in Docker, and bb-box never pulls one\. Build it there with setup\/docker\/build\.sh/);
-  assert.deepEqual(fake.sandboxes(), []);
+  await assert.rejects(
+    backend.acquire(identity(), null, hooks().hooks, signal()),
+    (error: unknown) => error instanceof BackendError && error.code === "no_capacity" && /has no image bbbox\/linux:1 yet\. bb-box is building it there in a microVM/.test(error.message),
+  );
+  for (let i = 0; i < 200 && !fake.images()["bbbox/linux:1"]; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.ok(fake.images()["bbbox/linux:1"], "built and moved into msb");
+  const builder = fake.calls().find((call) => call[0] === "create" && call.includes("--name") && after(call, "--name")[0]!.startsWith("bb-box-builder-"))!;
+  assert.equal(builder[1], BUILDER_IMAGE);
+  assert.match(BUILDER_IMAGE, /^docker:[\w.-]+-dind@sha256:[0-9a-f]{64}$/, "by digest");
+  const { readFileSync } = await import("node:fs");
+  const steps = readFileSync(join(fake.root, "builder"), "utf8");
+  assert.match(steps, /nohup dockerd >\/var\/log\/dockerd\.log 2>&1 <\/dev\/null &/);
+  assert.match(steps, /base64 -d \| tar -xz -C \/build/);
+  assert.match(steps, /bash setup\/docker\/build\.sh --arch x86_64 --tag bbbox\/linux:1 linux /);
+  assert.ok(fake.scripts.some(([name, , image]) => name === "transfer" && image === "bbbox/linux:1"));
+  for (let i = 0; i < 100 && fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")); i++) await new Promise((r) => setTimeout(r, 25));
+  assert.deepEqual(fake.sandboxes(), [], "the builder is removed, and no box was made");
   assert.ok(!fake.calls().some((call) => call[0] === "pull"));
+  // The next box starts from the built image.
+  await backend.acquire(identity(), null, hooks().hooks, signal());
+});
+
+test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framework, builds there for arm64, and leaves the reclaim alone (053)", async () => {
+  const { fake, backend } = setup({}, { imported: false });
+  fake.facts({ os: "Darwin", arch: "arm64", mkfs: "0", docker: "" });
+  fake.docker.clear();
+  const report = await backend.doctor(signal());
+  assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux-arm64", "linux-arm64-desktop-cpu"]);
+  assert.ok(backend.kinds().every((kind) => kind.capabilities.arch === "arm64"));
+  assert.equal(backend.hostOs, "macos");
+  const by = Object.fromEntries(report.checks.map((check) => [check.id, check]));
+  assert.match(by["microsandbox.host"]!.detail, /It offers the arm64 kinds\./);
+  assert.deepEqual([by["microsandbox.kvm"]!.name, by["microsandbox.kvm"]!.status], ["Hypervisor", "ok"]);
+  assert.equal(by["image.bbbox/linux:1-arm64"]!.status, "warn");
+  assert.match(by["image.bbbox/linux:1-arm64"]!.fix ?? "", /bb-box builds it there in a microVM of its own/);
+  assert.equal(by["image.bbbox/linux:1"], undefined, "no x86_64 image on an arm64 host");
+  await assert.rejects(backend.acquire(identity("linux"), null, hooks().hooks, signal()), /does not offer linux boxes/);
+  await assert.rejects(backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal()), /bb-box is building it there/);
+  for (let i = 0; i < 200 && !fake.images()["bbbox/linux:1-arm64"]; i++) await new Promise((r) => setTimeout(r, 25));
+  const { readFileSync } = await import("node:fs");
+  assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /build\.sh --arch arm64 --tag bbbox\/linux:1-arm64 linux /);
+  const box = await backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
+  assert.deepEqual(after(fake.calls().find((call) => call[0] === "create" && call.includes(box.ref))!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"], "msb's own disk, as a Mac has no mkfs.ext4");
+  await backend.maintain(signal());
+  assert.ok(!fake.calls().some((call) => call[0] === "exec" && call.some((arg) => arg.includes("drop_caches"))), "a Mac keeps what a guest has used, so no reclaim");
 });
 
 test("a start runs the image's command again, which msb start does not, and waits for it; a stop stops the microVM", async () => {
@@ -279,8 +321,9 @@ test("above 1, the boxes' sizes may add up to the overcommit times the host's me
 test("on a Mac, which keeps the memory a box has used, each box counts at its full size whatever the overcommit, and the doctor says so (#557)", async () => {
   const { fake, backend } = setup({ boxes: 10, "reserve-memory-mib": 4096, "memory-overcommit": 2 });
   fake.facts({ os: "Darwin", arch: "arm64", cpus: "8", memory_kib: String(16 * 1024 * 1024), available_kib: String(12 * 1024 * 1024) });
-  for (let i = 0; i < 3; i++) await backend.acquire(identity(), null, hooks().hooks, signal());
-  const full = await backend.capacity("linux", SMALL, []);
+  // A Mac offers the arm64 kinds (040).
+  for (let i = 0; i < 3; i++) await backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
+  const full = await backend.capacity("linux-arm64", SMALL, []);
   assert.deepEqual(full.hosts[0]!.limits.map((limit) => [limit.resource, limit.id ?? null, limit.used, limit.total]), [["guests", null, 3, 10], ["memory", null, 12288, 16384]]);
   assert.match(full.message ?? "", /has 4 GiB of memory free and keeps 4 GiB free, so a box with 4 GiB does not fit/);
   assert.ok(!fake.scripts.some(([name]) => name === "memory"), "the memory script is not run");
@@ -349,7 +392,7 @@ test("the doctor checks the host, msb, KVM and the images, warns in LXC, and say
   assert.match(by["microsandbox.msb"]!.fix ?? "", /bb-box installs msb 0\.7\.7 there, checked by its SHA-256/);
 });
 
-test("the doctor says which images bb-box imports from Docker, and fails for one Docker lacks too", async () => {
+test("the doctor says which images bb-box imports from Docker, and which it builds itself (053)", async () => {
   const { fake, backend } = setup({}, { imported: false });
   // Before msb is installed too: Docker alone says what bb-box can import.
   fake.facts({ installed: "" });
@@ -358,8 +401,8 @@ test("the doctor says which images bb-box imports from Docker, and fails for one
   const by = Object.fromEntries(report.checks.map((check) => [check.id, check]));
   assert.equal(by["image.bbbox/linux:1"]!.status, "warn");
   assert.match(by["image.bbbox/linux:1"]!.fix ?? "", /bb-box imports it from Docker with the first linux box/);
-  assert.equal(by["image.bbbox/linux-desktop:1"]!.status, "fail");
-  assert.match(by["image.bbbox/linux-desktop:1"]!.fix ?? "", /Build it on the host with setup\/docker\/build\.sh/);
+  assert.equal(by["image.bbbox/linux-desktop:1"]!.status, "warn");
+  assert.match(by["image.bbbox/linux-desktop:1"]!.fix ?? "", /bb-box builds it there in a microVM of its own, about 10 minutes, with the first linux-desktop-cpu box/);
 });
 
 test("runs commands, copies files and probes through msb exec as the box user, and a stopped box does not answer", async () => {

@@ -82,7 +82,7 @@ Projects' images, by name (049).
 | [`ssh-pool`](#ssh-pool) | SSH host pool | linux, macos, macos-desktop |
 | [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop |
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
-| [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu |
+| [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
 
 ### proxmox-lxc
 
@@ -215,6 +215,8 @@ Setup: [setup/microsandbox/README.md](../../setup/microsandbox/README.md).
 | `host` | Host | string | connection |  | The Linux host with KVM that runs the boxes: ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there, in a folder of its own. |
 | `linux-image` | Linux image | string | boxes | `bbbox/linux:1` | The image linux boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off. |
 | `desktop-image` | Desktop image | string | boxes | `bbbox/linux-desktop:1` | The image linux-desktop-cpu boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off. |
+| `linux-arm64-image` | Linux image on arm64 | string | boxes | `bbbox/linux:1-arm64` | The image linux-arm64 boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off. |
+| `desktop-arm64-image` | Desktop image on arm64 | string | boxes | `bbbox/linux-desktop:1-arm64` | The image linux-arm64-desktop-cpu boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off. |
 | `docker` | Docker in boxes | boolean | boxes | `true` | Give each box its own Docker daemon, started by its first docker command, with its data on a disk of the box's own. Each box has its own kernel, so this needs no privilege on the host. |
 | `docker-disk-gib` | Docker disk (GiB) | number | advanced | `64` | The most each box's Docker disk may grow to. It takes only what Docker writes, and goes with the box. |
 | `disk-gib` | Root disk (GiB) | number | advanced | `32` | The most a box's root disk may grow to when no disk size is asked for. It takes only what the box writes. |

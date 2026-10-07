@@ -30,9 +30,15 @@
 //   whose labels name this install and the box (018).
 
 import type { CheckId } from "../../core/checks.ts";
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 import { MIN_DESKTOP, type Display } from "../../transports/types.ts";
 import {
+  type Arch,
   BackendError,
   type AcquireHooks,
   type Backend,
@@ -94,6 +100,39 @@ const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 const MiB_PER_GiB = 1024;
 /** A Docker disk this old with no microVM of its name is a leftover, which the upkeep removes. */
 const ORPHAN_DISK_S = 15 * 60;
+/**
+ * The builder microVM's image: Docker's own, with dockerd, pinned by its
+ * multi-architecture index's digest, the only image bb-box pulls.
+ */
+export const BUILDER_IMAGE = "docker:29.1.3-dind@sha256:173f284a4299164772a90f52b373e73e087583c0963f1334c9995f190ef6f3f5";
+/** How long a build may take, and the disk it needs free first, so the host keeps 60 GiB. */
+const BUILD_MS = 90 * 60_000;
+const BUILD_FREE_GIB = 80;
+
+/**
+ * bb-box's setup/ folder: beside src/ in the repository; the plugin's
+ * bundle, dist/server.js, has the plugin's files one up.
+ */
+function setupDir(): string {
+  const here = fileURLToPath(new URL("../../../setup/", import.meta.url));
+  return existsSync(join(here, "docker", "build.sh")) ? here : fileURLToPath(new URL("../setup/", import.meta.url));
+}
+
+/** `setup` as a gzipped tar of one folder, setup/, for a builder. */
+function setupArchive(setup: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("tar", ["-czf", "-", "-C", dirname(setup.replace(/\/+$/, "")), basename(setup.replace(/\/+$/, ""))], { stdio: ["ignore", "pipe", "pipe"] });
+    const parts: Buffer[] = [];
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => parts.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
+    child.once("error", reject);
+    child.once("close", (code) => (code === 0 ? resolve(Buffer.concat(parts)) : reject(new Error(`tar of ${setup} failed: ${stderr.trim()}`))));
+  });
+}
+
+/** The storage key of the host's architecture, so a restart offers its kinds before the host answers. */
+const ARCH_KEY = "host-arch";
 /** How long the host's facts from the status script serve capacity checks. */
 const FACTS_MS = 60_000;
 /** What a box takes as it starts and joins BB, before the upkeep's reclaim (#575): a new box needs this much available, or its size if less (#557). */
@@ -110,11 +149,15 @@ export const LABELS = {
   name: "bbbox.name",
   kind: "bbbox.kind",
   created: "bbbox.created",
+  /** On a builder microVM (#build): the install's ID. */
+  builder: "bbbox.builder",
   /** On an image setup/docker/build.sh made: its record, as JSON (049). */
   imageRecord: "bbbox.image-record",
 } as const;
 
 export interface MsbBackendOptions extends MsbCliOptions {
+  /** bb-box's setup/ folder, which a builder microVM builds images from; the plugin's own by default. */
+  readonly setup?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
 }
@@ -230,8 +273,18 @@ function ownerOf(labels: Readonly<Record<string, string>>): BoxOwner | null {
   };
 }
 
-/** The kinds a config offers: those with an image. A box has Docker when the setting is on (041). */
-export function msbKinds(config: MsbConfig): BoxKind[] {
+/** The architecture of a host, as `uname -m` says it. */
+export function archOf(machine: string): Arch | null {
+  if (machine === "x86_64" || machine === "amd64") return "x86_64";
+  if (machine === "arm64" || machine === "aarch64") return "arm64";
+  return null;
+}
+
+/**
+ * The kinds a config offers on a host of `arch`: those with an image, of
+ * that architecture (040). A box has Docker when the setting is on (041).
+ */
+export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
   const docker = config.docker ? ["docker"] : [];
   const kinds: Record<MsbKind, BoxKind> = {
     linux: {
@@ -261,8 +314,34 @@ export function msbKinds(config: MsbConfig): BoxKind[] {
       },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
+    "linux-arm64": {
+      id: "linux-arm64",
+      label: "Linux on arm64",
+      description: "A Linux microVM on arm64, on a Mac with Apple silicon or another arm64 host. amd64 container images and x86_64 binaries do not run there.",
+      requires: [],
+      capabilities: { os: "linux", arch: "arm64", gpu: false, features: docker, command: MSB_COMMAND, displays: [], computerUse: null, enrol: true },
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    },
+    "linux-arm64-desktop-cpu": {
+      id: "linux-arm64-desktop-cpu",
+      label: "Linux desktop on arm64",
+      description:
+        "A Linux desktop microVM on arm64, drawn by the CPU, on a Mac with Apple silicon or another arm64 host, for computer use and browsers. amd64 container images and x86_64 binaries do not run there.",
+      requires: [],
+      capabilities: {
+        os: "linux",
+        arch: "arm64",
+        gpu: false,
+        features: docker,
+        command: MSB_COMMAND,
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        computerUse: CUA_DRIVER,
+        enrol: true,
+      },
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    },
   };
-  return MSB_KINDS.filter((kind) => config.images[kind]).map((kind) => kinds[kind]);
+  return MSB_KINDS.filter((kind) => config.images[kind] && kinds[kind].capabilities.arch === arch).map((kind) => kinds[kind]);
 }
 
 /** The host for people: a BB machine's name, an ssh:// host, or BB's server. */
@@ -278,8 +357,11 @@ export class MsbBackend implements Backend {
   readonly #config: MsbConfig;
   readonly #context: BackendContext;
   readonly #options: MsbBackendOptions;
-  readonly #kinds: BoxKind[];
   readonly #cli: MsbCli;
+  /** The host's architecture, from its facts, kept in storage for the next start; null until known. */
+  #arch: Arch | null = null;
+  /** A build of an image in a builder microVM (#build), while one runs. */
+  #building: { readonly image: string; readonly since: number; readonly work: Promise<void> } | null = null;
   /** The host's facts, as the status script last gave them, and when. */
   #facts: { at: number; facts: HostFacts } | null = null;
   /** msb installed at the pinned release, once checked or done this run. */
@@ -294,8 +376,22 @@ export class MsbBackend implements Backend {
     this.#config = config;
     this.#context = context;
     this.#options = options;
-    this.#kinds = msbKinds(config);
     this.#cli = new MsbCli(config.host, config.machine, context.machines, options);
+    void context.storage.get<Arch>(ARCH_KEY).then((kept) => {
+      if (kept && !this.#arch) this.#arch = kept;
+    }, () => {});
+  }
+
+  /**
+   * The host's architecture: as its facts last said, else as kept from the
+   * last run, else a Mac's when BB says the machine is one, else this
+   * process's for BB's server, else x86_64.
+   */
+  get #hostArch(): Arch {
+    if (this.#arch) return this.#arch;
+    if (this.#config.machine && this.#context.machines?.platform?.(this.#config.machine) === "macos") return "arm64";
+    if (!this.#config.host) return process.arch === "arm64" ? "arm64" : "x86_64";
+    return "x86_64";
   }
 
   get label(): string {
@@ -306,22 +402,33 @@ export class MsbBackend implements Backend {
     return this.#config.host ? [this.#host] : [];
   }
 
-  /** A BB machine's OS as BB has it; Linux for any other host, as msb's Linux kinds need one. */
+  /** A BB machine's OS as BB has it; else the host's, from its facts; Linux until known. */
   get hostOs(): GuestOs | null {
     if (this.#config.machine) return this.#context.machines?.platform?.(this.#config.machine) ?? null;
-    return "linux";
+    return this.#facts?.facts.os === "Darwin" ? "macos" : "linux";
   }
 
   get #host(): string {
     return hostWords(this.#config, this.#context);
   }
 
+  /**
+   * Reads the host's facts when its architecture is not known yet, so a
+   * first box on an ssh:// Mac or BB's server finds the arm64 kinds. A host
+   * that does not answer is left to the call that needs it to say so.
+   */
+  async #knowArch(signal?: AbortSignal): Promise<void> {
+    if (this.#arch) return;
+    if (this.#config.machine && (await this.#context.machines?.connected(this.#config.machine)) !== true) return;
+    await this.#hostFacts(signal).catch(() => undefined);
+  }
+
   kinds(): BoxKind[] {
-    return this.#kinds;
+    return msbKinds(this.#config, this.#hostArch);
   }
 
   #kind(id: string): BoxKind {
-    const kind = this.#kinds.find((candidate) => candidate.id === id);
+    const kind = this.kinds().find((candidate) => candidate.id === id);
     if (!kind) throw new BackendError("unsupported", `${this.label} does not offer ${id} boxes.`);
     return kind;
   }
@@ -335,6 +442,11 @@ export class MsbBackend implements Backend {
     if (result.exitCode !== 0) throw this.#cli.error(`The status script on ${this.#host}`, result);
     const facts = parseFacts(result.stdout);
     this.#facts = { at: Date.now(), facts };
+    const arch = archOf(facts.arch);
+    if (arch && arch !== this.#arch) {
+      this.#arch = arch;
+      await this.#context.storage.set(ARCH_KEY, arch).catch(() => {});
+    }
     return facts;
   }
 
@@ -361,7 +473,7 @@ export class MsbBackend implements Backend {
    * Docker's image is not the one imported (`refresh`), one import of an
    * image at a time.
    */
-  #import(image: string, refresh: boolean, signal?: AbortSignal): Promise<void> {
+  #import(image: string, kind: MsbKind, refresh: boolean, signal?: AbortSignal): Promise<void> {
     const running = this.#importing.get(image);
     if (running) return running;
     const work = (async () => {
@@ -373,7 +485,12 @@ export class MsbBackend implements Backend {
       const imported = await this.#context.storage.get<string>(this.#importedKey(image));
       if (present && (!docker || docker === imported)) return;
       if (!docker) {
-        throw new Error(`${this.#host} has no image ${image}, in msb or in Docker, and bb-box never pulls one. Build it there with setup/docker/build.sh (setup/microsandbox/README.md).`);
+        // No Docker on the host to import it from, as on a Mac: bb-box builds it there, in a microVM of its own.
+        const building = this.#startBuild(image, kind);
+        throw new BackendError(
+          "no_capacity",
+          `${this.#host} has no image ${image} yet. bb-box is building it there in a microVM, which takes about 10 minutes from when it started, ${Math.round((Date.now() - building.since) / 60_000)} min ago.`,
+        );
       }
       const result = await this.#cli.script("import", [image], signal);
       if (result.exitCode !== 0) throw this.#cli.error(`Importing ${image} from Docker on ${this.#host}`, result);
@@ -383,13 +500,92 @@ export class MsbBackend implements Backend {
     return work;
   }
 
+  /** Starts a build of `image` in a builder microVM, unless one runs; the one running, or this one. */
+  #startBuild(image: string, kind: MsbKind): { readonly image: string; readonly since: number } {
+    if (this.#building) return this.#building;
+    const since = Date.now();
+    const work = this.#build(image, kind)
+      .catch((error) => this.#context.logError(`build ${image}`, error))
+      .finally(() => {
+        if (this.#building?.since === since) this.#building = null;
+      });
+    this.#building = { image, since, work };
+    return this.#building;
+  }
+
+  /**
+   * Builds `image` on the host, which has no Docker to import it from, as a
+   * Mac: in a builder microVM from Docker's own image, pinned by digest, with
+   * Docker inside on a disk of its own, from a copy of bb-box's setup/, with
+   * setup/docker/build.sh for the host's architecture. Then moves it into msb
+   * (`transfer`) and removes the builder. About 10 minutes on a Mac for both
+   * images; it needs BUILD_FREE_GIB free.
+   */
+  async #build(image: string, kind: MsbKind): Promise<void> {
+    const signal = AbortSignal.timeout(BUILD_MS);
+    const facts = await this.#hostFacts(signal, true);
+    if (facts.freeGiB < BUILD_FREE_GIB) {
+      throw new Error(`${this.#host} has ${facts.freeGiB} GiB free, and bb-box builds an image there only with ${BUILD_FREE_GIB} GiB free, so the host keeps 60 GiB.`);
+    }
+    const name = `bb-box-builder-${randomBytes(4).toString("hex")}`;
+    const exec = (script: string, options: { stdin?: string; timeoutMs?: number } = {}) =>
+      this.#cli.ok(["exec", "--stream", name, "--", "/bin/sh", "-c", script], { timeoutMs: options.timeoutMs ?? 10 * 60_000, signal, stdin: options.stdin });
+    try {
+      await this.#cli.ok(
+        [
+          "create", BUILDER_IMAGE,
+          "--name", name,
+          "--quiet",
+          "--label", `${LABELS.backend}=microsandbox`,
+          "--label", `${LABELS.builder}=${this.#context.installId}`,
+          "--cpus", String(Math.max(2, Math.min(8, facts.cpus))),
+          "--memory", "8192M",
+          "--root-disk", "64G",
+          "--tmpfs", "/run",
+          "--net", this.#config.network,
+          "--mount-owned", "/var/lib/docker:kind=disk,size=96G",
+        ],
+        { timeoutMs: 10 * 60_000, signal },
+      );
+      await exec(
+        // BusyBox's setsid has no -f; what nohup starts with its output redirected outlives msb exec.
+        "apk add --no-cache bash coreutils curl jq >/dev/null && { nohup dockerd >/var/log/dockerd.log 2>&1 </dev/null & } && " +
+          "i=0; until docker info >/dev/null 2>&1; do i=$((i+1)); [ $i -lt 600 ] || { tail -5 /var/log/dockerd.log >&2; exit 3; }; sleep 0.1; done",
+      );
+      await exec("mkdir -p /build && base64 -d | tar -xz -C /build", { stdin: (await setupArchive(this.#options.setup ?? setupDir())).toString("base64") });
+      const target = kind.includes("desktop") ? "desktop" : "linux";
+      await exec(`cd /build && bash setup/docker/build.sh --arch ${archOf(facts.arch) ?? "x86_64"} --tag ${image} ${target} >/build/build.log 2>&1 || { tail -20 /build/build.log >&2; exit 1; }`, { timeoutMs: BUILD_MS });
+      const moved = await this.#cli.script("transfer", [name, image], signal);
+      if (moved.exitCode !== 0) throw this.#cli.error(`Moving ${image} from the builder into msb on ${this.#host}`, moved);
+      await this.#context.storage.set(this.#importedKey(image), `built:${Date.now()}`);
+    } finally {
+      await this.#cli.run(["remove", "--force", "--quiet", name], { timeoutMs: 120_000 }).catch(() => undefined);
+    }
+  }
+
+  /** Removes builder microVMs of this install that no build is using, as after a restart in the middle of one. */
+  async #sweepBuilders(signal?: AbortSignal): Promise<void> {
+    if (this.#building) return;
+    for (const builder of await this.#cli.list({ [LABELS.builder]: this.#context.installId }, signal)) {
+      await this.#cli.run(["remove", "--force", "--quiet", builder.name], { timeoutMs: 120_000, signal });
+    }
+  }
+
   /** Installs msb and imports each kind's image anew when Docker's has changed. */
   async maintain(signal?: AbortSignal): Promise<void> {
     if (this.#config.machine && (await this.#context.machines?.connected(this.#config.machine)) !== true) return;
     await this.#install(signal);
-    for (const image of new Set(MSB_KINDS.map((kind) => this.#config.images[kind]).filter((image): image is string => image !== null))) {
-      await this.#import(image, true, signal).catch((error) => this.#context.logError(`import ${image}`, error));
+    // The images of the kinds this host offers, by its architecture.
+    const seen = new Set<string>();
+    for (const kind of this.kinds()) {
+      const image = this.#config.images[kind.id as MsbKind];
+      if (!image || seen.has(image)) continue;
+      seen.add(image);
+      await this.#import(image, kind.id as MsbKind, true, signal).catch((error) => {
+        if (!(error instanceof BackendError)) this.#context.logError(`import ${image}`, error);
+      });
     }
+    await this.#sweepBuilders(signal).catch((error) => this.#context.logError("remove leftover builders", error));
     await this.#sweepDisks(signal).catch((error) => this.#context.logError("remove leftover Docker disks", error));
     await this.#reclaim(signal).catch((error) => this.#context.logError("reclaim idle boxes' memory", error));
     await this.#oom(signal).catch((error) => this.#context.logError("raise the boxes' oom_score_adj", error));
@@ -403,6 +599,8 @@ export class MsbBackend implements Backend {
 
   /** Has each running, idle box of this install give its page cache back to the host (RECLAIM). Returns the KiB dropped. */
   async #reclaim(signal?: AbortSignal): Promise<number> {
+    // A Mac's msb keeps what a guest has used, so dropping it gives nothing back there (053).
+    if ((await this.#hostFacts(signal)).os === "Darwin") return 0;
     const running = (await this.#cli.list({ [LABELS.backend]: "microsandbox", [LABELS.install]: this.#context.installId }, signal)).filter((box) => powerOf(box.status) === "running");
     let dropped = 0;
     for (let at = 0; at < running.length; at += 4) {
@@ -472,6 +670,7 @@ export class MsbBackend implements Backend {
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+    await this.#knowArch(signal);
     this.#kind(kind);
     const machine = this.#config.machine;
     if (machine && (await this.#context.machines?.connected(machine)) !== true) {
@@ -562,6 +761,7 @@ export class MsbBackend implements Backend {
   // A box's life.
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    await this.#knowArch(signal);
     const kind = this.#kind(box.kind);
     const image = this.#config.images[box.kind as MsbKind]!;
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs);
@@ -579,7 +779,7 @@ export class MsbBackend implements Backend {
     const guest = (size: BoxSize | null = null): Guest => ({ ref: name, host: this.#host, address: null, size, data: { box: box.boxId } });
     try {
       await hooks.claim(guest());
-      await step("image", () => this.#import(image, false, signal));
+      await step("image", () => this.#import(image, box.kind as MsbKind, false, signal));
       await step("create", () => this.#create(box, image, signal));
       await hooks.starting();
       await step("ready", () => this.#ready(name, deadline, signal));
@@ -731,7 +931,7 @@ export class MsbBackend implements Backend {
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
     await this.#cli.prepare();
     const command = new MsbTransport(this.#cli, guest.ref);
-    const capabilities = this.#kinds.find((candidate) => candidate.id === kind)?.capabilities;
+    const capabilities = this.kinds().find((candidate) => candidate.id === kind)?.capabilities;
     const displays = (capabilities?.displays ?? []).map(
       (display): Display =>
         display.protocol === "selkies"
@@ -755,7 +955,6 @@ export class MsbBackend implements Backend {
     const notes: string[] = [`This install's ID is ${this.#context.installId}. Its microVMs carry the label ${LABELS.install}=${this.#context.installId}.`];
     const push = (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix: string | null = null) => checks.push({ id, name, status, detail, fix });
     const skip = (id: CheckId, name: string) => push(id, name, "skipped", "Skipped until the checks above pass.");
-    const images = [...new Set(MSB_KINDS.map((kind) => this.#config.images[kind]).filter((image): image is string => image !== null))];
     const hostName = `Host ${this.#host}`;
 
     let facts: HostFacts | null = null;
@@ -773,9 +972,10 @@ export class MsbBackend implements Backend {
     }
     if (facts) {
       const about = `${facts.os} ${facts.arch}, kernel ${facts.kernel}, ${facts.cpus} cores, ${formatMiB(facts.memoryMiB)}, ${facts.freeGiB} GiB free`;
-      if (facts.os !== "Linux") push("microsandbox.host", hostName, "fail", `${about}. bb-box runs msb on Linux hosts for now; Macs come later.`, "Use a Linux host with KVM.");
-      else if (facts.arch !== "x86_64") push("microsandbox.host", hostName, "fail", `${about}. The images are x86_64.`, "Use an x86_64 host.");
-      else push("microsandbox.host", hostName, "ok", `${about}.`);
+      const arch = archOf(facts.arch);
+      if (facts.os !== "Linux" && facts.os !== "Darwin") push("microsandbox.host", hostName, "fail", `${about}. bb-box runs msb on Linux hosts and Macs.`, "Use a Linux host with KVM, or a Mac with Apple silicon.");
+      else if (!arch || (facts.os === "Darwin" && arch !== "arm64")) push("microsandbox.host", hostName, "fail", `${about}. msb runs on x86_64 and arm64 Linux hosts, and Macs with Apple silicon.`, "Use another host.");
+      else push("microsandbox.host", hostName, "ok", `${about}. It offers the ${arch} kinds.`);
 
       if (facts.installed === MSB_VERSION) push("microsandbox.msb", "msb", "ok", `msb ${MSB_VERSION}, as bb-box pins it, in ${facts.dir}.`);
       else
@@ -788,7 +988,10 @@ export class MsbBackend implements Backend {
         );
 
       const kvmFix = `Let the user BB runs as on ${this.#host} use /dev/kvm: add it to the kvm group, then restart its services (sudo systemctl restart user@$(id -u).service) so BB's daemon has the group.`;
-      if (facts.kvm === "ok") push("microsandbox.kvm", "KVM", "ok", "/dev/kvm is there, and BB's user may use it.");
+      if (facts.os === "Darwin") {
+        if (facts.kvm === "ok") push("microsandbox.kvm", "Hypervisor", "ok", "The Mac's Hypervisor framework is there.");
+        else push("microsandbox.kvm", "Hypervisor", "fail", `${this.#host} says the Hypervisor framework is not supported (kern.hv_support), so no box starts.`, "Use a Mac with Apple silicon, not a VM.");
+      } else if (facts.kvm === "ok") push("microsandbox.kvm", "KVM", "ok", "/dev/kvm is there, and BB's user may use it.");
       else if (facts.kvm === "denied") push("microsandbox.kvm", "KVM", "fail", "/dev/kvm is there, but BB's user may not use it, so no box starts.", kvmFix);
       else push("microsandbox.kvm", "KVM", "fail", `${this.#host} has no /dev/kvm, so no box starts.`, "Use a Linux host with KVM: the machine itself, or a VM with nested virtualisation on.");
 
@@ -839,27 +1042,30 @@ export class MsbBackend implements Backend {
         this.#context.images?.pins("linux-desktop") ?? null,
         this.#context.images?.bbApp(signal) ?? null,
       ]).catch(() => [null, null, null] as const);
+      const images = [...new Set(this.kinds().map((kind) => this.#config.images[kind.id as MsbKind]).filter((image): image is string => !!image))];
       const ids = images.length ? scriptValues((await this.#cli.script("images", images, signal).catch(() => ({ stdout: "" }))).stdout) : {};
       for (const image of images) {
-        const serves = MSB_KINDS.filter((kind) => this.#config.images[kind] === image);
+        const serves = this.kinds().map((kind) => kind.id).filter((kind) => this.#config.images[kind as MsbKind] === image);
         const id = `image.${image}` as const;
         const name = `Image ${image}`;
         const labels = facts.installed ? await this.#cli.imageLabels(image, signal).catch(() => null) : null;
         const inDocker = ids[`docker:${image}`] || null;
         if (!labels) {
           if (inDocker) push(id, name, "warn", `msb on ${this.#host} has no ${image} yet. Docker there has it.`, `bb-box imports it from Docker with the first ${serves.join(" or ")} box, or within a few minutes.`);
+          else if (this.#building?.image === image)
+            push(id, name, "warn", `bb-box is building ${image} on ${this.#host} in a microVM, since ${Math.round((Date.now() - this.#building.since) / 60_000)} min ago.`, "Wait for it: about 10 minutes from the start.");
           else
             push(
               id,
               name,
-              "fail",
-              `${this.#host} has no image ${image}, in msb${docker ? " or in Docker" : ", and has no Docker to import it from"}. bb-box never pulls images.`,
-              "Build it on the host with setup/docker/build.sh, and bb-box imports it into msb (setup/microsandbox/README.md).",
+              "warn",
+              `${this.#host} has no image ${image}, in msb${docker ? " or in Docker" : ""}.`,
+              `bb-box builds it there in a microVM of its own, about 10 minutes, with the first ${serves.join(" or ")} box or within a few minutes. It needs ${BUILD_FREE_GIB} GiB free. Or build it with Docker there with setup/docker/build.sh, and bb-box imports it.`,
             );
           continue;
         }
         const imported = await this.#context.storage.get<string>(this.#importedKey(image));
-        const judged = judgeImage(recordFromJson(labels[LABELS.imageRecord]), { os: "linux", pins: serves.includes("linux") ? linuxPins : desktopPins, bbApp: app }, "Build it again on the host with setup/docker/build.sh, and bb-box imports it.");
+        const judged = judgeImage(recordFromJson(labels[LABELS.imageRecord]), { os: "linux", pins: serves.some((kind) => !kind.includes("desktop")) ? linuxPins : desktopPins, bbApp: app }, "Build it again on the host with setup/docker/build.sh, and bb-box imports it.");
         const behind = inDocker && imported && inDocker !== imported ? " Docker has a newer build, which bb-box imports within a few minutes." : "";
         push(id, name, judged.status, `For ${serves.join(", ")} boxes. ${judged.detail}${behind}`, judged.fix);
       }
@@ -873,7 +1079,7 @@ export class MsbBackend implements Backend {
         if (signal?.aborted) throw error;
       }
       if (state) {
-        const room = this.#room(state, this.#context.kind(this.#kinds[0]?.id ?? "linux").defaultSize);
+        const room = this.#room(state, this.#context.kind(this.kinds()[0]?.id ?? "linux").defaultSize);
         push(
           "microsandbox.capacity",
           `Room on ${this.#host}`,
@@ -888,13 +1094,13 @@ export class MsbBackend implements Backend {
         host: this.#host,
         has: `${facts.cpus} cores and ${formatMiB(facts.memoryMiB)} memory`,
         keepsMiB: this.#config.reserveMemoryMiB,
-        kinds: this.#kinds.map((kind) => ({ kind: kind.id, settings: this.#context.kind(kind.id), largest: { cores: facts!.cpus || Infinity, memoryMiB: facts!.memoryMiB - this.#config.reserveMemoryMiB, diskGiB: null } })),
+        kinds: this.kinds().map((kind) => ({ kind: kind.id, settings: this.#context.kind(kind.id), largest: { cores: facts!.cpus || Infinity, memoryMiB: facts!.memoryMiB - this.#config.reserveMemoryMiB, diskGiB: null } })),
       });
       if (sizes) checks.push(sizes);
     } else {
       skip("microsandbox.msb", "msb");
       skip("microsandbox.kvm", "KVM");
-      for (const image of images) skip(`image.${image}`, `Image ${image}`);
+      for (const image of new Set(this.kinds().map((kind) => this.#config.images[kind.id as MsbKind]).filter((image): image is string => !!image))) skip(`image.${image}`, `Image ${image}`);
     }
 
     const ok = checks.every((check) => check.status !== "fail");

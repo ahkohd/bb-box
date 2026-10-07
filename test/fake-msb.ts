@@ -55,6 +55,8 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
   const docker = new Map([
     ["bbbox/linux:1", { id: "sha256:linux1", labels: imageLabels("linux") }],
     ["bbbox/linux-desktop:1", { id: "sha256:desktop1", labels: imageLabels("linux-desktop") }],
+    ["bbbox/linux:1-arm64", { id: "sha256:linuxarm1", labels: imageLabels("linux-arm64") }],
+    ["bbbox/linux-desktop:1-arm64", { id: "sha256:desktoparm1", labels: imageLabels("linux-arm64-desktop-cpu") }],
   ]);
   const imagesFile = join(root, "images.json");
   const readImages = (): Record<string, Record<string, string>> => (existsSync(imagesFile) ? JSON.parse(readFileSync(imagesFile, "utf8")) : {});
@@ -105,6 +107,11 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
       if (name === "disks") {
         const disks = existsSync(join(dir, "disks")) ? readdirSync(join(dir, "disks")) : [];
         return { exitCode: 0, stdout: disks.map((file) => `${file.replace(/\.ext4$/, "")}=${Math.round((Date.now() - statSync(join(dir, "disks", file)).mtimeMs) / 1000)}\n`).join(""), stderr: "" };
+      }
+      if (name === "transfer") {
+        const kind = args[1]!.includes("desktop") ? "linux-arm64-desktop-cpu" : "linux-arm64";
+        writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[1]!]: imageLabels(kind, "build.builder") }));
+        return { exitCode: 0, stdout: `transferred=${args[1]}\n`, stderr: "" };
       }
       if (name === "memory") return { exitCode: 0, stdout: `available_kib=${facts.available_kib}\n`, stderr: "" };
       if (name === "oom") return { exitCode: 0, stdout: "adjusted=0\n", stderr: "" };

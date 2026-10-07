@@ -10,8 +10,8 @@ The kinds of box bb-box knows, the backends that can offer each, and each kind's
 | `linux-desktop` | A Linux desktop on a GPU, for computer use, browsers and app development. | linux | x86_64 | yes | yes | Proxmox LXC, Docker |
 | `linux-desktop-cpu` | A Linux desktop drawn by the CPU, for computer use and browsers. | linux | x86_64 | yes | no | Proxmox LXC, Docker, microsandbox |
 | `linux-desktop-wayland-cpu` | A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there. | linux | x86_64 | yes, Wayland | no | Proxmox LXC, Docker |
-| `linux-arm64` | A Linux box on arm64. amd64 container images and x86_64 binaries do not run there. | linux | arm64 | no | no | Tart |
-| `linux-arm64-desktop-cpu` | A Linux desktop on arm64, drawn by the CPU. amd64 container images and x86_64 binaries do not run there. | linux | arm64 | yes | no | Tart |
+| `linux-arm64` | A Linux box on arm64. amd64 container images and x86_64 binaries do not run there. | linux | arm64 | no | no | Tart, microsandbox |
+| `linux-arm64-desktop-cpu` | A Linux desktop on arm64, drawn by the CPU. amd64 container images and x86_64 binaries do not run there. | linux | arm64 | yes | no | Tart, microsandbox |
 | `macos` | A Mac for builds and Apple's tools. | macos | arm64 | no | no | SSH host pool, Tart |
 | `macos-desktop` | A macOS desktop for computer use and app development. | macos | arm64 | yes | no | SSH host pool, Tart |
 | `windows-desktop` | A Windows desktop for computer use, browsers and Windows apps. | windows | x86_64 | yes | no | Proxmox QEMU |
