@@ -17,7 +17,8 @@ token and SSH key. How bb-box drives a box is in the
 | `answer/bb-box/firstlogon.ps1` | Runs once at the first logon and sets the VM up |
 | `answer/bb-box/boot.ps1` | Gives each box its address at boot |
 | `answer/bb-box/logon.ps1` | Turns on browsers' full accessibility tree at each logon |
-| `check.ps1` | Checks a clone of the new template over SSH |
+| [`../windows/check.ps1`](../windows/check.ps1) | Checks a clone of the new template over SSH, and a refresh's trial box |
+| [`../windows/refresh.ps1`](../windows/refresh.ps1) | Refreshes the image in a box: Windows' updates and the pinned tools ([054](../../docs/decisions/054-windows-images-are-refreshed-in-a-box-of-the-current-build.md)) |
 
 ## What you need
 
@@ -55,7 +56,7 @@ token and SSH key. How bb-box drives a box is in the
 
 It takes about 50 minutes, most of it Windows Setup. The VM's console in the
 Proxmox UI shows how far it is. At the end it clones the new template, starts
-the clone, and runs `check.ps1` in it over SSH with bb-box's key. It then
+the clone, and runs `../windows/check.ps1` in it over SSH with bb-box's key. It then
 hibernates the clone and resumes it, as the warm pool does, and checks SSH
 and Cua again:
 
