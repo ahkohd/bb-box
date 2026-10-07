@@ -4,7 +4,7 @@
 
 import { randomBytes } from "node:crypto";
 import { posix } from "node:path";
-import { DESKTOP_EXITS, desktopScript } from "../transports/powershell.ts";
+import { DESKTOP_EXITS, desktopScript, powershellCommand } from "../transports/powershell.ts";
 import { LOADS_ENV } from "../transports/process.ts";
 import type { GuestOs } from "../transports/types.ts";
 
@@ -159,13 +159,78 @@ function inJob(job: JobOptions, run: string): string {
   );
 }
 
+/** A job's directory in a Windows box, as PowerShell names it. */
+function windowsJobDir(id: string): string {
+  if (!JOB_ID.test(id)) throw new Error(`"${id}" is not a job ID.`);
+  return `(Join-Path $HOME '.local\\state\\bb-box\\jobs\\${id}')`;
+}
+
+/**
+ * Copies a job's file, or its last `tail` bytes, to a stream; the command
+ * that writes it may still hold it open.
+ */
+const WINDOWS_EMIT =
+  "function bbEmit($s,$p,$n){if(Test-Path -LiteralPath $p){$f=[IO.File]::Open($p,'Open','Read','ReadWrite');try{if($n -and $f.Length -gt $n){$null=$f.Seek(-$n,'End')};$f.CopyTo($s);$s.Flush()}finally{$f.Close()}}};";
+
+/**
+ * A job in a Windows box (#414). sshd ends every process of a command when
+ * the command's PowerShell exits, so a command that is to outlive bb-box's
+ * connection must start outside it: the script goes in a file in the job's
+ * directory, stdin in another, and Start-Detached (#483) starts a runner
+ * that runs the script with its output, error and exit status in the job's
+ * files, and stops it and all it started at its timeout, with exit code 1,
+ * as the watchdog does. The command itself waits for the status, passes the
+ * files on, and exits with it. If bb-box drops the connection, the runner
+ * goes on, and jobScript reads the files. PowerShell writes a redirected
+ * output when it ends, so a running job's output so far may be empty.
+ */
+function windowsJob(job: JobOptions, script: string, timeoutMs: number | undefined): string {
+  const file = Buffer.from(powershellCommand(script), "utf8").toString("base64");
+  const wait = timeoutMs === undefined ? "$p.WaitForExit()" : `$p.WaitForExit(${Math.ceil(timeoutMs)})`;
+  const runner =
+    "$d=$env:BB_BOX_JOB;" +
+    "$p=Start-Process -FilePath ([Environment]::ProcessPath) -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',([char]34+(Join-Path $d 'script.ps1')+[char]34) " +
+    "-RedirectStandardInput (Join-Path $d 'in') -RedirectStandardOutput (Join-Path $d 'out') -RedirectStandardError (Join-Path $d 'err') -NoNewWindow -PassThru;" +
+    "$null=$p.Handle;" +
+    `if(${wait}){$c=$p.ExitCode}else{taskkill /T /F /PID $p.Id *>$null;$p.WaitForExit();$c=1};` +
+    "[IO.File]::WriteAllText((Join-Path $d 'status.tmp'),[string]$c);Move-Item -Force -LiteralPath (Join-Path $d 'status.tmp') -Destination (Join-Path $d 'status')";
+  const jobs = "(Join-Path $HOME '.local\\state\\bb-box\\jobs')";
+  return (
+    `$bbJob=${windowsJobDir(job.id)};` +
+    job.forget.map((id) => `Remove-Item -Recurse -Force -LiteralPath ${windowsJobDir(id)} -ErrorAction Ignore;`).join("") +
+    (job.prune ? `Get-ChildItem -Directory -LiteralPath ${jobs} -ErrorAction Ignore|Where-Object LastWriteTime -lt (Get-Date).AddDays(-${JOB_DAYS})|Remove-Item -Recurse -Force -ErrorAction Ignore;` : "") +
+    "New-Item -ItemType Directory -Force -Path $bbJob|Out-Null;" +
+    `[IO.File]::WriteAllBytes((Join-Path $bbJob 'script.ps1'),[Convert]::FromBase64String('${file}'));` +
+    "$f=[IO.File]::Create((Join-Path $bbJob 'in'));try{[Console]::OpenStandardInput().CopyTo($f)}finally{$f.Close()};" +
+    "$env:BB_BOX_JOB=$bbJob;" +
+    `$bbRunner=Start-Detached -Command ${ps(runner)};` +
+    "Remove-Item Env:BB_BOX_JOB;" +
+    "$bbStatus=Join-Path $bbJob 'status';" +
+    "while(-not (Test-Path -LiteralPath $bbStatus)){if(-not (Get-Process -Id $bbRunner -ErrorAction Ignore)){Start-Sleep -Milliseconds 300;if(-not (Test-Path -LiteralPath $bbStatus)){[Console]::Error.WriteLine('bb-box: the job ended without an exit status: the box'+[char]39+'s disk may be full.');exit 1}};Start-Sleep -Milliseconds 100};" +
+    WINDOWS_EMIT +
+    "bbEmit ([Console]::OpenStandardOutput()) (Join-Path $bbJob 'out') 0;bbEmit ([Console]::OpenStandardError()) (Join-Path $bbJob 'err') 0;" +
+    "exit [int](Get-Content -Raw -LiteralPath $bbStatus)"
+  );
+}
+
 /**
  * Reads a job in a Linux or macOS box. Exits 0 once the job has ended, with
  * its exit status on stdout's first line, then its stdout, and its stderr;
  * 4 while it runs, with the last `tailBytes` of each stream so far; 3 when
  * there is no such job (#405).
  */
-export function jobScript(id: string, tailBytes: number): string {
+export function jobScript(id: string, tailBytes: number, os: GuestOs = "linux"): string {
+  if (os === "windows") {
+    const tail = Math.floor(tailBytes);
+    return (
+      `$d=${windowsJobDir(id)};if(-not (Test-Path -LiteralPath $d)){exit 3};` +
+      WINDOWS_EMIT +
+      "$o=[Console]::OpenStandardOutput();$e=[Console]::OpenStandardError();$s=Join-Path $d 'status';" +
+      "if(Test-Path -LiteralPath $s){$b=[Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath $s).Trim()+[char]10);$o.Write($b,0,$b.Length);" +
+      "bbEmit $o (Join-Path $d 'out') 0;bbEmit $e (Join-Path $d 'err') 0;exit 0};" +
+      `bbEmit $o (Join-Path $d 'out') ${tail};bbEmit $e (Join-Path $d 'err') ${tail};exit 4`
+    );
+  }
   return (
     `bb_job=${jobDir(id)}; [ -d "$bb_job" ] || exit 3; ` +
     `if [ -s "$bb_job/status" ]; then { cat "$bb_job/status" "$bb_job/out" && cat "$bb_job/err" >&2; } || exit 5; exit 0; fi; ` +
@@ -229,6 +294,8 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
     const env = "if (Test-Path -LiteralPath $bbBoxEnv) { . $bbBoxEnv }; ";
     const cd = options.cwd ? `Set-Location -LiteralPath ${ps(options.cwd)} -ErrorAction Stop; ` : "";
     if (options.session === "desktop") return `${write && file + write}${desktopScript(`${file}${env}${cd}${script}`, options.timeoutMs)}`;
+    // A job's runner keeps the timeout itself, as it outlives this command (#414).
+    if (options.job) return `${file}${write}${windowsJob(options.job, `${file}${env}${cd}${script}`, options.timeoutMs)}`;
     return `${windowsTimeout(options.timeoutMs)}${file}${write}${env}${cd}${script}`;
   }
   const file = `"$HOME/${envFile(os)}"`;

@@ -978,6 +978,28 @@ test("the macOS timeout passes a command's exit on, and kills one that ignores T
   assert.ok(!command("macos", "true").includes("perl"), "no timeout, no wrapper");
 });
 
+test("a Windows command with a job starts outside sshd's job, through Start-Detached, with its script, stdin, output and status in the job's files, and its timeout kept by the runner (#414)", () => {
+  const env = "$env:FOO = 'bar'";
+  const script = command("windows", "Get-Process", { cwd: "C:\\work", env, timeoutMs: 1_500, job: { id: "0123456789ab", forget: ["ba9876543210"], prune: true } });
+  assert.ok(!script.includes("ping -n"), "no watchdog: the command waits for the runner, which keeps the timeout");
+  assert.match(script, /Remove-Item -Recurse -Force -LiteralPath \(Join-Path \$HOME '\.local\\state\\bb-box\\jobs\\ba9876543210'\)/, "a job whose result bb-box has goes");
+  assert.match(script, /Where-Object LastWriteTime -lt \(Get-Date\)\.AddDays\(-7\)/, "old jobs go");
+  assert.match(script, /\$bbRunner=Start-Detached -Command '.*\$p\.WaitForExit\(1500\).*taskkill \/T \/F \/PID \$p\.Id/);
+  assert.match(script, /exit \[int\]\(Get-Content -Raw -LiteralPath \$bbStatus\)$/);
+  assert.ok(script.includes("Set-Content -LiteralPath $bbBoxEnv -NoNewline -Value '$env:FOO = ''bar'''"), "the env file is written before the job starts");
+  // The file the runner runs is the command as the transport would wrap it: the env file, the directory, the script.
+  const file = Buffer.from(/FromBase64String\('([A-Za-z0-9+/=]+)'\)\);/.exec(script)![1]!, "base64").toString("utf8");
+  const inner = Buffer.from(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/.exec(file)![1]!, "base64").toString("utf8");
+  assert.match(inner, /\. \$bbBoxEnv \}; Set-Location -LiteralPath 'C:\\work' -ErrorAction Stop; Get-Process\n/);
+  // A command in the desktop session has no job.
+  assert.ok(!command("windows", "Get-Process", { session: "desktop", job: { id: "0123456789ab", forget: [], prune: false } }).includes("Start-Detached -Command"));
+
+  const read = jobScript("0123456789ab", 4096, "windows");
+  assert.match(read, /^\$d=\(Join-Path \$HOME '\.local\\state\\bb-box\\jobs\\0123456789ab'\);if\(-not \(Test-Path -LiteralPath \$d\)\)\{exit 3\};/);
+  assert.match(read, /bbEmit \$o \(Join-Path \$d 'out'\) 4096;bbEmit \$e \(Join-Path \$d 'err'\) 4096;exit 4$/);
+  assert.throws(() => jobScript("../x", 4, "windows"), /is not a job ID/);
+});
+
 test("a Windows command starts a watchdog that stops it in the box at its timeout", async () => {
   assert.ok(
     command("windows", "Get-Process", { timeoutMs: 1_500 }).startsWith(

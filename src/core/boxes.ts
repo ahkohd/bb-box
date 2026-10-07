@@ -1684,7 +1684,8 @@ export class Boxes {
     // A transport that already runs commands in the desktop session needs no wrapper.
     const session = options.session === "desktop" && !capabilities.command?.inDesktopSession ? "desktop" : "default";
     const env = await this.#envFile(box);
-    const jobs = options.job && capabilities.os !== "windows" ? this.#jobsOf(box.id) : null;
+    // A Windows command in the desktop session runs through a scheduled task, which has no job yet.
+    const jobs = options.job && !(capabilities.os === "windows" && session === "desktop") ? this.#jobsOf(box.id) : null;
     const job = jobs && options.job ? { id: options.job, forget: [...jobs.received], prune: !jobs.pruned } : undefined;
     options.onSend?.();
     // Every box stops a command at its timeout itself; bb-box's own comes a moment later.
@@ -1738,20 +1739,17 @@ export class Boxes {
   }
 
   /**
-   * Job `id` in a Linux or macOS box, which a command left when bb-box
+   * Job `id` in a box, which a command left when bb-box
    * restarted (#405): once it has ended, its exit code and output, which the
    * box's next command then removes; while it runs, the end of its output
    * so far; null when the box has no such job.
    */
   async job(threadId: string, ref: string, id: string, options: { signal?: AbortSignal; maxOutputBytes?: number } = {}): Promise<{ box: BoxRecord; job: JobResult | null }> {
     const box = await this.get(threadId, ref);
-    if (box.capabilities.os === "windows") {
-      throw new BoxError("unsupported", `Box ${box.name} runs Windows, where a command ends with bb-box's connection, so it has no jobs.`);
-    }
     const maxOutputBytes = options.maxOutputBytes ?? 128 * 1024;
     const result = await this.#reach(
       box,
-      (transport) => transport.run(jobScript(id, maxOutputBytes / 2), { timeoutMs: 30_000, signal: options.signal, maxOutputBytes }),
+      (transport) => transport.run(jobScript(id, maxOutputBytes / 2, box.capabilities.os), { timeoutMs: 30_000, signal: options.signal, maxOutputBytes }),
       options.signal,
     );
     if (result.exitCode === 3) return { box, job: null };

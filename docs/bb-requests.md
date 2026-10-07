@@ -693,10 +693,11 @@ and its eventual answer goes nowhere (measured on 7 October 2026 with a 330 s
 sending keep-alive bytes or progress, up to a stated limit; or abort the
 plugin's signal with a reason when BB ends the call, and document the limit.
 
-**Until then.** `box_run` returns after 270 s. A Linux or macOS command still
-running then goes on in its box as a job, and the answer names it with its
-output so far for `box_job`. A Windows command is stopped then, with its
-output so far, as Windows boxes have no jobs yet (#414).
+**Until then.** `box_run` returns after 270 s. A command still running then
+goes on in its box as a job, and the answer names it with its output so far
+for `box_job`; on Windows, the job starts outside the SSH session (#414). A
+Windows command in the desktop session, which has no job, is stopped then,
+with its output so far.
 
 ## 20. Move large files through the file API
 

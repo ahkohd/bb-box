@@ -488,7 +488,7 @@ test("a deploy lets box_run's commands finish and takes no new ones, and a comma
   assert.equal(readFileSync(join(home, ".local/state/bb-box/jobs", job, "out"), "utf8"), "long\n", "the command's output is in the box");
 });
 
-test("box_run returns before BB ends a tool call: a Linux command goes on as a job with its output so far, and a Windows one is stopped with its output and why (#486)", async (t) => {
+test("box_run returns before BB ends a tool call: a Linux command goes on as a job with its output so far, and a Windows one as a job too (#486, #414)", async (t) => {
   const linux = await start({ "fake-enabled": true, "enrol-boxes": false }, { runWaitMs: 1_000 });
   t.after(() => linux.harness.lifecycle.dispose());
   await linux.tool("box_acquire", {});
@@ -505,11 +505,10 @@ test("box_run returns before BB ends a tool call: a Linux command goes on as a j
   const windows = await start({ "fake-enabled": true, "enrol-boxes": false }, { kinds: [FAKE_WINDOWS_KIND], shell: FAKE_PWSH, runWaitMs: 1_000 });
   t.after(() => windows.harness.lifecycle.dispose());
   const name = /Box (\S+) \(/.exec(text(await windows.tool("box_acquire", { kind: "windows" })))![1]!;
-  const cut = await windows.tool("box_run", { box: name, command: "echo started; sleep 5", timeout_seconds: 600 });
-  assert.equal(isError(cut), true);
-  // The fake's shell keeps no output from a command it stops; a Windows box's does, which the live check covers.
-  assert.match(text(cut), /^Timed out in box \S+ after 1\.\d s\./);
-  assert.ok(text(cut).endsWith("Next: BB ends a tool call at about five minutes, so box_run stops a Windows command after 1 s, as Windows has no jobs yet. Start a long one with Start-Detached { <cmd> } job.log, then read job.log with box_run."), text(cut));
+  // The fake's PowerShell cannot run a job, but its runner's command waits as a Windows box's does.
+  const detached = await windows.tool("box_run", { box: name, command: "Start-Sleep 5", timeout_seconds: 600 });
+  assert.equal(isError(detached), false, text(detached));
+  assert.match(text(detached), /^The command still runs in box \S+ after 1 s, and goes on there as job [0-9a-f]{12}: BB ends a tool call at about five minutes/);
 });
 
 test("box_job gives a job's output while it runs and its exit code once it ends, and the box's next command removes it (#405)", async (t) => {
