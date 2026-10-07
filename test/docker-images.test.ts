@@ -284,3 +284,15 @@ test("build.sh with BB's URL passes on the digest of BB's app that the server gi
   const silent = buildWith(BUILD_FREE_GB, ["--bb-url", url]);
   assert.deepEqual([silent.status, silent.stderr, silent.built], [1, `BB's server at ${url} gave no digest for its app.\n`, []]);
 });
+
+test("build.sh --arch arm64 builds the arm64 linux and desktop images for linux/arm64, and no Wayland desktop (053)", () => {
+  const arm = buildWith(BUILD_FREE_GB, ["--arch", "arm64"]);
+  assert.equal(arm.status, 0, arm.stderr);
+  assert.deepEqual(arm.built, ["linux", "desktop"], "both, by default");
+  assert.ok(arm.builds.every((call) => call.includes("--platform linux/arm64")));
+  assert.deepEqual(arm.builds.map((call) => / -t (\S+) /.exec(call)?.[1]), ["bbbox/linux:1-arm64", "bbbox/linux-desktop:1-arm64"]);
+  assert.match(arm.checks[0]!, /--platform linux\/arm64 --entrypoint df /);
+  const wayland = buildWith(BUILD_FREE_GB, ["--arch", "arm64", "desktop-wayland"]);
+  assert.deepEqual([wayland.status, wayland.stderr, wayland.built], [2, "There is no Wayland desktop for arm64 yet: build linux or desktop.\n", []]);
+  assert.equal(buildWith(BUILD_FREE_GB, ["--arch", "riscv64"]).status, 2);
+});

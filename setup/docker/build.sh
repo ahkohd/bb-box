@@ -5,9 +5,13 @@
 # and bbbox/linux-desktop-wayland:1 for linux-desktop-wayland-cpu boxes (048).
 # See README.md.
 #
-# usage: build.sh [--bb-url <url>] [--tag <image>] [linux|desktop|desktop-wayland]...
+# usage: build.sh [--bb-url <url>] [--tag <image>] [--arch x86_64|arm64] [linux|desktop|desktop-wayland]...
 # --tag names the one image it builds otherwise, as a refresh does (049) to
-# check a build before it takes the image's own name.
+# check a build before it takes the image's own name. --arch arm64 builds the
+# arm64 images, bbbox/linux:1-arm64 and bbbox/linux-desktop:1-arm64, for
+# microsandbox on a Mac (053), on an arm64 Docker host: the guest scripts
+# install the arm64 pins, as for Tart's Linux images (040). Its desktop is on
+# the CPU, and there is no Wayland desktop for arm64 yet.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # The images' layout version, which the backend checks (IMAGE_VERSION in
@@ -15,7 +19,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 version=1
 
 usage() {
-  echo "usage: build.sh [--bb-url <url>] [--tag <image>] [linux|desktop|desktop-wayland]..." >&2
+  echo "usage: build.sh [--bb-url <url>] [--tag <image>] [--arch x86_64|arm64] [linux|desktop|desktop-wayland]..." >&2
   echo "  --bb-url  BB's server URL, to pre-install BB's host app in the images" >&2
   echo "  --tag     the name of the one image to build, in place of its own" >&2
   echo "  With no image named, builds all three." >&2
@@ -23,15 +27,28 @@ usage() {
 }
 bb_url=
 tag=
+arch=x86_64
 targets=()
 while [ $# -gt 0 ]; do
   case $1 in
     --bb-url) [ $# -ge 2 ] || usage; bb_url=$2; shift 2 ;;
     --tag) [ $# -ge 2 ] || usage; tag=$2; shift 2 ;;
+    --arch) [ $# -ge 2 ] || usage; arch=$2; shift 2 ;;
     linux | desktop | desktop-wayland) targets+=("$1"); shift ;;
     *) usage ;;
   esac
 done
+case $arch in
+  x86_64) platform=linux/amd64 suffix= ;;
+  arm64) platform=linux/arm64 suffix=-arm64 ;;
+  *) echo "--arch is x86_64 or arm64" >&2; exit 2 ;;
+esac
+if [ "$arch" = arm64 ]; then
+  [ ${#targets[@]} -gt 0 ] || targets=(linux desktop)
+  for target in "${targets[@]}"; do
+    [ "$target" != desktop-wayland ] || { echo "There is no Wayland desktop for arm64 yet: build linux or desktop." >&2; exit 2; }
+  done
+fi
 [ ${#targets[@]} -gt 0 ] || targets=(linux desktop desktop-wayland)
 [ -z "$tag" ] || [ ${#targets[@]} = 1 ] || { echo "--tag names one image: give one of linux, desktop or desktop-wayland" >&2; exit 2; }
 
@@ -62,7 +79,7 @@ case "${targets[*]}" in
   *) need=36 what="${#targets[@]} images" ;;
 esac
 base=$(sed -n 's/^ARG UBUNTU=//p' "$here/Dockerfile")
-if df=$(docker run --rm --quiet --network none --platform linux/amd64 --entrypoint df "$base" -Pk / 2>&1) &&
+if df=$(docker run --rm --quiet --network none --platform "$platform" --entrypoint df "$base" -Pk / 2>&1) &&
   free=$(awk '$NF == "/" && $4 ~ /^[0-9]+$/ { print $4 }' <<<"$df") && [ -n "$free" ]; then
   if [ "$free" -lt $((need * 1000000000 / 1024)) ]; then
     echo "The Docker host has $((free * 1024 / 1000000000)) GB of disk free, and building $what needs about $need GB." \
@@ -75,19 +92,19 @@ fi
 
 for target in "${targets[@]}"; do
   case $target in
-    linux) image=bbbox/linux:$version ;;
-    desktop) image=bbbox/linux-desktop:$version ;;
+    linux) image=bbbox/linux:$version$suffix ;;
+    desktop) image=bbbox/linux-desktop:$version$suffix ;;
     desktop-wayland) image=bbbox/linux-desktop-wayland:$version ;;
   esac
   image=${tag:-$image}
-  # The guest scripts install x86_64 builds of their tools.
-  build=(docker build --platform linux/amd64 --target "$target" --build-arg BB_URL="$bb_url"
+  # The guest scripts install the tools built for the image's architecture.
+  build=(docker build --platform "$platform" --target "$target" --build-arg BB_URL="$bb_url"
     --build-arg BB_APP_SHA256="$app_sha256" -t "$image" -f "$here/Dockerfile")
   "${build[@]}" "$here/.."
   # Its record (049) in a label, where the plugin's doctor reads it without
   # starting the image: the image's own, which a second build, all from the
   # cache, puts on the image.
-  record=$(docker run --rm --quiet --network none --platform linux/amd64 --entrypoint jq "$image" -c . /usr/share/bb-box/image.json) \
+  record=$(docker run --rm --quiet --network none --platform "$platform" --entrypoint jq "$image" -c . /usr/share/bb-box/image.json) \
     && [ "${record:0:1}" = "{" ] || { echo "$image has no image record, /usr/share/bb-box/image.json" >&2; exit 1; }
   "${build[@]}" --quiet --label "bbbox.image-record=$record" "$here/.." >/dev/null
   echo "built $image"

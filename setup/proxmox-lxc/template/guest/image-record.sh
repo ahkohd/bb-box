@@ -31,8 +31,8 @@ if [ "$kind" != linux ]; then
   pin_set=linux-desktop
   if [ "$(settings DESKTOP_SESSION)" = wayland ]; then image_kind=linux-desktop-wayland-cpu
   # Docker's X desktop image serves GPU desktops too, with the host's NVIDIA
-  # userspace.
-  elif [ "$(settings DESKTOP_GPU)" = none ] && [ "$(settings BOX_RUNTIME)" != docker ]; then image_kind=$image_kind-desktop-cpu
+  # userspace, on x86_64; on arm64 every desktop is on the CPU.
+  elif [ "$arch" != x86_64 ] || { [ "$(settings DESKTOP_GPU)" = none ] && [ "$(settings BOX_RUNTIME)" != docker ]; }; then image_kind=$image_kind-desktop-cpu
   else image_kind=linux-desktop; fi
   version_of() { awk -F'\t' -v n="$1" -v a="$arch" '$1 == n && $5 == a { print $2 }' "$build/desktop-pins.tsv" | sed -n "$2"; }
   # Chrome as installed: a refresh keeps one newer than the pin.
