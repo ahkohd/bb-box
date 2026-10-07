@@ -34,6 +34,8 @@ const BAKE = "images/bake/";
 const USAGE = "images/usage/";
 /** Builds a box still used when they were replaced or went: the nightly upkeep tries again. */
 const RETIRED = "images/bake-retired";
+/** Builds a try kept for a thread's box (#451), by backend and reference: the box's ID. */
+const KEPT = "images/try-kept/";
 /** Where the build's files go in the box, as a refresh puts them. */
 const BUILD_DIR = "/var/tmp/bb-box-build";
 /** A GPU desktop's build would hold one GPU's devices, so its image runs at start. */
@@ -78,6 +80,12 @@ export interface TryInput {
   readonly check?: string;
   /** A backend's ID, or the first that bakes the kind. */
   readonly on?: string;
+  /**
+   * Keeps a box of what the try built for this thread to look inside
+   * (#451): of the build when it was made, or of the build box as the script
+   * left it when the script failed. The build stays until the box goes.
+   */
+  readonly keep?: { readonly threadId: string; readonly projectId: string | null };
 }
 
 export interface TryCheck {
@@ -96,6 +104,8 @@ export interface TryResult {
   readonly output: readonly string[];
   /** Why it could not try, as a box that would not start, or null. */
   readonly reason: string | null;
+  /** The box kept for the thread, when asked to keep one, or why there is none. */
+  readonly kept?: { readonly box: string | null; readonly detail: string };
 }
 
 /** What a bake or the nightly upkeep did to an image's build, as a line of the nightly run. */
@@ -115,6 +125,10 @@ export interface ImageBakesDeps {
   readonly setup: string;
   readonly log?: (line: string) => void;
   readonly now?: () => number;
+  /** Acquires a thread's box from a kept build on its backend, waiting until it is ready (#451). */
+  keep?(input: { readonly threadId: string; readonly projectId: string | null; readonly kind: string; readonly backend: string; readonly name: string; readonly build: string | null; readonly ref: string }): Promise<{ readonly id: string; readonly name: string }>;
+  /** Whether box `id` is still there, so its kept build stays. */
+  boxExists?(id: string): Promise<boolean>;
 }
 
 /** The SHA-256 of an image's script and check: a build made with others is out of date. */
@@ -317,7 +331,7 @@ export class ImageBakes {
     backend: Backend,
     kind: string,
     standard: ImageBuild,
-    options: { readonly signal: AbortSignal; readonly made: string[]; readonly output: string[]; readonly lines: number },
+    options: { readonly signal: AbortSignal; readonly made: string[]; readonly output: string[]; readonly lines: number; readonly state?: { box?: ImageBox } },
   ): Promise<Built> {
     const { signal, made, output } = options;
     const images = backend.images!;
@@ -327,6 +341,7 @@ export class ImageBakes {
     if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
     const box = await images.box(standard, `build of ${name}`, signal);
     made.push(box.ref);
+    if (options.state) options.state.box = box;
     await box.command.writeFile("bb-box-setup.tgz", tar.stdout, { signal });
     await box.command.writeFile(".bb-box-image/setup.sh", text.encode(image.script), { mode: "0700", signal });
     if (image.check) await box.command.writeFile(".bb-box-image/check.sh", text.encode(image.check), { mode: "0700", signal });
@@ -355,6 +370,7 @@ export class ImageBakes {
     if (wrote.exitCode !== 0) throw new Error(`The image's record could not be written: ${wrote.stderr.trim()}`);
     const captured = await images.capture(box, standard, name, signal);
     made.splice(made.indexOf(box.ref), 1, captured.ref);
+    if (options.state) delete options.state.box;
     const trial = await images.box(captured, `trial of ${name}`, signal);
     made.push(trial.ref);
     return { captured, trial, ms };
@@ -395,21 +411,26 @@ export class ImageBakes {
     const output: string[] = [];
     const checks: TryCheck[] = [];
     const image: ImageConfig = { kinds: [input.kind], script: input.script, ...(input.check ? { check: input.check } : {}), projects: [] };
-    const end = (reason: string | null): TryResult => ({
-      ok: reason === null && checks.every((check) => check.ok),
-      backend: backend.id,
-      kind: input.kind,
-      seconds: Math.round((this.#now() - started) / 1000),
-      checks,
-      output,
-      reason,
-    });
+    // The result, which the box kept after it (#451) is added to.
+    let ended: { -readonly [K in keyof TryResult]: TryResult[K] } | null = null;
+    const end = (reason: string | null): TryResult =>
+      (ended = {
+        ok: reason === null && checks.every((check) => check.ok),
+        backend: backend.id,
+        kind: input.kind,
+        seconds: Math.round((this.#now() - started) / 1000),
+        checks,
+        output,
+        reason,
+      });
+    const state: { box?: ImageBox } = {};
+    let standard: ImageBuild | null = null;
+    let built: Built | null = null;
     try {
-      const standard = this.#standard(await this.#builds(backend, true), input.kind);
+      standard = this.#standard(await this.#builds(backend, true), input.kind);
       if (!standard) return end(`${backend.label} has no standard ${input.kind} build to try it on.`);
-      let built: Built;
       try {
-        built = await this.#build(input.name, image, backend, input.kind, standard, { signal, made, output, lines: 200 });
+        built = await this.#build(input.name, image, backend, input.kind, standard, { signal, made, output, lines: 200, state });
       } catch (error) {
         checks.push({ name: input.check ? "the script and the check, in the build box" : "the script, in the build box", ok: false, detail: message(error) });
         return end(null);
@@ -433,8 +454,49 @@ export class ImageBakes {
     } catch (error) {
       return end(message(error));
     } finally {
+      const result = ended as { kept?: TryResult["kept"] } | null;
+      if (input.keep && standard && result) result.kept = await this.#keep(input, backend, standard, built, state.box ?? null, made, signal);
       for (const ref of made.reverse()) await images.remove(ref).catch((error: unknown) => this.#say(`could not remove ${backend.id}/${ref}: ${message(error)}`));
     }
+  }
+
+  /**
+   * Keeps a box of what a try made for the thread (#451): of its build, or,
+   * when the script failed, of the build box as it left it, captured as a
+   * build. That build is taken out of `made`, so it stays until the box goes.
+   */
+  async #keep(input: TryInput, backend: Backend, standard: ImageBuild, built: Built | null, failed: ImageBox | null, made: string[], signal: AbortSignal): Promise<NonNullable<TryResult["kept"]>> {
+    const images = backend.images!;
+    let build: ImageBuild;
+    try {
+      if (built) build = built.captured;
+      else if (failed) {
+        build = await images.capture(failed, standard, input.name, signal);
+        made.splice(made.indexOf(failed.ref), 1, build.ref);
+      } else return { box: null, detail: "No box was made, so there is nothing to keep." };
+    } catch (error) {
+      return { box: null, detail: `The build box could not be kept: ${message(error)}` };
+    }
+    if (!this.#deps.keep) return { box: null, detail: "This bb-box keeps no box of a try." };
+    try {
+      const box = await this.#deps.keep({ ...input.keep!, kind: input.kind, backend: backend.id, name: input.name, build: build.build, ref: build.ref });
+      made.splice(made.indexOf(build.ref), 1);
+      await this.#deps.storage.set(`${KEPT}${backend.id}/${build.ref}`, box.id);
+      return { box: box.name, detail: built ? "a box of the build" : "a box of the build box as the script left it" };
+    } catch (error) {
+      return { box: null, detail: `The box could not start: ${message(error)}` };
+    }
+  }
+
+  /** A box that went: the try's build it was kept with goes too, or once no box uses it (#451). */
+  async released(box: { readonly id: string; readonly backend: string; readonly image?: { readonly from?: string } | null }): Promise<void> {
+    const ref = box.image?.from;
+    if (!ref) return;
+    const at = `${KEPT}${box.backend}/${ref}`;
+    if ((await this.#deps.storage.get<string>(at)) !== box.id) return;
+    await this.#deps.storage.delete(at);
+    const backend = this.#backend(box.backend);
+    if (backend?.images) await this.#retire(backend, ref);
   }
 
   /** Removes a build, or keeps it for the nightly upkeep to try again while a box still uses it. */
@@ -525,6 +587,18 @@ export class ImageBakes {
         kept.add(`${backendId}/${bake.ref}`);
         const recent = this.#now() - bake.used <= USE_DAYS * DAY_MS || image!.bake === "always";
         if (recent && this.#bakes(image!, backend, kind) && !(await this.current(name, backendId, kind))) due.push({ name, backend, kind });
+      }
+      // A try's builds kept for a box stay while it is there (#451).
+      for (const entry of await this.#deps.storage.list(KEPT)) {
+        const [backendId = "", ref = ""] = entry.slice(KEPT.length).split("/");
+        const boxId = await this.#deps.storage.get<string>(entry);
+        if (boxId && (await this.#deps.boxExists?.(boxId).catch(() => true)) !== false) {
+          kept.add(`${backendId}/${ref}`);
+          continue;
+        }
+        await this.#deps.storage.delete(entry);
+        const backend = this.#backend(backendId);
+        if (backend?.images) await this.#retire(backend, ref, options.signal);
       }
       // Builds again, and builds of projects' images that no bake names, left by one that did not end.
       const retired = (await this.#deps.storage.get<{ backend: string; ref: string }[]>(RETIRED)) ?? [];

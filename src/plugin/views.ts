@@ -525,7 +525,8 @@ export function tryText(result: TryResult): string {
     : `The script ${result.ok ? "passed" : "failed"} on ${result.backend} (${result.kind}), in ${result.seconds} s, as a build runs it.`;
   const checks = result.checks.map((check) => `- ${check.name}: ${check.ok ? "ok" : "FAIL"}, ${check.detail}`);
   const lines = result.output.length ? ["", `The build's last ${result.output.length} lines:`, ...result.output] : [];
-  return [head, ...checks, ...lines].join("\n");
+  const kept = result.kept ? [result.kept.box ? `Kept box ${result.kept.box} (${result.kept.detail}).` : `Kept no box: ${result.kept.detail}`] : [];
+  return [head, ...checks, ...kept, ...lines].join("\n");
 }
 
 /** What a rebuild of the standard Linux images would take, a line per tool, its architectures together where they agree. */

@@ -608,6 +608,12 @@ export class Boxes {
     on?: string | readonly string[];
     /** An image's name, or "standard" (049). The project's image for the kind when left out. */
     image?: string;
+    /**
+     * A build to start the box from, as a tried image's kept build (#451):
+     * its image's name, build ID and reference on the backend `on` names,
+     * which must start boxes from builds.
+     */
+    from?: { readonly name: string; readonly build: string | null; readonly ref: string };
   }): Promise<BoxRecord> {
     const requested = this.#now();
     const { kind: wanted, features } = kindRequest(input.kind);
@@ -645,13 +651,16 @@ export class Boxes {
     const claimsSpare = role === "box" && input.threadId !== SPARES;
     const general = await this.#deps.general();
     // The image chosen, or the project's for the kind (049): a thread's own box too, not one of your machines unless chosen. Such a box is made, not a spare, for now.
-    const image =
-      input.image === "standard" ? null : input.image !== undefined ? (this.#deps.image?.(input.projectId, wanted, input.image) ?? null) : yours ? null : (this.#deps.image?.(input.projectId, wanted) ?? null);
+    const tried = input.from ?? null;
+    if (tried && named === null) throw new BoxError("unsupported", "A box from a given build needs the backend that keeps it, in on.");
+    const image = tried
+      ? null
+      : input.image === "standard" ? null : input.image !== undefined ? (this.#deps.image?.(input.projectId, wanted, input.image) ?? null) : yours ? null : (this.#deps.image?.(input.projectId, wanted) ?? null);
     if (input.image !== undefined && input.image !== "standard" && !image) {
       throw new BoxError("not_found", `There is no image ${input.image} for ${wanted} boxes. box_list names each kind's images; "standard" is bb-box's own.`);
     }
     // Spares left over from a kind that keeps none now are released, not claimed.
-    const claims = claimsSpare && !image && (general.spares[wanted] ?? 0) > 0;
+    const claims = claimsSpare && !image && !tried && (general.spares[wanted] ?? 0) > 0;
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
     const { box, claimed } = await this.#admission.run(() =>
@@ -669,6 +678,7 @@ export class Boxes {
         const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
         const chosen = await this.#place({ threadId: input.threadId, named }, offered, everywhere, sized.size, features);
+        if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
         // A current baked build of the image on the backend chosen starts the box with it (049); otherwise its script runs at start.
         const baked =
           image && chosen.backend.images?.startsFrom ? await this.#deps.baked?.(image.name, chosen.backend.id, chosen.kind.id).catch(() => null) : null;
@@ -695,7 +705,11 @@ export class Boxes {
           resetAt: null,
           timings: {},
           enrol: { state: "off", hostId: null, error: null },
-          ...(image ? { image: baked ? { name: image.name, state: "baked" as const, build: baked.build, from: baked.ref } : { name: image.name, state: "pending" as const } } : {}),
+          ...(tried
+            ? { image: { name: tried.name, state: "baked" as const, build: tried.build, from: tried.ref } }
+            : image
+              ? { image: baked ? { name: image.name, state: "baked" as const, build: baked.build, from: baked.ref } : { name: image.name, state: "pending" as const } }
+              : {}),
         };
         await this.#deps.kv.set(indexKey(box.id), box.threadId);
         return { box: await this.#write(box), claimed: null };

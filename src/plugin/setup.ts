@@ -453,14 +453,25 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     onError: (error) => logError("project names", error),
   });
   // Projects' images, baked where their boxes start (049).
-  const imageBakes = new ImageBakes({
+  const imageBakes: ImageBakes = new ImageBakes({
     backends: () => backends.on(),
     images: () => configuration.document.images ?? {},
     storage: kv,
     setup: pins,
     log: (line) => bb.log.info(line),
+    // A tried image's box, from its kept build (#451), ready to look inside.
+    async keep({ threadId, projectId, kind, backend, name, build, ref }): Promise<{ id: string; name: string }> {
+      const box = await boxes.acquire({ threadId, projectId, kind, on: backend, from: { name: `${name} (tried)`, build, ref } });
+      const ready: BoxRecord = (await boxes.settled(box)) ?? box;
+      if (ready.state !== "ready") {
+        await boxes.release(threadId, box.id, "it did not start for a tried image").catch(() => null);
+        throw new Error(ready.error ?? `it ended ${ready.state}`);
+      }
+      return { id: ready.id, name: ready.name };
+    },
+    boxExists: async (id) => (await boxes.find(id)) !== null,
   });
-  const boxes = new Boxes({
+  const boxes: Boxes = new Boxes({
     kv: bb.storage.kv,
     backends,
     general,
@@ -472,6 +483,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     imageTools: imageTools(pins),
     notify,
     recorded(box, deleted) {
+      // A tried image's kept build goes with its box (#451).
+      if (deleted) void imageBakes.released(box).catch((error) => logError("tried image", error));
       // Fetched while the box starts, for its enrolment.
       if (!deleted && box.state === "acquiring") void names(box).catch(() => {});
       // A desktop that stops, restarts or goes gives control back to the agent.

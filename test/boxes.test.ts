@@ -174,6 +174,25 @@ test("a box of a project's image with a current build on its backend starts from
   assert.deepEqual(readied.map((one) => [one.id, one.image?.state]), [[plain.id, "done"], [box.id, "baked"]]);
 });
 
+test("a box can start from a given build, as a tried image's kept one, on the backend named, and not elsewhere (#451)", async () => {
+  const world = setup();
+  const started: (string | undefined)[] = [];
+  const acquire = world.backend.acquire.bind(world.backend);
+  world.backend.acquire = (box, previous, hooks, signal) => {
+    started.push(box.from);
+    return acquire(box, previous, hooks, signal);
+  };
+  const from = { name: "rust (tried)", build: "build.20261007-100000-abcd", ref: "try-build" };
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", from }), /needs the backend that keeps it, in on/);
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", on: "fake", from }), /starts no box from a build/);
+  Object.defineProperty(world.backend, "images", { value: { startsFrom: true } });
+  const asked = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", on: "fake", from });
+  assert.deepEqual(asked.image, { name: "rust (tried)", state: "baked", build: from.build, from: "try-build" });
+  const box = await ready(world.boxes, asked);
+  assert.equal(box.state, "ready", box.error ?? "");
+  assert.deepEqual(started, ["try-build"]);
+});
+
 test("an image's script at start finds bb-box's own commands first on its PATH, such as bb-box-feature (049)", async () => {
   const image = { kinds: ["linux"], script: 'hello-tool > "$HOME/tool"\n', projects: ["prj"] };
   const world = setup({}, {
