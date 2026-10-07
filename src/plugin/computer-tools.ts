@@ -113,7 +113,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     presentation: { label: { pending: "Acting on the desktop", completed: "Acted on the desktop" } },
     parameters: z.object({
       box: boxParam,
-      action: z.enum(["click", "double_click", "right_click", "scroll", "set_value", "key"]),
+      action: z.enum(["click", "double_click", "right_click", "scroll", "set_value", "key"]).describe("What to do: click, double_click or right_click on ref or at x and y; scroll in direction; set_value to value; key to press keys."),
       ref: z.string().min(1).optional().describe("The element's reference from computer_observe, such as e12."),
       window: windowOrDesktop
         .optional()

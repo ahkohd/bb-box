@@ -22,7 +22,9 @@ export interface SecretState {
 export interface HostConfig {
   /** Lower-case letters, digits and "-", unique in its backend. */
   readonly name: string;
+  /** Off, the host takes no new boxes; its boxes keep working. */
   readonly enabled: boolean;
+  /** The host's own fields, as its driver lists them. */
   readonly fields: Readonly<Record<string, FieldValue>>;
 }
 
@@ -33,6 +35,7 @@ export interface BackendConfig {
   readonly type: string;
   /** Display name. The driver's label when left out. */
   readonly label?: string;
+  /** Off, the backend takes no new boxes; its boxes keep working. */
   readonly enabled: boolean;
   /** What the operator set. Stored without secrets; shown with each as its state. */
   readonly fields: Readonly<Record<string, FieldValue | SecretState>>;
@@ -43,9 +46,13 @@ export interface BackendConfig {
 }
 
 export interface KindConfig {
+  /** Off, no backend offers new boxes of the kind. On when left out. */
   readonly enabled?: boolean;
+  /** Changes to the small, medium and large sizes: cores, memoryGiB and diskGiB, each optional. */
   readonly presets?: Partial<Readonly<Record<Preset, SizeChange>>>;
+  /** The preset a box gets when it asks for no size. */
   readonly default?: Preset;
+  /** The most a custom size may ask for, as a size change. */
   readonly largest?: SizeChange;
   /** Spare boxes to keep: ready, enrolled and owned by no thread (032). */
   readonly spares?: number;
@@ -80,20 +87,26 @@ export const IMAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
 export const IMAGE_SCRIPT_BYTES = 256 * 1024;
 
 export interface GeneralSettings {
-  /** 0 means no limit. */
+  /** The most boxes a thread may hold at once. 0 means no limit. */
   readonly boxesPerThread?: number;
+  /** Whether boxes join BB as machines, so threads and terminals can use them with the thread's credentials. */
   readonly enrol?: boolean;
+  /** The kind a thread gets when it asks for none. */
   readonly defaultKind?: string;
   /** Files for every box (#455): paths under the box user's home, whose contents are secrets. */
   readonly files?: readonly BoxFileSetting[];
 }
 
 export interface ConfigDocument {
+  /** The document's format: 1. */
   readonly schema: typeof SCHEMA;
+  /** Counts each save. A file applied with a revision is refused when the configuration has changed since. */
   readonly revision: number;
   /** In the order the registry tries them. */
   readonly backends: readonly BackendConfig[];
+  /** Each kind's entry, by its ID: only what differs from its defaults. */
   readonly kinds: Readonly<Record<string, KindConfig>>;
+  /** Settings for every backend and kind. */
   readonly general: GeneralSettings;
   /** Projects' images, by name (049). */
   readonly images?: Readonly<Record<string, ImageConfig>>;

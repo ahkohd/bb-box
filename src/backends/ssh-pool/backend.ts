@@ -29,6 +29,7 @@
 // Mac serving them that answered the last survey has Xcode, and an iOS
 // runtime.
 
+import type { CheckId } from "../../core/checks.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -192,7 +193,9 @@ interface SshKeys {
   readonly generated: boolean;
 }
 
-type Check = readonly [id: string, name: string];
+type Check = readonly [id: CheckId, name: string];
+/** What a machine's checks are of: machine.<name>.<what> in the catalog. */
+type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "screensharing" | "grants" | "xcode" | "input";
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const MACHINES_CHECK: Check = ["machines", "Machines"];
 const DOCKER_CHECK: Check = ["docker", "Docker"];
@@ -898,7 +901,7 @@ export class SshPoolBackend implements Backend {
       const mac = machine.os === "macos";
       const docker = this.#docker && !mac;
       const setup = `${setupWords(machine)} on ${name} ${setupAs(machine)}`;
-      const check = (what: string, label: string): Check => [`machine.${name}.${what}`, `${name}: ${label}`];
+      const check = (what: MachineCheck, label: string): Check => [`machine.${name}.${what}`, `${name}: ${label}`];
       const SSH = check("ssh", "SSH"), HELPER = check("helper", "helper"), ARCH_CHECK = check("arch", "architecture");
       const TOOLS = check("tools", "tools"), DOCKER = check("docker", "Docker"), STATE = check("state", "state");
       const FILEVAULT = check("filevault", "FileVault"), SIGNIN = check("signin", "sign-in"), FULL_DISK = check("fulldisk", "Full Disk Access");

@@ -26,6 +26,7 @@
 //   start restores it, as a box that takes a warm VM does. A running one
 //   counts its memory and QEMU's own, but not against the two macOS VMs.
 
+import type { CheckId } from "../../core/checks.ts";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
@@ -1502,7 +1503,7 @@ export class TartBackend implements Backend {
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {
     const checks: DoctorCheck[] = [];
     const notes: string[] = [`This install's ID is ${this.#context.installId}. Its VMs' owner files on each Mac, in ~/.bb-box/tart/owners, name it.`];
-    const push = (id: string, name: string, status: DoctorCheck["status"], detail: string, fix: string | null = null) =>
+    const push = (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix: string | null = null) =>
       checks.push({ id, name, status, detail, fix });
 
     let keys: SshKeys | null = null;
@@ -1552,7 +1553,7 @@ export class TartBackend implements Backend {
     const tart = this.#tart();
     const windowsImage = this.#config.kinds["windows-arm64-desktop"].image;
     for (const host of this.#config.hosts) {
-      const id = `host.${host.name}`;
+      const id = `host.${host.name}` as const;
       const name = `Mac ${host.name}`;
       const images = TART_KINDS.filter((kind) => guestOsOf(kind) !== "windows" && this.#config.kinds[kind].image);
       const state = states.get(host.name);
@@ -1650,10 +1651,10 @@ export class TartBackend implements Backend {
     host: TartHost,
     qemu: QemuState,
     image: string,
-    push: (id: string, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
+    push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
     judge: (kind: TartKind, image: string, record: ImageRecord | null, on: string) => ImageJudgement,
   ): void {
-    const id = `qemu.${host.name}`;
+    const id = `qemu.${host.name}` as const;
     const name = `QEMU on ${host.name}`;
     if (!qemu.version) {
       push(id, name, "fail", `${host.name} has no qemu-system-aarch64 on the PATH of ${host.user}'s SSH sessions.`, "Install QEMU on the Mac, with Homebrew or Nix.");
@@ -1664,7 +1665,7 @@ export class TartBackend implements Backend {
     } else {
       push(id, name, "ok", `QEMU ${qemu.version}, with the Hypervisor framework and its UEFI firmware.`);
     }
-    const imageId = `image.${host.name}.windows-arm64-desktop`;
+    const imageId = `image.${host.name}.windows-arm64-desktop` as const;
     const imageName = `windows-arm64-desktop image on ${host.name}`;
     if (!qemu.image) {
       push(imageId, imageName, "fail", `${host.name} has no Windows image ${image} in ~/.bb-box/qemu/images.`, "Prepare it on the Mac, or set the Windows image in bb-box's settings.");

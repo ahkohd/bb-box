@@ -27,6 +27,7 @@
 // in memory until the VM resumes or goes. A claim resumes the VM, gives it
 // the box's tags, name and description, waits for SSH and sets the clock.
 
+import type { CheckId } from "../../core/checks.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
 import {
@@ -125,7 +126,7 @@ const KIND: BoxKind = {
 };
 
 /** A doctor check's stable ID and its name. */
-type Check = readonly [id: string, name: string];
+type Check = readonly [id: CheckId, name: string];
 const API: Check = ["proxmox.api", "Proxmox API"];
 const NODE: Check = ["proxmox.node", "Node"];
 const MEMORY: Check = ["proxmox.memory", "Node memory"];
@@ -715,7 +716,7 @@ export class ProxmoxQemuBackend implements Backend {
                 { os: "windows", pins: await pins, bbApp: null },
                 `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh windows ${template} --replace.`,
               );
-              checks.push({ id: `${name[0]}.image`, name: `Image of ${name[1]}`, ...judged });
+              checks.push({ id: `template.${template}.image`, name: `Image of ${name[1]}`, ...judged });
             }
           }
         } catch (error) {

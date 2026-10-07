@@ -1,4 +1,5 @@
 // The backend interface. A backend adapts one provider of machines (Proxmox
+import type { CheckId } from "../core/checks.ts";
 // LXC now; Proxmox QEMU, a Mac host, a pool of physical machines, a cloud
 // later) to bb-box: acquire and release, address, capacity, and the
 // transports that reach each box. bb-box's core depends only on this file and
@@ -498,8 +499,8 @@ export interface Footprint {
 }
 
 export interface DoctorCheck {
-  /** Stable, for example "proxmox.api" or "template.linux-desktop". */
-  readonly id: string;
+  /** Stable, for example "proxmox.api" or "template.linux-desktop": one of the catalog's (src/core/checks.ts). */
+  readonly id: CheckId;
   /** What was checked, for example "Proxmox API". */
   readonly name: string;
   /** "skipped" when an earlier check failed. */

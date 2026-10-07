@@ -440,8 +440,8 @@ export class FakeBackend implements Backend {
     const problem = this.faults.doctor;
     const checks = [
       problem
-        ? { id: "fake.host", name: "Fake host", status: "fail" as const, detail: problem, fix: "Clear the fault." }
-        : { id: "fake.host", name: "Fake host", status: "ok" as const, detail: `Guests live under ${this.#options.root}.`, fix: null },
+        ? { id: "host.fake" as const, name: "Fake host", status: "fail" as const, detail: problem, fix: "Clear the fault." }
+        : { id: "host.fake" as const, name: "Fake host", status: "ok" as const, detail: `Guests live under ${this.#options.root}.`, fix: null },
     ];
     return { ok: !problem, summary: problem ? `Fake host: ${problem}` : this.label, checks, notes: [] };
   }

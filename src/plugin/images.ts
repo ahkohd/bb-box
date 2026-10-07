@@ -321,7 +321,7 @@ export class ImageJobs {
       if (!view.last || view.last.ok) continue;
       const when = new Date(view.last.at).toISOString().slice(0, 10);
       checks.push({
-        id: `images.${view.name}`,
+        id: `images.${view.backend}/${view.build.ref}`,
         name: `Rebuild of ${view.name}`,
         status: "warn",
         detail: view.last.waiting

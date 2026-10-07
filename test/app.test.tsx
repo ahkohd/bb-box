@@ -486,8 +486,8 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
             ok: false,
             summary: "Fake host 1.0",
             checks: [
-              { id: "api", name: "API", status: "fail", detail: "No answer from the API.", fix: "Check the URL." },
-              { id: "disk", name: "Disk", status: "ok", detail: "120 GiB free.", fix: null },
+              { id: "proxmox.api", name: "API", status: "fail", detail: "No answer from the API.", fix: "Check the URL." },
+              { id: "proxmox.memory", name: "Disk", status: "ok", detail: "120 GiB free.", fix: null },
             ],
             notes: ["Install this public key in the templates: ssh-ed25519 AAAA bb-box"],
           },
@@ -1151,7 +1151,7 @@ test("a backend's switch saves the document with the switch changed, and a probl
 
 test("a backend's setup shows its fields by group with problems, saves the whole document, and checks a draft", async () => {
   const { handlers, changes } = server([], {
-    checkWith: { problems: [], doctor: { ok: true, summary: "Fake host 1.0", checks: [{ id: "api", name: "API", status: "ok", detail: "Answers.", fix: null }], notes: ["Install this key: ssh-ed25519 AAAA"] } },
+    checkWith: { problems: [], doctor: { ok: true, summary: "Fake host 1.0", checks: [{ id: "proxmox.api", name: "API", status: "ok", detail: "Answers.", fix: null }], notes: ["Install this key: ssh-ed25519 AAAA"] } },
   });
   const slot = settings(handlers);
   fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
