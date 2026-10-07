@@ -249,7 +249,7 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   assert.ok(line.includes("-machine virt-11.1 -accel hvf -cpu host -smp 4 -m 8192"), line);
   assert.ok(line.includes(`-drive if=pflash,format=raw,readonly=on,file=${firmware}`), line);
   assert.ok(line.includes(`hostfwd=tcp:127.0.0.1:${sshPort}-:22`), line);
-  assert.ok(line.includes(`-display none -vnc 127.0.0.1:${vncPort - 5900}`), line);
+  assert.ok(line.includes(`-display none -vnc 127.0.0.1:${vncPort - 5900},lossy=on`), line);
   assert.ok(!line.includes("-daemonize") && !line.includes("-incoming"), line);
   assert.equal(await backend.power(guest, signal()), "running");
   assert.equal(await backend.power({ ...guest, data: { ...guest.data, box: "another" } }, signal()), null, "another box's VM is not this one's");
