@@ -7,7 +7,8 @@
 // daemon, where the env file's loader finds them. It starts a new one only
 // when the values of the names bb-box asks for change, and holds a worker
 // lease so BB's idle timer leaves the worker, and with it the sleep, alone.
-// The sleep ends with the worker.
+// The sleep ends with the worker. Windows has no sleep, so there the held
+// process is Node, which runs BB's daemon, waiting for ever (#560).
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -15,6 +16,11 @@ import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@g
 
 /** What the held process runs: it only waits, about 68 years. */
 export const HOLDER_COMMAND = ["sleep", "2147483647"] as const;
+
+/** The held process's command on `platform`. */
+export function holderCommand(platform: NodeJS.Platform = process.platform): readonly string[] {
+  return platform === "win32" ? [process.execPath, "-e", "setInterval(() => {}, 1 << 30)"] : HOLDER_COMMAND;
+}
 
 /** The values of `names` in `env`, as a hash, so no value is kept apart from the process. */
 function fingerprint(names: readonly string[], env: NodeJS.ProcessEnv): string {
@@ -25,7 +31,7 @@ function fingerprint(names: readonly string[], env: NodeJS.ProcessEnv): string {
 const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
 
 export function accessHandlers(options: { command?: readonly string[] } = {}) {
-  const [program, ...args] = options.command ?? HOLDER_COMMAND;
+  const [program, ...args] = options.command ?? holderCommand();
   let held: { child: ChildProcess; fingerprint: string } | null = null;
   let lease: ExperimentalHostWorkerLease | null = null;
   const stop = () => {
@@ -44,7 +50,8 @@ export function accessHandlers(options: { command?: readonly string[] } = {}) {
         const missing = [...new Set(names)].filter((name) => !process.env[name]);
         if (held && running(held.child) && held.fingerprint === now) return { started: false, pid: held.child.pid ?? null, missing };
         const old = held;
-        const child = spawn(program!, args, { env: { ...process.env }, stdio: "ignore" });
+        // windowsHide: BB's daemon runs in the desktop session, where Node would show a console.
+        const child = spawn(program!, args, { env: { ...process.env }, stdio: "ignore", windowsHide: true });
         // A program that cannot start must not take the worker down with it.
         child.on("error", () => {});
         held = { child, fingerprint: now };

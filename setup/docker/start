@@ -10,10 +10,11 @@
 #   the first docker command starts Docker's daemon, as docker.socket does
 #   in an LXC box (041). A box with containers starts it at once, so their
 #   restart policies work.
-# - In a desktop box, starts the display, the XFCE session and Cua Driver as
-#   the box user, and starts each again when it exits, as their units do. In
-#   a Wayland desktop box (048), Sway is the display and the session, and
-#   Cua Driver and wayvnc start each time it is up and stop with it.
+# - In a desktop box, starts the display, the XFCE session, Cua Driver and
+#   Selkies (056) as the box user, and starts each again when it exits, as
+#   their units do. In a Wayland desktop box (048), Sway is the display and
+#   the session, and Cua Driver and wayvnc start each time it is up and stop
+#   with it.
 # - Then writes /run/bb-box/ready, which bb-box waits for, once Docker's
 #   socket is the docker group's. /run is a tmpfs, so the file is new at each
 #   start.
@@ -160,6 +161,12 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
         kill "$cua" 2>/dev/null'
     }
     keep session &
+    # Selkies' stream of :99, each time the display is up.
+    stream() {
+      as_box /usr/local/libexec/bb-box/display wait || return
+      as_box /usr/local/libexec/bb-box/selkies
+    }
+    keep stream &
   fi
   as_box /usr/local/libexec/bb-box/display wait || log "the display did not come up"
   for _ in $(seq 1 100); do

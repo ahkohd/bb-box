@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { Backends, DRIVERS, boxForm, overlapChecks } from "../src/backends/index.ts";
+import { parseImageRecord, recordInDescription } from "../src/backends/images.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
-import { installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
+import { buildFromTags, installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
 import { proxmoxFootprint } from "../src/backends/proxmox/settings.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxQemuBackend, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
@@ -935,4 +936,127 @@ test("dispose stops a warm fill", async () => {
   await assert.rejects(backend.maintain(), /bb-box is stopping/);
   await disposed;
   assert.equal(proxmox.guests.has(9700), false, "the VM it was filling is deleted");
+});
+
+/** A Windows box's PowerShell, as an image box's: its desktop up, its clock set, and the record a refresh writes (054). */
+function imageSetup(record: Record<string, unknown>) {
+  const env = setup();
+  for (let last = 150; last <= 159; last++) {
+    mkdirSync(env.ssh.home(`192.0.2.${last}`), { recursive: true });
+    env.ssh.powershell(
+      `192.0.2.${last}`,
+      `case "$1" in\n  *"Get-Process explorer"*) exit 0;;\n  *Set-Date*) exit 0;;\n  *"Get-Content C:\\\\bb-box\\\\image.json"*) echo '${JSON.stringify(record)}'; exit 0;;\n  *Clear-Content*) printf cleared > "$HOME/boot-log"; exit 0;;\n  *) exec sh -c "$1";;\nesac\n`,
+    );
+  }
+  return env;
+}
+
+test("image operations: a box from the Windows template, its capture as a template with its record, a trial box, and the template replaced in place (054)", async () => {
+  const record = { contract: 1, image: "standard", kind: KIND, arch: "x86_64", build: "build.20261007-030000-5e1f", built: "2026-10-07T03:00:00Z", os: "Windows 11 Pro", pins: "p".repeat(64), tools: { node: "24.21.0" } };
+  const { backend, proxmox, ssh } = imageSetup(record);
+  const template = proxmox.guests.get(9104)!;
+  template.name = template.config.name = "bb-box-windows";
+  template.config.tags = "bbbox;windows;build.20260901-020000-77aa";
+  template.config.description = "bb-box windows template, built 2026-09-01 from win11.iso: Windows 11 Pro, PowerShell 7.6.6.";
+  const images = backend.images;
+  assert.equal(images.windows, true);
+
+  const listed = await images.list();
+  const standard = listed.builds.find((build) => build.ref === "9104")!;
+  assert.deepEqual([standard.image, standard.kind, standard.build, standard.record, standard.current], ["standard", KIND, "build.20260901-020000-77aa", null, true]);
+  assert.deepEqual(listed.builds.map((build) => build.ref), ["9104"], "the configured template alone");
+  assert.deepEqual(listed.boxes, []);
+
+  // The build box: a clone at a box's VMID and address, with its desktop up, which no sweep takes.
+  const box = await images.box(standard, "refresh of 9104", signal());
+  assert.equal(box.ref, "9700");
+  const vm = proxmox.guests.get(9700)!;
+  assert.deepEqual([vm.status, vm.name, parseTags(vm.config.tags)], ["running", "bb-box-image", ["bb-box", "install.test", "image-box", "template.9104"]]);
+  assert.match(vm.config.smbios1!, /serial=/, "the box's address, as a box has it");
+  assert.equal(installFromDescription(vm.config.description), "test");
+  assert.deepEqual(await backend.held(), [], "not a box's guest");
+  assert.deepEqual((await images.list()).boxes, ["9700"]);
+
+  // The capture: stopped, a template configured as the one it came from, with no address, the record and the build's tags.
+  const captured = await images.capture(box, standard, "standard", signal());
+  assert.deepEqual([captured.ref, captured.build, captured.current, captured.record?.build], ["9700", "build.20261007-030000-5e1f", false, "build.20261007-030000-5e1f"]);
+  assert.deepEqual([vm.template, vm.status, vm.name, vm.config.protection, vm.config.onboot], [true, "stopped", "bb-box-windows", "1", "0"]);
+  assert.match(vm.config.smbios1!, /^uuid=[0-9a-f-]{36}$/, "no address in the template");
+  assert.deepEqual(parseTags(vm.config.tags), ["bb-box", "install.test", "image.standard", "kind.windows-desktop", "template.9104", "build.20261007-030000-5e1f"]);
+  assert.deepEqual(recordInDescription(vm.config.description!), parseImageRecord(record));
+  assert.equal(readFileSync(join(ssh.home("192.0.2.150"), "boot-log"), "utf8"), "cleared", "clones start with an empty boot log");
+  assert.deepEqual(await backend.held(), []);
+  assert.deepEqual((await images.list()).builds.map((build) => [build.ref, build.image, build.current]), [["9104", "standard", true], ["9700", "standard", false]]);
+
+  // A trial box from the build, then removed; a configured template stays.
+  const trial = await images.box(captured, "trial of build.20261007-030000-5e1f", signal());
+  assert.equal(trial.ref, "9701");
+  assert.equal(proxmox.calls.find((call) => call.path.endsWith("/clone") && call.params.newid === "9701")?.path, "/nodes/pve/qemu/9700/clone");
+  await images.remove(trial.ref, signal());
+  assert.equal(proxmox.guests.has(9701), false);
+  await assert.rejects(images.remove("9104", signal()), /VM 9104 is not an image box or build of this install's/);
+
+  // The replace: 9104 is kept as a rollback, then goes, the build is cloned into its VMID and made a template, and the build goes.
+  const before = proxmox.calls.length;
+  const replaced = await images.replace(captured, standard, signal());
+  assert.deepEqual([replaced.ref, replaced.current, replaced.build], ["9104", true, "build.20261007-030000-5e1f"]);
+  assert.equal(proxmox.guests.has(9700), false);
+  const now = proxmox.guests.get(9104)!;
+  assert.deepEqual([now.template, now.name, now.config.protection], [true, "bb-box-windows", "1"]);
+  assert.deepEqual(parseTags(now.config.tags), ["bbbox", "windows", "build.20261007-030000-5e1f"]);
+  assert.match(now.config.description!, /^bb-box windows template, refreshed \d{4}-\d{2}-\d{2} from win11\.iso: Windows 11 Pro, PowerShell 7\.6\.6\.\n\{"contract":1,/);
+  assert.deepEqual(
+    proxmox.calls
+      .slice(before)
+      .filter((call) => /\/qemu\/(9104|9700)(\/(clone|template))?$/.test(call.path) && call.method !== "GET")
+      .map((call) => `${call.method} ${call.path.replace(/^\/nodes\/pve/, "")}`),
+    ["POST /qemu/9104/clone", "DELETE /qemu/9104", "POST /qemu/9700/clone", "POST /qemu/9104/template", "DELETE /qemu/9700"],
+  );
+  // The rollback: the old template as it was, at a free VMID of the range, until the next replace.
+  const rollback = [...proxmox.guests.values()].find((guest) => parseTags(guest.config.tags).includes("image.rollback"))!;
+  assert.equal(rollback.vmid, 9702);
+  assert.deepEqual([rollback.template, rollback.name, rollback.config.protection], [true, "bb-box-windows-rollback", "1"]);
+  assert.deepEqual(parseTags(rollback.config.tags), ["bb-box", "install.test", "image.rollback", "kind.windows-desktop", "template.9104", "build.20260901-020000-77aa"]);
+  assert.match(rollback.config.description!, /^bb-box rollback of Windows template 9104, build\.20260901-020000-77aa, kept until its next refresh\. To use it, list 9702 as the Windows template in bb-box's settings\.$/);
+  assert.deepEqual(
+    (await images.list()).builds.map((one) => [one.ref, one.image, one.current]),
+    [["9104", "standard", true], ["9702", "rollback", false]],
+    "listed, but not as a standard build that a run would remove",
+  );
+  assert.deepEqual(await backend.held(), [], "no box's");
+  const after = (await images.list()).builds.find((build) => build.ref === "9104")!;
+  assert.deepEqual([after.build, after.record?.build], ["build.20261007-030000-5e1f", "build.20261007-030000-5e1f"]);
+  // A box from the replaced template, as any.
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(guest.data?.template, 9104);
+
+  // The next replace keeps the template it replaces, and only then removes the rollback before.
+  const next = await images.capture(await images.box(after, "refresh of 9104", signal()), after, "standard", signal());
+  await images.replace(next, after, signal());
+  const rollbacks = [...proxmox.guests.values()].filter((one) => parseTags(one.config.tags).includes("image.rollback"));
+  assert.deepEqual(rollbacks.map((one) => [one.vmid, buildFromTags(parseTags(one.config.tags))]), [[rollbacks[0]!.vmid, "20261007-030000-5e1f"]]);
+  assert.notEqual(rollbacks[0]!.vmid, 9702);
+});
+
+test("a replace with no free VMID for the rollback changes nothing (054)", async () => {
+  const { backend, proxmox } = imageSetup({ contract: 1, image: "standard", kind: KIND, build: "build.x", built: "2026-10-07T03:00:00Z", os: "Windows 11 Pro", pins: "p".repeat(64), tools: { node: "24.21.0" } });
+  const standard = (await backend.images.list()).builds[0]!;
+  const captured = await backend.images.capture(await backend.images.box(standard, "refresh of 9104", signal()), standard, "standard", signal());
+  for (let vmid = 9701; vmid <= 9709; vmid++) proxmox.addVmTemplate(vmid);
+  await assert.rejects(backend.images.replace(captured, standard, signal()), /No VMID from 9700 to 9709 is free for the rollback of template 9104/);
+  assert.equal(proxmox.guests.get(9104)!.template, true, "the template stays");
+  assert.ok(proxmox.guests.has(9700), "and the build, for the refresh to remove");
+});
+
+test("a capture without the refresh's record is refused, and a failed image box is deleted (054)", async () => {
+  const { backend, proxmox } = imageSetup({});
+  const standard = (await backend.images.list()).builds[0]!;
+  const box = await backend.images.box(standard, "refresh of 9104", signal());
+  await assert.rejects(backend.images.capture(box, standard, "standard", signal()), /Image box 9700 has no image record in C:\\bb-box\\image\.json/);
+  await backend.images.remove(box.ref, signal());
+  assert.equal(proxmox.guests.has(9700), false);
+
+  proxmox.nextTaskExit.set("qmstart", "start failed: QEMU exited with code 1");
+  await assert.rejects(backend.images.box(standard, "refresh of 9104", signal()), /QEMU exited with code 1/);
+  assert.deepEqual([...proxmox.guests.keys()].filter((vmid) => vmid >= 9700), [], "the clone that did not start is gone");
 });

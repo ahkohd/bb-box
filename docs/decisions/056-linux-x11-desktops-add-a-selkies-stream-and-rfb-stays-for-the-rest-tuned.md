@@ -36,8 +36,8 @@ tries KasmVNC, and decides which desktop gets which stream.
   8 GiB, with its Xtigervnc 1.16.2 at 1920x1080 and Chrome 154 showing a
   test page in kiosk mode. Selkies 2.0.0, from its Ubuntu 24.04 package,
   captured the same X display with XShm and encoded H.264 with x264 at its
-  defaults (8 Mbit/s, up to 240 frames a second), with resize off. noVNC
-  1.7.0 reached Xtigervnc through websockify in the box.
+  defaults, which gave each viewer CRF 25 at 60 frames a second, with
+  resize off. noVNC 1.7.0 reached Xtigervnc through websockify in the box.
 - **The viewer**: a second box of the same kind on the same network,
   running headless Chrome 154 at 1920x1080 and decoding in software. It
   reached the server through a TCP forward, not through BB.

@@ -1,0 +1,30 @@
+#!/bin/bash
+# bb-box: Selkies, the desktop's second stream (056), run as the box user by
+# bb-box-selkies.service, or by a Docker box's start, once :99 is up.
+#
+# It captures :99 and sends H.264 over WebSockets on 127.0.0.1:5980 only:
+# bb-box's relay reaches it through the box's transport, and BB has signed
+# the viewer in, so it has no sign-in of its own. With no page connected it
+# captures nothing, and takes about 0.1% of a core.
+#
+# bb-box's relay decides which pages connect as viewers (role=viewer, which
+# --enable-shared allows) and whose input reaches it. bb-box sets the
+# screen's size, so Selkies does not. Audio, the microphone, the webcam,
+# gamepads and their player slots, file transfers, printing and commands
+# are off.
+#
+# On the GPU display path it waits instead, until Selkies with NVENC has
+# been measured (056).
+set -u
+if [ "$(cat /run/bb-box/display-mode 2>/dev/null)" = gpu ]; then
+  echo "selkies: waits on the GPU display path (056)" >&2
+  exec sleep infinity
+fi
+export DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority
+exec /usr/bin/selkies --addr=127.0.0.1 --port=5980 --mode=websockets \
+  --enable-basic-auth=false --enable-https=false \
+  --encoder=h264enc --use-cpu=true --enable-resize=false --second-screen=false \
+  --enable-binary-clipboard=true \
+  --audio-enabled=false --microphone-enabled=false --webcam-enabled=false --gamepad-enabled=false \
+  --file-transfers=none --printing-enabled=false --command-enabled=false --enable-dual-mode=false \
+  --enable-player2=false --enable-player3=false --enable-player4=false

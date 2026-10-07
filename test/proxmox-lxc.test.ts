@@ -115,7 +115,14 @@ test("kinds lists only kinds with a template", () => {
   assert.equal(desktop.capabilities.gpu, true);
   const cpu = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.kinds().find((kind) => kind.id === "linux-desktop-cpu")!;
   assert.equal(cpu.capabilities.gpu, false);
-  assert.deepEqual(cpu.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "Xtigervnc resizes");
+  assert.deepEqual(
+    cpu.capabilities.displays,
+    [
+      { id: "desktop", protocol: "rfb", resizable: true },
+      { id: "selkies", protocol: "selkies", resizable: true },
+    ],
+    "Xtigervnc resizes, and Selkies streams it beside (056)",
+  );
   assert.deepEqual(cpu.capabilities.computerUse, desktop.capabilities.computerUse);
   const wayland = setup({ "proxmox-lxc-desktop-wayland-cpu-templates": "9004" }).backend.kinds().find((kind) => kind.id === "linux-desktop-wayland-cpu")!;
   assert.equal(wayland.label, "Linux desktop on Wayland");

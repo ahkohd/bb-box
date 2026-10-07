@@ -2,7 +2,7 @@
 # bb-box desktop template, run as root inside the CT after customize-base.sh
 # and before finalize.sh: XFCE on :99 as the box user, Xorg with NVIDIA's
 # driver (or Xtigervnc on the CPU as fallback) served over VNC on port 5900,
-# Chrome, Mousepad, Ristretto, Evince, Cua Driver, NVIDIA userspace matching
+# Selkies' H.264 stream of it on 127.0.0.1:5980 (056), Chrome, Mousepad, Ristretto, Evince, Cua Driver, NVIDIA userspace matching
 # the host, VirtualGL, GPUI build dependencies and Rust.
 #
 # usage: customize-desktop.sh <build-dir>
@@ -61,6 +61,9 @@ gpui_packages="clang cmake libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev 
 tigervnc=$(check tigervnc)
 virtualgl=$(check virtualgl)
 chrome=$(check chrome)
+# Selkies, the desktop's second stream (056): its package holds its own
+# Python, in /opt/selkies.
+selkies=$(check selkies)
 # A refresh of a built image (049) may have a newer Chrome already, which
 # Google's apt source brought: keep it rather than go back to the pin. A
 # build from a fresh image, as Tart's, has none yet.
@@ -73,14 +76,14 @@ fi
 # baseline.sh; files already downloaded stay in apt's cache.
 # shellcheck disable=SC2086
 for try in 1 2 3 4 5; do
-  apt-get install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" ${chrome:+"$chrome"} && break
+  apt-get install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"} && break
   [ "$try" = 5 ] && exit 1
   echo "customize-desktop: download failed (try $try of 5); retrying in $((try * 30)) s" >&2
   sleep $((try * 30))
 done
 # shellcheck disable=SC2086
-apt-get install -y -q --no-install-recommends $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" ${chrome:+"$chrome"}
-for package in $desktop_packages $gpui_packages tigervncserver virtualgl google-chrome-stable; do
+apt-get install -y -q --no-install-recommends $desktop_packages $gpui_packages "$tigervnc" "$virtualgl" "$selkies" ${chrome:+"$chrome"}
+for package in $desktop_packages $gpui_packages tigervncserver virtualgl selkies google-chrome-stable; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || die "$package is not installed"
 done
 
@@ -108,7 +111,7 @@ else
 fi
 {
   echo "nvidia=$nvidia"
-  for name in tigervnc virtualgl chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
+  for name in tigervnc virtualgl selkies chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
 } >"$build/extra-release"
 
 # Xorg on the one GPU the CT can see, with no display attached.
@@ -150,6 +153,7 @@ EOF
 install -d -m 0755 /usr/local/libexec/bb-box /etc/bb-box
 install -m 0755 "$build/guest/files/display" /usr/local/libexec/bb-box/display
 install -m 0755 "$build/guest/files/vnc-password" /usr/local/libexec/bb-box/vnc-password
+install -m 0755 "$build/guest/files/selkies" /usr/local/libexec/bb-box/selkies
 install -m 0644 "$build/guest/files/chrome-gpu.mjs" /usr/local/libexec/bb-box/chrome-gpu.mjs
 install -m 0644 "$build/guest/files/cua-probe.mjs" /usr/local/libexec/bb-box/cua-probe.mjs
 display_mode=auto
@@ -184,8 +188,8 @@ cat >/etc/systemd/system/bb-box-display.service <<EOF
 Description=bb-box: display :99 and VNC on port 5900
 After=systemd-user-sessions.service bb-box-vnc-password.service
 Wants=bb-box-vnc-password.service
-# Bring the session back whenever the display is up again.
-Upholds=bb-box-session.service
+# Bring the session and Selkies back whenever the display is up again.
+Upholds=bb-box-session.service bb-box-selkies.service
 
 [Service]
 User=$user
@@ -230,7 +234,27 @@ RestartSec=1
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable bb-box-vnc-password.service bb-box-display.service bb-box-session.service >/dev/null
+# Selkies' stream of :99, which starts and stops with the display.
+cat >/etc/systemd/system/bb-box-selkies.service <<EOF
+[Unit]
+Description=bb-box: Selkies' stream of :99 on 127.0.0.1:5980
+After=bb-box-display.service
+Requires=bb-box-display.service
+PartOf=bb-box-display.service
+
+[Service]
+User=$user
+Group=$user
+WorkingDirectory=~
+ExecStart=/usr/local/libexec/bb-box/selkies
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable bb-box-vnc-password.service bb-box-display.service bb-box-session.service \
+  bb-box-selkies.service >/dev/null
 
 # Everything the box user runs (SSH commands, BB's user services, Cua) lands
 # on :99.

@@ -55,6 +55,7 @@ import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
+import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
@@ -330,7 +331,7 @@ export function dockerKinds(config: DockerConfig, rootless = false, gpuDocker = 
         gpu: false,
         features: docker,
         command: DOCKER_COMMAND,
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
         computerUse: CUA_DRIVER,
         enrol: true,
       },
@@ -797,20 +798,23 @@ export class DockerBackend implements Backend {
     // wayvnc offers Apple's sign-in, not a VNC password (048).
     const wayland = kind === "linux-desktop-wayland-cpu";
     const displays = (capabilities?.displays ?? []).map(
-      (display): Display => ({
-        ...display,
-        label: "Desktop",
-        open: async (signal) => {
-          const password = await this.#vncPassword(command, signal);
-          return {
-            route: await command.route(VNC_PORT),
-            auth: !password ? { type: "none" } : wayland ? { type: "apple", user: WAYVNC_USER, password } : { type: "vnc-password", password },
-          };
-        },
-        ...(kind === "linux-desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
-        ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal) } : {}),
-        minSize: MIN_DESKTOP,
-      }),
+      (display): Display =>
+        display.protocol === "selkies"
+          ? selkiesDisplay((port) => command.route(port))
+          : {
+              ...display,
+              label: "Desktop",
+              open: async (signal) => {
+                const password = await this.#vncPassword(command, signal);
+                return {
+                  route: await command.route(VNC_PORT),
+                  auth: !password ? { type: "none" } : wayland ? { type: "apple", user: WAYVNC_USER, password } : { type: "vnc-password", password },
+                };
+              },
+              ...(kind === "linux-desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
+              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal) } : {}),
+              minSize: MIN_DESKTOP,
+            },
     );
     // No SSH server runs in a box, and its Docker is reached only through it, so only BB's server reaches it.
     return { command, displays, access: null };
