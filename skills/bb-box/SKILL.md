@@ -19,7 +19,7 @@ Every result ends with a `Next:` line that says what to do next.
 | `box_list` | | Lists the thread's boxes and the kinds on offer, with each kind's images where a project's image covers it: this project's first, the default, then `standard`, then other projects'. |
 | `box_status` | `box` | Shows one box, checking its power state with the backend, and why it last stopped when bb-box did not stop it. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
-| `box_job` | `box`, `job` | Gives the exit code and output of a `box_run` command that went on in its box as a job when bb-box restarted, or the end of its output while it runs. |
+| `box_job` | `box`, `job` | Gives the exit code and output of a `box_run` command that went on in its box as a job, after 270 s or when bb-box restarted, or the end of its output while it runs. |
 | `box_copy` | `box`, `direction`, `from`, `to?` | Copies one file between the thread's workspace or storage folder and a box: `to_box` or `from_box`. |
 | `box_stop` | `box` | Stops a box and keeps its disk. Refused while a thread is working on the box, naming it. |
 | `box_start` | `box` | Starts a stopped box again. |
@@ -52,6 +52,11 @@ Limits:
   for the command. One still running then goes on in the box as a job, and
   `box_run`'s error names it: `box_job` gives its exit code and output once it
   ends. On Windows the command stops instead.
+- BB ends a tool call at about five minutes, so `box_run` returns after 270 s.
+  A Linux or macOS command still running then goes on as a job: the answer
+  names it and gives its output so far, and `box_job` gives the rest. On
+  Windows the command is stopped at 270 s with its output so far: start a
+  longer one with `Start-Detached`.
 - On Windows, commands run in PowerShell 7, and what a command starts with
   `Start-Process`, `Start-Job` or `cmd /c start` ends with it. Start a
   server with `Start-Detached { <cmd> } server.log` instead, which returns
