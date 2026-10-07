@@ -107,7 +107,7 @@ export function tooLargeToCopy(path: string, size: number | null, direction: "to
   const joinHere = `cat ${parts}* > ${name}`;
   if (os === "windows") {
     const join = `$o = [IO.File]::Create("${name}"); Get-ChildItem ${parts}* | Sort-Object Name | ForEach-Object { $b = [IO.File]::ReadAllBytes($_.FullName); $o.Write($b, 0, $b.Length) }; $o.Close()`;
-    const split = `$i = [IO.File]::OpenRead("${name}"); $b = New-Object byte[] 15MB; $n = 0; while (($r = $i.Read($b, 0, $b.Length)) -gt 0) { [IO.File]::WriteAllBytes(("${parts}{0:d3}" -f $n++), $b[0..($r - 1)]) }; $i.Close()`;
+    const split = `$i = [IO.File]::OpenRead("${name}"); $b = New-Object byte[] 15MB; $n = 0; while (($r = $i.Read($b, 0, $b.Length)) -gt 0) { $o = [IO.File]::Create(("${parts}{0:d3}" -f $n++)); $o.Write($b, 0, $r); $o.Close() }; $i.Close()`;
     return direction === "to_box"
       ? `${what} Move it in parts: run ${splitHere} on this side, box_copy each part, then join them in the box with box_run: ${join}. Compare its Get-FileHash with sha256sum here.`
       : `${what} Move it in parts: split it in the box with box_run: ${split}. box_copy each part, then join them on this side: ${joinHere}. Compare its sha256sum with Get-FileHash in the box.`;
