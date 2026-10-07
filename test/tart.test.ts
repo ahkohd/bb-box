@@ -151,7 +151,8 @@ test("a macOS desktop is Tart's VNC through the run's holder, which starts with 
   writeFileSync(join(mac, ".fake-vnc-port"), String(port));
 
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
-  await until(() => tart.connections === 1);
+  // The holder connects as the run starts, before any viewer, however long python3 takes to start under load (#580).
+  await tart.connected;
   const [display] = (await backend.transports(guest, "macos-desktop")).displays;
   for (let open = 0; open < 3; open++) {
     const opened = await display!.open(signal());
@@ -439,9 +440,10 @@ function crashReport(pid: number): string {
 }`;
 }
 
+/** Waits for done(). The 60 s is for a hang, not a measure of speed: a full suite can be slow (#580). */
 async function until(done: () => boolean): Promise<void> {
   for (let i = 0; !done(); i++) {
-    assert.ok(i < 200, "it did not happen within 10 s");
+    assert.ok(i < 1200, "it did not happen within 60 s");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
