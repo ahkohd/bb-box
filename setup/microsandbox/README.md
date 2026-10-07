@@ -5,9 +5,10 @@ This backend runs Linux boxes as microVMs on one Linux host with KVM, with
 is an option beside the [Docker backend](../docker/README.md), not a
 replacement and not the default: keep it after Docker in the backend order,
 and ask for it with `--on` (or `box_acquire`'s `on`) for a box that needs a
-kernel of its own. On the same Linux host, Docker made boxes about twice as
-fast and held far less memory while idle; a microVM box was ready in 1.6 s
-alone, and holds its own page cache
+kernel of its own. On bare metal it makes boxes as fast as Docker, and
+removes them faster; under nested KVM, as in WSL 2, Docker is about twice as
+fast. Either way a microVM holds far more memory while idle, as it keeps
+its own page cache
 ([053](../../docs/decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md#what-the-built-backend-measured)).
 It offers two kinds, from the same images as the Docker backend:
 

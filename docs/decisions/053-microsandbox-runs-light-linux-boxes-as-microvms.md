@@ -12,13 +12,14 @@ now: microsandbox is light, and agents make and drop many boxes, faster
 than with Docker. The spike's measurements stay as they were.
 
 Amended later on 7 October 2026, as the operator's call, after the built
-backend was measured against Docker on the same host
+backend was measured against Docker on the same hosts
 ([below](#what-the-built-backend-measured)): **microsandbox is an option
 beside Docker, never a replacement for it and never the default.** It
 stays last in the backend order, so only a box that asks for it gets a
-microVM. On a Linux host, Docker made boxes about twice as fast and held
-far less memory while idle; what microsandbox gives there is a kernel per
-box. On a Mac, microsandbox is far faster than Tart's Linux VMs.
+microVM. On a Linux host under nested KVM, Docker made boxes about twice as fast and held
+far less memory while idle; on bare metal, msb was as fast as Docker. What
+microsandbox gives on Linux is a kernel per box. On a Mac, microsandbox is
+far faster than Tart's Linux VMs.
 
 ## Context
 
@@ -239,20 +240,37 @@ with Tart's Linux VMs, which serve Linux on a Mac now
 
 ### What it means
 
-- On a Linux host, microsandbox buys isolation and fast removal, not speed
-  or memory: a kernel per box, so Docker in a box with no privileged
-  container and Chrome with its own sandbox, and 20 boxes removed in
-  0.3 s against Docker's 2.9 s. Docker made boxes about twice as fast, and
-  shares the image's files in the host's page cache where each microVM
-  holds its own.
+- On a Linux host, microsandbox buys isolation and fast removal, not
+  memory: a kernel per box, so Docker in a box with no privileged
+  container and Chrome with its own sandbox, and 20 boxes removed 7 to 10
+  times faster than Docker's. On bare metal it makes boxes as fast as
+  Docker; under nested KVM, as in WSL 2, Docker is about twice as fast.
+  Each microVM holds its own page cache where Docker's containers share
+  the host's, so an idle box takes far more memory.
 - On a Mac, microsandbox is the clear win over Tart for Linux boxes: 20 at
   once ready in 1 to 3 s, where one Tart Linux VM takes about 9 s and
   holds several times the memory.
 
 ### A Linux host without nesting
 
-To come: a Proxmox LXC box with `/dev/kvm` passed in, as the spike's, with
-msb and Docker in the same box.
+A Proxmox LXC box with `/dev/kvm` passed in, as the spike's: KVM on bare
+metal, an AMD Threadripper PRO 9975WX, the box at 8 cores and 16 GiB. msb
+and Docker ran in the same box, with `bbbox/linux:1` and each backend's
+flags, as on the nested host.
+
+| 20 at once, not enrolled | msb, 4 GiB | msb, 2 GiB | Docker, 4 GiB | Docker, 2 GiB |
+| --- | --- | --- | --- | --- |
+| One alone | 0.44 s | 0.41 s | 0.29 s | 0.30 s |
+| All ready by | 1.47 s | 1.26 s | 1.42 s | 1.32 s |
+| Median | 1.25 s | 0.89 s | 1.21 s | 1.14 s |
+| Memory each, idle | 212 MiB | 110 MiB | under 10 MiB | 6 MiB |
+| 20 removed in | 0.23 s | 0.22 s | 1.71 s | 1.54 s |
+
+- Without nesting, msb makes boxes as fast as Docker: about the same at
+  4 GiB, faster at 2 GiB. Most of the gap on the nested host was nesting.
+- Memory does not change with nesting: about 210 MiB per idle 4 GiB box,
+  against a few MiB for a Docker box.
+- There is no enrolled run here: the box was not an msb host in bb-box.
 
 ## What the spike measured
 
