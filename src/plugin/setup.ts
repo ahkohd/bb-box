@@ -591,6 +591,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   void files.started().catch((error) => logError("write the files for every box", error));
   enrolment = new Enrolment({
     boxes,
+    kv,
     hosts: () => bb.sdk.hosts as unknown as HostApi,
     bootstrap: (request) => bb.experimental_machines.bootstrap(request),
     logError,
