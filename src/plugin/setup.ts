@@ -121,6 +121,8 @@ export interface BbBox {
   setInstallId(id: string): Promise<void>;
   /** The machine and directory a thread works in, for copying files to and from its boxes. */
   workspace(threadId: string, signal?: AbortSignal): Promise<{ hostId: string; path: string | null }>;
+  /** The thread's own storage folder, $BB_THREAD_STORAGE, and its host (#482); null when BB gives none. */
+  threadStorage(threadId: string, signal?: AbortSignal): Promise<{ hostId: string; path: string } | null>;
   /** A thread's project, for boxes the panel or the CLI acquires. */
   projectOf(threadId: string): Promise<string | null>;
   /**
@@ -896,6 +898,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (!thread.environmentId) throw new Error("This thread has no workspace yet, so there is nowhere to copy files to or from.");
       const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId, signal });
       return { hostId: environment.hostId, path: environment.path ?? null };
+    },
+    async threadStorage(threadId, signal) {
+      const location = await bb.sdk.threads.storageLocation({ threadId, signal }).catch(() => null);
+      return location ? { hostId: location.hostId, path: location.storageRootPath } : null;
     },
     projectOf,
     async runsOn(threadId, signal) {

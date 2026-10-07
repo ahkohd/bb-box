@@ -20,7 +20,7 @@ Every result ends with a `Next:` line that says what to do next.
 | `box_status` | `box` | Shows one box, checking its power state with the backend, and why it last stopped when bb-box did not stop it. |
 | `box_run` | `box`, `command`, `cwd?`, `timeout_seconds?`, `stdin?`, `desktop?` | Runs a shell script as the box user and returns the exit code, stdout and stderr. |
 | `box_job` | `box`, `job` | Gives the exit code and output of a `box_run` command that went on in its box as a job when bb-box restarted, or the end of its output while it runs. |
-| `box_copy` | `box`, `direction`, `from`, `to?` | Copies one file between the thread's workspace and a box: `to_box` or `from_box`. |
+| `box_copy` | `box`, `direction`, `from`, `to?` | Copies one file between the thread's workspace or storage folder and a box: `to_box` or `from_box`. |
 | `box_stop` | `box` | Stops a box and keeps its disk. Refused while a thread is working on the box, naming it. |
 | `box_start` | `box` | Starts a stopped box again. |
 | `box_thread` | `box`, `prompt`, `title` | Starts a child thread on a box that is a BB machine, in a worktree of the project cloned onto the box. It is archived with this thread. |
@@ -63,10 +63,11 @@ Limits:
   and the error a tool gives then say when and why. bb-box starts a box
   whose VM crashed again at once, unless it did so less than 10 minutes
   before: call `box_status` after a few seconds.
-- `box_copy` moves one file of up to 16 MiB. Tar a directory first. A
-  relative workspace path is under the thread's workspace directory. A
-  relative box path, or one that starts with `~/`, is under the box user's
-  home.
+- `box_copy` moves one file of up to 16 MiB. Tar a directory first. A relative
+  workspace path is under the thread's workspace directory. A path in the
+  thread's storage folder, absolute or starting with `$BB_THREAD_STORAGE/`, is
+  there, both ways. A relative box path, or one that starts with `~/`, is
+  under the box user's home.
 - `box_status` says whether the box user can use `sudo`, and `box_list`
   says it for each kind. On Proxmox LXC boxes, Docker boxes and SSH host
   pool boxes with Docker it can, without a password; on pool boxes without
