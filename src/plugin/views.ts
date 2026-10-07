@@ -646,7 +646,7 @@ export function configText(state: ConfigState): string {
   lines.push("");
   const general = { ...state.defaults.general, ...document.general };
   lines.push(
-    `Boxes per thread: ${general.boxesPerThread || "no limit"}. Enrol boxes as BB machines: ${general.enrol ? "yes" : "no"}. Default kind: ${general.defaultKind}.`,
+    `Boxes per thread: ${general.boxesPerThread || "no limit"}. Enrol boxes as BB machines: ${general.enrol ? "yes" : "no"}. Default kind: ${general.defaultKind}. Linux desktops as video: ${general.video ? "yes" : "no"}.`,
   );
   if (state.problems.length) lines.push("", "Problems:", problemsText(state.problems));
   if (state.migrated) {

@@ -451,8 +451,16 @@ joins as a shared client. The viewer is noVNC.
 **The Selkies relay.** An X11 CPU desktop also has a Selkies display, H.264
 over WebSockets from `127.0.0.1:5980` in the box
 ([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)).
-A viewer asks for it with `&stream=selkies`. The relay speaks WebSocket to
-Selkies over the display's route and carries messages, not bytes:
+A viewer asks for it with `&stream=selkies`. With the general setting
+`video` on, the panel shows such a desktop as video when its fastest of
+three round trips to BB's server takes 10 ms or more, and over RFB when it
+is quicker, as RFB answers keys faster on a LAN. The viewer's menu has
+"Show as video", and the tab keeps that choice for the box. Video needs
+WebCodecs, so a browser without it, or video that does not start, shows
+RFB. The panel's client decodes the H.264 with WebCodecs onto a canvas,
+takes keysyms from noVNC's keyboard handling, and stops the video while its
+tab is hidden. The relay speaks WebSocket to Selkies over the display's
+route and carries messages, not bytes:
 
 - Each viewer joins Selkies as a viewer (`role=viewer`), so Selkies never
   hands the display from one page to another. The relay passes only its

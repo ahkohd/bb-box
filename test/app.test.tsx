@@ -12,7 +12,8 @@ import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
-import { PASTE_CHORD_DELAY_MS, SETTLE_MS } from "../src/app/desktop.tsx";
+import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { SelkiesSession } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
@@ -239,6 +240,7 @@ afterEach(() => {
   FakeObserver.made = [];
   window.sessionStorage.clear();
   window.localStorage.clear();
+  forgetStreams();
 });
 
 function box(overrides: Partial<BoxView> = {}): BoxView {
@@ -409,7 +411,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[] } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; video?: boolean; pingMs?: number } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -432,7 +434,11 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
-    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
+    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
+    ping: async () => {
+      if (options.pingMs) await new Promise((resolve) => setTimeout(resolve, options.pingMs));
+      return null;
+    },
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktopClipboard: () => boxClipboard,
@@ -554,7 +560,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
     document,
     revision: document.revision,
     defaults: {
-      general: { boxesPerThread: 0, enrol: true, defaultKind: "linux" },
+      general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: false },
       kinds: {
         linux: { enabled: true, presets: { small: size(2, 4), medium: size(4, 8), large: size(8, 16) }, default: "small", largest: size(16, 32, 256) },
         "linux-desktop": { enabled: true, presets: { small: size(4, 8), medium: size(8, 16), large: size(16, 32) }, default: "small", largest: size(32, 64, 256) },
@@ -1832,6 +1838,197 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
   expect([client!.viewOnly, client!.resizeSession]).toEqual([true, false]);
   expect(slot.queryByTestId("control-ring")).toBeNull();
   expect(changes).toEqual(["takeControl box_2", "handBack box_2"]);
+});
+
+/** WebCodecs, which jsdom lacks: each decoder shows each chunk at once, as a 1280x800 frame. */
+class FakeDecoder {
+  static made: FakeDecoder[] = [];
+  state = "unconfigured";
+  readonly chunks: { type: string; timestamp: number }[] = [];
+  readonly #output: (frame: unknown) => void;
+  constructor(init: { output: (frame: unknown) => void }) {
+    this.#output = init.output;
+    FakeDecoder.made.push(this);
+  }
+  configure() {
+    this.state = "configured";
+  }
+  decode(chunk: { type: string; timestamp: number }) {
+    this.chunks.push(chunk);
+    this.#output({ displayWidth: 1280, displayHeight: 800, timestamp: chunk.timestamp, close() {} });
+  }
+  close() {
+    this.state = "closed";
+  }
+}
+
+/** Puts WebCodecs and a secure context in place for a test that shows video, and takes them away after. */
+function withVideo() {
+  FakeDecoder.made = [];
+  vi.stubGlobal("VideoDecoder", FakeDecoder);
+  vi.stubGlobal("EncodedVideoChunk", class {
+    readonly type: string;
+    readonly timestamp: number;
+    constructor(init: { type: string; timestamp: number }) {
+      this.type = init.type;
+      this.timestamp = init.timestamp;
+    }
+  });
+  vi.stubGlobal("isSecureContext", true);
+  return () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.stubGlobal("ResizeObserver", FakeObserver);
+  };
+}
+
+/** A Selkies video message: type 4, H.264, its frame id. */
+function videoFrame(id: number, key: boolean): ArrayBuffer {
+  const bytes = new Uint8Array(20);
+  bytes[0] = 4;
+  bytes[1] = 0x10 | (key ? 1 : 0);
+  bytes[2] = id >> 8;
+  bytes[3] = id & 0xff;
+  return bytes.buffer;
+}
+
+/** The video socket the viewer opened: through the relay, with &stream=selkies. */
+function videoSocket(): FakeSocket {
+  const socket = FakeSocket.made.find((made) => new URL(made.url).searchParams.get("stream") === "selkies");
+  if (!socket) throw new Error("no video socket");
+  return socket;
+}
+
+test("with the setting on, a desktop shows as video when the round trip to BB's server is slow, and over VNC when it is quick or the setting is off (056)", async () => {
+  const undo = withVideo();
+  try {
+    // Quick: VNC, after the viewer timed its round trips.
+    const quick = server([desktopBox()], { video: true });
+    const first = desktopTab(quick.handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const pings = () => first.inspection.rpcCalls.filter((call) => call.method === "ping").length;
+    expect(pings()).toBe(3);
+    cleanup();
+    dropAllKept();
+    forgetStreams();
+    forgetLive();
+    novnc.FakeRfb.made = [];
+
+    // The setting off: VNC, with no round trips timed.
+    const off = server([desktopBox()]);
+    desktopTab(off.handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    expect(pings()).toBe(3);
+    cleanup();
+    dropAllKept();
+    forgetStreams();
+    forgetLive();
+    novnc.FakeRfb.made = [];
+    FakeSocket.made = [];
+
+    // Slow: video, through the relay.
+    const slow = server([desktopBox()], { video: true, pingMs: 12 });
+    const slot = desktopTab(slow.handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+    const socket = videoSocket();
+    const url = new URL(socket.url);
+    expect([url.pathname, url.searchParams.get("box")]).toEqual([DESKTOP_PATH, "box_2"]);
+    act(() => socket.open());
+    expect(socket.sent).toEqual(['SETTINGS,{"displayId":"primary"}', "START_VIDEO"]);
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    // A delta before the first key frame is dropped; the key frame shows, and the desktop is connected.
+    act(() => void socket.onmessage?.({ data: videoFrame(4, false) }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    expect(FakeDecoder.made.at(-1)!.chunks).toEqual([{ type: "key", timestamp: 5 }]);
+    expect(await slot.findByText("The agent has control.")).toBeTruthy();
+    // It says which frame it has shown.
+    await waitFor(() => expect(socket.sent).toContain("CLIENT_FRAME_ACK 5 0"));
+
+    // With control, keys go as Selkies' kd and ku, and the pointer as m; without, nothing goes.
+    const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+    fireEvent.keyDown(canvas, { key: "a", code: "KeyA" });
+    expect(socket.sent.filter((sent) => typeof sent === "string" && sent.startsWith("kd,"))).toEqual([]);
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    fireEvent.keyDown(canvas, { key: "a", code: "KeyA" });
+    fireEvent.keyUp(canvas, { key: "a", code: "KeyA" });
+    expect(socket.sent).toContain("kd,97");
+    expect(socket.sent).toContain("ku,97");
+    canvas.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    expect(socket.sent.at(-1)).toBe("m,0,0,1,0");
+    canvas.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
+    expect(socket.sent.at(-1)).toBe("m,0,0,0,0");
+
+    // The box's clipboard, for the viewer with control, goes to this computer's.
+    const { writeText } = fakeClipboard(() => Promise.resolve(""));
+    act(() => void socket.onmessage?.({ data: `clipboard,${btoa("from the box")}` }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("from the box"));
+
+    // The menu's "Show as video", ticked, turns it off: VNC, which the tab keeps for this box only.
+    const item = within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as video" });
+    expect(item.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(item);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    expect(window.sessionStorage.getItem(streamChoiceKey("box_2"))).toBe("rfb");
+    expect(window.localStorage.length).toBe(0);
+    expect(socket.readyState).toBe(3);
+    expect(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as video" }).getAttribute("aria-checked")).toBe("false");
+  } finally {
+    undo();
+  }
+});
+
+test("a desktop whose video does not start shows over VNC, and says why (056)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => socket.end(1011, "This box's desktop has no Selkies stream"));
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    // The outcome first, the reason in its tooltip.
+    const note = slot.getByText("Video did not start, so this shows VNC.");
+    expect(note.getAttribute("title")).toBe("This box's desktop has no Selkies stream.");
+  } finally {
+    undo();
+  }
+});
+
+test("a video session stops its video while hidden, and starts again from a key frame; it pastes as Selkies' cw and the box's chord (056)", async () => {
+  const undo = withVideo();
+  vi.useFakeTimers();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    socket.onmessage?.({ data: videoFrame(1, true) });
+    expect(session.connection.state).toBe("connected");
+    socket.sent.length = 0;
+    session.hidden = true;
+    expect(socket.sent).toEqual(["STOP_VIDEO"]);
+    session.hidden = false;
+    expect(socket.sent).toEqual(["STOP_VIDEO", "START_VIDEO", "REQUEST_KEYFRAME"]);
+    socket.sent.length = 0;
+    session.setControl(true, true);
+    session.paste("héllo");
+    vi.advanceTimersByTime(PASTE_CHORD_DELAY_MS);
+    // Acknowledgements go on meanwhile, every 50 ms.
+    expect(socket.sent.filter((sent) => !String(sent).startsWith("CLIENT_FRAME_ACK"))).toEqual([
+      `cw,${btoa(String.fromCharCode(...new TextEncoder().encode("héllo")))}`,
+      "kd,65507",
+      "kd,118",
+      "ku,118",
+      "ku,65507",
+    ]);
+    session.dispose();
+  } finally {
+    vi.useRealTimers();
+    undo();
+  }
 });
 
 test("the tab the agent took control back from says so, and takes it again; another tab does not (038)", async () => {
