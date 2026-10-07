@@ -520,9 +520,16 @@ export function draftText(draft: Draft): string {
 
 /** What a try of a script did (049): a line per check, then the build's last lines. */
 export function tryText(result: TryResult): string {
+  // The first check is the script's own, in the build box; a later one failing means the script passed, and says which to fix.
+  const where = `on ${result.backend} (${result.kind}), in ${result.seconds} s, as a build runs it`;
+  const failed = result.checks.find((check) => !check.ok);
   const head = result.reason
     ? `The try on ${result.backend} (${result.kind}) did not finish, after ${result.seconds} s: ${result.reason}`
-    : `The script ${result.ok ? "passed" : "failed"} on ${result.backend} (${result.kind}), in ${result.seconds} s, as a build runs it.`;
+    : result.ok || !failed
+      ? `The script ${result.ok ? "passed" : "failed"} ${where}.`
+      : failed === result.checks[0]
+        ? `The script failed ${where}.`
+        : `The script passed ${where}, but this failed: ${failed.name}.`;
   const checks = result.checks.map((check) => `- ${check.name}: ${check.ok ? "ok" : "FAIL"}, ${check.detail}`);
   const lines = result.output.length ? ["", `The build's last ${result.output.length} lines:`, ...result.output] : [];
   const kept = result.kept ? [result.kept.box ? `Kept box ${result.kept.box} (${result.kept.detail}).` : `Kept no box: ${result.kept.detail}`] : [];
