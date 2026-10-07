@@ -8,6 +8,11 @@ its GPU experiment gates only GPU desktops. Extends
 resizes through its backend; and
 [048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md):
 wayvnc's viewers ask for lighter pictures, and Selkies waits on Wayland.
+Amended while its first step was built, 7 October 2026
+([measured](../research/rfb-quality.md)): the compression level stays
+noVNC's 2, as 9 saved under 2% of Xtigervnc's traffic and halved QEMU's
+frames; and as wayvnc never sends a still area again, its viewers ask for
+one losslessly once the screen is still.
 
 ## Context
 

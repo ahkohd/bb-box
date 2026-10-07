@@ -211,7 +211,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
       command: SSH_COMMAND,
       // wayvnc refuses a viewer's resize, so transports() gives this display
       // a resize that runs the display script's (048).
-      displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" }],
       computerUse: CUA_DRIVER,
       enrol: true,
     },

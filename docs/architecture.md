@@ -458,6 +458,16 @@ joins as a shared client. The viewer is noVNC.
 | macOS on Tart | the Virtualization framework's VNC, through a holder on the Mac | VNC password | none |
 | macOS on a pool's Mac | Screen Sharing, through SSH as the box user | type 30, as the box user | none |
 
+- **The picture.** The viewer asks every display for JPEG quality 2, and
+  keeps noVNC's compression level, 2
+  ([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md),
+  [measured](research/rfb-quality.md)). Xtigervnc sends a still area again
+  near losslessly about 0.1 s after it stops changing. wayvnc never does,
+  so for a display with `refresh: "viewer"`, the Wayland desktops, the
+  viewer asks for the area it drew as JPEG again with no quality level
+  once nothing has come for 250 ms, then for JPEG again
+  (`src/app/rfb-refresh.ts`). QEMU's VNC without `lossy=on` and Tart's
+  holder send no JPEG.
 - **A pool Mac's input.** macOS 27's Screen Sharing ignores a viewer that
   is not Apple's, so the display's `input` is core's `MacInput`: a JXA
   helper in the box user's session that posts each event with
@@ -893,9 +903,9 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
   hosts on Hetzner Cloud, then AWS, and places boxes on them; a cloud VM
   per box comes later, for Windows and GPU desktops.
 - **Desktop streams** ([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)):
-  the panel asks RFB displays for JPEG quality 2 and compression 9; Linux
-  X11 desktops add a Selkies display, H.264 over WebSockets, which the
-  relay carries message by message with the same control; and Tart's
+  Linux X11 desktops add a Selkies display, H.264 over WebSockets, which
+  the relay carries message by message with the same control; QEMU's VNC
+  on a Mac gets `lossy=on`, so the viewer's quality reaches it; and Tart's
   holder sends each viewer updates only as it asks.
 
 ## The conformance suite and the doctor

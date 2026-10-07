@@ -121,7 +121,11 @@ test("kinds lists only kinds with a template", () => {
   assert.equal(wayland.label, "Linux desktop on Wayland");
   assert.equal(wayland.capabilities.gpu, false);
   assert.deepEqual(wayland.capabilities.features, ["docker"]);
-  assert.deepEqual(wayland.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "Sway resizes through the backend (048)");
+  assert.deepEqual(
+    wayland.capabilities.displays,
+    [{ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" }],
+    "Sway resizes through the backend (048), and wayvnc sends no still area again, so the viewer asks (056)",
+  );
   assert.deepEqual(wayland.capabilities.computerUse, desktop.capabilities.computerUse);
 });
 

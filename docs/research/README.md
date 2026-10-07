@@ -15,6 +15,7 @@ decided is in the [decisions](../decisions/README.md).
 | [The macOS desktop session](macos-desktop-session.md) | 1 October 2026 | [030](../decisions/030-a-mac-runs-desktop-commands-through-launchctl-asuser.md) |
 | [Windows hosts](windows-hosts.md) | 1 October 2026 | built as [setup/docker-wsl](../../setup/docker-wsl/README.md) (#158) |
 | [A Wayland desktop](wayland-desktop.md) | 2 October 2026 | [048](../decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md) |
+| [RFB picture quality](rfb-quality.md) | 7 October 2026 | [056](../decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) |
 
 [computer-use-rig](computer-use-rig/README.md) is the test rig the computer
 use research ran in.
