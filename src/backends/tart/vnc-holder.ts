@@ -6,14 +6,17 @@
 // never connects again; a new run gets a new holder (holderScript).
 //
 // It reads each of the server's messages whole, and keeps exactly one update
-// request outstanding,
-// as a VNC viewer does, whether anyone watches or not: Tart answers requests
-// in order, and one for changes only when the screen changes. So it keeps the
-// last whole screen and the updates since, and a viewer that joins gets them
-// at once, then every update with the rest; it never asks Tart for anything.
-// When the updates since outgrow the whole screen, or the size changes, the
-// next request is for the whole screen again. Viewers' input goes upstream as
-// it is.
+// request outstanding, as a VNC viewer does, whether anyone watches or not:
+// Tart answers requests in order, and one for changes only when the screen
+// changes. It draws each update on its own copy of the screen, CopyRect too,
+// and notes for each viewer what changed since its last update. A viewer gets
+// an update only when it has asked for one, as noVNC does after each, with
+// all it missed, from the screen as it is: so a slow viewer gets fewer
+// updates that are current, rather than a queue (056). A viewer that joins
+// has the whole screen to come, so its first update is the screen, and the
+// holder never asks Tart for anything for a viewer. It asks for the whole
+// screen only at the start and after a new size. Viewers' input goes
+// upstream as it is.
 //
 // Tart's server does not send the pixel format a client asks for: red and
 // blue came out swapped. So the holder keeps the server's own format, as its
@@ -45,11 +48,8 @@ PIXEL_FORMAT = bytes([32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0])
 # CopyRect, Raw, DesktopSize, LastRect, Cursor. Tart's server ends the VM on an update request without DesktopSize.
 ENCODINGS = [1, 0, -223, -224, -239]
 ZLIB = 6
-# A viewer this far behind is dropped rather than held in memory.
-MAX_BEHIND = 64 * 1024 * 1024
-# The updates kept since the last whole screen, at most, before asking for a whole screen again.
-MAX_SINCE = 1000
-MAX_SINCE_BYTES = 64 * 1024 * 1024
+# A viewer's changed rects, at most, before they are the one rect around them all.
+MAX_CHANGED = 32
 
 
 def vnc_response(challenge, password):
@@ -65,22 +65,39 @@ def vnc_response(challenge, password):
     return done.stdout[:16]
 
 
+def inside(rect, other):
+    return other[0] <= rect[0] and other[1] <= rect[1] and rect[0] + rect[2] <= other[0] + other[2] and rect[1] + rect[3] <= other[1] + other[3]
+
+
 class Viewer:
     def __init__(self, writer):
         self.writer = writer
-        # It asked for updates, and has had the screen so far: it gets each update as it comes.
-        self.watching = False
-        self.synced = False
+        # What changed since its last update, which it has not had.
+        self.changed = []
+        self.resized = False
+        self.cursor = True
+        # It asked for an update and has not had it.
+        self.asked = False
         # Fastest: a viewer's first screen is deflated as it joins.
         self.deflate = zlib.compressobj(1)
 
+    def change(self, x, y, width, height):
+        if not width or not height:
+            return
+        rect = (x, y, width, height)
+        if any(inside(rect, other) for other in self.changed):
+            return
+        self.changed = [other for other in self.changed if not inside(other, rect)] + [rect]
+        if len(self.changed) > MAX_CHANGED:
+            left = min(r[0] for r in self.changed)
+            top = min(r[1] for r in self.changed)
+            right = max(r[0] + r[2] for r in self.changed)
+            bottom = max(r[1] + r[3] for r in self.changed)
+            self.changed = [(left, top, right - left, bottom - top)]
+
     def send(self, data):
-        if self.writer.is_closing():
-            return
-        if self.writer.transport.get_write_buffer_size() > MAX_BEHIND:
-            self.writer.close()
-            return
-        self.writer.write(data)
+        if not self.writer.is_closing():
+            self.writer.write(data)
 
 
 class Holder:
@@ -92,11 +109,9 @@ class Holder:
         # Where red, green and blue are in each of the server's 4-byte pixels.
         self.order = (0, 1, 2)
         self.cursor = None
-        # The last whole screen and the updates since, which a viewer that joins gets first.
-        self.base = None
-        self.since = []
-        self.base_bytes = 0
-        self.since_bytes = 0
+        # The screen, in noVNC's pixel format, once Tart has sent all of it at its size.
+        self.screen = None
+        self.whole = False
         # The one outstanding request is for the whole screen.
         self.asked_whole = False
 
@@ -172,6 +187,7 @@ class Holder:
         init = await r.readexactly(24)
         self.width, self.height = struct.unpack(">HH", init[:4])
         self.name = await r.readexactly(struct.unpack(">I", init[20:24])[0])
+        self.screen = bytearray(self.width * self.height * 4)
         bits, depth, big, true_colour = init[4:8]
         maxima = struct.unpack(">HHH", init[8:14])
         shifts = init[14:17]
@@ -205,44 +221,49 @@ class Holder:
     async def update(self):
         r = self.reader
         count = struct.unpack(">xH", await r.readexactly(3))[0]
-        rects = []
+        answered_whole = self.asked_whole
+        changed = []
+        cursor = resized = False
+        read = 0
         # A count of 65535 ends with LastRect.
-        while count == 0xFFFF or len(rects) < count:
+        while count == 0xFFFF or read < count:
+            read += 1
             head = await r.readexactly(12)
-            width, height, encoding = struct.unpack(">HHi", head[4:])
+            x, y, width, height, encoding = struct.unpack(">HHHHi", head)
             if encoding == -224:
                 break
             if encoding == 0:
-                pixels = self.reorder(await r.readexactly(width * height * 4))
-                rects.append((head[:8] + struct.pack(">i", ZLIB), None, pixels))
-                continue
-            if encoding == 1:
-                body = await r.readexactly(4)
+                self.draw(x, y, width, height, self.reorder(await r.readexactly(width * height * 4)))
+                changed.append((x, y, width, height))
+            elif encoding == 1:
+                source = struct.unpack(">HH", await r.readexactly(4))
+                self.draw(x, y, width, height, self.pixels(source[0], source[1], width, height))
+                changed.append((x, y, width, height))
             elif encoding == -223:
+                # A new size: the screen is drawn again, from the next whole one.
                 self.width, self.height = width, height
-                body = b""
+                self.screen = bytearray(width * height * 4)
+                resized = True
             elif encoding == -239:
                 body = self.reorder(await r.readexactly(width * height * 4)) + await r.readexactly((width + 7) // 8 * height)
                 self.cursor = head + body
+                cursor = True
             else:
                 raise RuntimeError("Tart's VNC server sent rect encoding %d, which the holder did not ask for" % encoding)
-            rects.append((head, body, None))
-        size = sum(len(body if tiles is None else tiles) for head, body, tiles in rects)
-        resized = any(struct.unpack(">i", head[8:])[0] == -223 for head, body, tiles in rects)
-        if self.asked_whole and not resized:
-            self.base, self.since, self.base_bytes, self.since_bytes = rects, [], size, 0
-        elif self.base is not None and not resized:
-            self.since.append(rects)
-            self.since_bytes += size
-        else:
-            # A new size: what is kept no longer draws the screen, until the next whole one.
-            self.base, self.since = None, []
+        if resized:
+            self.whole = False
+        elif answered_whole:
+            self.whole = True
+        for viewer in self.viewers:
+            if resized:
+                viewer.resized = True
+                viewer.changed = [(0, 0, self.width, self.height)]
+            for rect in changed:
+                viewer.change(*rect)
+            viewer.cursor = viewer.cursor or cursor
+        self.request(whole=not self.whole)
         for viewer in list(self.viewers):
-            if viewer.synced:
-                viewer.send(self.message(viewer, rects))
-            elif viewer.watching and self.base is not None:
-                self.replay(viewer)
-        self.request(whole=self.base is None or len(self.since) > MAX_SINCE or self.since_bytes > max(MAX_SINCE_BYTES, 2 * self.base_bytes))
+            self.answer(viewer)
 
     def reorder(self, data):
         # Each pixel's red, green and blue bytes, from the server's places to noVNC's.
@@ -255,29 +276,39 @@ class Holder:
         pixels[2::4] = data[blue::4]
         return bytes(pixels)
 
-    def message(self, viewer, rects):
-        parts = [struct.pack(">BxH", 0, len(rects))]
-        for head, body, tiles in rects:
-            if tiles is None:
-                parts.append(head + body)
-            else:
-                data = viewer.deflate.compress(tiles) + viewer.deflate.flush(zlib.Z_SYNC_FLUSH)
-                parts.append(head + struct.pack(">I", len(data)) + data)
-        return b"".join(parts)
+    def draw(self, x, y, width, height, pixels):
+        # A rect's pixels on the screen, as far as the screen goes.
+        pixels = memoryview(pixels)
+        row = width * 4
+        cut = max(0, min(width, self.width - x)) * 4
+        for line in range(max(0, min(height, self.height - y))):
+            at = ((y + line) * self.width + x) * 4
+            self.screen[at : at + cut] = pixels[line * row : line * row + cut]
 
-    def replay(self, viewer):
-        # The cursor, the last whole screen and the updates since: the screen as it is.
-        if self.cursor:
-            viewer.send(struct.pack(">BxH", 0, 1) + self.cursor)
-        viewer.send(self.message(viewer, self.base))
-        for rects in self.since:
-            viewer.send(self.message(viewer, rects))
-        viewer.synced = True
+    def pixels(self, x, y, width, height):
+        # A rect of the screen, row by row.
+        if x == 0 and width == self.width:
+            return bytes(self.screen[y * width * 4 : (y + height) * width * 4])
+        return b"".join(self.screen[((y + line) * self.width + x) * 4 : ((y + line) * self.width + x + width) * 4] for line in range(height))
+
+    def answer(self, viewer):
+        # An update for a viewer that has asked, once there is a whole screen and something it has not had.
+        if not viewer.asked or not self.whole or not (viewer.changed or viewer.resized or (viewer.cursor and self.cursor)):
+            return
+        rects = []
+        if viewer.resized:
+            rects.append(struct.pack(">HHHHi", 0, 0, self.width, self.height, -223))
+        if viewer.cursor and self.cursor:
+            rects.append(self.cursor)
+        for x, y, width, height in viewer.changed:
+            data = viewer.deflate.compress(self.pixels(x, y, width, height)) + viewer.deflate.flush(zlib.Z_SYNC_FLUSH)
+            rects.append(struct.pack(">HHHHiI", x, y, width, height, ZLIB, len(data)) + data)
+        viewer.asked, viewer.changed, viewer.resized, viewer.cursor = False, [], False, False
+        viewer.send(struct.pack(">BxH", 0, len(rects)) + b"".join(rects))
 
     def broadcast(self, data):
         for viewer in list(self.viewers):
-            if viewer.synced:
-                viewer.send(data)
+            viewer.send(data)
 
     def request(self, whole=False):
         # The one outstanding request, sent after the sign-in and after each update.
@@ -295,6 +326,8 @@ class Holder:
             writer.write(struct.pack(">I", 0))
             await reader.readexactly(1)
             writer.write(struct.pack(">HH", self.width, self.height) + PIXEL_FORMAT + struct.pack(">I", len(self.name)) + self.name)
+            # All of the screen at the size it was told is to come.
+            viewer.change(0, 0, self.width, self.height)
             self.viewers.add(viewer)
             while True:
                 kind = (await reader.readexactly(1))[0]
@@ -305,12 +338,11 @@ class Holder:
                     # SetEncodings: the encodings are the holder's.
                     await reader.readexactly(4 * struct.unpack(">xH", await reader.readexactly(3))[0])
                 elif kind == 3:
-                    await reader.readexactly(9)
-                    if not viewer.watching:
-                        # Its first request: the screen as it is, at once, then every update. Its later requests are the holder's own.
-                        viewer.watching = True
-                        if self.base is not None:
-                            self.replay(viewer)
+                    # An update request, answered from the screen: for changes since its last, or for all of it.
+                    if not (await reader.readexactly(9))[0]:
+                        viewer.change(0, 0, self.width, self.height)
+                    viewer.asked = True
+                    self.answer(viewer)
                 elif kind == 4:
                     self.writer.write(b"\x04" + await reader.readexactly(7))
                 elif kind == 5:
