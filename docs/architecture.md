@@ -331,15 +331,22 @@ held for 250 ms: the last frame of a pane opening is not lost.
   macOS 27 box: a paste left the guest's pasteboard unchanged, and a guest
   copy reached no viewer; Tart shares the pasteboard only with its own host);
   a pool Mac's own input does both. So for a display that says `clipboard:
-  "commands"`, as Tart's macOS desktop does, bb-box moves it itself for the
+  "commands"`, as Tart's macOS desktop does and both Windows desktops do
+  (Proxmox QEMU and Windows on a Mac's Tart, #461), bb-box moves it itself for the
   viewer with control (#464): the viewer sends its text over RPC, as UTF-8,
   and bb-box puts it on the pasteboard with `pbcopy` in the box user's desktop
   session before the viewer presses Cmd+V; the viewer with control asks for
   the box's clipboard over RPC every 2 s while its tab has the focus, and
   bb-box reads it with `pbpaste` there. Each takes one command over SSH. An
   empty pasteboard, or one with no text, leaves this computer's clipboard as
-  it is. For Windows the viewer says it moves none in either direction and
-  leaves the paste chord to noVNC.
+  it is. On Windows (#461) the commands are PowerShell 7's `Set-Clipboard`
+  and `Get-Clipboard`, with the text as UTF-8 bytes both ways, in the desktop
+  session's one-off scheduled task (039), and the viewer presses Ctrl+V. A
+  Windows read or write takes 2 to 4 s on Proxmox QEMU and about 8 s on a
+  Mac's Tart (measured 7 October 2026), longer than the viewer's 2 s poll, so
+  bb-box runs one read per box at a time, which overlapping polls share, and
+  drops a read that began before a paste, so a slow read cannot bring the old
+  text back over the person's paste.
 - wayvnc, which streams a Wayland desktop (048), offers no VNC password,
   so the relay signs in there with type 30 too, as the user `box`.
 - Windows uses RFB through Proxmox's console: nothing to install in the

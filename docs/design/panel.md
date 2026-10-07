@@ -536,13 +536,16 @@ titled after the box.
   note. Only a failure that needs action, such as a paste the box refused, is
   a lasting line in red under the toolbar, with Dismiss (the operator's note
   of 4 October 2026). Where nothing has come from the box, the note says why:
-  take control first, copy in the box first, or, for Windows, that the
-  desktop's server moves the clipboard in neither direction (QEMU's console
-  only with the SPICE guest agent). wayvnc and TigerVNC move it both ways,
-  measured 4 October 2026. Tart's VNC server moves it in neither direction,
-  measured the same day, so on a macOS VM on Tart bb-box moves it with
-  `pbcopy` and `pbpaste` in the box's desktop session, and the viewer's text
-  goes over RPC as UTF-8 (#464).
+  take control first, or copy in the box first. wayvnc and TigerVNC move it
+  both ways, measured 4 October 2026. Tart's VNC server moves it in neither
+  direction, measured the same day, so on a macOS VM on Tart bb-box moves it
+  with `pbcopy` and `pbpaste` in the box's desktop session, and the viewer's
+  text goes over RPC as UTF-8 (#464). QEMU's console, which shows both
+  Windows desktops, moves it only with the SPICE guest agent, which the
+  templates lack, so there bb-box moves it the same way with PowerShell's
+  `Set-Clipboard` and `Get-Clipboard` in the desktop session, and the viewer
+  presses Ctrl+V (#461). A Windows box from before #461 says the desktop
+  moves no clipboard until bb-box's next start gives it the commands.
 - **Control** (decisions 008 and 020):
 
   | Who | Text | Action |

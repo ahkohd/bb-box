@@ -860,12 +860,12 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
 }
 
 /**
- * Why a box's desktop moves no clipboard either way, or null where it does. A Windows box through QEMU's console: QEMU
- * moves it only through the SPICE guest agent, which the box does not have. A macOS VM on Tart, whose VNC server moves
- * none (measured on 4 October 2026), has it through bb-box's own commands (#464); a pool Mac through its own input.
+ * Why a box's desktop moves no clipboard either way, or null where it does. A macOS VM on Tart (#464) and a Windows box
+ * through QEMU's console (#461), whose servers move none, have it through bb-box's own commands in the box; a pool Mac
+ * through its own input. A Windows box from before #461 is told so until bb-box's next start gives it the commands.
  */
 function noClipboardThroughServer(box: BoxView): string | null {
-  if (box.os === "windows") return `${box.name}'s desktop does not report its clipboard to viewers, nor take theirs: Windows through QEMU's console moves it only with the SPICE guest agent, which the box does not have.`;
+  if (box.os === "windows" && box.display?.clipboard !== "commands") return `${box.name}'s desktop does not report its clipboard to viewers, nor take theirs: Windows through QEMU's console moves it only with the SPICE guest agent, which the box does not have.`;
   return null;
 }
 

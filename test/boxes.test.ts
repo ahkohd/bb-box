@@ -12,7 +12,7 @@ import { userInfo } from "node:os";
 import { join } from "node:path";
 import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, accessCheck, accessSetup, accessSetupMs, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
+import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
 import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
@@ -2422,4 +2422,20 @@ test("a job's command outlives its connection and leaves its exit status and out
   chmodSync(join(home, JOBS_DIR), 0o755);
   assert.deepEqual([direct.status, direct.stdout], [5, "direct\n"]);
   assert.throws(() => jobScript("../x", 4), /is not a job ID/);
+});
+
+test("a desktop's clipboard commands: pbcopy and pbpaste on macOS, Get-Clipboard and Set-Clipboard as UTF-8 on Windows, in the desktop session; none on Linux (#464, #461)", () => {
+  assert.equal(clipboardCommands("macos"), MAC_CLIPBOARD);
+  assert.equal(clipboardCommands("windows"), WINDOWS_CLIPBOARD);
+  assert.equal(clipboardCommands("linux"), null);
+  // UTF-8 bytes both ways, not the console's code page.
+  assert.match(WINDOWS_CLIPBOARD.read, /Get-Clipboard -Raw/);
+  assert.match(WINDOWS_CLIPBOARD.read, /\[Text\.Encoding\]::UTF8\.GetBytes/);
+  assert.match(WINDOWS_CLIPBOARD.read, /OpenStandardOutput/);
+  assert.match(WINDOWS_CLIPBOARD.write, /OpenStandardInput\(\)\.CopyTo/);
+  assert.match(WINDOWS_CLIPBOARD.write, /Set-Clipboard -Value \(\[Text\.Encoding\]::UTF8\.GetString/);
+  // In the desktop session: the one-off scheduled task in the user's interactive logon (039), which passes stdin in and stdout back.
+  const wrapped = command("windows", WINDOWS_CLIPBOARD.write, { session: "desktop", timeoutMs: 20_000 });
+  assert.match(wrapped, /Schedule\.Service/);
+  assert.match(wrapped, /OpenStandardInput\(\)\.CopyTo\(\$bbFile\)/);
 });

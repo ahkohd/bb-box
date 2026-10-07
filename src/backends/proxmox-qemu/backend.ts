@@ -115,7 +115,9 @@ const KIND: BoxKind = {
     gpu: false,
     features: [],
     command: { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true },
-    displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+    // QEMU's VNC server moves the clipboard only through the SPICE guest agent, which the template lacks, so bb-box
+    // moves it with Get-Clipboard and Set-Clipboard in the desktop session (#461).
+    displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }],
     computerUse: CUA_DRIVER,
     enrol: false,
   },

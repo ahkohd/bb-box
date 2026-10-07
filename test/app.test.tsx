@@ -1651,6 +1651,42 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
   }
 });
 
+test("a Windows box, whose QEMU console moves no clipboard, has it through bb-box: Cmd+V from a Mac and the menu's Paste send UTF-8 by RPC, then press the box's Ctrl+V, and Copy reads the box's (#461)", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
+  const { writeText } = fakeClipboard(() => Promise.resolve("from the Mac ✓"));
+  try {
+    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: true, clipboard: "commands" } })]);
+    const slot = desktopTab(handlers, "box_7");
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    const viewer = new URL(novnc.FakeRfb.made[0]!.url).searchParams.get("viewer");
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    // The menu's items are live here, not the old "does not report its clipboard" words.
+    const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+    expect(within(menu).getByRole("menuitem", { name: "Paste from this computer" }).getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
+    await waitFor(() => expect(changes).toContain(`desktopPaste box_7 ${viewer} from the Mac ✓`));
+    // Windows' paste chord is Ctrl+V, whatever the browser's platform.
+    await waitFor(() => expect(client.keys).toHaveLength(4));
+    expect(client.keys.map((key) => `${key.code}:${key.down ? "down" : "up"}`)).toEqual(["ControlLeft:down", "KeyV:down", "KeyV:up", "ControlLeft:up"]);
+    // Cmd+V on the desktop: the browser's paste event's text goes by RPC too, not as noVNC's Latin-1 cut text.
+    keyOnCanvas(slot, { key: "v", metaKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("日本 → Windows")));
+    await waitFor(() => expect(changes).toContain(`desktopPaste box_7 ${viewer} 日本 → Windows`));
+    await waitFor(() => expect(client.keys).toHaveLength(8));
+    expect(client.pasted).toEqual([]);
+    // What the box copies comes back through the RPC, and Copy writes it here.
+    copyInBox("copied in Windows ✓");
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Copy to this computer" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("copied in Windows ✓"));
+    expect(slot.queryByText(/does not report its clipboard/)).toBeNull();
+  } finally {
+    platform.mockRestore();
+  }
+});
+
 test("the pointer over the desktop: the local arrow without control whatever the box sends, the box's cursor with control, and never an invisible one", async () => {
   const { handlers } = server([desktopBox()]);
   const slot = desktopTab(handlers);
