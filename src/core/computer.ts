@@ -2079,7 +2079,9 @@ export class Computer {
     // An action whose window closes a moment later, as a dialog's button does, read it before it went.
     if (!changed && options.late) {
       await sleep(LATE_CLOSE_MS, use.signal);
-      if (!(await this.#listWindows(use)).has(id)) {
+      // A list that fails leaves the answer as it was: nothing changed.
+      const now = await this.#listWindows(use).catch(() => null);
+      if (now && !now.has(id)) {
         this.#lost(use.state, id);
         return this.#gone(use, before.window);
       }
