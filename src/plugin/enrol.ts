@@ -40,7 +40,7 @@ import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
-import { runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
+import { runWindowsCommand, windowsExecutor, windowsFailure, type WindowsEnrolment } from "./enrol-windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 
@@ -316,8 +316,9 @@ export class Enrolment {
           const transport = await this.#transport(box);
           phases?.mark("prepared");
           report.step(`Installing BB in box ${box.name}`);
-          if (box.capabilities.os === "windows") await this.#enrolWindows(box, transport, signal, phases);
-          else await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
+          // A Windows box runs BB's Windows installer, as BB's bootstrap asks for its POSIX one (#539).
+          const exec = box.capabilities.os === "windows" ? windowsExecutor(transport, this.#windowsEnrolment(box, signal), phases) : executor(transport, phases);
+          await this.#deps.bootstrap({ key, executor: exec, report, signal });
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
@@ -368,25 +369,22 @@ export class Enrolment {
   }
 
   /**
-   * Enrols a Windows box (#539): BB's enrolment command for the machine, in
-   * its Windows form, run in the box user's desktop session. BB's create
-   * gives no machine ID, so this waits for the one bb-box records once BB
-   * makes the machine.
+   * What the Windows executor asks of BB for box `box` (#539): its machine's
+   * ID, for which BB's create gives none, so it waits for the one bb-box
+   * records once BB makes the machine; and the machine's enrolment command.
    */
-  async #enrolWindows(box: BoxRecord, transport: CommandTransport, signal: AbortSignal, phases?: Phases): Promise<void> {
-    let hostId: string | null = null;
-    for (let tries = 0; !hostId; tries++) {
-      hostId = (await this.#deps.boxes.find(box.id))?.enrol.hostId ?? null;
-      if (hostId) break;
-      if (tries >= 100 || signal.aborted) throw new Error(`bb-box did not learn box ${box.name}'s BB machine, so it could not enrol it.`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    const enrolment = await this.#deps.hosts().experimental_getEnrollmentCommand({ hostId });
-    if (!enrolment?.windowsCommand) throw new Error(`BB gave no Windows enrolment command for box ${box.name}'s machine ${hostId}.`);
-    phases?.mark("install");
-    const result = await runWindowsCommand(transport, enrolment.windowsCommand, { timeoutMs: this.#timeoutMs, signal });
-    phases?.mark("installed");
-    if (result.exitCode !== 0) throw new Error(windowsFailure(`BB's Windows installer in box ${box.name}`, result));
+  #windowsEnrolment(box: BoxRecord, signal: AbortSignal): WindowsEnrolment {
+    return {
+      hostId: async () => {
+        for (let tries = 0; ; tries++) {
+          const hostId = (await this.#deps.boxes.find(box.id))?.enrol.hostId ?? null;
+          if (hostId) return hostId;
+          if (tries >= 100 || signal.aborted) throw new Error(`bb-box did not learn box ${box.name}'s BB machine, so it could not enrol it.`);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      },
+      command: (hostId) => this.#deps.hosts().experimental_getEnrollmentCommand({ hostId }),
+    };
   }
 
   async #transport(box: BoxRecord): Promise<CommandTransport> {
