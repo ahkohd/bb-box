@@ -406,6 +406,7 @@ export class DockerBackend implements Backend {
     build: (current, setup, options) => this.#buildStandard(current, setup, options),
     check: () => DOCKER_CHECK,
     startsFrom: true,
+    spares: true,
   };
   /** Placement is one at a time, so two acquires never take the last room on the host. */
   #placement: Promise<unknown> = Promise.resolve();

@@ -1,8 +1,13 @@
-# 053: microsandbox is a later backend, not built now
+# 053: microsandbox runs light Linux boxes as microVMs
 
-Status: accepted, 7 October 2026. Follows
+Status: accepted, 7 October 2026, as the operator's call. Follows
 [005](005-linux-boxes-on-proxmox-lxc.md), which named microVM runtimes
 such as microsandbox as possible backends.
+
+This record first said, on the same day, to build the backend later, when
+one of three conditions held (below). The operator has chosen to build it
+now: microsandbox is light, and agents make and drop many boxes, faster
+than with Docker. The spike's measurements stay as they were.
 
 ## Context
 
@@ -39,9 +44,14 @@ by `setup/docker/build.sh` and given to msb with `docker save` and
 
 ## Decision
 
-**Do not build a microsandbox backend now.** It runs our Linux images
-unchanged and fast, but adds too little over Docker and Tart to be a sixth
-backend while it is beta (below). Build it when one of these holds:
+**Build a microsandbox backend now, `microsandbox`, a virtual one.** It
+runs our Linux images unchanged, ready in under half a second, at about
+100 MiB of the host's memory for an idle box, which suits agents that make
+and drop many boxes. Speed and a low cost per box are the point, so each
+step below is measured.
+
+The record first set three conditions for building it, none of which held
+on 7 October 2026:
 
 1. A need that Docker and Tart do not meet: Docker in boxes on hosts where
    privileged containers are not allowed; Linux boxes on a Windows PC
@@ -52,7 +62,71 @@ backend while it is beta (below). Build it when one of these holds:
    ([050](050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md)):
    its UDP relay keeps one mapping per source port (upstream #498).
 
-Until then nothing in bb-box changes. #516 tracks it.
+The operator has chosen to build it anyway. The second condition is what
+the pinned release guards against (below). The third still keeps a box on
+a tailnet on Tailscale's relays. #516 tracks the work.
+
+### The build plan
+
+In small pull requests, in this order:
+
+1. **This record**, amended.
+2. **The msb relay.** msb has no daemon or API socket, so the Docker
+   relay ([042](042-a-docker-host-can-be-a-bb-machine.md)), which forwards
+   Docker's socket, cannot carry it. bb-box's host entry on a BB machine
+   gets a call that runs msb there, over the same kind of relay: each call
+   is a channel carrying the command line, stdin, stdout, stderr, the exit
+   status and a terminal's size. The entry runs only the pinned msb, and
+   imports images from Docker on the machine. On BB's server, a small
+   client stands in for the `msb` CLI, so transports use command lines as
+   they do for Docker (031).
+3. **The backend**, virtual, with:
+   - the kinds `linux`, with Docker on an ext4 disk of the box's own, so
+     `linux-docker` too ([041](041-every-linux-box-has-docker.md)), and
+     `linux-desktop-cpu`, whose VNC server is reached as a Docker box's
+     is;
+   - a host that is BB's server, one over `ssh://`, or a BB machine
+     through the msb relay, one backend per host, as for Docker;
+   - our own OCI images, which bb-box never pulls: it imports them onto
+     the host from Docker there, as `setup/docker/build.sh` builds or
+     loads them, with `docker save` and `msb load`;
+   - boxes that join BB as machines, as other Linux boxes do, with the
+     interface's capacity and doctor checks;
+   - the conformance suite, against a fake `msb` in the tests and against
+     a real host;
+   - a setup guide, `setup/microsandbox/README.md`, with what you need,
+     steps, check, update, remove, and what to do when it goes wrong
+     (#499).
+4. **Then, each measured:** spares from forks or snapshots where the host
+   allows them, each with a new identity before it enrols; the Wayland
+   desktop; and arm64 boxes on a Mac.
+
+### How the backend handles what the spike found
+
+- **BB's server on a private or tailnet address**: boxes run with
+  `--net public,private`.
+- **`msb start` does not rerun the image's command**: the backend runs
+  `bb-box-start` through `msb exec` after each start, and waits for
+  `/run/bb-box/ready`, on a `/run` that is a tmpfs.
+- **Docker in a box**: `/var/lib/docker` is an ext4 disk of the box's own,
+  removed with it.
+- **Proxmox LXC hosts**: LXC's seccomp filter answers EPERM to `FICLONE`,
+  so snapshots and flat roots fail there. The guide recommends a VM or the
+  machine itself, and the doctor tests `FICLONE` on the host. Boxes work in
+  LXC without them.
+- **A fork or snapshot copies its source's identity**: each box from one
+  gets a new machine ID, SSH host keys and hostname, and no enrolment of
+  its source's, before it enrols.
+- **msb is beta**: bb-box pins one release and checks its SHA-256 against
+  the one it was tested with. It installs msb, its guest agent and
+  libkrunfw as one release, in a folder of bb-box's own data, apart from a
+  user's `~/.microsandbox`, and keeps msb's state and images there too
+  (`MSB_HOME`). It never runs `msb self update`. A new release is a change
+  to bb-box that passes the conformance suite first, and the guide says
+  how to upgrade.
+- **Records a failed create leaves**: a create for a box that failed is
+  made again with `--replace`, which only a box of this install and the
+  same box ID may be.
 
 ### What it would add
 
@@ -69,7 +143,7 @@ Over Tart, for Linux on a Mac:
 - a box in under a second, where a Linux VM's cold clone takes about 5.5 s;
 - the same OCI images as Docker, for both architectures.
 
-### Why that is not enough now
+### Why it was not built at first
 
 - Docker already gives a Linux box in under a second. Docker and Proxmox
   LXC serve every Linux kind, including those on a GPU, which msb cannot.
@@ -201,7 +275,7 @@ and cgroup v2. It has no modules, IP_VS, WireGuard or AppArmor.
 | `linux-desktop` | | no: msb has no GPU |
 | macOS and Windows kinds | | no: msb runs Linux guests only |
 
-## If it is built
+## How it fits, as the spike found
 
 **Setup for a user:**
 
@@ -254,12 +328,15 @@ The conformance suite's Linux checks would apply as they are. Resizing
 
 ## Consequences
 
-- No new code, settings or guide.
-- The README and the architecture call microsandbox a later backend, with
-  a link here.
-- Not measured, for when it is built: a dual-stack host, a live enrolment,
-  a tailnet join, the Wayland desktop, our images on arm64, and Windows
-  hosts.
+- A sixth backend, `microsandbox`, in `src/backends/microsandbox/`, with
+  its guide in `setup/microsandbox/`. The README and the architecture list
+  it with its status.
+- bb-box's host entry runs msb on a BB machine for it: the pinned release
+  only, from bb-box's own data folder.
+- Not measured yet, and measured as the plan reaches them: a dual-stack
+  host, a live enrolment, a tailnet join, the Wayland desktop, our images
+  on arm64, Windows hosts, and forks on a host without `FICLONE`, where
+  msb copies the box's disk.
 - Until 1.0, upstream may change the CLI or state formats. A pinned
   release, upgraded by bb-box after the conformance suite passes, is the
   guard.

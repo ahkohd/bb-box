@@ -38,6 +38,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { FILE_ROUTE, FileRelay } from "../relay/files.ts";
+import { NAME_WINDOWS_SCRIPT, parseNamed } from "../backends/windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
 import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
@@ -240,7 +241,7 @@ export interface SetupOptions {
   /** setup/docker/build.sh, which builds images on a BB machine (042). By default the one beside the plugin's bundle. */
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
-  readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree">;
+  readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree" | "nameWindows">;
 }
 
 export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promise<BbBox> {
@@ -469,6 +470,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     storage: kv,
     setup: pins,
     log: (line) => bb.log.info(line),
+    // A build made or removed: the images' spares (#440) follow at once.
+    changed: () => void boxes.keepSpares(),
     // A tried image's box, from its kept build (#451), ready to look inside.
     async keep({ threadId, projectId, kind, backend, name, build, ref }): Promise<{ id: string; name: string }> {
       const box = await boxes.acquire({ threadId, projectId, kind, on: backend, from: { name: `${name} (tried)`, build, ref } });
@@ -489,6 +492,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     image: (projectId, kind, name) => (name === undefined ? projectImage(configuration.document, projectId, kind) : namedImage(configuration.document, name, kind)),
     baked: (name, backend, kind) => imageBakes.current(name, backend, kind),
     imageReady: (box) => imageBakes.ready(box),
+    imageSpares: () => imageBakes.spareWants(),
     // As the bundle's setup files have it; a build installs the same in the image.
     imageTools: imageTools(pins),
     notify,
@@ -575,6 +579,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const { command } = await boxes.transports(box);
       if (!command?.spawn) throw new BoxError("unsupported", `Box ${box.name}'s command transport cannot start the computer-use driver.`);
       return command.spawn(script, signal);
+    },
+    // In the box user's desktop session, whose windows they are (#365).
+    async nameWindows(box, signal) {
+      if (box.capabilities.os !== "windows") return [];
+      const { result } = await boxes.run(box.threadId, box.id, NAME_WINDOWS_SCRIPT, { session: "desktop", timeoutMs: 60_000, signal, waitForEnrolment: false, maxOutputBytes: 16 * 1024 });
+      if (result.exitCode !== 0) throw new Error(`Naming the untitled windows failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+      return parseNamed(result.stdout);
     },
     owner: (boxId) => desktops?.control.view(boxId).owner ?? "agent",
     takeBack: (boxId) => desktops?.control.takeBack(boxId) ?? Promise.resolve(false),
@@ -781,6 +792,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const images = Object.entries(configuration.document.images ?? {});
       if (!images.length) return [];
       const names = await projectNames.get("all").catch(() => new Map<string, string>());
+      const spareCounts = await boxes.imageSpareCounts();
       const options: ImageOptionView[] = [];
       for (const [name, image] of images) {
         options.push({
@@ -789,6 +801,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           projects: image.projects.map((id) => ({ id, name: names.get(id) ?? id })),
           mine: !!project && image.projects.includes(project),
           builds: await imageBakes.builds(name),
+          spares: Object.entries(spareCounts)
+            .filter(([key]) => key.startsWith(`${name}|`))
+            .map(([key, count]) => {
+              const [, backend = "", kind = ""] = key.split("|");
+              return { backend, kind, ...count };
+            }),
         });
       }
       return options.sort((a, b) => Number(b.mine) - Number(a.mine) || a.name.localeCompare(b.name));
@@ -883,7 +901,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
         });
       }
-      const imageChecks = [...(await imageJobs.checks(signal)), ...(await imageBakes.checks())];
+      const imageChecks = [...(await imageJobs.checks(signal)), ...(await imageBakes.checks()), ...(await boxes.imageSpareChecks())];
       if (imageChecks.length) {
         sections.push({
           title: "Images",

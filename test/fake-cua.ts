@@ -98,6 +98,14 @@ export interface FakeDesktop {
   menusInWindow?: boolean;
   /** Cua is on Wayland. */
   wayland?: boolean;
+  /** As Cua on Windows: a window with no title is neither listed nor read (#365). */
+  untitledUnlisted?: boolean;
+  /** A dialog's button closes it 100 ms after the click, as a GTK dialog does, not at once. */
+  closesLate?: boolean;
+  /** Meanwhile a read of the closing dialog fails with no reason, as Cua on Windows does. */
+  closingUnreadable?: boolean;
+  /** Dialogs closing late, by window ID. */
+  closing?: number[];
   /**
    * A click opens another process's panel, as a Windows tray icon does, and
    * Cua on Windows then says the click failed its foreground check (#484).
@@ -377,6 +385,9 @@ export class FakeCua {
 
   #window(desktop: FakeDesktop, args: Args): FakeWindow | Result {
     const window = desktop.windows.find((candidate) => candidate.id === args.window_id);
+    if (window && desktop.untitledUnlisted && !window.title.trim() && window.menuOf === undefined) {
+      return text(`No window with window_id ${window.id} exists. Call \`list_windows({"pid": ${window.pid}})\` for candidates.`, { code: "window_not_found" }, true);
+    }
     if (!window || (args.pid !== undefined && window.pid !== args.pid)) {
       return text(`window_id ${String(args.window_id)} is stale or no longer running; refresh list_windows.`, { code: "stale_window" }, true);
     }
@@ -460,7 +471,7 @@ export class FakeCua {
 
   #listWindows(): Result {
     const desktop = this.#load();
-    const windows = desktop.windows.filter((window) => window.menuOf === undefined).map((window) => this.#windowJson(window));
+    const windows = desktop.windows.filter((window) => window.menuOf === undefined && !(desktop.untitledUnlisted && !window.title.trim())).map((window) => this.#windowJson(window));
     return text(`${windows.length} windows.`, { windows });
   }
 
@@ -471,6 +482,7 @@ export class FakeCua {
     const standIn = !("id" in window) && desktop.wayland ? desktop.windows.find((other) => other.pid === args.pid && other.menuOf === undefined) : undefined;
     if (standIn) window = standIn;
     if (!("id" in window)) return window;
+    if (desktop.closingUnreadable && desktop.closing?.includes(window.id)) return text("", undefined, true);
     this.#reads.set(window.id, (this.#reads.get(window.id) ?? 0) + 1);
     const owner = desktop.windows.find((other) => other.id === window.menuOf);
     const placed = owner
@@ -626,8 +638,14 @@ export class FakeCua {
     } else if (node.key === "clear" && window.dialogOf === undefined) {
       desktop.windows.push({ id: desktop.nextWindow++, pid: window.pid, app: window.app, title: "Clear all tasks?", x: 300, y: 300, width: 300, height: 150, onScreen: true, dialogOf: window.id });
     } else if (window.dialogOf !== undefined && (node.key === "clear" || node.key === "cancel")) {
-      if (node.key === "clear") desktop.tasks[window.dialogOf] = [];
-      desktop.windows = desktop.windows.filter((other) => other.id !== window.id);
+      const close = (later: FakeDesktop) => {
+        if (node.key === "clear") later.tasks[window.dialogOf!] = [];
+        later.windows = later.windows.filter((other) => other.id !== window.id);
+      };
+      if (desktop.closesLate) {
+        desktop.closing = [...(desktop.closing ?? []), window.id];
+        setTimeout(() => this.#change(close), 100);
+      } else close(desktop);
     }
   }
 
@@ -750,7 +768,7 @@ export class FakeCua {
       const wide = name === "wide";
       setTimeout(() => {
         this.#change((later) => {
-          const title = name === "editor" ? "Untitled 1 - Editor" : name;
+          const title = name === "editor" ? "Untitled 1 - Editor" : name === "untitled" ? "" : name;
           later.windows.push({ id, pid, app: name, title, x: 0, y: 0, width: wide ? 4000 : 640, height: wide ? 200 : 480, onScreen: true });
         });
       }, 200);

@@ -481,6 +481,8 @@ export interface ImageOptionView {
   readonly mine: boolean;
   /** Where it is built ahead, so a box there starts from the build; elsewhere its script runs as the box starts. */
   readonly builds: readonly { readonly kind: string; readonly backend: string; readonly build: string | null; /** ISO 8601. */ readonly built: string }[];
+  /** Its spares (#440), where it has any: a box claims a ready one at once. */
+  readonly spares: readonly { readonly kind: string; readonly backend: string; readonly ready: number; readonly making: number }[];
 }
 
 /**
@@ -492,7 +494,11 @@ export function imagesText(images: readonly ImageOptionView[], kind: string): st
   const covering = images.filter((image) => image.kinds.includes(kind));
   if (!covering.length) return "";
   const words = (image: ImageOptionView) => {
-    const built = image.builds.filter((build) => build.kind === kind).map((build) => build.backend);
+    const spare = (backend: string) => {
+      const count = image.spares.find((one) => one.kind === kind && one.backend === backend);
+      return count?.ready ? " with a spare ready" : count?.making ? " with a spare being made" : "";
+    };
+    const built = image.builds.filter((build) => build.kind === kind).map((build) => `${build.backend}${spare(build.backend)}`);
     return `${image.name}${image.mine ? " (this project's, the default)" : ` (${image.projects.map((project) => project.name).join(", ")})`}${built.length ? `, built ahead on ${built.join(", ")}` : ""}`;
   };
   const mine = covering.filter((image) => image.mine);
@@ -520,9 +526,16 @@ export function draftText(draft: Draft): string {
 
 /** What a try of a script did (049): a line per check, then the build's last lines. */
 export function tryText(result: TryResult): string {
+  // The first check is the script's own, in the build box; a later one failing means the script passed, and says which to fix.
+  const where = `on ${result.backend} (${result.kind}), in ${result.seconds} s, as a build runs it`;
+  const failed = result.checks.find((check) => !check.ok);
   const head = result.reason
     ? `The try on ${result.backend} (${result.kind}) did not finish, after ${result.seconds} s: ${result.reason}`
-    : `The script ${result.ok ? "passed" : "failed"} on ${result.backend} (${result.kind}), in ${result.seconds} s, as a build runs it.`;
+    : result.ok || !failed
+      ? `The script ${result.ok ? "passed" : "failed"} ${where}.`
+      : failed === result.checks[0]
+        ? `The script failed ${where}.`
+        : `The script passed ${where}, but this failed: ${failed.name}.`;
   const checks = result.checks.map((check) => `- ${check.name}: ${check.ok ? "ok" : "FAIL"}, ${check.detail}`);
   const lines = result.output.length ? ["", `The build's last ${result.output.length} lines:`, ...result.output] : [];
   const kept = result.kept ? [result.kept.box ? `Kept box ${result.kept.box} (${result.kept.detail}).` : `Kept no box: ${result.kept.detail}`] : [];

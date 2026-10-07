@@ -28,7 +28,15 @@ The row says how the backend is:
 
 ### Setting up a backend
 
-Select **Set up** on the row. Its settings open below it. Each backend needs different settings: see its setup guide and the [configuration reference](../reference/configuration.md).
+Select **Set up** on the row. Its settings open below it. Each backend needs different settings, which its setup guide explains:
+
+- [Proxmox LXC](../../setup/proxmox-lxc/README.md)
+- [Proxmox QEMU](../../setup/proxmox-qemu/README.md)
+- [SSH host pool](../../setup/ssh-pool/README.md)
+- [Docker](../../setup/docker/README.md), and [Docker in WSL on a Windows PC](../../setup/docker-wsl/README.md)
+- [Tart](../../setup/tart/README.md)
+
+Every setting is also in the [configuration reference](../reference/configuration.md).
 
 A secret, such as a password or an API token, never shows its value. Its field says whether it is set, and you can replace or clear it.
 

@@ -72,11 +72,16 @@ test("a box's choice of image: the project's first, the default, then standard, 
 });
 
 test("box_list's images per kind, and a box's image in its details (049)", () => {
-  const option = (name: string, mine: boolean, changes: Partial<ImageOptionView> = {}): ImageOptionView => ({ name, kinds: ["linux"], projects: [{ id: "prj_x", name: "Example" }], mine, builds: [], ...changes });
+  const option = (name: string, mine: boolean, changes: Partial<ImageOptionView> = {}): ImageOptionView => ({ name, kinds: ["linux"], projects: [{ id: "prj_x", name: "Example" }], mine, builds: [], spares: [], ...changes });
   const images = [option("rust-tools", true, { builds: [{ kind: "linux", backend: "proxmox-lxc", build: "build.20261003-021500-3f9c", built: "2026-10-03T02:15:00.000Z" }] }), option("other", false)];
   assert.equal(imagesText(images, "linux"), " Images: rust-tools (this project's, the default), built ahead on proxmox-lxc; standard; other (Example).");
   assert.equal(imagesText([option("other", false)], "linux"), " Images: standard (the default); other (Example).");
   assert.equal(imagesText(images, "macos"), "");
+  // Its spares (#440): where one is ready, or being made.
+  const spared = [option("rust-tools", true, { builds: images[0]!.builds, spares: [{ kind: "linux", backend: "proxmox-lxc", ready: 1, making: 0 }] })];
+  assert.equal(imagesText(spared, "linux"), " Images: rust-tools (this project's, the default), built ahead on proxmox-lxc with a spare ready; standard.");
+  const making = [option("rust-tools", true, { builds: images[0]!.builds, spares: [{ kind: "linux", backend: "proxmox-lxc", ready: 0, making: 1 }] })];
+  assert.match(imagesText(making, "linux"), /built ahead on proxmox-lxc with a spare being made;/);
   assert.equal(imageWords({ name: "rust-tools", state: "baked", build: "build.20261002-021500-3f9c", from: "9123" }), "rust-tools, built 2 October");
   assert.equal(imageWords({ name: "rust-tools", state: "done", seconds: 22 }), "rust-tools, its script ran as the box started, in 22 s");
 });

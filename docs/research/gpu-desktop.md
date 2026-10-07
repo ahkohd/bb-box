@@ -4,6 +4,11 @@ How apps in a Linux desktop box render on the host's NVIDIA GPU, when the box
 is an unprivileged container and the desktop is streamed rather than shown on
 a monitor.
 
+Research, 30 September 2026: a note of what was known and measured then, not
+the current design, which is in [the architecture](../architecture.md).
+Settled by [006](../decisions/006-gpu-desktop-on-xorg.md); its experiment
+with Selkies' Xvfb is still open.
+
 Status: a working path is measured; a better one is proposed and needs one
 experiment. Checked on 30 September 2026.
 

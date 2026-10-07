@@ -20,7 +20,8 @@ tools do not.
 ## Choosing a box
 
 `box_list` shows the kinds on offer, their sizes, where each can come from
-("On: ..."), and the project's images. The
+("On: ..."), and the project's images, with whether each has a spare ready
+where it is built ahead, which its boxes claim at once (#440). The
 [kinds reference](../../docs/reference/kinds.md) describes every kind.
 
 - Ask for the kind's default size when you can. A kind can keep spare boxes
@@ -43,84 +44,61 @@ tools do not.
 
 ## Running commands
 
-- `box_run` returns when the script's shell exits. What a command started in
-  the background writes after that is lost unless you redirect it: start a
-  server with `nohup <cmd> >server.log 2>&1 &`.
+`box_run`'s description gives its timeout, its jobs after 270 s and how to
+keep a server running. Its answers, and `box_job`'s, say what to do when
+bb-box restarts. Beyond those:
+
 - A command that exits with a non-zero code is not a tool error. A command
   that times out is.
-- BB ends a tool call after about five minutes, so `box_run` returns after
-  270 s. A command still running then goes on in the box as a job. The answer
-  names the job and gives its output so far; call `box_job` for the rest.
-- When bb-box restarts, as for an update, a running command goes on as a job
-  too, and the answer names it. bb-box is back within a minute. Until then a
-  box may not answer: wait about 30 s and try again. Do not release it: its
-  commands and jobs go on.
 - A box can stop on its own, as when its VM crashes. The tool's error and
   `box_status` say when and why. bb-box starts it again unless it crashed in
   the last 10 minutes.
 - Each command reads `~/.config/bb-box/env`, which sets `BB_BOX_ID`,
   `BB_BOX_NAME`, `BB_BOX_KIND`, `BB_THREAD_ID`, and `BB_HOST_ID` once the box
   is a BB machine.
-- `desktop: true` runs the command in the desktop session, so it can open
-  windows. On a Mac, only such a command reaches the login keychain, which
-  git's keychain helper and Xcode's signing use.
+- On a Mac, only a desktop command (`desktop: true`) reaches the login
+  keychain, which git's keychain helper and Xcode's signing use.
 
 ### Windows
 
-- Commands run in PowerShell 7, as an administrator.
+The Windows kinds' descriptions in `box_list` say how commands run there.
+Beyond those:
+
 - A Windows box is not a BB machine yet, so `box_thread` cannot start a
   thread there.
-- What a command starts with `Start-Process`, `Start-Job` or `cmd /c start`
-  ends with the command. Start a server with
-  `Start-Detached { <cmd> } server.log` instead. It returns the process ID,
-  and gets the command's directory and environment variables, but not its
-  PowerShell variables: pass values in `$env:`.
-- Start a GUI program the same way, in a desktop command (`desktop: true`) so
-  its window shows: `Start-Detached { & <program> <args> } app.log`. Its
-  output reaches the log.
-- A desktop command runs unelevated, as an app you open does. It has no job:
-  `box_run` stops it after 270 s, with its output so far.
+- `Start-Detached` gives the command it starts the environment variables,
+  but not PowerShell variables: pass values in `$env:`.
+- For a GUI program's window to show, call `Start-Detached` in a desktop
+  command (`desktop: true`).
 
 ## Copying files
 
-`box_copy` copies one file of any size in one call; do not split it. Tar a
-directory first.
+`box_copy`'s description gives its sizes and paths. Beyond those:
 
-- A file over 16 MiB streams through bb-box's worker on the thread's
-  machine, and both ends check its SHA-256. A copy that fails leaves the
-  target as it was.
-- The machine that holds the file must be connected to BB, as it is while
-  the thread runs there.
-- A path in the thread's storage folder works both ways: give it in full, or
-  starting with `$BB_THREAD_STORAGE/`.
+- A copy that fails leaves the target as it was.
+- The machine that holds the workspace or storage folder must be connected
+  to BB, as it is while the thread runs there.
 
 ## Desktops and computer use
 
-A person can watch a desktop box from BB and take control of its keyboard
-and mouse. While they hold control, every computer tool refuses at once.
-Wait, or call `computer_take_control` only when they ask you to continue or
-have clearly finished.
+Open an app or a URL with `computer_launch`, then read a window with
+`computer_observe`, act on it with `computer_act` and type with
+`computer_type`. Their descriptions say how. Beyond those:
 
-- Open an app or a URL with `computer_launch`. Read a window as text with
-  `computer_observe`, and act on its references, such as `e12`: click with
-  `computer_act`, type with `computer_type`. Take an image with
-  `computer_screenshot` only when appearance matters.
+- A person can take control of a desktop from BB. While they hold it, every
+  computer tool refuses at once; call `computer_take_control` only when they
+  ask you to continue or have clearly finished. Afterwards, observe the
+  window again: the references and images from before are gone.
 - A reference stays valid while its element is on screen. When it has gone,
-  the tool says so: observe the window again. After a person held control,
-  observe again too.
-- A web page's tree can be long: pass `query` to see only the lines you
-  need.
-- Pixels count only in your latest image of that window, or of the desktop.
-  An image is at most 1568 pixels on each edge, so it can be smaller than
-  the screen; each answer gives the scale.
-- An action that opens a menu or popup says so, with its items. A menu never
-  becomes the active window: to press keys in it, such as Escape, give its
-  window ID or window `"desktop"`.
+  the tool says so: observe the window again.
 - When an app refuses input in the background, bb-box uses the real pointer
   or keyboard, and says so. The desktop's focus may then have moved.
-- On Windows, `computer_windows` lists only windows with a title. An app that
-  draws everything itself, such as a GPUI app, has no accessibility tree:
-  drive it with `computer_screenshot` and pixel actions.
+- On Windows, a window with no title gets the title "<app> (untitled)", as
+  Cua reaches only windows with one: `computer_launch` names it at once, and
+  `computer_windows` names it in the background and lists it on a later
+  call, within about 15 s, and each says so. An app that draws everything
+  itself, such as a GPUI app, has no accessibility tree: drive it with
+  `computer_screenshot` and pixel actions.
 
 ## BB machines
 
@@ -168,16 +146,10 @@ one, follow these steps:
 
 ## The bb box command
 
-The `bb box` command checks and sets up bb-box. The
-[CLI reference](../../docs/reference/cli.md) lists every subcommand, and the
-[configuration reference](../../docs/reference/configuration.md) every
-setting.
+The `bb box` command checks and sets up bb-box; the
+[CLI reference](../../docs/reference/cli.md) lists it. An agent mostly needs:
 
-- `bb box doctor` checks each backend and says how to fix what is wrong.
-- `bb box config show --json` prints the configuration with no secret in it.
-  `bb box config apply <file>` reads the file on the machine BB's server runs
-  on.
-- `bb box machines add <kind> --name <name>` keeps a box as one of your own
-  BB machines, which no thread owns and which lives until you remove it.
-- `bb plugin logs bb-box` says why each box was released, and how long each
-  step of joining BB took.
+- `bb box doctor`, which checks each backend and says how to fix what is
+  wrong.
+- `bb plugin logs bb-box`, which says why each box was released, and how long
+  each step of joining BB took.

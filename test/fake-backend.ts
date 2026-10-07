@@ -662,9 +662,9 @@ export class FakeTransport implements CommandTransport {
 
   async spawn(script: string, signal?: AbortSignal): Promise<ByteChannel> {
     await this.#answer();
-    // The fake Cua Driver is the box's cua-driver command.
+    // The fake Cua Driver is the box's cua-driver command. A Windows box's PowerShell starts a program with &, which sh does without.
     const path = `${FAKE_CUA_BIN}:${process.env.PATH ?? ""}`;
-    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && ${script}`] }, this.#signal(signal));
+    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && ${script.replace(/^& /, "")}`] }, this.#signal(signal));
   }
   /** A shell on the test machine in the fake box's home, on a PTY. */
   async terminal(size: TerminalSize, signal?: AbortSignal): Promise<Terminal> {

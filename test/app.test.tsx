@@ -2533,8 +2533,8 @@ test("the Display choice shows only when a system offers X11 and Wayland, defaul
 
 /** Two projects' images for Linux (049): this project's, and another project's. */
 const IMAGES: ImageOptionView[] = [
-  { name: "rust-tools", kinds: ["linux"], projects: [{ id: "proj_1", name: "Example" }], mine: true, builds: [{ kind: "linux", backend: "proxmox-lxc", build: "b1", built: "2026-10-02T10:00:00Z" }] },
-  { name: "go-tools", kinds: ["linux"], projects: [{ id: "proj_2", name: "Another project" }], mine: false, builds: [] },
+  { name: "rust-tools", kinds: ["linux"], projects: [{ id: "proj_1", name: "Example" }], mine: true, builds: [{ kind: "linux", backend: "proxmox-lxc", build: "b1", built: "2026-10-02T10:00:00Z" }], spares: [] },
+  { name: "go-tools", kinds: ["linux"], projects: [{ id: "proj_2", name: "Another project" }], mine: false, builds: [], spares: [] },
 ];
 
 test("the Image choice shows under Type where an image covers the kind, this project's first and chosen, and Create sends the choice (049)", async () => {
