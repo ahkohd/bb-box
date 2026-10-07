@@ -16,10 +16,10 @@ backend was measured against Docker on the same hosts
 ([below](#what-the-built-backend-measured)): **microsandbox is an option
 beside Docker, never a replacement for it and never the default.** It
 stays last in the backend order, so only a box that asks for it gets a
-microVM. On a Linux host under nested KVM, Docker made boxes about twice as fast and held
-far less memory while idle; on bare metal, msb was as fast as Docker. What
-microsandbox gives on Linux is a kernel per box. On a Mac, microsandbox is
-far faster than Tart's Linux VMs.
+microVM. On a Linux host under nested KVM, Docker made boxes about twice
+as fast; on bare metal, msb was as fast as Docker. Either way an idle
+microVM held far more memory. What microsandbox gives on Linux is a kernel
+per box. On a Mac, microsandbox is far faster than Tart's Linux VMs.
 
 ## Context
 
