@@ -30,6 +30,8 @@ is a log: bb-box does not file these with BB.
 | [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | not met | `box_run` returns after 270 s, and a command still running goes on as a job for `box_job`; a Windows command in the desktop session, which has no job, is stopped (#486, #414) |
 | [Move large files through the file API](#20-move-large-files-through-the-file-api) | not met | `box_copy` moves a file over 16 MiB through bb-box's own worker on the machine that holds it, which needs that machine connected to BB (#492) |
 | [Stop a plugin's machine workers after its tool calls](#21-stop-a-plugins-machine-workers-after-its-tool-calls) | not met | a command in a Docker box on a BB machine loses its box first at a deploy, so `box_run` waits up to 10 s to see that bb-box is stopping before it names the job (#415) |
+| [Remove a machine whose host is gone](#22-remove-a-machine-whose-host-is-gone) | not met | a Windows box's machine stays in BB's list as "removing" when the box goes before BB has torn down the threads' environments on it, so bb-box waits up to 2 minutes for BB's removal before it releases a Windows box (#539) |
+| [Install commands for the machine's OS](#23-install-commands-for-the-machines-os) | not met | BB's install action for Cursor's CLI on a Windows machine is a bash script, which Windows cannot run (#561) |
 
 ## 1. BB's host app on Windows
 
@@ -846,6 +848,57 @@ reason as the workers stop.
 **Until then.** A `box_run` whose box stops answering waits up to 10 s to see
 whether bb-box is stopping. If it is, the answer names the job, which
 `box_job` reads once bb-box is back; if not, it fails as before.
+
+## 22. Remove a machine whose host is gone
+
+**Status in BB 0.45.0: not met.** SDK 0.6.15's `hosts.delete` takes no force,
+and neither do `bb machine remove` and `bb machine retry-cleanup`.
+
+**What bb-box needs.** To remove a Windows box's machine, made with BB's
+manual provider (#539), when the box goes, even when the box has gone first,
+so that no machine is left in BB's list.
+
+**What BB does now.** Before it removes a machine, BB tears down each
+thread's environment on it, such as a worktree, and each teardown needs the
+machine connected. `hosts.delete` of a manual machine returns before then. If
+the machine has gone by then, each teardown fails with "Host is not
+connected", BB tries it again, and the machine stays in BB's list as
+"removing", disconnected, for good. Removing the machine again does not help,
+nor does archiving the environment's thread and asking for the environment's
+cleanup. There is no way to force an environment's teardown, or a machine's
+removal, once its host is gone.
+
+**What we ask.** A way to remove a machine whose host is gone, such as a
+forced `hosts.delete` and `bb machine remove --force` that drop its
+environments' teardowns. Or a teardown that gives up when its machine is
+being removed and is not connected. A `hosts.delete` of a manual machine
+that returns once BB has removed it would also help.
+
+**Until then.** Once bb-box has asked BB to remove a Windows box's manual
+machine, it waits up to 2 minutes for BB to finish before it releases the
+box, and keeps its record of the machine until BB no longer has it. Its sweep
+looks again, and it logs a machine BB has not removed in that time. One whose
+box went first stays in BB's list.
+
+## 23. Install commands for the machine's OS
+
+**Status in BB 0.45.0: not met.** On a Windows machine, SDK 0.6.15's
+`hosts.providerCliStatus` gives a bash command to install Cursor's CLI.
+
+**What bb-box needs.** BB's install action for each provider's CLI in a form
+the machine can run, so that a Windows box can get an agent CLI (#561).
+
+**What BB does now.** `hosts.providerCliStatus` gives each provider's install
+command for the machine. On a Windows machine, Claude Code's is PowerShell,
+`irm https://claude.ai/install.ps1 | iex`, and Codex's and Pi's are
+`npm.cmd install -g`. Cursor's is a bash script that runs `mktemp`, `curl`
+and `bash`, which Windows cannot run.
+
+**What we ask.** Cursor's install action in a Windows form on a Windows
+machine, or none where BB has no Windows installer for it.
+
+**Until then.** bb-box installs no agent CLI itself. Its Windows images are
+to carry Claude Code, Codex and Pi (#450).
 
 ## Checked, no request needed
 
