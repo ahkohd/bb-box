@@ -1,15 +1,21 @@
 // The desktop viewer's WebSocket route, /desktop?box=<id>&viewer=<id>, and
 // the shared control behind it. Each connection gets its own relay to the
-// box's display (007, 011). The viewer ID names one tab of the panel, so only
-// the tab that took control sends input (008). A display whose stream server
-// cannot resize is resized by its backend (021). Each person's control is
-// kept in plugin storage for the plugin's next instance (045).
+// box's display (007, 011): RFB by default, or with &stream=selkies the box's
+// Selkies display, beside its RFB one (056). The viewer ID names one tab of
+// the panel, so only the tab that took control sends input (008). A display
+// whose stream server cannot resize is resized by its backend (021), and a
+// Selkies viewer's desktop is resized through the RFB display, which Selkies
+// follows. Each person's control is kept in plugin storage for the plugin's
+// next instance (045).
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { BoxRecord, Boxes } from "../core/boxes.ts";
 import { Control, RECONNECT_MS, STALE_MS, type KeptControl, type ViewerConnection } from "../core/control.ts";
 import { clipboardCommands } from "../core/in-box.ts";
 import { RfbRelay, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
+import type { Screen } from "../core/rfb.ts";
+import { SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
+import { openRoute } from "../transports/route.ts";
 import type { Display } from "../transports/types.ts";
 
 export const DESKTOP_ROUTE = "/desktop";
@@ -69,15 +75,31 @@ export interface Desktops {
   dispose(): Promise<void>;
 }
 
-/** The display the viewer shows: the box's first, until boxes have more than one. */
-async function display(boxes: Boxes, boxId: string): Promise<Display> {
+/** The screen a Selkies viewer's resize sets, through the RFB display: screen 0, as noVNC's before the server names one. */
+const SELKIES_SCREEN: Screen = { id: 0, flags: 0 };
+
+/** The box's displays, when it is running and has one. */
+async function displays(boxes: Boxes, boxId: string): Promise<readonly Display[]> {
   const box = await boxes.find(boxId);
   if (!box) throw new Error("bb-box has no such box. It may have been released.");
   if (box.state !== "ready") throw new Error(`Box ${box.name} is not running, so its desktop cannot show.`);
-  const [first] = (await boxes.transports(box)).displays;
-  if (!first) throw new Error(`Box ${box.name} has no desktop.`);
-  if (first.protocol !== "rfb") throw new Error(`The viewer cannot show a ${first.protocol} desktop yet.`);
-  return first;
+  const found = (await boxes.transports(box)).displays;
+  if (!found.length) throw new Error(`Box ${box.name} has no desktop.`);
+  return found;
+}
+
+/** The RFB display: the box's first. Control and sizes go through it. */
+async function display(boxes: Boxes, boxId: string): Promise<Display> {
+  const [first] = await displays(boxes, boxId);
+  if (first!.protocol !== "rfb") throw new Error(`The viewer cannot show a ${first!.protocol} desktop yet.`);
+  return first!;
+}
+
+/** The box's Selkies display (056). */
+async function selkiesDisplay(boxes: Boxes, boxId: string): Promise<Display> {
+  const found = (await displays(boxes, boxId)).find((each) => each.protocol === "selkies");
+  if (!found) throw new Error("This box's desktop has no Selkies stream.");
+  return found;
 }
 
 interface Caller {
@@ -91,14 +113,15 @@ interface Caller {
  * latest size is set. A replaced request settles with the one that replaced it.
  */
 class Resizes {
-  readonly #waiting = new Map<string, { display: Display; size: Size; callers: Caller[] }>();
+  readonly #waiting = new Map<string, { apply: (size: Size) => Promise<void>; size: Size; callers: Caller[] }>();
   readonly #running = new Set<string>();
 
-  request(boxId: string, display: Display, size: Size): Promise<void> {
+  /** Sets the size with `apply`, a display's resize or another way. */
+  request(boxId: string, apply: (size: Size) => Promise<void>, size: Size): Promise<void> {
     return new Promise((resolve, reject) => {
       const waiting = this.#waiting.get(boxId);
       const callers = [...(waiting?.callers ?? []), { resolve, reject }];
-      this.#waiting.set(boxId, { display, size, callers });
+      this.#waiting.set(boxId, { apply, size, callers });
       if (!this.#running.has(boxId)) void this.#run(boxId);
     });
   }
@@ -109,7 +132,7 @@ class Resizes {
       for (let next = this.#waiting.get(boxId); next; next = this.#waiting.get(boxId)) {
         this.#waiting.delete(boxId);
         try {
-          await next.display.resize!(next.size);
+          await next.apply(next.size);
           for (const caller of next.callers) caller.resolve();
         } catch (error) {
           for (const caller of next.callers) caller.reject(error);
@@ -164,10 +187,38 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       // SetDesktopSize first, even when the backend resizes: a GPU desktop
       // can come back on the CPU after a stop and start, and take it (021).
       await restoreSize(displayOpener(shown), size, screen);
-      if (shown.resize) await resizes.request(boxId, shown, size);
+      if (shown.resize) await resizes.request(boxId, (each) => shown.resize!(each), size);
     },
   });
-  const relays = new Set<RfbRelay>();
+  const relays = new Set<{ close(): Promise<void> }>();
+  /** Each box's side of its Selkies viewers, while any is connected. */
+  const selkiesBoxes = new Map<string, { box: SelkiesBox; viewers: number }>();
+  const selkiesBox = (boxId: string, open: OpenStream): SelkiesBox => {
+    const entry = selkiesBoxes.get(boxId) ?? { box: new SelkiesBox(open, { onError: (error) => deps.logError("open the Selkies input", error) }), viewers: 0 };
+    entry.viewers += 1;
+    selkiesBoxes.set(boxId, entry);
+    return entry.box;
+  };
+  const leftSelkies = (boxId: string) => {
+    const entry = selkiesBoxes.get(boxId);
+    if (!entry || --entry.viewers > 0) return;
+    selkiesBoxes.delete(boxId);
+    void entry.box.close();
+  };
+  /** Sets a box's desktop to a Selkies viewer's size, through its RFB display, which Selkies follows. */
+  const sizeForSelkies = async (boxId: string, size: Size): Promise<void> => {
+    const shown = await display(boxes, boxId);
+    const min = shown.minSize;
+    const raised = { width: Math.max(size.width, min?.width ?? 0), height: Math.max(size.height, min?.height ?? 0) };
+    await resizes.request(
+      boxId,
+      async (each) => {
+        await restoreSize(displayOpener(shown), each, SELKIES_SCREEN);
+        if (shown.resize) await shown.resize(each);
+      },
+      raised,
+    );
+  };
   const clipboards = new Map<string, { text: string; serial: number }>();
   let clipboardSerial = 0;
   /** The box, when it is running and its desktop's clipboard goes through bb-box's commands. */
@@ -203,55 +254,81 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     ({ url }) => {
       const boxId = url.searchParams.get("box") ?? "";
       const viewer = url.searchParams.get("viewer") ?? "";
-      let relay: RfbRelay | null = null;
+      const selkies = url.searchParams.get("stream") === "selkies";
+      let relay: RfbRelay | SelkiesRelay | null = null;
       let shown: Display | null = null;
+      const connection: ViewerConnection = { viewer, release: () => relay?.release() ?? Promise.resolve() };
+      const onEnd = (by: "viewer" | "box", error: Error | null) => {
+        relays.delete(relay!);
+        if (selkies) leftSelkies(boxId);
+        // Control goes back to the agent unless the viewer connects again soon (020), so the log says why it may lose it.
+        if (by === "box" && control.mayInput(boxId, viewer)) {
+          const why = error?.message ?? "It closed the connection.";
+          void boxes
+            .find(boxId)
+            .then((box) =>
+              bb.log.warn(`Box ${box?.name ?? boxId}'s desktop ended the connection of the viewer with control. ${why} Control goes back to the agent unless the viewer connects again within ${reconnectMs / 1000} s.`),
+            )
+            .catch((caught) => deps.logError("log a desktop's end", caught));
+        }
+        control.detach(boxId, connection, by);
+      };
       return {
         onOpen(socket) {
-          const open: OpenDisplay = VIEWER_ID.test(viewer)
-            ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)
-            : async () => {
-                throw new Error("The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
-              };
-          const connection: ViewerConnection = { viewer, release: () => relay?.release() ?? Promise.resolve() };
-          relay = new RfbRelay({
-            viewer: {
-              send: (bytes) => socket.send(bytes),
-              close: (code, reason) => socket.close(code, reason),
-            },
-            open,
-            mayInput: () => control.mayInput(boxId, viewer),
-            onServerInit: (size) => control.seen(boxId, size),
-            minSize: () => shown?.minSize ?? null,
-            onResize: (size, screen) => {
-              control.resized(boxId, viewer, screen);
-              // The SetDesktopSize still reaches the box, which answers the viewer.
-              if (shown?.resize) {
-                resizes.request(boxId, shown, size).catch((error) => deps.logError("resize the desktop", error));
-              }
-            },
-            onClipboard: (text) => {
-              clipboards.set(boxId, { text, serial: ++clipboardSerial });
-            },
-            onInputError: (error) => deps.logError("open the desktop's input", error),
-            onEnd: (by, error) => {
-              relays.delete(relay!);
-              // Control goes back to the agent unless the viewer connects again soon (020), so the log says why it may lose it.
-              if (by === "box" && control.mayInput(boxId, viewer)) {
-                const why = error?.message ?? "It closed the connection.";
-                void boxes
-                  .find(boxId)
-                  .then((box) =>
-                    bb.log.warn(`Box ${box?.name ?? boxId}'s desktop ended the connection of the viewer with control. ${why} Control goes back to the agent unless the viewer connects again within ${reconnectMs / 1000} s.`),
-                  )
-                  .catch((caught) => deps.logError("log a desktop's end", caught));
-              }
-              control.detach(boxId, connection, by);
-            },
-          });
+          const end = { send: (message: string | Uint8Array) => socket.send(message), close: (code: number, reason: string) => socket.close(code, reason) };
+          if (selkies) {
+            if (!VIEWER_ID.test(viewer)) {
+              socket.close(1008, "The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
+              return;
+            }
+            const open: OpenStream = async (signal) => openRoute((await (await selkiesDisplay(boxes, boxId)).open(signal)).route, signal);
+            relay = new SelkiesRelay({
+              viewer: end,
+              box: selkiesBox(boxId, open),
+              open,
+              mayInput: () => control.mayInput(boxId, viewer),
+              onSize: (size) => control.seen(boxId, size),
+              onResize: (size) => {
+                control.resized(boxId, viewer, SELKIES_SCREEN);
+                sizeForSelkies(boxId, size).catch((error) => deps.logError("resize the desktop", error));
+              },
+              onEnd,
+            });
+          } else {
+            const open: OpenDisplay = VIEWER_ID.test(viewer)
+              ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)
+              : async () => {
+                  throw new Error("The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
+                };
+            relay = new RfbRelay({
+              viewer: end,
+              open,
+              mayInput: () => control.mayInput(boxId, viewer),
+              onServerInit: (size) => control.seen(boxId, size),
+              minSize: () => shown?.minSize ?? null,
+              onResize: (size, screen) => {
+                control.resized(boxId, viewer, screen);
+                // The SetDesktopSize still reaches the box, which answers the viewer.
+                const resize = shown?.resize;
+                if (resize) {
+                  resizes.request(boxId, (each) => resize(each), size).catch((error) => deps.logError("resize the desktop", error));
+                }
+              },
+              onClipboard: (text) => {
+                clipboards.set(boxId, { text, serial: ++clipboardSerial });
+              },
+              onInputError: (error) => deps.logError("open the desktop's input", error),
+              onEnd,
+            });
+          }
           relays.add(relay);
           control.attach(boxId, connection);
         },
         async onMessage(socket, data) {
+          if (relay instanceof SelkiesRelay) {
+            await relay.receive(data);
+            return;
+          }
           if (typeof data === "string") {
             socket.close(1003, "The desktop relay takes binary messages only.");
             return;
