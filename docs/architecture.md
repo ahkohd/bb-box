@@ -885,6 +885,11 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
   as a pool machine. Next, a cloud backend makes Docker and microsandbox
   hosts on Hetzner Cloud, then AWS, and places boxes on them; a cloud VM
   per box comes later, for Windows and GPU desktops.
+- **Desktop streams** ([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)):
+  the panel asks RFB displays for JPEG quality 2 and compression 9; Linux
+  X11 desktops add a Selkies display, H.264 over WebSockets, which the
+  relay carries message by message with the same control; and Tart's
+  holder sends each viewer updates only as it asks.
 
 ## The conformance suite and the doctor
 
@@ -909,5 +914,5 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
 | What a stand-in Mac could not show: that a person's Accessibility step lets the input helper post events with System Integrity Protection on, the reset's sweep with it on, the console's size with no display, Cua's first capture for a new user, and Xcode with the Simulator's first boot | the live check on a Mac set aside, in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-live-check) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB request 2](bb-requests.md#2-send-backlog-on-plugin-websockets) |
-| Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md) |
+| Selkies on a GPU desktop: NVENC and NvFBC in a box, and their GPU memory | step 3 of [056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md#plan-of-prs) |
 | Whether a Docker host that is an LXC container passes TUN to privileged boxes, and how long a tailnet join takes | the first PRs of [050](decisions/050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md#to-verify-in-the-first-prs) |

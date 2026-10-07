@@ -6,7 +6,9 @@ by its rule; [021](021-desktop-resize-through-the-backend.md): the backend
 resizes a Wayland display; [015](015-computer-use-through-cua-driver.md):
 Cua Driver on Wayland, with a fallback for element clicks; and
 [006](006-gpu-desktop-on-xorg.md): a Wayland desktop on the GPU, later, needs
-a host setting that 006's Xorg path does not.
+a host setting that 006's Xorg path does not. Extended by
+[056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md): wayvnc's viewers ask for lighter pictures, and Selkies waits
+until Sway can run nested in its compositor.
 
 ## Context
 
