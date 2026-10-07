@@ -84,7 +84,8 @@ a desktop box has a terminal too.
 | Proxmox QEMU | virtual | Windows desktop | working, not yet a BB machine |
 | SSH host pool, Macs | real | macOS terminal and desktop, on Macs you own with Apple silicon | built, not yet checked on a real Mac |
 | Physical pool | real | Linux or Windows machines you own | possible |
-| Microsandbox, Crabbox, clouds | virtual | what each provides | possible |
+| Microsandbox | virtual | Linux terminal and desktop on the CPU, on Linux with KVM or a Mac | later ([053](docs/decisions/053-microsandbox-is-a-later-backend-not-built-now.md)) |
+| Crabbox, clouds | virtual | what each provides | possible |
 
 Windows boxes cannot enrol in BB until BB's host app runs on Windows
 ([BB requests](docs/bb-requests.md)). Until then they run commands, copy files
