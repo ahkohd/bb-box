@@ -295,7 +295,9 @@ switch (command) {
       const [name] = named(image);
       if (!name) fail(`Error response from daemon: No such image: ${image}`);
       const format = more[more.indexOf("--format") + 1];
-      console.log(format === "{{.Id}}" ? idOf(name) : JSON.stringify(images[name]));
+      // Its size, in bytes, from image-sizes.json where a test sets it, else as a desktop image's (#474).
+      const size = read("image-sizes.json", {})[name] ?? 6_500_000_000;
+      console.log(format === "{{.Id}}" ? idOf(name) : format === "{{.Size}} {{json .Config.Labels}}" ? `${size} ${JSON.stringify(images[name])}` : JSON.stringify(images[name]));
     } else if (sub === "tag") {
       const [source, target] = more;
       const [name] = named(source);

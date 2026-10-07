@@ -43,9 +43,11 @@ DESKTOP_GPU=none
 DESKTOP_SESSION=$session
 BOX_RUNTIME=docker
 END
-echo runtime=docker >"$build/extra-release"
 
 bash "$build/guest/customize-base.sh" "$build"
 [ "$kind" = linux ] || bash "$build/guest/customize-desktop.sh" "$build"
-# The template's release names the session, as an LXC template's does.
+# The template's release names the session, as an LXC template's does, and
+# the runtime, which finalize.sh reads. The desktop scripts write the
+# release's lines anew, so this goes after them (#474).
+echo runtime=docker >>"$build/extra-release"
 bash "$build/guest/finalize.sh" "$build" "${kind%-wayland}"
