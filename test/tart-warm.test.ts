@@ -3,13 +3,13 @@
 // retired when their image, Tart or macOS changes.
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
-import { FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
+import { FAKE_DISK_GIB, FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
@@ -103,10 +103,8 @@ test("maintain fills a pool with suspended clones at the default size, which hel
 });
 
 test("a fill needs its memory free on disk beyond the disk kept free, for its suspend; a box does not", async () => {
-  const { mac, make, contexts, warmVms } = setup();
-  const { bavail, bsize } = statfsSync(mac);
-  const free = Math.floor((Number(bavail) * Number(bsize)) / 2 ** 30);
-  assert.ok(free > 12, "the test needs 13 GiB of disk free");
+  const { make, contexts, warmVms } = setup();
+  const free = FAKE_DISK_GIB.free;
   // 4 GiB above what is kept free, less than the 8 GiB a small VM suspends.
   const short = make("test", { macos: 1 }, { "tart-reserve-disk-gib": free - 4 });
   await short.maintain();

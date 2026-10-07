@@ -41,7 +41,7 @@ export function anchor(heading: string): string {
     .replace(/ /g, "-");
 }
 
-interface Registered {
+export interface Registered {
   readonly cli: { readonly name: string; readonly summary: string; readonly commands: readonly { name: string; usage: string; summary: string }[] };
   readonly tools: readonly { name: string; description: string; inputSchema: JsonSchema }[];
   readonly help: ReadonlyMap<string, string>;
@@ -59,7 +59,7 @@ interface JsonSchema {
 }
 
 /** The plugin's CLI and agent tools, as a fake BB host records them when the plugin starts. */
-async function registered(): Promise<Registered> {
+export async function registered(): Promise<Registered> {
   const { bb, harness } = createFakePluginHost({ pluginId: "bb-box" });
   await plugin(bb);
   const registrations = harness.inspection.registrations as unknown as { cli: Registered["cli"]; agentTools: Registered["tools"] };
