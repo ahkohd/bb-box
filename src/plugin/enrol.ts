@@ -40,11 +40,28 @@ import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
-import { runWindowsCommand, windowsExecutor, windowsFailure, type WindowsEnrolment } from "./enrol-windows.ts";
+import type { BackendStorage } from "../backends/types.ts";
+import { runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 
 export const MACHINE_PROVIDER_ID = "bb-box";
+
+/**
+ * BB's manual provider, which makes Windows boxes' machines on trial (#539):
+ * only its machines have a Windows enrolment command. bb-box owns their
+ * lifecycle itself, as BB calls no provider of bb-box's for them.
+ */
+const MANUAL_PROVIDER_ID = "manual";
+/** Where bb-box keeps each manual machine it made, by machine ID, with its box, so none outlives its box. */
+const MANUAL_PREFIX = "manual-machine/";
+/** How long a manual machine may name no box before the sweep takes it for a leftover: an enrolment records it on the box first. */
+const MANUAL_GRACE_MS = 10 * 60_000;
+
+interface ManualMachine {
+  readonly boxId: string;
+  readonly at: number;
+}
 
 /** What BB's bootstrap says on a Mac where launchd has its daemon's LaunchAgent loaded already (#416). */
 const LOADED = /Bootstrap failed: 5: Input\/output error/;
@@ -73,7 +90,7 @@ done
 
 /** The parts of BB's host API enrolment uses. */
 export interface HostApi {
-  experimental_create(args: { machineProviderId: string; key: string; inputs: { boxId: string }; wait: false }): Promise<HostState>;
+  experimental_create(args: { machineProviderId: string; key: string; inputs: { boxId: string } | null; wait: false }): Promise<HostState>;
   get(args: { hostId: string; signal?: AbortSignal }): Promise<HostState>;
   update(args: { hostId: string; name: string }): Promise<unknown>;
   delete(args: { hostId: string }): Promise<unknown>;
@@ -96,6 +113,8 @@ interface Progress {
 
 export interface EnrolmentDeps {
   readonly boxes: Boxes;
+  /** bb-box's storage, for the manual machines it made (#539). */
+  readonly kv: BackendStorage;
   readonly hosts: () => HostApi;
   bootstrap(request: { key: string; executor: MachineExecutor; report: Progress; signal: AbortSignal }): Promise<{ hostId: string }>;
   logError(operation: string, error: unknown): void;
@@ -316,9 +335,7 @@ export class Enrolment {
           const transport = await this.#transport(box);
           phases?.mark("prepared");
           report.step(`Installing BB in box ${box.name}`);
-          // A Windows box runs BB's Windows installer, as BB's bootstrap asks for its POSIX one (#539).
-          const exec = box.capabilities.os === "windows" ? windowsExecutor(transport, this.#windowsEnrolment(box, signal), phases) : executor(transport, phases);
-          await this.#deps.bootstrap({ key, executor: exec, report, signal });
+          await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
@@ -369,22 +386,24 @@ export class Enrolment {
   }
 
   /**
-   * What the Windows executor asks of BB for box `box` (#539): its machine's
-   * ID, for which BB's create gives none, so it waits for the one bb-box
-   * records once BB makes the machine; and the machine's enrolment command.
+   * Enrols a Windows box on trial (#539) as the manual machine bb-box made
+   * for it: names the machine after the box, then runs the machine's
+   * enrolment command, in its Windows form, in the box user's desktop
+   * session, where BB's daemon has to run.
    */
-  #windowsEnrolment(box: BoxRecord, signal: AbortSignal): WindowsEnrolment {
-    return {
-      hostId: async () => {
-        for (let tries = 0; ; tries++) {
-          const hostId = (await this.#deps.boxes.find(box.id))?.enrol.hostId ?? null;
-          if (hostId) return hostId;
-          if (tries >= 100 || signal.aborted) throw new Error(`bb-box did not learn box ${box.name}'s BB machine, so it could not enrol it.`);
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      },
-      command: (hostId) => this.#deps.hosts().experimental_getEnrollmentCommand({ hostId }),
-    };
+  async #enrolWindows(box: BoxRecord, hostId: string, phases: Phases): Promise<void> {
+    await this.#deps
+      .hosts()
+      .update({ hostId, name: machineName(box) })
+      .catch((error) => this.#deps.logError("rename machine", error));
+    const enrolment = await this.#deps.hosts().experimental_getEnrollmentCommand({ hostId });
+    if (!enrolment?.windowsCommand) throw new Error(`BB gave no Windows enrolment command for box ${box.name}'s machine ${hostId}.`);
+    const transport = await this.#transport(box);
+    phases.mark("install");
+    const result = await runWindowsCommand(transport, enrolment.windowsCommand, { timeoutMs: this.#timeoutMs, signal: AbortSignal.timeout(this.#timeoutMs) });
+    phases.mark("installed");
+    if (result.exitCode !== 0) throw new Error(windowsFailure(`BB's Windows installer in box ${box.name}`, result));
+    phases.mark("bootstrapped");
   }
 
   async #transport(box: BoxRecord): Promise<CommandTransport> {
@@ -425,10 +444,11 @@ export class Enrolment {
           return;
         }
         current = recorded;
+        if (box.capabilities.os === "windows") await this.#enrolWindows(current, host.id, phases);
         // BB still had the box's machine, as for a box the sweep restored,
         // and its daemon is not running. BB does not create the machine
         // again, so bootstrap with the same key starts the daemon.
-        if (host.lifecycle.phase === "active" && host.status !== "connected") {
+        if (box.capabilities.os !== "windows" && host.lifecycle.phase === "active" && host.status !== "connected") {
           const transport = await this.#transport(current);
           await this.#bootstrapAgain(current, host.id, transport, { key: box.id, executor: executor(transport, phases), report: QUIET, signal: AbortSignal.timeout(this.#timeoutMs) });
           phases.mark("bootstrapped");
@@ -437,8 +457,11 @@ export class Enrolment {
       await this.#follow(current, phases, this.#setUpAccess(current, phases));
     } catch (error) {
       this.#deps.logError("enrol", error);
+      // A Windows box's manual machine is bb-box's to remove: none may stay in BB's list (#539).
+      const manual = box.capabilities.os === "windows" ? (await this.#deps.boxes.find(box.id))?.enrol.hostId : null;
+      if (manual) await this.#remove(manual).catch((removal) => this.#deps.logError("enrol", removal));
       await this.#deps.boxes
-        .update(box, (current) => ({ enrol: { ...current.enrol, state: "failed", error: describeError(error, "Enrolling the box") } }))
+        .update(box, (current) => ({ enrol: { ...current.enrol, ...(manual ? { hostId: null } : {}), state: "failed", error: describeError(error, "Enrolling the box") } }))
         .catch(() => null);
     } finally {
       this.#phases.delete(box.id);
@@ -452,6 +475,11 @@ export class Enrolment {
    * asks again then. Null when the box was released meanwhile.
    */
   async #create(box: BoxRecord): Promise<HostState | null> {
+    if (box.capabilities.os === "windows") {
+      const host = await this.#deps.hosts().experimental_create({ machineProviderId: MANUAL_PROVIDER_ID, key: box.id, inputs: null, wait: false });
+      await this.#deps.kv.set(`${MANUAL_PREFIX}${host.id}`, { boxId: box.id, at: Date.now() } satisfies ManualMachine);
+      return host;
+    }
     for (let attempt = 1; ; attempt++) {
       try {
         return await this.#deps.hosts().experimental_create({ machineProviderId: MACHINE_PROVIDER_ID, key: box.id, inputs: { boxId: box.id }, wait: false });
@@ -610,6 +638,27 @@ export class Enrolment {
     } catch (error) {
       if (!isNotFound(error)) throw error;
     }
+    await this.#deps.kv.delete(`${MANUAL_PREFIX}${hostId}`);
+  }
+
+  /**
+   * Removes each manual machine bb-box made whose box is gone, or whose box
+   * no longer names it once an enrolment has had time to (#539), and
+   * forgets one BB no longer has.
+   */
+  async #sweepManual(signal?: AbortSignal): Promise<void> {
+    for (const key of await this.#deps.kv.list(MANUAL_PREFIX)) {
+      if (signal?.aborted) return;
+      const hostId = key.slice(MANUAL_PREFIX.length);
+      const made = await this.#deps.kv.get<ManualMachine>(key);
+      const box = made ? await this.#deps.boxes.find(made.boxId) : null;
+      const gone = !box || box.state === "releasing" || box.state === "gone" || box.state === "failed";
+      const unnamed = !!box && box.enrol.hostId !== hostId && Date.now() - (made?.at ?? 0) > MANUAL_GRACE_MS;
+      if (!made || gone || unnamed) {
+        this.#deps.log?.(`Removing BB machine ${hostId}, a manual machine bb-box made for a Windows box: ${box ? `box ${box.name} no longer uses it` : "its box is gone"}.`);
+        await this.#remove(hostId).catch((error) => this.#deps.logError("sweep manual machines", error));
+      }
+    }
   }
 
   /**
@@ -692,6 +741,7 @@ export class Enrolment {
   /** Starts BB's daemon again in each enrolled box whose machine BB shows disconnected. Ends at once when `signal` aborts, as when the plugin stops. */
   async sweep(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return;
+    await this.#sweepManual(signal).catch((error) => this.#deps.logError("sweep manual machines", error));
     const enrolled = (await this.#deps.boxes.all()).filter((box) => box.state === "ready" && box.enrol.state === "enrolled" && box.enrol.hostId);
     await Promise.all(
       enrolled.map(async (box) => {
@@ -710,6 +760,7 @@ export class Enrolment {
 
   /** BB removed a machine, for example from its Machines page: its box is no longer enrolled. */
   async forgetHost(hostId: string): Promise<void> {
+    await this.#deps.kv.delete(`${MANUAL_PREFIX}${hostId}`);
     for (const box of await this.#deps.boxes.all()) {
       if (box.enrol.hostId === hostId) await this.#deps.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
     }

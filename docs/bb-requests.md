@@ -37,8 +37,8 @@ is a log: bb-box does not file these with BB.
 `bb-app` lists `win32`, and a Windows machine enrols with `install.ps1`, a
 Node installer that starts the daemon at sign-in from the user's `Run` key, so
 in the desktop session (`bb guide machines`). Asks 1 to 3 are met. The SDK's
-`MachineBootstrapRequest` still names no OS, and nothing says `bootstrap` runs
-the Windows installer through a provider's executor, so ask 4 is not shown. No
+`MachineBootstrapRequest` still names no OS, and ask 4 is not met: #539's
+trial found that a provider's machine cannot enrol on Windows (below). No
 workaround to drop yet.
 
 **What bb-box needs.** Windows boxes that enrol as BB machines, like Linux and
@@ -67,12 +67,34 @@ a Windows app.
    example as a scheduled task at logon, rather than as a service in session 0.
    Threads then reach the desktop the user sees.
 4. `experimental_machines.bootstrap` choosing the installer by the machine's
-   OS, so a provider's executor can run PowerShell.
+   OS, so a provider's executor can run PowerShell. Or
+   `hosts.experimental_getEnrollmentCommand` giving a provider's machine its
+   enrolment command with its Windows form, `windowsCommand`, as it gives a
+   manual machine's.
+
+**What #539's trial found, in BB 0.45.0.**
+
+- `bootstrap` asks a provider's executor to run
+  `sh -c <script> bb-machine-install <server>/install.sh`, with the bundle on
+  stdin for `--bootstrap-env BB_ENROLLMENT`, whatever the machine's OS.
+- `hosts.experimental_getEnrollmentCommand` gives no command for a
+  provider's machine, before `bootstrap` or during it.
+- `install.ps1` serves only a manual enrolment's `X-BB-Enrollment` header: a
+  provider's bundle, which carries its credential for `--bootstrap-env`, gets
+  "This installer needs an enrollment command".
 
 **Until then.** Windows boxes run commands, copy files and stream their
 desktop through bb-box's own transports. They do not get the thread's Git
 credentials and machine variables from BB, and child threads cannot run on
 them. The panel says so on each Windows box.
+
+On trial, behind the Proxmox QEMU backend's "Windows boxes as BB machines"
+setting (#539), a Windows box enrols as a machine of BB's manual provider,
+whose enrolment command has a Windows form, and bb-box owns that machine
+itself: its release removes the machine, a failed enrolment removes it, and
+the sweep removes any whose box is gone. BB's provider hooks do not reach
+such a machine, so BB removing it does not release the box, and "a thread on
+its own box" cannot make one.
 
 We tried BB's Linux host app in WSL2 inside a Windows box as a stopgap
 (#174), and chose not to build it. A Windows command could read GH_TOKEN,
