@@ -242,6 +242,8 @@ export interface SetupOptions {
   readonly variablesWaitMs?: number;
   /** How long an enrolment waits to ask BB again when BB does not know bb-box's machine provider yet. */
   readonly providerRetryMs?: number;
+  /** How long a release waits for BB to finish removing a Windows box's manual machine. */
+  readonly manualRemoveMs?: number;
   /** setup/docker/build.sh, which builds images on a BB machine (042). By default the one beside the plugin's bundle. */
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
@@ -599,6 +601,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     log: (message) => bb.log.info(message),
     variablesWaitMs: options.variablesWaitMs,
     providerRetryMs: options.providerRetryMs,
+    manualRemoveMs: options.manualRemoveMs,
   });
   bb.experimental_machines.register(enrolment.provider());
   registerNewBox(bb, {

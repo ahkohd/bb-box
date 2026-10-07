@@ -61,6 +61,10 @@ const MANUAL_GRACE_MS = 10 * 60_000;
 interface ManualMachine {
   readonly boxId: string;
   readonly at: number;
+  /** When bb-box asked BB to remove it, while BB has not finished. */
+  readonly removing?: number;
+  /** Logged as stuck in BB's removal. */
+  readonly stuck?: boolean;
 }
 
 /** What BB's bootstrap says on a Mac where launchd has its daemon's LaunchAgent loaded already (#416). */
@@ -129,6 +133,8 @@ export interface EnrolmentDeps {
   readonly variablesWaitMs?: number;
   /** How long to wait before asking BB again to add a box, when BB does not know bb-box's machine provider yet. */
   readonly providerRetryMs?: number;
+  /** How long a release waits for BB to finish removing a Windows box's manual machine (#539). */
+  readonly manualRemoveMs?: number;
 }
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
@@ -303,6 +309,7 @@ export class Enrolment {
   readonly #fastPollMs: number;
   readonly #variablesWaitMs: number;
   readonly #providerRetryMs: number;
+  readonly #manualRemoveMs: number;
   /** Boxes whose enrolment this process is following. */
   readonly #following = new Set<string>();
   /** Boxes whose BB daemon this process is starting again. */
@@ -318,6 +325,7 @@ export class Enrolment {
     // BB can give a new machine GH_TOKEN some seconds after it connects.
     this.#variablesWaitMs = deps.variablesWaitMs ?? 30_000;
     this.#providerRetryMs = deps.providerRetryMs ?? 6_000;
+    this.#manualRemoveMs = deps.manualRemoveMs ?? 2 * 60_000;
   }
 
   /** The machine provider BB calls to create and remove a box's machine. */
@@ -655,13 +663,54 @@ export class Enrolment {
     if (box.enrol.hostId) await this.#remove(box.enrol.hostId);
   }
 
-  async #remove(hostId: string): Promise<void> {
+  /**
+   * Removes a machine from BB. BB's delete of a manual machine returns
+   * before BB has removed it: BB first tears down the threads' environments
+   * on it, which needs the machine. So for one, bb-box waits up to `waitMs`
+   * for BB to finish, as the box must not go first, and keeps its record of
+   * the machine until BB no longer has it (#539).
+   */
+  async #remove(hostId: string, waitMs = this.#manualRemoveMs): Promise<void> {
+    const key = `${MANUAL_PREFIX}${hostId}`;
+    const made = await this.#deps.kv.get<ManualMachine>(key);
+    const removing = made?.removing ?? Date.now();
     try {
       await this.#deps.hosts().delete({ hostId });
     } catch (error) {
       if (!isNotFound(error)) throw error;
     }
-    await this.#deps.kv.delete(`${MANUAL_PREFIX}${hostId}`);
+    if (!made) return;
+    const left = await this.#removing(hostId, waitMs);
+    if (left === null) await this.#deps.kv.delete(key);
+    else await this.#stillRemoving(hostId, { ...made, removing }, left);
+  }
+
+  /** Waits up to `waitMs` for BB to no longer have machine `hostId`. Null once it has not; otherwise what BB says of it. */
+  async #removing(hostId: string, waitMs: number): Promise<string | null> {
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      let host: HostState;
+      try {
+        host = await this.#deps.hosts().get({ hostId });
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+      if (host.lifecycle.phase === "removed") return null;
+      if (Date.now() >= deadline) return `${host.lifecycle.phase}, ${host.lifecycle.message ?? host.status}`;
+      await new Promise((resolve) => setTimeout(resolve, this.#pollMs));
+    }
+  }
+
+  /** Keeps the record of a manual machine BB is still removing, and logs it once BB has taken longer than a release waits. */
+  async #stillRemoving(hostId: string, made: ManualMachine & { removing: number }, left: string): Promise<void> {
+    const stuck = Date.now() - made.removing >= this.#manualRemoveMs;
+    if (stuck && !made.stuck) {
+      this.#deps.log?.(
+        `BB has not finished removing machine ${hostId}, a manual machine bb-box made for a Windows box, ${Math.round((Date.now() - made.removing) / 1000)} s after bb-box asked: ${left}. bb-box keeps its record, and its sweep looks again.`,
+      );
+    }
+    await this.#deps.kv.set(`${MANUAL_PREFIX}${hostId}`, { ...made, stuck: made.stuck || stuck } satisfies ManualMachine);
   }
 
   /**
@@ -674,12 +723,19 @@ export class Enrolment {
       if (signal?.aborted) return;
       const hostId = key.slice(MANUAL_PREFIX.length);
       const made = await this.#deps.kv.get<ManualMachine>(key);
+      // One bb-box asked BB to remove: forgotten once BB no longer has it.
+      if (made?.removing) {
+        const left = await this.#removing(hostId, 0).catch((error) => (this.#deps.logError("sweep manual machines", error), "unknown"));
+        if (left === null) await this.#deps.kv.delete(key);
+        else await this.#stillRemoving(hostId, { ...made, removing: made.removing }, left);
+        continue;
+      }
       const box = made ? await this.#deps.boxes.find(made.boxId) : null;
       const gone = !box || box.state === "releasing" || box.state === "gone" || box.state === "failed";
       const unnamed = !!box && box.enrol.hostId !== hostId && Date.now() - (made?.at ?? 0) > MANUAL_GRACE_MS;
       if (!made || gone || unnamed) {
         this.#deps.log?.(`Removing BB machine ${hostId}, a manual machine bb-box made for a Windows box: ${box ? `box ${box.name} no longer uses it` : "its box is gone"}.`);
-        await this.#remove(hostId).catch((error) => this.#deps.logError("sweep manual machines", error));
+        await this.#remove(hostId, 0).catch((error) => this.#deps.logError("sweep manual machines", error));
       }
     }
   }
