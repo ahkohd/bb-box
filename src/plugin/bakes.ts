@@ -71,6 +71,16 @@ interface Built {
   readonly ms: number;
 }
 
+/** A spare of a project's image that bb-box keeps (#440): its build on a backend, for a kind. */
+export interface ImageSpareWant {
+  readonly name: string;
+  readonly backend: string;
+  readonly kind: string;
+  /** The build's reference, which the spare starts from. */
+  readonly ref: string;
+  readonly build: string | null;
+}
+
 /** A script to try as a build runs it (049). */
 export interface TryInput {
   /** The image's name, which the script reads as BB_BOX_IMAGE. */
@@ -129,6 +139,8 @@ export interface ImageBakesDeps {
   keep?(input: { readonly threadId: string; readonly projectId: string | null; readonly kind: string; readonly backend: string; readonly name: string; readonly build: string | null; readonly ref: string }): Promise<{ readonly id: string; readonly name: string }>;
   /** Whether box `id` is still there, so its kept build stays. */
   boxExists?(id: string): Promise<boolean>;
+  /** A build was made or removed, so the spares of images (#440) are kept again. */
+  readonly changed?: () => void;
 }
 
 /** The SHA-256 of an image's script and check: a build made with others is out of date. */
@@ -319,6 +331,7 @@ export class ImageBakes {
       await this.#deps.storage.delete(`${at}/failed`);
       if (last && last.ref !== captured.ref) await this.#retire(backend, last.ref);
       this.#lists.delete(backend.id);
+      this.#deps.changed?.();
       const seconds = Math.round((this.#now() - started) / 1000);
       this.#say(`baked ${what} as ${captured.ref}, in ${seconds} s`);
       return { name: what, outcome: "baked", detail: `now ${captured.build ?? captured.ref}, in ${seconds} s` };
@@ -531,6 +544,8 @@ export class ImageBakes {
    * background, each after the bakes before it.
    */
   settle(name: string): void {
+    // Its spares (#440) go at once when it was removed or its script changed, as its builds are no longer current.
+    this.#deps.changed?.();
     void (async () => {
       const image = this.#deps.images()[name];
       if (!image) {
@@ -646,7 +661,31 @@ export class ImageBakes {
       }
       lines.push(await this.bake(name, backend, kind));
     }
+    if (lines.some((line) => line.outcome === "removed")) this.#deps.changed?.();
     return lines;
+  }
+
+  /**
+   * The spares of projects' images wanted now (#440): one per image, backend
+   * and kind where its build is current, on a backend that keeps image
+   * spares, and the image in use: a box started from the build, or the build
+   * made, within the last 14 days, or the image says always.
+   */
+  async spareWants(): Promise<ImageSpareWant[]> {
+    const wants: ImageSpareWant[] = [];
+    const images = this.#deps.images();
+    for (const entry of await this.#deps.storage.list(BAKE)) {
+      if (entry.endsWith("/failed")) continue;
+      const { name, backend: backendId, kind } = parts(entry);
+      const image = images[name];
+      const backend = this.#backend(backendId);
+      if (!image || !backend?.images?.spares || !this.#bakes(image, backend, kind)) continue;
+      const bake = await this.#deps.storage.get<Bake>(entry);
+      if (!bake || (image.bake !== "always" && this.#now() - bake.used > USE_DAYS * DAY_MS)) continue;
+      const current = await this.current(name, backendId, kind);
+      if (current) wants.push({ name, backend: backendId, kind, ref: current.ref, build: current.build });
+    }
+    return wants;
   }
 
   /** An image's current builds, by kind and backend, for a choice of image (049). */

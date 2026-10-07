@@ -578,6 +578,12 @@ export interface BackendImages {
   check?(kind: string): string;
   /** Whether acquire starts a box from a build in BoxIdentity.from (049). */
   readonly startsFrom?: boolean;
+  /**
+   * Whether bb-box keeps a spare of a project's image built here (#440): a
+   * running, enrolled box. Not on Tart, where a Linux VM cannot be suspended
+   * and a spare would hold its whole memory.
+   */
+  readonly spares?: boolean;
 }
 
 export interface BackendStorage {

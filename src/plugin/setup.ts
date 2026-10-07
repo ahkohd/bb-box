@@ -470,6 +470,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     storage: kv,
     setup: pins,
     log: (line) => bb.log.info(line),
+    // A build made or removed: the images' spares (#440) follow at once.
+    changed: () => void boxes.keepSpares(),
     // A tried image's box, from its kept build (#451), ready to look inside.
     async keep({ threadId, projectId, kind, backend, name, build, ref }): Promise<{ id: string; name: string }> {
       const box = await boxes.acquire({ threadId, projectId, kind, on: backend, from: { name: `${name} (tried)`, build, ref } });
@@ -490,6 +492,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     image: (projectId, kind, name) => (name === undefined ? projectImage(configuration.document, projectId, kind) : namedImage(configuration.document, name, kind)),
     baked: (name, backend, kind) => imageBakes.current(name, backend, kind),
     imageReady: (box) => imageBakes.ready(box),
+    imageSpares: () => imageBakes.spareWants(),
     // As the bundle's setup files have it; a build installs the same in the image.
     imageTools: imageTools(pins),
     notify,

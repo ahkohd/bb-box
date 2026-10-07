@@ -24,7 +24,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -1818,6 +1818,98 @@ test("a spare released by hand is replaced at once, not at the next sweep (#129)
   await until(async () => (await world.boxes.list(SPARES)).some((other) => other.id !== spare.id && other.enrol.state === "enrolled"));
   assert.equal((await world.boxes.list(SPARES)).length, 1);
   assert.deepEqual(world.errors, []);
+});
+
+/** A world whose fake backend starts boxes from builds, with a project's image "rust" baked as `build.ref`, and its spare wanted while `build.wanted`. */
+function imageWorld(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, log?: (line: string) => void) {
+  const image = { kinds: ["linux"], script: 'touch "$HOME/ran"\n', projects: ["prj"] };
+  const build = { ref: "rust-1", wanted: true };
+  const readied: string[] = [];
+  const started: (string | undefined)[] = [];
+  const world = setup(options, {
+    image: (projectId, kind, name) => ((name ?? (projectId === "prj" ? "rust" : null)) === "rust" && kind === "linux" ? { name: "rust", image } : null),
+    baked: async (name, backend, kind) => (name === "rust" && kind === "linux" ? { ref: build.ref, build: `build.${build.ref}` } : null),
+    imageReady: (box) => void readied.push(`${box.threadId} ${box.image?.state}`),
+    imageSpares: async () => (build.wanted ? [{ name: "rust", backend: world.backend.id, kind: "linux", ref: build.ref }] : []),
+    ...(log ? { log } : {}),
+  });
+  Object.defineProperty(world.backend, "images", { value: { startsFrom: true, spares: true } });
+  const acquire = world.backend.acquire.bind(world.backend);
+  world.backend.acquire = (box, previous, hooks, signal) => {
+    started.push(box.from);
+    if (box.from === "broken") return Promise.reject(new Error("the build does not boot"));
+    return acquire(box, previous, hooks, signal);
+  };
+  return { world, build, readied, started };
+}
+
+test("a project's box claims a spare of its image's current build, made ahead, and a kind's box does not (#440)", async () => {
+  const { world, readied, started } = imageWorld();
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  assert.deepEqual([spare?.image, spare?.enrol.state, started], [{ name: "rust", state: "baked", build: "build.rust-1", from: "rust-1" }, "enrolled", ["rust-1"]]);
+  assert.deepEqual(readied, [], "a spare's own start is no use of its image");
+  assert.deepEqual(await world.boxes.spareCounts(), {}, "an image's spare is not its kind's");
+
+  // A kind's box makes its own guest; the project's box takes the spare at once.
+  const plain = await world.boxes.acquire({ threadId: THREAD, projectId: "prj_other", kind: "linux" });
+  assert.equal(plain.timings.spare, undefined);
+  const claimed = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
+  assert.deepEqual([claimed.id, claimed.image?.from, typeof claimed.timings.spare], [spare!.id, "rust-1", "number"]);
+  assert.deepEqual(readied, [`${THREAD} baked`], "the claim is a use of its build");
+  await world.boxes.idle();
+  assert.equal((await world.boxes.list(SPARES)).length, 1, "another spare is made");
+});
+
+test("an image's spare goes when its build changes or the image is not in use, and one of a failing build is not made again for a day (#440)", async () => {
+  const logs: string[] = [];
+  const { world, build, started } = imageWorld({}, (line) => logs.push(line));
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [first] = await world.boxes.list(SPARES);
+
+  // A new build: the old spare goes, and one of the new build comes.
+  build.ref = "rust-2";
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const spares = await world.boxes.list(SPARES);
+  assert.deepEqual(spares.map((spare) => spare.image?.from), ["rust-2"]);
+  assert.ok(logs.includes(`Releasing spare box ${first!.name}: its image rust is not in use, or its build on fake is not current.`), logs.join("\n"));
+
+  // Not in use: no spare.
+  build.wanted = false;
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  assert.deepEqual(await world.boxes.list(SPARES), []);
+
+  // A build whose boxes fail: one try, then none for a day, then again for another build.
+  build.wanted = true;
+  build.ref = "broken";
+  for (let i = 0; i < 3; i++) {
+    await world.boxes.keepSpares();
+    await world.boxes.idle();
+  }
+  assert.equal(started.filter((from) => from === "broken").length, 1, "made once, not in a loop");
+  build.ref = "rust-3";
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => [spare.image?.from, spare.state]), [["rust-3", "ready"]]);
+});
+
+test("an image's spare gives its room to a thread's box that finds none (#440)", async () => {
+  const logs: string[] = [];
+  const { world } = imageWorld({ maxGuests: 1 }, (line) => logs.push(line));
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  assert.equal(spare?.image?.name, "rust");
+  const box = await world.boxes.acquire({ threadId: "a", projectId: null, kind: "linux-desktop" });
+  assert.ok(logs.includes(`Releasing spare box ${spare!.name}: a thread's linux-desktop box needs its room.`));
+  assert.equal((await ready(world.boxes, box)).state, "ready");
+  await world.boxes.keepSpares();
+  assert.deepEqual(await world.boxes.list(SPARES), [], "the upkeep takes no thread's room");
+  assert.ok(logs.some((line) => line.startsWith("bb-box keeps no spare rust linux box on fake for now: ")), logs.join("\n"));
 });
 
 test("a spare gives its room to a thread's box that finds none, and comes back only when there is room (#120)", async () => {

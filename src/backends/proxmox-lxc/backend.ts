@@ -475,6 +475,7 @@ export class ProxmoxLxcBackend implements Backend {
     replace: (build, current, signal) => this.#replaceTemplate(build, current, signal),
     remove: (ref, signal) => this.#removeImage(ref, signal),
     startsFrom: true,
+    spares: true,
   };
 
   constructor(config: LxcConfig, context: BackendContext, options: LxcBackendOptions = {}) {
