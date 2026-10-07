@@ -147,9 +147,10 @@ else
   if [ "$(sysctl -n kern.hv_support 2>/dev/null)" = 1 ]; then echo "kvm=ok"; else echo "kvm=missing"; fi
   echo "lxc=0"
 fi
-mkdir -p "$dir/home"
+mkdir -p "$dir/home" "$dir/templates"
 echo "free_kib=$(df -Pk "$dir/home" | awk 'NR==2 {print $4}')"
-echo "used_kib=$(du -sk "$dir/home" "$dir/disks" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+echo "templates=$(cd "$dir/templates" && ls -- *.ext4 2>/dev/null | tr '\n' ' ')"
+echo "used_kib=$(du -sk "$dir/home" "$dir/disks" "$dir/templates" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
 if PATH=$PATH:/sbin:/usr/sbin command -v mkfs.ext4 >/dev/null; then echo "mkfs=1"; else echo "mkfs=0"; fi
 probe=$(mktemp "$dir/home/.reflink.XXXXXX")
 echo bb-box >"$probe"
@@ -178,9 +179,19 @@ done
   disk: () => `${PRELUDE}PATH=$PATH:/sbin:/usr/sbin
 mkdir -p "$dir/disks"
 file=$dir/disks/$1.ext4
+template=$dir/templates/docker-$2G.ext4
 if [ ! -e "$file" ]; then
-  truncate -s "$2G" "$file.new"
-  mkfs.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 "$file.new"
+  if command -v mkfs.ext4 >/dev/null; then
+    truncate -s "$2G" "$file.new"
+    mkfs.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 "$file.new"
+  elif [ -s "$template" ]; then
+    # A host without mkfs.ext4, as a Mac: a clone of the template bb-box made
+    # once, which shares its blocks on APFS or a file system with reflinks.
+    cp -c "$template" "$file.new" 2>/dev/null || cp --reflink=auto "$template" "$file.new"
+  else
+    echo "no template $template" >&2
+    exit 4
+  fi
   mv "$file.new" "$file"
 fi
 echo "disk=$file"

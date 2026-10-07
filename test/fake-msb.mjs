@@ -60,7 +60,7 @@ function flags(rest, takes) {
 
 function create(rest) {
   const [image, ...after] = rest;
-  const { values, many } = flags(after, ["--name", "--pull", "--hostname", "--cpus", "--memory", "--root-disk", "--tmpfs", "--net"]);
+  const { values, many } = flags(after, ["--name", "--pull", "--hostname", "--cpus", "--memory", "--root-disk", "--tmpfs", "--net", "--mount-dir"]);
   const name = values["--name"];
   if (host.ghost === name && !values["--replace"]) fail(`sandbox already exists: sandbox '${name}' already exists; remove it, start the stopped sandbox, or recreate with .replace()`);
   if (load(name) && !values["--replace"]) fail(`sandbox already exists: sandbox '${name}' already exists; remove it, start the stopped sandbox, or recreate with .replace()`);
@@ -85,6 +85,7 @@ function create(rest) {
       env: many["--env"],
       mounts: many["--mount-owned"],
       disks: many["--mount-disk"],
+      mountDir: values["--mount-dir"] ?? null,
       network: values["--net"],
       tmpfs: values["--tmpfs"],
       runtime: { hostname: values["--hostname"] },
@@ -111,6 +112,17 @@ function exec(rest) {
   }
   const name = rest[i];
   const sandbox = found(name);
+  // The helper that makes the Docker disks' template: the template appears in the folder it sees.
+  if (name.startsWith("bb-box-mkfs-")) {
+    const made = /\/work\/(docker-\d+G\.ext4)( |$)/.exec(rest.slice(i + 2).join(" "));
+    const [source] = (sandbox.config.mountDir ?? "").split(":");
+    if (made && source) {
+      mkdirSync(source, { recursive: true });
+      writeFileSync(join(source, made[1]), "template");
+    }
+    appendFileSync(join(root, "mkfs"), `${rest.slice(i + 2).join(" ")}\n`);
+    return;
+  }
   // A builder's commands, which need Docker and the network: logged, not run.
   if (name.startsWith("bb-box-builder-")) {
     appendFileSync(join(root, "builder"), `${rest.slice(i + 2).join(" ")}\n`);

@@ -116,7 +116,7 @@ test("acquires a box as a microVM labelled with its owner, at its size, with /ru
   assert.deepEqual([after(plain, "--mount-owned"), after(plain, "--mount-disk"), after(plain, "--env"), after(plain, "--root-disk")[0]], [[], [], [], "8G"]);
 });
 
-test("a box's Docker disk goes with the box, a host without mkfs.ext4 gets msb's own, and the upkeep removes old disks no microVM has", async () => {
+test("a box's Docker disk goes with the box, a host without mkfs.ext4 gets msb's own until bb-box has made a template to clone, and the upkeep removes old disks no microVM has", async () => {
   const { fake, backend } = setup();
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   const disk = join(fake.dir, "disks", `${guest.ref}.ext4`);
@@ -143,13 +143,25 @@ test("a box's Docker disk goes with the box, a host without mkfs.ext4 gets msb's
   await backend.maintain(signal());
   assert.deepEqual(readdirSync(join(fake.dir, "disks")).sort(), [`${kept.ref}.ext4`, "bbbox-bxmaking.ext4"].sort());
 
-  fake.facts({ mkfs: "0" });
+  // A host without mkfs.ext4, as a Mac: msb's own disk until bb-box has made its template, then a clone of it.
   const plain = setup();
   plain.fake.facts({ mkfs: "0" });
-  await plain.backend.acquire(identity(), null, hooks().hooks, signal());
-  assert.deepEqual(after(plain.fake.calls().find((call) => call[0] === "create")!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"]);
+  const before = await plain.backend.doctor(signal());
+  assert.equal(before.checks.find((check) => check.id === "microsandbox.disks")?.status, "warn");
+  const first = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.deepEqual(after(plain.fake.calls().find((call) => call[0] === "create" && call.includes(first.ref))!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"]);
+  for (let i = 0; i < 200 && !existsSync(join(plain.fake.dir, "templates", "docker-64G.ext4")); i++) await new Promise((r) => setTimeout(r, 25));
+  const helper = plain.fake.calls().find((call) => call[0] === "create" && after(call, "--name")[0]?.startsWith("bb-box-mkfs-"))!;
+  assert.deepEqual([helper[1], after(helper, "--mount-dir")[0]], [BUILDER_IMAGE, `${plain.fake.dir}/templates:/work:quota=65G`]);
+  const { readFileSync } = await import("node:fs");
+  assert.match(readFileSync(join(plain.fake.root, "mkfs"), "utf8"), /mkfs\.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 \/work\/docker-64G\.ext4\.new/);
+  for (let i = 0; i < 100 && plain.fake.sandboxes().some((name) => name.startsWith("bb-box-mkfs-")); i++) await new Promise((r) => setTimeout(r, 25));
+  assert.ok(!plain.fake.sandboxes().some((name) => name.startsWith("bb-box-mkfs-")), "the helper goes");
+  const second = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.deepEqual(after(plain.fake.calls().find((call) => call[0] === "create" && call.includes(second.ref))!, "--mount-disk"), [`${plain.fake.dir}/disks/${second.ref}.ext4:/var/lib/docker`]);
+  assert.equal(readFileSync(join(plain.fake.dir, "disks", `${second.ref}.ext4`), "utf8"), "template", "a clone of the template");
   const report = await plain.backend.doctor(signal());
-  assert.match(report.checks.find((check) => check.id === "microsandbox.disks")?.detail ?? "", /has no mkfs\.ext4, so msb formats each box's Docker disk whole/);
+  assert.match(report.checks.find((check) => check.id === "microsandbox.disks")?.detail ?? "", /Each box's Docker disk is a clone of bb-box's template, docker-64G\.ext4/);
 });
 
 test("installs msb on a host that lacks it, once, and imports a kind's image from Docker when msb lacks it, and again when Docker's changes", async () => {
