@@ -6,9 +6,10 @@ workloads.
 
 Research, 30 September 2026: a note of what was known and measured then, not
 the current design, which is in [the architecture](../architecture.md).
-Settled by [007](../decisions/007-desktop-stream-is-a-typed-transport.md)
-and [011](../decisions/011-interface-v1.md); its Selkies experiment is still
-open.
+Settled by [007](../decisions/007-desktop-stream-is-a-typed-transport.md),
+[011](../decisions/011-interface-v1.md) and
+[056](../decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md), which measured
+Selkies on the CPU on 7 October 2026; the GPU experiment is still open.
 
 Status: recommendation made, measurements pending (see Experiments). Checked
 on 30 September 2026.
