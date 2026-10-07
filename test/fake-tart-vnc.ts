@@ -47,9 +47,14 @@ export class FakeTart {
   /** Its own pixel format, which it sends whatever the client asks: blue, green, red, unused in memory, as macOS draws, or red first. */
   readonly native: "bgrx" | "rgbx";
 
+  /** Settles at its first connection, however long that takes. */
+  readonly connected: Promise<void>;
+  #connected!: () => void;
+
   constructor(password: string, native: "bgrx" | "rgbx" = "bgrx") {
     this.password = password;
     this.native = native;
+    this.connected = new Promise((resolve) => (this.#connected = resolve));
     this.server = createServer((socket) => void this.#serve(socket));
   }
 
@@ -91,6 +96,7 @@ export class FakeTart {
       socket.destroy();
       return this.#crash("second connection");
     }
+    this.#connected();
     this.#socket = socket;
     const reader = new StreamReader(
       new ReadableStream({
