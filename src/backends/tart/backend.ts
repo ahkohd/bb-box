@@ -434,8 +434,9 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         features: [],
         command: WINDOWS_COMMAND,
         // QEMU's VNC server, at the listed mode that best covers the viewer. It moves no clipboard without the SPICE
-        // guest agent, so bb-box moves it with Get-Clipboard and Set-Clipboard in the desktop session (#461).
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }],
+        // guest agent, so bb-box moves it with Get-Clipboard and Set-Clipboard in the desktop session (#461). With
+        // lossy=on its JPEG at quality 2 broke text up, and its own refresh of a still area kept some JPEG (056).
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4 }],
         computerUse: WINDOWS_CUA,
         // Windows boxes join BB only on trial, when the setting is on (#539).
         enrol: config.windowsEnrol,

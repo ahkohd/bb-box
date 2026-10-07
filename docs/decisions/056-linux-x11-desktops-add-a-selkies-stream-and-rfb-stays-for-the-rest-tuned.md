@@ -12,7 +12,9 @@ Amended while its first step was built, 7 October 2026
 ([measured](../research/rfb-quality.md)): the compression level stays
 noVNC's 2, as 9 saved under 2% of Xtigervnc's traffic and halved QEMU's
 frames; and as wayvnc never sends a still area again, its viewers ask for
-one losslessly once the screen is still.
+one losslessly once the screen is still. So do the viewers of Windows on a
+Mac, whose QEMU with `lossy=on` sends one partly as JPEG still, and they
+ask for quality 4, as QEMU's JPEG at 2 broke moving text up.
 
 ## Context
 

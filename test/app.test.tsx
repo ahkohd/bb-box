@@ -631,7 +631,7 @@ function desktopBox(overrides: Partial<BoxView> = {}): BoxView {
     kindLabel: "Linux desktop",
     desktop: true,
     gpu: true,
-    display: { protocol: "rfb", resizable: true, clipboard: null, refresh: null },
+    display: { protocol: "rfb", resizable: true, clipboard: null, refresh: null, quality: null },
     control: { owner: "agent", holder: null },
     facts: [
       { label: "GPU", value: "GPU-0a1b" },
@@ -1377,7 +1377,7 @@ function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") 
 }
 
 test("a desktop that cannot be resized says only that you have control, and noVNC does not resize it", async () => {
-  const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null } })]);
+  const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null, quality: null } })]);
   const slot = desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
   const [client] = novnc.FakeRfb.made;
@@ -1407,7 +1407,7 @@ test("every desktop is asked for JPEG quality 2, and an X11 one, whose server se
 });
 
 test("a Wayland desktop's viewer asks for a still area it drew as JPEG again with no quality level, then for JPEG again (056)", async () => {
-  const wayland = desktopBox({ kind: "linux-desktop-wayland-cpu", gpu: false, display: { protocol: "rfb", resizable: true, clipboard: null, refresh: "viewer" } });
+  const wayland = desktopBox({ kind: "linux-desktop-wayland-cpu", gpu: false, display: { protocol: "rfb", resizable: true, clipboard: null, refresh: "viewer", quality: null } });
   const { handlers } = server([wayland]);
   desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
@@ -1427,6 +1427,24 @@ test("a Wayland desktop's viewer asks for a still area it drew as JPEG again wit
   client!._framebufferUpdate();
   act(() => void vi.advanceTimersByTime(1000));
   expect(novnc.FakeRfb.sent).toEqual(["encodings 7,-223", "full 0,0,200,100", "encodings 7,-30,-223"]);
+});
+
+test("a desktop whose display names a JPEG quality is asked for that one, as Windows on a Mac's 4 (056)", async () => {
+  const windows = desktopBox({ kind: "windows-arm64-desktop", os: "windows", gpu: false, display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4 } });
+  const { handlers } = server([windows]);
+  desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const [client] = novnc.FakeRfb.made;
+  act(() => void client!.dispatchEvent(new Event("connect")));
+  await waitFor(() => expect(client!.qualityLevel).toBe(4));
+  // Its refresh returns to quality 4, not the viewer's own 2.
+  vi.useFakeTimers();
+  client!._display.imageRect(0, 0, 64, 64, "image/jpeg", new Uint8Array());
+  client!._framebufferUpdate();
+  act(() => void vi.advanceTimersByTime(250));
+  client!._display.blitImage(0, 0, 64, 64, new Uint8Array(), 0);
+  client!._framebufferUpdate();
+  expect(novnc.FakeRfb.sent).toEqual(["encodings 7,-223", "full 0,0,64,64", "encodings 7,-28,-223"]);
 });
 
 test("once the tab's size holds, a desktop in your control asks for it once; while it moves, noVNC may not ask", async () => {
@@ -1620,7 +1638,7 @@ test("what the box copies reaches this computer's clipboard quietly; the menu's 
   cleanup();
   dropAllKept();
   // A Windows box through QEMU's console: the message says the console does not send it.
-  const windows = desktopTab(server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null } })]).handlers, "box_7");
+  const windows = desktopTab(server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null, quality: null } })]).handlers, "box_7");
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
   act(() => void novnc.FakeRfb.made[1]!.dispatchEvent(new Event("connect")));
   menu = await openMenu(windows.getByRole("button", { name: "Desktop actions" }));
@@ -1632,7 +1650,7 @@ test("what the box copies reaches this computer's clipboard quietly; the menu's 
 
 test("clipboard outcomes are toolbar notes that go after about 3 s, never from taking control; a paste the box refused is a lasting problem with Dismiss", async () => {
   fakeClipboard(() => Promise.resolve(""));
-  const { handlers } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null } })]);
+  const { handlers } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null } })]);
   const refusing: PluginRpcTestHandlers<Contract> = {
     ...handlers,
     desktopPaste: () => {
@@ -1675,7 +1693,7 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
   const { writeText } = fakeClipboard(() => Promise.resolve("héllo, wörld ✓ 日本"));
   try {
-    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null } })]);
+    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null } })]);
     const slot = desktopTab(handlers, "box_8");
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
     const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
@@ -1713,7 +1731,7 @@ test("a Windows box, whose QEMU console moves no clipboard, has it through bb-bo
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
   const { writeText } = fakeClipboard(() => Promise.resolve("from the Mac ✓"));
   try {
-    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: null } })]);
+    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: null, quality: null } })]);
     const slot = desktopTab(handlers, "box_7");
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
     const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;

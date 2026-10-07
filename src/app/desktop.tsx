@@ -47,13 +47,13 @@ const PASTE_EVENT_WAIT_MS = 150;
 /** How long a clipboard note, such as "Copied" or "Pasted", shows in the toolbar at least. */
 const FLASH_MS = 3_000;
 /**
- * The JPEG quality every desktop is asked for (056), against noVNC's 6: moving
- * text stays readable, and scrolling takes half the traffic. Xtigervnc sends a
- * still area again near losslessly, and wayvnc's viewers ask for it
- * (rfb-refresh.ts), so a still screen is sharp. QEMU without lossy=on and the
- * Tart holder send no JPEG, so it changes nothing there. The compression level
- * stays noVNC's 2: 9 saved under 2% of Xtigervnc's traffic for a tenth of a
- * core more, and halved QEMU's frames.
+ * The JPEG quality a desktop is asked for unless its display names one (056),
+ * against noVNC's 6: moving text stays readable, and scrolling takes half the
+ * traffic. Xtigervnc sends a still area again near losslessly, and wayvnc's
+ * and QEMU's viewers ask for it (rfb-refresh.ts), so a still screen is sharp.
+ * QEMU on Proxmox and the Tart holder send no JPEG, so it changes nothing
+ * there. The compression level stays noVNC's 2: 9 saved under 2% of
+ * Xtigervnc's traffic for a tenth of a core more, and halved QEMU's frames.
  */
 export const QUALITY_LEVEL = 2;
 const XK_CONTROL_L = 0xffe3;
@@ -222,6 +222,8 @@ export class DesktopSession implements Kept {
   #disposed = false;
   /** The desktop's server sends no lossless refresh, so the viewer asks for one (rfb-refresh.ts). */
   #viewerRefresh = false;
+  /** The JPEG quality the viewer asks for: its display's, else QUALITY_LEVEL. */
+  #quality = QUALITY_LEVEL;
   readonly #observer: ResizeObserver | null;
   #settle: ReturnType<typeof setTimeout> | undefined;
   /** The viewer's size as last observed, so the first observation, at mount, is not taken for a move. */
@@ -292,7 +294,7 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#retry);
     this.#refused = null;
     const client = new Viewer(this.element, this.#url, { shared: true });
-    client.qualityLevel = QUALITY_LEVEL;
+    client.qualityLevel = this.#quality;
     if (this.#viewerRefresh) client.refreshLosslessly();
     client.scaleViewport = true;
     client.viewOnly = !this.#mine;
@@ -359,6 +361,12 @@ export class DesktopSession implements Kept {
   refreshLosslessly(): void {
     this.#viewerRefresh = true;
     this.#client?.refreshLosslessly();
+  }
+
+  /** The JPEG quality to ask for from now on; noVNC asks again at once when connected. */
+  setQuality(level: number): void {
+    this.#quality = level;
+    if (this.#client) this.#client.qualityLevel = level;
   }
 
   /** The box's OS, for the paste chord and the Cmd mapping. */
@@ -591,6 +599,10 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   useLayoutEffect(() => {
     if (viewerRefresh) session.current?.refreshLosslessly();
   }, [viewerRefresh, connection]);
+  const quality = box?.display?.quality ?? QUALITY_LEVEL;
+  useLayoutEffect(() => {
+    session.current?.setQuality(quality);
+  }, [quality, connection]);
 
   // A box that stops or goes takes its stream with it.
   useEffect(() => {
