@@ -343,7 +343,7 @@ test("box_image_set and bb box image set, list, show and remove keep a project's
   // A try needs a backend that builds images, which the fake host is not; the CLI tries an image already set, on a kind it covers.
   const tried = await tool("box_image_try", { kind: "linux", script: "#!/bin/bash\necho rust\n" });
   assert.ok(isError(tried));
-  assert.match(text(tried), /No backend that is on builds linux images\. Proxmox LXC and Docker do; elsewhere boxes run the script as they start\./);
+  assert.match(text(tried), /No backend that is on builds linux images\. Proxmox LXC, Docker and Tart do; elsewhere boxes run the script as they start\./);
   const otherKind = await harness.behavior.runCli(["image", "try", "rust-tools", "--kind", "linux-desktop-cpu"]);
   assert.deepEqual([otherKind.exitCode, /Image rust-tools covers linux, not linux-desktop-cpu\./.test(otherKind.stderr ?? "")], [1, true], otherKind.stderr);
   assert.match((await harness.behavior.runCli(["image", "try", "rust-tools"])).stderr ?? "", /No backend that is on builds linux images/);
@@ -2643,6 +2643,25 @@ test("a dialog is named with its window, and an action that closes a window says
   assert.match(cleared, /Window 101 closed\./);
   const after = text(await tool("computer_observe", { box: box.name, window: 100 }));
   assert.doesNotMatch(after, /list item/);
+});
+
+test("on Wayland, a window that closes and gives way to another of its app's says it closed, and names the other (#402)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.wayland = true;
+  });
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Clear all"') }));
+  const dialog = text(await tool("computer_observe", { box: box.name, window: 101 }));
+  // Cua then reads window 101 as window 100, with no title or bounds of its own.
+  const cleared = text(await tool("computer_act", { box: box.name, action: "click", ref: refOf(dialog, '"Clear"') }));
+  assert.match(cleared, /\n\nWindow 101 closed\. Its app's window 100: tasks "Tasks", \d+ by \d+, is open\.\n\nNext: Call computer_observe with window 100 to read it\.$/);
+  assert.doesNotMatch(cleared, /What changed in window 101/);
+  const again = await tool("computer_observe", { box: box.name, window: 101 });
+  assert.match(text(again), /has no window 101|Window 101 has closed/);
+  const typed = await tool("computer_type", { box: box.name, window: 101, text: "x" });
+  assert.ok(isError(typed));
 });
 
 test("pixels count only against the agent's latest image of the window or the desktop", async (t) => {

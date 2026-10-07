@@ -158,8 +158,11 @@ one, follow these steps:
    `keep: true`, a box of what it built stays for you to look inside with
    `box_run`; release it after.
 4. **Register.** Commit the two files, then call `box_image_set` with their
-   text and paths. It changes every new box of those kinds in the project,
-   so ask the user first unless they asked for the image.
+   text and paths. It changes every new box of those kinds in the project, so
+   ask the user first unless they asked for the image. Proxmox LXC, Docker and
+   Tart then build the image ahead once it is used, and later boxes start from
+   the build; the SSH host pool and GPU desktops run the script as each box
+   starts.
 
 ## The bb box command
 
