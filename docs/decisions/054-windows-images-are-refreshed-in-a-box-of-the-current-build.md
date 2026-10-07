@@ -64,9 +64,6 @@ for a new Windows release or a broken image.
 
 ## Consequences
 
-- Each Windows template takes one more VMID of bb-box's range, for its
-  rollback, while it has one.
-
 - Each backend with Windows boxes gives `BackendImages` for its Windows
   kind: Proxmox QEMU through its API, Tart through QEMU on the Mac.
 - A refreshed image is a clone of a clone. Each month's build carries the
@@ -74,3 +71,5 @@ for a new Windows release or a broken image.
   fresh install from the ISO starts that over.
 - The pins in `setup/windows/pins.json` and in the build scripts must
   agree until the build scripts read `pins.json` themselves.
+- Each Windows template takes one more VMID of bb-box's range, for its
+  rollback, while it has one.

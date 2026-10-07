@@ -345,7 +345,8 @@ A box is a resource of its thread and gets what the thread's machine has.
   `git` takes GitHub credentials from `gh`, and fetches GitHub's SSH URLs
   over HTTPS.
 - **Child threads.** A child thread can run on an enrolled box
-  (`box_thread`), and BB's new-thread screen can start a thread on a new
+  (`box_thread`), with its parent's agent and model when the box has that
+  agent's CLI (#561). BB's new-thread screen can start a thread on a new
   box, which goes with the thread
   ([033](decisions/033-a-thread-can-start-on-a-new-box.md)).
 - **Your machines.** Boxes you own, kept as BB machines under names you
@@ -782,7 +783,13 @@ by [setup/microsandbox](../setup/microsandbox/README.md)
   size is asked for. `/run` is a tmpfs, and its network profiles are
   `public,private`, which reach BB's server on a private or tailnet address.
 - With Docker on, as by default, `/var/lib/docker` is an ext4 disk of the
-  box's own, as overlayfs cannot sit on `msb`'s root, and the image's start
+  box's own, as overlayfs cannot sit on `msb`'s root. bb-box makes it in
+  its folder's `disks`, sparse, with its inode tables and journal left for
+  the kernel to initialise (3 ms, about 5 MB), passes it with
+  `--mount-disk`, and deletes it with the box; the upkeep removes one left
+  by an acquire that stopped part way. `msb`'s own disk for a box formats
+  it whole, which made 20 creates at once 2 to 3 s slower; bb-box uses it
+  only on a host without `mkfs.ext4`. The image's start
   script starts `dockerd` with the first `docker` command
   ([041](decisions/041-every-linux-box-has-docker.md)). It needs no
   privilege on the host: each box has its own kernel.

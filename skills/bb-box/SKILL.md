@@ -112,6 +112,9 @@ terminals can use it. `box_acquire`, `box_start` and `box_run` wait up to
 - A project's own variables reach a box only while a thread of that project
   runs on it. A command that needs one can run in a thread on the box: start
   one with `box_thread`.
+- `box_thread` starts the child on your thread's agent and model when the
+  box has that agent's CLI, and on BB's default otherwise. It refuses a box
+  with none of BB's agent CLIs, and names them.
 - In BB's new-thread screen, "New box" starts a thread on a box of its own.
   From a terminal, `bb thread spawn` does the same with the environment
   provider `bb-box-new` and inputs such as `{"kind": "linux"}`; give

@@ -24,6 +24,7 @@ import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings
 import { LINUX_LEAST_MEMORY_GIB, presetMemoryChecks } from "../core/sizes.ts";
 import type { ControlView } from "../core/control.ts";
 import { Configuration, boundedDoctor, type ApplyResult } from "./configuration.ts";
+import { agentFor } from "./agents.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
@@ -71,7 +72,7 @@ const RELAY_CALL_TIMEOUT_MS = 15_000;
 /** The longest a streamed box_copy may take (#492). */
 const FILE_CALL_TIMEOUT_MS = 2 * 60 * 60_000;
 /** How long each msb script may run on a BB machine (053), with a minute more for the call. */
-const MSB_SCRIPT_TIMEOUT_MS = { install: 11 * 60_000, status: 2 * 60_000, images: 2 * 60_000, import: 31 * 60_000 } as const;
+const MSB_SCRIPT_TIMEOUT_MS = { install: 11 * 60_000, status: 2 * 60_000, images: 2 * 60_000, import: 31 * 60_000, disk: 90_000, undisk: 2 * 60_000, disks: 90_000 } as const;
 /** How long BB's word on a machine's connection is trusted, so each docker command does not ask again. */
 const MACHINE_STATE_MS = 2_000;
 /** bb-box's version, which the move from BB's settings records. */
@@ -1057,6 +1058,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const projectId = box.projectId ?? (await projectOf(threadId));
       if (!projectId) throw new BoxError("unsupported", "This thread has no project, so a thread on its box would have none either.");
       const hostId = box.enrol.hostId;
+      // Before the clone: a box with none of BB's agent CLIs is refused (#561).
+      const agent = await agentFor(bb.sdk, threadId, hostId, box.name, logError);
       // BB's personal project has no repository, and its threads take a personal workspace. A thread
       // of any other project runs where the project has a source, so a box gets a clone of its repository.
       const project = ((await bb.sdk.projects.list({ includePersonal: true })) as { id: string; kind: string; sources: { hostId: string }[] }[]).find(
@@ -1077,6 +1080,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         },
         prompt,
         title: title ?? `On box ${box.name}`,
+        ...agent,
       });
       await bb.sdk.threads.update({ threadId: thread.id, parentThreadId: threadId });
       return thread.id;

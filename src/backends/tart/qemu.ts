@@ -242,12 +242,13 @@ fw="$(qshare)/edk2-aarch64-code.fd"
 [ -f "$fw" ] || { echo "QEMU's firmware $fw is missing." >&2; exit 1; }
 val() { sed -n "s/^$1=//p" "$v/config" | head -n 1; }
 rm -f "$v/qmp" "$v/pid"
+# VNC with lossy=on, so a viewer that asks for JPEG, as the panel does, gets it (056).
 set -- -name "$vm" -machine "$(val machine)" -accel hvf -cpu host -smp "$(val cores)" -m "$(val memory)" \
   -drive "if=pflash,format=raw,readonly=on,file=$fw" -drive "if=pflash,format=raw,file=$v/vars.fd" \
   -device qemu-xhci -device usb-kbd -device usb-tablet \
   -drive "if=none,id=disk,file=$v/disk.qcow2,discard=unmap" -device virtio-blk-pci,drive=disk \
   -netdev "user,id=net,hostfwd=tcp:127.0.0.1:$(val ssh)-:22" -device virtio-net-pci,netdev=net \
-  -device virtio-gpu-pci -display none -vnc "127.0.0.1:$(($(val vnc) - 5900))" \
+  -device virtio-gpu-pci -display none -vnc "127.0.0.1:$(($(val vnc) - 5900)),lossy=on" \
   -qmp "unix:$v/qmp,server=on,wait=off" -pidfile "$v/pid"
 saved=; if [ -f "$v/state" ]; then saved=1; set -- "$@" -incoming defer; fi
 keep "$v/out" "$v/exit"

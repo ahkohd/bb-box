@@ -69,7 +69,7 @@ async function start(
   // The thread's storage folder, $BB_THREAD_STORAGE (#482).
   const storage = join(root, "thread-storage", THREAD);
   mkdirSync(storage, { recursive: true });
-  const threads = new Map<string, Thread>([[THREAD, makeThreadResponse({ id: THREAD, projectId: PROJECT, environmentId: "env_one" })]]);
+  const threads = new Map<string, Thread>([[THREAD, makeThreadResponse({ id: THREAD, projectId: PROJECT, environmentId: "env_one", providerId: "claude-code" })]]);
   const hosts = new Map<string, Host>();
   const world = {
     root,
@@ -98,6 +98,16 @@ async function start(
     threadsError: null as Error | null,
     /** Makes threads.get fail for one thread. */
     threadErrors: new Map<string, Error>(),
+    /** The agent CLIs BB finds on every machine, by provider; null: BB cannot say (#561). */
+    agentClis: {
+      "claude-code": { displayName: "Claude Code", executableName: "claude", installed: true },
+      codex: { displayName: "Codex", executableName: "codex", installed: true },
+      "acp-cursor": { displayName: "Cursor", executableName: "cursor-agent", installed: false },
+    } as Record<string, { displayName: string; executableName: string; installed: boolean }> | null,
+    /** The model of the calling thread's latest turn. */
+    parentModel: "claude-opus-5-5" as string | null,
+    /** The models each provider's CLI lists on a machine. */
+    models: { "claude-code": ["claude-opus-5-5", "claude-sonnet-5-5"], codex: ["gpt-5.5"] } as Record<string, string[]>,
     /** Calls for the names of BB's machine variables: "system", or the project's ID. */
     names: [] as string[],
     /** Threads bb-box asked BB to start. */
@@ -160,6 +170,8 @@ async function start(
         },
         list: async ({ hostId }: { hostId?: string }) => (hostId ? (world.onHost.get(hostId) ?? []) : []) as never,
         storageLocation: async () => ({ hostId: world.workspaceHost, storageRootPath: storage }),
+        defaultExecutionOptions: async () =>
+          world.parentModel ? { model: world.parentModel, permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/requested" } : null,
         spawn: async (args: unknown) => {
           world.spawned.push(args);
           return makeThreadResponse({ id: `thr_child${world.spawned.length}`, projectId: PROJECT });
@@ -207,7 +219,14 @@ async function start(
           };
         },
       },
+      providers: {
+        models: async ({ providerId }: { providerId: string }) => ({ models: (world.models[providerId] ?? []).map((model) => ({ id: model, model })) }),
+      },
       hosts: {
+        providerCliStatus: async () => {
+          if (!world.agentClis) throw new Error("Not found");
+          return world.agentClis;
+        },
         // A machine's enrolment and reconnect commands, with their Windows forms (#539).
         experimental_getEnrollmentCommand: async ({ hostId }: { hostId: string }) => {
           world.events.push(`enrolment command ${hostId}`);
@@ -1353,6 +1372,8 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
     environment: { type: "host", hostId: box.boxes[0]!.enrol.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
     prompt: "Run uname -a",
     title: `On box ${name}`,
+    providerId: "claude-code",
+    model: "claude-opus-5-5",
     origin: "plugin",
     originPluginId: "bb-box",
   });
@@ -1364,6 +1385,42 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
   const cli = await harness.behavior.runCli(["thread", name, "--prompt", "Once more", "--thread", THREAD]);
   assert.equal(cli.stdout, `Started thread thr_child3 on box ${name}.\n`);
   assert.equal(world.sources.length, 1, "later threads use the same clone");
+});
+
+test("box_thread starts the child on its parent's provider and model when the box has them, BB's default otherwise, and refuses a box with no agent CLI (#561)", async (t) => {
+  const { harness, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const { boxes } = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { boxes: { name: string }[] };
+  const name = boxes[0]!.name;
+  const agent = async () => {
+    const started = await tool("box_thread", { box: name, prompt: "Run uname -a" });
+    assert.ok(!isError(started), text(started));
+    const { providerId, model } = world.spawned.at(-1) as { providerId?: string; model?: string };
+    return { providerId, model };
+  };
+
+  // The box's CLI does not list the parent's model: that CLI's default.
+  world.parentModel = "claude-opus-4-1";
+  assert.deepEqual(await agent(), { providerId: "claude-code", model: undefined });
+  // The box lacks the parent's CLI: BB's default.
+  world.agentClis!["claude-code"] = { ...world.agentClis!["claude-code"]!, installed: false };
+  assert.deepEqual(await agent(), { providerId: undefined, model: undefined });
+  // BB cannot say which CLIs the box has: BB's default.
+  const clis = world.agentClis;
+  world.agentClis = null;
+  assert.deepEqual(await agent(), { providerId: undefined, model: undefined });
+
+  // None of BB's CLIs: refused before anything is started.
+  world.agentClis = Object.fromEntries(Object.entries(clis!).map(([id, cli]) => [id, { ...cli, installed: false }]));
+  const spawned = world.spawned.length;
+  const refused = await tool("box_thread", { box: name, prompt: "Run uname -a" });
+  assert.ok(isError(refused));
+  assert.match(
+    text(refused),
+    new RegExp(`^A thread cannot run on box ${name}: it has none of the agent CLIs BB runs threads with: Claude Code \\(claude\\), Codex \\(codex\\), Cursor \\(cursor-agent\\)\\. Install one there, then start the thread again\\.`),
+  );
+  assert.equal(world.spawned.length, spawned);
 });
 
 test("in BB's personal project, a thread on a box takes a personal workspace there, with no clone (#55)", async (t) => {
