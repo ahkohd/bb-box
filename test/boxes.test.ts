@@ -978,13 +978,18 @@ test("the macOS timeout passes a command's exit on, and kills one that ignores T
   assert.ok(!command("macos", "true").includes("perl"), "no timeout, no wrapper");
 });
 
-test("a Windows command with a job starts outside sshd's job, through Start-Detached, with its script, stdin, output and status in the job's files, and its timeout kept by the runner (#414)", () => {
+test("a Windows command with a job starts outside sshd's job, through WMI and cmd, with its script, stdin, output and status in the job's files, a watchdog for its timeout, and waits on cmd's handle (#414)", () => {
   const env = "$env:FOO = 'bar'";
   const script = command("windows", "Get-Process", { cwd: "C:\\work", env, timeoutMs: 1_500, job: { id: "0123456789ab", forget: ["ba9876543210"], prune: true } });
-  assert.ok(!script.includes("ping -n"), "no watchdog: the command waits for the runner, which keeps the timeout");
+  assert.ok(!script.includes("ping -n"), "no watchdog in the session: the job's own keeps the timeout");
   assert.match(script, /Remove-Item -Recurse -Force -LiteralPath \(Join-Path \$HOME '\.local\\state\\bb-box\\jobs\\ba9876543210'\)/, "a job whose result bb-box has goes");
   assert.match(script, /Where-Object LastWriteTime -lt \(Get-Date\)\.AddDays\(-7\)/, "old jobs go");
-  assert.match(script, /\$bbRunner=Start-Detached -Command '.*\$p\.WaitForExit\(1500\).*taskkill \/T \/F \/PID \$p\.Id/);
+  assert.match(script, /\$bbCl='cmd \/d \/v:on \/s \/c '.*' <'\+\$q\+\(Join-Path \$bbJob 'in'\).*' & echo !errorlevel!>'/);
+  assert.match(script, /\$bbR=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @\{CommandLine=\$bbCl;.*if\(\$bbR\.ReturnValue -ne 0 -or -not \$bbR\.ProcessId\)\{.*exit 1\}/, "a job Windows did not start fails at once, not waits for ever");
+  assert.match(script, /if\(\$p\.ProcessName -ne ''cmd''\)\{\$p=\$null\};if\(\$p -and -not \$p\.WaitForExit\(1500\)\)\{taskkill \/T \/F \/PID \$p\.Id/, "the watchdog holds cmd's handle and stops its tree at the timeout");
+  assert.match(script, /try\{\(Get-Process -Id \$bbCmd -ErrorAction Stop\)\.WaitForExit\(\)\}catch\{\};/, "the session waits on cmd's handle");
+  assert.ok(!script.includes("Start-Detached"), "no Start-Detached, whose search for its process took 190 ms");
+  assert.ok(!command("windows", "x", { job: { id: "0123456789ab", forget: [], prune: false } }).includes("taskkill"), "no timeout, no watchdog");
   assert.match(script, /exit \[int\]\(Get-Content -Raw -LiteralPath \$bbStatus\)$/);
   assert.ok(script.includes("Set-Content -LiteralPath $bbBoxEnv -NoNewline -Value '$env:FOO = ''bar'''"), "the env file is written before the job starts");
   // The file the runner runs is the command as the transport would wrap it: the env file, the directory, the script.

@@ -55,9 +55,9 @@ Limits:
 - BB ends a tool call at about five minutes, so `box_run` returns after 270 s.
   A command still running then goes on as a job: the answer names it and gives
   its output so far, and `box_job` gives the rest. On Windows too, since a job
-  there starts outside the SSH session, which costs about half a second more
-  per command; a Windows command in the desktop session has no job, and is
-  stopped at 270 s with its output so far.
+  there starts outside the SSH session, which costs about a quarter of a
+  second more per command; a Windows command in the desktop session has no
+  job, and is stopped at 270 s with its output so far.
 - On Windows, commands run in PowerShell 7, and what a command starts with
   `Start-Process`, `Start-Job` or `cmd /c start` ends with it. Start a
   server with `Start-Detached { <cmd> } server.log` instead, which returns
