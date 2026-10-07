@@ -58,4 +58,4 @@ which records still stand as written. The current design as a whole is in
 | [048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md) | A Wayland desktop is Sway with floating windows, streamed by wayvnc | Current |
 | [049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md) | A project's image is a script on the standard image, and images are rebuilt when stale | Current |
 | [050](050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md) | A box can join the operator's tailnet as an ephemeral node | Not built yet, but for TUN in Proxmox LXC templates |
-| [053](053-microsandbox-is-a-later-backend-not-built-now.md) | microsandbox is a later backend, not built now | Not built yet |
+| [053](053-microsandbox-runs-light-linux-boxes-as-microvms.md) | microsandbox runs light Linux boxes as microVMs | Being built |
