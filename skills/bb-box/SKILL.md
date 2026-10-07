@@ -51,12 +51,13 @@ Limits:
 - If bb-box restarts mid-command, as for an update, `box_run` waits up to 60 s
   for the command. One still running then goes on in the box as a job, and
   `box_run`'s error names it: `box_job` gives its exit code and output once it
-  ends. On Windows the command stops instead.
+  ends.
 - BB ends a tool call at about five minutes, so `box_run` returns after 270 s.
-  A Linux or macOS command still running then goes on as a job: the answer
-  names it and gives its output so far, and `box_job` gives the rest. On
-  Windows the command is stopped at 270 s with its output so far: start a
-  longer one with `Start-Detached`.
+  A command still running then goes on as a job: the answer names it and gives
+  its output so far, and `box_job` gives the rest. On Windows too, since a job
+  there starts outside the SSH session, which costs about half a second more
+  per command; a Windows command in the desktop session has no job, and is
+  stopped at 270 s with its output so far.
 - On Windows, commands run in PowerShell 7, and what a command starts with
   `Start-Process`, `Start-Job` or `cmd /c start` ends with it. Start a
   server with `Start-Detached { <cmd> } server.log` instead, which returns

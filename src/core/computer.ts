@@ -898,7 +898,9 @@ export class Computer {
       const cause: Cause = { element: watch?.element ?? target.element, right: input.action === "right_click" };
       const seen = watch ? await this.#settle(use, watch, cause) : await this.#changes(use, before!, { popups: { ...cause, result } });
       const forward = elsewhere?.forward;
-      return { text: [...lines, ...seen.parts].join("\n\n"), hints: forward == null ? seen.hints : [`Call computer_observe with window ${forward} to act in what came in front.`, ...seen.hints] };
+      // What came in front may be among the windows that opened, whose hint says to observe it already.
+      const told = forward == null || seen.hints.some((hint) => hint.includes(`computer_observe with window ${forward} `));
+      return { text: [...lines, ...seen.parts].join("\n\n"), hints: told ? seen.hints : [`Call computer_observe with window ${forward} to act in what came in front.`, ...seen.hints] };
     });
   }
 
