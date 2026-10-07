@@ -25,6 +25,8 @@ const RUN_TIMEOUT_S = 10 * 60;
  * command in the desktop session, which has no job yet, is stopped then.
  */
 export const RUN_WAIT_MS = 270_000;
+/** How long box_run waits, after a command lost its box, to see whether bb-box is stopping for a deploy (#415). */
+const LOST_BOX_MS = 10_000;
 const RUN_TIMEOUT_MAX_S = 60 * 60;
 
 const HINTS: Record<BoxErrorCode, string> = {
@@ -403,6 +405,11 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ? `${text}${next(...hints)}`
           : { content: [{ type: "text", text: `${text}${next(...hints)}` }], isError: result.timedOut };
       } catch (error) {
+        // A box that stops answering as bb-box starts stopping, as a Docker box on a BB machine does at a deploy, when BB stops
+        // bb-box's worker and the relay before it aborts the call (#415): the command may go on there as a job.
+        if (target && !target.jobless && error instanceof BoxError && error.code === "unreachable" && (await drain.stoppingWithin(signal, LOST_BOX_MS))) {
+          return restarted(target.box, job, false, false);
+        }
         // A command that fails while bb-box stops may go on too.
         const stopping = drain.closed && !(error instanceof BoxError && error.code === "restarting");
         if (target && error instanceof Detached) return detached(target.owner, target.box, job, signal);

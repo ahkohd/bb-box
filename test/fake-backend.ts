@@ -524,6 +524,12 @@ export class FakeBackend implements Backend {
     return controller;
   }
 
+  /** Makes the guest's running commands fail as unreachable, as a Docker box's do when the relay to its BB machine closes (#415). */
+  loseCommands(ref: string): void {
+    this.#running.get(ref)?.abort(new TransportError("unreachable", "The fake box's connection closed."));
+    this.#running.delete(ref);
+  }
+
   /** Stops the guest's commands, then deletes its directory. A write already under way can land after the stop, so the delete tries again. */
   async #wipe(ref: string): Promise<void> {
     this.#running.get(ref)?.abort(new TransportError("unreachable", "The fake box is gone."));

@@ -511,6 +511,27 @@ test("box_run returns before BB ends a tool call: a Linux command goes on as a j
   assert.match(text(detached), /^The command still runs in box \S+ after 1 s, and goes on there as job [0-9a-f]{12}: BB ends a tool call at about five minutes/);
 });
 
+test("a command whose box stops answering as bb-box stops for a deploy, as a Docker box on a BB machine does when BB stops the relay first, names its job (#415)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false }, { drainMs: 1_500 });
+  let disposing: Promise<void> | null = null;
+  t.after(() => disposing ?? harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  const deploy = new AbortController();
+  const long = harness.behavior.callAgentTool("box_run", { box: box.name, command: "echo long; sleep 5" }, { threadId: THREAD, projectId: PROJECT, signal: deploy.signal });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  // BB stops bb-box's worker on the machine, and the relay with it, then aborts the calls and runs the dispose hooks.
+  world.backend!.loseCommands(box.guest!.ref);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  deploy.abort("plugin-disposed");
+  disposing = harness.lifecycle.dispose();
+  const answer = await long;
+  assert.equal(isError(answer), true);
+  const job = /It may go on there as job ([0-9a-f]{12})\./.exec(text(answer))?.[1];
+  assert.ok(job, text(answer));
+  assert.ok(text(answer).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends.`), text(answer));
+});
+
 test("box_job gives a job's output while it runs and its exit code once it ends, and the box's next command removes it (#405)", async (t) => {
   const { harness, app, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
   t.after(() => harness.lifecycle.dispose());

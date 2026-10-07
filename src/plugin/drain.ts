@@ -73,6 +73,31 @@ export class Drain {
     }
   }
 
+  /**
+   * Whether bb-box starts stopping within `ms`: BB aborts `signal`, a tool
+   * call's, for a deploy, or the drain closes. BB stops bb-box's worker on a
+   * BB machine, and with it the relay to Docker there, before either, so a
+   * command in a Docker box there loses its box first (#415).
+   */
+  stoppingWithin(signal: AbortSignal, ms: number): Promise<boolean> {
+    const now = () => this.#closed || (signal.aborted && signal.reason === PLUGIN_DISPOSED);
+    if (now()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const done = (stopping: boolean) => {
+        clearInterval(poll);
+        clearTimeout(timer);
+        signal.removeEventListener("abort", check);
+        resolve(stopping);
+      };
+      const check = () => {
+        if (now()) done(true);
+      };
+      const poll = setInterval(check, 100);
+      const timer = setTimeout(() => done(now()), ms);
+      signal.addEventListener("abort", check);
+    });
+  }
+
   /** Takes no new tasks, waits up to `ms` for those running, then stops the rest. */
   async close(ms: number): Promise<void> {
     this.#closed = true;
