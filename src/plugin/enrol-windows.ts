@@ -126,7 +126,28 @@ export function bundleOf(command: readonly string[]): { name: string; bundle: st
   const at = command.indexOf("--bootstrap-env");
   const name = at >= 0 ? (command[at + 1] ?? null) : (/--bootstrap-env[ =]'?([A-Za-z_][A-Za-z0-9_]*)/.exec(command.join(" "))?.[1] ?? null);
   if (!name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
-  return { name, bundle: assigned(command, name) };
+  // Only a bundle counts: a script may set the variable from something else, such as $(cat).
+  const value = assigned(command, name);
+  return { name, bundle: value !== null && stdinBundle(value) ? value : null };
+}
+
+/** `text` when it is a bundle: a JSON object with a serverUrl, as install.sh reads one. */
+export function stdinBundle(stdin: string): string | null {
+  try {
+    const parsed = JSON.parse(stdin) as unknown;
+    return parsed && typeof parsed === "object" && typeof (parsed as { serverUrl?: unknown }).serverUrl === "string" ? stdin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stdin's shape for a message: its length, and the keys of a JSON object, never their values. */
+export function stdinShape(stdin: string): string {
+  try {
+    const parsed = JSON.parse(stdin) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return `stdin of ${stdin.length} characters, a JSON object with ${Object.keys(parsed).join(", ") || "no keys"}`;
+  } catch {}
+  return `stdin of ${stdin.length} characters, not JSON${stdin.startsWith("#!") ? ", a script" : ""}`;
 }
 
 /** Runs install.ps1 with the bundle's headers, with the bundle, on stdin, in the variable `name`. */
@@ -160,7 +181,7 @@ export interface WindowsEnrolment {
  */
 export function windowsExecutor(transport: CommandTransport, enrolment: WindowsEnrolment, phases?: Phases): MachineExecutor {
   return {
-    async exec({ command, timeoutMs, signal, onOutput }) {
+    async exec({ command, stdin, timeoutMs, signal, onOutput }) {
       const requested = bundleOf(command);
       if (!requested) {
         onOutput(`bb-box cannot yet run this request of BB's on a Windows box: ${shapeOf(command)}\n`);
@@ -170,10 +191,14 @@ export function windowsExecutor(transport: CommandTransport, enrolment: WindowsE
       const windowsCommand = (await enrolment.command(hostId).catch(() => null))?.windowsCommand;
       let plan: { script: string; stdin: string; how: string };
       if (windowsCommand) plan = { script: WINDOWS_COMMAND_SCRIPT, stdin: windowsCommand, how: "BB's Windows enrolment command" };
-      else if (requested.bundle) plan = { script: bundleScript(requested.name), stdin: requested.bundle, how: "install.ps1 with the bundle of BB's request, as BB gave no Windows enrolment command" };
       else {
-        onOutput(`BB gave no Windows enrolment command, and its request sets no ${requested.name}: ${shapeOf(command)}\n`);
-        return { exitCode: 2 };
+        // The request sets the bundle in its command, or its script reads it from stdin.
+        const bundle = requested.bundle ?? stdinBundle(stdin);
+        if (!bundle) {
+          onOutput(`BB gave no Windows enrolment command, and its request sets no ${requested.name}: ${shapeOf(command)}, with ${stdinShape(stdin)}\n`);
+          return { exitCode: 2 };
+        }
+        plan = { script: bundleScript(requested.name), stdin: bundle, how: "install.ps1 with the bundle of BB's request, as BB gave no Windows enrolment command" };
       }
       onOutput(`bb-box: running ${plan.how}, in the box user's desktop session.\n`);
       phases?.mark("install");

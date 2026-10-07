@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseQemuPart } from "../src/backends/proxmox-qemu/config.ts";
-import { WINDOWS_COMMAND_SCRIPT, bundleOf, runWindowsCommand, shapeOf, windowsExecutor, windowsFailure } from "../src/plugin/enrol-windows.ts";
+import { WINDOWS_COMMAND_SCRIPT, bundleOf, runWindowsCommand, shapeOf, stdinShape, windowsExecutor, windowsFailure } from "../src/plugin/enrol-windows.ts";
 import type { CommandTransport, RunOptions, RunResult } from "../src/transports/types.ts";
 
 test("BB's Windows command runs in the desktop session, after Node.js is made sure of, and goes as stdin, never in the script", async () => {
@@ -63,4 +63,30 @@ test("without a Windows enrolment command, install.ps1 runs with the request's b
   assert.equal(sent[0]!.options.stdin, bundle);
   assert.ok(!sent[0]!.script.includes("secret-enrolment-credential"));
   assert.match(output.join(""), /running install\.ps1 with the bundle of BB's request/);
+});
+
+test("as BB sends it, the bundle comes on stdin to a script that fetches install.sh, and install.ps1 runs with it", async () => {
+  const bundle = JSON.stringify({ hostId: "host_abc", serverUrl: "https://bb.example.com", headers: { "X-BB-Enrollment": "secret-enrolment-credential" } });
+  // BB's first enrolment, as the live run showed its shape: a script of about 500 characters, then $0 and $1.
+  const script = 'BB_ENROLLMENT=$(cat); export BB_ENROLLMENT; curl -fsSL "$1" | sh -s -- --bootstrap-env BB_ENROLLMENT'.padEnd(502, " ");
+  const command = ["sh", "-c", script, "bb-machine-install", "https://bb.example.com/install.sh"];
+  const sent: { script: string; options: RunOptions }[] = [];
+  const result: RunResult = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+  const transport = { run: async (text: string, options: RunOptions = {}) => (sent.push({ script: text, options }), result) } as unknown as CommandTransport;
+  const output: string[] = [];
+  const executor = windowsExecutor(transport, { hostId: async () => "host_abc", command: async () => null });
+  assert.deepEqual(await executor.exec({ command, stdin: bundle, timeoutMs: 60_000, signal: new AbortController().signal, onOutput: (text) => output.push(text) }), { exitCode: 0 });
+  assert.equal(sent[0]!.options.stdin, bundle);
+  // The script goes base64-encoded into the desktop session's task: decode what it runs.
+  const decode = (text: string, depth = 0): string =>
+    depth > 4 ? text : [text, ...[...text.matchAll(/FromBase64String\('{1,2}([A-Za-z0-9+/=]+)'{1,2}\)/g)].map((match) => decode(Buffer.from(match[1]!, "base64").toString("utf8"), depth + 1))].join("\n");
+  const decoded = decode(sent[0]!.script);
+  assert.match(decoded, /Set-Item -LiteralPath 'Env:BB_ENROLLMENT' -Value \$bbBundle/);
+  assert.match(decoded, /\+ '\/install\.ps1'\) -Headers \$bbHeaders/);
+  assert.ok(!sent[0]!.script.includes("secret-enrolment-credential") && !decoded.includes("secret-enrolment-credential"));
+  // Stdin that is not the bundle: refused, with its shape and no values.
+  const refused: string[] = [];
+  assert.deepEqual(await executor.exec({ command, stdin: "#!/bin/sh\necho", timeoutMs: 60_000, signal: new AbortController().signal, onOutput: (text) => refused.push(text) }), { exitCode: 2 });
+  assert.match(refused.join(""), /sets no BB_ENROLLMENT: sh -c <502 characters> bb-machine-install https:\/\/bb\.example\.com\/install\.sh, with stdin of 14 characters, not JSON, a script/);
+  assert.equal(stdinShape(JSON.stringify({ token: "secret", serverUrl: "x" })), "stdin of 34 characters, a JSON object with token, serverUrl");
 });
