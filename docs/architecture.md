@@ -771,6 +771,10 @@ Code in [src/backends/docker/](../src/backends/docker/). Set up by
 Code in [src/backends/microsandbox/](../src/backends/microsandbox/). Set up
 by [setup/microsandbox](../setup/microsandbox/README.md)
 ([053](decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)).
+It is an option beside Docker, for boxes that need a kernel of their own,
+never the default: it stays last in the backend order, so a box gets a
+microVM only when it asks for this backend.
+
 
 - bb-box runs its own `msb` on one Linux host with KVM: BB's server, one
   over `ssh://`, or a BB machine through the msb relay. It installs the
@@ -807,8 +811,9 @@ by [setup/microsandbox](../setup/microsandbox/README.md)
   one.
 - Capacity is the host's memory, less a reserve and the memory of the
   running bb-box microVMs, its cores, and a most-boxes budget counting every
-  install's. `msb` reserves no memory, so an idle box holds about 100 MiB of
-  what it is counted at. There is no warm pool yet.
+  install's. `msb` reserves no memory and takes back what a guest frees,
+  but each guest keeps its own page cache, so a box that has joined BB holds
+  about 2 GiB while idle (053). There is no warm pool yet.
 
 ### SSH host pool
 

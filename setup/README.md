@@ -9,7 +9,7 @@ A backend is where boxes come from. You can turn on several, and a new box goes 
 | Backend | Choose it for | Guide |
 | --- | --- | --- |
 | Docker | the quickest start: it needs only Docker, on the machine that runs BB, another host, or a BB machine | [Docker](docker/README.md), and [Docker in WSL on a Windows PC](docker-wsl/README.md) |
-| microsandbox | many light Linux boxes and desktops, each a microVM ready in under half a second, on a Linux host with KVM: the machine that runs BB, another host, or a BB machine | [microsandbox](microsandbox/README.md) |
+| microsandbox | an option beside Docker, not the default: Linux boxes and desktops that each need a kernel of their own, such as Docker without a privileged container, as microVMs on a Linux host with KVM: the machine that runs BB, another host, or a BB machine | [microsandbox](microsandbox/README.md) |
 | Proxmox LXC | Linux boxes and desktops, including desktops on a GPU, on a Proxmox VE host | [Proxmox LXC](proxmox-lxc/README.md) |
 | Proxmox QEMU | Windows desktops on a Proxmox VE host | [Proxmox QEMU](proxmox-qemu/README.md) |
 | Tart | macOS, Linux on arm64 and Windows on arm64, on your Macs with Apple silicon | [Tart](tart/README.md) |

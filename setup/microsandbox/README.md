@@ -1,10 +1,14 @@
 # microsandbox backend
 
 This backend runs Linux boxes as microVMs on one Linux host with KVM, with
-[microsandbox](https://github.com/superradcompany/microsandbox)'s `msb`. A box
-is ready in under half a second and holds about 100 MiB of the host's memory
-while idle, so agents can make and drop many of them
-([053](../../docs/decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)).
+[microsandbox](https://github.com/superradcompany/microsandbox)'s `msb`. It
+is an option beside the [Docker backend](../docker/README.md), not a
+replacement and not the default: keep it after Docker in the backend order,
+and ask for it with `--on` (or `box_acquire`'s `on`) for a box that needs a
+kernel of its own. On the same Linux host, Docker made boxes about twice as
+fast and held far less memory while idle; a microVM box was ready in 1.6 s
+alone, and holds its own page cache
+([053](../../docs/decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md#what-the-built-backend-measured)).
 It offers two kinds, from the same images as the Docker backend:
 
 - **linux**: Ubuntu 24.04 with the same tools as a Docker or Proxmox LXC
@@ -13,7 +17,8 @@ It offers two kinds, from the same images as the Docker backend:
   through Cua Driver.
 
 Each box has a kernel of its own, so Docker in it needs no privilege on the
-host, and Chrome runs with its own sandbox. Boxes join BB as machines, as
+host, where a Docker box with Docker is a privileged container, and Chrome
+runs with its own sandbox. That isolation is what this backend is for. Boxes join BB as machines, as
 other Linux boxes do.
 
 The host is the machine that runs BB, another machine over SSH, or a BB
@@ -40,7 +45,8 @@ the boxes. How bb-box drives a box is in the
   writes. A box's disks are sparse, so they take only what it writes.
 - Memory for the boxes: bb-box keeps 4 GiB of the host's memory free by
   default, and counts each running box's full size, so a host for a few
-  small boxes needs 16 GiB.
+  small boxes needs 16 GiB. A box that has joined BB holds about 2 GiB of
+  the host's memory while idle, as its guest keeps its own page cache.
 - For a host over SSH: the user BB runs as logs in to it with a key and no
   prompt.
 
