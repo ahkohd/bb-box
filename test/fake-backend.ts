@@ -10,7 +10,8 @@
 // greeting. With `resize: "backend"` that server ignores SetDesktopSize and the
 // display's resize sets the size instead, as on a GPU desktop (021). With
 // `wayland`, a viewer signs in with Apple's authentication and the fake Cua
-// Driver acts as on Wayland (048).
+// Driver acts as on Wayland (048). A kind with a Selkies display, as
+// FAKE_SELKIES_KIND, streams it from a fake Selkies (056).
 //
 // Stopping a guest's command, as at a timeout, kills only its shell, as it
 // kills `ssh` for a real box, so what the script started runs on, as do
@@ -23,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
 import { emptyDesktop } from "./fake-cua.ts";
 import { FakeRfb } from "./fake-rfb.ts";
+import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeGroup, inGroup } from "./helpers.ts";
 import {
   type GuestOs,
@@ -166,6 +168,12 @@ export const FAKE_KINDS: readonly BoxKind[] = [
   },
 ];
 
+/** An X11 desktop with Selkies beside its VNC server (056). */
+export const FAKE_SELKIES_KIND: BoxKind = {
+  ...FAKE_KINDS[1]!,
+  capabilities: { ...FAKE_KINDS[1]!.capabilities, displays: [...FAKE_KINDS[1]!.capabilities.displays, { id: "selkies", protocol: "selkies", resizable: true }] },
+};
+
 /** A Wayland desktop, which the plugin knows as one by its kind's ID (048). */
 export const FAKE_WAYLAND_KIND: BoxKind = { ...FAKE_KINDS[1]!, id: "linux-desktop-wayland-cpu", label: "Linux desktop (Wayland)" };
 
@@ -210,6 +218,9 @@ export class FakeBackend implements Backend {
   /** Every desktop box's VNC server: one server, with a password the viewer never sees. */
   readonly rfb: FakeRfb;
   #vnc: Promise<number> | null = null;
+  /** Every desktop box's Selkies, for a kind with a Selkies display. */
+  readonly selkies = new FakeSelkies();
+  #selkiesPort: Promise<number> | null = null;
   /** Each size a display's resize was asked for, in order. */
   readonly resizes: DisplaySize[] = [];
   /** How many resizes run now, and the most that ran at once. */
@@ -407,10 +418,13 @@ export class FakeBackend implements Backend {
         label: "Desktop",
         protocol: display.protocol,
         resizable: display.resizable,
-        open: async () => ({
-          route: { type: "tcp", host: "127.0.0.1", port: await (this.#vnc ??= this.rfb.listen()) },
-          auth: this.#options.wayland ? { type: "apple", user: "box", password: "fakepass" } : { type: "vnc-password", password: "fakepass" },
-        }),
+        open: async () =>
+          display.protocol === "selkies"
+            ? { route: { type: "tcp", host: "127.0.0.1", port: await (this.#selkiesPort ??= this.selkies.listen()) }, auth: { type: "none" } }
+            : {
+                route: { type: "tcp", host: "127.0.0.1", port: await (this.#vnc ??= this.rfb.listen()) },
+                auth: this.#options.wayland ? { type: "apple", user: "box", password: "fakepass" } : { type: "vnc-password", password: "fakepass" },
+              },
         ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
         ...(this.#options.minSize ? { minSize: this.#options.minSize } : {}),
       }),
@@ -478,6 +492,9 @@ export class FakeBackend implements Backend {
     if (this.#vnc) await this.#vnc;
     this.#vnc = null;
     await this.rfb.close();
+    if (this.#selkiesPort) await this.#selkiesPort;
+    this.#selkiesPort = null;
+    await this.selkies.close();
   }
 
   #kind(kind: string): BoxKind {

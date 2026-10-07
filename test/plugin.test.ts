@@ -21,7 +21,7 @@ import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { hostEntry } from "../src/host/entry.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
-import { FAKE_KINDS, FAKE_PWSH, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
+import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { fakeDaemon, joined, tempDir } from "./helpers.ts";
 
@@ -2239,6 +2239,47 @@ test("the desktop route relays a box's desktop, and only the viewer with control
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
   assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal" });
+});
+
+test("the desktop route carries a box's Selkies stream message by message, and only the viewer with control reaches the box, sizes it and gets its clipboard (056)", async (t) => {
+  const { harness, app, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  const selkies = world.backend!.selkies;
+  const rfb = world.backend!.rfb;
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
+  const page = await until("the viewer's page", async () => selkies.pages[0]);
+  assert.equal(page.role, "viewer");
+  await until("Selkies' first message", async () => session.sent.includes("MODE websockets"));
+  await session.receive("SETTINGS,{}");
+  await session.receive("kd,97");
+  await session.receive("r,1024x768");
+  await until("the settings", async () => page.received.includes("SETTINGS,{}"));
+  await selkies.frame(1, true, 1280, 800);
+  await until("the frame", async () => session.sent.some((message) => typeof message !== "string"));
+  assert.equal(selkies.pages.length, 1, "no input connection, and no input, without control");
+  assert.deepEqual([rfb.width, rfb.height], [1280, 800], "no resize without control");
+  await selkies.clipboard("copied");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.ok(!session.sent.some((message) => typeof message === "string" && message.startsWith("clipboard,")), "no clipboard without control");
+
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: null };
+  assert.equal(took.error, null);
+  await session.receive("kd,97");
+  const input = await until("the input connection", async () => selkies.pages[1]);
+  assert.equal(input.role, "controller");
+  await until("the key", async () => input.received.includes("kd,97"));
+  assert.equal(input.received[0], "STOP_VIDEO", "it asks for no video first");
+  await session.receive("r,1024x768");
+  await until("the resize", async () => rfb.width === 1024 && rfb.height === 768);
+  await selkies.clipboard("copied again");
+  await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied again").toString("base64")}`));
+
+  await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name });
+  await until("the key let go", async () => input.received.includes("ku,97"));
+  await until("the size the agent had", async () => rfb.width === 1280 && rfb.height === 800);
+  await session.close();
+  await until("the page closed", async () => page.closed);
 });
 
 test("the backend resizes a desktop whose stream server cannot, one resize at a time and the latest last, and not below the display's smallest size (021)", async (t) => {

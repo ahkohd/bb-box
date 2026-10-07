@@ -193,10 +193,10 @@ is never logged or sent to the browser. A command transport's `route(port)`
 gives a route to a port inside the box: `ssh -W`, or `docker exec` with
 `socat`.
 
-**Displays.** A display has an ID, a protocol (`rfb`), whether it can
-resize, and `open()`, which returns a route and how to sign in: none, a VNC
-password, or a user and password for Apple's authentication. A display may
-also have:
+**Displays.** A display has an ID, a protocol (`rfb`, or `selkies` beside
+it on an X11 CPU desktop), whether it can resize, and `open()`, which
+returns a route and how to sign in: none, a VNC password, or a user and
+password for Apple's authentication. A display may also have:
 
 - `resize()`, which the relay calls when the stream server cannot resize
   ([021](decisions/021-desktop-resize-through-the-backend.md));
@@ -445,6 +445,29 @@ handshake itself, VNC authentication with the box's password or Apple's
 only, as BB has authenticated the viewer. Passwords and tickets never reach
 the browser. It copies bytes both ways without decoding pixels, and always
 joins as a shared client. The viewer is noVNC.
+
+**The Selkies relay.** An X11 CPU desktop also has a Selkies display, H.264
+over WebSockets from `127.0.0.1:5980` in the box
+([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)).
+A viewer asks for it with `&stream=selkies`. The relay speaks WebSocket to
+Selkies over the display's route and carries messages, not bytes:
+
+- Each viewer joins Selkies as a viewer (`role=viewer`), so Selkies never
+  hands the display from one page to another. The relay passes only its
+  video requests, and drops the rest of what it sends.
+- The input of the viewer with control goes over the box's input
+  connection, one per box, which asks for no video. A pointer loses its
+  sequence number there, as several viewers' input shares it.
+- The box's clipboard reaches only the viewer with control.
+- Selkies paces a viewer by its socket, which the route hides, so the relay
+  paces each by the frames it acknowledges: 400 ms behind, it drops that
+  viewer's frames until it catches up, then asks for a key frame, which
+  goes to every viewer, and resumes from it.
+- Selkies refuses a connection within 500 ms of another from the same
+  address, and the relay's all come from the box's loopback, so it spaces
+  them and tries again.
+- A resize from the viewer with control goes through the RFB display, which
+  Selkies follows.
 
 **Each desktop's server.**
 
