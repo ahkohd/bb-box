@@ -40,10 +40,13 @@ export const MSB_HOME_MAX = 57;
 export const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 
 /** The scripts a host runs for bb-box, by name. */
-export type MsbScript = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "transfer";
+export type MsbScript = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "memory" | "oom" | "transfer";
 
 /** A builder microVM's name (#build in backend.ts). */
 export const BUILDER_NAME = /^bb-box-builder-[a-z0-9]{1,32}$/;
+
+/** What the oom script sets each bb-box microVM's oom_score_adj to, so the kernel ends a box before BB's daemon (#557). */
+export const OOM_SCORE_ADJ = 500;
 
 /** A box's Docker disk's name: its microVM's. */
 export const DISK_NAME = /^bbbox-[A-Za-z0-9_.-]{1,80}$/;
@@ -199,6 +202,34 @@ for file in "$dir"/disks/*.ext4; do
 done
 `,
 
+  /** The host's memory available now, `available_kib`: MemAvailable on Linux, free, inactive and speculative pages on macOS (#557). */
+  memory: () => `${PRELUDE}set +e
+if [ "$(uname -s)" = Linux ]; then
+  echo "available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+else
+  vm_stat | awk -v page="$(sysctl -n hw.pagesize)" '/^Pages (free|inactive|speculative):/ {gsub(/\\./, "", $NF); sum += $NF} END {print "available_kib=" int(sum * page / 1024)}'
+fi
+`,
+
+  /**
+   * Raises each bb-box microVM's oom_score_adj to OOM_SCORE_ADJ, on Linux,
+   * where msb runs each as `msb machine --name <name>`, so that a host
+   * that runs out of memory ends a box before BB's daemon (#557). Raising
+   * it needs no privilege. Prints `adjusted=<count>`.
+   */
+  oom: () => `${PRELUDE}set +e
+n=0
+if [ "$(uname -s)" = Linux ]; then
+  for proc in /proc/[0-9]*; do
+    tr '\\0' ' ' <"$proc/cmdline" 2>/dev/null | grep -Eq ' machine .*(-n|--name)[ =]bbbox-' || continue
+    adj=$(cat "$proc/oom_score_adj" 2>/dev/null) || continue
+    [ "$adj" -lt ${OOM_SCORE_ADJ} ] 2>/dev/null || continue
+    echo ${OOM_SCORE_ADJ} >"$proc/oom_score_adj" 2>/dev/null && n=$((n + 1))
+  done
+fi
+echo "adjusted=$n"
+`,
+
   /**
    * Moves image $2 from Docker in builder microVM $1 into msb on the host,
    * under the same reference, with `docker save` there and `msb load` here.
@@ -226,7 +257,7 @@ export function scriptArgsOk(name: string, args: readonly string[]): name is Msb
   if (name === "import") return args.length === 1 && IMAGE_REF.test(args[0]!);
   if (name === "disk") return args.length === 2 && DISK_NAME.test(args[0]!) && /^[1-9][0-9]{0,3}$/.test(args[1]!);
   if (name === "undisk") return args.length >= 1 && args.length <= 4 && args.every((arg) => DISK_NAME.test(arg));
-  if (name === "disks") return args.length === 0;
+  if (name === "disks" || name === "memory" || name === "oom") return args.length === 0;
   if (name === "transfer") return args.length === 2 && BUILDER_NAME.test(args[0]!) && IMAGE_REF.test(args[1]!);
   if (name === "images") return args.length >= 1 && args.length <= 4 && args.every((arg) => IMAGE_REF.test(arg));
   return false;

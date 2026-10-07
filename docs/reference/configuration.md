@@ -222,3 +222,4 @@ Setup: [setup/microsandbox/README.md](../../setup/microsandbox/README.md).
 | `network` | Network profiles | string | advanced | `public,private` | msb's network profiles for each box, comma-separated: public reaches the internet, private the host's local networks and tailnet, where BB's server often is. |
 | `boxes` | Most boxes | number | advanced | `20` | The most bb-box microVMs on the host at once, running or stopped, counting those of every bb-box install that uses it. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | A new box is refused if the host would have less memory than this left, after the memory of the running boxes. |
+| `memory-overcommit` | Memory overcommit | number | advanced | `1` | The boxes' memory may add up to this many times the host's, less the memory kept free. 1 counts each box at its full memory. Raise it for mostly idle boxes. |
