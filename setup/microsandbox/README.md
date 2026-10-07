@@ -48,7 +48,8 @@ the boxes. How bb-box drives a box is in the
   default, and counts each running box's full size, so a host for a few
   small boxes needs 16 GiB. A box that has joined BB holds about 0.5 GiB of
   the host's memory while idle, once bb-box has had it drop its page cache
-  (below).
+  (below). A host of mostly idle boxes can take more: see
+  [Fit more boxes on a host](#fit-more-boxes-on-a-host).
 - For a host over SSH: the user BB runs as logs in to it with a key and no
   prompt.
 
@@ -144,6 +145,7 @@ fields, press Check, then Save and turn on.
 | `network` | `public,private` | `msb`'s network profiles for each box: `public` reaches the internet, `private` the host's local networks and tailnet |
 | `boxes` | 20 | The most bb-box microVMs on the host, running or stopped, of every bb-box install that uses it |
 | `reserve-memory-mib` | 4096 | A new box is refused when the host would have less memory than this left, after the memory of the running boxes |
+| `memory-overcommit` | 1 | How many times the host's memory, less the memory kept free, the running boxes' sizes may add up to. 1 counts each box at its full size |
 
 `bb machine list` gives a BB machine's ID. From a terminal,
 `bb box config show --json` prints the configuration, and
@@ -170,6 +172,29 @@ A box keeps the files it reads cached in its own memory, which the host
 cannot share. Every 3 minutes bb-box has each idle box drop that cache, so
 the host gets the memory back: an idle box that has joined BB holds about
 0.5 GiB.
+
+#### Fit more boxes on a host
+
+bb-box counts each running box at its full size, though an idle box holds
+about 0.5 GiB. On a host whose boxes are mostly idle agent boxes, raise
+`memory-overcommit` to fit more. At 2, the boxes' sizes may add up to twice
+the host's memory, less the memory kept free. A 64 GiB host that keeps 4 GiB
+free then takes 30 boxes of 4 GiB rather than 15. Raise `boxes` too, which
+is 20 by default.
+
+Above 1, bb-box also checks the memory the host has available now before it
+starts a box. A new box needs up to 2 GiB as it starts, or its size if less,
+on top of the memory kept free. So while the boxes are busy, a new box is
+refused, with the reason, until memory is free again.
+
+If busy boxes still need more memory than the host has, Linux ends one of
+the boxes rather than BB's daemon, as bb-box raises each box's
+`oom_score_adj`. Raise the setting a little at a time, such as to 1.5, and
+watch the host's memory.
+
+On a Mac, memory a box has used is not given back, so bb-box counts each
+box there at its full size, whatever the setting, and the doctor warns when
+it is above 1. Tart's VMs share the Mac's memory too.
 
 `msb` needs a short path for its sockets, so when the folder's is long,
 `msb` reaches it through a link, `/tmp/bb-box-msb-<uid>`. bb-box never uses

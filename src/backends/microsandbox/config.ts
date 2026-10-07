@@ -34,6 +34,12 @@ export interface MsbConfig {
   /** The most bb-box microVMs on the host, counting every install's. */
   readonly boxes: number;
   readonly reserveMemoryMiB: number;
+  /**
+   * How many times the host's memory, less the reserve, the running boxes'
+   * sizes may add up to (#557). Above 1, a new box also needs memory
+   * available on the host now.
+   */
+  readonly memoryOvercommit: number;
 }
 
 export const MSB_DEFAULTS = {
@@ -48,7 +54,11 @@ export const MSB_DEFAULTS = {
   network: "public,private",
   boxes: 20,
   reserveMemoryMiB: 4096,
+  memoryOvercommit: 1,
 } as const;
+
+/** The most memory overcommit bb-box allows. */
+export const MSB_MAX_OVERCOMMIT = 4;
 
 export const MSB_KEYS = {
   host: "host",
@@ -62,6 +72,7 @@ export const MSB_KEYS = {
   network: "network",
   boxes: "boxes",
   reserveMemoryMiB: "reserve-memory-mib",
+  memoryOvercommit: "memory-overcommit",
 } as const;
 
 export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
@@ -145,6 +156,13 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "advanced",
     default: MSB_DEFAULTS.reserveMemoryMiB,
   },
+  [MSB_KEYS.memoryOvercommit]: {
+    type: "number",
+    label: "Memory overcommit",
+    description: "The boxes' memory may add up to this many times the host's, less the memory kept free. 1 counts each box at its full memory. Raise it for mostly idle boxes.",
+    group: "advanced",
+    default: MSB_DEFAULTS.memoryOvercommit,
+  },
 };
 
 function text(values: Readonly<Record<string, unknown>>, key: string, fallback = ""): string {
@@ -202,6 +220,10 @@ export function parseMsbPart(part: BackendPart): ParsedBackend<MsbConfig> {
   const boxes = whole(MSB_KEYS.boxes, MSB_DEFAULTS.boxes, 1, "the most boxes");
   const reserveMemoryMiB = number(values, MSB_KEYS.reserveMemoryMiB, MSB_DEFAULTS.reserveMemoryMiB);
   if (!(reserveMemoryMiB >= 0)) problem(MSB_KEYS.reserveMemoryMiB, "microsandbox: the memory kept free cannot be negative.");
+  const memoryOvercommit = number(values, MSB_KEYS.memoryOvercommit, MSB_DEFAULTS.memoryOvercommit);
+  if (!(memoryOvercommit >= 1 && memoryOvercommit <= MSB_MAX_OVERCOMMIT)) {
+    problem(MSB_KEYS.memoryOvercommit, `microsandbox: the memory overcommit must be from 1 to ${MSB_MAX_OVERCOMMIT}, such as 1.5.`);
+  }
 
   if (problems.length) return { ok: false, problems };
   return {
@@ -216,6 +238,7 @@ export function parseMsbPart(part: BackendPart): ParsedBackend<MsbConfig> {
       network: profiles.join(","),
       boxes,
       reserveMemoryMiB,
+      memoryOvercommit,
     },
   };
 }

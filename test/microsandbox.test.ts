@@ -60,11 +60,15 @@ test("parses the fields, with the guide's defaults, and refuses what it cannot u
     network: "public,private",
     boxes: 20,
     reserveMemoryMiB: 4096,
+    memoryOvercommit: 1,
   });
   assert.equal(msbConfig({ host: "bb:host_abc123" }).machine, "host_abc123");
-  const bad = parseMsbPart({ id: "microsandbox", hosts: [], fields: { host: "tcp://x:1", "linux-image": "a b", network: "public,lan", boxes: 0, "disk-gib": 2 } });
+  assert.equal(msbConfig({ "memory-overcommit": 1.5 }).memoryOvercommit, 1.5);
+  const bad = parseMsbPart({ id: "microsandbox", hosts: [], fields: { host: "tcp://x:1", "linux-image": "a b", network: "public,lan", boxes: 0, "disk-gib": 2, "memory-overcommit": 5 } });
   assert.equal(bad.ok, false);
-  assert.deepEqual(bad.ok ? [] : bad.problems.map((problem) => problem.path).sort(), ["boxes", "disk-gib", "host", "linux-image", "network"]);
+  assert.deepEqual(bad.ok ? [] : bad.problems.map((problem) => problem.path).sort(), ["boxes", "disk-gib", "host", "linux-image", "memory-overcommit", "network"]);
+  const under = parseMsbPart({ id: "microsandbox", hosts: [], fields: { "memory-overcommit": 0.5 } });
+  assert.deepEqual(under.ok ? [] : under.problems.map((problem) => problem.message), ["microsandbox: the memory overcommit must be from 1 to 4, such as 1.5."]);
   assert.equal(microsandboxDriver.several?.({ host: " bb:host_a " }), "bb:host_a");
 });
 
@@ -287,6 +291,96 @@ test("counts every install's microVMs and the memory of running ones, and refuse
   const stopped = await backend.capacity("linux", SMALL, [{ kind: "linux", size: SMALL }]);
   assert.match(stopped.message ?? "", /has 3 of the 3 bb-box microVMs it may have, counting stopped boxes/);
   assert.match((await backend.capacity("linux", { ...SMALL, diskGiB: 900 }, [])).message ?? "", /less than the 900 GiB disk asked for/);
+});
+
+test("at a memory overcommit of 1, capacity is as before and reads no available memory (#557)", async () => {
+  const { fake, backend } = setup({ boxes: 10, "reserve-memory-mib": 4096 });
+  fake.facts({ cpus: "8", memory_kib: String(16 * 1024 * 1024), available_kib: String(1024) });
+  for (let i = 0; i < 3; i++) await backend.acquire(identity(), null, hooks().hooks, signal());
+  const full = await backend.capacity("linux", SMALL, []);
+  assert.deepEqual(full.hosts[0]!.limits.map((limit) => [limit.resource, limit.id ?? null, limit.used, limit.total]), [["guests", null, 3, 10], ["memory", null, 12288, 16384]]);
+  assert.match(full.message ?? "", /has 4 GiB of memory free and keeps 4 GiB free, so a box with 4 GiB does not fit/);
+  assert.ok(!fake.scripts.some(([name]) => name === "memory"), "the memory script is not run");
+});
+
+test("above 1, the boxes' sizes may add up to the overcommit times the host's memory less the reserve, and a new box needs memory available now (#557)", async () => {
+  const { fake, backend } = setup({ boxes: 10, "reserve-memory-mib": 4096, "memory-overcommit": 2 });
+  // 16 GiB, less 4 GiB kept free: the boxes' sizes may add up to 24 GiB, 6 boxes of 4 GiB, where 1 takes 3.
+  fake.facts({ cpus: "8", memory_kib: String(16 * 1024 * 1024), available_kib: String(12 * 1024 * 1024) });
+  for (let i = 0; i < 5; i++) await backend.acquire(identity(), null, hooks().hooks, signal());
+  const room = await backend.capacity("linux", SMALL, []);
+  assert.equal(room.ok, true, room.message ?? "");
+  assert.deepEqual(room.hosts[0]!.limits.map((limit) => [limit.resource, limit.id ?? null, limit.used, limit.total, limit.reserve]), [
+    ["guests", null, 5, 10, 0],
+    ["memory", "committed", 20480, 28672, 4096],
+    ["memory", "in use", 4096, 16384, 4096],
+  ]);
+  // Another box in flight takes the last of the ceiling.
+  const ceiling = await backend.capacity("linux", SMALL, [{ kind: "linux", size: SMALL }]);
+  assert.match(ceiling.message ?? "", /the boxes on .+ may have 24 GiB of memory in all, at a memory overcommit of 2, and have 24 GiB, so a box with 4 GiB does not fit\. Ask for less memory, release a box, or raise the memory overcommit in bb-box's settings/);
+
+  // Busy boxes: under the ceiling, but the host has too little available to start one.
+  fake.facts({ available_kib: String(5 * 1024 * 1024) });
+  const busy = await backend.capacity("linux", SMALL, []);
+  assert.match(busy.message ?? "", /has 5 GiB of memory available now and keeps 4 GiB free, so it cannot start a box with 4 GiB, which takes up to 2 GiB as it starts\. Its boxes are busy: try again later, or release a box/);
+  // A smaller box needs only its size.
+  assert.equal((await backend.capacity("linux", { cores: 1, memoryMiB: 1024, diskGiB: null }, [])).ok, true);
+  // A box still starting counts at what it takes as it starts.
+  const starting = await backend.capacity("linux", { cores: 1, memoryMiB: 1024, diskGiB: null }, [{ kind: "linux", size: { cores: 1, memoryMiB: 2048, diskGiB: null } }]);
+  assert.match(starting.message ?? "", /has 5 GiB of memory available now, 2 GiB of it for boxes still starting, and keeps 4 GiB free/);
+});
+
+test("on a Mac, which keeps the memory a box has used, each box counts at its full size whatever the overcommit, and the doctor says so (#557)", async () => {
+  const { fake, backend } = setup({ boxes: 10, "reserve-memory-mib": 4096, "memory-overcommit": 2 });
+  fake.facts({ os: "Darwin", arch: "arm64", cpus: "8", memory_kib: String(16 * 1024 * 1024), available_kib: String(12 * 1024 * 1024) });
+  // A Mac offers the arm64 kinds (040).
+  for (let i = 0; i < 3; i++) await backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
+  const full = await backend.capacity("linux-arm64", SMALL, []);
+  assert.deepEqual(full.hosts[0]!.limits.map((limit) => [limit.resource, limit.id ?? null, limit.used, limit.total]), [["guests", null, 3, 10], ["memory", null, 12288, 16384]]);
+  assert.match(full.message ?? "", /has 4 GiB of memory free and keeps 4 GiB free, so a box with 4 GiB does not fit/);
+  assert.ok(!fake.scripts.some(([name]) => name === "memory"), "the memory script is not run");
+  const check = (await backend.doctor(signal())).checks.find((one) => one.id === "microsandbox.overcommit");
+  assert.equal(check?.status, "warn");
+  assert.match(check?.detail ?? "", /is a Mac, which keeps the memory a box has used, so bb-box counts each box there at its full size, whatever the memory overcommit of 2\./);
+  assert.equal(check?.fix, "Set the memory overcommit to 1.");
+});
+
+test("each launch and each upkeep raise the microVMs' oom_score_adj on the host, and the scripts read what they should (#557)", async () => {
+  const { fake, backend } = setup();
+  await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(fake.scripts.filter(([name]) => name === "oom").length, 1, "at the launch");
+  await backend.maintain(signal());
+  assert.equal(fake.scripts.filter(([name]) => name === "oom").length, 2, "and at the upkeep");
+
+  const { msbScript, scriptArgsOk } = await import("../src/backends/microsandbox/release.ts");
+  const { mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { execFileSync } = await import("node:child_process");
+  assert.ok(scriptArgsOk("memory", []) && scriptArgsOk("oom", []));
+  assert.ok(!scriptArgsOk("oom", ["bbbox-x"]));
+  const dir = (await import("./helpers.ts")).tempDir("oom");
+  // A stand-in /proc: a bb-box microVM, another sandbox's, one already raised, and another process.
+  const proc = (pid: string, cmdline: string[], adj: string) => {
+    mkdirSync(join(dir, pid));
+    writeFileSync(join(dir, pid, "cmdline"), `${cmdline.join("\0")}\0`);
+    writeFileSync(join(dir, pid, "oom_score_adj"), `${adj}\n`);
+  };
+  proc("101", ["/home/u/.local/share/bb-box/microsandbox/0.7.7/msb", "machine", "--name", "bbbox-bx1", "--sandbox-id", "3"], "0");
+  proc("102", ["/opt/msb", "machine", "--name", "other", "--sandbox-id", "4"], "0");
+  proc("103", ["/opt/msb", "machine", "-n", "bbbox-bx2"], "800");
+  proc("104", ["/usr/bin/node", "bb-app.js", "host-daemon"], "0");
+  const oom = msbScript("oom").replace("/proc/[0-9]*", `${dir}/[0-9]*`);
+  assert.equal(execFileSync("sh", ["-c", oom], { encoding: "utf8" }).trim(), "adjusted=1");
+  assert.deepEqual(["101", "102", "103", "104"].map((pid) => readFileSync(join(dir, pid, "oom_score_adj"), "utf8").trim()), ["500", "0", "800", "0"]);
+
+  writeFileSync(join(dir, "meminfo"), "MemTotal: 16384000 kB\nMemFree: 1000000 kB\nMemAvailable: 9000000 kB\n");
+  const linux = msbScript("memory").replace("/proc/meminfo", join(dir, "meminfo")).replace('"$(uname -s)" = Linux', "Linux = Linux");
+  assert.equal(execFileSync("sh", ["-c", linux], { encoding: "utf8" }).trim(), "available_kib=9000000");
+  writeFileSync(
+    join(dir, "vm_stat"),
+    "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                               10000.\nPages active:                            50000.\nPages inactive:                          20000.\nPages speculative:                        2000.\n",
+  );
+  const mac = msbScript("memory").replace('"$(uname -s)" = Linux', "Darwin = Linux").replace("vm_stat |", `cat ${join(dir, "vm_stat")} |`).replace("$(sysctl -n hw.pagesize)", "16384");
+  assert.equal(execFileSync("sh", ["-c", mac], { encoding: "utf8" }).trim(), `available_kib=${(32000 * 16384) / 1024}`);
 });
 
 test("the doctor checks the host, msb, KVM and the images, warns in LXC, and says what msb's files take", async () => {
