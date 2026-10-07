@@ -2,7 +2,9 @@
 
 Status: accepted, 7 October 2026, as the operator's call. Follows
 [005](005-linux-boxes-on-proxmox-lxc.md), which named microVM runtimes
-such as microsandbox as possible backends.
+such as microsandbox as possible backends. Extended by
+[055](055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md): a
+cloud host with KVM runs microsandbox.
 
 This record first said, on the same day, to build the backend later, when
 one of three conditions held (below). The operator has chosen to build it
