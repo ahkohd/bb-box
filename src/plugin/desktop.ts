@@ -8,7 +8,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { BoxRecord, Boxes } from "../core/boxes.ts";
 import { Control, RECONNECT_MS, STALE_MS, type KeptControl, type ViewerConnection } from "../core/control.ts";
-import { MAC_CLIPBOARD } from "../core/in-box.ts";
+import { clipboardCommands } from "../core/in-box.ts";
 import { RfbRelay, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Display } from "../transports/types.ts";
 
@@ -173,8 +173,15 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   /** The box, when it is running and its desktop's clipboard goes through bb-box's commands. */
   const byCommands = async (boxId: string): Promise<BoxRecord | null> => {
     const box = await boxes.find(boxId);
-    return box?.state === "ready" && box.capabilities.displays[0]?.clipboard === "commands" ? box : null;
+    return box?.state === "ready" && box.capabilities.displays[0]?.clipboard === "commands" && clipboardCommands(box.capabilities.os) ? box : null;
   };
+  /**
+   * One read of a box's clipboard at a time, which the next calls share: a Windows desktop's read takes seconds,
+   * longer than the viewer's 2 s poll (#461), so reads would pile up in the box.
+   */
+  const reading = new Map<string, Promise<void>>();
+  /** Pastes into each box so far: a read that began before a paste found the old text, which must not come back as a copy. */
+  const pastes = new Map<string, number>();
 
   // Control people had as the last instance stopped. BB starts this one first, so the viewers connect again once that one stops.
   void (async () => {
@@ -268,10 +275,20 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     async clipboard(boxId, viewer) {
       const box = viewer && control.mayInput(boxId, viewer) ? await byCommands(boxId) : null;
       if (box) {
-        const read = await boxes.runOwn(box, MAC_CLIPBOARD.read, { session: "desktop", timeoutMs: CLIPBOARD_TIMEOUT_MS, maxOutputBytes: MAX_CLIPBOARD_BYTES }).catch(() => null);
-        // An empty pasteboard, or one with no text, such as an image, leaves this computer's clipboard as it is.
-        const text = read?.exitCode === 0 && !read.truncated ? read.stdout : "";
-        if (text && text !== clipboards.get(boxId)?.text) clipboards.set(boxId, { text, serial: ++clipboardSerial });
+        let read = reading.get(boxId);
+        if (!read) {
+          const commands = clipboardCommands(box.capabilities.os)!;
+          const before = pastes.get(boxId) ?? 0;
+          read = (async () => {
+            const result = await boxes.runOwn(box, commands.read, { session: "desktop", timeoutMs: CLIPBOARD_TIMEOUT_MS, maxOutputBytes: MAX_CLIPBOARD_BYTES }).catch(() => null);
+            // An empty clipboard, or one with no text, such as an image, leaves this computer's clipboard as it is.
+            const text = result?.exitCode === 0 && !result.truncated ? result.stdout : "";
+            if ((pastes.get(boxId) ?? 0) !== before) return;
+            if (text && text !== clipboards.get(boxId)?.text) clipboards.set(boxId, { text, serial: ++clipboardSerial });
+          })().finally(() => reading.delete(boxId));
+          reading.set(boxId, read);
+        }
+        await read;
       }
       return clipboards.get(boxId) ?? null;
     },
@@ -279,9 +296,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       if (!control.mayInput(boxId, viewer)) throw new Error("Only the tab with control of the desktop can paste into it. Take control, then paste again.");
       const box = await byCommands(boxId);
       if (!box) throw new Error("This desktop takes a viewer's clipboard through its own server, so bb-box does not paste into it.");
-      const written = await boxes.runOwn(box, MAC_CLIPBOARD.write, { session: "desktop", stdin: text, timeoutMs: CLIPBOARD_TIMEOUT_MS, maxOutputBytes: 64 * 1024 });
+      pastes.set(boxId, (pastes.get(boxId) ?? 0) + 1);
+      const written = await boxes.runOwn(box, clipboardCommands(box.capabilities.os)!.write, { session: "desktop", stdin: text, timeoutMs: CLIPBOARD_TIMEOUT_MS, maxOutputBytes: 64 * 1024 });
       if (written.exitCode !== 0) {
-        const why = written.stderr.trim().split("\n").at(-1) || `pbcopy exited with code ${written.exitCode}`;
+        const why = written.stderr.trim().split("\n").at(-1) || `the clipboard command exited with code ${written.exitCode}`;
         throw new Error(`Box ${box.name} did not take the text for its clipboard: ${why}`);
       }
       // The box has the viewer's text, so the next read finds no change to copy back.

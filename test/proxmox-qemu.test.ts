@@ -122,7 +122,7 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   assert.equal(kind!.capabilities.os, "windows");
   assert.equal(kind!.capabilities.arch, "x86_64");
   assert.equal(kind!.capabilities.enrol, false, "BB cannot enrol a Windows box yet");
-  assert.deepEqual(kind!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }]);
+  assert.deepEqual(kind!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }]);
   assert.deepEqual(kind!.capabilities.computerUse, { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" });
 });
 
@@ -298,7 +298,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.deepEqual(transports.access!.ssh, { host: "192.0.2.150", port: 22, user: "box", hostKeys: [] });
   assert.deepEqual(
     transports.displays.map(({ open: _, resize: __, ...display }) => display),
-    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, minSize: { width: 800, height: 600 } }],
+    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", minSize: { width: 800, height: 600 } }],
   );
 });
 

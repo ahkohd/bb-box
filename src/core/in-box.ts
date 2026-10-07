@@ -63,6 +63,23 @@ export const MAC_CLIPBOARD = {
   write: "LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 exec pbcopy",
 } as const;
 
+/**
+ * A Windows box's clipboard as UTF-8 text, as MAC_CLIPBOARD is a Mac's (#461): PowerShell 7's Get-Clipboard and
+ * Set-Clipboard, run in the box user's desktop session (039), whose clipboard the desktop shows; a command over SSH
+ * has a window station, and a clipboard, of its own. The text goes as UTF-8 bytes both ways, not through the
+ * console's code page. Measured on both Windows kinds on 7 October 2026: a write and a read take 2 to 4 s on
+ * Proxmox QEMU and about 8 s on a Mac's Tart, most of it the desktop session's scheduled task and PowerShell starting.
+ */
+export const WINDOWS_CLIPBOARD = {
+  read: "$t=Get-Clipboard -Raw;if($t){$b=[Text.Encoding]::UTF8.GetBytes($t);$o=[Console]::OpenStandardOutput();$o.Write($b,0,$b.Length);$o.Flush()}",
+  write: "$m=[IO.MemoryStream]::new();[Console]::OpenStandardInput().CopyTo($m);Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString($m.ToArray()))",
+} as const;
+
+/** The commands that read and write a box's clipboard in its desktop session, for a desktop whose server moves none; null where bb-box has none. */
+export function clipboardCommands(os: GuestOs): { readonly read: string; readonly write: string } | null {
+  return os === "macos" ? MAC_CLIPBOARD : os === "windows" ? WINDOWS_CLIPBOARD : null;
+}
+
 /** Where a command runs: as the transport runs it, or in the box's logged-in desktop session. */
 export type Session = "default" | "desktop";
 

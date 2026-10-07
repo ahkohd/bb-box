@@ -2460,6 +2460,56 @@ test("a macOS desktop whose server moves no clipboard has it through pbcopy and 
   await session.close();
 });
 
+test("a desktop's clipboard is read once at a time, and a read that began before a paste does not bring the old text back (#461)", async (t) => {
+  // A slow clipboard, as a Windows desktop's read takes seconds: it reads first, then waits, and counts its reads.
+  const bin = tempDir("pasteboard-slow");
+  const shims: Record<string, string> = {
+    pbcopy: `cat > "$HOME/pasteboard"`,
+    pbpaste: `echo read >> "$HOME/pasteboard-reads"; t=$(cat "$HOME/pasteboard" 2>/dev/null); sleep 0.6; printf %s "$t"`,
+  };
+  for (const [name, script] of Object.entries(shims)) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const { displays, command } = FAKE_KINDS[1]!.capabilities;
+  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ ...displays[0]!, resizable: false, clipboard: "commands" as const }] };
+  const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities };
+  const { harness, app, box, tool } = await desktopBox({ kind });
+  t.after(() => harness.lifecycle.dispose());
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+  const viewer = "viewer-one-0001";
+  const clipboard = () => harness.behavior.callRpc("desktopClipboard", { threadId: THREAD, box: box.id, viewer }) as Promise<{ text: string; serial: number } | null>;
+  const reads = () => (existsSync(join(home, "pasteboard-reads")) ? readFileSync(join(home, "pasteboard-reads"), "utf8").split("\n").filter(Boolean).length : 0);
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await until("the viewer to join", async () => app.desktops.control.connected(box.id, viewer));
+  assert.equal(((await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null }).error, null);
+
+  // Three reads at once, as polls that overlap a slow read, run one command in the box and share its answer.
+  writeFileSync(join(home, "pasteboard"), "first");
+  const [a, b, c] = await Promise.all([clipboard(), clipboard(), clipboard()]);
+  assert.equal(reads(), 1);
+  assert.equal(a?.text, "first");
+  assert.deepEqual([b, c], [a, a]);
+
+  // A read that began before a paste found the old text: it is dropped, so the viewer's paste is not undone by a copy.
+  writeFileSync(join(home, "pasteboard"), "old in the box");
+  const reading = clipboard();
+  await until("the second read to start", async () => reads() === 2);
+  assert.equal(await harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer, text: "pasted while reading" }), null);
+  const after = await reading;
+  assert.deepEqual(after, { text: "pasted while reading", serial: a!.serial });
+  assert.equal(readFileSync(join(home, "pasteboard"), "utf8"), "pasted while reading");
+  await session.close();
+});
+
 test("a click that opened another process's panel, which Cua on Windows calls a failed foreground check, is done, and names the panel (#484)", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());

@@ -402,8 +402,9 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         gpu: false,
         features: [],
         command: WINDOWS_COMMAND,
-        // QEMU's VNC server, at the listed mode that best covers the viewer.
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        // QEMU's VNC server, at the listed mode that best covers the viewer. It moves no clipboard without the SPICE
+        // guest agent, so bb-box moves it with Get-Clipboard and Set-Clipboard in the desktop session (#461).
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }],
         computerUse: WINDOWS_CUA,
         enrol: false,
       },
