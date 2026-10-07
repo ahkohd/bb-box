@@ -8,7 +8,7 @@ decided is in the [decisions](../decisions/README.md).
 | Note | Date | Settled by |
 | --- | --- | --- |
 | [Computer use](computer-use.md) | 30 September 2026 | [015](../decisions/015-computer-use-through-cua-driver.md) |
-| [Desktop streaming](desktop-streaming.md) | 30 September 2026 | [007](../decisions/007-desktop-stream-is-a-typed-transport.md), [011](../decisions/011-interface-v1.md) |
+| [Desktop streaming](desktop-streaming.md) | 30 September 2026 | [007](../decisions/007-desktop-stream-is-a-typed-transport.md), [011](../decisions/011-interface-v1.md), [056](../decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) |
 | [Enrolment and warm pools](enrolment-and-warm-pools.md) | 30 September 2026 | [014](../decisions/014-enrol-through-machine-providers.md), [017](../decisions/017-boxes-clear-bb-daemon-state-at-boot.md), [032](../decisions/032-spare-boxes-are-enrolled-ahead.md) |
 | [The GPU in a desktop box](gpu-desktop.md) | 30 September 2026 | [006](../decisions/006-gpu-desktop-on-xorg.md) |
 | [Later backends](later-backends.md) | 30 September 2026 | [011](../decisions/011-interface-v1.md), [016](../decisions/016-changes-from-building-v1.md) |

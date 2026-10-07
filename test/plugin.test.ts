@@ -84,6 +84,8 @@ async function start(
     installer: "echo installed > bb-installed",
     /** False: BB gives no Windows enrolment command (#539). */
     windowsEnrolment: true,
+    /** A Windows machine connects once its enrolment command is asked for, as its installer would make it (#539). */
+    windowsConnects: false,
     /** BB's machine calls never answer, as for a plugin that is stopping. */
     silent: false,
     /** How many more machine creates BB refuses, not knowing bb-box's provider, as while the plugin restarts. */
@@ -209,17 +211,29 @@ async function start(
         // A machine's enrolment and reconnect commands, with their Windows forms (#539).
         experimental_getEnrollmentCommand: async ({ hostId }: { hostId: string }) => {
           world.events.push(`enrolment command ${hostId}`);
+          // As BB's installer would once it runs: the machine connects a moment later, named after the computer.
+          const host = hosts.get(hostId);
+          if (host && world.windowsConnects) setTimeout(() => hosts.set(hostId, { ...hosts.get(hostId)!, name: "bb-box-win", status: "connected", lifecycle: { ...host.lifecycle, phase: "active" } }), 50);
           return world.windowsEnrolment ? { command: `sh enrol ${hostId}`, windowsCommand: `& enrol ${hostId}`, expiresAt: Date.now() + 60_000 } : null;
         },
         experimental_reconnect: async ({ hostId }: { hostId: string }) => {
+          const host = hosts.get(hostId);
+          if (host?.status === "connected") throw Object.assign(new Error("HTTP 409: Machine is connected and doesn't need reconnecting"), { status: 409 });
           world.events.push(`reconnect command ${hostId}`);
+          if (host) setTimeout(() => hosts.set(hostId, { ...hosts.get(hostId)!, status: "connected" }), 50);
           return { command: `sh start ${hostId}`, windowsCommand: `& start ${hostId}`, hostId, expiresAt: Date.now() + 60_000 };
         },
         // Like BB: records the machine, then calls the provider's create in
         // the background. A key whose machine BB still has gets it back.
-        experimental_create: async ({ key, inputs }: { key: string; inputs: { boxId: string } }) => {
+        experimental_create: async ({ key, inputs, machineProviderId }: { key: string; inputs: { boxId: string }; machineProviderId: string }) => {
           const id = `host-${key}`;
-          world.events.push(`create ${id}`);
+          world.events.push(machineProviderId === "manual" ? `create manual ${id}` : `create ${id}`);
+          // BB's manual provider: the machine waits for its enrolment command to run (#539).
+          if (machineProviderId === "manual") {
+            const host = makeHostResponse({ id, status: "disconnected", machineProviderId: "manual" });
+            hosts.set(id, { ...host, lifecycle: { ...host.lifecycle, phase: "creating" } });
+            return hosts.get(id)!;
+          }
           if (world.unknownProvider > 0) {
             world.unknownProvider--;
             throw Object.assign(new Error('HTTP 400: Unknown machine provider "bb-box"'), { status: 400 });
@@ -693,31 +707,55 @@ test("box_copy streams a file too large for BB's file API through the thread's m
   await until("the lease to go", async () => worker.experimental_getRetainedWorkerLeaseCount() === 0);
 });
 
-test("a Windows box on trial runs BB's Windows installer for BB's bootstrap: its Windows enrolment command, else install.ps1 with the request's bundle, else it says what BB sent (#539)", async (t) => {
+test("a Windows box on trial enrols as a machine of BB's manual provider, which bb-box owns: release, a failure and the sweep remove it, and a start reconnects only a disconnected one (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
-  const bundle = JSON.stringify({ hostId: "host-x", serverUrl: "https://bb.example.com", headers: { "X-BB-Enrollment": "secret-enrolment-credential" } });
-  // BB's bootstrap request, as the fake's `sh -c` script: the bundle in a variable, then install.sh with --bootstrap-env.
-  const request = `BB_BOOTSTRAP='${bundle}' exec sh -s -- --bootstrap-env BB_BOOTSTRAP`;
-  for (const [windowsEnrolment, installer, said] of [
-    [true, request, "running BB's Windows enrolment command, in the box user's desktop session"],
-    [false, request, "running install.ps1 with the bundle of BB's request, as BB gave no Windows enrolment command"],
-    [false, "exec sh -s -- --bootstrap-env BB_BOOTSTRAP", "BB gave no Windows enrolment command, and its request sets no BB_BOOTSTRAP: sh -c exec sh -s -- --bootstrap-env BB_BOOTSTRAP"],
-  ] as const) {
-    const { harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell: FAKE_PWSH });
-    world.windowsEnrolment = windowsEnrolment;
-    world.installer = installer;
-    await tool("box_acquire", { kind: "windows" });
-    const box = await only(app);
-    await until("the enrolment to end", async () => (await app.boxes.find(box.id))?.enrol.state === "failed");
-    const error = (await app.boxes.find(box.id))!.enrol.error!;
-    assert.deepEqual(world.bootstraps, [box.id], "BB's bootstrap makes the bundle");
-    assert.ok(world.events.includes(`enrolment command host-${box.id}`), world.events.join("\n"));
-    assert.ok(error.includes(said), error);
-    assert.doesNotMatch(error, /secret-enrolment-credential/);
-    // The fake box's PowerShell runs no script: it says a desktop command went through a scheduled task, and exits 1.
-    if (installer === request) assert.match(error, /a scheduled task/);
-    await harness.lifecycle.dispose();
-  }
+  // A box's PowerShell that runs the desktop session's command as BB's installer would, and exits 0.
+  const shell = join(tempDir("windows-shell"), "pwsh");
+  writeFileSync(shell, '#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; esac\nexit 1\n');
+  chmodSync(shell, 0o755);
+  const { bb, harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell });
+  t.after(() => harness.lifecycle.dispose());
+  world.windowsConnects = true;
+  await tool("box_acquire", { kind: "windows" });
+  const box = await only(app);
+  await until("the enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  const hostId = `host-${box.id}`;
+  assert.ok(world.events.includes(`create manual ${hostId}`), world.events.join("\n"));
+  assert.ok(world.events.includes(`enrolment command ${hostId}`));
+  assert.deepEqual(world.bootstraps, [], "BB's POSIX bootstrap is not run");
+  assert.equal(world.hosts.get(hostId)?.name, box.name, "the machine is named after the box once it connects");
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), [`manual-machine/${hostId}`]);
+  // A start runs BB's reconnect command only when BB shows the machine disconnected.
+  await tool("box_stop", { box: box.name });
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  assert.ok(!world.events.includes(`reconnect command ${hostId}`), world.events.join("\n"));
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await tool("box_stop", { box: box.name });
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  assert.ok(world.events.includes(`reconnect command ${hostId}`), world.events.join("\n"));
+  assert.equal((await app.boxes.find(box.id))?.enrol.error, null);
+  // Releasing the box removes its machine, and bb-box's record of it.
+  assert.ok(!isError(await tool("box_release", { box: box.name })));
+  assert.equal(world.hosts.has(hostId), false);
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
+
+  // A failed enrolment removes its machine.
+  world.windowsConnects = false;
+  world.windowsEnrolment = false;
+  await tool("box_acquire", { kind: "windows" });
+  const failed = await only(app);
+  await until("the enrolment to fail", async () => (await app.boxes.find(failed.id))?.enrol.state === "failed");
+  assert.match((await app.boxes.find(failed.id))!.enrol.error!, /BB gave no Windows enrolment command/);
+  assert.equal(world.hosts.has(`host-${failed.id}`), false);
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
+
+  // The sweep removes a manual machine whose box is gone.
+  const leftover = makeHostResponse({ id: "host-left", status: "connected", machineProviderId: "manual" });
+  world.hosts.set("host-left", leftover);
+  await bb.storage.kv.set("manual-machine/host-left", { boxId: "bxgone", at: 0 });
+  await app.enrolment.sweep();
+  assert.equal(world.hosts.has("host-left"), false);
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
 });
 
 test("box_copy names a file from a Windows box after its source", async (t) => {

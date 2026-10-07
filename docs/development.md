@@ -20,6 +20,9 @@ npm run reference
   directly.
 - `npm test` runs against a fake Proxmox API, a fake `ssh`, a fake `tart`
   on a fake Mac and a fake `docker`, so it needs no host.
+  GitHub runs it, and the typecheck, on each pull request. It fails when
+  the reference is out of date, a link between Markdown files is broken,
+  or the skill does not name an agent tool.
 - `scripts/smoke.ts` runs one box on a real backend without BB: it
   acquires a box, runs a command, opens a desktop as the relay does, and
   releases the box, printing each step's time. Its settings file is the

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseQemuPart } from "../src/backends/proxmox-qemu/config.ts";
-import { WINDOWS_COMMAND_SCRIPT, bundleOf, runWindowsCommand, shapeOf, windowsExecutor, windowsFailure } from "../src/plugin/enrol-windows.ts";
+import { WINDOWS_COMMAND_SCRIPT, runWindowsCommand, windowsFailure } from "../src/plugin/enrol-windows.ts";
 import type { CommandTransport, RunOptions, RunResult } from "../src/transports/types.ts";
 
 test("BB's Windows command runs in the desktop session, after Node.js is made sure of, and goes as stdin, never in the script", async () => {
@@ -40,27 +40,4 @@ test("Windows boxes join BB only when the Proxmox QEMU backend's trial setting i
   assert.ok(off.ok && on.ok, JSON.stringify([off, on]));
   assert.equal(off.ok && off.config.enrol, false);
   assert.equal(on.ok && on.config.enrol, true);
-});
-
-test("BB's POSIX request gives its bundle, as an argument or in a script, and its shape never shows the bundle", () => {
-  const bundle = JSON.stringify({ serverUrl: "https://bb.example.com", headers: { "X-BB-Enrollment": "secret-enrolment-credential" }, note: "it's" });
-  assert.deepEqual(bundleOf(["env", `BB_BOOTSTRAP=${bundle}`, "sh", "-s", "--", "--bootstrap-env", "BB_BOOTSTRAP"]), { name: "BB_BOOTSTRAP", bundle });
-  assert.deepEqual(bundleOf(["sh", "-c", `BB_BOOTSTRAP='${bundle.replaceAll("'", "'\\''")}' exec sh -s -- --bootstrap-env BB_BOOTSTRAP`]), { name: "BB_BOOTSTRAP", bundle });
-  assert.deepEqual(bundleOf(["sh", "-s", "--", "--bootstrap-env", "BB_BOOTSTRAP"]), { name: "BB_BOOTSTRAP", bundle: null });
-  assert.equal(bundleOf(["sh", "-s", "--", "--start", "--host-id", "host_abc"]), null);
-  assert.equal(shapeOf(["env", `BB_BOOTSTRAP=${bundle}`, "sh"]), `env <${bundle.length + 13} characters> sh`);
-});
-
-test("without a Windows enrolment command, install.ps1 runs with the request's bundle as stdin, never in the script", async () => {
-  const bundle = JSON.stringify({ serverUrl: "https://bb.example.com", headers: { "X-BB-Enrollment": "secret-enrolment-credential" } });
-  const sent: { script: string; options: RunOptions }[] = [];
-  const result: RunResult = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
-  const transport = { run: async (script: string, options: RunOptions = {}) => (sent.push({ script, options }), result) } as unknown as CommandTransport;
-  const output: string[] = [];
-  const executor = windowsExecutor(transport, { hostId: async () => "host_abc", command: async () => null });
-  const done = await executor.exec({ command: ["env", `BB_BOOTSTRAP=${bundle}`, "sh", "-s", "--", "--bootstrap-env", "BB_BOOTSTRAP"], stdin: "#!/bin/sh", timeoutMs: 60_000, signal: new AbortController().signal, onOutput: (text) => output.push(text) });
-  assert.deepEqual(done, { exitCode: 0 });
-  assert.equal(sent[0]!.options.stdin, bundle);
-  assert.ok(!sent[0]!.script.includes("secret-enrolment-credential"));
-  assert.match(output.join(""), /running install\.ps1 with the bundle of BB's request/);
 });

@@ -88,6 +88,18 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
 | `image.<image>` | Image <image> | An image a kind runs is on the host, built by bb-box's build script, and not too old. |
 
+## microsandbox
+
+| ID | Name | What it checks |
+| --- | --- | --- |
+| `image.<image>` | Image <image> | An image a kind runs is on the host, built by bb-box's build script, and not too old. |
+| `microsandbox.host` | Host <host> | The host answers, runs Linux on x86_64, and its cores, memory and free disk. |
+| `microsandbox.msb` | msb | bb-box's msb is installed on the host at the release this bb-box pins. |
+| `microsandbox.kvm` | KVM | The host has /dev/kvm, and BB's user may use it. |
+| `microsandbox.lxc` | LXC | The host is an LXC container, where msb's snapshots and flat roots fail. |
+| `microsandbox.capacity` | Room on <host> | Room on the host for a box at its default size. |
+| `microsandbox.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
+
 ## Tart
 
 | ID | Name | What it checks |

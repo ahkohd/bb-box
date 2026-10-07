@@ -7,9 +7,10 @@ description: Boxes for BB threads, Linux or macOS computers for commands, builds
 
 bb-box gives each BB thread its own boxes: Linux, macOS or Windows
 computers that start in seconds. A box belongs to the thread that acquired
-it. It goes when the thread releases it, or a few minutes after the thread
-is archived or deleted. Boxes do not expire. Push your work to Git, or copy
-it out, before a box goes: its disk goes with it.
+it. It goes when the thread releases it with `box_release`, or a few
+minutes after the thread is archived or deleted. Boxes do not expire. Push
+your work to Git, or copy it out, before a box goes: its disk goes with it.
+To free a box's memory and CPU but keep its disk, stop it with `box_stop`.
 
 Every tool's answer ends with a `Next:` line that says what to do next. The
 tools, and each of their parameters, are in the
@@ -80,12 +81,14 @@ Beyond those:
 
 ## Desktops and computer use
 
-The `computer_` tools' descriptions say how to read, act and type. Beyond
-those:
+Open an app or a URL with `computer_launch`, then read a window with
+`computer_observe`, act on it with `computer_act` and type with
+`computer_type`. Their descriptions say how. Beyond those:
 
 - A person can take control of a desktop from BB. While they hold it, every
-  computer tool refuses at once. Afterwards, observe the window again: the
-  references and images from before are gone.
+  computer tool refuses at once; call `computer_take_control` only when they
+  ask you to continue or have clearly finished. Afterwards, observe the
+  window again: the references and images from before are gone.
 - A reference stays valid while its element is on screen. When it has gone,
   the tool says so: observe the window again.
 - When an app refuses input in the background, bb-box uses the real pointer

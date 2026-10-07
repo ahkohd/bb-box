@@ -898,7 +898,7 @@ test("a Wayland desktop signs in as box with Apple's sign-in, and its display sc
     `#!/bin/sh
 case "$*" in
   *vnc-password*) echo hunter2; exit 0;;
-  *"/usr/local/libexec/bb-box/display resize "*) echo "$*" >>"${log}"; case "$*" in *40000x800*) echo "${refusal}" >&2; exit 1;; esac; exit 0;;
+  *"/usr/local/libexec/bb-box/display resize "*) printf '%s\\n' "$*" >>"${log}"; case "$*" in *40000x800*) echo "${refusal}" >&2; exit 1;; esac; exit 0;;
 esac
 exec "${FAKE_SSH_BINARY}" "$@"
 `,

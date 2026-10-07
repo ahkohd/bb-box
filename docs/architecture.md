@@ -667,6 +667,7 @@ What runs where:
 | --- | --- | --- | --- | --- |
 | Linux | Linux | container | Proxmox LXC | `linux`, `linux-desktop`, `linux-desktop-cpu`, `linux-desktop-wayland-cpu` |
 | Linux, Windows (WSL 2, Docker Desktop) | Linux | container | Docker, local, over `ssh://` or a BB machine's | `linux`, `linux-desktop`, `linux-desktop-cpu`, `linux-desktop-wayland-cpu` |
+| Linux | Linux | microVM | microsandbox, local, over `ssh://` or a BB machine's | `linux`, `linux-desktop-cpu` |
 | Linux | Linux | physical | SSH host pool | `linux` |
 | Linux | Windows | VM | Proxmox QEMU | `windows-desktop` |
 | Mac | macOS | VM | Tart | `macos`, `macos-desktop` |
@@ -674,16 +675,16 @@ What runs where:
 | Mac | Linux | VM | Tart | `linux-arm64`, `linux-arm64-desktop-cpu` |
 | Mac | Windows | VM | Tart, in QEMU | `windows-arm64-desktop` |
 
-| | Proxmox LXC | Proxmox QEMU | Docker | SSH host pool | Tart |
-| --- | --- | --- | --- | --- | --- |
-| Nature | virtual | virtual | virtual | real | virtual |
-| Acquire | linked clone, start | resume a hibernated warm VM, or a linked clone | create and start a container | claim a machine | `tart clone`, `tart run`; QEMU for Windows |
-| Release | delete | delete | remove the container | reset the machine | `tart delete` |
-| Commands | SSH | OpenSSH with PowerShell 7 | `docker exec` | SSH as the box user | SSH through the Mac |
-| Ownership | tags and description | tags and description | labels set at creation | a marker on the machine | an owner file per VM on the Mac |
-| Capacity | memory, disk, VMIDs, GPU | memory, disk, VMIDs | memory, a container budget, desktops per GPU | machines | macOS VM slots, memory, disk |
-| Stop and start | yes | yes, by hibernating | yes | no | yes, by suspending or saving |
-| Warm guests | started clones | hibernated clones | none: a box is ready in about a second | free machines | suspended macOS VMs, saved Windows VMs |
+| | Proxmox LXC | Proxmox QEMU | Docker | microsandbox | SSH host pool | Tart |
+| --- | --- | --- | --- | --- | --- | --- |
+| Nature | virtual | virtual | virtual | virtual | real | virtual |
+| Acquire | linked clone, start | resume a hibernated warm VM, or a linked clone | create and start a container | `msb create` | claim a machine | `tart clone`, `tart run`; QEMU for Windows |
+| Release | delete | delete | remove the container | `msb remove` | reset the machine | `tart delete` |
+| Commands | SSH | OpenSSH with PowerShell 7 | `docker exec` | `msb exec` | SSH as the box user | SSH through the Mac |
+| Ownership | tags and description | tags and description | labels set at creation | labels set at creation | a marker on the machine | an owner file per VM on the Mac |
+| Capacity | memory, disk, VMIDs, GPU | memory, disk, VMIDs | memory, a container budget, desktops per GPU | memory, cores, a microVM budget | machines | macOS VM slots, memory, disk |
+| Stop and start | yes | yes, by hibernating | yes | yes | no | yes, by suspending or saving |
+| Warm guests | started clones | hibernated clones | none: a box is ready in about a second | none: a box is ready in under half a second | free machines | suspended macOS VMs, saved Windows VMs |
 
 ### Proxmox LXC
 
@@ -764,6 +765,44 @@ Code in [src/backends/docker/](../src/backends/docker/). Set up by
   Proxmox LXC template's guest scripts; bb-box never pulls one. On a BB
   machine, bb-box builds what is missing or out of date itself.
 
+### microsandbox
+
+Code in [src/backends/microsandbox/](../src/backends/microsandbox/). Set up
+by [setup/microsandbox](../setup/microsandbox/README.md)
+([053](decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)).
+
+- bb-box runs its own `msb` on one Linux host with KVM: BB's server, one
+  over `ssh://`, or a BB machine through the msb relay. It installs the
+  release it pins, 0.7.7, checked by its SHA-256, in a folder of its own
+  there, with `msb`'s state and images, the first time it needs it.
+- A box is a microVM named `bbbox-<box ID>`, with labels set at creation
+  that name the backend, install, box, thread, name and kind; `msb modify`
+  changes the thread and name when the box changes hands. Its size is
+  `--cpus`, `--memory` and `--root-disk`, a sparse disk of 32 GiB unless a
+  size is asked for. `/run` is a tmpfs, and its network profiles are
+  `public,private`, which reach BB's server on a private or tailnet address.
+- With Docker on, as by default, `/var/lib/docker` is an ext4 disk of the
+  box's own, as overlayfs cannot sit on `msb`'s root, and the image's start
+  script starts `dockerd` with the first `docker` command
+  ([041](decisions/041-every-linux-box-has-docker.md)). It needs no
+  privilege on the host: each box has its own kernel.
+- `msb`'s agent runs the image's start script at the first boot only, so
+  `start` runs it again through `msb exec` after `msb start`, then waits for
+  `/run/bb-box/ready`.
+- Commands, copies and the desktop's stream go through `msb exec --stream`,
+  which gives output as it comes. `msb exec` of a stopped box boots it for
+  the command, so the transport's probe asks `msb ping` first. As over SSH,
+  what a command leaves running survives its `msb exec` only with `nohup`
+  and its output redirected.
+- Images come from Docker on the host, built by `setup/docker/build.sh`:
+  bb-box imports a kind's image with `docker save` and `msb load` at its
+  first box, and again when Docker's image ID changes; bb-box never pulls
+  one.
+- Capacity is the host's memory, less a reserve and the memory of the
+  running bb-box microVMs, its cores, and a most-boxes budget counting every
+  install's. `msb` reserves no memory, so an idle box holds about 100 MiB of
+  what it is counted at. There is no warm pool yet.
+
 ### SSH host pool
 
 Code in [src/backends/ssh-pool/](../src/backends/ssh-pool/). Set up by
@@ -835,16 +874,22 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
   as an ephemeral node, with a one-off key from an OAuth client, and leaves
   it on release or stop. Built so far: Proxmox LXC templates have
   `/dev/net/tun`.
-- **microsandbox**
-  ([053](decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)),
-  being built as a backend, runs the same OCI images as Docker as microVMs,
-  on Linux with KVM or a Mac.
+- **microsandbox**, next
+  ([053](decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)):
+  spares made ahead, from forks only on hosts with reflinks, as a fork on
+  ext4 copies the box's disk and is slower than a new box; the Wayland
+  desktop; and arm64 boxes on a Mac.
 - **Clouds**
   ([055](decisions/055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md)):
   a cloud VM that runs Linux works today as a Docker host, through BB, or
   as a pool machine. Next, a cloud backend makes Docker and microsandbox
   hosts on Hetzner Cloud, then AWS, and places boxes on them; a cloud VM
   per box comes later, for Windows and GPU desktops.
+- **Desktop streams** ([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)):
+  the panel asks RFB displays for JPEG quality 2 and compression 9; Linux
+  X11 desktops add a Selkies display, H.264 over WebSockets, which the
+  relay carries message by message with the same control; and Tart's
+  holder sends each viewer updates only as it asks.
 
 ## The conformance suite and the doctor
 
@@ -869,5 +914,5 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
 | Whether Cua's references survive a new proxy session; macOS 26's window-picker consent; driving the iOS Simulator; Cua's background input on real Xorg | the experiments in [computer use](research/computer-use.md) |
 | What a stand-in Mac could not show: that a person's Accessibility step lets the input helper post events with System Integrity Protection on, the reset's sweep with it on, the console's size with no display, Cua's first capture for a new user, and Xcode with the Simulator's first boot | the live check on a Mac set aside, in [047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-live-check) |
 | Whether BB's plugin WebSocket will give `bufferedAmount` | [BB request 2](bb-requests.md#2-send-backlog-on-plugin-websockets) |
-| Switching the Linux desktop to Selkies' patched Xvfb | the experiment in [the GPU in a desktop box](research/gpu-desktop.md) |
+| Selkies on a GPU desktop: NVENC and NvFBC in a box, and their GPU memory | step 3 of [056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md#plan-of-prs) |
 | Whether a Docker host that is an LXC container passes TUN to privileged boxes, and how long a tailnet join takes | the first PRs of [050](decisions/050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md#to-verify-in-the-first-prs) |

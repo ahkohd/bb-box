@@ -7,7 +7,8 @@ Extends [011](011-interface-v1.md) and
 [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
 Windows' console resizes through the backend. Extended by
 [048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md):
-the backend resizes a Wayland display.
+the backend resizes a Wayland display. Extended by
+[056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md): a Selkies display resizes through its backend too.
 
 ## Context
 

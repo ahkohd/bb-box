@@ -14,7 +14,7 @@ which records still stand as written. The current design as a whole is in
 | [004](004-acquire-and-release.md) | Acquire and release, for virtual and real machines | Current |
 | [005](005-linux-boxes-on-proxmox-lxc.md) | The first backend runs Linux boxes as unprivileged LXC containers on Proxmox VE | Current |
 | [006](006-gpu-desktop-on-xorg.md) | The Linux GPU desktop runs Xorg with NVIDIA's driver, streamed by x0vncserver | Partly superseded by 021 |
-| [007](007-desktop-stream-is-a-typed-transport.md) | The desktop stream is a typed transport, relayed through the plugin | Partly superseded by 011 |
+| [007](007-desktop-stream-is-a-typed-transport.md) | The desktop stream is a typed transport, relayed through the plugin | Partly superseded by 011 and 056 |
 | [008](008-shared-control.md) | You and the agent share one desktop, with one controller at a time | Partly superseded by 015, 038 and 045 |
 | [009](009-conformance-suite-and-doctor.md) | A conformance suite and a doctor check for every backend | Partly superseded by 016 |
 | [010](010-publishable-by-default.md) | The repository is publishable at all times | Current |
@@ -61,3 +61,4 @@ which records still stand as written. The current design as a whole is in
 | [053](053-microsandbox-runs-light-linux-boxes-as-microvms.md) | microsandbox runs light Linux boxes as microVMs | Being built |
 | [054](054-windows-images-are-refreshed-in-a-box-of-the-current-build.md) | Windows images are refreshed in a box of the current build | Being built |
 | [055](055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md) | Cloud boxes run on cloud hosts first, and a cloud VM per box later | Not built yet |
+| [056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) | Linux X11 desktops add a Selkies stream, and RFB stays for the rest, tuned | Not built yet |

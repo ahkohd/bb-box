@@ -36,7 +36,7 @@ What shapes the design:
 - **Screen Sharing.** A VNC client that gives only the VNC password gets a
   session of its own at the login window, not the console's user: Tart's
   setup measured this in a VM
-  ([setup guide](../../setup/tart/README.md#the-desktops-vnc-server)). A
+  ([architecture](../architecture.md#desktops-and-control)). A
   client that signs in as the console's user with Apple's authentication
   (RFB security type 30, Diffie-Hellman) sees that user's screen. noVNC
   has spoken type 30 since 1.4.
