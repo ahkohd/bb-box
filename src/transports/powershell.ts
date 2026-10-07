@@ -9,7 +9,9 @@
 // command exits, so what a script starts with Start-Process, Start-Job or
 // `cmd /c start` ends with it. Start-Detached, Windows' nohup, starts a
 // command through WMI instead, outside the job, with the script's
-// environment variables and directory, and returns its process ID.
+// environment variables and directory, and returns its process ID. Its
+// output goes to a log file that is the standard output and error of all it
+// runs, so a GUI program's output reaches it too (#483).
 //
 // Stdin is the process's, untouched: native commands and
 // [Console]::OpenStandardInput() read it byte for byte, and
@@ -33,32 +35,38 @@ const SETTINGS =
 /**
  * What a detached command's PowerShell runs once $f names its file: it reads
  * and deletes the file, takes on the environment variables in it, and runs
- * the command with all its output going to the log, or nowhere.
+ * the command. Its output goes where the PowerShell's own does: the log.
  */
 const DETACHED =
   SETTINGS +
   "$a=Import-Clixml -LiteralPath $f;Remove-Item -LiteralPath $f;" +
   "foreach($k in $a.e.Keys){[Environment]::SetEnvironmentVariable($k,$a.e[$k])};" +
-  "$s=[scriptblock]::Create($a.c);if($a.o){& $s *> $a.o}else{& $s *> $null}";
+  "& ([scriptblock]::Create($a.c))";
 
 /**
- * Start-Detached { <command> } <log>. The command, the log's full path and
- * the environment go in a file in the temp directory, and WMI starts the new
- * PowerShell in the script's directory. $q is a double quote, which the
- * command line cannot carry.
+ * Start-Detached { <command> } <log>. The command and the environment go in a
+ * file in the temp directory, and WMI starts the new PowerShell in the
+ * script's directory, through cmd, whose `> log 2>&1` makes the log, or NUL,
+ * its standard output and error (#483). What the command runs inherits that
+ * file, not a pipe: PowerShell does not wait for a GUI program, such as an
+ * Electron app, and a pipe would close under it with its output lost. It
+ * returns the PowerShell's process ID, not cmd's. $q is a double quote,
+ * which the command line cannot carry.
  */
 const DETACH =
   "function Start-Detached{param([Parameter(Mandatory)][string]$Command,[string]$Log);" +
   "$f=Join-Path ([IO.Path]::GetTempPath()) ('bb-box-'+[guid]::NewGuid().ToString('n')+'.xml');" +
-  "$o=if($Log){$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Log)};" +
+  "$o=if($Log){$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Log)}else{'NUL'};" +
   "$e=@{};foreach($v in Get-ChildItem env:){$e[$v.Name]=$v.Value};" +
-  "@{e=$e;c=$Command;o=$o}|Export-Clixml -LiteralPath $f;" +
+  "@{e=$e;c=$Command}|Export-Clixml -LiteralPath $f;" +
   `$b='$f='''+($f -replace '''','''''')+''';${DETACHED.replaceAll("'", "''")}';` +
   "$q=[char]34;$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{" +
-  "CommandLine=$q+[Environment]::ProcessPath+$q+' -NoProfile -NonInteractive -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($b));" +
+  "CommandLine=$q+$env:ComSpec+$q+' /d /s /c '+$q+$q+[Environment]::ProcessPath+$q+' -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($b))+' >'+$q+$o+$q+' 2>&1'+$q;" +
   "CurrentDirectory=(Get-Location -PSProvider FileSystem).ProviderPath};" +
   "if($r.ReturnValue){Remove-Item -LiteralPath $f;throw ('Cannot start the command: Win32_Process Create returned '+$r.ReturnValue)};" +
-  "$r.ProcessId};";
+  "$n=[IO.Path]::GetFileName([Environment]::ProcessPath);$p=$null;" +
+  "for($i=0;-not $p -and $i -lt 50;$i++){$p=(Get-CimInstance Win32_Process -Filter ('ParentProcessId='+$r.ProcessId+' and Name='+[char]39+$n+[char]39)).ProcessId|Select-Object -First 1;if(-not $p){Start-Sleep -Milliseconds 100}};" +
+  "if($p){$p}else{$r.ProcessId}};";
 
 const PRELUDE = `${SETTINGS}${DETACH}$global:LASTEXITCODE=0;`;
 
