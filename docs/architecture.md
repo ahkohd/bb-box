@@ -898,7 +898,9 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
   the panel asks RFB displays for JPEG quality 2 and compression 9; Linux
   X11 desktops add a Selkies display, H.264 over WebSockets, which the
   relay carries message by message with the same control; and Tart's
-  holder sends each viewer updates only as it asks.
+  holder sends each viewer updates only as it asks. Built so far: X11
+  desktop templates and images run Selkies on `127.0.0.1:5980` in the box,
+  which takes about 0.1% of a core while no viewer is connected.
 
 ## The conformance suite and the doctor
 

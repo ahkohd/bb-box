@@ -169,8 +169,8 @@ Every download is checked against a pinned SHA-256, and kept in
   from, so builds repeat;
 - `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, uv, Claude
   Code, Codex and Pi, for x86_64 and arm64;
-- `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Google Chrome, Cua Driver
-  and rustup, for x86_64 and arm64;
+- `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Selkies, Google Chrome,
+  Cua Driver and rustup, for x86_64 and arm64;
 - the NVIDIA installer for the host's driver version, checked against the
   SHA-256 NVIDIA publishes beside it.
 
@@ -386,14 +386,19 @@ The XFCE desktops add:
 
 - an XFCE session on display `:99` as `box`, and VNC on port 5900, with a
   password each box makes at first boot (`/var/lib/bb-box/vnc-password`);
+- Selkies 2.0, which streams `:99` as H.264 over WebSockets on
+  `127.0.0.1:5980`, in `bb-box-selkies.service`, which starts and stops
+  with the display. It captures nothing while no viewer is connected, and
+  waits on the GPU path
+  ([056](../../docs/decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md));
 - on a GPU desktop, the NVIDIA userspace for the host's driver and
   VirtualGL; on every desktop, Vulkan and Mesa's CPU renderers;
 - Google Chrome, Mousepad, Ristretto, Evince and Noto CJK fonts;
 - Rust (rustup, stable) and the libraries Zed's GPUI needs to build;
 - Cua Driver, as a daemon in the desktop session, with its telemetry and
   update check off;
-- `bb-box-check-desktop`, which checks the display, VNC, the GPU, Chrome,
-  the fonts, Mousepad and Cua Driver.
+- `bb-box-check-desktop`, which checks the display, VNC, Selkies, the GPU,
+  Chrome, the fonts, Mousepad and Cua Driver.
 
 Each login of `box` gets `DISPLAY=:99` and
 `XAUTHORITY=/run/bb-box/Xauthority`.
