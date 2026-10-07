@@ -162,7 +162,8 @@ test("offers windows-arm64-desktop only with a Windows image, as a Windows deskt
     gpu: false,
     features: [],
     command: { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true },
-    displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }],
+    // QEMU with lossy=on: quality 4, as 2 broke text up, and the viewer's refresh, as QEMU's kept some JPEG (056).
+    displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4 }],
     computerUse: { driver: "cua", version: "0.30.4", socket: CUA_PIPE },
     enrol: false,
   });
@@ -305,7 +306,7 @@ test("the desktop resizes to the listed mode that best covers the viewer, set by
   const { displays } = await backend.transports(guest, KIND);
   assert.deepEqual(
     displays.map(({ open: _, resize: __, ...display }) => display),
-    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", minSize: { width: 800, height: 600 } }],
+    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, minSize: { width: 800, height: 600 } }],
   );
 
   // The acquire compiles the helper, and the first resize waits for it.

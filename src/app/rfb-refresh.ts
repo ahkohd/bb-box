@@ -1,10 +1,11 @@
 // The viewer's own lossless refresh, for a desktop whose stream server never
-// sends again what it sent as JPEG (056). Xtigervnc sends an area again,
-// near losslessly, about 0.1 s after it stops changing; wayvnc does not, so
-// its picture stayed as soft as the motion until the next change, at every
-// quality. Here the viewer asks instead: once nothing has come for a moment,
-// it asks for the area it drew as JPEG again with no quality level, which
-// wayvnc answers losslessly, then asks for JPEG again. Motion keeps the light
+// sends again losslessly what it sent as JPEG (056). Xtigervnc sends an area
+// again, near losslessly, about 0.1 s after it stops changing; wayvnc does
+// not, so its picture stayed as soft as the motion until the next change, at
+// every quality; and QEMU with lossy=on does after 1.5 s, but partly as JPEG
+// still. Here the viewer asks instead: once nothing has come for a moment, it
+// asks for the area it drew as JPEG again with no quality level, which both
+// answer losslessly, then asks for JPEG again. Motion keeps the light
 // quality; a still screen is exact about 0.35 s after it stops.
 
 import type RFB from "@novnc/novnc";

@@ -73,9 +73,15 @@ export interface DisplayCapability {
    * what it sent as JPEG once it stops changing, as wayvnc (056): the viewer
    * asks for it again once the screen is still. Left out, the server does so
    * itself, as Xtigervnc, or sends no JPEG, as QEMU without lossy=on and the
-   * Tart holder.
+   * Tart holder. QEMU with lossy=on sends one, but partly as JPEG still.
    */
   readonly refresh?: "viewer";
+  /**
+   * The JPEG quality, 0 to 9, the viewer asks the display's server for, where
+   * the viewer's own, 2, is too soft to read in motion: QEMU's JPEG at 2 broke
+   * text up, and 4 cost it no more (056). Left out, 2.
+   */
+  readonly quality?: number;
 }
 
 /**
