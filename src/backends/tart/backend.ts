@@ -29,6 +29,8 @@
 import type { CheckId } from "../../core/checks.ts";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
@@ -201,17 +203,29 @@ fi`;
 
 /** The check a trial box of each kind runs: a Linux image's own, after its display is up, or macOS's above. */
 /**
- * A Windows box's checks as its administrator, in PowerShell (#450): the
- * tools the image has and its record, a line per check, with ok or FAIL.
+ * Windows' shared check (setup/windows/check.ps1, 054) as a Mac's boxes run
+ * it: the clock's check (windows/check-clock.ps1) in place of the address's
+ * from the SMBIOS serial, which a Mac's QEMU does not give, as
+ * prepare-windows-image.sh builds it.
  */
-export const WINDOWS_CHECK = String.raw`function t($name, [scriptblock]$b) { try { $o = & $b 2>&1 | Select-Object -First 1; if ($?) { "$name ok   $o" } else { "$name FAIL $o" } } catch { "$name FAIL $($_.Exception.Message)" } }
-t pwsh { $PSVersionTable.PSVersion.ToString() }
-t git { git --version }
-t ssh { (Get-Service sshd).Status }
-t "image record" { if (Test-Path C:\bb-box\image.json) { 'C:\bb-box\image.json' } else { throw 'C:\bb-box\image.json is missing' } }`;
+export function macWindowsCheck(check: string, clock: string): string {
+  const out: string[] = [];
+  let [replaced, dropping] = [0, false];
+  for (const line of check.split("\n")) {
+    if (line === "Check 'address from the SMBIOS serial' {") {
+      out.push(...clock.replace(/\n$/, "").split("\n"));
+      [replaced, dropping] = [replaced + 1, true];
+    } else if (dropping) {
+      if (line === "}") dropping = false;
+    } else out.push(line);
+  }
+  if (replaced !== 1 || dropping) throw new Error("setup/windows/check.ps1 has changed: adapt Tart's Windows check (macWindowsCheck) to it.");
+  return out.join("\n");
+}
 
+/** The check a trial box of each kind runs; none of Tart's own for Windows, whose shared check.ps1 runs, adapted (adaptCheck). */
 function tartCheck(kind: string): string {
-  if (guestOsOf(kind) === "windows") return WINDOWS_CHECK;
+  if (guestOsOf(kind) === "windows") return "";
   if (guestOsOf(kind) === "macos") return MAC_CHECK;
   if (kind === "linux-arm64") return "bb-box-check-headless";
   return "for i in $(seq 1 60); do [ -s /run/bb-box/display-mode ] && break; sleep 1; done; bb-box-check-desktop";
@@ -595,6 +609,7 @@ export class TartBackend implements Backend {
     remove: (ref, signal) => this.#removeImage(ref, signal),
     build: (current, setup, options) => this.#buildStandard(current, setup, options),
     check: (kind) => tartCheck(kind),
+    adaptCheck: (kind, check, setup) => (guestOsOf(kind) === "windows" ? macWindowsCheck(check, readFileSync(join(setup, "tart", "windows", "check-clock.ps1"), "utf8")) : check),
     // A project's box clones its image's build on the build's Mac (049, #439).
     startsFrom: true,
   };

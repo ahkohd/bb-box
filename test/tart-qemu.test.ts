@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
@@ -868,7 +869,14 @@ test("a Windows image's operations on a Mac (#450): a box of its build, a captur
 
   const current = (await images.list()).builds.find((build) => build.kind === KIND)!;
   assert.deepEqual([current.ref, current.image, current.current], [`mac1/${FAKE_WINDOWS_IMAGE}`, "standard", true]);
-  assert.equal(images.check?.(KIND).includes('t "image record"'), true, "a Windows kind's own check");
+  // The shared check.ps1 (054), with the clock's check in place of the SMBIOS address's, which a Mac's QEMU has not.
+  assert.equal(images.check?.(KIND), "", "no check of Tart's own: the shared one runs");
+  const setupDir = fileURLToPath(new URL("../setup/", import.meta.url));
+  const shared = readFileSync(join(setupDir, "windows", "check.ps1"), "utf8");
+  const adapted = images.adaptCheck!(KIND, shared, setupDir);
+  assert.ok(shared.includes("address from the SMBIOS serial") && !adapted.includes("address from the SMBIOS serial"));
+  assert.ok(adapted.includes(readFileSync(join(setupDir, "tart", "windows", "check-clock.ps1"), "utf8").trim().split("\n")[0]!));
+  assert.throws(() => images.adaptCheck!(KIND, "Check 'something else' {\n}\n", setupDir), /setup\/windows\/check\.ps1 has changed/);
 
   // An image box: an overlay on the current build, marked as one.
   const box = await images.box(current, "refresh of the image", AbortSignal.timeout(30_000));
