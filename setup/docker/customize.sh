@@ -21,8 +21,10 @@ if id -u ubuntu >/dev/null 2>&1; then userdel -r ubuntu 2>/dev/null; fi
 # that no package comes from the live archive: customize-base.sh would take
 # them from there, and a newer libssl from the live archive does not match
 # the snapshot's libssl-dev.
-apt=(-o "APT::Snapshot=$(cat /mnt/template/apt-snapshot)" -o Acquire::https::CaInfo=/mnt/ca-certificates.crt
-  -o Acquire::Retries=5)
+# Ubuntu keeps snapshots of its main archive only, so an arm64 image
+# (ports.ubuntu.com) installs from the live archive, as baseline.sh does.
+apt=(-o Acquire::https::CaInfo=/mnt/ca-certificates.crt -o Acquire::Retries=5)
+[ "$(dpkg --print-architecture)" != amd64 ] || apt+=(-o "APT::Snapshot=$(cat /mnt/template/apt-snapshot)")
 apt-get "${apt[@]}" update -q --error-on=any
 apt-get "${apt[@]}" install -y -q --no-install-recommends ca-certificates
 

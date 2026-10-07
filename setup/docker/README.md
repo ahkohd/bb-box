@@ -116,6 +116,11 @@ DOCKER_HOST=ssh://user@host setup/docker/build.sh     # on a Docker host over SS
   its pinned SHA-256. When the snapshot service has an outage, the build
   retries for a few minutes, then fails: run it again later.
 - Once the images are built, `docker builder prune` frees the build cache.
+- `--arch arm64`, on an arm64 Docker host, builds `bbbox/linux:1-arm64` and
+  `bbbox/linux-desktop:1-arm64` for microsandbox on a Mac (053), from the
+  same scripts with their arm64 pins, as for Tart's Linux images. Ubuntu has
+  no snapshots of its arm64 archive, so those packages come from the live
+  archive. There is no Wayland desktop for arm64 yet.
 
 ### 3. Configure bb-box
 

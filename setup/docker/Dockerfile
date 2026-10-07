@@ -11,17 +11,22 @@ ARG UBUNTU=ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09
 # The artifacts the guest scripts install, each checked against its pinned
 # SHA-256, as fetch-artifacts.sh does on a Proxmox host.
 FROM ${UBUNTU} AS fetch
+# BuildKit's name for the platform's architecture, amd64 or arm64, as the
+# guest scripts' pins name it, x86_64 or arm64.
+ARG TARGETARCH
 RUN apt-get update -q && apt-get install -y -q --no-install-recommends ca-certificates curl jq \
   && rm -rf /var/lib/apt/lists/*
 COPY proxmox-lxc/host/common.sh /src/host/
 COPY proxmox-lxc/template/fetch-artifacts.sh proxmox-lxc/template/pins.json proxmox-lxc/template/desktop-pins.tsv /src/template/
-RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts linux
+RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts linux "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
 
 FROM fetch AS fetch-desktop
-RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-cpu
+ARG TARGETARCH
+RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-cpu "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
 
 FROM fetch AS fetch-desktop-wayland
-RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-wayland-cpu
+ARG TARGETARCH
+RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-wayland-cpu "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
 
 # BB's host app from BB's server, to pre-install it, so a box enrols without
 # downloading it. Empty BB_URL: boxes download it when they enrol.
