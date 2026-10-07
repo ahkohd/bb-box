@@ -158,7 +158,7 @@ test("a Windows box runs each script in PowerShell, base64-encoded, so no quote 
   assert.doesNotMatch(entry!.command, /["`]/);
   assert.match(entry!.command, /^\$ProgressPreference='SilentlyContinue';.*;exit 0$/);
   assert.match(entry!.command, /if\(\$PSStyle\)\{\$PSStyle\.OutputRendering='PlainText'\}/, "output has no colours");
-  assert.match(entry!.command, /;function Start-Detached\{.*;\$r\.ProcessId\};\$global:LASTEXITCODE=0;& \(\[scriptblock\]::Create\(/, "the script can start commands outside its job");
+  assert.match(entry!.command, /;function Start-Detached\{.*\$env:ComSpec.* >'\+\$q\+\$o\+\$q\+' 2>&1'.*else\{\$r\.ProcessId\}\};\$global:LASTEXITCODE=0;& \(\[scriptblock\]::Create\(/, "the script can start commands outside its job");
   const encoded = /FromBase64String\('([^']+)'\)/.exec(entry!.command)![1]!;
   assert.equal(Buffer.from(encoded, "base64").toString("utf8"), `${script}\nif(-not $?){if($LASTEXITCODE){exit $LASTEXITCODE};exit 1}`);
   assert.equal(await box.probe(), true);

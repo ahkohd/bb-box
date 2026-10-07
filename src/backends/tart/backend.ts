@@ -394,7 +394,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
       id: "windows-arm64-desktop",
       label: "Windows desktop on arm64",
       description:
-        "A Windows 11 VM on arm64, on a Mac with Apple silicon, for Windows apps, browsers and builds, with its desktop shown in the panel and computer use. x64 apps run under Windows' emulation, more slowly; x64 drivers do not. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running. A desktop command runs unelevated, and what it opens stays open.",
+        "A Windows 11 VM on arm64, on a Mac with Apple silicon, for Windows apps, browsers and builds, with its desktop shown in the panel and computer use. x64 apps run under Windows' emulation, more slowly; x64 drivers do not. Commands run in PowerShell 7 as an administrator. What a command starts with Start-Process ends with it; Start-Detached { <cmd> } <log> keeps it running, with a GUI program's output in the log too. A desktop command runs unelevated, and what it opens stays open.",
       requires: [],
       capabilities: {
         os: "windows",
