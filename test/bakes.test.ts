@@ -69,7 +69,8 @@ function backend(id = "proxmox-lxc", options: { startsFrom?: boolean; fail?: (sc
     },
     capture: async (box, from, image) => {
       const made = box as ImageBox & { record(): ImageRecord | null };
-      const build: ImageBuild = { ref: box.ref, image, kind: from.kind, build: made.record()!.build, record: made.record(), current: false };
+      // A failed build box has no record of its own; the build is kept as it is.
+      const build: ImageBuild = { ref: box.ref, image, kind: from.kind, build: made.record()?.build ?? null, record: made.record(), current: false };
       builds.push(build);
       return build;
     },
@@ -91,8 +92,25 @@ function bakes(backends: Backend[], images: Record<string, ImageConfig> = { rust
   const storage = new MemoryStorage();
   const config = { images };
   const said: string[] = [];
-  const made = new ImageBakes({ backends: () => backends, images: () => config.images, storage, setup: new URL("../setup/", import.meta.url).pathname, now: () => clock.now, log: (line) => said.push(line) });
-  return { bakes: made, storage, clock, config, said };
+  /** Thread boxes a kept try started (#451), by ID, and whether the next fails to start. */
+  const kept = new Map<string, { name: string; from: string; image: string; build: string | null }>();
+  const keeping = { fail: false };
+  const made = new ImageBakes({
+    backends: () => backends,
+    images: () => config.images,
+    storage,
+    setup: new URL("../setup/", import.meta.url).pathname,
+    now: () => clock.now,
+    log: (line) => said.push(line),
+    keep: async ({ name, build, ref }) => {
+      if (keeping.fail) throw new Error("no room");
+      const id = `bx${kept.size + 1}`;
+      kept.set(id, { name: `kept-${kept.size + 1}`, from: ref, image: name, build });
+      return { id, name: kept.get(id)!.name };
+    },
+    boxExists: async (id) => kept.has(id),
+  });
+  return { bakes: made, storage, clock, config, said, kept, keeping };
 }
 
 /** A box of the image that is ready, as Boxes says. */
@@ -296,6 +314,50 @@ test("a try runs the script as a build does, then the check and the kind's check
   assert.deepEqual(await storage.list("images/"), [], "a try keeps nothing");
   assert.match(tryText(result), /^The script passed on proxmox-lxc \(linux\), in \d+ s, as a build runs it\.\n- the script and the check, in the build box: ok, \d+ s, with finalizing\n/);
   assert.ok(lxc.ran.some((one) => one.script.includes(`BB_BOX_IMAGE='rust' BB_BOX_KIND='linux' BB_BOX_BACKEND='proxmox-lxc'`)));
+});
+
+test("a try with keep leaves a box of its build, or of the build box a failing script left, and the build goes with that box (#451)", async () => {
+  const lxc = backend();
+  const { bakes: on, storage, kept, keeping } = bakes([lxc.backend], {});
+  const keep = { threadId: "thr_abc", projectId: null };
+
+  const passed = await on.try({ name: "rust", kind: "linux", script: IMAGE.script, check: IMAGE.check!, keep });
+  assert.equal(passed.ok, true, tryText(passed));
+  assert.deepEqual(passed.kept, { box: "kept-1", detail: "a box of the build" });
+  assert.deepEqual({ ...kept.get("bx1"), build: undefined }, { name: "kept-1", from: "7000", image: "rust", build: undefined }, "a box of the captured build");
+  assert.match(kept.get("bx1")!.build ?? "", /^build\.\d{8}-\d{6}-[0-9a-f]{4}$/, "with the try's build ID");
+  assert.deepEqual(lxc.removed, ["7001"], "only the trial box goes; the build stays for the box");
+  assert.deepEqual(await storage.list("images/try-kept/"), ["images/try-kept/proxmox-lxc/7000"]);
+  assert.match(tryText(passed), /\nKept box kept-1 \(a box of the build\)/);
+
+  // Released: its build goes.
+  kept.delete("bx1");
+  await on.released({ id: "bx1", backend: "proxmox-lxc", image: { from: "7000" } });
+  assert.deepEqual(lxc.removed, ["7001", "7000"]);
+  assert.deepEqual(await storage.list("images/try-kept/"), []);
+
+  // A failing script: the build box as it left it.
+  const failing = backend("proxmox-lxc", { fail: (script) => (script.startsWith("set -euo pipefail") ? { ...ok("E: Unable to locate package ripgrep\n"), exitCode: 100 } : null) });
+  const second = bakes([failing.backend], {});
+  const failed = await second.bakes.try({ name: "try", kind: "linux", script: "apt-get install -y ripgrep\n", keep });
+  assert.equal(failed.ok, false);
+  assert.deepEqual(failed.kept, { box: "kept-1", detail: "a box of the build box as the script left it" });
+  assert.deepEqual(second.kept.get("bx1")?.from, "7000");
+  assert.deepEqual(failing.removed, [], "the build box is kept as a build");
+
+  // The nightly upkeep keeps a kept build while its box is there, and removes it after.
+  assert.deepEqual(await second.bakes.maintain(), []);
+  assert.deepEqual(failing.removed, []);
+  second.kept.delete("bx1");
+  await second.bakes.maintain();
+  assert.deepEqual(failing.removed, ["7000"]);
+
+  // A box that will not start: the try says why, and keeps nothing.
+  keeping.fail = true;
+  const unkept = await on.try({ name: "rust", kind: "linux", script: IMAGE.script, keep });
+  assert.deepEqual(unkept.kept, { box: null, detail: "The box could not start: no room" });
+  assert.deepEqual(await storage.list("images/try-kept/"), []);
+  assert.ok(lxc.removed.includes("7002") && lxc.removed.includes("7003"), "its build and trial box go, as without keep");
 });
 
 test("a try that fails says which step and gives the build's last lines; a GPU desktop, or no backend that builds, is refused (049)", async () => {
