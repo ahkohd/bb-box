@@ -2,34 +2,44 @@
 
 bb-box builds on BB rather than around it
 ([002](decisions/002-bb-is-the-coordinator.md)). These are the BB features it
-needs and does not have yet, checked against BB 0.44.0 (plugin SDK and
-server protocol 219). They are drafts until filed with BB.
+has needed. Each one's status is checked against BB 0.45.0, its plugin SDK
+0.6.15, its guide and its component registry, on 7 October 2026. A request BB
+meets stays here, with the bb-box issue that drops its workaround. This page
+is a log: bb-box does not file these with BB.
 
 | Request | Status | Without it |
 | --- | --- | --- |
-| [BB's host app on Windows](#1-bbs-host-app-on-windows) | draft | Windows boxes cannot enrol |
-| [Send backlog on plugin WebSockets](#2-send-backlog-on-plugin-websockets) | draft | the desktop relay cannot slow down for a slow viewer |
-| [Start cleanly after a reboot](#3-start-cleanly-after-a-reboot) | draft | every template and image clears BB's daemon lock and PID file at boot |
-| [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | draft | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
-| [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | draft | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
-| [Find a machine by its key](#6-find-a-machine-by-its-key) | draft | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
-| [Reach a port on a machine](#7-reach-a-port-on-a-machine) | draft | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already; Docker on a BB machine goes through a relay of bb-box's own, on a route with `auth: "none"` guarded by a one-time secret |
-| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | draft | bb-box keeps a BB terminal on each box and reads the thread's variables and GH_TOKEN from BB's processes there: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
-| [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | draft | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
-| [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | draft | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
-| [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | draft | a box has its thread's project variables only while a thread of the project runs on it |
-| [Make a plugin's host call quick](#12-make-a-plugins-host-call-quick) | draft | each call to bb-box's host entry takes about 0.4 s, so it cannot carry commands |
-| [Mark a machine offline when it stops checking in](#13-mark-a-machine-offline-when-it-stops-checking-in) | draft | a machine that goes with no word, such as a PC that restarts, shows as connected for about 16 minutes, so bb-box judges it by when BB last heard from it |
-| [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | draft | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
-| [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | draft | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text |
-| [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | draft | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
-| [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | draft | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
-| [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | draft | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
-| [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | draft | `box_run` returns after 270 s, and a command still running goes on as a job for `box_job`; a Windows command in the desktop session, which has no job, is stopped (#486, #414) |
-| [Move large files through the file API](#20-move-large-files-through-the-file-api) | draft | `box_copy` moves a file over 16 MiB through bb-box's own worker on the machine that holds it, which needs that machine connected to BB (#492) |
-| [Stop a plugin's machine workers after its tool calls](#21-stop-a-plugins-machine-workers-after-its-tool-calls) | draft | a command in a Docker box on a BB machine loses its box first at a deploy, so `box_run` waits up to 10 s to see that bb-box is stopping before it names the job (#415) |
+| [BB's host app on Windows](#1-bbs-host-app-on-windows) | partly met | Windows boxes cannot enrol |
+| [Send backlog on plugin WebSockets](#2-send-backlog-on-plugin-websockets) | not met | the desktop relay cannot slow down for a slow viewer |
+| [Start cleanly after a reboot](#3-start-cleanly-after-a-reboot) | not met | every template and image clears BB's daemon lock and PID file at boot |
+| [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | not met | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
+| [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | not met | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
+| [Find a machine by its key](#6-find-a-machine-by-its-key) | not met | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
+| [Reach a port on a machine](#7-reach-a-port-on-a-machine) | not met | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already; Docker on a BB machine goes through a relay of bb-box's own, on a route with `auth: "none"` guarded by a one-time secret |
+| [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | not met | bb-box keeps a BB terminal on each box and reads the thread's variables and GH_TOKEN from BB's processes there: from `/proc` on Linux, inexactly from `ps -E` on macOS, and not at all on Windows |
+| [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | not met | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
+| [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | not known | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
+| [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | not met | a box has its thread's project variables only while a thread of the project runs on it |
+| [Make a plugin's host call quick](#12-make-a-plugins-host-call-quick) | not met | each call to bb-box's host entry takes about 0.4 s, so it cannot carry commands |
+| [Mark a machine offline when it stops checking in](#13-mark-a-machine-offline-when-it-stops-checking-in) | not met | a machine that goes with no word, such as a PC that restarts, shows as connected for about 16 minutes, so bb-box judges it by when BB last heard from it |
+| [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | not met | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
+| [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | met | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text, until #535 |
+| [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | not met | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
+| [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | not met | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
+| [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | not met | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
+| [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | not met | `box_run` returns after 270 s, and a command still running goes on as a job for `box_job`; a Windows command in the desktop session, which has no job, is stopped (#486, #414) |
+| [Move large files through the file API](#20-move-large-files-through-the-file-api) | not met | `box_copy` moves a file over 16 MiB through bb-box's own worker on the machine that holds it, which needs that machine connected to BB (#492) |
+| [Stop a plugin's machine workers after its tool calls](#21-stop-a-plugins-machine-workers-after-its-tool-calls) | not met | a command in a Docker box on a BB machine loses its box first at a deploy, so `box_run` waits up to 10 s to see that bb-box is stopping before it names the job (#415) |
 
 ## 1. BB's host app on Windows
+
+**Status in BB 0.45.0: partly met.** BB 0.45.0 has a Windows host app:
+`bb-app` lists `win32`, and a Windows machine enrols with `install.ps1`, a
+Node installer that starts the daemon at sign-in from the user's `Run` key, so
+in the desktop session (`bb guide machines`). Asks 1 to 3 are met. The SDK's
+`MachineBootstrapRequest` still names no OS, and nothing says `bootstrap` runs
+the Windows installer through a provider's executor, so ask 4 is not shown. No
+workaround to drop yet.
 
 **What bb-box needs.** Windows boxes that enrol as BB machines, like Linux and
 macOS boxes. Then a thread's Git credentials and machine variables reach its
@@ -91,6 +101,9 @@ A thread started on such a box would also run in Linux, not Windows:
 
 ## 2. Send backlog on plugin WebSockets
 
+**Status in BB 0.45.0: not met.** SDK 0.6.15's plugin WebSocket has neither
+`bufferedAmount` nor a `send` that returns a promise.
+
 **What bb-box needs.** The desktop relay copies a box's stream to each viewer
 through a plugin WebSocket route. When a viewer's network is slower than the
 stream, the relay should see its own backlog, so it can stop reading from the
@@ -111,6 +124,10 @@ TigerVNC's congestion control, which keeps the backlog small. Selkies'
 WebSocket mode is not measured yet.
 
 ## 3. Start cleanly after a reboot
+
+**Status in BB 0.45.0: not met.** The 0.45.0 daemon still reads
+`install-daemon.pid` as a bare PID, with no boot ID, and takes over its lock
+only once the lock is stale by age. The guide says nothing new.
 
 **What bb-box needs.** A box that restarts after a hard stop reconnects to BB
 as soon as it boots. bb-box's `stop` on Proxmox LXC is a hard stop, and a
@@ -138,6 +155,10 @@ Docker box's daemon ends with its container.
 ([017](decisions/017-boxes-clear-bb-daemon-state-at-boot.md)).
 
 ## 4. Change a plugin's source and keep its state
+
+**Status in BB 0.45.0: not met.** `bb plugin install` keeps a plugin's state
+only when it moves from one local path to another, and `bb plugin update`
+takes no ref.
 
 **What bb-box needs.** An operator moves bb-box from one source to another
 without losing anything: from a pinned commit to a branch to follow
@@ -178,6 +199,9 @@ restores the boxes of live threads from their guests
 remove, its settings and secrets must still be entered again.
 
 ## 5. Enrol quickly when bb-app is installed
+
+**Status in BB 0.45.0: not met.** Boxes made on 7 October enrolled in 9.0 to
+13.2 s, as `box_status` gives it, not under 2 s.
 
 **What bb-box needs.** A box from a template that has bb-app installed is a
 BB machine in under 2 s after it is ready. Until then it has none of the
@@ -239,6 +263,9 @@ machines until a thread claims them (below).
 
 ## 6. Find a machine by its key
 
+**Status in BB 0.45.0: not met.** SDK 0.6.15 has no way to find a machine by
+its key.
+
 **What bb-box needs.** To remove the BB machine of a box whose record it
 lost. bb-box makes each box's machine with the box ID as the key
 ([014](decisions/014-enrol-through-machine-providers.md)). If bb-box loses
@@ -267,6 +294,9 @@ that answers only the plugin whose provider made the machine, or the key on
 follows only lost plugin storage, which upgrades no longer cause.
 
 ## 7. Reach a port on a machine
+
+**Status in BB 0.45.0: not met.** SDK 0.6.15 has no stream to an address on a
+machine.
 
 **What bb-box needs.** To drive a Mac that is already a BB machine without
 SSH. The Tart backend runs `tart` on a Mac host, and reaches each VM through
@@ -330,6 +360,9 @@ one-time secret that a host call gives it, and carries Docker's API over it
 (042).
 
 ## 8. Give a machine's own commands its variables
+
+**Status in BB 0.45.0: not met.** Neither the guide nor SDK 0.6.15 gives a
+machine's user the variables a thread has there.
 
 **What bb-box needs.** The thread's machine variables and GitHub token in
 every command that runs in its box, not only in the processes BB's daemon
@@ -399,6 +432,9 @@ get none of the variables.
 
 ## 9. Open BB's terminal on a machine from a plugin
 
+**Status in BB 0.45.0: not met.** SDK 0.6.15 has no navigation call that opens
+BB's terminal on a machine.
+
 **What bb-box needs.** A terminal in a box, one click from the Box panel.
 A box that is a BB machine already has BB's own terminal sessions on it:
 BB's app opens a terminal tab on a machine, keeps the session across
@@ -431,6 +467,10 @@ BB's terminal list.
 
 ## 10. Show machine-making environments where they can be seen
 
+**Status in BB 0.45.0: not known.** Neither the guide nor the SDK says where
+the new-thread screen lists environments, and this check did not look at BB's
+UI.
+
 **What bb-box needs.** "New box" in BB's new-thread screen
 ([033](decisions/033-a-thread-can-start-on-a-new-box.md)) where a user sees
 it when they open the Environment picker.
@@ -461,6 +501,8 @@ machine" under the machines, or before them.
 "new" in the picker's search. The skill says so.
 
 ## 11. Give a machine a project's variables without a thread there
+
+**Status in BB 0.45.0: not met.** SDK 0.6.15's host updates take no projects.
 
 **What bb-box needs.** A box has everything its thread has (#109),
 including the variables set for the thread's project. Most boxes serve a
@@ -495,6 +537,9 @@ so.
 
 ## 12. Make a plugin's host call quick
 
+**Status in BB 0.45.0: not met.** Neither the guide nor SDK 0.6.15 changes how
+a host call starts. It was not timed again.
+
 **What bb-box needs.** Calls to its host entry that take about as long as
 BB's own requests to a machine. bb-box calls its host entry to keep a
 process with the thread's access on each enrolled box (request 8): before
@@ -527,6 +572,10 @@ Commands themselves go through SSH, `docker exec` or the relay.
 
 ## 13. Mark a machine offline when it stops checking in
 
+**Status in BB 0.45.0: not met.** `bb host list` still gives `lastSeenAt`, and
+the guide names no time after which BB marks a silent machine offline. bb-box
+keeps its rule of 60 s.
+
 **What bb-box needs.** BB's word on whether a machine is connected, kept up
 to date. bb-box asks it before it places a box on a Docker host that is a BB
 machine, and before it opens the relay there, so it can say at once when the
@@ -551,6 +600,9 @@ BB and its plugins take a machine that has gone as connected.
 heard from for 60 s, as offline.
 
 ## 14. Panel actions without a launcher row
+
+**Status in BB 0.45.0: not met.** `threadPanelAction` in SDK 0.6.15 has no
+field that hides its launcher row.
 
 **What bb-box needs.** A thread panel action that a panel can open, but that
 BB draws no launcher row for: a tab a plugin reaches by code, not one a
@@ -584,6 +636,11 @@ context and `run()` none either.
 
 ## 15. Give a plugin's CLI the caller's files
 
+**Status in BB 0.45.0: met.** A plugin command called with `--stdin` gets the
+caller's standard input, up to 256 KiB of text, as `--input-text`, without
+BB's server reading a file (`bb guide plugins`). bb-box can take image scripts
+and configuration files that way, and stop reading them on BB's server: #535.
+
 **What bb-box needs.** A plugin CLI command that reads a file where `bb` runs:
 a project image's script for `bb box image set --script-file`
 ([049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)),
@@ -606,6 +663,9 @@ the text, and `bb box image try <name>` tries an image already set, with no
 file.
 
 ## 16. Alert dialogs that do not fly in from the corner
+
+**Status in BB 0.45.0: not met.** The 0.45.0 registry's `alert-dialog` still
+has the four slide classes, and no `motion-reduce` classes.
 
 **What bb-box needs.** Its confirms (Release, Stop anyway, Remove) to move
 as BB's own dialogs do, so that a plugin's dialog is not the odd one out.
@@ -635,6 +695,9 @@ dropped class names, since Tailwind scans comments and would emit them.
 
 ## 17. Carry providers' own config to every machine
 
+**Status in BB 0.45.0: not met.** The guide names no provider config that BB
+carries to machines.
+
 **What bb-box needs.** A provider that BB runs on a box to find the same
 config there as on the machine where the operator set it up. pi reads its
 custom providers and models from `~/.pi/agent/models.json`, and its defaults
@@ -660,6 +723,9 @@ need the files copied by hand.
 
 ## 18. A nav page's title-bar action beside its title
 
+**Status in BB 0.45.0: not met.** SDK 0.6.15's nav panel has no slot beside
+its title.
+
 **What bb-box needs.** The Boxes page's settings gear in BB's title bar
 right after the page's title, "Boxes", small and dim like the title's own
 icon (the operator's note of 5 October 2026).
@@ -678,6 +744,9 @@ contained as `headerContent` is, for an icon button or a short status.
 before BB's buttons.
 
 ## 19. Tool calls longer than five minutes
+
+**Status in BB 0.45.0: not met.** Neither the guide nor SDK 0.6.15 states a
+tool call's time limit or a way to keep a call open. It was not timed again.
 
 **What bb-box needs.** A tool call that runs as long as its tool says, such as
 `box_run` with `timeout_seconds` up to an hour, or else to be told when BB
@@ -702,6 +771,9 @@ with its output so far.
 
 ## 20. Move large files through the file API
 
+**Status in BB 0.45.0: not met.** SDK 0.6.15's `files.read` and `files.write`
+still move a whole file, with no offset, length or append.
+
 **What bb-box needs.** To copy a file of any size between a thread's workspace
 or storage folder and a box, as `box_copy` does for small ones: installers,
 app bundles and build artifacts are often hundreds of megabytes, and trying a
@@ -725,6 +797,9 @@ That needs the machine connected to BB and bb-box's host entry on it, so the
 file API is still the better way when BB offers one.
 
 ## 21. Stop a plugin's machine workers after its tool calls
+
+**Status in BB 0.45.0: not met.** Neither the guide nor SDK 0.6.15 says that a
+plugin's tool calls end before its machine workers stop.
 
 **What bb-box needs.** At a deploy, its running tool calls to hear that bb-box
 is stopping before the machines they work on stop answering, so a call can say
