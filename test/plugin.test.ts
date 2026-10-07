@@ -343,7 +343,7 @@ test("box_image_set and bb box image set, list, show and remove keep a project's
   // A try needs a backend that builds images, which the fake host is not; the CLI tries an image already set, on a kind it covers.
   const tried = await tool("box_image_try", { kind: "linux", script: "#!/bin/bash\necho rust\n" });
   assert.ok(isError(tried));
-  assert.match(text(tried), /No backend that is on builds linux images\. Proxmox LXC and Docker do; elsewhere boxes run the script as they start\./);
+  assert.match(text(tried), /No backend that is on builds linux images\. Proxmox LXC, Docker and Tart do; elsewhere boxes run the script as they start\./);
   const otherKind = await harness.behavior.runCli(["image", "try", "rust-tools", "--kind", "linux-desktop-cpu"]);
   assert.deepEqual([otherKind.exitCode, /Image rust-tools covers linux, not linux-desktop-cpu\./.test(otherKind.stderr ?? "")], [1, true], otherKind.stderr);
   assert.match((await harness.behavior.runCli(["image", "try", "rust-tools"])).stderr ?? "", /No backend that is on builds linux images/);

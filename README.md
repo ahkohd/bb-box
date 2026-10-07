@@ -200,7 +200,7 @@ Working today, on every backend above that says so:
   boxes with nothing installed but Docker.
 - Images rebuilt each night with the latest agent CLIs, and projects'
   images: a script an agent writes, run as a project's boxes start and then
-  built ahead on Proxmox LXC and Docker.
+  built ahead on Proxmox LXC, Docker and Tart.
 
 Next: Windows boxes as BB machines (a BB request), and physical Macs in the
 SSH host pool.
@@ -254,7 +254,7 @@ needed first. The order is:
 
 Each one is built with the latest Claude Code, Codex, pi, gh and Chrome. It replaces the image only when a trial box of the new build passes its checks. A run starts no image after 4 hours (`--hours`), and ends with a line per image. A failure keeps the old image, and the image is not tried again until something it is built from changes. An image whose host lacks room waits for the next night.
 
-The run then keeps projects' images' builds in order. bb-box builds a project's image on Proxmox LXC or Docker once two of its boxes started there within 14 days. The run removes builds no box started from for 30 days. It builds again those in use whose standard image was rebuilt.
+The run then keeps projects' images' builds in order. bb-box builds a project's image on Proxmox LXC, Docker or Tart once two of its boxes started there within 14 days. The run removes builds no box started from for 30 days. It builds again those in use whose standard image was rebuilt.
 
 Other commands:
 
@@ -274,7 +274,7 @@ project", or use New box's offer. The agent drafts `.bb/box-setup.sh` and
 they pass, commits them, and registers them with your approval.
 
 The project's boxes of those kinds then run the script as they start. Once
-two of them started on Proxmox LXC or Docker within 14 days, bb-box builds
+two of them started on Proxmox LXC, Docker or Tart within 14 days, bb-box builds
 the image there in the background, and later boxes start from the build in
 the usual few seconds. Nothing needs setting up for it: builds use the
 access each backend has already.

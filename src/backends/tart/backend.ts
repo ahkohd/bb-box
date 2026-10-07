@@ -579,6 +579,8 @@ export class TartBackend implements Backend {
     remove: (ref, signal) => this.#removeImage(ref, signal),
     build: (current, setup, options) => this.#buildStandard(current, setup, options),
     check: (kind) => tartCheck(kind),
+    // A project's box clones its image's build on the build's Mac (049, #439).
+    startsFrom: true,
   };
   /** Display helpers compiling for new Windows boxes, by VM, which a resize waits for. */
   readonly #compiling = new Map<string, Promise<void>>();
@@ -758,18 +760,21 @@ export class TartBackend implements Backend {
    * time: a free warm VM of the box's own size and kind on a Mac with room;
    * else a clone on the first Mac with room; else a fill on a full Mac,
    * taken over when its size and kinds suit the box, or stopped so its slot
-   * is free ("wait", outside the chain, as a fill ends in the chain).
+   * is free ("wait", outside the chain, as a fill ends in the chain). A box
+   * from a project's image's build (049) is a clone on the build's Mac: warm
+   * VMs and fills are of the standard image.
    */
   #place(box: BoxIdentity, signal: AbortSignal): Promise<Placement> {
     return this.#chain(async (): Promise<Placement> => {
       const states = await this.#states(signal);
-      const on = this.#on();
+      const from = box.from ? this.#imageRef(box.from).host.name : null;
+      const on = this.#on().filter((host) => from === null || host.name === from);
       const os = guestOsOf(box.kind);
       const rooms = on.map((host) => ({ host, ...this.#room(host, states.get(host.name)!, box.size, NONE_UNPLACED, new Set(), os) }));
       const count = (host: TartHost, vm: string) => this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(box.kind, box.size), macos: os === "macos" });
       for (const room of rooms) {
         const state = states.get(room.host.name)!;
-        if (!room.capacity.ok || state instanceof Error) continue;
+        if (!room.capacity.ok || state instanceof Error || from !== null) continue;
         const warm = this.#freeWarm(state).find((free) => free.kinds.includes(box.kind) && sameSize(free.size, box.size));
         if (warm) {
           count(room.host, warm.vm);
@@ -781,7 +786,7 @@ export class TartBackend implements Backend {
         count(chosen.host, vmName(box.boxId));
         return { how: "clone", host: chosen.host, vm: vmName(box.boxId) };
       }
-      const fills = [...this.#filling.entries()].filter(([, fill]) => !fill.adopted && on.some((host) => host.name === fill.host));
+      const fills = from !== null ? [] : [...this.#filling.entries()].filter(([, fill]) => !fill.adopted && on.some((host) => host.name === fill.host));
       const suits = fills.find(([, fill]) => fill.kinds.includes(box.kind) && sameSize(fill.size, box.size));
       if (suits) {
         const [vm, fill] = suits;
@@ -808,7 +813,8 @@ export class TartBackend implements Backend {
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
-    const image = this.#config.kinds[box.kind as TartKind].image!;
+    // A project's image's build, as images.list gives it, <Mac>/<VM>, else the kind's image.
+    const image = box.from ? this.#imageRef(box.from).vm : this.#config.kinds[box.kind as TartKind].image!;
     const os = guestOsOf(box.kind);
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs);
     const step: Step = async (name, run) => {
