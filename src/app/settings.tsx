@@ -232,6 +232,12 @@ export function SettingsSection() {
         <GeneralRow label="Enrol boxes as BB machines" description="Threads and terminals can then use a box, with the thread's credentials.">
           <Switch aria-label="Enrol boxes as BB machines" checked={general.enrol} disabled={busy === "general"} onCheckedChange={(enrol) => void applyNow("general", withGeneral(document, { enrol: enrol === state.defaults.general.enrol ? undefined : enrol }))} />
         </GeneralRow>
+        <GeneralRow
+          label="Linux desktops as video (trial)"
+          description="A trial of video for X11 desktops, smoother than VNC on a slow connection. A browser that is not on BB's network gets it. Off unless you are trying it."
+        >
+          <Switch aria-label="Linux desktops as video (trial)" checked={general.video} disabled={busy === "general"} onCheckedChange={(video) => void applyNow("general", withGeneral(document, { video: video === state.defaults.general.video ? undefined : video }))} />
+        </GeneralRow>
       </Section>
       <BoxFilesSection
         files={document.general.files ?? []}

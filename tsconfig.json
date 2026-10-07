@@ -21,6 +21,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@novnc/novnc/core/*": [
+        "./node_modules/@novnc/novnc/core/*"
       ]
     }
   },

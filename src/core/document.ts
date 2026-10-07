@@ -95,6 +95,12 @@ export interface GeneralSettings {
   readonly defaultKind?: string;
   /** Files for every box (#455): paths under the box user's home, whose contents are secrets. */
   readonly files?: readonly BoxFileSetting[];
+  /**
+   * Whether a viewer of a Linux X11 desktop on the CPU may show it as video,
+   * through Selkies (056): when its round trip to BB's server is slow, or
+   * when the viewer chose it. Off while it is tried.
+   */
+  readonly video?: boolean;
 }
 
 export interface ConfigDocument {
@@ -120,7 +126,7 @@ export interface Problem {
   readonly message: string;
 }
 
-export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux" } as const;
+export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: false } as const;
 
 export const MAX_WARM = 20;
 export const MAX_SPARES = 10;
@@ -256,7 +262,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind and files.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files and video.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -272,7 +278,10 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "files") {
           const files = readFiles(value, problem, secrets);
           if (files) general[key] = files;
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind and files.`);
+        } else if (key === "video") {
+          if (typeof value === "boolean") general[key] = value;
+          else problem("general.video", "video is true or false.");
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files and video.`);
       }
     }
   }

@@ -33,6 +33,12 @@ export interface DesktopState {
   readonly box: BoxView | null;
   readonly desktopPath: string;
   readonly terminalPath: string;
+  /**
+   * Whether the viewer may show the box as video (056): the general setting
+   * is on and the box has a Selkies display. The viewer then picks by its
+   * round trip, or as the person chose.
+   */
+  readonly video: boolean;
 }
 
 /** A box in any thread, or one of your machines, for the Boxes page. */
@@ -110,6 +116,8 @@ export const contract = defineRpcContract({
   start: { input: oneBox, output: boxResult },
   refresh: { input: oneBox, output: boxResult },
   desktop: { input: oneBox, output: z.custom<DesktopState>() },
+  /** Answers at once: the viewer times it, for its round trip to BB's server (056). */
+  ping: { input: z.null(), output: z.null() },
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },
   /**

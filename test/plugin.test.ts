@@ -2292,12 +2292,21 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   assert.match(sentTo(noId).subarray(12).toString(), /The viewer gave no viewer ID/);
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
-  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal" });
+  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false });
 });
 
 test("the desktop route carries a box's Selkies stream message by message, and only the viewer with control reaches the box, sizes it and gets its clipboard (056)", async (t) => {
   const { harness, app, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
   t.after(() => harness.lifecycle.dispose());
+  // The viewer may show it as video only once the general setting is on (056).
+  const video = async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { video: boolean }).video;
+  assert.equal(await video(), false);
+  const exported = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...exported, general: { ...exported.general, video: true } }, revision: exported.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  assert.equal(await video(), true);
+  const refused = (await harness.behavior.callRpc("config.check", { draft: { ...app.configuration.exported(), general: { video: "yes" } } })) as { problems: { path: string; message: string }[] };
+  assert.deepEqual(refused.problems.find((problem) => problem.path === "general.video")?.message, "video is true or false.");
   const selkies = world.backend!.selkies;
   const rfb = world.backend!.rfb;
   const viewer = "viewer-one-0001";

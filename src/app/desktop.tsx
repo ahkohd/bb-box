@@ -1,6 +1,9 @@
 // The desktop viewer: noVNC over the plugin's relay (007), with the control
 // bar for taking and handing back input (008). It shows in a thread panel
 // tab of its own for each box, and on the Boxes page for a browser tab.
+// Where the setting allows it, a Linux desktop shows as video instead,
+// through Selkies (selkies.ts, 056), when the round trip to BB's server is
+// slow or the person chose it.
 
 import RFB from "@novnc/novnc";
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
@@ -15,7 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
@@ -29,21 +32,26 @@ import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
+import { SelkiesSession, canShowVideo } from "./selkies.ts";
+import {
+  MAX_RETRY_MS,
+  PASTE_CHORD_DELAY_MS,
+  PASTE_EVENT_WAIT_MS,
+  SETTLE_MS,
+  XK_CONTROL_L,
+  XK_META_L,
+  XK_V,
+  isCommandKey,
+  macBrowser,
+  type Connection,
+} from "./viewer.ts";
 import { BoxGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
 
-/** The longest wait between attempts to reconnect to a desktop. */
-const MAX_RETRY_MS = 15_000;
 /** How often a tab with control asks for the box's clipboard. */
 const CLIPBOARD_POLL_MS = 2_000;
-/** How long the viewer's size must hold before the desktop is asked for it again. */
-export const SETTLE_MS = 250;
-/** How long the paste chord waits after the text is sent, so a server that fetches the text (the extended clipboard) has it before the paste. */
-export const PASTE_CHORD_DELAY_MS = 150;
-/** How long a Cmd+V or Ctrl+V waits for the browser's paste event before the box pastes its own clipboard. */
-const PASTE_EVENT_WAIT_MS = 150;
 /** How long a clipboard note, such as "Copied" or "Pasted", shows in the toolbar at least. */
 const FLASH_MS = 3_000;
 /**
@@ -56,18 +64,53 @@ const FLASH_MS = 3_000;
  * Xtigervnc's traffic for a tenth of a core more, and halved QEMU's frames.
  */
 export const QUALITY_LEVEL = 2;
-const XK_CONTROL_L = 0xffe3;
-const XK_META_L = 0xffe7;
-const XK_META_R = 0xffe8;
-const XK_SUPER_L = 0xffeb;
-const XK_SUPER_R = 0xffec;
-const XK_V = 0x76;
+export { PASTE_CHORD_DELAY_MS, SETTLE_MS };
+/** The round trip to BB's server under which a viewer shows VNC, not video: the same host or a LAN, where VNC answers keys faster (056). */
+export const VIDEO_ROUND_TRIP_MS = 10;
+/** Where the tab keeps the person's choice of stream for a box, from the viewer's menu: next time, the round trip decides again. */
+export function streamChoiceKey(boxId: string): string {
+  return `bb-box:stream:${boxId}`;
+}
+/** How long the note that video did not start stays, to be read. */
+const FALLBACK_NOTE_MS = 8_000;
 
-/** Whether the browser runs on a Mac, where Cmd is the shortcut key. */
-function macBrowser(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const platform = (navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? "";
-  return /Mac|iPhone|iPad/.test(platform);
+type Stream = "rfb" | "selkies";
+type ViewerSession = DesktopSession | SelkiesSession;
+
+function storedChoice(boxId: string): Stream | null {
+  try {
+    const value = window.sessionStorage.getItem(streamChoiceKey(boxId));
+    return value === "rfb" || value === "selkies" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeChoice(boxId: string, stream: Stream): void {
+  try {
+    window.sessionStorage.setItem(streamChoiceKey(boxId), stream);
+  } catch {
+    // Storage may be off: the choice lasts while the viewer is open.
+  }
+}
+
+/** The stream each viewer showed last, so a remount finds its kept session before the box's state loads. */
+const lastStream = new Map<string, Stream>();
+
+/** Forgets every viewer's last stream, for tests. */
+export function forgetStreams(): void {
+  lastStream.clear();
+}
+
+/** The fastest of three round trips to BB's server. */
+async function roundTrip(ping: () => Promise<unknown>): Promise<number> {
+  let fastest = Number.POSITIVE_INFINITY;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const started = performance.now();
+    await ping();
+    fastest = Math.min(fastest, performance.now() - started);
+  }
+  return fastest;
 }
 
 /**
@@ -91,7 +134,7 @@ class Viewer extends RFB {
   }
 
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
-    if (this.commandAsControl && (keysym === XK_META_L || keysym === XK_META_R || keysym === XK_SUPER_L || keysym === XK_SUPER_R)) {
+    if (this.commandAsControl && isCommandKey(keysym)) {
       // The code too: with QEMU's key events the box takes the scancode, not the keysym.
       super._handleKeyEvent(XK_CONTROL_L, "ControlLeft", down, numlock, capslock);
       return;
@@ -196,8 +239,6 @@ function useViewerId(boxId: string): string {
   }, [viewer]);
   return viewer;
 }
-
-type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "disconnected"; readonly reason: string; readonly retryMs: number };
 
 /**
  * One viewer's desktop: noVNC and its canvas, in an element of its own that
@@ -497,14 +538,52 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const resizable = box?.display?.resizable ?? false;
 
   const target = useRef<HTMLDivElement>(null);
-  const session = useRef<DesktopSession | null>(null);
+  const session = useRef<ViewerSession | null>(null);
   const mineNow = useRef(false);
   mineNow.current = mine;
   const boxNow = useRef(box);
   boxNow.current = box;
-  const key = `desktop:${boxId}:${viewer}`;
+  // The stream: VNC, unless the box may show as video (056), this browser can decode it, and the
+  // round trip to BB's server is slow, or the person chose video. Video that cannot start falls back to VNC.
+  const shown = `${boxId}:${viewer}`;
+  const [stream, setStream] = useState<Stream | null>(() => lastStream.get(shown) ?? null);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const decide = (next: Stream) => {
+    lastStream.set(shown, next);
+    setStream(next);
+  };
+  const video = state?.video ?? null;
+  const videoPossible = video === true && !videoFailed && canShowVideo();
+  useEffect(() => {
+    if (video === null) return;
+    if (!videoPossible) {
+      decide("rfb");
+      return;
+    }
+    const choice = storedChoice(boxId);
+    if (choice) {
+      decide(choice);
+      return;
+    }
+    if (stream) return;
+    let stopped = false;
+    void roundTrip(() => rpc.call("ping", null)).then(
+      (ms) => !stopped && decide(ms < VIDEO_ROUND_TRIP_MS ? "rfb" : "selkies"),
+      () => !stopped && decide("rfb"),
+    );
+    return () => {
+      stopped = true;
+    };
+  }, [video, videoPossible, rpc]);
+  const key = stream ? `desktop:${shown}:${stream}` : null;
+  // The session of a stream given up for another is ended, not kept.
+  const keyBefore = useRef(key);
+  useEffect(() => {
+    if (keyBefore.current && keyBefore.current !== key) dropKept(keyBefore.current);
+    keyBefore.current = key;
+  }, [key]);
   // A kept session shows at once, before the box's state has loaded; the state can only confirm or end it.
-  const [connection, setConnection] = useState<Connection>(() => keptFree<DesktopSession>(key)?.connection ?? { state: "connecting" });
+  const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? { state: "connecting" });
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   /** The box's clipboard text as last seen: from its desktop's cut text, or the RPC where its input reports it. */
@@ -515,12 +594,13 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
    * automatic attempt, and never a lasting problem line, which is for
    * failures that need action. A sentence stays a little longer, to be read.
    */
-  const [flash, setFlash] = useState<string | null>(null);
+  const [flash, setFlash] = useState<{ readonly words: string; readonly detail?: string } | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const flashFor = (words: string) => {
-    setFlash(words);
+  /** A note, with a detail its tooltip shows, for at least `ms`. */
+  const flashFor = (words: string, detail?: string, ms = FLASH_MS) => {
+    setFlash({ words, detail });
     clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlash(null), Math.max(FLASH_MS, words.split(" ").length * 300));
+    flashTimer.current = setTimeout(() => setFlash(null), Math.max(ms, words.split(" ").length * 300));
   };
   useEffect(() => () => clearTimeout(flashTimer.current), []);
   /** The field to paste into when this computer's clipboard cannot be read here: null closed, else its text. */
@@ -530,17 +610,25 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const ready = showing && path !== null;
   const pathNow = useRef(path);
   pathNow.current = path;
-  const wanted = ready || keptFree(key) !== undefined;
+  const wanted = key !== null && (ready || keptFree(key) !== undefined);
 
   // The viewer's session is claimed on mount and given back on unmount; the registry keeps it meanwhile (037).
   // A layout effect, so a kept frame is in the page before it paints.
   useLayoutEffect(() => {
     const screen = target.current;
-    if (!wanted || !screen) return;
+    if (!wanted || !screen || !key) return;
     const latestPath = pathNow.current;
     if (keptFree(key) === undefined && !latestPath) return;
-    const claimed = claimKept(key, () => new DesktopSession(socketUrl(latestPath!, boxId, viewer)));
+    const claimed = claimKept<ViewerSession>(key, () =>
+      stream === "selkies" ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&stream=selkies`) : new DesktopSession(socketUrl(latestPath!, boxId, viewer)),
+    );
     const current = claimed.session;
+    if (current instanceof SelkiesSession) {
+      current.onFallback = (reason) => {
+        flashFor("Video did not start, so this shows VNC.", reason, FALLBACK_NOTE_MS);
+        setVideoFailed(true);
+      };
+    }
     screen.appendChild(current.element);
     session.current = current;
     // The box's clipboard, as its desktop sends it to the viewer with control, goes to this computer's when the browser lets it,
@@ -566,6 +654,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       current.onPaste = undefined;
       current.onPasteFailed = undefined;
       current.putClipboard = undefined;
+      if (current instanceof SelkiesSession) current.onFallback = undefined;
       current.element.remove();
       session.current = null;
       if (!claimed.kept) {
@@ -585,7 +674,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           : {},
       );
     };
-  }, [wanted, boxId, viewer, key, rpc, threadId]);
+  }, [wanted, boxId, viewer, key, stream, rpc, threadId]);
 
   // In the commit that shows who has control, so the toolbar never says "You have control" while input is still off (#116).
   useLayoutEffect(() => {
@@ -595,18 +684,19 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   useLayoutEffect(() => {
     if (guestOs) session.current?.setGuest(guestOs);
   }, [guestOs, connection]);
+  // RFB's own: video has neither.
   const viewerRefresh = box?.display?.refresh === "viewer";
   useLayoutEffect(() => {
-    if (viewerRefresh) session.current?.refreshLosslessly();
+    if (viewerRefresh && session.current instanceof DesktopSession) session.current.refreshLosslessly();
   }, [viewerRefresh, connection]);
   const quality = box?.display?.quality ?? QUALITY_LEVEL;
   useLayoutEffect(() => {
-    session.current?.setQuality(quality);
+    if (session.current instanceof DesktopSession) session.current.setQuality(quality);
   }, [quality, connection]);
 
   // A box that stops or goes takes its stream with it.
   useEffect(() => {
-    if (state && !showing) dropKept(key);
+    if (state && !showing && key) dropKept(key);
   }, [state, showing, key]);
 
   // The clipboard, both ways, while this tab has control: the browser's goes
@@ -744,8 +834,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           <span className="min-w-0">{words}</span>
         </span>
         {flash ? (
-          <span role="status" className="min-w-0 text-muted-foreground">
-            {flash}
+          <span role="status" title={flash.detail} className="min-w-0 text-muted-foreground">
+            {flash.words}
           </span>
         ) : null}
         <span className="ml-auto flex items-center gap-1.5">
@@ -788,6 +878,19 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                     <Icon name="ArrowReloadHorizontal" aria-hidden />
                     Reconnect
                   </DropdownMenuItem>
+                ) : null}
+                {showing && video === true && canShowVideo() && stream ? (
+                  <DropdownMenuCheckboxItem
+                    checked={stream === "selkies"}
+                    onCheckedChange={(checked) => {
+                      const next = checked ? "selkies" : "rfb";
+                      storeChoice(boxId, next);
+                      setVideoFailed(false);
+                      decide(next);
+                    }}
+                  >
+                    Show as video
+                  </DropdownMenuCheckboxItem>
                 ) : null}
                 {showing ? (
                   <>
