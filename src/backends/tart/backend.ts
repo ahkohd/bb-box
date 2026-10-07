@@ -599,7 +599,9 @@ export class TartBackend implements Backend {
    * Image operations (049) on each Mac: a clone of an image as an image box,
    * its capture as a VM of its own with its record beside it, a new build of
    * a standard image by its prepare script, and the image's name moved to a
-   * build. A reference is <Mac>/<VM>. Windows images are later.
+   * build. A reference is <Mac>/<VM>. A Windows image's build is a QEMU disk
+   * under ~/.bb-box/qemu, refreshed in a box of it (054, #450): its current
+   * build is <Mac>/<image>, and another <Mac>/<image>@<build>.
    */
   readonly images: BackendImages = {
     list: (signal) => this.#imageList(signal),
@@ -612,6 +614,7 @@ export class TartBackend implements Backend {
     adaptCheck: (kind, check, setup) => (guestOsOf(kind) === "windows" ? macWindowsCheck(check, readFileSync(join(setup, "tart", "windows", "check-clock.ps1"), "utf8")) : check),
     // A project's box clones its image's build on the build's Mac (049, #439).
     startsFrom: true,
+    windows: true,
   };
   /** Each Windows image box's SSH port on its Mac's loopback, by VM, for its capture to drop its connection (#450). */
   readonly #imagePorts = new Map<string, number>();

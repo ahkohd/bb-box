@@ -862,6 +862,7 @@ test("the window namer titles only visible, unowned, top-level windows with no t
 test("a Windows image's operations on a Mac (#450): a box of its build, a capture as a build of its own, a trial box, and the build made current", async () => {
   const { ssh, backend, qemu, owners } = setup();
   const images = backend.images;
+  assert.equal(images.windows, true, "the nightly refresh takes in its Windows images");
   const record = JSON.stringify({ contract: 1, image: "standard", kind: KIND, arch: "arm64", build: "build.20261007-020000-abcd", built: "2026-10-07T02:00:00Z", os: "Windows 11", tools: { pwsh: "7.6.0" } });
   // The guest's record, as a refresh leaves it in C:\bb-box\image.json.
   ssh.powershell(GUEST, ['case "$1" in', `  *image.json*) echo '${record}';;`, '  *) exec sh -c "$1";;', "esac", ""].join("\n"));
