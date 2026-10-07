@@ -38,6 +38,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { FILE_ROUTE, FileRelay } from "../relay/files.ts";
+import { NAME_WINDOWS_SCRIPT, parseNamed } from "../backends/windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
 import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
@@ -240,7 +241,7 @@ export interface SetupOptions {
   /** setup/docker/build.sh, which builds images on a BB machine (042). By default the one beside the plugin's bundle. */
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
-  readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree">;
+  readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree" | "nameWindows">;
 }
 
 export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promise<BbBox> {
@@ -575,6 +576,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const { command } = await boxes.transports(box);
       if (!command?.spawn) throw new BoxError("unsupported", `Box ${box.name}'s command transport cannot start the computer-use driver.`);
       return command.spawn(script, signal);
+    },
+    // In the box user's desktop session, whose windows they are (#365).
+    async nameWindows(box, signal) {
+      if (box.capabilities.os !== "windows") return [];
+      const { result } = await boxes.run(box.threadId, box.id, NAME_WINDOWS_SCRIPT, { session: "desktop", timeoutMs: 60_000, signal, waitForEnrolment: false, maxOutputBytes: 16 * 1024 });
+      if (result.exitCode !== 0) throw new Error(`Naming the untitled windows failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+      return parseNamed(result.stdout);
     },
     owner: (boxId) => desktops?.control.view(boxId).owner ?? "agent",
     takeBack: (boxId) => desktops?.control.takeBack(boxId) ?? Promise.resolve(false),

@@ -10,7 +10,7 @@ import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backe
 import { ownerText } from "../src/backends/tart/host.ts";
 import { parseQemuState } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
-import { CUA_PIPE } from "../src/backends/windows.ts";
+import { CUA_PIPE, NAME_WINDOWS_SCRIPT, parseNamed } from "../src/backends/windows.ts";
 import { FAKE_MAC, FAKE_WINDOWS_IMAGE, addImage, addWindowsImage, fakeMacTools, fakeQemu, imageRecord, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
@@ -849,4 +849,15 @@ test("a Windows fill cut short by a restart is listed with no owner, so the swee
   await backend.release(held, releasing, signal());
   assert.ok(!existsSync(join(qemu, "vms", guest.ref)) && !existsSync(join(owners, guest.ref)));
   assert.equal(alive(pid), false);
+});
+
+test("the window namer titles only visible, unowned, top-level windows with no title, and says which (#365)", () => {
+  assert.deepEqual(parseNamed("328276\tgpui-example (untitled)\r\n\n262514\tpwsh (untitled)\n"), [
+    { id: 328276, title: "gpui-example (untitled)" },
+    { id: 262514, title: "pwsh (untitled)" },
+  ]);
+  assert.deepEqual(parseNamed(""), []);
+  // A title the app set, even of spaces, has a length: only an empty one is named.
+  assert.match(NAME_WINDOWS_SCRIPT, /!IsWindowVisible\(window\) \|\| GetWindow\(window, 4\) != IntPtr\.Zero \|\| GetWindowTextLength\(window\) != 0/);
+  assert.match(NAME_WINDOWS_SCRIPT, /\$bbDll = .*'windows-[0-9a-f]{12}\.dll'/, "compiled once, and kept, as the display helper is");
 });

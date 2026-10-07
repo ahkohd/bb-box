@@ -2664,6 +2664,60 @@ test("on Wayland, a window that closes and gives way to another of its app's say
   assert.ok(isError(typed));
 });
 
+test("on Windows, computer_windows and computer_launch give a window with no title one, so Cua lists and reads it, and say so (#365)", async (t) => {
+  // The backend's namer, as the box's helper is: a moment later, it titles each window on screen that has none.
+  let file = "";
+  let asked = 0;
+  let running = 0;
+  let most = 0;
+  const nameWindows = async () => {
+    asked++;
+    most = Math.max(most, ++running);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    running--;
+    const named: { id: number; title: string }[] = [];
+    editDesktop(file, (desktop) => {
+      for (const window of desktop.windows) {
+        if (window.title || window.menuOf !== undefined || !window.onScreen) continue;
+        window.title = `${window.app} (untitled)`;
+        named.push({ id: window.id, title: window.title });
+      }
+    });
+    return named;
+  };
+  const desktopKind = FAKE_KINDS.find((kind) => kind.capabilities.displays.length)!;
+  const windowsDesktop: BoxKind = { ...desktopKind, id: "windows-desktop", label: "Windows desktop", capabilities: { ...desktopKind.capabilities, os: "windows", enrol: false } };
+  const started = await desktopBox({ kind: windowsDesktop, computer: { nameWindows, launchWaitMs: 2_000 } });
+  const { harness, box, tool } = started;
+  file = started.file;
+  t.after(() => harness.lifecycle.dispose());
+  let untitled = 0;
+  editDesktop(file, (desktop) => {
+    desktop.untitledUnlisted = true;
+    untitled = desktop.nextWindow++;
+    desktop.windows.push({ id: untitled, pid: desktop.nextPid++, app: "gpui-example", title: "", x: 50, y: 50, width: 640, height: 480, onScreen: true });
+  });
+
+  // computer_windows answers at once with Cua's list, and names in the background, one namer at a time.
+  const first = await Promise.all([tool("computer_windows", { box: box.name }), tool("computer_windows", { box: box.name })]);
+  for (const listed of first) assert.doesNotMatch(text(listed), new RegExp(`window ${untitled}|bb-box gave`));
+  assert.equal(most, 1, "one namer at a time");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const listed = text(await tool("computer_windows", { box: box.name }));
+  assert.match(listed, new RegExp(`\\n- window ${untitled}: gpui-example "gpui-example \\(untitled\\)", 640 by 480\\n`));
+  assert.match(listed, new RegExp(`\\n\\nbb-box gave window ${untitled} the title "gpui-example \\(untitled\\)", as it had none, and Cua on Windows reaches only windows with a title\\.\\n\\nNext:`));
+  assert.match(text(await tool("computer_observe", { box: box.name, window: untitled })), new RegExp(`^Window ${untitled}: gpui-example "gpui-example \\(untitled\\)"`));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.doesNotMatch(text(await tool("computer_windows", { box: box.name })), /bb-box gave/, "said once, and a title the window has is left alone");
+
+  // An app whose window has no title, launched: Cua lists it once it has one.
+  const launched = text(await tool("computer_launch", { box: box.name, app: "untitled" }));
+  assert.match(launched, /^Opened untitled\. Its window:\n- window \d+: untitled "untitled \(untitled\)", 640 by 480\n\nbb-box gave window \d+ the title "untitled \(untitled\)", as it had none, and Cua on Windows reaches only windows with a title\./);
+  const before = asked;
+  await tool("computer_observe", { box: box.name, window: untitled });
+  assert.equal(asked, before, "only computer_windows and computer_launch name windows");
+});
+
 test("pixels count only against the agent's latest image of the window or the desktop", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());

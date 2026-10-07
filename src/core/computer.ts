@@ -89,6 +89,12 @@ export interface ComputerResult {
 export interface ComputerDeps {
   /** Starts `script` in the box through its command transport's spawn. */
   spawn(box: BoxRecord, script: string, signal?: AbortSignal): Promise<ByteChannel>;
+  /**
+   * Gives each window on a Windows box's desktop that has no title one,
+   * as Cua lists and reads only windows with a title (#365), and returns
+   * those it named. computer_windows and computer_launch ask it.
+   */
+  nameWindows?(box: BoxRecord, signal?: AbortSignal): Promise<readonly { readonly id: number; readonly title: string }[]>;
   /** Who controls the box's desktop now. */
   owner(boxId: string): Owner;
   /** Takes control of the box's desktop back from a person (038). False when the agent had it already. */
@@ -311,6 +317,10 @@ interface BoxState {
   readonly popups: Map<number, Popup>;
   /** Windows whose trees are too large to read around an action on the desktop. */
   readonly large: Set<number>;
+  /** The namer of untitled windows on a Windows box, while it runs; one at a time (#365). */
+  naming: Promise<void> | null;
+  /** Titles the namer gave in the background, by window ID, until computer_windows says so. */
+  readonly titled: Map<number, string>;
 }
 
 interface Use {
@@ -707,6 +717,15 @@ function joinText(pieces: readonly string[]): string {
   return out;
 }
 
+/** The line saying which listed windows bb-box gave a title, and why (#365); null for none. */
+function namedLine(named: readonly { readonly id: number; readonly title: string }[], windows: readonly WindowInfo[]): string | null {
+  const shown = named.filter((window) => windows.some((listed) => listed.id === window.id));
+  if (!shown.length) return null;
+  const which = shown.map((window) => `window ${window.id} the title "${window.title}"`);
+  const list = which.length === 1 ? which[0] : `${which.slice(0, -1).join(", ")} and ${which.at(-1)}`;
+  return `bb-box gave ${list}, as ${shown.length === 1 ? "it had" : "they had"} none, and Cua on Windows reaches only windows with a title.`;
+}
+
 export function windowLine(window: WindowInfo): string {
   const title = window.title ? ` "${window.title}"` : "";
   return `window ${window.id}: ${window.app || "an app"}${title}, ${window.width} by ${window.height}${window.onScreen ? "" : ", not on screen"}`;
@@ -781,15 +800,50 @@ export class Computer {
   /** Lists the desktop's windows. */
   windows(box: BoxRecord, signal?: AbortSignal): Promise<ComputerResult> {
     return this.#run(box, signal, async (use) => {
+      // The namer takes a second or more in the desktop session, so it runs in
+      // the background: a window it names is listed from the next call on.
+      this.#nameLater(use);
       const windows = [...(await this.#listWindows(use)).values()].filter((window) => window.width > 1 && window.height > 1);
       if (!windows.length) {
         return { text: `Box ${box.name}'s desktop has no windows.`, hints: ["Open an app with computer_launch."] };
       }
-      return {
-        text: `Windows on box ${box.name}'s desktop:\n${windows.map((window) => `- ${windowLine(window)}`).join("\n")}`,
-        hints: ["Read a window with computer_observe.", "Open another app with computer_launch."],
-      };
+      const lines = [`Windows on box ${box.name}'s desktop:\n${windows.map((window) => `- ${windowLine(window)}`).join("\n")}`];
+      const titled = [...use.state.titled].map(([id, title]) => ({ id, title }));
+      // Said once: a window not listed now has closed, or is listed under its new title next time without the line.
+      use.state.titled.clear();
+      const told = namedLine(titled, windows);
+      if (told) lines.push(told);
+      return { text: lines.join("\n\n"), hints: ["Read a window with computer_observe.", "Open another app with computer_launch."] };
     });
+  }
+
+  /** Names the untitled windows of a Windows box's desktop, where the backend can (#365). A failure leaves them as they are. */
+  async #name(use: Use): Promise<readonly { readonly id: number; readonly title: string }[]> {
+    if (use.box.capabilities.os !== "windows" || !this.#deps.nameWindows) return [];
+    // One namer at a time per box: wait for the one in the background.
+    await use.state.naming;
+    try {
+      return await this.#deps.nameWindows(use.box, use.signal);
+    } catch (error) {
+      if (use.signal?.aborted) throw error;
+      this.#deps.logError("name windows", error);
+      return [];
+    }
+  }
+
+  /** Starts the namer in the background, unless it runs already, keeping what it names for computer_windows to say (#365). */
+  #nameLater(use: Use): void {
+    const { state, box } = use;
+    if (box.capabilities.os !== "windows" || !this.#deps.nameWindows || state.naming) return;
+    state.naming = this.#deps
+      .nameWindows(box)
+      .then((named) => {
+        for (const window of named) state.titled.set(window.id, window.title);
+      })
+      .catch((error: unknown) => this.#deps.logError("name windows", error))
+      .finally(() => {
+        state.naming = null;
+      });
   }
 
   /** Reads a window's accessibility tree, and its image when asked. */
@@ -999,10 +1053,18 @@ export class Computer {
       let reused: WindowInfo | null = null;
       const waited = this.#deps.launchWaitMs ?? LAUNCH_WAIT_MS;
       const deadline = Date.now() + waited;
+      const named: { id: number; title: string }[] = [];
       while (!windows.length && !reused && Date.now() < deadline) {
         await sleep(LAUNCH_POLL_MS, use.signal);
-        const now = await this.#listWindows(use);
+        let now = await this.#listWindows(use);
         windows = [...now.values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1);
+        // Cua on Windows lists only windows with a title: name those without one, and look again (#365).
+        const naming = windows.length ? [] : await this.#name(use);
+        if (naming.length) {
+          named.push(...naming);
+          now = await this.#listWindows(use);
+          windows = [...now.values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1);
+        }
         if (input.url !== undefined) {
           reused = [...now.values()].find((window) => before.has(window.id) && before.get(window.id)!.title !== window.title && browser(window)) ?? null;
         }
@@ -1034,6 +1096,8 @@ export class Computer {
       if (input.url !== undefined && placeholder(page.title, input.url)) {
         lines.push(`The page may still be loading, or it has no title of its own: its window's title is still ${page.title ? `"${page.title}"` : "empty"}.`);
       }
+      const told = namedLine(named, windows);
+      if (told) lines.push(told);
       return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${page.id} to read it.`] };
     });
   }
@@ -1122,6 +1186,8 @@ export class Computer {
         images: new Map(),
         popups: new Map(),
         large: new Set(),
+        naming: null,
+        titled: new Map(),
       };
       this.#boxes.set(boxId, state);
     }
