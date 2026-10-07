@@ -271,7 +271,26 @@ Its fix gives the prepare script's command that builds the image again.
 - **macOS and Linux images rebuild each night** once the nightly run is set
   up ([setup](../README.md#rebuild-images-each-night)), on each Mac in turn.
   A rebuild pulls the base again when the registry has moved its tag and the
-  Mac has room. Windows images are not rebuilt yet.
+  Mac has room.
+- **Windows images are refreshed in a box** of their current build, monthly,
+  in the same nightly run
+  ([054](../../docs/decisions/054-windows-images-are-refreshed-in-a-box-of-the-current-build.md)).
+  [`../windows/refresh.ps1`](../windows/refresh.ps1) installs Windows'
+  updates and the pinned tools, a trial box runs `check.ps1`, and the new
+  build becomes current only if every check passes. The build before stays
+  as a rollback until the next refresh succeeds, whatever boxes use it: the
+  link `rollback` beside `current` in `~/.bb-box/qemu/images/<image>` names
+  it. To go back to it, on the Mac:
+
+  ```sh
+  cd ~/.bb-box/qemu/images/bb-box-windows && ln -sfn "$(readlink rollback)" current
+  ```
+
+  New boxes and warm VMs are then made from it, and boxes on the newer build
+  keep it until they go. Pause the nightly run until the cause is fixed, or
+  it refreshes the image again. A new image from `prepare-windows-image.sh`
+  needs the Windows ISO and about 30 minutes, so the rollback is the way
+  back.
 - **Rebuild an image by hand** with its prepare script and `--replace`. Boxes
   cloned from the old one keep running.
 - **Before a new Tart release**, run the conformance suite against a Mac from

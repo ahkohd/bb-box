@@ -455,16 +455,23 @@ echo captured
 
 /**
  * Makes a Windows image's build current (049): the link "current" names it,
- * in one rename, and it is no refresh's build any more. Builds no VM is an
- * overlay on, other than the current one, then go. Prints "replaced".
+ * in one rename, and it is no refresh's build any more. The build that was
+ * current stays, named by the link "rollback", until the next replace,
+ * whatever VMs use it: going back is pointing "current" at it, where a new
+ * build from the ISO takes the operator's ISO and an hour. Other builds no
+ * VM is an overlay on, the rollback before among them, then go. Prints
+ * "replaced".
  */
 export function qemuReplaceScript(image: string, build: string): string {
   return qemu(String.raw`im="$q/images/"${quote(image)}; b=${quote(build)}
 [ -f "$im/$b/disk.qcow2" ] || { echo "The image has no build $b." >&2; exit 1; }
+was=$(cd "$im/current" 2>/dev/null && pwd -P) && was=$(basename "$was")
+if [ -n "$was" ] && [ "$was" != "$b" ] && [ -f "$im/$was/disk.qcow2" ]; then ln -sfn "$was" "$im/rollback" || exit 1; fi
 ln -sfn "$b" "$im/current" || exit 1
 rm -f "$im/$b/owner"
+rb=$(cd "$im/rollback" 2>/dev/null && pwd -P) && rb=$(basename "$rb")
 for o in "$im"/*; do
-  n=$(basename "$o"); [ "$n" != current ] && [ "$n" != "$b" ] && [ -d "$o" ] && [ ! -L "$o" ] && [ -f "$o/disk.qcow2" ] || continue
+  n=$(basename "$o"); [ "$n" != current ] && [ "$n" != rollback ] && [ "$n" != "$b" ] && [ "$n" != "$rb" ] && [ -d "$o" ] && [ ! -L "$o" ] && [ -f "$o/disk.qcow2" ] || continue
   grep -qx "build=$n" "$q"/vms/*/config 2>/dev/null && continue
   chmod -R u+w "$o"; rm -rf "$o"
 done
