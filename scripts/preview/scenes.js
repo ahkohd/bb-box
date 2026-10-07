@@ -515,8 +515,8 @@ export const scenes = {
     width: 720,
     height: 860,
     rpc: rpc([], { images: [
-      { name: "rust-tools", kinds: ["linux"], projects: [{ id: "proj_1", name: "Example" }], mine: true, builds: [{ kind: "linux", backend: "proxmox-lxc", build: "b1", built: "2026-10-02T10:00:00Z" }] },
-      { name: "go-tools", kinds: ["linux"], projects: [{ id: "proj_2", name: "Another project" }], mine: false, builds: [] },
+      { name: "rust-tools", kinds: ["linux"], projects: [{ id: "proj_1", name: "Example" }], mine: true, builds: [{ kind: "linux", backend: "proxmox-lxc", build: "b1", built: "2026-10-02T10:00:00Z" }], spares: [] },
+      { name: "go-tools", kinds: ["linux"], projects: [{ id: "proj_2", name: "Another project" }], mine: false, builds: [], spares: [] },
     ] }),
     after: async (root) => {
       click(root, "button", "New box");
