@@ -24,6 +24,7 @@ export const CHECKS = {
   "images.nightly": { name: "Nightly rebuilds", from: ["bb-box"], what: "When bb box images refresh last ended. It warns when no run ended for 8 days." },
   "images.<backend>/<ref>": { name: "Rebuild of <backend>/<ref>", from: ["bb-box"], what: "A standard image whose last rebuild failed, or waits for room." },
   "images.bake.<image>.<backend>.<kind>": { name: "Build of <image> for <kind> on <backend>", from: ["bb-box"], what: "A project image whose last build failed. Its boxes run its script as they start meanwhile." },
+  "spares.image.<image>.<backend>.<kind>": { name: "Spare of <image> for <kind> on <backend>", from: ["bb-box"], what: "A project image's spare whose build failed to start a box, so bb-box makes none of that build for a day. Its boxes start from the build meanwhile." },
 
   // Proxmox LXC and Proxmox QEMU.
   "proxmox.api": { name: "Proxmox API", from: ["proxmox-lxc", "proxmox-qemu"], what: "The API answers at its URL, with a certificate bb-box trusts, and the token works." },

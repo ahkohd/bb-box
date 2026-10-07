@@ -481,6 +481,8 @@ export interface ImageOptionView {
   readonly mine: boolean;
   /** Where it is built ahead, so a box there starts from the build; elsewhere its script runs as the box starts. */
   readonly builds: readonly { readonly kind: string; readonly backend: string; readonly build: string | null; /** ISO 8601. */ readonly built: string }[];
+  /** Its spares (#440), where it has any: a box claims a ready one at once. */
+  readonly spares: readonly { readonly kind: string; readonly backend: string; readonly ready: number; readonly making: number }[];
 }
 
 /**
@@ -492,7 +494,11 @@ export function imagesText(images: readonly ImageOptionView[], kind: string): st
   const covering = images.filter((image) => image.kinds.includes(kind));
   if (!covering.length) return "";
   const words = (image: ImageOptionView) => {
-    const built = image.builds.filter((build) => build.kind === kind).map((build) => build.backend);
+    const spare = (backend: string) => {
+      const count = image.spares.find((one) => one.kind === kind && one.backend === backend);
+      return count?.ready ? " with a spare ready" : count?.making ? " with a spare being made" : "";
+    };
+    const built = image.builds.filter((build) => build.kind === kind).map((build) => `${build.backend}${spare(build.backend)}`);
     return `${image.name}${image.mine ? " (this project's, the default)" : ` (${image.projects.map((project) => project.name).join(", ")})`}${built.length ? `, built ahead on ${built.join(", ")}` : ""}`;
   };
   const mine = covering.filter((image) => image.mine);

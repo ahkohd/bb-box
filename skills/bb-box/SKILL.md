@@ -19,7 +19,8 @@ tools do not.
 ## Choosing a box
 
 `box_list` shows the kinds on offer, their sizes, where each can come from
-("On: ..."), and the project's images. The
+("On: ..."), and the project's images, with whether each has a spare ready
+where it is built ahead, which its boxes claim at once (#440). The
 [kinds reference](../../docs/reference/kinds.md) describes every kind.
 
 - Ask for the kind's default size when you can. A kind can keep spare boxes

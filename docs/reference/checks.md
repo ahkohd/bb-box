@@ -18,6 +18,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `images.nightly` | Nightly rebuilds | When bb box images refresh last ended. It warns when no run ended for 8 days. |
 | `images.<backend>/<ref>` | Rebuild of <backend>/<ref> | A standard image whose last rebuild failed, or waits for room. |
 | `images.bake.<image>.<backend>.<kind>` | Build of <image> for <kind> on <backend> | A project image whose last build failed. Its boxes run its script as they start meanwhile. |
+| `spares.image.<image>.<backend>.<kind>` | Spare of <image> for <kind> on <backend> | A project image's spare whose build failed to start a box, so bb-box makes none of that build for a day. Its boxes start from the build meanwhile. |
 
 ## Proxmox LXC
 
