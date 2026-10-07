@@ -1,6 +1,6 @@
 # Images
 
-Every box starts from an image. A standard image has the system and the tools most work needs. A project's image adds what one project needs, so its boxes start ready for it. BB Box rebuilds the standard images each night, so they stay up to date.
+Every box starts from an image. A standard image has the system and the tools most work needs. A project's image adds what one project needs, so its boxes start ready for it. BB Box rebuilds the standard Linux and macOS images each night, so they stay up to date.
 
 ## Project images
 
@@ -37,10 +37,12 @@ To see which image a box has, run `bb box status` for the box. It says, for exam
 
 ## Standard images stay up to date
 
-Once it is set up, a BB automation runs `bb box images refresh` each night. It rebuilds the standard images that are due:
+Once it is set up, a BB automation runs `bb box images refresh` each night. To set it up, see [rebuilding images each night](../../README.md#rebuilding-images-each-night). It rebuilds the standard images that are due:
 
 - a Linux image is due after a week
-- a macOS or Windows image is due after a month
+- a macOS image is due after a month
+
+Windows images are not rebuilt yet. A Windows box starts from the image its setup guide made.
 
 BB Box rebuilds one image at a time, the most needed first, and starts none after 4 hours. Each new build is tried in a box first. It replaces the old one only if the box passes its checks. A project's image is then built again on the new standard image.
 
