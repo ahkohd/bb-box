@@ -4,13 +4,13 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
-import { BoxError, OPERATOR, describeError } from "../core/boxes.ts";
+import { BoxError, OPERATOR, describeError, isAcquiring, type BoxRecord } from "../core/boxes.ts";
 import type { DoctorReport } from "../backends/types.ts";
 import type { ImageBake, Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, tryText, versionsText } from "./views.ts";
+import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -40,6 +40,11 @@ function out(text: string): PluginCliResult {
 
 function json(value: unknown): PluginCliResult {
   return out(JSON.stringify(value, null, 2));
+}
+
+/** A line for a box an acquire waited for that is not ready yet, with the command that follows it (#533). */
+function starting(box: BoxRecord, restarted: boolean, follow: string): string {
+  return isAcquiring(box) ? `\n${startingWords(box, restarted)} Follow it with: ${follow}\n` : "";
 }
 
 function threadOf(option: string | undefined, ctx: PluginCliContext): string {
@@ -168,7 +173,8 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}) });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
-              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };
+              const follow = `bb box status ${box.name}${options.thread ? ` --thread ${threadId}` : ""}`;
+              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n${options["no-wait"] ? "" : starting(box, boxes.stopping, follow)}` };
             }),
         }),
         status: cliCommand({
@@ -201,7 +207,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}), ...(options.on ? { on: providersOf(options.on) } : {}) });
               if (!options["no-wait"]) box = await boxes.enrolled((await boxes.settled(box)) ?? box);
               if (options.json) return json(app.view(box));
-              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n` };
+              return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n${options["no-wait"] ? "" : starting(box, boxes.stopping, "bb box machines")}` };
             }),
         }),
         "machines remove": cliCommand({

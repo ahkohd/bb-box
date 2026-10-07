@@ -376,7 +376,7 @@ function describeBox(box: Pick<BoxRecord, "name" | "threadId">): string {
   return box.threadId === SPARES ? `spare box ${box.name}` : `box ${box.name} of thread ${box.threadId}`;
 }
 
-function isAcquiring(box: BoxRecord): boolean {
+export function isAcquiring(box: BoxRecord): boolean {
   return box.state === "acquiring" || box.state === "starting";
 }
 
@@ -2210,6 +2210,11 @@ export class Boxes {
       if (signal?.aborted) throw error;
       return false;
     }
+  }
+
+  /** True once dispose() has begun, as bb-box restarts. */
+  get stopping(): boolean {
+    return this.#disposed;
   }
 
   /** Cancels acquires in progress, which a restart then resumes, and waits for running tasks. */
