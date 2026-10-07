@@ -304,7 +304,9 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   kinds(): BoxKind[] {
-    return this.#config.templates.length ? [KIND] : [];
+    if (!this.#config.templates.length) return [];
+    // Windows boxes join BB only on trial, when the setting is on (#539).
+    return [this.#config.enrol ? { ...KIND, capabilities: { ...KIND.capabilities, enrol: true } } : KIND];
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {

@@ -204,6 +204,15 @@ async function start(
         },
       },
       hosts: {
+        // A machine's enrolment and reconnect commands, with their Windows forms (#539).
+        experimental_getEnrollmentCommand: async ({ hostId }: { hostId: string }) => {
+          world.events.push(`enrolment command ${hostId}`);
+          return { command: `sh enrol ${hostId}`, windowsCommand: `& enrol ${hostId}`, expiresAt: Date.now() + 60_000 };
+        },
+        experimental_reconnect: async ({ hostId }: { hostId: string }) => {
+          world.events.push(`reconnect command ${hostId}`);
+          return { command: `sh start ${hostId}`, windowsCommand: `& start ${hostId}`, hostId, expiresAt: Date.now() + 60_000 };
+        },
         // Like BB: records the machine, then calls the provider's create in
         // the background. A key whose machine BB still has gets it back.
         experimental_create: async ({ key, inputs }: { key: string; inputs: { boxId: string } }) => {
@@ -680,6 +689,20 @@ test("box_copy streams a file too large for BB's file API through the thread's m
   assert.ok(!existsSync(join(world.workspace, "back.bin.bb-box-part")));
   // The worker's lease goes once bb-box closes the link.
   await until("the lease to go", async () => worker.experimental_getRetainedWorkerLeaseCount() === 0);
+});
+
+test("a Windows box on trial enrols with BB's Windows enrolment command in its desktop session, not BB's POSIX bootstrap (#539)", async (t) => {
+  const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
+  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell: FAKE_PWSH });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", { kind: "windows" });
+  const box = await only(app);
+  await until("the enrolment to end", async () => (await app.boxes.find(box.id))?.enrol.state === "failed");
+  const failed = (await app.boxes.find(box.id))!;
+  assert.ok(world.events.includes(`enrolment command host-${box.id}`), world.events.join("\n"));
+  assert.deepEqual(world.bootstraps, [], "BB's POSIX installer is not run on Windows");
+  // The fake box's PowerShell runs no script: it says a desktop command went through a scheduled task, and exits 1.
+  assert.match(failed.enrol.error!, new RegExp(`BB's Windows installer in box ${box.name} exited with 1:\\s+a scheduled task`));
 });
 
 test("box_copy names a file from a Windows box after its source", async (t) => {
