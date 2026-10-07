@@ -280,6 +280,12 @@ export interface BoxesDeps {
    * from its daemon, so they have the thread's access. Null for none.
    */
   access?(box: BoxRecord): Promise<Access | null>;
+  /**
+   * Why a box that does not answer is to be waited for, not released: bb-box
+   * is reconnecting to the machine it runs on, as after an update (#415).
+   * Null when it is not.
+   */
+  reconnecting?(box: BoxRecord): string | null;
   logError(operation: string, error: unknown): void;
   /** Records what the sweep did to a guest, and what became of spares, and why. */
   log?(message: string): void;
@@ -308,7 +314,9 @@ export type BoxErrorCode =
   /** The box this thread runs on belongs to another owner, who releases or stops it (036). */
   | "not_owner"
   /** bb-box is stopping, as for an update, and takes no new commands (#405). */
-  | "restarting";
+  | "restarting"
+  /** The box does not answer while bb-box reconnects to the machine it runs on, as after an update (#415). */
+  | "reconnecting";
 
 /** A job a box_run command left running when bb-box restarted (#405). */
 export type JobResult =
@@ -1657,6 +1665,8 @@ export class Boxes {
       return await task(transport);
     } catch (error) {
       if (!(error instanceof TransportError) || error.code !== "unreachable") throw error;
+      const reconnecting = this.#deps.reconnecting?.(box) ?? null;
+      if (reconnecting) throw new BoxError("reconnecting", `Box ${box.name} does not answer yet: ${reconnecting}`);
       const current = await this.#observe(box, { signal }).catch(() => null);
       if (current && current.state !== "ready") this.#require(current, "ready");
       throw new BoxError("unreachable", `Box ${box.name} is running but does not answer. ${error.message}`);

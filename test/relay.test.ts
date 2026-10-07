@@ -133,7 +133,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { hostEntry } from "../src/host/entry.ts";
 import { endpointOf, refusal } from "../src/host/relay.ts";
-import { RELAY_ROUTE, RelayHub } from "../src/relay/hub.ts";
+import { REOPEN_MS, RELAY_ROUTE, RelayHub } from "../src/relay/hub.ts";
 import { FILE_ROUTE, FileRelay } from "../src/relay/files.ts";
 import { joined, tempDir } from "./helpers.ts";
 
@@ -182,6 +182,9 @@ test("the docker CLI's connections reach Docker on the machine through the relay
   });
   t.after(() => hub.dispose());
 
+  // A new instance's relay is coming back until it opens, as after an update, but not for ever (#415).
+  assert.equal(hub.reopening("host_abc"), true);
+  assert.equal(hub.reopening("host_abc", Date.now() + REOPEN_MS + 1), false);
   const endpoint = await hub.endpoint("host_abc");
   assert.match(endpoint, /^unix:\/\/.+\/host_abc\.sock$/);
   const socketPath = endpoint.slice("unix://".length);
@@ -189,6 +192,7 @@ test("the docker CLI's connections reach Docker on the machine through the relay
   assert.deepEqual(JSON.parse(one.text), { path: "/v1.47/version", method: "GET", got: 0 });
   assert.deepEqual(JSON.parse(two.text), { path: "/containers/create", method: "POST", got: 300_000 });
   assert.deepEqual(calls, ["host_abc"], "one relay serves every connection");
+  assert.equal(hub.reopening("host_abc"), false, "open");
   assert.match(urls[0]!, /^wss:\/\/bb\.example\.com\/api\/v1\/plugins\/bb-box\/http\/docker-relay\?s=[0-9a-f]{32}$/);
   assert.equal(worker.experimental_getRetainedWorkerLeaseCount(), 1, "the worker holds a lease while the relay is open");
 
@@ -358,8 +362,10 @@ test("a connection to a relay that went quiet asks BB first: it fails at once wh
   // BB says the machine's worker exited: the relay goes, and the next connection opens another.
   hub.drop("host_pc", "the machine's worker exited");
   await new Promise((r) => setImmediate(r));
+  assert.equal(hub.reopening("host_pc"), true, "lost: a box there is waited for (#415)");
   assert.equal((await get(path, "/_ping")).status, 200);
   assert.equal(opens, 4);
+  assert.equal(hub.reopening("host_pc"), false, "open again");
 });
 
 test("a file copy through the worker refuses a file outside its folder or missing, and keeps no file that does not match the box's (#492)", async (t) => {

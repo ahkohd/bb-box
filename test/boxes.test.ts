@@ -24,7 +24,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -995,6 +995,27 @@ test("the macOS timeout passes a command's exit on, and kills one that ignores T
   assert.equal(stubborn.status, 137);
   assert.ok(stubborn.seconds >= 5.5 && stubborn.seconds < 9, `TERM at 1 s, KILL 5 s later: ${stubborn.seconds} s`);
   assert.ok(!command("macos", "true").includes("perl"), "no timeout, no wrapper");
+});
+
+test("a box that stops answering while bb-box reconnects to its machine, as after an update, is to be waited for, not released (#415)", async () => {
+  let reconnecting: string | null = "bb-box is reconnecting to devpc, which runs its Docker, as after an update.";
+  const world = setup({}, { reconnecting: () => reconnecting });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const lose = async () => {
+    const running = world.boxes.run(THREAD, box.id, "sleep 5", { waitForEnrolment: false });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    world.backend.loseCommands(box.guest!.ref);
+    return running.then(
+      () => assert.fail("the command should fail"),
+      (error: unknown) => error as BoxError,
+    );
+  };
+  const waited = await lose();
+  assert.equal(waited.code, "reconnecting");
+  assert.equal(waited.message, `Box ${box.name} does not answer yet: bb-box is reconnecting to devpc, which runs its Docker, as after an update.`);
+  // Otherwise, a box that does not answer is unreachable, as before.
+  reconnecting = null;
+  assert.equal((await lose()).code, "unreachable");
 });
 
 test("a Windows command with a job starts outside sshd's job, through WMI and cmd, with its script, stdin, output and status in the job's files, a watchdog for its timeout, and waits on cmd's handle (#414)", () => {

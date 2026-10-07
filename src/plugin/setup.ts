@@ -528,6 +528,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       void names(box).catch(() => {});
       return enrolment.claimed(box);
     },
+    // A box on Docker on a BB machine whose relay is coming back, as after an update, is waited for (#415).
+    reconnecting: (box) => {
+      const host = configuration.document.backends.find((backend) => backend.id === box.backend)?.fields.host;
+      if (typeof host !== "string" || !host.startsWith("bb:")) return null;
+      const hostId = host.slice("bb:".length);
+      if (!relay.reopening(hostId)) return null;
+      return `bb-box is reconnecting to ${machineNames.get(hostId) ?? `BB machine ${hostId}`}, which runs its Docker, as after an update.`;
+    },
     access: async (box) => {
       const { names: listed, gitToken } = await access(box);
       if (box.enrol.hostId) await holders.ensure(box.enrol.hostId, listed);
