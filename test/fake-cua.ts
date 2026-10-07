@@ -180,6 +180,14 @@ interface Result {
   isError?: boolean;
 }
 
+/** Another process's panel opens, as Explorer's overflow does, and Cua on Windows says the click failed its foreground check (#484). */
+function trayPanel(desktop: FakeDesktop, target: number): Result {
+  const panel = { id: desktop.nextWindow++, pid: desktop.nextPid++, app: "explorer", title: "Notification overflow", x: 1600, y: 900, width: 200, height: 120, onScreen: true };
+  desktop.windows.push(panel);
+  const hex = (id: number) => `0x${id.toString(16)}`;
+  return text(`Exact target HWND ${hex(target)} or a verified same-process post-action window was not foreground after the click (actual foreground HWND ${hex(panel.id)}).`, undefined, true);
+}
+
 function text(message: string, structured?: Record<string, unknown>, isError = false): Result {
   return { content: [{ type: "text", text: message }], structuredContent: structured, isError };
 }
@@ -567,6 +575,7 @@ export class FakeCua {
         const under = desktop.windows
           .filter((window) => window.onScreen && x >= window.x && x < window.x + window.width && y >= window.y && y < window.y + window.height)
           .sort((a, b) => b.id - a.id)[0];
+        if (desktop.trayMenus) return trayPanel(desktop, under?.id ?? 0);
         if (under) this.#activate(desktop, under, hit(desktop, under, x - under.x, y - under.y), args);
         return text(`Sent screen-absolute click at (${x},${y}) (desktop scope).`, { effect: "unverifiable" });
       }
@@ -591,12 +600,7 @@ export class FakeCua {
         }
       }
       if (!("key" in node)) return node;
-      if (desktop.trayMenus) {
-        const panel = { id: desktop.nextWindow++, pid: desktop.nextPid++, app: "explorer", title: "Notification overflow", x: 1600, y: 900, width: 200, height: 120, onScreen: true };
-        desktop.windows.push(panel);
-        const hex = (id: number) => `0x${id.toString(16)}`;
-        return text(`Exact target HWND ${hex(window.id)} or a verified same-process post-action window was not foreground after the click (actual foreground HWND ${hex(panel.id)}).`, undefined, true);
-      }
+      if (desktop.trayMenus) return trayPanel(desktop, window.id);
       this.#activate(desktop, window, node, args);
       return text(`Clicked ${node.role} "${node.label}" (delivery_mode=${String(args.delivery_mode ?? "background")}).`, { verified: true });
     });

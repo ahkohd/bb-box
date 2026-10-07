@@ -2384,6 +2384,12 @@ test("a click that opened another process's panel, which Cua on Windows calls a 
   assert.match(text(clicked), /\n\nNext: Call computer_observe with window \d+ to act in what came in front\./);
   const calls = readDesktop(file).calls.filter((call) => call.tool === "click");
   assert.equal(calls.length, 1, "no second click, by position, that would close the panel again");
+
+  // A click by position on the desktop, as on the taskbar's hidden-icons arrow, the same.
+  await tool("computer_screenshot", { box: box.name });
+  const onDesktop = await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 1500, y: 870 });
+  assert.equal(isError(onDesktop), false, text(onDesktop));
+  assert.match(text(onDesktop), /\n\nThe click landed, and window \d+: explorer "Notification overflow", 200 by 120 came in front/);
 });
 
 test("an agent reads a desktop box's window, acts on references and is told what changed", async (t) => {
