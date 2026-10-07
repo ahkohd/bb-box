@@ -75,6 +75,8 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
     reflink: "0",
     docker: "29.0.0",
     mkfs: "1",
+    // What the memory script says the host has available now (#557).
+    available_kib: String(48 * 1024 * 1024),
   };
   let values: Record<string, unknown> = {};
   const scripts: string[][] = [];
@@ -104,6 +106,8 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
         const disks = existsSync(join(dir, "disks")) ? readdirSync(join(dir, "disks")) : [];
         return { exitCode: 0, stdout: disks.map((file) => `${file.replace(/\.ext4$/, "")}=${Math.round((Date.now() - statSync(join(dir, "disks", file)).mtimeMs) / 1000)}\n`).join(""), stderr: "" };
       }
+      if (name === "memory") return { exitCode: 0, stdout: `available_kib=${facts.available_kib}\n`, stderr: "" };
+      if (name === "oom") return { exitCode: 0, stdout: "adjusted=0\n", stderr: "" };
       if (name === "images") return { exitCode: 0, stdout: args.map((ref) => `docker:${ref}=${docker.get(ref)?.id ?? ""}\n`).join(""), stderr: "" };
       const image = docker.get(args[0]!);
       if (!image) return { exitCode: 2, stdout: "", stderr: `Docker on this host has no image ${args[0]} to import.\n` };

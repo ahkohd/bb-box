@@ -19,7 +19,13 @@
 // - Capacity: the host's memory, less a reserve and the memory of the
 //   running bb-box microVMs; its cores; and a most-boxes setting, counting
 //   every install's. msb reserves no memory, so this is what the boxes may
-//   take, not what they hold.
+//   take, not what they hold. An idle box holds far less (#575), so a memory
+//   overcommit above 1 lets the boxes' sizes add up to that many times the
+//   host's memory, less the reserve, and then a new box also needs memory
+//   available on the host now (#557). A Mac keeps the memory a box has used,
+//   so there each box counts at its full size whatever the setting. On
+//   Linux, each microVM's oom_score_adj is raised, so a host that runs out
+//   ends a box first.
 // - Every call that acts on a microVM inspects it first and acts only on one
 //   whose labels name this install and the box (018).
 
@@ -90,6 +96,8 @@ const MiB_PER_GiB = 1024;
 const ORPHAN_DISK_S = 15 * 60;
 /** How long the host's facts from the status script serve capacity checks. */
 const FACTS_MS = 60_000;
+/** What a box takes as it starts and joins BB, before the upkeep's reclaim (#575): a new box needs this much available, or its size if less (#557). */
+const START_MIB = 2048;
 
 const MSB_COMMAND: CommandCapability = { transport: "msb", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
 
@@ -161,6 +169,8 @@ interface Placing {
 
 interface HostState {
   readonly facts: HostFacts;
+  /** The host's memory available now, read only when the memory overcommit is above 1. */
+  readonly availableMiB: number | null;
   /** Every bb-box microVM on the host, of every install, with its cores and memory. */
   readonly boxes: readonly { readonly name: string; readonly status: string; readonly cpus: number; readonly memoryMiB: number }[];
 }
@@ -382,6 +392,13 @@ export class MsbBackend implements Backend {
     }
     await this.#sweepDisks(signal).catch((error) => this.#context.logError("remove leftover Docker disks", error));
     await this.#reclaim(signal).catch((error) => this.#context.logError("reclaim idle boxes' memory", error));
+    await this.#oom(signal).catch((error) => this.#context.logError("raise the boxes' oom_score_adj", error));
+  }
+
+  /** Raises each bb-box microVM's oom_score_adj on a Linux host, so a host that runs out of memory ends a box before BB's daemon (#557). */
+  async #oom(signal?: AbortSignal): Promise<void> {
+    const result = await this.#cli.script("oom", [], signal);
+    if (result.exitCode !== 0) throw this.#cli.error(`The oom script on ${this.#host}`, result);
   }
 
   /** Has each running, idle box of this install give its page cache back to the host (RECLAIM). Returns the KiB dropped. */
@@ -430,8 +447,28 @@ export class MsbBackend implements Backend {
 
   async #state(signal?: AbortSignal): Promise<HostState> {
     await this.#install(signal);
-    const [facts, all] = await Promise.all([this.#hostFacts(signal), this.#cli.status(signal)]);
-    return { facts, boxes: all.filter((box) => box.name.startsWith("bbbox-")) };
+    const facts = await this.#hostFacts(signal);
+    const [all, availableMiB] = await Promise.all([this.#cli.status(signal), this.#available(facts, signal)]);
+    return { facts, boxes: all.filter((box) => box.name.startsWith("bbbox-")), availableMiB };
+  }
+
+  /**
+   * The memory overcommit on this host: 1 on a Mac, where msb's microVMs
+   * keep the memory a box has used, as the microsandbox thread measured
+   * (#557), so each box counts at its full size there.
+   */
+  #overcommit(facts: HostFacts): number {
+    return facts.os === "Darwin" ? 1 : this.#config.memoryOvercommit;
+  }
+
+  /** The host's memory available now, fresh for each check, when the memory overcommit is above 1 (#557). */
+  async #available(facts: HostFacts, signal?: AbortSignal): Promise<number | null> {
+    if (this.#overcommit(facts) <= 1) return null;
+    const result = await this.#cli.script("memory", [], signal);
+    if (result.exitCode !== 0) throw this.#cli.error(`The memory script on ${this.#host}`, result);
+    const kib = Number(scriptValues(result.stdout).available_kib);
+    if (!(kib > 0)) throw new Error(`${this.#host} did not say how much memory it has available.`);
+    return Math.floor(kib / 1024);
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
@@ -468,17 +505,35 @@ export class MsbBackend implements Backend {
       running.reduce((sum, box) => sum + box.memoryMiB, 0) + placing.filter((other) => !holding.has(other.name)).reduce((sum, other) => sum + other.memoryMiB, 0) + unplaced.memoryMiB;
     const memoryFree = facts.memoryMiB - memoryUsed;
     const reserve = this.#config.reserveMemoryMiB;
+    const overcommit = this.#overcommit(facts);
+    // What the boxes' sizes may add up to, with the reserve: the host's memory at an overcommit of 1.
+    const ceiling = Math.floor(overcommit * (facts.memoryMiB - reserve)) + reserve;
+    // Boxes bb-box is still starting have not taken their memory yet.
+    const starting =
+      placing.reduce((sum, other) => sum + Math.min(other.memoryMiB, START_MIB), 0) + Math.min(unplaced.memoryMiB, unplaced.count * START_MIB);
+    const need = Math.min(size.memoryMiB, START_MIB);
     const limits: Limit[] = [
       { resource: "guests", used: guests, total: this.#config.boxes, reserve: 0, unit: "count" },
-      { resource: "memory", used: memoryUsed, total: facts.memoryMiB, reserve, unit: "MiB" },
+      overcommit === 1
+        ? { resource: "memory", used: memoryUsed, total: facts.memoryMiB, reserve, unit: "MiB" }
+        : { resource: "memory", id: "committed", used: memoryUsed, total: ceiling, reserve, unit: "MiB" },
+      ...(state.availableMiB === null ? [] : [{ resource: "memory", id: "in use", used: facts.memoryMiB - state.availableMiB, total: facts.memoryMiB, reserve, unit: "MiB" } satisfies Limit]),
     ];
+    const box = `a box with ${formatMiB(size.memoryMiB)}`;
     let why: string | null = null;
     if (facts.cpus && size.cores > facts.cpus) {
       why = `${host} has ${facts.cpus} cores, fewer than the ${size.cores} asked for. Ask for at most ${facts.cpus} cores`;
     } else if (guests >= this.#config.boxes) {
       why = `${host} has ${guests} of the ${this.#config.boxes} bb-box microVMs it may have, counting stopped boxes and other installs' boxes. Release a box, or raise the most boxes in bb-box's settings`;
-    } else if (memoryFree - size.memoryMiB < reserve) {
-      const box = `a box with ${formatMiB(size.memoryMiB)}`;
+    } else if (overcommit !== 1 && memoryUsed + size.memoryMiB > ceiling - reserve) {
+      why =
+        `the boxes on ${host} may have ${formatMiB(ceiling - reserve)} of memory in all, at a memory overcommit of ${overcommit}, and have ${formatMiB(memoryUsed)}, so ${box} does not fit. ` +
+        "Ask for less memory, release a box, or raise the memory overcommit in bb-box's settings";
+    } else if (state.availableMiB !== null && state.availableMiB - starting - reserve < need) {
+      why =
+        `${host} has ${formatMiB(state.availableMiB)} of memory available now${starting ? `, ${formatMiB(starting)} of it for boxes still starting,` : ""} and keeps ${formatMiB(reserve)} free, ` +
+        `so it cannot start ${box}, which takes up to ${formatMiB(need)} as it starts. Its boxes are busy: try again later, or release a box`;
+    } else if (overcommit === 1 && memoryFree - size.memoryMiB < reserve) {
       why =
         size.memoryMiB > memoryFree
           ? `${host} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Ask for less memory or release a box`
@@ -602,7 +657,10 @@ export class MsbBackend implements Backend {
   /** Starts the image's command as root, detached, once per boot: neither `msb create` nor `msb start` runs it (053). */
   async #launch(name: string, signal?: AbortSignal): Promise<void> {
     const script = `echo 0 >${REPORTING_ORDER} 2>/dev/null; [ -e ${STARTED} ] || { : >${STARTED}; setsid -f ${START} >/run/bb-box-start.log 2>&1 </dev/null; }`;
-    await this.#cli.ok(["exec", name, "--", "/bin/sh", "-c", script], { timeoutMs: 30_000, signal });
+    await Promise.all([
+      this.#cli.ok(["exec", name, "--", "/bin/sh", "-c", script], { timeoutMs: 30_000, signal }),
+      this.#oom(signal).catch((error) => this.#context.logError("raise the boxes' oom_score_adj", error)),
+    ]);
   }
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
@@ -743,6 +801,25 @@ export class MsbBackend implements Backend {
           "Install e2fsprogs on the host.",
         );
       }
+      const overcommit = this.#config.memoryOvercommit;
+      if (overcommit > 1) {
+        if (facts.os === "Darwin") {
+          push(
+            "microsandbox.overcommit",
+            "Memory overcommit",
+            "warn",
+            `${this.#host} is a Mac, which keeps the memory a box has used, so bb-box counts each box there at its full size, whatever the memory overcommit of ${overcommit}.`,
+            "Set the memory overcommit to 1.",
+          );
+        } else {
+          push(
+            "microsandbox.overcommit",
+            "Memory overcommit",
+            "ok",
+            `The running boxes' sizes may add up to ${overcommit} times the host's memory, less the memory kept free, and a new box needs memory available now.`,
+          );
+        }
+      }
       if (facts.lxc) {
         push(
           "microsandbox.lxc",
@@ -789,7 +866,9 @@ export class MsbBackend implements Backend {
 
       let state: HostState | null = null;
       try {
-        state = facts.installed ? { facts, boxes: (await this.#cli.status(signal)).filter((box) => box.name.startsWith("bbbox-")) } : { facts, boxes: [] };
+        state = facts.installed
+          ? { facts, boxes: (await this.#cli.status(signal)).filter((box) => box.name.startsWith("bbbox-")), availableMiB: await this.#available(facts, signal) }
+          : { facts, boxes: [], availableMiB: null };
       } catch (error) {
         if (signal?.aborted) throw error;
       }
@@ -799,8 +878,8 @@ export class MsbBackend implements Backend {
           "microsandbox.capacity",
           `Room on ${this.#host}`,
           room.why === null ? "ok" : "warn",
-          room.why ?? room.capacity.limits.map((limit) => `${limit.resource} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}`).join(", "),
-          room.why === null ? null : "Release a box, or change the most boxes or the memory kept free in bb-box's settings.",
+          room.why ?? room.capacity.limits.map((limit) => `${limit.resource}${limit.id ? ` ${limit.id}` : ""} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}`).join(", "),
+          room.why === null ? null : "Release a box, or change the most boxes, the memory kept free or the memory overcommit in bb-box's settings.",
         );
       }
       const sizes = sizesCheck({

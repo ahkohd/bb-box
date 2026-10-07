@@ -29,7 +29,7 @@ export interface MsbOptions {
 }
 
 /** How long each script may take: an install downloads about 30 MB, and an import moves a desktop image of about 1.7 GB. */
-const SCRIPT_MS: Readonly<Record<string, number>> = { install: 10 * 60_000, status: 60_000, images: 60_000, import: 30 * 60_000, disk: 30_000, undisk: 60_000, disks: 30_000 };
+const SCRIPT_MS: Readonly<Record<string, number>> = { install: 10 * 60_000, status: 60_000, images: 60_000, import: 30 * 60_000, disk: 30_000, undisk: 60_000, disks: 30_000, memory: 30_000, oom: 30_000 };
 /** How long a run that bb-box stopped waiting for has, after SIGTERM, before SIGKILL. */
 const KILL_MS = 2_000;
 const OUTPUT_BYTES = 256 * 1024;
