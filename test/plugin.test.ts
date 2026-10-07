@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
@@ -33,6 +33,11 @@ function absolute(path: string): string {
   return path;
 }
 
+/** As BB's file API reads: a path outside the root it is given is refused (#482). */
+function withinRoot(path: string, rootPath: string | undefined): void {
+  if (rootPath && relative(rootPath, path).startsWith("..")) throw Object.assign(new Error(`HTTP 400: Path "${path}" escapes read root`), { status: 400 });
+}
+
 function notFound(what: string): Error {
   return Object.assign(new Error(`${what} not found`), { status: 404, code: "not_found" });
 }
@@ -57,11 +62,15 @@ async function start(
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
   mkdirSync(workspace, { recursive: true });
+  // The thread's storage folder, $BB_THREAD_STORAGE (#482).
+  const storage = join(root, "thread-storage", THREAD);
+  mkdirSync(storage, { recursive: true });
   const threads = new Map<string, Thread>([[THREAD, makeThreadResponse({ id: THREAD, projectId: PROJECT, environmentId: "env_one" })]]);
   const hosts = new Map<string, Host>();
   const world = {
     root,
     workspace,
+    storage,
     threads,
     hosts,
     backend: null as FakeBackend | null,
@@ -142,6 +151,7 @@ async function start(
           return makeThreadResponse({ id: (args as { threadId: string }).threadId, projectId: PROJECT });
         },
         list: async ({ hostId }: { hostId?: string }) => (hostId ? (world.onHost.get(hostId) ?? []) : []) as never,
+        storageLocation: async () => ({ hostId: world.workspaceHost, storageRootPath: storage }),
         spawn: async (args: unknown) => {
           world.spawned.push(args);
           return makeThreadResponse({ id: `thr_child${world.spawned.length}`, projectId: PROJECT });
@@ -250,7 +260,8 @@ async function start(
         },
       },
       files: {
-        read: async ({ path }: { path: string }) => {
+        read: async ({ path, rootPath }: { path: string; rootPath?: string }) => {
+          withinRoot(path, rootPath);
           const data = readFileSync(absolute(path));
           return { path, content: data.toString("base64"), contentEncoding: "base64", sha256: "", sizeBytes: data.byteLength } as never;
         },
@@ -557,6 +568,31 @@ test("box_copy takes relative paths under the workspace and the box user's home,
   assert.equal(readFileSync(join(world.workspace, "both.txt"), "utf8"), "notes\nnotes\n");
   await tool("box_copy", { box: box.name, direction: "from_box", from: "both.txt", to: join(world.root, "outside.txt") });
   assert.equal(readFileSync(join(world.root, "outside.txt"), "utf8"), "notes\nnotes\n");
+});
+
+test("box_copy takes files in the thread's storage folder both ways, by its variable or its path (#482)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const { name } = await only(app);
+  mkdirSync(join(world.storage, "prof"));
+  writeFileSync(join(world.storage, "prof", "check.mjs"), "stored\n");
+
+  const byPath = await tool("box_copy", { box: name, direction: "to_box", from: join(world.storage, "prof", "check.mjs") });
+  assert.ok(!isError(byPath), text(byPath));
+  assert.match(text(byPath), /\(7 bytes\) to check\.mjs in box/);
+  assert.ok(!isError(await tool("box_copy", { box: name, direction: "to_box", from: "$BB_THREAD_STORAGE/prof/check.mjs", to: "again.mjs" })));
+  assert.match(text(await tool("box_run", { box: name, command: "cat check.mjs again.mjs > both.txt" })), /Exit code 0/);
+
+  const back = await tool("box_copy", { box: name, direction: "from_box", from: "both.txt", to: "${BB_THREAD_STORAGE}/out/both.txt" });
+  assert.ok(!isError(back), text(back));
+  assert.match(text(back), /in this thread's storage folder\./);
+  assert.equal(readFileSync(join(world.storage, "out", "both.txt"), "utf8"), "stored\nstored\n");
+  // A path in neither folder is still the workspace's, and BB refuses to read one outside it.
+  writeFileSync(join(world.root, "other.txt"), "x");
+  const outside = await tool("box_copy", { box: name, direction: "to_box", from: join(world.root, "other.txt") });
+  assert.ok(isError(outside));
+  assert.match(text(outside), /escapes read root/);
 });
 
 test("box_copy names a file from a Windows box after its source", async (t) => {
