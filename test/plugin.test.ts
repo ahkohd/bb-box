@@ -2370,6 +2370,22 @@ test("a macOS desktop whose server moves no clipboard has it through pbcopy and 
   await session.close();
 });
 
+test("a click that opened another process's panel, which Cua on Windows calls a failed foreground check, is done, and names the panel (#484)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const add = refOf(tree, '"Add"');
+  editDesktop(file, (desktop) => {
+    desktop.trayMenus = true;
+  });
+  const clicked = await tool("computer_act", { box: box.name, action: "click", ref: add });
+  assert.equal(isError(clicked), false, text(clicked));
+  assert.match(text(clicked), /^Clicked e\d+ \(push button 'Add'\)\.\n\nThe click landed, and window (\d+): explorer "Notification overflow", 200 by 120 came in front, such as a menu or panel of another app\. Observe it to act in it; clicking the same place again may close it\./);
+  assert.match(text(clicked), /\n\nNext: Call computer_observe with window \d+ to act in what came in front\./);
+  const calls = readDesktop(file).calls.filter((call) => call.tool === "click");
+  assert.equal(calls.length, 1, "no second click, by position, that would close the panel again");
+});
+
 test("an agent reads a desktop box's window, acts on references and is told what changed", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
