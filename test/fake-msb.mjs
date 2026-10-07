@@ -46,7 +46,7 @@ const labelled = (sandbox, filters) => filters.every((filter) => {
 /** The flags before the first plain argument, and the rest. */
 function flags(rest, takes) {
   const values = {};
-  const many = { "--label": [], "--env": [], "--mount-owned": [] };
+  const many = { "--label": [], "--env": [], "--mount-owned": [], "--mount-disk": [] };
   let i = 0;
   for (; i < rest.length && rest[i].startsWith("-"); i++) {
     const flag = rest[i];
@@ -83,6 +83,7 @@ function create(rest) {
       labels,
       env: many["--env"],
       mounts: many["--mount-owned"],
+      disks: many["--mount-disk"],
       network: values["--net"],
       tmpfs: values["--tmpfs"],
       runtime: { hostname: values["--hostname"] },

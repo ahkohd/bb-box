@@ -4,7 +4,7 @@
 // imports from Docker into msb.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ScriptResult } from "../src/backends/microsandbox/cli.ts";
 import { parseMsbPart, type MsbConfig } from "../src/backends/microsandbox/config.ts";
@@ -29,7 +29,7 @@ export interface FakeMsbHost {
   /** The scripts run so far, with their arguments. */
   readonly scripts: string[][];
   sandboxes(): string[];
-  inspect(name: string): { status: string; config: { labels: Record<string, string>; env: string[]; mounts: string[]; network: string; tmpfs: string; resources: { cpus: number; memory_mib: number } } };
+  inspect(name: string): { status: string; config: { labels: Record<string, string>; env: string[]; mounts: string[]; disks: string[]; network: string; tmpfs: string; resources: { cpus: number; memory_mib: number } } };
   /** msb's images, by reference, with their labels. */
   images(): Record<string, Record<string, string>>;
   home(name: string): string;
@@ -74,6 +74,7 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
     used_kib: String(3 * 1024 * 1024),
     reflink: "0",
     docker: "29.0.0",
+    mkfs: "1",
   };
   let values: Record<string, unknown> = {};
   const scripts: string[][] = [];
@@ -89,6 +90,19 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
       if (name === "install") {
         facts = { ...facts, installed: "0.7.7" };
         return { exitCode: 0, stdout: "installed=0.7.7\n", stderr: "" };
+      }
+      if (name === "disk") {
+        mkdirSync(join(dir, "disks"), { recursive: true });
+        if (!existsSync(join(dir, "disks", `${args[0]}.ext4`))) writeFileSync(join(dir, "disks", `${args[0]}.ext4`), "");
+        return { exitCode: 0, stdout: `disk=${join(dir, "disks", `${args[0]}.ext4`)}\n`, stderr: "" };
+      }
+      if (name === "undisk") {
+        for (const disk of args) rmSync(join(dir, "disks", `${disk}.ext4`), { force: true });
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (name === "disks") {
+        const disks = existsSync(join(dir, "disks")) ? readdirSync(join(dir, "disks")) : [];
+        return { exitCode: 0, stdout: disks.map((file) => `${file.replace(/\.ext4$/, "")}=${Math.round((Date.now() - statSync(join(dir, "disks", file)).mtimeMs) / 1000)}\n`).join(""), stderr: "" };
       }
       if (name === "images") return { exitCode: 0, stdout: args.map((ref) => `docker:${ref}=${docker.get(ref)?.id ?? ""}\n`).join(""), stderr: "" };
       const image = docker.get(args[0]!);
