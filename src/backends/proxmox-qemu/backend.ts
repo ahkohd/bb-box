@@ -97,6 +97,8 @@ const IMAGE_HOSTNAME = "bb-box-image";
 const IMAGE_TAG = "image.";
 /** The tag that names a captured build's kind. */
 const KIND_TAG = "kind.";
+/** The image a replaced template is kept as, until the next replace of its template (054). */
+const ROLLBACK = "rollback";
 /** A linked clone of Windows boots and starts sshd in about 20 s; this leaves room for a busy host. */
 const READY_TIMEOUT_MS = 180_000;
 /** build.sh --replace swaps the template for its new build, which leaves it missing for a moment. A clone waits this long for it. */
@@ -1438,12 +1440,14 @@ export class ProxmoxQemuBackend implements Backend {
 
   /**
    * Puts a captured build in a configured template's place under its VMID,
-   * as build.sh --replace does: the old template goes, the build is cloned
-   * into its VMID (linked on LVM-thin, where the clone needs nothing of its
-   * origin, else a full copy on the template's storage), made a template with
-   * the old one's name and tags but the new build's ID, and the build goes.
-   * Acquires wait for the template meanwhile, and warm VMs of the old build
-   * are retired.
+   * as build.sh --replace does. The old template is first kept as a rollback
+   * (054), a template at a free VMID of the range, as rebuilding one from the
+   * ISO takes an hour as root on the host. Then the old template goes, the
+   * build is cloned into its VMID (linked on LVM-thin, where the clone needs
+   * nothing of its origin, else a full copy on the template's storage), made
+   * a template with the old one's name and tags but the new build's ID, and
+   * the build goes, with the rollback of the replace before. Acquires wait
+   * for the template meanwhile, and warm VMs of the old build are retired.
    */
   async #replaceTemplate(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
     if (!current.current || build.current) throw new Error(`Template ${current.ref} is not a configured template, or ${build.ref} is one.`);
@@ -1455,6 +1459,51 @@ export class ProxmoxQemuBackend implements Backend {
     if (!storage) throw new Error(`Windows template ${target} has no boot disk.`);
     const thin = (await api.storageStatus(storage, signal)).type === "lvmthin";
     const name = typeof old.name === "string" ? old.name : "bb-box-windows";
+    const pool = this.#config.proxmox.pool;
+    const install = installTag(this.#context.installId);
+    const guests = await api.listPool(pool, signal);
+    const earlier = guests
+      .filter((guest) => guest.type === "qemu" && this.#inRange(guest.vmid) && !this.#config.templates.includes(guest.vmid))
+      .filter((guest) => guest.tags.includes(install) && guest.tags.includes(`${IMAGE_TAG}${ROLLBACK}`) && templateFromTags(guest.tags) === target)
+      .map((guest) => guest.vmid);
+    // The old template as it is, at a free VMID, made before anything changes. A VMID taken outside the pool is skipped.
+    const oldBuild = buildFromTags(parseTags(old.tags));
+    const keptRecord = recordInDescription(String(old.description ?? ""));
+    const taken = [...guests];
+    let rollback: number;
+    let kept: string;
+    for (;;) {
+      const free = this.#freeVmid(taken, this.#nextVmid ?? this.#config.vmids.first);
+      if (free === null) throw new BackendError("no_capacity", `No VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is free for the rollback of template ${target}. Release a box first.`);
+      kept = `bb-box rollback of Windows template ${target}${oldBuild ? `, ${BUILD}${oldBuild}` : ""}, kept until its next refresh. To use it, list ${free} as the Windows template in bb-box's settings.`;
+      this.#reserved.add(free);
+      try {
+        if (thin) await api.cloneLinked({ template: target, vmid: free, hostname: `${name}-rollback`, pool, description: kept }, signal);
+        else await api.cloneFull({ template: target, vmid: free, hostname: `${name}-rollback`, storage, pool, description: kept }, signal);
+        rollback = free;
+        break;
+      } catch (error) {
+        if (!(error instanceof ProxmoxError && error.alreadyExists)) throw error;
+        taken.push({ vmid: free } as PoolGuest);
+      } finally {
+        this.#reserved.delete(free);
+      }
+    }
+    this.#reserved.add(rollback);
+    try {
+      await api.makeTemplate(rollback, signal);
+      await api.configure(
+        rollback,
+        {
+          description: `${kept}${keptRecord ? `\n${JSON.stringify(keptRecord)}` : ""}`,
+          tags: [TAG, install, `${IMAGE_TAG}${ROLLBACK}`, `${KIND_TAG}${current.kind}`, templateTag(target), ...(oldBuild ? [`${BUILD}${oldBuild}`] : [])],
+          protection: true,
+        },
+        signal,
+      );
+    } finally {
+      this.#reserved.delete(rollback);
+    }
     const first = String(old.description ?? "bb-box windows template.").split("\n")[0]!;
     const today = new Date().toISOString().slice(0, 10);
     const line = /, (built|refreshed) \d{4}-\d{2}-\d{2}/.test(first) ? first.replace(/, (built|refreshed) \d{4}-\d{2}-\d{2}/, `, refreshed ${today}`) : first;
@@ -1464,13 +1513,17 @@ export class ProxmoxQemuBackend implements Backend {
     await api.configure(target, { delete: ["protection"] }, signal);
     await api.destroy(target, signal);
     this.#templates.delete(target);
-    const pool = this.#config.proxmox.pool;
     if (thin) await api.cloneLinked({ template: source, vmid: target, hostname: name, pool, description }, signal);
     else await api.cloneFull({ template: source, vmid: target, hostname: name, storage, pool, description }, signal);
     await api.makeTemplate(target, signal);
     await api.configure(target, { description, tags, protection: true }, signal);
     await api.configure(source, { delete: ["protection"] }, signal);
     await api.destroy(source, signal);
+    // The replace worked, so the rollback of the replace before goes.
+    for (const vmid of earlier) {
+      await api.configure(vmid, { delete: ["protection"] }, signal);
+      await api.destroy(vmid, signal);
+    }
     return { ...build, ref: String(target), image: "standard", current: true };
   }
 

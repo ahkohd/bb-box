@@ -103,8 +103,11 @@ template, [`../windows/refresh.ps1`](../windows/refresh.ps1) installs
 Windows' updates and the tools pinned in
 [`../windows/pins.json`](../windows/pins.json). The box is then made a
 template, a trial box of it runs `check.ps1`, and the new template takes the
-old one's place under its VMID only if every check passes. To refresh one
-now, or to try a refresh and keep the old template:
+old one's place under its VMID only if every check passes. The old template
+stays as a rollback, at a free VMID of bb-box's range with "rollback" in its
+name, until the next refresh succeeds: to go back to it, list its VMID as the
+Windows template in bb-box's settings. To refresh one now, or to try a
+refresh and keep the old template:
 
 ```sh
 bb box images build proxmox-qemu/9104
