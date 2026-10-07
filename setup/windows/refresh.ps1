@@ -109,6 +109,8 @@ function Version-Of([scriptblock] $ask) {
   if ("$said" -match '\d+(\.\d+)+') { $Matches[0] }
 }
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+# The agent CLIs, each in a directory of its own on the machine's PATH (#561).
+$tools = 'C:\Program Files\bb-box-tools'
 $versions = @{
   'pwsh' = { & 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' }
   'git' = { git --version }
@@ -118,6 +120,20 @@ $versions = @{
   'llvm' = { & 'C:\Program Files\LLVM\bin\clang.exe' --version }
   'rustup' = { & (Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe') --version }
   'node' = { & 'C:\Program Files\nodejs\node.exe' --version }
+  'claude-code' = { & "$tools\claude\claude.exe" --version }
+  'codex' = { & "$tools\codex\codex.exe" --version }
+  'pi' = { & "$tools\pi\pi.exe" --version }
+}
+
+# Puts an agent CLI's program in its directory, in place of what was there, on the machine's PATH.
+function Install-Tool($name, $file, $exe) {
+  $to = Join-Path $tools $name
+  Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith("$to\", 'OrdinalIgnoreCase') } | Stop-Process -Force
+  Remove-Item $to -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force $to | Out-Null
+  if ($file -like '*.zip') { Expand-Archive $file -DestinationPath $to -Force } else { Copy-Item $file (Join-Path $to $exe) }
+  if (-not (Test-Path (Join-Path $to $exe))) { throw "$name has no $exe" }
+  Add-MachinePath $to
 }
 
 # Each tool, installed as the template's first logon installs it.
@@ -164,6 +180,9 @@ $installers = @{
     Add-MachinePath $to
     if ((& "$to\node.exe" --version) -ne "v$($pin.version)") { throw "node.exe is not $($pin.version)" }
   }
+  'claude-code' = { param($pin, $file) Install-Tool claude $file claude.exe }
+  'codex' = { param($pin, $file) Install-Tool codex $file codex.exe }
+  'pi' = { param($pin, $file) Install-Tool pi $file pi.exe }
 }
 
 try {
@@ -187,6 +206,9 @@ try {
     Step "Rust $((& (Join-Path $env:USERPROFILE '.cargo\bin\rustc.exe') --version) -replace '^rustc ', '')"
   }
 
+  # Claude Code's PowerShell tool, beside its Bash tool in Git Bash: it runs PowerShell 7 (#561).
+  [Environment]::SetEnvironmentVariable('CLAUDE_CODE_USE_POWERSHELL_TOOL', '1', 'Machine')
+
   # Edge updates itself, and its update writes its handler again without the
   # flag the first logon gave it: give it again, as the first logon does.
   Step 'Edge: its whole page in the accessibility tree'
@@ -199,8 +221,12 @@ try {
 
   if ($restart) { Step 'a restart, then this again'; exit 3010 }
 
-  Step 'The image record, C:\bb-box\image.json'
-  [IO.File]::WriteAllText('C:\bb-box\image.json', "$((Get-Content $Record -Raw).Trim())`n")
+  # The record, with the edition this Windows says it is, such as Windows 11 Pro.
+  $edition = (Get-CimInstance Win32_OperatingSystem).Caption -replace '^Microsoft ', ''
+  Step "The image record, C:\bb-box\image.json ($edition)"
+  $new = Get-Content $Record -Raw | ConvertFrom-Json
+  if ($edition) { $new.os = $edition }
+  [IO.File]::WriteAllText('C:\bb-box\image.json', "$($new | ConvertTo-Json -Compress -Depth 5)`n")
   Step 'Cleaning up: temporary files and update downloads'
   Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
   Remove-Item "$env:SystemRoot\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue

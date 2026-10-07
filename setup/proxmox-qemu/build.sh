@@ -69,6 +69,13 @@ RUSTUP_SHA256=6F4BEF66261261FCB43131BE8720BAB817D403A09EDEC7455C371974B90BDB7E
 # Node.js, which BB's installer for Windows needs (#539), as Linux boxes have it.
 NODE_VERSION=24.21.0
 NODE_SHA256=158F7685B44DE51F6C0DF1D153526CBCD3E1BC739A8DFC607721CEF75DE9E541
+# The agent CLIs, as Linux boxes pin them, for threads on the box (#561).
+CLAUDE_VERSION=2.1.283
+CLAUDE_SHA256=9DBE16DAFED59DA5CDABBFE11AD0335738C753FAD794989B47F9446ACCD6DE3A
+CODEX_VERSION=0.157.1
+CODEX_SHA256=8CB0E69E99FF2A158C54815DB82D0F2E524D8F301BC30184722CFD1AE5973574
+PI_VERSION=0.87.1
+PI_SHA256=AAB2BA67BAF8FF97A52D05B62D88E9E65A840C6EA8FA1029A28D62D210D4E5FC
 
 for tool in genisoimage jq python3 ssh scp; do command -v "$tool" >/dev/null || die "$tool is required"; done
 [ -f "$BBBOX_SSH_KEY.pub" ] || die "no plugin key at $BBBOX_SSH_KEY.pub: run ../proxmox-lxc/host/setup-host.sh"
@@ -93,10 +100,10 @@ thin=
 record=$(jq -cn --arg build "$build" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg os "$BBBOX_WINDOWS_EDITION" \
   --arg pins "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/build.sh" | sha256sum | cut -d' ' -f1)" \
   --arg pwsh "$PWSH_VERSION" --arg git "$GIT_VERSION" --arg gh "$GH_VERSION" --arg cua "$CUA_VERSION" \
-  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" \
+  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" --arg claude "$CLAUDE_VERSION" --arg codex "$CODEX_VERSION" --arg pi "$PI_VERSION" \
   '{contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: $build, built: $built, base: null, os: $os,
     aptSnapshot: null, pins: $pins, bbApp: null,
-    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node},
+    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi},
     nvidia: null, layer: null, sizeGiB: null}')
 linked_clones() { # vmid
   { grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null ||
@@ -188,6 +195,12 @@ json.dump({
                "url": "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/x86_64-pc-windows-msvc/rustup-init.exe"},
     "node": {"version": "$NODE_VERSION", "sha256": "$NODE_SHA256",
              "url": "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-win-x64.zip"},
+    "claude": {"version": "$CLAUDE_VERSION", "sha256": "$CLAUDE_SHA256",
+               "url": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/win32-x64/claude.exe"},
+    "codex": {"version": "$CODEX_VERSION", "sha256": "$CODEX_SHA256",
+              "url": "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-x86_64-pc-windows-msvc.exe"},
+    "pi": {"version": "$PI_VERSION", "sha256": "$PI_SHA256",
+           "url": "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-windows-x64.zip"},
 }, open(sys.argv[1], "w"), indent=2)
 EOF
 genisoimage -quiet -J -r -V BBBOXANSWER -o "$answer_iso" "$work/answer"
@@ -311,7 +324,7 @@ qm destroy "$check_vm" --purge 1 >/dev/null
 check_vm=
 [ "$checked" = 0 ] || die "the check failed (above)"
 
-description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION, Node.js $NODE_VERSION.
+description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION, Node.js $NODE_VERSION, Claude Code $CLAUDE_VERSION, Codex $CODEX_VERSION, Pi $PI_VERSION.
 $record"
 # The pool's ACL lets the plugin's token delete guests in it; protection keeps
 # it from deleting templates. Clones inherit the flag, so the plugin clears it
