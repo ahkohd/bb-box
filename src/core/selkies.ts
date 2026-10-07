@@ -130,6 +130,12 @@ export class SelkiesBox {
     this.spacing = new Spacing(options.spacingMs ?? OPEN_SPACING_MS);
   }
 
+  /** Opens the input connection, if it is not open, so the first input does not wait for it. */
+  warm(): void {
+    if (this.#closed) return;
+    this.#connection().catch(() => undefined);
+  }
+
   /** Sends one input message to the box; opens the input connection first if needed. */
   async input(message: string): Promise<void> {
     if (this.#closed) return;

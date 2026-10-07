@@ -2328,11 +2328,12 @@ test("the desktop route carries a box's Selkies stream message by message, and o
 
   const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: null };
   assert.equal(took.error, null);
-  await session.receive("kd,97");
+  // The input connection opens as control is taken, before any key.
   const input = await until("the input connection", async () => selkies.pages[1]);
   assert.equal(input.role, "controller");
+  await until("its STOP_VIDEO", async () => input.received[0] === "STOP_VIDEO");
+  await session.receive("kd,97");
   await until("the key", async () => input.received.includes("kd,97"));
-  assert.equal(input.received[0], "STOP_VIDEO", "it asks for no video first");
   await session.receive("r,1024x768");
   await until("the resize", async () => rfb.width === 1024 && rfb.height === 768);
   await selkies.clipboard("copied again");
