@@ -133,6 +133,28 @@ export function writeFileScript(path: string): string {
   );
 }
 
+/** Prints the file's SHA-256 in lower-case hex and its size in bytes, as "<sha256> <bytes>" (#492). */
+const PRINT_HASH = "[Console]::Out.Write((Get-FileHash -Algorithm SHA256 -LiteralPath $t).Hash.ToLower()+' '+(Get-Item -LiteralPath $t).Length)";
+
+/** Prints `path`'s SHA-256 and size (#492). */
+export function hashFileScript(path: string): string {
+  return onFile(path, `if(-not [IO.File]::Exists($p)){throw ($p+' is not a file.')};$t=$p;${PRINT_HASH}`);
+}
+
+/** Writes stdin to `path`'s part file, creating parent directories, and prints the part's SHA-256 and size (#492). */
+export function writePartScript(path: string): string {
+  return onFile(
+    path,
+    "$t=$p+'.bb-box-part';$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($p));" +
+      `$f=[IO.File]::Create($t);try{[Console]::OpenStandardInput().CopyTo($f)}finally{$f.Close()};${PRINT_HASH}`,
+  );
+}
+
+/** Puts `path`'s part file in its place, over any file there, or removes it when not `keep` (#492). */
+export function settlePartScript(path: string, keep: boolean): string {
+  return onFile(path, keep ? "[IO.File]::Move($p+'.bb-box-part',$p,$true)" : "[IO.File]::Delete($p+'.bb-box-part')");
+}
+
 /** Writes `path` to stdout, byte for byte. A file another process is writing can be read too. */
 export function readFileScript(path: string): string {
   return onFile(

@@ -17,11 +17,13 @@ import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
-import { boxPath, tooLargeToCopy, workspacePath } from "../src/plugin/tools.ts";
+import { boxPath, workspacePath } from "../src/plugin/tools.ts";
+import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
+import { hostEntry } from "../src/host/entry.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
-import { fakeDaemon, tempDir } from "./helpers.ts";
+import { fakeDaemon, joined, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_one";
 const PROJECT = "prj_one";
@@ -645,29 +647,39 @@ test("box_copy takes files in the thread's storage folder both ways, by its vari
   assert.match(text(outside), /escapes read root/);
 });
 
-test("a file too large for box_copy is refused with how to move it in parts, both ways, and the parts join to the file (#485)", async (t) => {
+test("box_copy streams a file too large for BB's file API through the thread's machine, both ways, and checks its SHA-256 (#492)", async (t) => {
   const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
   t.after(() => harness.lifecycle.dispose());
+  const saved = process.env.BB_SERVER_URL;
+  process.env.BB_SERVER_URL = "https://bb.example.com";
+  t.after(() => (saved === undefined ? delete process.env.BB_SERVER_URL : (process.env.BB_SERVER_URL = saved)));
+  // bb-box's worker on the thread's machine, its WebSocket joined to bb-box's route in memory.
+  const { urls, connectTo } = joined(() => app.files);
+  const worker = experimental_createHostEntryHarness(hostEntry({ files: { connect: connectTo } }));
+  t.after(() => worker.experimental_dispose());
+  world.hostEntry = (method, _hostId, input) => (method === "file" ? worker.experimental_call("file", input as never) : { started: false, pid: null });
   await tool("box_acquire", {});
   const { name } = await only(app);
   const big = join(world.workspace, "setup.bin");
-  writeFileSync(big, randomBytes(26 * 1024 * 1024));
-  const refused = await tool("box_copy", { box: name, direction: "to_box", from: big });
-  assert.ok(isError(refused));
-  assert.match(text(refused), new RegExp(`${big} is ${26 * 1024 * 1024} bytes; box_copy moves files up to 16 MiB, as BB's file API takes a file whole and refuses one over 25 MB\\. Move it in parts: run split -b 15m ${big} ${big}\\.part- on this side`));
+  const content = randomBytes(26 * 1024 * 1024);
+  writeFileSync(big, content);
+  const sha = createHash("sha256").update(content).digest("hex");
 
-  // The recipe works: split here, copy each part, join in the box.
-  execFileSync("split", ["-b", "15m", big, `${big}.part-`]);
-  const parts = readdirSync(world.workspace).filter((file) => file.startsWith("setup.bin.part-")).sort();
-  assert.equal(parts.length, 2);
-  for (const part of parts) assert.ok(!isError(await tool("box_copy", { box: name, direction: "to_box", from: part })));
-  assert.match(text(await tool("box_run", { box: name, command: "cat setup.bin.part-* > setup.bin && rm setup.bin.part-* && sha256sum setup.bin" })), new RegExp(createHash("sha256").update(readFileSync(big)).digest("hex")));
+  const sent = await tool("box_copy", { box: name, direction: "to_box", from: big });
+  assert.ok(!isError(sent), text(sent));
+  assert.match(text(sent), new RegExp(`^Copied ${big} \\(${content.length} bytes, SHA-256 ${sha}\\) to setup\\.bin in box ${name}, streamed through the thread's machine\\.`));
+  assert.match(urls[0]!, /^wss:\/\/bb\.example\.com\/api\/v1\/plugins\/bb-box\/http\/file-relay\?s=[0-9a-f]{32}$/);
+  const inBox = text(await tool("box_run", { box: name, command: "sha256sum setup.bin; ls" }));
+  assert.ok(inBox.includes(`${sha}  setup.bin\n`), inBox);
+  assert.doesNotMatch(inBox, /bb-box-part/, "the part file took the file's place");
 
-  // From the box, the transport's limit says the same, the other way.
-  const back = await tool("box_copy", { box: name, direction: "from_box", from: "setup.bin" });
-  assert.ok(isError(back));
-  assert.match(text(back), /setup\.bin is too large; box_copy moves files up to 16 MiB.* split it in the box with box_run: split -b 15m setup\.bin setup\.bin\.part-\. box_copy each part, then join them on this side: cat setup\.bin\.part-\* > setup\.bin\./);
-  assert.match(tooLargeToCopy("C:\\Users\\box\\app.msi", null, "from_box", "windows"), /\$i = \[IO\.File\]::OpenRead\("app\.msi"\).*"app\.msi\.part-\{0:d3\}".*cat app\.msi\.part-\* > app\.msi/);
+  const back = await tool("box_copy", { box: name, direction: "from_box", from: "setup.bin", to: "back.bin" });
+  assert.ok(!isError(back), text(back));
+  assert.match(text(back), new RegExp(`^Copied setup\\.bin \\(${content.length} bytes, SHA-256 ${sha}\\) from box ${name} to ${join(world.workspace, "back.bin")} in the workspace, streamed through the thread's machine\\.`));
+  assert.equal(createHash("sha256").update(readFileSync(join(world.workspace, "back.bin"))).digest("hex"), sha);
+  assert.ok(!existsSync(join(world.workspace, "back.bin.bb-box-part")));
+  // The worker's lease goes once bb-box closes the link.
+  await until("the lease to go", async () => worker.experimental_getRetainedWorkerLeaseCount() === 0);
 });
 
 test("box_copy names a file from a Windows box after its source", async (t) => {

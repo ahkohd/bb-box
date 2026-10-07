@@ -42,4 +42,24 @@ export const hostContract = defineRpcContract({
     input: z.object({ secret: z.string().regex(/^[0-9a-f]{32}$/), path: z.string().regex(/^\/api\/v1\/plugins\/[^?#]+$/) }).strict(),
     output: z.object({ endpoint: z.string() }).strict(),
   },
+  /**
+   * Copies one file over a WebSocket out to bb-box's route at `path`, with
+   * `secret` (#492): `send` streams `file` to bb-box, `receive` writes what
+   * bb-box streams to it. `file` is absolute, and within `root` when given.
+   * A received file replaces `file` only when it has `expect`'s size and
+   * SHA-256. Answers once this side is done, with the bytes and their SHA-256.
+   */
+  file: {
+    input: z
+      .object({
+        secret: z.string().regex(/^[0-9a-f]{32}$/),
+        path: z.string().regex(/^\/api\/v1\/plugins\/[^?#]+$/),
+        file: z.string().min(1).max(4096),
+        root: z.string().min(1).max(4096).optional(),
+        direction: z.enum(["send", "receive"]),
+        expect: z.object({ bytes: z.number().int().nonnegative(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }).strict().optional(),
+      })
+      .strict(),
+    output: z.object({ bytes: z.number().int().nonnegative(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }).strict(),
+  },
 });

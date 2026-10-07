@@ -717,11 +717,12 @@ bytes exceeds the 25 MB limit".
 or a stream in each direction. Either keeps memory flat on BB's server and the
 machine.
 
-**Until then.** `box_copy` moves up to 16 MiB, which base64 keeps under the
-limit, and a larger file's error gives the commands to split it on one side,
-copy the parts and join them on the other, with a hash to compare. Serving the
-file over HTTP from the thread's machine works only when the box can reach it,
-and exposes the file to the network meanwhile.
+**Until then.** `box_copy` moves up to 16 MiB through the file API, which
+base64 keeps under the limit. A larger file streams through bb-box's own host
+worker on the machine that holds it, over a WebSocket out to bb-box's route,
+as the Docker relay does (042), with its SHA-256 checked at both ends (#492).
+That needs the machine connected to BB and bb-box's host entry on it, so the
+file API is still the better way when BB offers one.
 
 ## 21. Stop a plugin's machine workers after its tool calls
 

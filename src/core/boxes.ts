@@ -1847,6 +1847,12 @@ export class Boxes {
     return { box, data };
   }
 
+  /** Runs `task` with the box's command transport, saying why when the box does not answer, as for box_copy's streamed copies (#492). */
+  async reach<T>(threadId: string, ref: string, task: (transport: CommandTransport, box: BoxRecord) => Promise<T>, signal?: AbortSignal): Promise<{ box: BoxRecord; result: T }> {
+    const box = await this.get(threadId, ref);
+    return { box, result: await this.#reach(box, (transport) => task(transport, box), signal) };
+  }
+
   /**
    * The safety net, run at start and every few minutes. In order: releases
    * the boxes of threads that ended, finishes interrupted releases and

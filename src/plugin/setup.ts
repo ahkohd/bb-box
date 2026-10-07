@@ -37,6 +37,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
+import { FILE_ROUTE, FileRelay } from "../relay/files.ts";
 import { abortable } from "../core/abortable.ts";
 import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
 import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
@@ -65,6 +66,8 @@ const DAEMON_NAMES = ["GH_TOKEN", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_CO
 const NAMES_FRESH_MS = 60_000;
 /** How long the host call that opens a Docker relay may take, the worker's start included. */
 const RELAY_CALL_TIMEOUT_MS = 15_000;
+/** The longest a streamed box_copy may take (#492). */
+const FILE_CALL_TIMEOUT_MS = 2 * 60 * 60_000;
 /** How long BB's word on a machine's connection is trusted, so each docker command does not ask again. */
 const MACHINE_STATE_MS = 2_000;
 /** bb-box's version, which the move from BB's settings records. */
@@ -84,6 +87,8 @@ export interface BbBox {
   readonly configuration: Configuration;
   /** The Docker API relay to BB machines that are Docker hosts (042). */
   readonly relay: RelayHub;
+  /** Streams box_copy's large files through the worker on the thread's machine (#492). */
+  readonly files: FileRelay;
   /** BB machines that can host Docker boxes (042). */
   readonly dockerHosts: DockerHosts;
   /** Builds bb-box's images on BB machines that host Docker boxes (042). */
@@ -328,6 +333,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     log: (message) => bb.log.info(message),
   });
   bb.http.experimental_websocket(RELAY_ROUTE, ({ url }) => relay.route(url), { auth: "none" });
+  const fileRelay = new FileRelay({
+    call: (hostId, request, signal) => host.call("file", { ...request, path: `/api/v1/plugins/${bb.pluginId}/http${FILE_ROUTE}` }, { hostId, signal, timeoutMs: FILE_CALL_TIMEOUT_MS }),
+    logError,
+  });
+  bb.http.experimental_websocket(FILE_ROUTE, ({ url }) => fileRelay.route(url), { auth: "none" });
   bb.onDispose(() => relay.dispose());
   const machines: MachineAccess = {
     dockerHost: (hostId) => relay.address(hostId),
@@ -707,6 +717,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     backends,
     enrolment,
     relay,
+    files: fileRelay,
     dockerHosts,
     dockerImages,
     async dockerHostOf(machine) {

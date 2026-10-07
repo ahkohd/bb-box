@@ -127,52 +127,15 @@ test("a side with no onOpen refuses channels the other side opens", async (t) =>
 
 import { createServer as createHttpServer, request } from "node:http";
 import { connect, createServer, type Server } from "node:net";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { hostEntry } from "../src/host/entry.ts";
-import { endpointOf, refusal, type RelayWebSocket } from "../src/host/relay.ts";
-import { RELAY_ROUTE, RelayHub, type RelaySocket } from "../src/relay/hub.ts";
-import { tempDir } from "./helpers.ts";
-
-/** A WebSocket from the worker to the hub's route, delivered a turn later each way, or opening `openAfterMs` after it upgrades. */
-function joined(hub: () => RelayHub, options: { openAfterMs?: number } = {}) {
-  const urls: string[] = [];
-  const connectTo = (url: string): RelayWebSocket => {
-    urls.push(url);
-    const listeners = { open: [] as (() => void)[], close: [] as (() => void)[], error: [] as (() => void)[], message: [] as ((event: { data: unknown }) => void)[] };
-    const handlers = hub().route(new URL(url.replace(/^ws/, "http")));
-    let closed = false;
-    const server: RelaySocket = {
-      send: (data) => {
-        const copy = Uint8Array.from(data);
-        setImmediate(() => listeners.message.forEach((listener) => listener({ data: copy.buffer })));
-      },
-      close: () => {
-        if (closed) return;
-        closed = true;
-        setImmediate(() => listeners.close.forEach((listener) => listener()));
-      },
-    };
-    const socket: RelayWebSocket = {
-      binaryType: "blob",
-      send: (data) => {
-        const copy = Uint8Array.from(data);
-        setImmediate(() => handlers.onMessage(server, copy));
-      },
-      close: () => {
-        if (closed) return;
-        closed = true;
-        setImmediate(() => handlers.onClose());
-      },
-      addEventListener: (type: string, listener: never) => (listeners as Record<string, unknown[]>)[type]!.push(listener),
-    };
-    if (options.openAfterMs === undefined) setImmediate(() => handlers.onOpen(server));
-    else setTimeout(() => handlers.onOpen(server), options.openAfterMs);
-    return socket;
-  };
-  return { urls, connectTo };
-}
+import { endpointOf, refusal } from "../src/host/relay.ts";
+import { RELAY_ROUTE, RelayHub } from "../src/relay/hub.ts";
+import { FILE_ROUTE, FileRelay } from "../src/relay/files.ts";
+import { joined, tempDir } from "./helpers.ts";
 
 function fakeDocker(path: string): Promise<Server> {
   const server = createHttpServer((req, res) => {
@@ -397,4 +360,26 @@ test("a connection to a relay that went quiet asks BB first: it fails at once wh
   await new Promise((r) => setImmediate(r));
   assert.equal((await get(path, "/_ping")).status, 200);
   assert.equal(opens, 4);
+});
+
+test("a file copy through the worker refuses a file outside its folder or missing, and keeps no file that does not match the box's (#492)", async (t) => {
+  const dir = tempDir("file-relay");
+  process.env.BB_SERVER_URL ??= "https://bb.example.com";
+  let relay!: FileRelay;
+  const { connectTo } = joined(() => relay);
+  const worker = experimental_createHostEntryHarness(hostEntry({ files: { connect: connectTo } }));
+  t.after(() => worker.experimental_dispose());
+  relay = new FileRelay({ call: (_hostId, request) => worker.experimental_call("file", { ...request, path: `/api/v1/plugins/bb-box/http${FILE_ROUTE}` }) as never, logError: () => {} });
+  const nothing = async () => undefined;
+
+  await assert.rejects(relay.copy("host_abc", { file: "/etc/hostname", root: dir, direction: "send" }, nothing), /\/etc\/hostname is not within /);
+  await assert.rejects(relay.copy("host_abc", { file: join(dir, "missing.bin"), root: dir, direction: "send" }, nothing), /ENOENT/);
+
+  // What came does not match what the box said it sent: the target is left as it was.
+  writeFileSync(join(dir, "kept.bin"), "before");
+  const expect = { bytes: 5, sha256: "0".repeat(64) };
+  const sending = (channel: NodeJS.WritableStream) => new Promise<void>((resolve) => channel.end("after", () => resolve()));
+  await assert.rejects(relay.copy("host_abc", { file: join(dir, "kept.bin"), root: dir, direction: "receive", expect }, sending), /not the box's 5 bytes with 0{64}: the file may have changed in the box/);
+  assert.equal(readFileSync(join(dir, "kept.bin"), "utf8"), "before");
+  assert.equal(existsSync(join(dir, "kept.bin.bb-box-part")), false);
 });

@@ -13,6 +13,8 @@ import type { BackendContext, BackendStorage, KindSettings, WarmShortfall } from
 import { defaultSize, kindSizes, presetSizes } from "../src/core/sizes.ts";
 import { Ssh } from "../src/transports/ssh.ts";
 import type { SshAccess } from "../src/transports/types.ts";
+import type { RelayWebSocket } from "../src/host/relay.ts";
+import type { RelaySocket } from "../src/relay/hub.ts";
 
 export const KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----";
 
@@ -257,4 +259,48 @@ export async function fakeDaemon(
       } catch {}
     },
   };
+}
+
+/** A route of bb-box's that a worker's WebSocket connects to, as a RelayHub's or FileRelay's. */
+export interface Routed {
+  route(url: URL): { onOpen(socket: RelaySocket): void; onMessage(socket: RelaySocket, data: string | Uint8Array): void; onClose(): void };
+}
+
+/** A WebSocket from the worker to the hub's route, delivered a turn later each way, or opening `openAfterMs` after it upgrades. */
+export function joined(hub: () => Routed, options: { openAfterMs?: number } = {}) {
+  const urls: string[] = [];
+  const connectTo = (url: string): RelayWebSocket => {
+    urls.push(url);
+    const listeners = { open: [] as (() => void)[], close: [] as (() => void)[], error: [] as (() => void)[], message: [] as ((event: { data: unknown }) => void)[] };
+    const handlers = hub().route(new URL(url.replace(/^ws/, "http")));
+    let closed = false;
+    const server: RelaySocket = {
+      send: (data) => {
+        const copy = Uint8Array.from(data);
+        setImmediate(() => listeners.message.forEach((listener) => listener({ data: copy.buffer })));
+      },
+      close: () => {
+        if (closed) return;
+        closed = true;
+        setImmediate(() => listeners.close.forEach((listener) => listener()));
+      },
+    };
+    const socket: RelayWebSocket = {
+      binaryType: "blob",
+      send: (data) => {
+        const copy = Uint8Array.from(data);
+        setImmediate(() => handlers.onMessage(server, copy));
+      },
+      close: () => {
+        if (closed) return;
+        closed = true;
+        setImmediate(() => handlers.onClose());
+      },
+      addEventListener: (type: string, listener: never) => (listeners as Record<string, unknown[]>)[type]!.push(listener),
+    };
+    if (options.openAfterMs === undefined) setImmediate(() => handlers.onOpen(server));
+    else setTimeout(() => handlers.onOpen(server), options.openAfterMs);
+    return socket;
+  };
+  return { urls, connectTo };
 }

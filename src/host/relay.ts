@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import { connect, type NetConnectOpts } from "node:net";
 import { release, userInfo } from "node:os";
 import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
-import { Mux, type Channel } from "../relay/mux.ts";
+import { Mux, type Channel, type MuxOptions } from "../relay/mux.ts";
 
 /** What a channel connects to: Docker's unix socket or named pipe, or TCP. */
 export type DockerEndpoint = { readonly path: string } | { readonly host: string; readonly port: number };
@@ -61,6 +61,27 @@ export async function dockerEndpoint(env: NodeJS.ProcessEnv = process.env, platf
   const fromContext = context ? endpointOf(context) : null;
   if (fromContext) return fromContext;
   return platform === "win32" ? { path: "\\\\.\\pipe\\docker_engine" } : { path: "/var/run/docker.sock" };
+}
+
+/**
+ * Opens a WebSocket out to bb-box's route at `path` on BB's server, with
+ * `secret`, and a Mux on it for channels bb-box opens: the Docker relay's
+ * and a file copy's (#492).
+ */
+export function dial(path: string, secret: string, connect: ((url: string) => RelayWebSocket) | undefined, options: Omit<MuxOptions, "opener">): Mux {
+  const server = process.env.BB_SERVER_URL;
+  if (!server) throw new Error("BB_SERVER_URL is not set in the worker, so it cannot reach bb-box.");
+  const url = `${server.replace(/^http/, "ws").replace(/\/$/, "")}${path}?s=${encodeURIComponent(secret)}`;
+  const socket = (connect ?? ((to) => new WebSocket(to) as unknown as RelayWebSocket))(url);
+  socket.binaryType = "arraybuffer";
+  const mux = new Mux({ send: (data) => socket.send(data), close: (code, reason) => socket.close(code, reason) }, { ...options, opener: false });
+  socket.addEventListener("message", (event) => {
+    if (event.data instanceof ArrayBuffer) mux.receive(new Uint8Array(event.data));
+    else if (ArrayBuffer.isView(event.data)) mux.receive(new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength));
+  });
+  socket.addEventListener("close", () => mux.close("bb-box's side closed"));
+  socket.addEventListener("error", () => mux.close("the WebSocket to bb-box failed"));
+  return mux;
 }
 
 function describe(endpoint: DockerEndpoint): string {
@@ -121,34 +142,20 @@ export function relayHandlers(options: RelayOptions = {}) {
       },
       relay: async ({ secret, path }: { secret: string; path: string }, context: ExperimentalHostRpcContext) => {
         const endpoint = await (options.endpoint ?? dockerEndpoint)();
-        const server = process.env.BB_SERVER_URL;
-        if (!server) throw new Error("BB_SERVER_URL is not set in the worker, so it cannot reach bb-box.");
-        const url = `${server.replace(/^http/, "ws").replace(/\/$/, "")}${path}?s=${encodeURIComponent(secret)}`;
-        const socket = (options.connect ?? ((to) => new WebSocket(to) as unknown as RelayWebSocket))(url);
-        socket.binaryType = "arraybuffer";
+        if (!process.env.BB_SERVER_URL) throw new Error("BB_SERVER_URL is not set in the worker, so it cannot reach bb-box.");
         const lease = context.experimental_retainWorker();
         leases.add(lease);
-        const mux = new Mux(
-          { send: (data) => socket.send(data), close: (code, reason) => socket.close(code, reason) },
-          {
-            opener: false,
-            onOpen: (channel) => join(channel, endpoint),
-            pingMs: options.pingMs,
-            deadMs: options.deadMs,
-            onClose: () => {
-              muxes.delete(mux);
-              leases.delete(lease);
-              void lease.dispose();
-            },
+        const mux = dial(path, secret, options.connect, {
+          onOpen: (channel) => join(channel, endpoint),
+          pingMs: options.pingMs,
+          deadMs: options.deadMs,
+          onClose: () => {
+            muxes.delete(mux);
+            leases.delete(lease);
+            void lease.dispose();
           },
-        );
-        muxes.add(mux);
-        socket.addEventListener("message", (event) => {
-          if (event.data instanceof ArrayBuffer) mux.receive(new Uint8Array(event.data));
-          else if (ArrayBuffer.isView(event.data)) mux.receive(new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength));
         });
-        socket.addEventListener("close", () => mux.close("bb-box's side closed"));
-        socket.addEventListener("error", () => mux.close("the WebSocket to bb-box failed"));
+        muxes.add(mux);
         return { endpoint: describe(endpoint) };
       },
     },
