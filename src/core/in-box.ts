@@ -175,38 +175,63 @@ const WINDOWS_EMIT =
 /**
  * A job in a Windows box (#414). sshd ends every process of a command when
  * the command's PowerShell exits, so a command that is to outlive bb-box's
- * connection must start outside it: the script goes in a file in the job's
- * directory, stdin in another, and Start-Detached (#483) starts a runner
- * that runs the script with its output, error and exit status in the job's
- * files, and stops it and all it started at its timeout, with exit code 1,
- * as the watchdog does. The command itself waits for the status, passes the
- * files on, and exits with it. If bb-box drops the connection, the runner
- * goes on, and jobScript reads the files. PowerShell writes a redirected
- * output when it ends, so a running job's output so far may be empty.
+ * connection must start outside it. The script goes in a file in the job's
+ * directory and stdin in another, and WMI starts cmd, which runs the script
+ * in a PowerShell with the job's files as its stdin, output and error, then
+ * writes its exit code to the status file. The command waits on cmd's
+ * process, passes the files on, and exits with the status. A watchdog, a
+ * second PowerShell that WMI starts beside it and that holds cmd's handle,
+ * stops cmd and all it started at the timeout and writes status 1, as the
+ * watchdog of a command in the session gives; it ends with the job, or when
+ * the job ends first. If bb-box drops the connection, the job and the
+ * watchdog go on, and jobScript reads the files. A process WMI starts has
+ * the user's environment, not the session's, so the script reads the env
+ * file itself. One PowerShell start, about 155 ms, is the job's cost over a
+ * command in the session (measured on 7 October 2026).
  */
 function windowsJob(job: JobOptions, script: string, timeoutMs: number | undefined): string {
   const file = Buffer.from(powershellCommand(script), "utf8").toString("base64");
-  const wait = timeoutMs === undefined ? "$p.WaitForExit()" : `$p.WaitForExit(${Math.ceil(timeoutMs)})`;
-  const runner =
-    "$d=$env:BB_BOX_JOB;" +
-    "$p=Start-Process -FilePath ([Environment]::ProcessPath) -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',([char]34+(Join-Path $d 'script.ps1')+[char]34) " +
-    "-RedirectStandardInput (Join-Path $d 'in') -RedirectStandardOutput (Join-Path $d 'out') -RedirectStandardError (Join-Path $d 'err') -NoNewWindow -PassThru;" +
-    "$null=$p.Handle;" +
-    `if(${wait}){$c=$p.ExitCode}else{taskkill /T /F /PID $p.Id *>$null;$p.WaitForExit();$c=1};` +
-    "[IO.File]::WriteAllText((Join-Path $d 'status.tmp'),[string]$c);Move-Item -Force -LiteralPath (Join-Path $d 'status.tmp') -Destination (Join-Path $d 'status')";
   const jobs = "(Join-Path $HOME '.local\\state\\bb-box\\jobs')";
+  // A path in the job's directory, in double quotes, for cmd's command line.
+  const at = (name: string) => `$q+(Join-Path $bbJob '${name}')+$q`;
+  const run =
+    `$bbCl='cmd /d /v:on /s /c '+$q+$q+[Environment]::ProcessPath+$q+' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '+${at("script.ps1")}+` +
+    `' <'+${at("in")}+' >'+${at("out")}+' 2>'+${at("err")}+` +
+    `' & echo !errorlevel!>'+${at("status.tmp")}+' & move /y '+${at("status.tmp")}+' '+${at("status")}+' >nul'+$q;`;
+  const start = (command: string, what: string) =>
+    `$bbR=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${command};CurrentDirectory=(Get-Location -PSProvider FileSystem).ProviderPath};` +
+    `if($bbR.ReturnValue -ne 0 -or -not $bbR.ProcessId){[Console]::Error.WriteLine('bb-box: Windows did not start the ${what}: Win32_Process Create returned '+$bbR.ReturnValue+'.');exit 1};`;
+  // The watchdog's own script: stop the job at its timeout, unless it ended first, and say it timed out.
+  const dog =
+    timeoutMs === undefined
+      ? ""
+      : `$d=$env:BB_BOX_JOB;$p=Get-Process -Id $env:BB_BOX_JOB_PID -ErrorAction Ignore;if($p.ProcessName -ne 'cmd'){$p=$null};` +
+        `if($p -and -not $p.WaitForExit(${Math.ceil(timeoutMs)})){taskkill /T /F /PID $p.Id *>$null;$p.WaitForExit();` +
+        `[IO.File]::WriteAllText((Join-Path $d 'status.tmp'),'1');Move-Item -Force -LiteralPath (Join-Path $d 'status.tmp') -Destination (Join-Path $d 'status')}`;
+  // The watchdog's command line carries the job's directory and cmd's process ID itself, as a WMI start carries no variables.
+  const dogLine =
+    timeoutMs === undefined
+      ? ""
+      : `$bbDogScript='$env:BB_BOX_JOB='+[char]39+$bbJob.Replace([string][char]39,[string][char]39*2)+[char]39+';$env:BB_BOX_JOB_PID='+$bbCmd+';'+${ps(dog)};` +
+        `$bbDogLine=$q+[Environment]::ProcessPath+$q+' -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bbDogScript));` +
+        start("$bbDogLine", "watchdog for the job");
   return (
-    `$bbJob=${windowsJobDir(job.id)};` +
+    `$bbJob=${windowsJobDir(job.id)};$q=[char]34;` +
     job.forget.map((id) => `Remove-Item -Recurse -Force -LiteralPath ${windowsJobDir(id)} -ErrorAction Ignore;`).join("") +
     (job.prune ? `Get-ChildItem -Directory -LiteralPath ${jobs} -ErrorAction Ignore|Where-Object LastWriteTime -lt (Get-Date).AddDays(-${JOB_DAYS})|Remove-Item -Recurse -Force -ErrorAction Ignore;` : "") +
     "New-Item -ItemType Directory -Force -Path $bbJob|Out-Null;" +
     `[IO.File]::WriteAllBytes((Join-Path $bbJob 'script.ps1'),[Convert]::FromBase64String('${file}'));` +
     "$f=[IO.File]::Create((Join-Path $bbJob 'in'));try{[Console]::OpenStandardInput().CopyTo($f)}finally{$f.Close()};" +
-    "$env:BB_BOX_JOB=$bbJob;" +
-    `$bbRunner=Start-Detached -Command ${ps(runner)};` +
-    "Remove-Item Env:BB_BOX_JOB;" +
+    run +
+    start("$bbCl", "job") +
+    "$bbCmd=$bbR.ProcessId;" +
+    dogLine +
+    // Waits on cmd's handle, not by polling; a cmd that ended already has written the status.
+    "try{(Get-Process -Id $bbCmd -ErrorAction Stop).WaitForExit()}catch{};" +
     "$bbStatus=Join-Path $bbJob 'status';" +
-    "while(-not (Test-Path -LiteralPath $bbStatus)){if(-not (Get-Process -Id $bbRunner -ErrorAction Ignore)){Start-Sleep -Milliseconds 300;if(-not (Test-Path -LiteralPath $bbStatus)){[Console]::Error.WriteLine('bb-box: the job ended without an exit status: the box'+[char]39+'s disk may be full.');exit 1}};Start-Sleep -Milliseconds 100};" +
+    // The watchdog writes the status of a job it stopped a moment after cmd ends.
+    "for($i=0;-not (Test-Path -LiteralPath $bbStatus) -and $i -lt 50;$i++){Start-Sleep -Milliseconds 100};" +
+    "if(-not (Test-Path -LiteralPath $bbStatus)){[Console]::Error.WriteLine('bb-box: the job ended without an exit status: the box'+[char]39+'s disk may be full.');exit 1};" +
     WINDOWS_EMIT +
     "bbEmit ([Console]::OpenStandardOutput()) (Join-Path $bbJob 'out') 0;bbEmit ([Console]::OpenStandardError()) (Join-Path $bbJob 'err') 0;" +
     "exit [int](Get-Content -Raw -LiteralPath $bbStatus)"
