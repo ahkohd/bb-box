@@ -63,10 +63,11 @@ Limits:
   and the error a tool gives then say when and why. bb-box starts a box
   whose VM crashed again at once, unless it did so less than 10 minutes
   before: call `box_status` after a few seconds.
-- `box_copy` moves one file of up to 16 MiB. Tar a directory first. A
-  relative workspace path is under the thread's workspace directory. A
-  relative box path, or one that starts with `~/`, is under the box user's
-  home.
+- `box_copy` moves one file of up to 16 MiB. Tar a directory first. A larger
+  file goes in parts, split on one side and joined on the other: its error
+  gives the commands. A relative workspace path is under the thread's
+  workspace directory. A relative box path, or one that starts with `~/`, is
+  under the box user's home.
 - `box_status` says whether the box user can use `sudo`, and `box_list`
   says it for each kind. On Proxmox LXC boxes, Docker boxes and SSH host
   pool boxes with Docker it can, without a password; on pool boxes without

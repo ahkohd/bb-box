@@ -8,7 +8,7 @@ import { BoxError, OPERATOR, SPARES, describeError, type BoxErrorCode, type BoxR
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
-import type { RunResult } from "../transports/types.ts";
+import type { GuestOs, RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, tryText, type KindView } from "./views.ts";
@@ -90,6 +90,40 @@ export function workspacePath(root: string | null, path: string): string {
   if (paths.isAbsolute(path)) return paths.normalize(path);
   if (!root) throw new Error(`${path} is a relative path, and this thread's workspace has no directory. Give an absolute path.`);
   return paths.resolve(root, path);
+}
+
+/**
+ * Why a file is too large for box_copy, and how to move it in parts (#485).
+ * BB's file API takes a file whole, up to 25 MB (BB request 19), so box_copy
+ * moves up to 16 MiB, which base64 keeps under it; a larger file goes as
+ * parts the agent splits on one side and joins on the other.
+ */
+export function tooLargeToCopy(path: string, size: number | null, direction: "to_box" | "from_box", os: GuestOs): string {
+  const name = (os === "windows" ? win32 : posix).basename(path);
+  const parts = `${name}.part-`;
+  const limit = `box_copy moves files up to ${COPY_MAX_BYTES / 1024 / 1024} MiB, as BB's file API takes a file whole and refuses one over 25 MB`;
+  const what = `${path}${size === null ? " is too large" : ` is ${size} bytes`}; ${limit}.`;
+  const splitHere = `split -b 15m ${path} ${path}.part-`;
+  const joinHere = `cat ${parts}* > ${name}`;
+  if (os === "windows") {
+    const join = `$o = [IO.File]::Create("${name}"); Get-ChildItem ${parts}* | Sort-Object Name | ForEach-Object { $b = [IO.File]::ReadAllBytes($_.FullName); $o.Write($b, 0, $b.Length) }; $o.Close()`;
+    const split = `$i = [IO.File]::OpenRead("${name}"); $b = New-Object byte[] 15MB; $n = 0; while (($r = $i.Read($b, 0, $b.Length)) -gt 0) { [IO.File]::WriteAllBytes(("${parts}{0:d3}" -f $n++), $b[0..($r - 1)]) }; $i.Close()`;
+    return direction === "to_box"
+      ? `${what} Move it in parts: run ${splitHere} on this side, box_copy each part, then join them in the box with box_run: ${join}. Compare its Get-FileHash with sha256sum here.`
+      : `${what} Move it in parts: split it in the box with box_run: ${split}. box_copy each part, then join them on this side: ${joinHere}. Compare its sha256sum with Get-FileHash in the box.`;
+  }
+  const hash = os === "macos" ? "shasum -a 256" : "sha256sum";
+  return direction === "to_box"
+    ? `${what} Move it in parts: run ${splitHere} on this side, box_copy each part, then join them in the box with box_run: ${joinHere} && rm ${parts}*. Compare ${hash} on both sides.`
+    : `${what} Move it in parts: split it in the box with box_run: split -b 15m ${path} ${parts}. box_copy each part, then join them on this side: ${joinHere}. Compare ${hash} on both sides.`;
+}
+
+/** BB's file API refusing a file for its size, with the size where it says it. */
+function refusedForSize(error: unknown): { size: number | null } | null {
+  const text = error instanceof Error ? error.message : String(error);
+  if (!/\b413\b|exceeds the \d+ ?MB limit/.test(text)) return null;
+  const size = /File size (\d+) bytes/.exec(text);
+  return { size: size ? Number(size[1]) : null };
 }
 
 /** The box's transport runs in the box user's home, so a relative path is under it; so is one that starts with ~/. */
@@ -353,7 +387,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   bb.agents.registerTool({
     name: "box_copy",
     description:
-      "Copy one file between this thread's workspace and a box. A relative workspace path is under the workspace; a relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
+      "Copy one file, up to 16 MiB, between this thread's workspace and a box; a larger one goes in parts, as the error says. A relative workspace path is under the workspace; a relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
     presentation: { label: { pending: "Copying a file", completed: "Copied a file" } },
     parameters: z.object({
       box: boxParam,
@@ -370,14 +404,19 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         if (direction === "to_box") {
           const source = workspacePath(workspace.path, from);
           const target = boxPath(to ?? pathsOf(workspace.path).basename(source));
-          const file = await bb.sdk.files.read({ hostId: workspace.hostId, path: source, rootPath, signal });
+          const file = await bb.sdk.files.read({ hostId: workspace.hostId, path: source, rootPath, signal }).catch((error: unknown) => {
+            const refused = refusedForSize(error);
+            throw refused ? new Error(tooLargeToCopy(source, refused.size, direction, found.capabilities.os)) : error;
+          });
           if (!("content" in file)) throw new Error(`BB did not return the contents of ${source}.`);
-          if (file.sizeBytes > COPY_MAX_BYTES) throw new Error(`${source} is ${file.sizeBytes} bytes; box_copy moves files up to ${COPY_MAX_BYTES / 1024 / 1024} MiB. Split or compress it first.`);
+          if (file.sizeBytes > COPY_MAX_BYTES) throw new Error(tooLargeToCopy(source, file.sizeBytes, direction, found.capabilities.os));
           const box = await boxes.writeFile(owner, found.id, target, bytes(file.content, file.contentEncoding), { signal });
           return `Copied ${source} (${file.sizeBytes} bytes) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
         }
         const target = workspacePath(workspace.path, to ?? (found.capabilities.os === "windows" ? win32 : posix).basename(from));
-        const { box, data } = await boxes.readFile(owner, found.id, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal });
+        const { box, data } = await boxes.readFile(owner, found.id, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal }).catch((error: unknown) => {
+          throw error instanceof Error && /is larger than \d+ bytes/.test(error.message) ? new Error(tooLargeToCopy(from, null, direction, found.capabilities.os)) : error;
+        });
         await bb.sdk.files.write({
           hostId: workspace.hostId,
           path: target,
