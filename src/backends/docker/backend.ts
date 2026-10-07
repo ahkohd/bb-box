@@ -53,7 +53,7 @@ import {
 import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
-import { judgeImage, recordFromJson } from "../images.ts";
+import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
@@ -237,14 +237,32 @@ function ownerOf(labels: Readonly<Record<string, string>>): BoxOwner | null {
   };
 }
 
-/** An image's labels, from `docker image inspect --format '{{json .Config.Labels}}'`. */
-function imageLabels(text: string): Record<string, unknown> {
+/** Where #imageLabels keeps the image's size beside its labels. */
+const SIZE = Symbol("size");
+
+/** What `docker image inspect` gives of an image: its size in bytes, then its labels. */
+const IMAGE_FORMAT = "{{.Size}} {{json .Config.Labels}}";
+
+/** An image's labels and size, from `docker image inspect --format IMAGE_FORMAT`. */
+function imageFacts(text: string): { labels: Record<string, unknown>; sizeBytes: number | null } {
+  const space = text.indexOf(" ");
+  const size = Number(text.slice(0, space));
+  let labels: Record<string, unknown> = {};
   try {
-    return (JSON.parse(text) as Record<string, unknown> | null) ?? {};
+    labels = (JSON.parse(text.slice(space + 1)) as Record<string, unknown> | null) ?? {};
   } catch {
     // An image without labels prints null.
-    return {};
   }
+  return { labels, sizeBytes: space > 0 && Number.isFinite(size) && size > 0 ? size : null };
+}
+
+/**
+ * An image's record with Docker's size of the image (#474): what finalizing
+ * measures in a container is the Docker host's whole filesystem, and records
+ * built before the fix carry it.
+ */
+function withSize(record: ImageRecord | null, sizeBytes: number | null): ImageRecord | null {
+  return record && sizeBytes !== null ? { ...record, sizeGiB: Math.round((sizeBytes / 1024 ** 3) * 10) / 10 } : record;
 }
 
 function dataOf(container: ContainerInfo): Record<string, string> {
@@ -509,9 +527,9 @@ export class DockerBackend implements Backend {
   async #readGpuBusId(signal?: AbortSignal): Promise<void> {
     const image = this.#config.images["linux-desktop"];
     if (!image || !this.#config.docker) return;
-    const result = await this.#cli.run(["image", "inspect", "--format", "{{json .Config.Labels}}", image], { timeoutMs: 30_000, signal }).catch(() => null);
-    if (result?.exitCode !== 0) return;
-    this.#gpuBusId = imageLabels(result.stdout)[LABELS.gpuBusId] === "1";
+    const labels = await this.#imageLabels(image, signal).catch(() => null);
+    if (!labels) return;
+    this.#gpuBusId = labels[LABELS.gpuBusId] === "1";
   }
 
   #kind(id: string): BoxKind {
@@ -889,16 +907,16 @@ export class DockerBackend implements Backend {
         const kinds = serves.join(", ");
         const id = `image.${image}`;
         const name = `Image ${image}`;
-        const result = await this.#cli.run(["image", "inspect", "--format", "{{json .Config.Labels}}", image], { timeoutMs: 30_000, signal });
+        const result = await this.#cli.run(["image", "inspect", "--format", IMAGE_FORMAT, image], { timeoutMs: 30_000, signal });
         if (result.exitCode !== 0) {
           push(id, name, "fail", `${info.name} has no image ${image}, which ${kinds} boxes run. bb-box never pulls images.`, this.#buildFix("Build it with setup/docker/build.sh, or pull or load it on the Docker host."));
           continue;
         }
-        const labels = imageLabels(result.stdout);
+        const { labels, sizeBytes } = imageFacts(result.stdout.trim());
         const gpuDesktops = image === this.#config.images["linux-desktop"];
         if (gpuDesktops) this.#gpuBusId = labels[LABELS.gpuBusId] === "1";
         const built = labels[LABELS.imageVersion];
-        const record = recordFromJson(labels[LABELS.imageRecord]);
+        const record = withSize(recordFromJson(labels[LABELS.imageRecord]), sizeBytes);
         if (built === IMAGE_VERSION && gpuDesktops && !this.#gpuBusId && this.#config.docker && !info.rootless) {
           push(
             id,
@@ -1135,13 +1153,15 @@ export class DockerBackend implements Backend {
   }
 
   /** An image's labels, or null when the host has no such image. */
-  async #imageLabels(ref: string, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
-    const result = await this.#cli.run(["image", "inspect", "--format", "{{json .Config.Labels}}", ref], { timeoutMs: 30_000, signal });
-    return result.exitCode === 0 ? imageLabels(result.stdout) : null;
+  async #imageLabels(ref: string, signal?: AbortSignal): Promise<(Record<string, unknown> & { readonly [SIZE]?: number | null }) | null> {
+    const result = await this.#cli.run(["image", "inspect", "--format", IMAGE_FORMAT, ref], { timeoutMs: 30_000, signal });
+    if (result.exitCode !== 0) return null;
+    const { labels, sizeBytes } = imageFacts(result.stdout.trim());
+    return { ...labels, [SIZE]: sizeBytes };
   }
 
-  #imageBuild(ref: string, kind: string, image: string, labels: Record<string, unknown>, current: boolean): ImageBuild {
-    const record = recordFromJson(labels[LABELS.imageRecord]);
+  #imageBuild(ref: string, kind: string, image: string, labels: Record<string, unknown> & { readonly [SIZE]?: number | null }, current: boolean): ImageBuild {
+    const record = withSize(recordFromJson(labels[LABELS.imageRecord]), labels[SIZE] ?? null);
     return { ref, image, kind, build: record?.build ?? null, record, current };
   }
 

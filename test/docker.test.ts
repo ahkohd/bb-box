@@ -727,18 +727,23 @@ test("the doctor judges each image by its record's label: contract, age, BB's ap
   writeFileSync(
     join(fake.root, "images.json"),
     JSON.stringify({
-      "bbbox/linux:1": { "bbbox.image-version": "1", "bbbox.image-record": record(1, { kind: "linux", pins: linuxPins }) },
+      // A record finalizing gave the Docker host's whole filesystem as the image's size (#474).
+      "bbbox/linux:1": { "bbbox.image-version": "1", "bbbox.image-record": record(1, { kind: "linux", pins: linuxPins, sizeGiB: 190.7 }) },
       "bbbox/linux-desktop:1": { "bbbox.image-version": "1", "bbbox.gpu-bus-id": "1", "bbbox.image-record": record(20, { bbApp: null, pins: "x".repeat(64) }) },
       "bbbox/linux-desktop-wayland:1": { "bbbox.image-version": "1", "bbbox.image-record": record(1, { contract: 0 }) },
     }),
   );
+  writeFileSync(join(fake.root, "image-sizes.json"), JSON.stringify({ "bbbox/linux:1": 2_400_000_000 }));
   const backend = new DockerBackend(dockerConfig(), { ...testContext(), images }, { binary: fake.binary, readyTimeoutMs: 2_000 });
   const report = await backend.doctor(signal());
   const by = (image: string) => report.checks.find((check) => check.id === `image.${image}`)!;
 
   const linux = by("bbbox/linux:1");
   assert.deepEqual([linux.status, linux.fix], ["ok", null]);
-  assert.match(linux.detail, /^For linux boxes\. Standard image build\.20261003-021500-3f9c, built \d+ \w+ \(1 day ago\): Ubuntu 24\.04\.5 LTS, node 24\.21\.0\.$/);
+  // The size is Docker's of the image, not the record's.
+  assert.match(linux.detail, /^For linux boxes\. Standard image build\.20261003-021500-3f9c, built \d+ \w+ \(1 day ago\): Ubuntu 24\.04\.5 LTS, node 24\.21\.0, 2\.2 GiB\.$/);
+  const listed = (await backend.images!.list(signal())).builds.find((build) => build.ref === "bbbox/linux:1");
+  assert.equal(listed?.record?.sizeGiB, 2.2, "the image list's record has Docker's size too");
 
   const desktop = by("bbbox/linux-desktop:1");
   assert.equal(desktop.status, "warn");

@@ -75,8 +75,9 @@ rm -rf /home/*/.local/share/Mousepad /home/*/.config/dconf/user
 : >/etc/machine-id
 rm -f /var/lib/dbus/machine-id
 # The image's size in its record, now that it is clean. A Docker image's is
-# its layers', which Docker gives.
-if ! grep -qx runtime=docker "$out/template-release"; then
+# its layers', which Docker gives: in a container, as in a Docker build or a
+# bake in a Docker box, / is the Docker host's whole filesystem (#474).
+if ! grep -qx runtime=docker "$out/template-release" && [ ! -f /.dockerenv ]; then
   size=$(df -B1 --output=used / | tail -1 | awk '{ printf "%.1f", $1 / 1073741824 }')
   jq -c --argjson size "$size" '.sizeGiB = $size' "$out/image.json" >"$out/image.json.new"
   mv "$out/image.json.new" "$out/image.json"
