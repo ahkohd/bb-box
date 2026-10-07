@@ -458,8 +458,9 @@ Selkies over the display's route and carries messages, not bytes:
   hands the display from one page to another. The relay passes only its
   video requests, and drops the rest of what it sends.
 - The input of the viewer with control goes over the box's input
-  connection, one per box, which asks for no video. A pointer loses its
-  sequence number there, as several viewers' input shares it.
+  connection, one per box, which asks for no video. It opens as a person
+  takes control, so their first key does not wait for it. A pointer loses
+  its sequence number there, as several viewers' input shares it.
 - The box's clipboard reaches only the viewer with control.
 - Selkies paces a viewer by its socket, which the route hides, so the relay
   paces each by the frames it acknowledges: a second behind, it drops that
