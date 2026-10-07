@@ -26,6 +26,7 @@ server protocol 219). They are drafts until filed with BB.
 | [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | draft | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
 | [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | draft | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
 | [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | draft | `box_run` returns after 270 s: a Linux or macOS command goes on as a job for `box_job`, and a Windows one is stopped (#486) |
+| [Move large files through the file API](#20-move-large-files-through-the-file-api) | draft | `box_copy` moves files up to 16 MiB; a larger one, such as an installer or a build artifact, goes in parts the agent splits and joins by hand (#485) |
 
 ## 1. BB's host app on Windows
 
@@ -696,6 +697,29 @@ plugin's signal with a reason when BB ends the call, and document the limit.
 running then goes on in its box as a job, and the answer names it with its
 output so far for `box_job`. A Windows command is stopped then, with its
 output so far, as Windows boxes have no jobs yet (#414).
+
+## 20. Move large files through the file API
+
+**What bb-box needs.** To copy a file of any size between a thread's workspace
+or storage folder and a box, as `box_copy` does for small ones: installers,
+app bundles and build artifacts are often hundreds of megabytes, and trying a
+build on a box is a common reason for one (#485).
+
+**What BB does now.** The plugin SDK's `files.read` returns a whole file as
+base64 in one answer and `files.write` takes one the same way, with no offset,
+length or append. BB refuses a file over 25 MB with HTTP 413: "File size ...
+bytes exceeds the 25 MB limit".
+
+**What we ask.** A way to move a large file in pieces: a ranged `files.read`
+(offset and length) and a `files.write` that appends or writes at an offset,
+or a stream in each direction. Either keeps memory flat on BB's server and the
+machine.
+
+**Until then.** `box_copy` moves up to 16 MiB, which base64 keeps under the
+limit, and a larger file's error gives the commands to split it on one side,
+copy the parts and join them on the other, with a hash to compare. Serving the
+file over HTTP from the thread's machine works only when the box can reach it,
+and exposes the file to the network meanwhile.
 
 ## Checked, no request needed
 

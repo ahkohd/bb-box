@@ -3,7 +3,9 @@
 // and settings.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
@@ -15,7 +17,7 @@ import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
-import { boxPath, workspacePath } from "../src/plugin/tools.ts";
+import { boxPath, tooLargeToCopy, workspacePath } from "../src/plugin/tools.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
@@ -262,6 +264,9 @@ async function start(
       files: {
         read: async ({ path, rootPath }: { path: string; rootPath?: string }) => {
           withinRoot(path, rootPath);
+          // As BB's file API: a file over 25 MB is refused whole (#485).
+          const size = statSync(absolute(path)).size;
+          if (size > 25 * 1000 * 1000) throw Object.assign(new Error(`HTTP 413: File size ${size} bytes exceeds the 25 MB limit`), { status: 413 });
           const data = readFileSync(absolute(path));
           return { path, content: data.toString("base64"), contentEncoding: "base64", sha256: "", sizeBytes: data.byteLength } as never;
         },
@@ -618,6 +623,31 @@ test("box_copy takes files in the thread's storage folder both ways, by its vari
   const outside = await tool("box_copy", { box: name, direction: "to_box", from: join(world.root, "other.txt") });
   assert.ok(isError(outside));
   assert.match(text(outside), /escapes read root/);
+});
+
+test("a file too large for box_copy is refused with how to move it in parts, both ways, and the parts join to the file (#485)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const { name } = await only(app);
+  const big = join(world.workspace, "setup.bin");
+  writeFileSync(big, randomBytes(26 * 1024 * 1024));
+  const refused = await tool("box_copy", { box: name, direction: "to_box", from: big });
+  assert.ok(isError(refused));
+  assert.match(text(refused), new RegExp(`${big} is ${26 * 1024 * 1024} bytes; box_copy moves files up to 16 MiB, as BB's file API takes a file whole and refuses one over 25 MB\\. Move it in parts: run split -b 15m ${big} ${big}\\.part- on this side`));
+
+  // The recipe works: split here, copy each part, join in the box.
+  execFileSync("split", ["-b", "15m", big, `${big}.part-`]);
+  const parts = readdirSync(world.workspace).filter((file) => file.startsWith("setup.bin.part-")).sort();
+  assert.equal(parts.length, 2);
+  for (const part of parts) assert.ok(!isError(await tool("box_copy", { box: name, direction: "to_box", from: part })));
+  assert.match(text(await tool("box_run", { box: name, command: "cat setup.bin.part-* > setup.bin && rm setup.bin.part-* && sha256sum setup.bin" })), new RegExp(createHash("sha256").update(readFileSync(big)).digest("hex")));
+
+  // From the box, the transport's limit says the same, the other way.
+  const back = await tool("box_copy", { box: name, direction: "from_box", from: "setup.bin" });
+  assert.ok(isError(back));
+  assert.match(text(back), /setup\.bin is too large; box_copy moves files up to 16 MiB.* split it in the box with box_run: split -b 15m setup\.bin setup\.bin\.part-\. box_copy each part, then join them on this side: cat setup\.bin\.part-\* > setup\.bin\./);
+  assert.match(tooLargeToCopy("C:\\Users\\box\\app.msi", null, "from_box", "windows"), /\$i = \[IO\.File\]::OpenRead\("app\.msi"\).*"app\.msi\.part-\{0:d3\}".*cat app\.msi\.part-\* > app\.msi/);
 });
 
 test("box_copy names a file from a Windows box after its source", async (t) => {

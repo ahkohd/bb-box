@@ -72,11 +72,12 @@ Limits:
   and the error a tool gives then say when and why. bb-box starts a box
   whose VM crashed again at once, unless it did so less than 10 minutes
   before: call `box_status` after a few seconds.
-- `box_copy` moves one file of up to 16 MiB. Tar a directory first. A relative
-  workspace path is under the thread's workspace directory. A path in the
-  thread's storage folder, absolute or starting with `$BB_THREAD_STORAGE/`, is
-  there, both ways. A relative box path, or one that starts with `~/`, is
-  under the box user's home.
+- `box_copy` moves one file of up to 16 MiB, as BB's file API takes a file
+  whole and refuses one over 25 MB. Tar a directory first. Move a larger file
+  in parts, as below. A relative workspace path is under the thread's
+  workspace directory. A path in the thread's storage folder, absolute or
+  starting with `$BB_THREAD_STORAGE/`, is there, both ways. A relative box
+  path, or one that starts with `~/`, is under the box user's home.
 - `box_status` says whether the box user can use `sudo`, and `box_list`
   says it for each kind. On Proxmox LXC boxes, Docker boxes and SSH host
   pool boxes with Docker it can, without a password; on pool boxes without
@@ -84,6 +85,35 @@ Limits:
 - Each command reads `~/.config/bb-box/env`, which sets `BB_BOX_ID`,
   `BB_BOX_NAME`, `BB_BOX_KIND` and `BB_THREAD_ID`, and `BB_HOST_ID` once the
   box is a BB machine.
+
+### Files over 16 MiB
+
+Plan for a large file, such as an installer or a build artifact, before
+copying it: split it into parts of 15 MB, `box_copy` each part, join them on
+the other side, and compare hashes. For `big.bin` going into the box:
+
+- On this side: `split -b 15m big.bin big.bin.part-`, then `box_copy` each
+  `big.bin.part-*` (`to_box`).
+- In a Linux or macOS box, with `box_run`:
+  `cat big.bin.part-* > big.bin && rm big.bin.part-*`, then compare
+  `sha256sum big.bin` (`shasum -a 256` on macOS) with this side's.
+- In a Windows box, with `box_run`:
+
+  ```powershell
+  $o = [IO.File]::Create("big.bin"); Get-ChildItem big.bin.part-* | Sort-Object Name | ForEach-Object { $b = [IO.File]::ReadAllBytes($_.FullName); $o.Write($b, 0, $b.Length) }; $o.Close()
+  Get-FileHash big.bin
+  ```
+
+Coming out of the box, split it there, `box_copy` each part (`from_box`), then
+`cat big.bin.part-* > big.bin` on this side. A Linux or macOS box splits with
+`split -b 15m big.bin big.bin.part-`; a Windows box with:
+
+```powershell
+$i = [IO.File]::OpenRead("big.bin"); $b = New-Object byte[] 15MB; $n = 0; while (($r = $i.Read($b, 0, $b.Length)) -gt 0) { $o = [IO.File]::Create(("big.bin.part-{0:d3}" -f $n++)); $o.Write($b, 0, $r); $o.Close() }; $i.Close()
+```
+
+`box_copy`'s error for a file too large gives the same commands, with the
+file's own name.
 
 ## Kinds
 
