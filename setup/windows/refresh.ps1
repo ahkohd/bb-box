@@ -51,28 +51,46 @@ function Update-Windows {
 $ErrorActionPreference = 'Stop'
 $log = 'C:\bb-box\build\updates.log'
 function Say($text) { Add-Content $log "$(Get-Date -Format HH:mm:ss) $text" }
+# Another installation is going on: Windows' own updates, as Defender's run whatever the policy.
+$BUSY = 0x80240016
 try {
   $session = New-Object -ComObject Microsoft.Update.Session
-  $found = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'").Updates
-  $updates = New-Object -ComObject Microsoft.Update.UpdateColl
-  foreach ($update in $found) {
-    if (-not $update.EulaAccepted) { $update.AcceptEula() }
-    Say "update: $($update.Title)"
-    [void] $updates.Add($update)
-  }
-  $installed = 0; $failed = 0; $reboot = $false
-  if ($updates.Count) {
-    $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $updates; [void] $downloader.Download()
-    $installer = $session.CreateUpdateInstaller(); $installer.Updates = $updates
-    $result = $installer.Install()
-    for ($i = 0; $i -lt $updates.Count; $i++) {
-      # 2 succeeded, 3 succeeded with errors.
-      $code = $result.GetUpdateResult($i).ResultCode
-      if ($code -in 2, 3) { $installed++ } else { $failed++; Say "update failed ($code): $($updates.Item($i).Title)" }
+  $installer = $session.CreateUpdateInstaller()
+  $found = 0; $installed = 0; $failed = 0; $reboot = $false; $busy = 0
+  # Passes until a search finds nothing: installing one update can offer the next, as Defender's do.
+  for ($pass = 1; $pass -le 5; $pass++) {
+    for ($waited = 0; $installer.IsBusy -and $waited -lt 900; $waited += 10) { if (-not $waited) { Say 'Windows is installing updates of its own: waiting' }; Start-Sleep -Seconds 10 }
+    $offered = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'").Updates
+    if (-not $offered.Count) { $busy = 0; break }
+    $updates = New-Object -ComObject Microsoft.Update.UpdateColl
+    foreach ($update in $offered) {
+      if (-not $update.EulaAccepted) { $update.AcceptEula() }
+      Say "update: $($update.Title)"
+      [void] $updates.Add($update)
     }
-    $reboot = $result.RebootRequired
+    $found += $updates.Count
+    $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $updates
+    $downloaded = $downloader.Download()
+    for ($i = 0; $i -lt $updates.Count; $i++) {
+      $one = $downloaded.GetUpdateResult($i)
+      if ($one.ResultCode -notin 2, 3) { Say ('download failed ({0}, HResult 0x{1:X8}): {2}' -f $one.ResultCode, $one.HResult, $updates.Item($i).Title) }
+    }
+    $installer.Updates = $updates
+    $result = $installer.Install()
+    $busy = 0
+    for ($i = 0; $i -lt $updates.Count; $i++) {
+      # 2 succeeded, 3 succeeded with errors; the HResult says why one did not.
+      $one = $result.GetUpdateResult($i)
+      if ($one.ResultCode -in 2, 3) { $installed++ }
+      elseif (($one.HResult -band 0xFFFFFFFF) -eq $BUSY) { $busy++; Say "update waits for Windows' own installation: $($updates.Item($i).Title)" }
+      else { $failed++; Say ('update failed ({0}, HResult 0x{1:X8}): {2}' -f $one.ResultCode, $one.HResult, $updates.Item($i).Title) }
+    }
+    if ($result.RebootRequired) { $reboot = $true }
+    # A restart first, or a failure: the refresh restarts the box and runs this again, or stops.
+    if ($reboot -or $failed) { break }
   }
-  Set-Content 'C:\bb-box\build\updates.json' (@{ found = $updates.Count; installed = $installed; failed = $failed; reboot = $reboot } | ConvertTo-Json -Compress)
+  if ($busy) { $failed += $busy; Say "Windows was still installing updates of its own after 5 passes" }
+  Set-Content 'C:\bb-box\build\updates.json' (@{ found = $found; installed = $installed; failed = $failed; reboot = $reboot } | ConvertTo-Json -Compress)
 } catch {
   Say "FAILED: $_"
   Set-Content 'C:\bb-box\build\updates.json' (@{ error = "$_" } | ConvertTo-Json -Compress)
