@@ -817,11 +817,12 @@ export class Boxes {
     return typical;
   }
 
-  /** Spares ready to claim now, keyed "<kind>|<backend>" (032), for the picker's offers. */
+  /** Each kind's spares ready to claim now, keyed "<kind>|<backend>" (032), for the picker's offers. */
   async spareReadyByBackend(): Promise<Record<string, number>> {
     const counts: Record<string, number> = {};
     for (const spare of await this.list(SPARES)) {
-      if (!isActive(spare) || !(await this.#claimable(spare))) continue;
+      // An image's spares (#440) are not its kind's: a box of the standard image does not claim them.
+      if (!isActive(spare) || spare.image || !(await this.#claimable(spare))) continue;
       const key = `${spare.kind}|${spare.backend}`;
       counts[key] = (counts[key] ?? 0) + 1;
     }

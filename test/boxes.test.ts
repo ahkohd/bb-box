@@ -1852,6 +1852,7 @@ test("a project's box claims a spare of its image's current build, made ahead, a
   assert.deepEqual(readied, [], "a spare's own start is no use of its image");
   assert.deepEqual(await world.boxes.imageSpareCounts(), { "rust|fake|linux": { ready: 1, making: 0 } });
   assert.deepEqual(await world.boxes.spareCounts(), {}, "an image's spare is not its kind's");
+  assert.deepEqual(await world.boxes.spareReadyByBackend(), {}, "nor ready for the kind's boxes");
 
   // A kind's box makes its own guest; the project's box takes the spare at once.
   const plain = await world.boxes.acquire({ threadId: THREAD, projectId: "prj_other", kind: "linux" });

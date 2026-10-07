@@ -171,12 +171,15 @@ export function formWords(offer: OfferView): string | null {
   }
 }
 
-/** A row's second line: what the boxes are, spares ready (green), free machines, the usual start. */
-export function OfferWords({ offer }: { offer: OfferView }) {
+/**
+ * A row's second line: what the boxes are, "ready now" (green) when the box would claim a spare there, free machines, the usual start.
+ * `ready` is the form's say, as the box's image and size decide (#440); a spare's count is no use to the person, so it is not given.
+ */
+export function OfferWords({ offer, ready = offer.ready > 0 }: { offer: OfferView; ready?: boolean }) {
   const parts: ReactNode[] = [];
   const form = formWords(offer);
   if (form) parts.push(<span key="form">{form}</span>);
-  if (offer.ready) parts.push(<span key="ready" className="text-emerald-700 dark:text-emerald-400">{offer.ready} ready now</span>);
+  if (ready) parts.push(<span key="ready" className="text-emerald-700 dark:text-emerald-400">ready now</span>);
   if (offer.free !== null) parts.push(<span key="free">{offer.free} free</span>);
   if (offer.typicalReadyMs !== null) parts.push(<span key="usually">usually ~{seconds(offer.typicalReadyMs)}</span>);
   if (!parts.length) return null;
@@ -320,7 +323,7 @@ export function OptionCard({
  * shifts; a touch screen, with no hover, shows it on the chosen row (the
  * operator's notes of 2 October 2026).
  */
-export function ProviderRow({ offer, selected, onClick, optionRef, info }: { offer: OfferView; selected: boolean; onClick: () => void; optionRef?: (element: HTMLButtonElement | null) => void; info?: ReactNode }) {
+export function ProviderRow({ offer, ready, selected, onClick, optionRef, info }: { offer: OfferView; ready?: boolean; selected: boolean; onClick: () => void; optionRef?: (element: HTMLButtonElement | null) => void; info?: ReactNode }) {
   return (
     <div className={cn("group flex items-center rounded-md border", selected ? "border-transparent bg-state-active" : "border-input hover:bg-state-hover")}>
       <button
@@ -333,7 +336,7 @@ export function ProviderRow({ offer, selected, onClick, optionRef, info }: { off
         className="flex min-w-0 flex-1 flex-col items-start rounded-md px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer)}</span>
-        <OfferWords offer={offer} />
+        <OfferWords offer={offer} ready={ready} />
       </button>
       {info ? (
         <div
