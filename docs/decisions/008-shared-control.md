@@ -8,7 +8,9 @@ agent can take control back when asked. Extended by
 [037](037-a-panel-keeps-a-boxs-desktop-and-terminal.md): a hidden panel tab
 counts as a viewer gone. Partly superseded by
 [045](045-a-persons-control-lasts-through-a-restart-of-the-plugin.md): a
-restart of the plugin keeps a person's control for their viewer.
+restart of the plugin keeps a person's control for their viewer. Extended by
+[020](020-control-belongs-to-a-viewer.md): control belongs to one viewer,
+not to a person.
 
 ## Context
 

@@ -1,8 +1,9 @@
 # 016: Changes from building Interface v1
 
 Status: accepted, 30 September 2026. Partly supersedes
-[009](009-conformance-suite-and-doctor.md) and
-[011](011-interface-v1.md).
+[009](009-conformance-suite-and-doctor.md) and [011](011-interface-v1.md).
+Extended by [018](018-guests-name-their-install-and-box.md): guests name
+their install and their box.
 
 ## Context
 
