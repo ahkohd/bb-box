@@ -170,6 +170,7 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `linux-image` | Linux image (arm64) | string | boxes |  | The Tart VM on each Mac that linux-arm64 boxes are cloned from, as setup/tart/prepare-linux-image.sh builds it (bb-box-linux). Empty turns them off. |
 | `linux-desktop-image` | Linux desktop image (arm64) | string | boxes |  | The Tart VM on each Mac that linux-arm64-desktop-cpu boxes are cloned from, as setup/tart/prepare-linux-image.sh --desktop builds it (bb-box-linux-desktop). Empty turns them off. |
 | `windows-image` | Windows image (arm64) | string | boxes |  | The Windows image on each Mac, in ~/.bb-box/qemu/images, that windows-arm64-desktop boxes are made from, run by QEMU. Empty turns them off. |
+| `windows-enrol` | Windows boxes as BB machines (trial) | boolean | boxes | `false` | A trial of Windows boxes that join BB, so threads and terminals can use them (#539). Off unless you are trying it. |
 | `vm-user` | VM user | string | advanced | `admin` | The user in the macOS images that bb-box and BB work as. It is logged in to the desktop automatically. Linux boxes work as box. |
 | `vms-per-host` | VMs per Mac | number | advanced | `2` | The most macOS VMs that run on each Mac at once, counting every VM Tart runs there, not only bb-box's. At most 2, which Apple's licence and the Virtualization framework allow. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `16384` | A new box is refused if the Mac would have less memory than this left for its own use, after its running VMs. |

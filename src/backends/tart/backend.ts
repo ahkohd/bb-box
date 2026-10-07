@@ -407,7 +407,8 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         // guest agent, so bb-box moves it with Get-Clipboard and Set-Clipboard in the desktop session (#461).
         displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }],
         computerUse: WINDOWS_CUA,
-        enrol: false,
+        // Windows boxes join BB only on trial, when the setting is on (#539).
+        enrol: config.windowsEnrol,
       },
       readyTimeoutMs: WINDOWS_READY_TIMEOUT_MS,
     },
