@@ -8,6 +8,8 @@ BB ends an agent's tool call after about 5 minutes. So `box_run` waits for a com
 
 A command also goes on as a job when BB Box restarts while it runs, for example for an update.
 
+On Windows, a command run in the desktop session does not go on as a job. It is stopped at 270 seconds, and the agent gets its output so far.
+
 ## Reading a job
 
 The agent calls `box_job` with the job's name. While the job runs, `box_job` gives its output so far. Once it ends, `box_job` gives its exit code and all its output.
