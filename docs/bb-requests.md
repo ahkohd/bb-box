@@ -27,6 +27,7 @@ server protocol 219). They are drafts until filed with BB.
 | [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | draft | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
 | [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | draft | `box_run` returns after 270 s: a Linux or macOS command goes on as a job for `box_job`, and a Windows one is stopped (#486) |
 | [Move large files through the file API](#20-move-large-files-through-the-file-api) | draft | `box_copy` moves files up to 16 MiB; a larger one, such as an installer or a build artifact, goes in parts the agent splits and joins by hand (#485) |
+| [Stop a plugin's machine workers after its tool calls](#21-stop-a-plugins-machine-workers-after-its-tool-calls) | draft | a command in a Docker box on a BB machine loses its box first at a deploy, so `box_run` waits up to 10 s to see that bb-box is stopping before it names the job (#415) |
 
 ## 1. BB's host app on Windows
 
@@ -721,6 +722,26 @@ limit, and a larger file's error gives the commands to split it on one side,
 copy the parts and join them on the other, with a hash to compare. Serving the
 file over HTTP from the thread's machine works only when the box can reach it,
 and exposes the file to the network meanwhile.
+
+## 21. Stop a plugin's machine workers after its tool calls
+
+**What bb-box needs.** At a deploy, its running tool calls to hear that bb-box
+is stopping before the machines they work on stop answering, so a call can say
+what goes on (#415).
+
+**What BB does now.** It stops the plugin's worker on each BB machine first,
+then aborts the plugin's tool calls with "plugin-disposed", then runs its
+dispose hooks (#405). bb-box's relay to Docker on a BB machine runs in that
+worker, so a `box_run` in a Docker box there fails at once, as if the box had
+gone, while the command goes on in the box as a job.
+
+**What we ask.** Abort a plugin's tool calls, and run its dispose hooks,
+before stopping its workers on machines; or abort the calls with the same
+reason as the workers stop.
+
+**Until then.** A `box_run` whose box stops answering waits up to 10 s to see
+whether bb-box is stopping. If it is, the answer names the job, which
+`box_job` reads once bb-box is back; if not, it fails as before.
 
 ## Checked, no request needed
 
