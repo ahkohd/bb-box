@@ -40,6 +40,7 @@ import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
+import { runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 
@@ -76,6 +77,10 @@ export interface HostApi {
   get(args: { hostId: string; signal?: AbortSignal }): Promise<HostState>;
   update(args: { hostId: string; name: string }): Promise<unknown>;
   delete(args: { hostId: string }): Promise<unknown>;
+  /** A pending machine's enrolment command, with its Windows form (#539). Null when it has none. */
+  experimental_getEnrollmentCommand(args: { hostId: string }): Promise<{ command: string; windowsCommand?: string; expiresAt: number } | null>;
+  /** The command that starts a known machine's daemon again, with its Windows form (#539). */
+  experimental_reconnect(args: { hostId: string; signal?: AbortSignal }): Promise<{ command: string; windowsCommand?: string; hostId: string; expiresAt: number }>;
 }
 
 export interface HostState {
@@ -311,7 +316,8 @@ export class Enrolment {
           const transport = await this.#transport(box);
           phases?.mark("prepared");
           report.step(`Installing BB in box ${box.name}`);
-          await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
+          if (box.capabilities.os === "windows") await this.#enrolWindows(box, transport, signal, phases);
+          else await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
@@ -342,6 +348,14 @@ export class Enrolment {
    * unloads it then and runs the bootstrap once more (#416).
    */
   async #bootstrapAgain(box: BoxRecord, hostId: string, transport: CommandTransport, request: Parameters<EnrolmentDeps["bootstrap"]>[0]): Promise<void> {
+    if (box.capabilities.os === "windows") {
+      // BB's reconnect command, in its Windows form (#539).
+      const reconnect = await this.#deps.hosts().experimental_reconnect({ hostId, signal: request.signal });
+      if (!reconnect.windowsCommand) throw new Error(`BB gave no Windows command to start BB's daemon in box ${box.name} again.`);
+      const result = await runWindowsCommand(transport, reconnect.windowsCommand, { timeoutMs: this.#timeoutMs, signal: request.signal });
+      if (result.exitCode !== 0) throw new Error(windowsFailure(`Starting BB's daemon in box ${box.name} again`, result));
+      return;
+    }
     try {
       await this.#deps.bootstrap(request);
     } catch (error) {
@@ -351,6 +365,28 @@ export class Enrolment {
       if (unloaded.exitCode !== 0) throw error;
       await this.#deps.bootstrap(request);
     }
+  }
+
+  /**
+   * Enrols a Windows box (#539): BB's enrolment command for the machine, in
+   * its Windows form, run in the box user's desktop session. BB's create
+   * gives no machine ID, so this waits for the one bb-box records once BB
+   * makes the machine.
+   */
+  async #enrolWindows(box: BoxRecord, transport: CommandTransport, signal: AbortSignal, phases?: Phases): Promise<void> {
+    let hostId: string | null = null;
+    for (let tries = 0; !hostId; tries++) {
+      hostId = (await this.#deps.boxes.find(box.id))?.enrol.hostId ?? null;
+      if (hostId) break;
+      if (tries >= 100 || signal.aborted) throw new Error(`bb-box did not learn box ${box.name}'s BB machine, so it could not enrol it.`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const enrolment = await this.#deps.hosts().experimental_getEnrollmentCommand({ hostId });
+    if (!enrolment?.windowsCommand) throw new Error(`BB gave no Windows enrolment command for box ${box.name}'s machine ${hostId}.`);
+    phases?.mark("install");
+    const result = await runWindowsCommand(transport, enrolment.windowsCommand, { timeoutMs: this.#timeoutMs, signal });
+    phases?.mark("installed");
+    if (result.exitCode !== 0) throw new Error(windowsFailure(`BB's Windows installer in box ${box.name}`, result));
   }
 
   async #transport(box: BoxRecord): Promise<CommandTransport> {

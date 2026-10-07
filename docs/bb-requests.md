@@ -23,7 +23,7 @@ is a log: bb-box does not file these with BB.
 | [Make a plugin's host call quick](#12-make-a-plugins-host-call-quick) | not met | each call to bb-box's host entry takes about 0.4 s, so it cannot carry commands |
 | [Mark a machine offline when it stops checking in](#13-mark-a-machine-offline-when-it-stops-checking-in) | not met | a machine that goes with no word, such as a PC that restarts, shows as connected for about 16 minutes, so bb-box judges it by when BB last heard from it |
 | [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | not met | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
-| [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | met | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text, until #535 |
+| [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | documented in 0.45.0, not shipped | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text, until #535 |
 | [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | not met | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
 | [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | not met | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
 | [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | not met | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
@@ -636,10 +636,13 @@ context and `run()` none either.
 
 ## 15. Give a plugin's CLI the caller's files
 
-**Status in BB 0.45.0: met.** A plugin command called with `--stdin` gets the
-caller's standard input, up to 256 KiB of text, as `--input-text`, without
-BB's server reading a file (`bb guide plugins`). bb-box can take image scripts
-and configuration files that way, and stop reading them on BB's server: #535.
+**Status in BB 0.45.0: documented, not shipped.** `bb guide plugins` says a
+plugin command called with `--stdin` gets the caller's standard input, up to
+256 KiB of text, as `--input-text`. BB 0.45.0's CLI does not do it, nor does
+the nightly 0.45.1-nightly.37496027885.1: both rewrite only
+`--<flag>-stdin`, which takes one line of at most 16 KiB, and pass a bare
+`--stdin` on to the command ("unknown option '--stdin'"). bb-box takes image
+scripts and configuration files this way once the CLI does (#535).
 
 **What bb-box needs.** A plugin CLI command that reads a file where `bb` runs:
 a project image's script for `bb box image set --script-file`
