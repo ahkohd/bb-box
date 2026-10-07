@@ -8,6 +8,8 @@ A box belongs to a thread. It stays until you release it, or until its thread is
 
 - [The Box panel and the Boxes page](boxes.md): see a thread's boxes and every box you have, and act on them
 - [Making a box](making-a-box.md): choose its system, type, image, size and where it runs
+- [Desktops](desktops.md): watch a desktop, take control, copy and paste, and hand back
+- [The terminal](terminal.md): use a shell in a box
 
 ## Reference
 
