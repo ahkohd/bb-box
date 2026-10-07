@@ -399,7 +399,7 @@ export class ImageBakes {
       return backend;
     }
     const backend = this.#deps.backends().find(bakes);
-    if (!backend) throw new BoxError("unsupported", `No backend that is on builds ${input.kind} images. Proxmox LXC and Docker do; elsewhere boxes run the script as they start.`);
+    if (!backend) throw new BoxError("unsupported", `No backend that is on builds ${input.kind} images. Proxmox LXC, Docker and Tart do; elsewhere boxes run the script as they start.`);
     return backend;
   }
 

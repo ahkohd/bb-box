@@ -571,6 +571,12 @@ test("image operations on a Mac: an image box, its capture with its record besid
   assert.deepEqual(await backend.held(), [], "a captured build is no box's");
   assert.ok((await images.list()).builds.some((build) => build.ref === captured.ref && build.image === "small" && !build.current));
 
+  // A project's box starts from the build, a clone of it (#439).
+  assert.equal(images.startsFrom, true);
+  const project = await backend.acquire({ ...identity(), from: captured.ref }, null, hooks().hooks, signal());
+  assert.ok(tartCalls(mac).some((call) => call[0] === "clone" && call[1] === "bb-box-img-small-20261003-030000-abcd" && call[2] === project.ref), JSON.stringify(tartCalls(mac).filter((call) => call[0] === "clone")));
+  await backend.release(project, releasing);
+
   // A trial box of it, then both removed; what is not an image's stays.
   const trial = await images.box(captured, "trial", signal());
   await images.remove(trial.ref, signal());
