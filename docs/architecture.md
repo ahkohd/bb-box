@@ -462,9 +462,11 @@ Selkies over the display's route and carries messages, not bytes:
   sequence number there, as several viewers' input shares it.
 - The box's clipboard reaches only the viewer with control.
 - Selkies paces a viewer by its socket, which the route hides, so the relay
-  paces each by the frames it acknowledges: 400 ms behind, it drops that
+  paces each by the frames it acknowledges: a second behind, it drops that
   viewer's frames until it catches up, then asks for a key frame, which
-  goes to every viewer, and resumes from it.
+  goes to every viewer, and resumes from it. It asks on the input
+  connection when that is open, as Selkies takes a viewer's request once a
+  second, and again every 250 ms until one comes.
 - Selkies refuses a connection within 500 ms of another from the same
   address, and the relay's all come from the box's loopback, so it spaces
   them and tries again.
