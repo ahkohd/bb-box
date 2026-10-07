@@ -32,7 +32,7 @@ const record = (days: number, changes: Partial<ImageRecord> = {}): ImageRecord =
 const build = (ref: string, kind: string, rec: ImageRecord | null, changes: Partial<ImageBuild> = {}): ImageBuild => ({ ref, image: "standard", kind, build: rec?.build ?? null, record: rec, current: true, ...changes });
 
 /** A backend with image operations whose builds are `builds`, and room unless `full`. */
-function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; full?: string; boxless?: boolean } = {}) {
+function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; full?: string; boxless?: boolean; windows?: boolean } = {}) {
   const removed: string[] = [];
   /** The boxes each room check counted besides the one asked about. */
   const pending: number[] = [];
@@ -43,6 +43,7 @@ function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; 
     replace: async () => assert.fail("the job does not replace"),
     remove: async (ref) => void removed.push(ref),
     ...(options.boxless ? { build: async () => assert.fail("the job does not build") } : {}),
+    ...(options.windows ? { windows: true } : {}),
   };
   const capacity: Capacity = { ok: !options.full, message: options.full ?? null, warm: null, hosts: [] };
   const made = {
@@ -205,4 +206,31 @@ test("the doctor's checks: Nightly rebuilds, and each image whose last rebuild f
   clock.now += 9 * DAY;
   assert.deepEqual([(await job.checks())[0]!.status, (await job.checks())[0]!.detail], ["warn", "No run of bb box images refresh has ended for 9 days."]);
   assert.deepEqual(await jobs([backend("ssh-pool", []).backend]).job.checks(), [], "no images, no checks");
+});
+
+test("a backend that refreshes its Windows images has them due monthly, and a failed refresh is tried again the next month (054)", async () => {
+  const windows = (days: number) => record(days, { kind: "windows-desktop", bbApp: null, os: "Windows 11 Pro" });
+  const qemu = backend("proxmox-qemu", [build("9104", "windows-desktop", null), build("9105", "windows-desktop", windows(20)), build("9106", "windows-desktop", windows(31))], { windows: true });
+  const lxc = backend("proxmox-lxc", [build("9107", "windows-desktop", null)]);
+  const clock = { now: NOW };
+  const { job, refreshed } = jobs([qemu.backend, lxc.backend], { fail: ["9104"], clock });
+  assert.deepEqual(
+    (await job.list()).map((view) => [view.name, view.due]),
+    [
+      ["proxmox-qemu/9104", "it has no record, so its age is not known"],
+      ["proxmox-qemu/9106", "it is 31 days old, past its 30-day interval"],
+      ["proxmox-qemu/9105", null],
+    ],
+    "BB's app does not count on Windows, and a backend that does not say it refreshes Windows keeps its Windows images out",
+  );
+  await job.refreshAll();
+  assert.deepEqual(refreshed, ["9104", "9106"]);
+  // The same month: nothing it is built from has changed, so it waits.
+  clock.now += DAY;
+  const again = await job.refreshAll();
+  assert.equal(again.lines.find((line) => line.name === "proxmox-qemu/9104")?.outcome, "skipped");
+  // The next month brings Windows' updates, so it is tried again.
+  clock.now = Date.parse("2026-11-01T02:00:00Z");
+  await job.refreshAll();
+  assert.equal(refreshed.filter((ref) => ref === "9104").length, 2);
 });

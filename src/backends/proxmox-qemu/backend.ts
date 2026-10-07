@@ -57,6 +57,7 @@ import {
   type AcquireHooks,
   type Backend,
   type BackendContext,
+  type BackendImages,
   type Footprint,
   type BoxIdentity,
   type BoxKind,
@@ -68,6 +69,8 @@ import {
   type DoctorReport,
   type Guest,
   type HeldGuest,
+  type ImageBox,
+  type ImageBuild,
   type Limit,
   type PoolMember,
   type PowerState,
@@ -75,7 +78,7 @@ import {
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { judgeImage, recordInDescription } from "../images.ts";
+import { judgeImage, recordFromJson, recordInDescription } from "../images.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
@@ -87,6 +90,13 @@ const GiB = 2 ** 30;
 const SSH_KEY = "ssh-key";
 /** Where the next VMID search starts. */
 const NEXT_VMID = "next-vmid";
+/** The tag and name of a VM bb-box refreshes or tries an image in (054), which no sweep releases. */
+const IMAGE_BOX = "image-box";
+const IMAGE_HOSTNAME = "bb-box-image";
+/** The tag that names a captured build's image, such as image.standard. */
+const IMAGE_TAG = "image.";
+/** The tag that names a captured build's kind. */
+const KIND_TAG = "kind.";
 /** A linked clone of Windows boots and starts sshd in about 20 s; this leaves room for a busy host. */
 const READY_TIMEOUT_MS = 180_000;
 /** build.sh --replace swaps the template for its new build, which leaves it missing for a moment. A clone waits this long for it. */
@@ -290,6 +300,23 @@ export class ProxmoxQemuBackend implements Backend {
   });
   readonly #stopping = new AbortController();
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
+  /** Image boxes (054) from before their clone until their capture or removal, which no sweep counts. */
+  readonly #imageBoxes = new Set<number>();
+
+  /**
+   * Image operations (054): a box from a template, its capture as a template
+   * with the image's record in its description, and a template replaced in
+   * place under its VMID, as build.sh --replace does. refreshImage runs the
+   * Windows refresh script in the box.
+   */
+  readonly images: BackendImages = {
+    list: (signal) => this.#imageList(signal),
+    box: (build, label, signal) => this.#imageBox(build, label, signal),
+    capture: (box, from, image, signal) => this.#capture(box, from, image, signal),
+    replace: (build, current, signal) => this.#replaceTemplate(build, current, signal),
+    remove: (ref, signal) => this.#removeImage(ref, signal),
+    windows: true,
+  };
 
   constructor(config: QemuConfig, context: BackendContext, options: QemuBackendOptions = {}) {
     this.id = context.id;
@@ -567,6 +594,8 @@ export class ProxmoxQemuBackend implements Backend {
     for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
       if (guest.type !== "qemu" || guest.template || !this.#inRange(guest.vmid) || this.#reserved.has(guest.vmid)) continue;
       if (this.#filling.has(guest.vmid) || guest.tags.includes(WARM)) continue;
+      // An image box (054) is no box's, and goes with its refresh.
+      if (this.#imageBoxes.has(guest.vmid) || guest.tags.includes(IMAGE_BOX) || guest.tags.some((tag) => tag.startsWith(IMAGE_TAG))) continue;
       let install = installFromTags(guest.tags);
       let owner = ownerFromTags(guest.tags, guest.name || null);
       if (!guest.tags.includes(TAG) || !owner) {
@@ -1305,6 +1334,160 @@ export class ProxmoxQemuBackend implements Backend {
     } finally {
       for (const id of claimed) this.#filling.delete(id);
     }
+  }
+
+  /** The configured templates, as standard images, and this install's captured builds and image boxes. */
+  async #imageList(signal?: AbortSignal): Promise<{ builds: ImageBuild[]; boxes: string[] }> {
+    const api = await this.client();
+    const install = installTag(this.#context.installId);
+    const builds: ImageBuild[] = [];
+    for (const vmid of this.#config.templates) {
+      const config = await api.config(vmid, signal).catch(() => null);
+      if (config && isTemplate(config)) builds.push(this.#imageBuild(vmid, KIND.id, "standard", config, true));
+    }
+    const boxes: string[] = [];
+    for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
+      if (guest.type !== "qemu" || !this.#inRange(guest.vmid) || !guest.tags.includes(install)) continue;
+      const image = guest.tags.find((tag) => tag.startsWith(IMAGE_TAG))?.slice(IMAGE_TAG.length);
+      const kind = guest.tags.find((tag) => tag.startsWith(KIND_TAG))?.slice(KIND_TAG.length);
+      if (image && kind) {
+        // From its config: the listing says it is a template only after Proxmox's next status pass.
+        const config = await this.#guestConfig(api, guest.vmid, signal);
+        if (config && isTemplate(config)) builds.push(this.#imageBuild(guest.vmid, kind, image, config, false));
+      } else if (guest.tags.includes(IMAGE_BOX)) {
+        boxes.push(String(guest.vmid));
+      }
+    }
+    return { builds, boxes };
+  }
+
+  #imageBuild(vmid: number, kind: string, image: string, config: Record<string, unknown>, current: boolean): ImageBuild {
+    const build = buildFromTags(parseTags(config.tags));
+    return { ref: String(vmid), image, kind, build: build ? `${BUILD}${build}` : null, record: recordInDescription(String(config.description ?? "")), current };
+  }
+
+  /**
+   * A clone of a build's template, started as a box of its kind is, with its
+   * desktop up, tagged so that no sweep takes it.
+   */
+  async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
+    const api = await this.client();
+    const template = Number(build.ref);
+    let vmid: number | null = null;
+    try {
+      const guests = await api.listPool(this.#config.proxmox.pool, signal);
+      const description = `bb-box image box: ${label}\ninstall ${this.#context.installId}`;
+      vmid = await this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal, () => {});
+      const id = vmid;
+      await api.configure(id, this.#settings(this.#context.kind(KIND.id).defaultSize, id, await api.config(id, signal)), signal);
+      await api.configure(id, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
+      await api.start(id, signal);
+      const timeoutMs = this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs;
+      await this.#waitReady(id, timeoutMs, signal);
+      await this.#setClock(id, signal);
+      // The kind's check runs in the desktop session, which comes up soon after SSH.
+      await this.#desktopUp(id, timeoutMs, signal);
+      return { ref: String(id), command: await this.#command(id) };
+    } catch (error) {
+      if (vmid !== null) {
+        await this.#forget(vmid);
+        await api.destroy(vmid).catch((cause) => this.#context.logError("remove an image box", cause));
+        this.#imageBoxes.delete(vmid);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Shuts a build box down and makes it a template, configured as `from`
+   * (its name, size and network, and an SMBIOS UUID with no address), with
+   * its record in the description's second line and the image, kind and
+   * build in its tags.
+   */
+  async #capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
+    const api = await this.client();
+    const vmid = Number(box.ref);
+    const read = await box.command.run("Get-Content C:\\bb-box\\image.json -Raw", { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
+    const record = read.exitCode === 0 ? recordFromJson(read.stdout.trim()) : null;
+    if (!record) throw new Error(`Image box ${vmid} has no image record in C:\\bb-box\\image.json, which the refresh writes.`);
+    const source = await api.config(Number(from.ref), signal);
+    const build = record.build.startsWith(BUILD) ? record.build : `${BUILD}${record.build}`;
+    // Clones start with an empty boot log, as build.sh leaves the template's.
+    await box.command.run(`Clear-Content ${BOOT_LOG} -ErrorAction SilentlyContinue`, { timeoutMs: 15_000, signal });
+    await this.#forget(vmid);
+    await api.shutdown(vmid, 300, signal);
+    await api.configure(
+      vmid,
+      {
+        name: typeof source.name === "string" ? source.name : IMAGE_HOSTNAME,
+        ...(Number(source.cores) > 0 ? { cores: Number(source.cores) } : {}),
+        ...(Number(source.memory) > 0 ? { memory: Number(source.memory) } : {}),
+        ...(typeof source.net0 === "string" ? { net0: source.net0 } : {}),
+        smbios1: `uuid=${randomUUID()}`,
+        onboot: false,
+        description: `bb-box ${image} image of ${from.kind}, built ${new Date().toISOString().slice(0, 10)} from template ${from.ref}.\n${JSON.stringify(record)}`,
+        tags: [TAG, installTag(this.#context.installId), `${IMAGE_TAG}${image}`, `${KIND_TAG}${from.kind}`, templateTag(Number(from.ref)), build],
+      },
+      signal,
+    );
+    await api.makeTemplate(vmid, signal);
+    await api.configure(vmid, { protection: true }, signal);
+    this.#imageBoxes.delete(vmid);
+    return { ref: String(vmid), image, kind: from.kind, build, record, current: false };
+  }
+
+  /**
+   * Puts a captured build in a configured template's place under its VMID,
+   * as build.sh --replace does: the old template goes, the build is cloned
+   * into its VMID (linked on LVM-thin, where the clone needs nothing of its
+   * origin, else a full copy on the template's storage), made a template with
+   * the old one's name and tags but the new build's ID, and the build goes.
+   * Acquires wait for the template meanwhile, and warm VMs of the old build
+   * are retired.
+   */
+  async #replaceTemplate(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
+    if (!current.current || build.current) throw new Error(`Template ${current.ref} is not a configured template, or ${build.ref} is one.`);
+    const api = await this.client();
+    const [source, target] = [Number(build.ref), Number(current.ref)];
+    const old = await api.config(target, signal);
+    const disk = bootDisk(old);
+    const storage = disk ? (String(old[disk]).split(":")[0] ?? "") : "";
+    if (!storage) throw new Error(`Windows template ${target} has no boot disk.`);
+    const thin = (await api.storageStatus(storage, signal)).type === "lvmthin";
+    const name = typeof old.name === "string" ? old.name : "bb-box-windows";
+    const first = String(old.description ?? "bb-box windows template.").split("\n")[0]!;
+    const today = new Date().toISOString().slice(0, 10);
+    const line = /, (built|refreshed) \d{4}-\d{2}-\d{2}/.test(first) ? first.replace(/, (built|refreshed) \d{4}-\d{2}-\d{2}/, `, refreshed ${today}`) : first;
+    const description = `${line}${build.record ? `\n${JSON.stringify(build.record)}` : ""}`;
+    const tags = [...parseTags(old.tags).filter((tag) => !tag.startsWith(BUILD)), ...(build.build ? [build.build] : [])];
+    // Templates are protected against deletion: the token may clear it in the pool.
+    await api.configure(target, { delete: ["protection"] }, signal);
+    await api.destroy(target, signal);
+    this.#templates.delete(target);
+    const pool = this.#config.proxmox.pool;
+    if (thin) await api.cloneLinked({ template: source, vmid: target, hostname: name, pool, description }, signal);
+    else await api.cloneFull({ template: source, vmid: target, hostname: name, storage, pool, description }, signal);
+    await api.makeTemplate(target, signal);
+    await api.configure(target, { description, tags, protection: true }, signal);
+    await api.configure(source, { delete: ["protection"] }, signal);
+    await api.destroy(source, signal);
+    return { ...build, ref: String(target), image: "standard", current: true };
+  }
+
+  /** Removes an image box or a captured build of this install's, and nothing else. */
+  async #removeImage(ref: string, signal?: AbortSignal): Promise<void> {
+    const vmid = Number(ref);
+    const api = await this.client();
+    const config = await this.#guestConfig(api, vmid, signal);
+    if (!config) return;
+    const tags = parseTags(config.tags);
+    const ours = tags.includes(installTag(this.#context.installId)) && (tags.includes(IMAGE_BOX) || tags.some((tag) => tag.startsWith(IMAGE_TAG)));
+    if (this.#config.templates.includes(vmid) || !ours || !this.#inRange(vmid)) throw new Error(`VM ${vmid} is not an image box or build of this install's, so bb-box leaves it.`);
+    await this.#forget(vmid);
+    // A captured build is protected, as templates are.
+    if (config.protection) await api.configure(vmid, { delete: ["protection"] }, signal);
+    await api.destroy(vmid, signal);
+    this.#imageBoxes.delete(vmid);
   }
 
   /** Waits until Windows' desktop is up. */
