@@ -12,6 +12,8 @@ export const u16 = (value: number) => Buffer.from([value >> 8, value & 255]);
 export const u32 = (value: number) => Buffer.from([(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255]);
 const i32 = (value: number) => u32(value >>> 0);
 const rect = (x: number, y: number, w: number, h: number, encoding: number) => Buffer.concat([u16(x), u16(y), u16(w), u16(h), i32(encoding)]);
+/** The pixels of an update's label, which a shorter label pads with red 0. */
+const LABEL = 24;
 
 /**
  * Tart's VNC server as far as the holder sees it: it ends on a second
@@ -30,6 +32,8 @@ export class FakeTart {
   size = { width: 1024, height: 768 };
   /** Set for the next update: a new size. */
   resize: { width: number; height: number } | null = null;
+  /** Set for the next update: a CopyRect of its red, green and blue to here. */
+  copy: { x: number; y: number } | null = null;
   #socket: Socket | null = null;
   #encodings: number[] = [];
   #updates = 0;
@@ -168,31 +172,52 @@ export class FakeTart {
     if (this.#updates === 1) parts.push(rect(0, 0, 2, 2, -239), ...Array.from({ length: 4 }, () => this.pixel(200, 100, 50)), Buffer.from([0xc0, 0xc0]));
     const label = Buffer.from(`${whole ? "whole" : "change"} ${this.#updates}; `);
     this.tiles.push(label);
-    parts.push(rect(0, 0, label.length, 1, 0), ...[...label].map((char) => this.pixel(char, 0x11, 0x22)));
+    parts.push(rect(0, 0, LABEL, 1, 0), ...Array.from({ length: LABEL }, (_, x) => this.pixel(label[x] ?? 0, 0x11, 0x22)));
     parts.push(rect(8, 8, 3, 1, 0), this.pixel(255, 0, 0), this.pixel(0, 255, 0), this.pixel(0, 0, 255));
+    if (this.copy) parts.push(rect(this.copy.x, this.copy.y, 3, 1, 1), u16(8), u16(8));
+    this.copy = null;
     parts.push(rect(0, 0, 0, 0, -224));
     socket.write(Buffer.concat([Buffer.from([0, 0, 0xff, 0xff]), ...parts]));
   }
 }
 
-/** A viewer of the holder's socket, as noVNC would be. */
+/** A viewer of the holder's socket, as noVNC would be, which draws each update on its own screen. */
 export class Viewer {
   readonly socket: Socket;
   readonly reader: StreamReader;
   size = { width: 0, height: 0 };
+  /** Its screen's pixels, in noVNC's format: red, green, blue, unused. */
+  screen = Buffer.alloc(0);
   /** The Zlib rects' compressed bytes so far, one stream, and how much of what they inflate to is read. */
   #zlib = Buffer.alloc(0);
   #used = 0;
-  /** The labels read from the updates' pixels, in order. */
-  tiles = Buffer.alloc(0);
-  /** The red, green and blue of the last colour row at (8, 8), and of the cursor's first pixel. */
-  colours: number[][] = [];
   cursorColour: number[] = [];
   cursor = false;
+  /** The bytes it has had from the holder. */
+  received = 0;
 
   constructor(path: string) {
     this.socket = createConnection(path);
-    this.reader = new StreamReader(new ReadableStream({ start: (c) => { this.socket.on("data", (d: Buffer) => c.enqueue(new Uint8Array(d))); this.socket.on("close", () => { try { c.close(); } catch {} }); } }));
+    this.reader = new StreamReader(
+      new ReadableStream({
+        start: (c) => {
+          this.socket.on("data", (d: Buffer) => {
+            this.received += d.length;
+            c.enqueue(new Uint8Array(d));
+          });
+          this.socket.on("close", () => {
+            try {
+              c.close();
+            } catch {}
+          });
+        },
+      }),
+    );
+  }
+
+  #resize(width: number, height: number): void {
+    this.size = { width, height };
+    this.screen = Buffer.alloc(width * height * 4);
   }
 
   async join(): Promise<void> {
@@ -203,7 +228,7 @@ export class Viewer {
     assert.deepEqual([...(await this.reader.read(4))], [0, 0, 0, 0]);
     this.socket.write(Buffer.from([1]));
     const init = Buffer.from(await this.reader.read(24));
-    this.size = { width: init.readUInt16BE(0), height: init.readUInt16BE(2) };
+    this.#resize(init.readUInt16BE(0), init.readUInt16BE(2));
     await this.reader.read(init.readUInt32BE(20));
     // noVNC's first messages: its pixel format, its encodings, and a request for the whole screen.
     this.socket.write(Buffer.concat([Buffer.from([0, 0, 0, 0]), Buffer.alloc(16, 1)]));
@@ -223,34 +248,47 @@ export class Viewer {
     return pixels;
   }
 
-  /** Reads one whole update. */
+  /** Reads one whole update, and draws it. */
   async update(): Promise<{ rects: number }> {
     const head = Buffer.from(await this.reader.read(4));
     assert.equal(head[0], 0, "a FramebufferUpdate");
     const count = head.readUInt16BE(2);
     for (let i = 0; i < count; i++) {
       const r = Buffer.from(await this.reader.read(12));
-      const [w, h, encoding] = [r.readUInt16BE(4), r.readUInt16BE(6), r.readInt32BE(8)];
-      const [x, y] = [r.readUInt16BE(0), r.readUInt16BE(2)];
+      const [x, y, w, h, encoding] = [r.readUInt16BE(0), r.readUInt16BE(2), r.readUInt16BE(4), r.readUInt16BE(6), r.readInt32BE(8)];
       if (encoding === 0 || encoding === 6) {
         const pixels = await this.#pixels(encoding, w, h);
-        const rgb = Array.from({ length: w * h }, (_, p) => [pixels[p * 4]!, pixels[p * 4 + 1]!, pixels[p * 4 + 2]!]);
-        if (x === 8 && y === 8) this.colours = rgb;
-        else {
-          assert.ok(rgb.every(([, green, blue]) => green === 0x11 && blue === 0x22), `a label's pixels keep their green and blue: ${JSON.stringify(rgb[0])}`);
-          this.tiles = Buffer.concat([this.tiles, Buffer.from(rgb.map(([red]) => red!))]);
-        }
+        assert.ok(x + w <= this.size.width && y + h <= this.size.height, `the rect ${w}x${h} at ${x},${y} is on the screen`);
+        for (let line = 0; line < h; line++) pixels.copy(this.screen, ((y + line) * this.size.width + x) * 4, line * w * 4, (line + 1) * w * 4);
       } else if (encoding === -239) {
         const pixels = Buffer.from(await this.reader.read(w * h * 4));
         await this.reader.read(Math.ceil(w / 8) * h);
         this.cursorColour = [pixels[0]!, pixels[1]!, pixels[2]!];
         this.cursor = true;
-      } else if (encoding === -223) this.size = { width: w, height: h };
+      } else if (encoding === -223) this.#resize(w, h);
       else assert.fail(`rect encoding ${encoding}`);
     }
     return { rects: count };
   }
 
+  /** The red, green and blue of the three pixels from (x, y). */
+  colours(x = 8, y = 8): number[][] {
+    return [0, 1, 2].map((dx) => [...this.screen.subarray(((y * this.size.width) + x + dx) * 4, ((y * this.size.width) + x + dx) * 4 + 3)]);
+  }
+
+  /** The label at the top left of its screen: each pixel's red, up to the first that has none. */
+  get label(): string {
+    const chars: number[] = [];
+    for (let x = 0; x < LABEL; x++) {
+      const [red, green, blue] = this.colours(x, 0)[0]!;
+      assert.deepEqual([green, blue], [0x11, 0x22], `a label's pixels keep their green and blue, at ${x},0`);
+      if (!red) break;
+      chars.push(red);
+    }
+    return Buffer.from(chars).toString();
+  }
+
+  /** A request for changes, as noVNC sends after each update. */
   ask(): void {
     this.socket.write(Buffer.concat([Buffer.from([3, 1]), u16(0), u16(0), u16(this.size.width), u16(this.size.height)]));
   }

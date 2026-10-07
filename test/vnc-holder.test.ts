@@ -54,6 +54,7 @@ test("viewers join, leave, come back and watch two at once over the run's one co
   assert.deepEqual(a.size, { width: 1024, height: 768 });
   await a.update();
   assert.ok(a.cursor, "the cursor shape");
+  assert.equal(a.label, "whole 1; ");
   a.close();
 
   for (let round = 0; round < 5; round++) {
@@ -67,7 +68,9 @@ test("viewers join, leave, come back and watch two at once over the run's one co
   await Promise.all([b.update(), c.update()]);
   b.ask();
   c.ask();
+  await tart.change();
   await Promise.all([b.update(), c.update()]);
+  assert.deepEqual([b.label, c.label], ["change 2; ", "change 2; "]);
   b.close();
   c.close();
   assert.equal(tart.connections, 1, "one connection to Tart's VNC for the whole run");
@@ -79,13 +82,14 @@ test("a late joiner gets the size, cursor and screen of the moment at once, and 
   const early = new Viewer(socket);
   await early.join();
   await early.update();
-  await early.update();
+  early.ask();
   tart.resize = { width: 1280, height: 800 };
   await tart.change();
   await early.update();
   assert.deepEqual(early.size, { width: 1280, height: 800 }, "the watching viewer sees the resize");
-  await early.update();
-  assert.match(early.tiles.toString(), /whole 3; $/, "then the holder asks for the whole screen again, at its new size");
+  assert.equal(early.label, "whole 3; ", "with the whole screen, which the holder asks for again at its new size");
+  await until("the holder's requests", () => tart.requests.length === 4);
+  assert.deepEqual(tart.requests, [true, false, true, false]);
 
   // The screen is still, and Tart holds the holder's request for changes: the late joiner's screen comes at once all the same.
   const late = new Viewer(socket);
@@ -93,13 +97,12 @@ test("a late joiner gets the size, cursor and screen of the moment at once, and 
   assert.deepEqual(late.size, { width: 1280, height: 800 }, "ServerInit has the size of the moment");
   await late.update();
   assert.ok(late.cursor, "the cursor shape, from before it joined");
-  await late.update();
-  assert.match(late.tiles.toString(), /^whole 3; /, "its stream starts with the last whole screen, and decodes on its own");
+  assert.equal(late.label, "whole 3; ", "its stream starts with the screen of the moment, and decodes on its own");
+  early.ask();
+  late.ask();
   await tart.change();
   await Promise.all([early.update(), late.update()]);
-  const sent = tart.tiles.map((tile) => tile.toString());
-  assert.equal(early.tiles.toString(), sent.join(""), "the early viewer has every tile");
-  assert.equal(late.tiles.toString(), sent.slice(2).join(""), "the late joiner every tile since the last whole screen");
+  assert.deepEqual([early.label, late.label], ["change 4; ", "change 4; "]);
   assert.equal(tart.crashed, false);
   early.close();
   late.close();
@@ -113,26 +116,51 @@ test("joiners on a still screen get it at once, however many come and go, and th
     const started = performance.now();
     await viewer.join();
     await viewer.update();
-    await viewer.update();
     assert.ok(performance.now() - started < 1_000, `joiner ${round + 1} had its screen in ${Math.round(performance.now() - started)} ms`);
-    assert.match(viewer.tiles.toString(), /^whole 1; /);
+    assert.equal(viewer.label, "whole 1; ");
     viewer.close();
   }
   assert.deepEqual(tart.requests, [true, false], "the sign-in's request for the whole screen, then one for changes, held all along");
-  // A change reaches a viewer that joins after it, from the updates kept since.
+  // A change reaches a viewer that joins after it, on the holder's screen.
   await tart.change();
   await until("the change", () => tart.tiles.length === 2);
   const after = new Viewer(socket);
   await after.join();
   await after.update();
-  await after.update();
-  await after.update();
-  assert.equal(after.tiles.toString(), tart.tiles.map((tile) => tile.toString()).join(""));
+  assert.equal(after.label, "change 2; ");
   after.close();
   assert.equal(tart.connections, 1);
 });
 
-test("red, green and blue from Tart are red, green and blue at the viewer, in the screen, its updates and the cursor, whichever order Tart's own pixels are in", async (t) => {
+test("a viewer gets an update only when it asks, with all it missed, so a slow one gets the screen as it is rather than a queue (056)", async (t) => {
+  const { tart, socket } = await holder(t);
+  const [fast, slow] = [new Viewer(socket), new Viewer(socket)];
+  await Promise.all([fast.join(), slow.join()]);
+  await Promise.all([fast.update(), slow.update()]);
+  const before = slow.received;
+  for (let change = 2; change <= 21; change++) {
+    fast.ask();
+    await tart.change();
+    await fast.update();
+    assert.equal(fast.label, `change ${change}; `, "a viewer that asks after each update gets each");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(slow.received, before, "nothing for a viewer that has not asked");
+  slow.ask();
+  assert.deepEqual(await slow.update(), { rects: 2 }, "then one update, the label and the colours once each");
+  assert.equal(slow.label, "change 21; ", "of the screen as it is");
+  const after = slow.received;
+  slow.ask();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(slow.received, after, "a request with nothing new waits for a change");
+  await tart.change();
+  await slow.update();
+  assert.equal(slow.label, "change 22; ");
+  fast.close();
+  slow.close();
+});
+
+test("red, green and blue from Tart are red, green and blue at the viewer, in the screen, its updates, a CopyRect and the cursor, whichever order Tart's own pixels are in", async (t) => {
   const RED_GREEN_BLUE = [
     [255, 0, 0],
     [0, 255, 0],
@@ -145,20 +173,20 @@ test("red, green and blue from Tart are red, green and blue at the viewer, in th
     await viewer.join();
     await viewer.update();
     assert.deepEqual(viewer.cursorColour, [200, 100, 50], `${native}: the cursor's colour`);
-    await viewer.update();
-    assert.deepEqual(viewer.colours, RED_GREEN_BLUE, `${native}: the whole screen's colours`);
-    assert.match(viewer.tiles.toString(), /^whole 1; $/, `${native}: and the label, red by red`);
-    viewer.colours = [];
+    assert.deepEqual(viewer.colours(), RED_GREEN_BLUE, `${native}: the whole screen's colours`);
+    assert.equal(viewer.label, "whole 1; ", `${native}: and the label, red by red`);
+    viewer.screen.fill(0);
+    viewer.ask();
+    tart.copy = { x: 20, y: 20 };
     await tart.change();
     await viewer.update();
-    assert.deepEqual(viewer.colours, RED_GREEN_BLUE, `${native}: an update's colours`);
-    // A joiner's replay too.
+    assert.deepEqual(viewer.colours(), RED_GREEN_BLUE, `${native}: an update's colours`);
+    assert.deepEqual(viewer.colours(20, 20), RED_GREEN_BLUE, `${native}: a CopyRect's, which the holder draws`);
+    // A joiner's screen too.
     const late = new Viewer(socket);
     await late.join();
     await late.update();
-    await late.update();
-    await late.update();
-    assert.deepEqual(late.colours, RED_GREEN_BLUE, `${native}: a joiner's colours`);
+    assert.deepEqual([late.colours(), late.colours(20, 20)], [RED_GREEN_BLUE, RED_GREEN_BLUE], `${native}: a joiner's colours`);
     viewer.close();
     late.close();
     tart.end();
