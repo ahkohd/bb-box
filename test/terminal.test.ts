@@ -228,6 +228,24 @@ test("the route tells a tab why a shell could not open, within a close reason's 
   assert.deepEqual(noShell.closed, { code: 1011, reason: "Box calm-otter has no terminal: its transport cannot open a shell on a PTY." });
 });
 
+test("a resize that fails after its session ended is no error, as its PTY went with the shell (#564)", async () => {
+  const errors: string[] = [];
+  let failResize = (_error: Error) => {};
+  let endOutput = () => {};
+  const terminal: Terminal = {
+    readable: new ReadableStream<Uint8Array>({ start: (controller) => void (endOutput = () => controller.close()) }),
+    writable: new WritableStream<Uint8Array>(),
+    resize: () => new Promise<void>((_resolve, reject) => void (failResize = reject)),
+    close: async () => endOutput(),
+  };
+  const sessions = new TerminalSessions({ logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`), open: async () => terminal });
+  await sessions.attach("box_4", "sess-0004-dddd", viewer(), { cols: 80, rows: 24 });
+  await sessions.end("box_4", "The box was released.");
+  failResize(new Error("Resizing the terminal failed: stty: /dev/pts/0: No such file or directory"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(errors, []);
+});
+
 test("a tab whose close throws does not keep the shell alive when its session ends", { skip }, async () => {
   const errors: string[] = [];
   const sessions = new TerminalSessions({ logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`), open: (_box, size) => openTerminal(["/bin/sh", "-c", "echo hello; cat"], size) });
