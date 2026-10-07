@@ -655,7 +655,7 @@ export const scenes = {
   "desktop-stopped": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([{ ...desktop, state: "stopped" }]) },
   "desktop-released": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([]) },
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
-  "boxes-page": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
+  "boxes-page": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "Add dark mode" } },
   "boxes-page-empty": { slot: "boxes-page", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
   "boxes-page-menu": {
     slot: "boxes-page",
@@ -663,7 +663,7 @@ export const scenes = {
     height: 760,
     props: { subPath: "" },
     rpc: rpc([box(), desktop], { machines: MACHINES }),
-    threads: { [THREAD]: "bb-box: UI/UX design and panel" },
+    threads: { [THREAD]: "Add dark mode" },
     after: async (root) => {
       // A thread's box on the page has the Box panel's menu (the operator, 5 October 2026).
       openMenu(root, "calm-otter actions");
@@ -676,14 +676,14 @@ export const scenes = {
     height: 980,
     props: { subPath: "" },
     rpc: rpc([box(), desktop], { machines: MACHINES }),
-    threads: { [THREAD]: "bb-box: UI/UX design and panel" },
+    threads: { [THREAD]: "Add dark mode" },
     after: async (root) => {
       // The page's plus opens the same form as settings' Add machine, with the Name step (the operator, 4 October 2026).
       click(root, "button", "Add machine");
       await wait(400);
     },
   },
-  "boxes-page-starting": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "bb-box: UI/UX design and panel" } },
+  "boxes-page-starting": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "Add dark mode" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([], { machines: MACHINES }) },
   "settings-machines-empty": { slot: "settings", width: 860, height: 420, props: {}, rpc: rpc([]) },
   "settings-machines-add": {
