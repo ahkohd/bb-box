@@ -32,7 +32,7 @@ BB app: Box panel, Boxes page, desktop and terminal tabs, settings      BB serve
         |                                 |                                  |
         v                                 v                                  v
   inside each box             each provider's API or CLI       bb-box's host entry on BB machines:
-                                                               access, the Docker relay, file streams
+                                                               access, the Docker and msb relays, file streams
 ```
 
 | Part | Folder | Owns | Never |
@@ -43,7 +43,7 @@ BB app: Box panel, Boxes page, desktop and terminal tabs, settings      BB serve
 | Transports | `src/transports/` | running commands, copying files, opening a route to a port in a box | knows which provider made the box |
 | Backends | `src/backends/<type>/` | acquire and release, capacity, ownership records, which transports and displays reach each box, images, `doctor` | runs anything in a box for the core |
 | Host entry | `src/host/` | what BB's daemon runs for bb-box on a BB machine | |
-| Relays | `src/relay/` | the Docker relay and file streams, as channels on one WebSocket | |
+| Relays | `src/relay/` | the Docker and msb relays and file streams, as channels on one WebSocket | |
 
 - bb-box is a BB plugin with no service of its own
   ([002](decisions/002-bb-is-the-coordinator.md)). It calls each
@@ -598,6 +598,24 @@ control (`src/relay/mux.ts`).
   connection to it is a channel on the `/docker-relay` route's WebSocket.
   It opens with the first `docker` command, in about 0.5 s, and closes
   after 5 idle minutes when bb-box has no box on the machine.
+- **The msb relay** runs bb-box's msb on a BB machine
+  ([053](decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)).
+  msb has no daemon or API socket to forward, so each run of it is a
+  channel on the `/msb-relay` route's WebSocket, opened and kept as the
+  Docker relay is. bb-box's msb client (`src/relay/msb-client.mjs`), run by
+  node on BB's server, stands in for the msb CLI: it connects to the
+  machine's unix socket, sends the run's arguments, and carries its stdin,
+  stdout, stderr and exit status, and for a terminal its size and resizes,
+  as the frames of `src/relay/msb.ts`. On the machine, the host entry runs
+  only `bin/msb` in bb-box's msb folder, on a PTY of its own for a terminal,
+  and three scripts of bb-box's
+  (`src/backends/microsandbox/release.ts`) through its `microsandbox`
+  call: install the pinned msb after checking its SHA-256, report on the
+  machine, and import an image from Docker there. The folder is
+  `microsandbox` in the plugin's data folder on the machine, with msb's
+  state and images in its `home`. msb's sockets need a home of at most 57
+  bytes, so a longer one is reached through a link of the user's,
+  `/tmp/bb-box-msb-<uid>`.
 - **File streams** carry a `box_copy` larger than BB's file API takes, on
   the `/file-relay` route, from the worker on the machine that holds the
   thread's workspace (#492).
