@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { ImageOptionView, KindView, ProviderProfile, SizeView } from "../plugin/views.ts";
+import type { ImageOptionView, KindView, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
@@ -223,6 +223,11 @@ export function NewBox({
   const fields: Fields = (kind && edited[kind.id]) ?? (inView ? fieldsOf(inView) : { cores: "", memoryGiB: "", diskGiB: "" });
   const custom = size === CUSTOM ? customSize(fields) : null;
   const sizeIndex = choices.indexOf(size);
+  // Whether the box would claim a spare on a provider (032, #440): one of the chosen project's image, else one of the kind's,
+  // at the kind's default size. Your machines claim none.
+  const imageSpares = chosenImage && chosenImage !== "standard" ? (covering.find((candidate) => candidate.name === chosenImage)?.spares ?? []) : null;
+  const readyOn = (offer: OfferView) =>
+    !machine && !!kind && size === kind.defaultPreset && (imageSpares ? imageSpares.some((spare) => spare.kind === kind.id && spare.backend === offer.backend && spare.ready > 0) : offer.ready > 0);
 
   useEffect(() => {
     if (open) return;
@@ -482,6 +487,7 @@ export function NewBox({
                 <ProviderRow
                   key={offer.backend}
                   offer={offer}
+                  ready={readyOn(offer)}
                   selected={onOffer?.backend === offer.backend}
                   onClick={() => setOn(offer.backend)}
                   optionRef={(element) => {

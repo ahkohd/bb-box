@@ -118,7 +118,7 @@ function offer(type, label, hosts, form, extra = {}) {
 }
 
 export const KINDS = [
-  // Linux keeps a spare, ready, so the chooser shows "Ready now"; three backends offer it, one without Docker (041).
+  // Linux keeps a spare, ready, so the chooser's Proxmox LXC row says "ready now"; three backends offer it, one without Docker (041).
   {
     ...kind("linux", "Linux", "A Linux box for builds, servers, Docker and the agent's own work.", 2, false, false, { target: 1, ready: 1, making: 0 }),
     forms: ["LXC", "Physical", "Docker"],
@@ -509,13 +509,14 @@ export const scenes = {
     },
   },
   // Two projects' images cover Linux (049): a dim sub-label "Image" under the Type cards and one menu, this project's image first, open.
+  // This project's image has a spare ready on Proxmox LXC (#440), so that row says "ready now" for it.
   "panel-chooser-images": {
     slot: "boxes",
     chrome: boxesChrome,
     width: 720,
     height: 860,
     rpc: rpc([], { images: [
-      { name: "rust-tools", kinds: ["linux"], projects: [{ id: "proj_1", name: "Example" }], mine: true, builds: [{ kind: "linux", backend: "proxmox-lxc", build: "b1", built: "2026-10-02T10:00:00Z" }], spares: [] },
+      { name: "rust-tools", kinds: ["linux"], projects: [{ id: "proj_1", name: "Example" }], mine: true, builds: [{ kind: "linux", backend: "proxmox-lxc", build: "b1", built: "2026-10-02T10:00:00Z" }], spares: [{ kind: "linux", backend: "proxmox-lxc", ready: 1, making: 0 }] },
       { name: "go-tools", kinds: ["linux"], projects: [{ id: "proj_2", name: "Another project" }], mine: false, builds: [], spares: [] },
     ] }),
     after: async (root) => {

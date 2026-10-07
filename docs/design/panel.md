@@ -84,8 +84,11 @@ New box options and the desktop lists:
 
 In that order. Nothing else is a badge; the backend's name is in the row's
 details. Calm, not stacked. A spare ready (032) is no badge either: in the
-New box form the provider's row says "1 ready now", in green, so a box of
-it is known to come at once. A box claimed from a spare needs nothing
+New box form the provider's row says "ready now", in green, so a box of
+it is known to come at once. It says so only where the box would claim
+the spare: one of the chosen image's (#440), or the kind's for Standard,
+at the kind's default size, and never for your machines, which claim
+none. It gives no count. A box claimed from a spare needs nothing
 more: its status line says "Ready in 0.1 s".
 
 Badges never squeeze a name. In a row the title line wraps, so badges go
@@ -272,7 +275,7 @@ words are never cut off.
 | [ First with room                                              ]  |
 | [ Any of the 3 below, in order                                 ]  |
 | [ pve1                                                         ]  |
-| [ Container · 1 ready now · usually ~2.2 s                     ]  |
+| [ Container · ready now · usually ~2.2 s                       ]  |
 | [ SSH host pool                                                ]  |
 | [ Physical · 1 free                                            ]  |
 | [ docker-host                                                  ]  |
