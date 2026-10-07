@@ -395,7 +395,8 @@ The XFCE desktops add:
 - `bb-box-check-desktop`, which checks the display, VNC, the GPU, Chrome,
   the fonts, Mousepad and Cua Driver.
 
-Each login of `box` gets `DISPLAY=:99` and `XAUTHORITY=/run/bb-box/Xauthority`.
+Each login of `box` gets `DISPLAY=:99` and
+`XAUTHORITY=/run/bb-box/Xauthority`.
 
 ### The desktop's display
 
