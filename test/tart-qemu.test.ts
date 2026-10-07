@@ -901,8 +901,8 @@ test("a Windows image's operations on a Mac (#450): a box of its build, a captur
   assert.ok(!existsSync(join(built, "owner")));
   assert.ok(!existsSync(join(dir, "1")), "the old build goes");
   await assert.rejects(images.remove(`mac1/${FAKE_WINDOWS_IMAGE}@build.20261007-020000-abcd`, AbortSignal.timeout(30_000)), /is not a refresh's build of this install's/);
-  // A box made now is an overlay on the new build.
-  const guest = await backend.acquire(identity(), null, hooks().hooks, AbortSignal.timeout(60_000));
-  assert.match(readFileSync(join(qemu, "vms", guest.ref, "config"), "utf8"), /\nbuild=build\.20261007-020000-abcd\n/);
-  await backend.release(guest, { resetting: async () => {}, timing: () => {} });
+  // A VM made from the image's current build now is an overlay on the new build.
+  const next = await images.box(replaced, "after the replace", AbortSignal.timeout(30_000));
+  assert.match(readFileSync(join(qemu, "vms", next.ref.slice("mac1/".length), "config"), "utf8"), /^image=bb-box-windows\nbuild=build\.20261007-020000-abcd\n/);
+  await images.remove(next.ref, AbortSignal.timeout(30_000));
 });
