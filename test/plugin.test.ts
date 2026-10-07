@@ -211,13 +211,16 @@ async function start(
         // A machine's enrolment and reconnect commands, with their Windows forms (#539).
         experimental_getEnrollmentCommand: async ({ hostId }: { hostId: string }) => {
           world.events.push(`enrolment command ${hostId}`);
-          // As BB's installer would once it runs: the machine connects a moment later.
+          // As BB's installer would once it runs: the machine connects a moment later, named after the computer.
           const host = hosts.get(hostId);
-          if (host && world.windowsConnects) setTimeout(() => hosts.set(hostId, { ...hosts.get(hostId)!, status: "connected", lifecycle: { ...host.lifecycle, phase: "active" } }), 50);
+          if (host && world.windowsConnects) setTimeout(() => hosts.set(hostId, { ...hosts.get(hostId)!, name: "bb-box-win", status: "connected", lifecycle: { ...host.lifecycle, phase: "active" } }), 50);
           return world.windowsEnrolment ? { command: `sh enrol ${hostId}`, windowsCommand: `& enrol ${hostId}`, expiresAt: Date.now() + 60_000 } : null;
         },
         experimental_reconnect: async ({ hostId }: { hostId: string }) => {
+          const host = hosts.get(hostId);
+          if (host?.status === "connected") throw Object.assign(new Error("HTTP 409: Machine is connected and doesn't need reconnecting"), { status: 409 });
           world.events.push(`reconnect command ${hostId}`);
+          if (host) setTimeout(() => hosts.set(hostId, { ...hosts.get(hostId)!, status: "connected" }), 50);
           return { command: `sh start ${hostId}`, windowsCommand: `& start ${hostId}`, hostId, expiresAt: Date.now() + 60_000 };
         },
         // Like BB: records the machine, then calls the provider's create in
@@ -704,7 +707,7 @@ test("box_copy streams a file too large for BB's file API through the thread's m
   await until("the lease to go", async () => worker.experimental_getRetainedWorkerLeaseCount() === 0);
 });
 
-test("a Windows box on trial enrols as a machine of BB's manual provider, which bb-box owns: release, a failure and the sweep remove it (#539)", async (t) => {
+test("a Windows box on trial enrols as a machine of BB's manual provider, which bb-box owns: release, a failure and the sweep remove it, and a start reconnects only a disconnected one (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
   // A box's PowerShell that runs the desktop session's command as BB's installer would, and exits 0.
   const shell = join(tempDir("windows-shell"), "pwsh");
@@ -720,8 +723,17 @@ test("a Windows box on trial enrols as a machine of BB's manual provider, which 
   assert.ok(world.events.includes(`create manual ${hostId}`), world.events.join("\n"));
   assert.ok(world.events.includes(`enrolment command ${hostId}`));
   assert.deepEqual(world.bootstraps, [], "BB's POSIX bootstrap is not run");
-  assert.equal(world.hosts.get(hostId)?.name, box.name, "the machine is named after the box");
+  assert.equal(world.hosts.get(hostId)?.name, box.name, "the machine is named after the box once it connects");
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), [`manual-machine/${hostId}`]);
+  // A start runs BB's reconnect command only when BB shows the machine disconnected.
+  await tool("box_stop", { box: box.name });
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  assert.ok(!world.events.includes(`reconnect command ${hostId}`), world.events.join("\n"));
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await tool("box_stop", { box: box.name });
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  assert.ok(world.events.includes(`reconnect command ${hostId}`), world.events.join("\n"));
+  assert.equal((await app.boxes.find(box.id))?.enrol.error, null);
   // Releasing the box removes its machine, and bb-box's record of it.
   assert.ok(!isError(await tool("box_release", { box: box.name })));
   assert.equal(world.hosts.has(hostId), false);

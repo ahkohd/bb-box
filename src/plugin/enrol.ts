@@ -285,6 +285,12 @@ export class Phases {
   }
 }
 
+/** BB's answer to a reconnect of a machine it shows connected: HTTP 409. */
+function isConflict(error: unknown): boolean {
+  const { status } = (error ?? {}) as { status?: unknown };
+  return status === 409 || /\bHTTP 409\b|doesn't need reconnecting/i.test(error instanceof Error ? error.message : "");
+}
+
 function isNotFound(error: unknown): boolean {
   const { status, code } = (error ?? {}) as { status?: unknown; code?: unknown };
   return status === 404 || code === "not_found" || /not found/i.test(error instanceof Error ? error.message : "");
@@ -367,8 +373,18 @@ export class Enrolment {
    */
   async #bootstrapAgain(box: BoxRecord, hostId: string, transport: CommandTransport, request: Parameters<EnrolmentDeps["bootstrap"]>[0]): Promise<void> {
     if (box.capabilities.os === "windows") {
+      // BB's daemon runs on through a suspend, and its logon starts it after
+      // a boot. BB refuses a reconnect while it shows the machine connected.
+      if ((await this.#deps.hosts().get({ hostId })).status === "connected") return;
       // BB's reconnect command, in its Windows form (#539).
-      const reconnect = await this.#deps.hosts().experimental_reconnect({ hostId, signal: request.signal });
+      const reconnect = await this.#deps
+        .hosts()
+        .experimental_reconnect({ hostId, signal: request.signal })
+        .catch((error: unknown) => {
+          if (isConflict(error)) return null;
+          throw error;
+        });
+      if (!reconnect) return;
       if (!reconnect.windowsCommand) throw new Error(`BB gave no Windows command to start BB's daemon in box ${box.name} again.`);
       const result = await runWindowsCommand(transport, reconnect.windowsCommand, { timeoutMs: this.#timeoutMs, signal: request.signal });
       if (result.exitCode !== 0) throw new Error(windowsFailure(`Starting BB's daemon in box ${box.name} again`, result));
@@ -389,13 +405,11 @@ export class Enrolment {
    * Enrols a Windows box on trial (#539) as the manual machine bb-box made
    * for it: names the machine after the box, then runs the machine's
    * enrolment command, in its Windows form, in the box user's desktop
-   * session, where BB's daemon has to run.
+   * session, where BB's daemon has to run. BB's installer names the machine
+   * after the computer, so #follow names it again once it connects.
    */
   async #enrolWindows(box: BoxRecord, hostId: string, phases: Phases): Promise<void> {
-    await this.#deps
-      .hosts()
-      .update({ hostId, name: machineName(box) })
-      .catch((error) => this.#deps.logError("rename machine", error));
+    await this.#rename(box, hostId);
     const enrolment = await this.#deps.hosts().experimental_getEnrollmentCommand({ hostId });
     if (!enrolment?.windowsCommand) throw new Error(`BB gave no Windows enrolment command for box ${box.name}'s machine ${hostId}.`);
     const transport = await this.#transport(box);
@@ -404,6 +418,14 @@ export class Enrolment {
     phases.mark("installed");
     if (result.exitCode !== 0) throw new Error(windowsFailure(`BB's Windows installer in box ${box.name}`, result));
     phases.mark("bootstrapped");
+  }
+
+  /** Names the box's machine in BB after the box. Nothing fails without it, so it only logs an error. */
+  async #rename(box: BoxRecord, hostId: string): Promise<void> {
+    await this.#deps
+      .hosts()
+      .update({ hostId, name: machineName(box) })
+      .catch((error) => this.#deps.logError("rename machine", error));
   }
 
   async #transport(box: BoxRecord): Promise<CommandTransport> {
@@ -511,6 +533,7 @@ export class Enrolment {
       if (phase === "active" && host.status === "connected" && waitsEnded === undefined) {
         const connected = Date.now();
         phases.mark("connected", connected);
+        if (current.capabilities.os === "windows") await this.#rename(current, hostId);
         await access;
         await this.#variables(current, "the machine connected", connected, phases);
         // BB's daemon can stop during the waits, as when the box runs out of
@@ -705,10 +728,7 @@ export class Enrolment {
     const hostId = box.enrol.hostId;
     if (!hostId) return false;
     // The rename goes on in the background: nothing in the box needs it.
-    void this.#deps
-      .hosts()
-      .update({ hostId, name: machineName(box) })
-      .catch((error) => this.#deps.logError("rename machine", error));
+    void this.#rename(box, hostId);
     const host = await this.#deps.hosts().get({ hostId });
     return host.lifecycle.phase === "active" && host.status !== "connected";
   }
