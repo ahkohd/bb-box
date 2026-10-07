@@ -79,6 +79,10 @@ export interface BoxImage {
 /** Reads /etc/environment, where an image's script sets the box's PATH and variables, as a new session would (049). */
 export const LOAD_ENVIRONMENT = "set -a; [ ! -r /etc/environment ] || . /etc/environment; set +a;";
 
+/** A spare of an image's build that failed is not made again from that build for this long (#440). */
+const SPARE_RETRY_MS = 24 * 60 * 60_000;
+const spareFailedKey = (name: string, backend: string, kind: string) => `spares/image-failed/${name}/${backend}/${kind}`;
+
 /** How long an image's script may run at start (049), and its check. */
 const IMAGE_SCRIPT_MS = 30 * 60_000;
 const IMAGE_CHECK_MS = 10 * 60_000;
@@ -231,6 +235,11 @@ export interface BoxesDeps {
    * standard images had it (049).
    */
   readonly imageTools?: Readonly<Record<string, string>>;
+  /**
+   * The spares of projects' images wanted now (#440): one per image, backend
+   * and kind, from the build in `ref`, which is current there.
+   */
+  imageSpares?(): Promise<readonly { readonly name: string; readonly backend: string; readonly kind: string; readonly ref: string }[]>;
   /** Says a box of an image is ready, whether its script ran at start or it started baked, for baking when used (049). */
   imageReady?(box: BoxRecord): void;
   /** Tells panels and tools that a thread's boxes changed. */
@@ -667,8 +676,8 @@ export class Boxes {
     if (input.image !== undefined && input.image !== "standard" && !image) {
       throw new BoxError("not_found", `There is no image ${input.image} for ${wanted} boxes. box_list names each kind's images; "standard" is bb-box's own.`);
     }
-    // Spares left over from a kind that keeps none now are released, not claimed.
-    const claims = claimsSpare && !image && !tried && (general.spares[wanted] ?? 0) > 0;
+    // Spares left over from a kind that keeps none now are released, not claimed. A project's image's box claims a spare of its image's current build (#440).
+    const claims = claimsSpare && !tried && (image !== null || (general.spares[wanted] ?? 0) > 0);
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
     const { box, claimed } = await this.#admission.run(() =>
@@ -683,7 +692,7 @@ export class Boxes {
         }
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
-        const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested) : null;
+        const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested, image?.name ?? null) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
         const chosen = await this.#place({ threadId: input.threadId, named }, offered, everywhere, sized.size, features);
         if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
@@ -740,10 +749,15 @@ export class Boxes {
     size: BoxSize,
     taken: Set<string>,
     requested: number,
+    /** The project's image the box gets, whose spares alone it claims; a kind's spares have none. */
+    imageName: string | null,
   ): Promise<{ box: BoxRecord; from: string } | null> {
     return this.#locked(SPARES, async () => {
       for (const spare of await this.list(SPARES)) {
         if (!offered.some((candidate) => candidate.backend.id === spare.backend && candidate.kind.id === spare.kind)) continue;
+        if ((spare.image?.name ?? null) !== imageName) continue;
+        // An image's spare from a build that is no longer current there is not claimed: the upkeep replaces it.
+        if (imageName && (spare.image?.state !== "baked" || (await this.#deps.baked?.(imageName, spare.backend, spare.kind).catch(() => null))?.ref !== spare.image.from)) continue;
         // A spare made before its backend's offer gained a feature lacks it.
         if (!hasFeatures(spare.capabilities, features)) continue;
         if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), size)) continue;
@@ -817,7 +831,8 @@ export class Boxes {
   async spareCounts(): Promise<Record<string, { readonly ready: number; readonly making: number }>> {
     const counts: Record<string, { ready: number; making: number }> = {};
     for (const spare of await this.list(SPARES)) {
-      if (!isActive(spare)) continue;
+      // An image's spares (#440) are not its kind's.
+      if (!isActive(spare) || spare.image) continue;
       const count = (counts[spare.kind] ??= { ready: 0, making: 0 });
       if (await this.#claimable(spare)) count.ready++;
       else count.making++;
@@ -838,6 +853,8 @@ export class Boxes {
   #claimed(box: BoxRecord, from: string): void {
     this.#deps.log?.(`Claimed spare box ${box.name} for thread ${box.threadId}.`);
     this.#renamed(box, from);
+    // A claim of an image's spare is a use of its build (#440).
+    if (box.image) this.#deps.imageReady?.(box);
     void this.keepSpares();
   }
 
@@ -908,6 +925,11 @@ export class Boxes {
   async #keepSpares(): Promise<void> {
     if (this.#disposed) return;
     const general = await this.#deps.general();
+    // The images' spares wanted (#440), or null when they could not be read, which leaves the images' spares as they are.
+    const wants = this.#deps.imageSpares ? await this.#deps.imageSpares().catch((error) => (this.#deps.logError("image spares", error), null)) : [];
+    const wantOf = (spare: BoxRecord) => wants?.find((want) => want.name === spare.image?.name && want.backend === spare.backend && want.kind === spare.kind) ?? null;
+    /** Kept spares, by kind, and an image's by image, backend and kind. */
+    const slotOf = (spare: { image?: { name: string } | null; backend: string; kind: string }) => (spare.image ? `${spare.image.name}|${spare.backend}|${spare.kind}` : spare.kind);
     const kept = new Map<string, number>();
     for (const spare of await this.list(SPARES)) {
       // Claimed, but this record outlived the move.
@@ -917,9 +939,10 @@ export class Boxes {
       }
       if (spare.state === "releasing") continue;
       if (await this.#adoptIfUsed(spare)) continue;
-      const count = kept.get(spare.kind) ?? 0;
+      const slot = slotOf(spare);
+      const count = kept.get(slot) ?? 0;
       if (this.#work.has(spare.id) && isActive(spare)) {
-        kept.set(spare.kind, count + 1);
+        kept.set(slot, count + 1);
         continue;
       }
       if (this.#holdsNothing(spare)) {
@@ -932,13 +955,28 @@ export class Boxes {
         spare.state === "stopped" ||
         spare.enrol.state === "failed" ||
         (spare.state === "ready" && spare.enrol.state === "off" && !spare.restoredAt && (await this.#enrols(spare)));
-      const unwanted = count >= (general.spares[spare.kind] ?? 0);
+      const image = spare.image;
+      const want = image ? wantOf(spare) : null;
+      // An image's spare is wanted while its build there is current and the image in use, one per backend and kind.
+      const stale = !!image && wants !== null && (!want || image.state !== "baked" || image.from !== want.ref);
+      const unwanted = image ? wants !== null && (stale || count >= 1) : count >= (general.spares[spare.kind] ?? 0);
       const resized = !sameSize(await this.#size(spare), defaultSize(kindSizes(spare.kind, general.sizes)));
       if (failed || unwanted || resized) {
-        await this.#release(spare, failed ? `no claim can take it, as it is ${spare.state} and its enrolment ${spare.enrol.state}` : unwanted ? `bb-box keeps ${count} spare ${spare.kind} boxes` : "its kind's default size changed");
+        // A spare of a build that failed is not made again from it for a day: no loop of making and releasing.
+        if (failed && image?.from) await this.#spareFailed(image.name, spare.backend, spare.kind, image.from);
+        await this.#release(
+          spare,
+          failed
+            ? `no claim can take it, as it is ${spare.state} and its enrolment ${spare.enrol.state}`
+            : stale
+              ? `its image ${image!.name} is not in use, or its build on ${spare.backend} is not current`
+              : unwanted
+                ? `bb-box keeps ${count} spare ${image ? `${image.name} ` : ""}${spare.kind} boxes${image ? ` on ${spare.backend}` : ""}`
+                : "its kind's default size changed",
+        );
         continue;
       }
-      kept.set(spare.kind, count + 1);
+      kept.set(slot, count + 1);
     }
     for (const [kind, wanted] of Object.entries(general.spares)) {
       for (let count = kept.get(kind) ?? 0; count < wanted && !this.#disposed; count++) {
@@ -951,6 +989,29 @@ export class Boxes {
         }
       }
     }
+    for (const want of wants ?? []) {
+      if (this.#disposed || (kept.get(slotOf({ image: want, backend: want.backend, kind: want.kind })) ?? 0) >= 1) continue;
+      const failed = await this.#deps.kv.get<{ ref: string; at: number }>(spareFailedKey(want.name, want.backend, want.kind));
+      if (failed && failed.ref === want.ref && this.#now() - failed.at < SPARE_RETRY_MS) continue;
+      try {
+        const made = await this.acquire({ threadId: SPARES, projectId: null, kind: want.kind, image: want.name, on: want.backend });
+        // The build changed as it was made: it would run the script at start, so it goes, and waits a day.
+        if (made.image?.state !== "baked" || made.image.from !== want.ref) {
+          await this.#spareFailed(want.name, want.backend, want.kind, want.ref);
+          await this.#release(made, `it did not start from ${want.name}'s current build on ${want.backend}`);
+        }
+      } catch (error) {
+        const why = error instanceof Error ? error.message : String(error);
+        this.#deps.log?.(`bb-box keeps no spare ${want.name} ${want.kind} box on ${want.backend} for now: ${why}`);
+        // No room is not a failure of the build: the next upkeep tries again.
+        if (!(error instanceof BoxError && error.code === "no_capacity")) await this.#spareFailed(want.name, want.backend, want.kind, want.ref);
+      }
+    }
+  }
+
+  /** Remembers that a spare of an image's build failed, so the upkeep makes none from it for a day (#440). */
+  async #spareFailed(name: string, backend: string, kind: string, ref: string): Promise<void> {
+    await this.#deps.kv.set(spareFailedKey(name, backend, kind), { ref, at: this.#now() });
   }
 
   /**
@@ -1254,7 +1315,8 @@ export class Boxes {
         : { guest, state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt } },
     );
     if (next?.state === "ready") void this.#recordReady(next).catch((error) => this.#deps.logError("ready history", error));
-    if (next?.state === "ready" && next.image) this.#deps.imageReady?.(next);
+    // A spare's own start is not a use of its image: a claim is (#440).
+    if (next?.state === "ready" && next.image && next.threadId !== SPARES) this.#deps.imageReady?.(next);
     if (!next) {
       await backend.release(guest, QUIET).catch((error) => this.#deps.logError("release", error));
       return;
