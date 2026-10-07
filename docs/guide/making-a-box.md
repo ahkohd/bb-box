@@ -85,6 +85,8 @@ The form remembers the system, type and size you chose last, separately for boxe
 
 In BB's new-thread screen, choose **New box** as the thread's machine. BB Box makes a box for the thread and BB copies the project onto it, so the thread runs there from its first message.
 
+The box can be Linux or macOS, not Windows: BB adds the new box as a machine with its installer for Linux and macOS only. For a thread on Windows, start the thread elsewhere and give it a Windows box.
+
 The button beside it shows the box's kind, size and image. Select it to change them. The menu has 3 groups: Kind, Size and Image. In a project, the project's image is chosen at first. Outside a project, no image is chosen until you pick one.
 
 The box belongs to the thread, and goes when the thread is archived or deleted. In the Box panel its row says 'This thread's machine'.

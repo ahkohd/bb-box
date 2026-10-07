@@ -74,6 +74,11 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
     validate({ inputs }) {
       const kind = boxes.kinds().find((candidate) => candidate.id === inputs.kind);
       if (!kind) return { action: "refuse", message: `bb-box has no ${inputs.kind} boxes on offer now.` };
+      // BB adds a new box's machine through bb-box's provider, with its installer for Linux and macOS only. A Windows box joins
+      // BB as a machine of BB's manual provider, which BB does not make for a thread's new box (#539).
+      if (kind.capabilities.os === "windows") {
+        return { action: "refuse", message: `A thread cannot start on a new ${kind.label} box: BB adds a new box's machine with its installer for Linux and macOS only. Start the thread elsewhere, and give it a Windows box with box_acquire and box_thread.` };
+      }
       if (!kind.capabilities.enrol) return { action: "refuse", message: `A ${kind.label} box cannot become a BB machine, so a thread cannot run on it.` };
       return { action: "accept" };
     },
