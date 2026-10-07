@@ -7,9 +7,19 @@ such as microsandbox as possible backends. Extended by
 cloud host with KVM runs microsandbox.
 
 This record first said, on the same day, to build the backend later, when
-one of three conditions held (below). The operator has chosen to build it
+one of three conditions held (below). The operator chose to build it
 now: microsandbox is light, and agents make and drop many boxes, faster
 than with Docker. The spike's measurements stay as they were.
+
+Amended later on 7 October 2026, as the operator's call, after the built
+backend was measured against Docker on the same hosts
+([below](#what-the-built-backend-measured)): **microsandbox is an option
+beside Docker, never a replacement for it and never the default.** It
+stays last in the backend order, so only a box that asks for it gets a
+microVM. On a Linux host under nested KVM, Docker made boxes about twice
+as fast; on bare metal, msb was as fast as Docker. Either way an idle
+microVM held far more memory. What microsandbox gives on Linux is a kernel
+per box. On a Mac, microsandbox is far faster than Tart's Linux VMs.
 
 ## Context
 
@@ -160,6 +170,107 @@ Over Tart, for Linux on a Mac:
 - A box on a tailnet would reach its peers through Tailscale's DERP
   relays, not directly, as msb's UDP relay gives each destination its own
   host port (#498).
+
+## What the built backend measured
+
+Measured on 7 October 2026 with msb 0.7.7, the backend as built (with
+each box's Docker disk made by bb-box, #568), and each backend's own flags
+as bb-box passes them: 2 cores, `bbbox/linux:1`. Not enrolled means bb-box's
+steps to a ready box (create, the start script, the ready file) without
+BB's daemon; enrolled means through bb-box, until each box was a BB
+machine.
+
+### A Linux host with nested KVM
+
+A Windows PC's WSL 2, a VM under Hyper-V, AMD Ryzen 7 9800X3D, 16 threads,
+93 GiB. msb runs under nested KVM there; Docker runs natively in the VM.
+
+| 20 at once, not enrolled | msb, 4 GiB | msb, 2 GiB | Docker, 4 GiB | Docker, 2 GiB |
+| --- | --- | --- | --- | --- |
+| All ready by | 3.65 s | 3.00 s | 1.57 s | 1.44 s |
+| Median | 3.28 s | 2.35 s | 1.14 s | 1.08 s |
+| Host memory each, idle | 210 MiB | 108 MiB | 6 MiB | 8 MiB |
+| 20 removed in | 0.31 s | 0.29 s | 2.84 s | 2.96 s |
+
+With msb's own disk for Docker, which formats ext4 whole, 20 at 4 GiB took
+7.2 s, median 6.9 s.
+
+| 10 at once, enrolled, 4 GiB | msb | Docker (9, for room) |
+| --- | --- | --- |
+| Ready, median and slowest | 5.8 s, 14.4 s | 10.1 s, 23.9 s |
+| BB enrolment each | 119 to 160 s | 118 to 148 s |
+| Host memory each, idle | 1.7 to 2.0 GiB | about 830 MiB |
+
+- One box alone: msb ready in 1.6 s, enrolled 9.7 s later; a desktop in
+  2.3 s. A stopped box starts again in 1.1 s.
+- msb gives freed memory back: a 4 GiB guest that touched 2 GiB and freed
+  it held 226 MiB again 31 s later, through free page reporting in 2 MiB
+  blocks. What it keeps is the guest's page cache, which each microVM
+  holds in its own RAM where Docker's containers share the host's, and
+  free memory in pieces under 2 MiB. Enrolment fills the cache. Dropping
+  the guest's caches took a busy 4 GiB guest from 2.3 GiB to 306 MiB, and
+  reporting in 4 KiB pieces to 206 MiB. The idle floor follows the box's
+  memory: 181 MiB at 4 GiB, 82 MiB at 2 GiB.
+- Nesting slows msb's boot, not its memory: a plain `msb create` took
+  0.65 s there against the spike's 0.39 to 0.47 s on bare-metal KVM.
+
+### A Mac
+
+An M4 Max, 16 cores, 128 GiB, macOS 27; msb on the Hypervisor framework,
+with no nesting. The images are x86_64 and msb on a Mac runs arm64 guests
+only, so msb ran an arm64 stand-in, `ubuntu:24.04`, with bb-box's create
+flags and its three steps. The Mac has no Docker, so the comparison is
+with Tart's Linux VMs, which serve Linux on a Mac now
+([040](040-linux-on-arm64-has-kinds-of-its-own.md)). The Mac has no
+`mkfs.ext4`, so a Docker disk is msb's own.
+
+| 20 at once, not enrolled, arm64 stand-in | 4 GiB | 2 GiB | 4 GiB, Docker disk | 2 GiB, Docker disk |
+| --- | --- | --- | --- | --- |
+| All ready by | 1.24 s | 1.70 s | 3.00 s | 2.17 s |
+| Median | 1.04 s | 1.37 s | 2.86 s | 1.84 s |
+| RSS each, idle | 264 MiB | 155 MiB | 273 MiB | 165 MiB |
+| 20 removed in | 0.35 s | 0.24 s | 0.80 s | 0.78 s |
+
+- A fork of a running box that had written 1 GiB took 0.70 s, its child
+  answering 68 ms later: APFS has reflinks.
+- Tart, 10 `linux-arm64` boxes at once through bb-box, enrolled: ready in
+  9.1 s median, 10.1 s slowest, enrolled in 135 to 142 s, holding 3.4 to
+  3.9 GiB RSS each, 2.3 to 2.8 GB as macOS counts a footprint. msb has no
+  Mac host in bb-box yet, so there is no enrolled msb run to set beside it.
+
+### What it means
+
+- On a Linux host, microsandbox buys isolation and fast removal, not
+  memory: a kernel per box, so Docker in a box with no privileged
+  container and Chrome with its own sandbox, and 20 boxes removed 7 to 10
+  times faster than Docker's. On bare metal it makes boxes as fast as
+  Docker; under nested KVM, as in WSL 2, Docker is about twice as fast.
+  Each microVM holds its own page cache where Docker's containers share
+  the host's, so an idle box takes far more memory.
+- On a Mac, microsandbox is the clear win over Tart for Linux boxes: 20 at
+  once ready in 1 to 3 s, where one Tart Linux VM takes about 9 s and
+  holds several times the memory.
+
+### A Linux host without nesting
+
+A Proxmox LXC box with `/dev/kvm` passed in, as the spike's: KVM on bare
+metal, an AMD Threadripper PRO 9975WX, the box at 8 cores and 16 GiB. msb
+and Docker ran in the same box, with `bbbox/linux:1` and each backend's
+flags, as on the nested host.
+
+| 20 at once, not enrolled | msb, 4 GiB | msb, 2 GiB | Docker, 4 GiB | Docker, 2 GiB |
+| --- | --- | --- | --- | --- |
+| One alone | 0.44 s | 0.41 s | 0.29 s | 0.30 s |
+| All ready by | 1.47 s | 1.26 s | 1.42 s | 1.32 s |
+| Median | 1.25 s | 0.89 s | 1.21 s | 1.14 s |
+| Memory each, idle | 212 MiB | 110 MiB | under 10 MiB | 6 MiB |
+| 20 removed in | 0.23 s | 0.22 s | 1.71 s | 1.54 s |
+
+- Without nesting, msb makes boxes as fast as Docker: about the same at
+  4 GiB, faster at 2 GiB. Most of the gap on the nested host was nesting.
+- Memory does not change with nesting: about 210 MiB per idle 4 GiB box,
+  against a few MiB for a Docker box.
+- There is no enrolled run here: the box was not an msb host in bb-box.
 
 ## What the spike measured
 

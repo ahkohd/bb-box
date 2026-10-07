@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
+import { spawn } from "node:child_process";
+import { holderCommand } from "../src/host/access.ts";
 import { hostEntry } from "../src/host/entry.ts";
 import { Holders, RETIRED_TITLE, type RetiredTerminals } from "../src/plugin/holder.ts";
 
@@ -168,6 +170,16 @@ async function gone(pid: number): Promise<boolean> {
   for (let i = 0; i < 100 && alive(pid); i++) await new Promise((resolve) => setTimeout(resolve, 10));
   return !alive(pid);
 }
+
+test("on Windows, which has no sleep, the held process is Node waiting for ever (#560)", async (t) => {
+  assert.deepEqual(holderCommand("linux"), ["sleep", "2147483647"]);
+  const [program, ...args] = holderCommand("win32");
+  assert.equal(program, process.execPath);
+  const child = spawn(program!, args, { stdio: "ignore" });
+  t.after(() => child.kill("SIGKILL"));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(child.exitCode, null, "it is still running");
+});
 
 test("the host entry holds a process with the call's variables, kept until they change, with a lease on its worker", { skip: process.platform !== "linux" && "reads /proc" }, async (t) => {
   const harness = experimental_createHostEntryHarness(hostEntry({ access: { command: ["sleep", "300"] } }));

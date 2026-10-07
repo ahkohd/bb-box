@@ -193,10 +193,10 @@ is never logged or sent to the browser. A command transport's `route(port)`
 gives a route to a port inside the box: `ssh -W`, or `docker exec` with
 `socat`.
 
-**Displays.** A display has an ID, a protocol (`rfb`), whether it can
-resize, and `open()`, which returns a route and how to sign in: none, a VNC
-password, or a user and password for Apple's authentication. A display may
-also have:
+**Displays.** A display has an ID, a protocol (`rfb`, or `selkies` beside
+it on an X11 CPU desktop), whether it can resize, and `open()`, which
+returns a route and how to sign in: none, a VNC password, or a user and
+password for Apple's authentication. A display may also have:
 
 - `resize()`, which the relay calls when the stream server cannot resize
   ([021](decisions/021-desktop-resize-through-the-backend.md));
@@ -335,8 +335,10 @@ A box is a resource of its thread and gets what the thread's machine has.
   variables to its daemon in the box. Each command bb-box runs, and each
   SSH session through the box's `~/.bashrc` (`~/.zshenv` on macOS), takes
   `GH_TOKEN`, the git identity and BB's machine variables from a process of
-  that daemon as it starts: from `/proc` on Linux, and from `ps -E` on
-  macOS ([BB request 8](bb-requests.md#8-give-a-machines-own-commands-its-variables)).
+  that daemon as it starts: from `/proc` on Linux, from `ps -E` on macOS,
+  and through each process's PEB on Windows, on trial, for bb-box's own
+  commands only (#560;
+  [BB request 8](bb-requests.md#8-give-a-machines-own-commands-its-variables)).
   The values never reach the disk. bb-box's host entry keeps a process
   with the current values running in a worker of the daemon
   (`src/host/access.ts`), so commands always find one. A project's own
@@ -445,6 +447,29 @@ handshake itself, VNC authentication with the box's password or Apple's
 only, as BB has authenticated the viewer. Passwords and tickets never reach
 the browser. It copies bytes both ways without decoding pixels, and always
 joins as a shared client. The viewer is noVNC.
+
+**The Selkies relay.** An X11 CPU desktop also has a Selkies display, H.264
+over WebSockets from `127.0.0.1:5980` in the box
+([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)).
+A viewer asks for it with `&stream=selkies`. The relay speaks WebSocket to
+Selkies over the display's route and carries messages, not bytes:
+
+- Each viewer joins Selkies as a viewer (`role=viewer`), so Selkies never
+  hands the display from one page to another. The relay passes only its
+  video requests, and drops the rest of what it sends.
+- The input of the viewer with control goes over the box's input
+  connection, one per box, which asks for no video. A pointer loses its
+  sequence number there, as several viewers' input shares it.
+- The box's clipboard reaches only the viewer with control.
+- Selkies paces a viewer by its socket, which the route hides, so the relay
+  paces each by the frames it acknowledges: 400 ms behind, it drops that
+  viewer's frames until it catches up, then asks for a key frame, which
+  goes to every viewer, and resumes from it.
+- Selkies refuses a connection within 500 ms of another from the same
+  address, and the relay's all come from the box's loopback, so it spaces
+  them and tries again.
+- A resize from the viewer with control goes through the RFB display, which
+  Selkies follows.
 
 **Each desktop's server.**
 
@@ -781,6 +806,10 @@ Code in [src/backends/docker/](../src/backends/docker/). Set up by
 Code in [src/backends/microsandbox/](../src/backends/microsandbox/). Set up
 by [setup/microsandbox](../setup/microsandbox/README.md)
 ([053](decisions/053-microsandbox-runs-light-linux-boxes-as-microvms.md)).
+It is an option beside Docker, for boxes that need a kernel of their own,
+never the default: it stays last in the backend order, so a box gets a
+microVM only when it asks for this backend.
+
 
 - bb-box runs its own `msb` on one Linux host with KVM: BB's server, one
   over `ssh://`, or a BB machine through the msb relay. It installs the
@@ -817,8 +846,9 @@ by [setup/microsandbox](../setup/microsandbox/README.md)
   one.
 - Capacity is the host's memory, less a reserve and the memory of the
   running bb-box microVMs, its cores, and a most-boxes budget counting every
-  install's. `msb` reserves no memory, so an idle box holds about 100 MiB of
-  what it is counted at. There is no warm pool yet.
+  install's. `msb` reserves no memory and takes back what a guest frees,
+  but each guest keeps its own page cache, so a box that has joined BB holds
+  about 2 GiB while idle (053). There is no warm pool yet.
 
 ### SSH host pool
 
@@ -904,9 +934,10 @@ Code in [src/backends/tart/](../src/backends/tart/): settings in
   per box comes later, for Windows and GPU desktops.
 - **Desktop streams** ([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)):
   Linux X11 desktops add a Selkies display, H.264 over WebSockets, which
-  the relay carries message by message with the same control; QEMU's VNC
-  on a Mac gets `lossy=on`, so the viewer's quality reaches it; and Tart's
-  holder sends each viewer updates only as it asks.
+  the relay carries message by message with the same control; and Tart's
+  holder sends each viewer updates only as it asks. Built so far: X11
+  desktop templates and images run Selkies on `127.0.0.1:5980` in the box,
+  which takes about 0.1% of a core while no viewer is connected.
 
 ## The conformance suite and the doctor
 

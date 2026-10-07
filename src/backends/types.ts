@@ -592,6 +592,8 @@ export interface BackendImages {
    * and a spare would hold its whole memory.
    */
   readonly spares?: boolean;
+  /** Whether it refreshes its Windows images, in a box (054). */
+  readonly windows?: boolean;
 }
 
 export interface BackendStorage {

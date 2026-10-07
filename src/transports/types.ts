@@ -7,7 +7,7 @@
 
 export type GuestOs = "linux" | "windows" | "macos";
 export type Arch = "x86_64" | "arm64";
-/** The desktop viewer picks its client by protocol: noVNC for "rfb". */
+/** The desktop viewer picks its client by protocol: noVNC for "rfb", and for "selkies" the relay carries Selkies' WebSocket (056). */
 export type DisplayProtocol = "rfb" | "selkies";
 
 /** A two-way byte stream with backpressure. */

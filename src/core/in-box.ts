@@ -7,6 +7,7 @@ import { posix } from "node:path";
 import { DESKTOP_EXITS, desktopScript, powershellCommand } from "../transports/powershell.ts";
 import { LOADS_ENV } from "../transports/process.ts";
 import type { GuestOs } from "../transports/types.ts";
+import { WINDOWS_ACCESS_SETUP, windowsAccessCheck, windowsAccessLoader } from "./windows-access.ts";
 
 export { DESKTOP_EXITS };
 
@@ -22,9 +23,9 @@ export function envFile(os: GuestOs): string {
 }
 
 /**
- * Where commands in a Linux or macOS box take the thread's access from: the
- * named variables of a live process below one that runs a program whose path
- * holds `parent`. In a box that is a BB machine, that is BB's daemon, whose
+ * Where commands in a box take the thread's access from: the named
+ * variables of a live process below one that runs a program whose path
+ * holds `parent`, with \ read as / on Windows (#560). In a box that is a BB machine, that is BB's daemon, whose
  * workers carry BB's machine variables, GH_TOKEN and the user's git
  * identity. A project's variables are only in the agent a worker starts for
  * a thread of the project on the box, a level further down (#109). Only the
@@ -479,9 +480,8 @@ unset -f bb_box_access
 }
 
 /**
- * The file that sets `variables` for commands in the box, and on Linux and
- * macOS takes the thread's access. Names that are not valid shell names are
- * left out. On Linux, package installs ask nothing, since nobody could
+ * The file that sets `variables` for commands in the box, and takes the
+ * thread's access. Names that are not valid shell names are left out. On Linux, package installs ask nothing, since nobody could
  * answer; a variable of the thread's own can say otherwise.
  */
 export function envScript(os: GuestOs, variables: Readonly<Record<string, string>>, access?: Access): string {
@@ -489,7 +489,8 @@ export function envScript(os: GuestOs, variables: Readonly<Record<string, string
     .filter((name) => NAME.test(name))
     .sort();
   if (os === "windows") {
-    return names.map((name) => `$env:${name} = ${ps(variables[name]!)}`).join("\r\n") + "\r\n";
+    const own = names.map((name) => `$env:${name} = ${ps(variables[name]!)}`).join("\r\n") + "\r\n";
+    return own + (access ? windowsAccessLoader(accessNames(access), access.parent) : "");
   }
   const header = "# Written by bb-box: the thread's environment for commands in this box.\n";
   const defaults = os === "linux" ? "export DEBIAN_FRONTEND=noninteractive\n" : "";
@@ -528,10 +529,10 @@ const DROP_OLD_HOOK =
  * URL. That file is ~/.bashrc, or ~/.zshenv on macOS, since an SSH command
  * there runs a zsh that is not a login shell, which reads only ~/.zshenv.
  * Prints how long it took in the box, in milliseconds, for the enrolment's
- * log, when the box's date can tell. Null for Windows.
+ * log, when the box's date can tell. A Windows box gets git's part (#560).
  */
-export function accessSetup(os: GuestOs): string | null {
-  if (os === "windows") return null;
+export function accessSetup(os: GuestOs): string {
+  if (os === "windows") return WINDOWS_ACCESS_SETUP;
   // cp -p gives the new file the old one's mode, which writing it keeps.
   return String.raw`started=$(date +%s%N)
 f="$HOME/${os === "macos" ? ".zshenv" : ".bashrc"}"
@@ -571,13 +572,14 @@ export const ACCESS_CHECK_EXITS = { found: 0, waiting: 1, noDaemon: 2 } as const
  * that carry the variables a moment after its daemon connects. Exits 0 when
  * the env file set every required name, or any name when none is required,
  * 1 while the daemon runs without them, and 2 when nothing runs the
- * daemon's program, so there is nothing to wait for. Null for Windows, or
- * when there are no names.
+ * daemon's program, so there is nothing to wait for. Null when there are
+ * no names.
  */
 export function accessCheck(os: GuestOs, access: Access): string | null {
   const names = accessNames(access);
-  if (os === "windows" || !names.length) return null;
+  if (!names.length) return null;
   const required = (access.required ?? []).filter((name) => names.includes(name));
+  if (os === "windows") return windowsAccessCheck(names, required, access.parent, ACCESS_CHECK_EXITS);
   const set = required.length
     ? required.map((name) => `[ -n "\${${name}:-}" ]`).join(" && ")
     : names.map((name) => `[ -n "\${${name}:-}" ]`).join(" || ");
