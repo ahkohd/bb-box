@@ -64,7 +64,7 @@ ok    PowerShell 7 over SSH              7.6.6
 ok    UTF-8 code page                    ACP 65001, output utf-8
 ok    SSH session elevated               box, elevated
 ...
-ok    Edge page in the accessibility tree  3744 elements in 371 ms
+ok    Edge page in the accessibility tree  <n> elements in <ms> ms
 ```
 
 ### 2. Configure bb-box
@@ -128,14 +128,14 @@ The host's Proxmox LXC parts stay until you remove that backend too.
 - **Anything else in a build:** run it again with `--keep`, and look at the
   build VM's console and `C:\bb-box\firstlogon.log` in it:
   `qm guest exec <vmid> -- powershell -Command "Get-Content C:\bb-box\firstlogon.log"`.
-  A failed build also leaves its console as
-  `/var/tmp/bb-box-windows-<vmid>.ppm`.
+  A failed build also leaves a picture of its console in `/var/tmp`, named
+  after the build VM.
 
 ## What a box has
 
 - Windows 11, not generalized: every box is a linked clone of the same
   installed Windows, so machine SIDs repeat, which matters only in a domain.
-  Computer name `bb-box-win`. The time zone and the VM's clock are UTC.
+  The time zone and the VM's clock are UTC.
 - User `box`, an administrator, logged on to the console automatically, with
   no lock screen, sleep, screen saver or UAC prompt. Its password is random
   per build and kept nowhere else.
