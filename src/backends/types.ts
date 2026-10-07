@@ -68,6 +68,14 @@ export interface DisplayCapability {
    * stream server or the display's own input moves it, if anything does.
    */
   readonly clipboard?: "commands";
+  /**
+   * "viewer" when the display's stream server never sends again, losslessly,
+   * what it sent as JPEG once it stops changing, as wayvnc (056): the viewer
+   * asks for it again once the screen is still. Left out, the server does so
+   * itself, as Xtigervnc, or sends no JPEG, as QEMU without lossy=on and the
+   * Tart holder.
+   */
+  readonly refresh?: "viewer";
 }
 
 /**

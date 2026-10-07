@@ -22,6 +22,7 @@ import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelSt
 import type { BoxView, KindView } from "../plugin/views.ts";
 import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, OPERATOR, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
+import { refreshLosslessly, type LosslessRefresh } from "./rfb-refresh.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
 import { NewBox, type SizeRequest } from "./new-box.tsx";
@@ -45,6 +46,16 @@ export const PASTE_CHORD_DELAY_MS = 150;
 const PASTE_EVENT_WAIT_MS = 150;
 /** How long a clipboard note, such as "Copied" or "Pasted", shows in the toolbar at least. */
 const FLASH_MS = 3_000;
+/**
+ * The JPEG quality every desktop is asked for (056), against noVNC's 6: moving
+ * text stays readable, and scrolling takes half the traffic. Xtigervnc sends a
+ * still area again near losslessly, and wayvnc's viewers ask for it
+ * (rfb-refresh.ts), so a still screen is sharp. QEMU without lossy=on and the
+ * Tart holder send no JPEG, so it changes nothing there. The compression level
+ * stays noVNC's 2: 9 saved under 2% of Xtigervnc's traffic for a tenth of a
+ * core more, and halved QEMU's frames.
+ */
+export const QUALITY_LEVEL = 2;
 const XK_CONTROL_L = 0xffe3;
 const XK_META_L = 0xffe7;
 const XK_META_R = 0xffe8;
@@ -106,6 +117,17 @@ class Viewer extends RFB {
   /** noVNC refreshes the cursor at connect and on each cursor the box sends, not when view-only changes: the viewer asks here. */
   refreshCursor(): void {
     this._refreshCursor();
+  }
+
+  #refresh: LosslessRefresh | null = null;
+
+  /** Asks for a still area again losslessly, for a desktop whose server sends none itself (rfb-refresh.ts). */
+  refreshLosslessly(): void {
+    this.#refresh ??= refreshLosslessly(this);
+  }
+
+  stopRefreshing(): void {
+    this.#refresh?.stop();
   }
 }
 
@@ -198,6 +220,8 @@ export class DesktopSession implements Kept {
   #mine = false;
   #resizable = false;
   #disposed = false;
+  /** The desktop's server sends no lossless refresh, so the viewer asks for one (rfb-refresh.ts). */
+  #viewerRefresh = false;
   readonly #observer: ResizeObserver | null;
   #settle: ReturnType<typeof setTimeout> | undefined;
   /** The viewer's size as last observed, so the first observation, at mount, is not taken for a move. */
@@ -268,6 +292,8 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#retry);
     this.#refused = null;
     const client = new Viewer(this.element, this.#url, { shared: true });
+    client.qualityLevel = QUALITY_LEVEL;
+    if (this.#viewerRefresh) client.refreshLosslessly();
     client.scaleViewport = true;
     client.viewOnly = !this.#mine;
     client.resizeSession = this.#mine && this.#resizable;
@@ -287,6 +313,7 @@ export class DesktopSession implements Kept {
       this.#refused = (event as CustomEvent<{ reason?: string }>).detail.reason ?? "The relay refused the connection.";
     });
     client.addEventListener("disconnect", () => {
+      client.stopRefreshing();
       if (this.#client !== client) return;
       this.#client = null;
       const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** this.#failures);
@@ -326,6 +353,12 @@ export class DesktopSession implements Kept {
     client.commandAsControl = macBrowser() && this.guestOs !== "macos";
     client.refreshCursor();
     if (this.#mine) client.focus({ preventScroll: true });
+  }
+
+  /** Asks for still areas again losslessly from now on, for a desktop whose server sends none itself. */
+  refreshLosslessly(): void {
+    this.#viewerRefresh = true;
+    this.#client?.refreshLosslessly();
   }
 
   /** The box's OS, for the paste chord and the Cmd mapping. */
@@ -554,6 +587,10 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   useLayoutEffect(() => {
     if (guestOs) session.current?.setGuest(guestOs);
   }, [guestOs, connection]);
+  const viewerRefresh = box?.display?.refresh === "viewer";
+  useLayoutEffect(() => {
+    if (viewerRefresh) session.current?.refreshLosslessly();
+  }, [viewerRefresh, connection]);
 
   // A box that stops or goes takes its stream with it.
   useEffect(() => {

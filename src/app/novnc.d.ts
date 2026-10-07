@@ -7,8 +7,31 @@ declare module "@novnc/novnc" {
     readonly wsProtocols?: readonly string[];
   }
 
+  /** Where noVNC draws: each rect a decoder gives it, before it is rendered. */
+  export interface RfbDisplay {
+    imageRect(x: number, y: number, width: number, height: number, mime: string, data: Uint8Array): void;
+    blitImage(x: number, y: number, width: number, height: number, data: Uint8Array, offset: number, fromQueue?: boolean): void;
+    fillRect(x: number, y: number, width: number, height: number, color: Uint8Array | number[], fromQueue?: boolean): void;
+    videoFrame(x: number, y: number, width: number, height: number, frame: unknown): void;
+  }
+
   export default class RFB extends EventTarget {
     constructor(target: HTMLElement, urlOrChannel: string | WebSocket, options?: RfbOptions);
+    /** The JPEG quality it asks for, 0 to 9; 6 by default. */
+    qualityLevel: number;
+    /** The zlib level it asks for, 0 to 9; 2 by default. */
+    compressionLevel: number;
+    /** RFB's client messages, sent on a connection's socket. */
+    static messages: {
+      clientEncodings(sock: unknown, encodings: number[]): void;
+      fbUpdateRequest(sock: unknown, incremental: boolean, x: number, y: number, width: number, height: number): void;
+    };
+    _sock: unknown;
+    _display: RfbDisplay;
+    /** Reads one FramebufferUpdate: true once all its rects are drawn. */
+    _framebufferUpdate(): boolean;
+    /** Sends SetEncodings: the encodings it decodes, then pseudo-encodings, a quality level among them. */
+    _sendEncodings(): void;
     viewOnly: boolean;
     scaleViewport: boolean;
     resizeSession: boolean;

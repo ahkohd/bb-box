@@ -160,6 +160,8 @@ test("offers kinds by image, and its offers agree with Proxmox LXC's", async () 
   assert.deepEqual(kinds.map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"], ["docker"]]);
   assert.deepEqual(dockerKinds(dockerConfig({ privileged: false, "gpu-desktops": true })).map((kind) => kind.capabilities.features), [[], [], [], []]);
   assert.deepEqual(dockerKinds(dockerConfig(), true).map((kind) => kind.capabilities.features), [[], [], []]);
+  // wayvnc sends no still area again, so the Wayland desktop's viewer asks for it; Xtigervnc does, and Selkies is no RFB (056).
+  assert.deepEqual(kinds.map((kind) => kind.capabilities.displays.map((display) => display.refresh ?? null)), [[], [null, null], [null], ["viewer"]]);
   for (const kind of kinds) {
     assert.equal(kind.capabilities.arch, "x86_64");
     assert.equal(kind.capabilities.command?.transport, "docker");

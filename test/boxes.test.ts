@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, type Backend, type BoxKind, type BoxSize, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type ReleaseHooks } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -469,6 +469,16 @@ test("a box's view shows the size its guest says, else the size asked for (028)"
   assert.equal(boxView({ ...box, guest: { ...box.guest!, size: null } }, true, control).size, "2 cores, 4 GiB memory");
   const { size: _, ...before } = box;
   assert.equal(boxView({ ...before, guest: null }, true, control).size, null, "a box from before sizes, with no guest yet");
+});
+
+test("a box's view says whether its desktop's viewer asks for a still area again (056)", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const control = { owner: "agent", holder: null } as const;
+  const withDisplay = (display: DisplayCapability) => boxView({ ...box, capabilities: { ...box.capabilities, displays: [display] } }, true, control).display;
+  assert.equal(boxView(box, true, control).display, null, "no desktop");
+  assert.deepEqual(withDisplay({ id: "desktop", protocol: "rfb", resizable: true }), { protocol: "rfb", resizable: true, clipboard: null, refresh: null });
+  assert.equal(withDisplay({ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" })?.refresh, "viewer");
 });
 
 test("box details and kind lists say whether the box user can become root", async () => {
