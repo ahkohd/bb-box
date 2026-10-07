@@ -57,6 +57,10 @@ Limits:
   server with `Start-Detached { <cmd> } server.log` instead, which returns
   its process ID. It gets the command's directory and environment
   variables, but not its PowerShell variables: pass values in `$env:`.
+  A GUI program, such as an Electron app, starts the same way, with
+  `Start-Detached { & <program> <args> } app.log`: its output reaches the
+  log, though PowerShell does not wait for it. For its window to show on
+  the desktop, call Start-Detached in a desktop command (`desktop: true`).
 - A command that exits with a non-zero code is not a tool error. A command
   that times out is.
 - A box can stop without a request, as when its VM crashes. `box_status`
