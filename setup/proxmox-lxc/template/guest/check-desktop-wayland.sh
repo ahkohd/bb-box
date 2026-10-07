@@ -61,6 +61,21 @@ t "resize smaller, a viewer" bash -c '
   resize_to "$before" >/dev/null || ok=1
   kill -0 $viewer 2>/dev/null || { echo "the watching viewer was disconnected"; ok=1; }
   kill $viewer 2>/dev/null; rm -f "$hold"; exit $ok'
+# A viewer that leaves just as the size changes, as the relay's own
+# connection can, must not leave wayvnc for the next viewer to crash (#394).
+t "viewer leaves at a resize" bash -c '
+  before=$(size_of)
+  hold=$(mktemp); node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password --hold >"$hold" 2>&1 &
+  viewer=$!
+  for _ in $(seq 1 100); do [ -s "$hold" ] && break; sleep 0.1; done
+  $libexec/display resize 1233x677; ok=$?
+  kill $viewer 2>/dev/null; wait $viewer 2>/dev/null; rm -f "$hold"
+  sleep 0.3; vnc=$(pgrep -u "$(id -u)" -x wayvnc)
+  got=$(init_size); sleep 0.5
+  [ "$(pgrep -u "$(id -u)" -x wayvnc)" = "$vnc" ] || { echo "a new viewer ended wayvnc"; ok=1; }
+  [ "$got" = 1233x677 ] || { echo "a new viewer has $got"; ok=1; }
+  resize_to "$before" >/dev/null || ok=1
+  [ $ok = 0 ] && echo "a new viewer has $got, wayvnc runs on"; exit $ok'
 t "at-spi bus" sh -c 'n=$(pgrep -u "$(id -un)" -c at-spi-bus-laun); a=$(busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress) || exit 1; [ "$n" -le 1 ] || { echo "$n bus launchers"; exit 1; }; echo "$a" | cut -c1-60'
 t "Cua Driver daemon" sh -c 'systemctl --user is-active bb-box-cua-driver && cua-driver telemetry status | sed -n 1p'
 # Cua's get_screen_size is X11's; on Wayland it lists the windows through Sway.
