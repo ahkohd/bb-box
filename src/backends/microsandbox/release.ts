@@ -1,6 +1,6 @@
 // The microsandbox release bb-box runs, and the scripts it runs on an msb
-// host (053): install that release, report on the host, and import an image
-// from Docker there. The same scripts run on BB's server, over ssh://, and
+// host (053): install that release, report on the host, give Docker's IDs
+// of images there, and import an image from Docker. The same scripts run on BB's server, over ssh://, and
 // on a BB machine through bb-box's host entry, which runs no others.
 //
 // msb is beta, so bb-box pins one release and checks its SHA-256 against
@@ -40,7 +40,7 @@ export const MSB_HOME_MAX = 57;
 export const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 
 /** The scripts a host runs for bb-box, by name. */
-export type MsbScript = "install" | "status" | "import";
+export type MsbScript = "install" | "status" | "images" | "import";
 
 /** Sets `dir` to bb-box's msb folder: BBBOX_MSB_DIR, or MSB_DEFAULT_DIR. */
 const PRELUDE = `set -eu
@@ -150,12 +150,23 @@ rm -f "$probe" "$probe.copy"
 if command -v docker >/dev/null && docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then echo "docker=$(docker version --format '{{.Server.Version}}')"; else echo "docker="; fi
 `,
 
-  /** Imports image $1 from Docker on the host into msb under the same reference, with `docker save` and `msb load`. */
+  /** Docker's ID of each image named, `docker:<image>=<ID>`, empty for one Docker lacks. */
+  images: () => `${PRELUDE}set +e
+for image in "$@"; do
+  echo "docker:$image=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null)"
+done
+`,
+
+  /**
+   * Imports image $1 from Docker on the host into msb under the same
+   * reference, with `docker save` and `msb load`. Prints Docker's ID of what
+   * it imported.
+   */
   import: () => `${PRELUDE}image=$1
 [ -x "$msb" ] || { echo "msb is not installed in $dir." >&2; exit 2; }
-docker image inspect --format '{{.Id}}' "$image" >/dev/null || { echo "Docker on this host has no image $image to import." >&2; exit 2; }
+id=$(docker image inspect --format '{{.Id}}' "$image") || { echo "Docker on this host has no image $image to import." >&2; exit 2; }
 docker save "$image" | "$msb" load --quiet --tag "$image"
-echo "imported=$image"
+echo "imported=$id"
 `,
 };
 
@@ -168,6 +179,7 @@ export function msbScript(name: MsbScript): string {
 export function scriptArgsOk(name: string, args: readonly string[]): name is MsbScript {
   if (name === "install" || name === "status") return args.length === 0;
   if (name === "import") return args.length === 1 && IMAGE_REF.test(args[0]!);
+  if (name === "images") return args.length >= 1 && args.length <= 4 && args.every((arg) => IMAGE_REF.test(arg));
   return false;
 }
 

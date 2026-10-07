@@ -78,7 +78,7 @@ const SHM_MIN_MiB = 1024;
 /** Statuses in which a container holds its memory. */
 const ACTIVE = new Set(["running", "paused", "restarting"]);
 
-const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socket: "/home/box/.cache/cua-driver/cua-driver.sock" };
+export const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socket: "/home/box/.cache/cua-driver/cua-driver.sock" };
 const DOCKER_COMMAND: CommandCapability = { transport: "docker", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
 
 type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;

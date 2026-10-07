@@ -48,7 +48,15 @@ export const CHECKS = {
   "docker.gpus": { name: "GPUs", from: ["docker"], what: "The NVIDIA GPUs Docker lists as CDI devices, for GPU desktops." },
   "docker.capacity": { name: "Room on <host>", from: ["docker"], what: "Room on the host for a Linux box at its default size." },
   "docker.sizes": { name: "Room for each kind", from: ["docker"], what: "The host holds a box of each kind at its default size." },
-  "image.<image>": { name: "Image <image>", from: ["docker"], what: "An image a kind runs is on the host, built by bb-box's build script, and not too old." },
+  "image.<image>": { name: "Image <image>", from: ["docker", "microsandbox"], what: "An image a kind runs is on the host, built by bb-box's build script, and not too old." },
+
+  // microsandbox.
+  "microsandbox.host": { name: "Host <host>", from: ["microsandbox"], what: "The host answers, runs Linux on x86_64, and its cores, memory and free disk." },
+  "microsandbox.msb": { name: "msb", from: ["microsandbox"], what: "bb-box's msb is installed on the host at the release this bb-box pins." },
+  "microsandbox.kvm": { name: "KVM", from: ["microsandbox"], what: "The host has /dev/kvm, and BB's user may use it." },
+  "microsandbox.lxc": { name: "LXC", from: ["microsandbox"], what: "The host is an LXC container, where msb's snapshots and flat roots fail." },
+  "microsandbox.capacity": { name: "Room on <host>", from: ["microsandbox"], what: "Room on the host for a box at its default size." },
+  "microsandbox.sizes": { name: "Room for each kind", from: ["microsandbox"], what: "The host holds a box of each kind at its default size." },
 
   // Tart.
   "tart.ssh-key": { name: "SSH key", from: ["tart"], what: "bb-box's SSH key for the Macs reads, and its public key to install." },

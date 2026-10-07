@@ -74,6 +74,7 @@ If a box says 'Could not join BB', it cannot reach BB's address from inside its 
 - [Setting up bb-box](setup/README.md): choose a backend, install, rebuild images each night, upgrade and remove
 - Setup guides for each backend:
   - [Docker](setup/docker/README.md), and [Docker in WSL on a Windows PC](setup/docker-wsl/README.md)
+  - [microsandbox](setup/microsandbox/README.md)
   - [Proxmox LXC](setup/proxmox-lxc/README.md)
   - [Proxmox QEMU](setup/proxmox-qemu/README.md)
   - [Tart](setup/tart/README.md)

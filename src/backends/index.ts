@@ -6,6 +6,7 @@
 // or an open connection survives them and changes to other backends.
 
 import { dockerDriver } from "./docker/index.ts";
+import { microsandboxDriver } from "./microsandbox/index.ts";
 import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
 import { proxmoxQemuDriver } from "./proxmox-qemu/index.ts";
 import { sshPoolDriver } from "./ssh-pool/index.ts";
@@ -16,7 +17,7 @@ import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, D
 import type { ImageFacts } from "./images.ts";
 import { WarmShortfalls } from "./warm.ts";
 
-export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver];
+export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver, microsandboxDriver];
 
 /** What a backend's boxes are, from its ID, which starts with its driver's type (029). Null for a driver bb-box no longer has. */
 export function boxForm(backendId: string, drivers: readonly BackendDriver<any>[] = DRIVERS): BoxForm | null {
