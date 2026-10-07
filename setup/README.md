@@ -56,6 +56,8 @@ Do not remove bb-box to upgrade it: `bb plugin remove` deletes its configuration
 - Installed from a branch, with `bb plugin install git:<bb-box repository>@<branch>`: `bb plugin update bb-box` moves it to the branch's newest commit and keeps its settings and storage. `bb plugin outdated` shows whether there is one.
 - Installed from a commit or a tag: BB pins it, and `bb plugin update` refuses. Only a remove and an install move it, so install from a branch instead.
 
+After an upgrade, run `bb box doctor`. Your backend's guide says, under **Update**, when its host needs a step too, such as running a setup script again.
+
 To keep a copy of the configuration, run `bb box config show --json`. It leaves out the secrets. `bb box config apply --replace` sets bb-box up again from that copy. Give the secrets again, either as strings in place of `{"set": true}`, or on the settings page after you apply the copy with those backends off.
 
 ## If bb-box loses its storage
@@ -64,4 +66,9 @@ Its boxes keep running. Run `bb box install-id --set <id>` with bb-box's old ins
 
 ## Remove bb-box
 
-Release the boxes first, as removing bb-box does not release them. Then run `bb plugin remove bb-box`. It deletes bb-box's configuration, secrets and storage. A box you did not release keeps running on its host, where you can delete it.
+1. Release the boxes first, as removing bb-box does not release them. `bb box list --all` lists them, and `bb box release <box> --force` releases one. Remove your own machines with `bb box machines remove <name>`.
+2. Delete the nightly automation: `bb automation list --project <project>` finds it, and `bb automation delete` removes it.
+3. Undo each backend's host side, as its guide says under **Remove**.
+4. Run `bb plugin remove bb-box`. It deletes bb-box's configuration, secrets and storage.
+
+A box you did not release keeps running on its host, where you can delete it.
