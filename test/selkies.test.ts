@@ -146,6 +146,45 @@ test("a viewer that falls behind gets no frames until it has caught up, then fro
   await box.close();
 });
 
+test("a viewer that caught up asks for its key frame again until one comes, on the input connection when it is open (Selkies takes a viewer's once a second)", async () => {
+  const { server, box, relay, give } = setup({ lagMs: 50 });
+  const a = relay("a");
+  await until("the page", () => server.pages.length === 1);
+  const page = server.pages[0]!;
+  await server.frame(1, true);
+  await until("a frame", () => a.frames().length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await server.frame(2, false);
+  // Frame 2 comes while the viewer is behind, and is dropped; then it catches up.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await a.relay.receive("CLIENT_FRAME_ACK 1 0");
+  await server.frame(3, false);
+  await until("the first request", () => page.received.filter((message) => message === "REQUEST_KEYFRAME").length === 1);
+  await server.frame(4, false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(page.received.filter((message) => message === "REQUEST_KEYFRAME").length, 1, "not again within 250 ms");
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  await server.frame(5, false);
+  await until("the second request", () => page.received.filter((message) => message === "REQUEST_KEYFRAME").length === 2);
+  assert.deepEqual(a.frames(), [1], "no frame until the key frame");
+
+  // With the box's input connection open, it asks there instead.
+  give("a");
+  await a.relay.receive("kd,65");
+  await until("the input connection", () => server.pages.length === 2);
+  const input = server.pages[1]!;
+  await until("the key", () => input.received.includes("kd,65"));
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  await server.frame(6, false);
+  await until("the request on the input connection", () => input.received.includes("REQUEST_KEYFRAME"));
+  assert.equal(page.received.filter((message) => message === "REQUEST_KEYFRAME").length, 2, "not on the viewer's own");
+  await server.frame(7, true);
+  await until("the key frame", () => a.frames().length === 2);
+  assert.deepEqual(a.frames(), [1, 7]);
+  await a.relay.close();
+  await box.close();
+});
+
 test("a box's connections open one at a time, spaced, and one Selkies refuses for coming too soon opens again", async () => {
   const { server, box, relay, give } = setup({ debounceMs: 40, spacingMs: 60 });
   const started = Date.now();

@@ -12,7 +12,10 @@
 // Selkies paces a viewer by its own socket's send queue, which the route to
 // the box hides, so the relay paces each viewer by the frames it says it has
 // shown: past LAG_MS behind, it drops that viewer's frames until the viewer
-// has caught up, then asks for a key frame and resumes from it.
+// has caught up, then asks for a key frame and resumes from it. Selkies takes
+// a viewer's key frame request at most once a second and drops the rest, so
+// the relay asks on the box's input connection when it is open, which may ask
+// four times a second, and otherwise asks again until one comes.
 //
 // Selkies refuses a connection from an address that connected less than
 // 500 ms before, and every connection from the relay comes from the box's
@@ -27,10 +30,17 @@ const OPEN_SPACING_MS = 550;
 /** Selkies' close code for a connection that came too soon. */
 const TOO_SOON = 4029;
 const OPEN_TRIES = 4;
-/** How far behind a viewer may fall, from a frame's send to its acknowledgement, before its frames are dropped. */
-export const LAG_MS = 400;
-/** How often the relay asks for a key frame for a viewer that fell behind. */
-const KEYFRAME_ASK_MS = 1000;
+/**
+ * How far behind a viewer may fall, from a frame's send to its
+ * acknowledgement, before its frames are dropped. A pause on the way through
+ * BB's server, which can last half a second, is not a viewer that cannot
+ * keep up.
+ */
+export const LAG_MS = 1000;
+/** How often the relay asks for a key frame for a viewer that caught up, until one comes. */
+const KEYFRAME_RETRY_MS = 250;
+/** How often the input connection asks for no video, when frames come to it. */
+const STOP_ASK_MS = 1000;
 const VIDEO = 4;
 const JPEG = 3;
 
@@ -108,6 +118,8 @@ export class SelkiesBox {
   readonly #open: OpenStream;
   readonly spacing: Spacing;
   #input: Promise<BoxWebSocket> | null = null;
+  /** The input connection, once open. */
+  #ready: BoxWebSocket | null = null;
   #stopAsked = 0;
   #closed = false;
   readonly onError: (error: Error) => void;
@@ -130,6 +142,7 @@ export class SelkiesBox {
       const { socket, first } = await connect(this.#open, this.spacing, "", AbortSignal.timeout(20_000));
       if (first === null) throw new WebSocketError(`The box's Selkies closed the input connection${socket.closedWith ? ` (${socket.closedWith.code})` : ""}.`);
       await socket.send("STOP_VIDEO");
+      this.#ready = socket;
       void this.#drain(socket);
       return socket;
     })();
@@ -140,11 +153,23 @@ export class SelkiesBox {
     return this.#input;
   }
 
+  /**
+   * Asks for a key frame over the input connection, a controller, which
+   * Selkies lets ask four times a second. False when it is not open: the
+   * viewer asks itself.
+   */
+  keyframe(): boolean {
+    const socket = this.#ready;
+    if (!socket || this.#closed) return false;
+    socket.send("REQUEST_KEYFRAME").catch(() => undefined);
+    return true;
+  }
+
   /** Reads what Selkies sends the input connection. It asks for no video again whenever a frame comes, as a new capture sends to every page. */
   async #drain(socket: BoxWebSocket): Promise<void> {
     try {
       for (let message = await socket.next(); message !== null; message = await socket.next()) {
-        if (typeof message !== "string" && Date.now() - this.#stopAsked > KEYFRAME_ASK_MS) {
+        if (typeof message !== "string" && Date.now() - this.#stopAsked > STOP_ASK_MS) {
           this.#stopAsked = Date.now();
           await socket.send("STOP_VIDEO");
         }
@@ -152,6 +177,7 @@ export class SelkiesBox {
     } catch (error) {
       this.onError(error instanceof Error ? error : new Error(String(error)));
     } finally {
+      if (this.#ready === socket) this.#ready = null;
       if (this.#input && (await this.#input.catch(() => null)) === socket) this.#input = null;
     }
   }
@@ -160,6 +186,7 @@ export class SelkiesBox {
     this.#closed = true;
     const input = this.#input;
     this.#input = null;
+    this.#ready = null;
     await input?.then((socket) => socket.close()).catch(() => undefined);
   }
 }
@@ -268,7 +295,8 @@ export class SelkiesRelay {
   /**
    * Whether a frame goes to the viewer. More than LAG_MS behind, it gets none
    * until it has shown what it was sent, then none until a key frame. It asks
-   * for that only then, as a key frame goes to every viewer of the box.
+   * for that only then, as a key frame goes to every viewer of the box, and
+   * again every KEYFRAME_RETRY_MS until one comes.
    */
   #pace(socket: BoxWebSocket, id: number, key: boolean): boolean {
     const now = Date.now();
@@ -277,9 +305,9 @@ export class SelkiesRelay {
     if (this.#behind) {
       if (oldest !== null) return false;
       if (!key) {
-        if (now - this.#keyframeAsked > KEYFRAME_ASK_MS) {
+        if (now - this.#keyframeAsked >= KEYFRAME_RETRY_MS) {
           this.#keyframeAsked = now;
-          socket.send("REQUEST_KEYFRAME").catch(() => undefined);
+          if (!this.#options.box.keyframe()) socket.send("REQUEST_KEYFRAME").catch(() => undefined);
         }
         return false;
       }
