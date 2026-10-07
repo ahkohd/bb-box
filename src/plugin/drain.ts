@@ -25,6 +25,14 @@ export class Restarted extends Error {
   }
 }
 
+/** A command box_run stopped waiting for, as BB ends a tool call at about five minutes (#486). */
+export class Detached extends Error {
+  constructor() {
+    super("box_run stopped waiting for the command.");
+    this.name = "Detached";
+  }
+}
+
 export class Drain {
   readonly #running = new Map<Promise<unknown>, AbortController>();
   #closed = false;
@@ -37,9 +45,10 @@ export class Drain {
   /**
    * Runs `task` with a signal that follows `signal`, the tool call's, except
    * for BB's abort for a deploy. Throws at once while bb-box is stopping,
-   * and Restarted when close() stopped the task.
+   * and Restarted when close() stopped the task. With `detachMs`, it stops
+   * the task after that long as close() does, and throws Detached.
    */
-  async run<T>(signal: AbortSignal, task: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  async run<T>(signal: AbortSignal, task: (signal: AbortSignal) => Promise<T>, options: { detachMs?: number } = {}): Promise<T> {
     if (this.#closed) {
       throw new BoxError("restarting", "bb-box is restarting, as for an update, and takes no new commands until it is back, within a minute.");
     }
@@ -49,14 +58,16 @@ export class Drain {
     };
     if (signal.aborted) follow();
     else signal.addEventListener("abort", follow, { once: true });
+    const timer = options.detachMs === undefined ? undefined : setTimeout(() => controller.abort(new Detached()), options.detachMs);
     const done = task(controller.signal);
     this.#running.set(done, controller);
     try {
       return await done;
     } catch (error) {
-      if (controller.signal.reason instanceof Restarted) throw controller.signal.reason;
+      if (controller.signal.reason instanceof Restarted || controller.signal.reason instanceof Detached) throw controller.signal.reason;
       throw error;
     } finally {
+      clearTimeout(timer);
       this.#running.delete(done);
       signal.removeEventListener("abort", follow);
     }
