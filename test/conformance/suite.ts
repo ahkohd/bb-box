@@ -1003,17 +1003,26 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           assert.equal((await backend.held(signal())).find((guest) => guest.ref === box.ref), undefined, "an image box is no box's guest");
           assert.ok((await images.list(signal())).boxes.includes(box.ref), "an image box is listed until it goes");
 
-          // As a build's script and finalizing leave it: a file of the image's, and its record, where the OS keeps it (049).
-          const dir = kinds.find((kind) => kind.id === standard.kind)?.capabilities.os === "macos" ? "/usr/local/share/bb-box" : "/usr/share/bb-box";
+          // As a build's script and finalizing leave it: a file of the image's, and its record, where the OS keeps it (049, 054).
+          const os = kinds.find((kind) => kind.id === standard.kind)?.capabilities.os;
+          const dir = os === "windows" ? "C:\\bb-box" : os === "macos" ? "/usr/local/share/bb-box" : "/usr/share/bb-box";
           const marker = `bb-box conformance ${randomBytes(4).toString("hex")}`;
           const build = `build.conformance-${Date.now()}`;
           const record = { contract: 1, image: "conformance", kind: standard.kind, arch: "", build, built: new Date().toISOString(), os: "", tools: {} };
-          const script = [
-            "set -e",
-            `sudo -n mkdir -p ${dir}`,
-            `printf '%s\\n' '${marker}' | sudo -n tee ${dir}/conformance >/dev/null`,
-            `printf '%s\\n' '${JSON.stringify(record)}' | sudo -n tee ${dir}/image.json >/dev/null`,
-          ].join("\n");
+          const script =
+            os === "windows"
+              ? [
+                  "$ErrorActionPreference = 'Stop'",
+                  `New-Item -ItemType Directory -Force '${dir}' | Out-Null`,
+                  `Set-Content '${dir}\\conformance' '${marker}'`,
+                  `Set-Content '${dir}\\image.json' '${JSON.stringify(record)}'`,
+                ].join("\n")
+              : [
+                  "set -e",
+                  `sudo -n mkdir -p ${dir}`,
+                  `printf '%s\\n' '${marker}' | sudo -n tee ${dir}/conformance >/dev/null`,
+                  `printf '%s\\n' '${JSON.stringify(record)}' | sudo -n tee ${dir}/image.json >/dev/null`,
+                ].join("\n");
           const ran = await box.command.run(script, { timeoutMs: timeout, signal: signal() });
           assert.equal(ran.exitCode, 0, ran.stderr);
 
@@ -1025,7 +1034,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
 
           const trial = await images.box(made, "conformance trial", signal());
           left.push(trial.ref);
-          const read = await trial.command.run(`cat ${dir}/conformance`, { timeoutMs: timeout, signal: signal() });
+          const read = await trial.command.run(os === "windows" ? `Get-Content '${dir}\\conformance'` : `cat ${dir}/conformance`, { timeoutMs: timeout, signal: signal() });
           assert.equal(read.stdout.trim(), marker, "a box from the build has what the script made");
 
           await images.remove(trial.ref, signal());

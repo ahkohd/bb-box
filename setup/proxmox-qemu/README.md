@@ -96,8 +96,26 @@ Its fix is the `build.sh windows <vmid> --replace` command.
 
 ## Update
 
-bb-box does not rebuild Windows templates yet. Rebuild one by hand, for
-example for a newer ISO or new pins, with `--replace`:
+bb-box refreshes each Windows template monthly
+([054](../../docs/decisions/054-windows-images-are-refreshed-in-a-box-of-the-current-build.md)),
+in the nightly run of `bb box images refresh`. In a box cloned from the
+template, [`../windows/refresh.ps1`](../windows/refresh.ps1) installs
+Windows' updates and the tools pinned in
+[`../windows/pins.json`](../windows/pins.json). The box is then made a
+template, a trial box of it runs `check.ps1`, and the new template takes the
+old one's place under its VMID only if every check passes. The old template
+stays as a rollback, at a free VMID of bb-box's range with "rollback" in its
+name, until the next refresh succeeds: to go back to it, list its VMID as the
+Windows template in bb-box's settings. To refresh one now, or to try a
+refresh and keep the old template:
+
+```sh
+bb box images build proxmox-qemu/9104
+bb box images build proxmox-qemu/9104 --try
+```
+
+For a new Windows release or a broken template, build it again from the ISO
+by hand, with `--replace`:
 
 ```sh
 ./build.sh windows 9104 --replace
@@ -105,8 +123,9 @@ example for a newer ISO or new pins, with `--replace`:
 
 The new template is built and checked in another VM, and takes the old one's
 place only then. Boxes cloned from the old one keep running on LVM-thin. To
-change a tool's version, change its pin lines in `build.sh` (`NAME_VERSION=`,
-`NAME_SHA256=` and `NAME_URL=`) and rebuild.
+change a tool's version, change its pin in `../windows/pins.json` and its
+pin lines in `build.sh` (`NAME_VERSION=`, `NAME_SHA256=` and `NAME_URL=`),
+which a test keeps equal.
 
 ## Remove
 
