@@ -62,7 +62,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -351,6 +351,7 @@ async function start(
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
     providerRetryMs: options.providerRetryMs,
+    manualRemoveMs: options.manualRemoveMs,
     controlReconnectMs: options.controlReconnectMs,
     controlStaleMs: options.controlStaleMs,
     drainMs: options.drainMs,
@@ -776,6 +777,57 @@ test("a Windows box on trial enrols as a machine of BB's manual provider, which 
   await bb.storage.kv.set("manual-machine/host-left", { boxId: "bxgone", at: 0 });
   await app.enrolment.sweep();
   assert.equal(world.hosts.has("host-left"), false);
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
+});
+
+test("a Windows box's release waits for BB to finish removing its manual machine, and bb-box keeps its record of one BB is slow to remove (#539)", async (t) => {
+  const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
+  const shell = join(tempDir("windows-shell"), "pwsh");
+  writeFileSync(shell, `#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; esac\nexit 1\n`);
+  chmodSync(shell, 0o755);
+  const { bb, harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell, manualRemoveMs: 300 });
+  t.after(() => harness.lifecycle.dispose());
+  world.windowsConnects = true;
+  const acquire = async () => {
+    await tool("box_acquire", { kind: "windows" });
+    const box = await only(app);
+    await until("the enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+    return { box, hostId: `host-${box.id}` };
+  };
+  // As BB: the delete returns at once, and BB removes the machine once it has torn down the environments on it.
+  const removing = (hostId: string, message: string | null) => {
+    const host = world.hosts.get(hostId)!;
+    world.hosts.set(hostId, { ...host, lifecycle: { ...host.lifecycle, phase: "removing", message } });
+  };
+
+  const first = await acquire();
+  let releasedFirst: boolean | null = null;
+  world.bbRemovals.set(first.hostId, async () => {
+    removing(first.hostId, null);
+    setTimeout(() => {
+      releasedFirst = world.backend!.calls.some((call) => call.startsWith("release "));
+      world.hosts.delete(first.hostId);
+    }, 100);
+  });
+  assert.ok(!isError(await tool("box_release", { box: first.box.name })));
+  assert.equal(releasedFirst, false, "the box goes once BB has removed its machine");
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
+
+  // BB is still removing it when the wait ends, as when the box went first: the box goes, and bb-box keeps its record and logs it once.
+  const second = await acquire();
+  world.bbRemovals.set(second.hostId, async () => removing(second.hostId, "Host is not connected"));
+  assert.ok(!isError(await tool("box_release", { box: second.box.name })));
+  assert.deepEqual(await app.boxes.list(THREAD), []);
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), [`manual-machine/${second.hostId}`]);
+  const stuck = () => harness.inspection.logEntries.map((entry) => entry.message).filter((line) => line.startsWith(`BB has not finished removing machine ${second.hostId}`));
+  assert.equal(stuck().length, 1);
+  assert.match(stuck()[0]!, /s after bb-box asked: removing, Host is not connected\. bb-box keeps its record, and its sweep looks again\.$/);
+  // The sweep looks again without logging it again, and forgets it once BB no longer has it.
+  await app.enrolment.sweep();
+  assert.equal(stuck().length, 1);
+  assert.equal(world.hosts.has(second.hostId), true);
+  world.hosts.delete(second.hostId);
+  await app.enrolment.sweep();
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
 });
 

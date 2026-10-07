@@ -590,6 +590,12 @@ export interface BackendImages {
   build?(current: ImageBuild, setup: string, options: { readonly bbUrl: string | null; readonly log: (line: string) => void; readonly signal: AbortSignal }): Promise<ImageBuild>;
   /** The kind's check a trial box runs as the box user, printing a line per check with ok or FAIL, where it is not the template's own. */
   check?(kind: string): string;
+  /**
+   * The kind's shared check, Windows' setup/windows/check.ps1 (054), as this
+   * backend's boxes run it, where a check there differs: `setup` is the
+   * plugin's setup/ directory.
+   */
+  adaptCheck?(kind: string, check: string, setup: string): string;
   /** Whether acquire starts a box from a build in BoxIdentity.from (049). */
   readonly startsFrom?: boolean;
   /**

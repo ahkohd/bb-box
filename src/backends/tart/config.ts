@@ -45,6 +45,8 @@ export interface TartConfig {
   /** A null key means bb-box generates one and shows its public key. */
   readonly ssh: { readonly privateKey: string | null; readonly vmUser: string };
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
+  /** Windows boxes join BB as machines: a trial, as on Proxmox QEMU (#539). */
+  readonly windowsEnrol: boolean;
 }
 
 export const TART_DEFAULTS = {
@@ -66,6 +68,7 @@ export const TART_KEYS = {
   linuxImage: "tart-linux-image",
   linuxDesktopImage: "tart-linux-desktop-image",
   windowsImage: "tart-windows-image",
+  windowsEnrol: "tart-windows-enrol",
   vmsPerHost: "tart-vms-per-host",
   reserveMemoryMiB: "tart-reserve-memory-mib",
   reserveDiskGiB: "tart-reserve-disk-gib",
@@ -155,6 +158,12 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description:
       "The Windows image on each Mac, in ~/.bb-box/qemu/images, that windows-arm64-desktop boxes are made from, run by QEMU. Empty turns them off.",
     default: "",
+  },
+  [TART_KEYS.windowsEnrol]: {
+    type: "boolean",
+    label: "Tart: Windows boxes as BB machines (trial)",
+    description: "A trial of Windows boxes that join BB, so threads and terminals can use them (#539). Off unless you are trying it.",
+    default: false,
   },
   [TART_KEYS.vmsPerHost]: {
     type: "number",
@@ -281,7 +290,15 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
   if (keyText && !privateKey) problem(TART_KEYS.sshPrivateKey, "Tart: use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
 
-  return { hosts, hostKeys, kinds, vmsPerHost, ssh: { privateKey, vmUser }, reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB } };
+  return {
+    hosts,
+    hostKeys,
+    kinds,
+    vmsPerHost,
+    ssh: { privateKey, vmUser },
+    reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB },
+    windowsEnrol: values[TART_KEYS.windowsEnrol] === true,
+  };
 }
 
 export const TART_PREFIX = "tart-";
@@ -304,6 +321,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.linuxImage, "boxes"],
     [TART_KEYS.linuxDesktopImage, "boxes"],
     [TART_KEYS.windowsImage, "boxes"],
+    [TART_KEYS.windowsEnrol, "boxes"],
     [TART_KEYS.vmUser, "advanced"],
     [TART_KEYS.vmsPerHost, "advanced"],
     [TART_KEYS.reserveMemoryMiB, "advanced"],

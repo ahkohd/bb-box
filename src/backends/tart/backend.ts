@@ -29,6 +29,8 @@
 import type { CheckId } from "../../core/checks.ts";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
@@ -117,8 +119,13 @@ import { VNC_BRIDGE_PY } from "./vnc-holder.ts";
 import {
   parseQemuState,
   parseQemuVm,
+  qemuBuildsScript,
+  qemuCaptureScript,
   qemuCloneScript,
   qemuDeleteScript,
+  qemuRemoveBuildScript,
+  qemuReplaceScript,
+  parseQemuBuilds,
   qemuDiscardScript,
   qemuEndedScript,
   qemuPowerScript,
@@ -195,7 +202,30 @@ if grep -q '"xcode"' /usr/local/share/bb-box/image.json 2>/dev/null; then
 fi`;
 
 /** The check a trial box of each kind runs: a Linux image's own, after its display is up, or macOS's above. */
+/**
+ * Windows' shared check (setup/windows/check.ps1, 054) as a Mac's boxes run
+ * it: the clock's check (windows/check-clock.ps1) in place of the address's
+ * from the SMBIOS serial, which a Mac's QEMU does not give, as
+ * prepare-windows-image.sh builds it.
+ */
+export function macWindowsCheck(check: string, clock: string): string {
+  const out: string[] = [];
+  let [replaced, dropping] = [0, false];
+  for (const line of check.split("\n")) {
+    if (line === "Check 'address from the SMBIOS serial' {") {
+      out.push(...clock.replace(/\n$/, "").split("\n"));
+      [replaced, dropping] = [replaced + 1, true];
+    } else if (dropping) {
+      if (line === "}") dropping = false;
+    } else out.push(line);
+  }
+  if (replaced !== 1 || dropping) throw new Error("setup/windows/check.ps1 has changed: adapt Tart's Windows check (macWindowsCheck) to it.");
+  return out.join("\n");
+}
+
+/** The check a trial box of each kind runs; none of Tart's own for Windows, whose shared check.ps1 runs, adapted (adaptCheck). */
 function tartCheck(kind: string): string {
+  if (guestOsOf(kind) === "windows") return "";
   if (guestOsOf(kind) === "macos") return MAC_CHECK;
   if (kind === "linux-arm64") return "bb-box-check-headless";
   return "for i in $(seq 1 60); do [ -s /run/bb-box/display-mode ] && break; sleep 1; done; bb-box-check-desktop";
@@ -408,7 +438,8 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         // lossy=on its JPEG at quality 2 broke text up, and its own refresh of a still area kept some JPEG (056).
         displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4 }],
         computerUse: WINDOWS_CUA,
-        enrol: false,
+        // Windows boxes join BB only on trial, when the setting is on (#539).
+        enrol: config.windowsEnrol,
       },
       readyTimeoutMs: WINDOWS_READY_TIMEOUT_MS,
     },
@@ -570,7 +601,9 @@ export class TartBackend implements Backend {
    * Image operations (049) on each Mac: a clone of an image as an image box,
    * its capture as a VM of its own with its record beside it, a new build of
    * a standard image by its prepare script, and the image's name moved to a
-   * build. A reference is <Mac>/<VM>. Windows images are later.
+   * build. A reference is <Mac>/<VM>. A Windows image's build is a QEMU disk
+   * under ~/.bb-box/qemu, refreshed in a box of it (054, #450): its current
+   * build is <Mac>/<image>, and another <Mac>/<image>@<build>.
    */
   readonly images: BackendImages = {
     list: (signal) => this.#imageList(signal),
@@ -580,9 +613,13 @@ export class TartBackend implements Backend {
     remove: (ref, signal) => this.#removeImage(ref, signal),
     build: (current, setup, options) => this.#buildStandard(current, setup, options),
     check: (kind) => tartCheck(kind),
+    adaptCheck: (kind, check, setup) => (guestOsOf(kind) === "windows" ? macWindowsCheck(check, readFileSync(join(setup, "tart", "windows", "check-clock.ps1"), "utf8")) : check),
     // A project's box clones its image's build on the build's Mac (049, #439).
     startsFrom: true,
+    windows: true,
   };
+  /** Each Windows image box's SSH port on its Mac's loopback, by VM, for its capture to drop its connection (#450). */
+  readonly #imagePorts = new Map<string, number>();
   /** Display helpers compiling for new Windows boxes, by VM, which a resize waits for. */
   readonly #compiling = new Map<string, Promise<void>>();
   readonly #warm: ReadyPool<BoxIdentity>;
@@ -2042,9 +2079,20 @@ export class TartBackend implements Backend {
     const builds: ImageBuild[] = [];
     const boxes: string[] = [];
     const states = await this.#states(signal);
+    const windows = this.#config.kinds["windows-arm64-desktop"].image;
     for (const host of this.#config.hosts) {
       const state = states.get(host.name);
       if (!state || state instanceof Error) continue;
+      // A Windows image's builds (#450): its current one, and a refresh's builds of this install's, as <Mac>/<image>@<build>.
+      if (windows) {
+        const listed = parseQemuBuilds((await this.#run(host, qemuBuildsScript(windows), { timeoutMs: 30_000, signal }).catch(() => ({ stdout: "" }))).stdout);
+        for (const one of listed) {
+          if (one.current) builds.push({ ref: `${host.name}/${windows}`, image: "standard", kind: "windows-arm64-desktop", build: one.record?.build ?? one.build, record: one.record, current: true });
+          else if (one.owner.install === this.#context.installId && one.owner["image-build"]) {
+            builds.push({ ref: `${host.name}/${windows}@${one.build}`, image: one.owner["image-build"], kind: "windows-arm64-desktop", build: one.record?.build ?? one.build, record: one.record, current: false });
+          }
+        }
+      }
       const exists = (vm: string) => state.vms.some((listed) => listed.name === vm);
       const seen = new Set<string>();
       for (const kind of TART_KINDS) {
@@ -2070,8 +2118,8 @@ export class TartBackend implements Backend {
   async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
     const { host, vm: image } = this.#imageRef(build.ref);
     const os = guestOsOf(build.kind);
-    if (os === "windows") throw new Error("bb-box builds no Windows images on a Mac yet.");
     const vm = `${VM_PREFIX}image-${randomBytes(6).toString("hex")}`;
+    if (os === "windows") return this.#windowsImageBox(host, image, vm, build, label, signal);
     const { cores, memoryMiB } = this.#context.kind(build.kind).defaultSize;
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? this.#kind(build.kind).readyTimeoutMs);
     const owner = ownerText({ install: this.#context.installId, kind: build.kind, "image-box": label.replace(/[^\w .:-]/g, "").slice(0, 80) || "box", created: Date.now() });
@@ -2089,10 +2137,36 @@ export class TartBackend implements Backend {
     }
   }
 
+  /**
+   * A Windows image box (#450): a QEMU VM that is an overlay on the build,
+   * the current one or a refresh's, at the kind's default size, started and
+   * reached over SSH as a box is, with an owner file that marks it.
+   */
+  async #windowsImageBox(host: TartHost, ref: string, vm: string, build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
+    const [image = "", dir = "current"] = ref.split("@");
+    const { cores, memoryMiB } = this.#context.kind(build.kind).defaultSize;
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? WINDOWS_READY_TIMEOUT_MS);
+    const owner = ownerText({ install: this.#context.installId, kind: build.kind, "image-box": label.replace(/[^\w .:-]/g, "").slice(0, 80) || "box", created: Date.now() });
+    try {
+      if ((await this.#run(host, claimScript(vm, owner), { signal })).stdout.trim() !== "claimed") throw new Error(`VM ${vm} on ${host.name} is taken.`);
+      const made = parseQemuVm((await this.#run(host, qemuCloneScript(image, vm, cores, memoryMiB, null, dir), { timeoutMs: 120_000, signal })).stdout);
+      if (!made) throw new Error(`QEMU's VM ${vm} on ${host.name} has no whole config.`);
+      this.#imagePorts.set(vm, made.ssh);
+      await this.#start(host, vm, "windows", deadline, signal);
+      const access = this.#windows(await this.#mac(host), made.ssh);
+      await this.#waitReady(host, vm, access, "windows", deadline, signal);
+      return { ref: `${host.name}/${vm}`, command: new SshTransport((await this.#keys()).ssh, access, "windows") };
+    } catch (error) {
+      await this.#delete(host, vm, "windows", null).catch((cause) => this.#context.logError("remove an image box", cause));
+      throw error;
+    }
+  }
+
   /** Stops an image box and keeps it as bb-box-img-<image>-<build>, with its record beside it and an owner file that names its image. */
   async #capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
     const { host, vm } = this.#imageRef(box.ref);
     const os = guestOsOf(from.kind);
+    if (os === "windows") return this.#captureWindows(box, from, image, signal);
     const read = await box.command.run(`cat ${RECORD_PATH[os] ?? RECORD_PATH.linux}`, { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
     const record = read.exitCode === 0 ? recordFromJson(read.stdout.trim()) : null;
     if (!record) throw new Error(`Image box ${vm} on ${host.name} has no image record in ${RECORD_PATH[os]}, which finalizing writes.`);
@@ -2104,10 +2178,40 @@ export class TartBackend implements Backend {
     return { ref: `${host.name}/${to}`, image, kind: from.kind, build: record.build, record, current: false };
   }
 
+  /**
+   * Captures a Windows image box as a build of its image (#450): its record,
+   * read in the guest, names the build; the guest powers down, and its disk
+   * and its base become the build's own read-only disk beside the image's
+   * other builds, marked a refresh's build of this install's until replace
+   * makes it current. Only a standard image is a Windows one.
+   */
+  async #captureWindows(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
+    const { host, vm } = this.#imageRef(box.ref);
+    const target = this.#imageRef(from.ref).vm.split("@")[0]!;
+    if (image !== "standard") throw new Error("A Windows image has no project's images: their scripts are Linux's.");
+    const read = await box.command.run("Get-Content -Raw -LiteralPath 'C:\\bb-box\\image.json'", { timeoutMs: 30_000, signal, maxOutputBytes: 64 * 1024 });
+    const record = read.exitCode === 0 ? recordFromJson(read.stdout.trim()) : null;
+    if (!record) throw new Error(`Image box ${vm} on ${host.name} has no image record in C:\\bb-box\\image.json.`);
+    const build = record.build.startsWith("build.") ? record.build : `build.${record.build}`;
+    await this.#forget(host, vm, "windows", this.#imagePorts.get(vm) ?? null);
+    this.#imagePorts.delete(vm);
+    const owner = ownerText({ install: this.#context.installId, kind: from.kind, "image-build": image, created: Date.now() });
+    await this.#run(host, qemuCaptureScript(vm, target, build, JSON.stringify(record), owner, 180), { timeoutMs: 60 * 60_000, signal });
+    await this.#run(host, forgetImageScript(vm), { timeoutMs: 30_000, signal }).catch(() => undefined);
+    return { ref: `${host.name}/${target}@${build}`, image, kind: from.kind, build: record.build, record, current: false };
+  }
+
   /** Gives a build the image's name: the image goes, and boxes cloned from it keep running, as copies on write. */
   async #replaceImage(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
     const target = this.#imageRef(current.ref);
     const source = this.#imageRef(build.ref);
+    // A Windows image's build becomes current in its own directory (#450); the image's boxes keep the builds they are overlays on.
+    if (guestOsOf(current.kind) === "windows") {
+      const [image, dir] = source.vm.split("@");
+      if (!current.current || build.current || target.host !== source.host || image !== target.vm || !dir) throw new Error(`${build.ref} is not a refresh's build of ${current.ref}.`);
+      await this.#run(target.host, qemuReplaceScript(image, dir), { timeoutMs: 10 * 60_000, signal });
+      return { ...build, ref: current.ref, image: "standard", current: true };
+    }
     if (!current.current || build.current || target.host !== source.host) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is not a build on its Mac.`);
     await this.#run(target.host, replaceScript(source.vm, target.vm), { timeoutMs: 10 * 60_000, signal });
     // The base's copies no tag names, as a pull before the build left them (#475).
@@ -2124,6 +2228,12 @@ export class TartBackend implements Backend {
   /** Removes an image box, a captured build or a refresh's build of this install's, and nothing else. */
   async #removeImage(ref: string, signal?: AbortSignal): Promise<void> {
     const { host, vm } = this.#imageRef(ref);
+    // A refresh's build of a Windows image (#450), which goes once no VM is an overlay on it.
+    if (vm.includes("@")) {
+      const [image = "", dir = ""] = vm.split("@");
+      await this.#run(host, qemuRemoveBuildScript(image, dir, this.#context.installId), { timeoutMs: 10 * 60_000, signal });
+      return;
+    }
     const state = await this.#state(host, signal);
     const fields = state.owners.get(vm);
     const configured = TART_KINDS.some((kind) => this.#config.kinds[kind].image === vm);
@@ -2143,7 +2253,8 @@ export class TartBackend implements Backend {
   async #buildStandard(current: ImageBuild, setup: string, options: { bbUrl: string | null; log: (line: string) => void; signal: AbortSignal }): Promise<ImageBuild> {
     const { host, vm: image } = this.#imageRef(current.ref);
     const os = guestOsOf(current.kind);
-    if (os === "windows") throw new Error("bb-box refreshes no Windows images on a Mac yet.");
+    // A Windows image is refreshed in a box of its current build (054): no prepare script runs for it.
+    if (os === "windows") throw new Error("A Windows image is refreshed in a box of its build, not by its prepare script.");
     const { ssh, publicKey: key } = await this.#keys();
     if (!key) throw new Error("bb-box has no SSH public key for the image's user to accept.");
     const stamp = Date.now().toString(36);

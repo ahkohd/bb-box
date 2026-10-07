@@ -176,12 +176,13 @@ export function parseQemuState(text: string): QemuState {
  * variables, two free ports, and the machine QEMU's virt stands for. The VM
  * keeps that machine, so that a state saved by this QEMU restores after QEMU
  * is updated. Then sizes it, and prints its config after a line `@config`.
+ * An image box (049) can name another of the image's builds than the current.
  */
-export function qemuCloneScript(image: string, vm: string, cores: number, memoryMiB: number, diskGiB: number | null = null): string {
+export function qemuCloneScript(image: string, vm: string, cores: number, memoryMiB: number, diskGiB: number | null = null, build = "current"): string {
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"; image=${quote(image)}; disk=${Math.max(0, Math.trunc(diskGiB ?? 0))}
 mkdir -p "$q/vms" || exit 1
 if [ ! -d "$v" ]; then
-  b=$(cd "$q/images/$image/current" 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] ||
+  b=$(cd "$q/images/$image/"${quote(build)} 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] ||
     { echo "There is no Windows image $image on this Mac, in $q/images." >&2; exit 1; }
   machine=$(qemu-system-aarch64 -machine help 2>/dev/null | sed -n 's/^virt .*(alias of \(virt-[0-9.]*\)).*/\1/p' | head -n 1)
   [ -n "$machine" ] || machine=virt
@@ -381,5 +382,104 @@ fi
 rm -rf "$v" "$v.new" || exit 1
 rm -f "$d/owners/$vm"
 echo deleted
+`);
+}
+
+/**
+ * A Windows image's builds (049): each build directory, after a line
+ * `=<build> current|other`, its owner fields as `owner:<key>=<value>` lines
+ * (a refresh's build has them until it becomes current), and its record
+ * after `record:`.
+ */
+export function qemuBuildsScript(image: string): string {
+  return qemu(String.raw`d="$q/images/"${quote(image)}
+cd "$d" 2>/dev/null || exit 0
+cur=$(cd current 2>/dev/null && pwd -P); cur=$(basename "$cur" 2>/dev/null)
+for b in *; do
+  [ "$b" != current ] && [ -d "$b" ] && [ ! -L "$b" ] && [ -f "$b/disk.qcow2" ] || continue
+  if [ "$b" = "$cur" ]; then echo "=$b current"; else echo "=$b other"; fi
+  [ ! -f "$b/owner" ] || sed 's/^/owner:/' "$b/owner"
+  printf 'record:'; tr -d '\n' < "$b/image.json" 2>/dev/null; echo
+done
+`);
+}
+
+/** A Windows image's builds, as qemuBuildsScript lists them. */
+export function parseQemuBuilds(text: string): { readonly build: string; readonly current: boolean; readonly owner: Readonly<Record<string, string>>; readonly record: ImageRecord | null }[] {
+  const builds: { build: string; current: boolean; owner: Record<string, string>; record: ImageRecord | null }[] = [];
+  for (const line of text.split("\n")) {
+    const head = /^=(\S+) (current|other)$/.exec(line);
+    const last = builds.at(-1);
+    if (head) builds.push({ build: head[1]!, current: head[2] === "current", owner: {}, record: null });
+    else if (last && line.startsWith("owner:")) {
+      const at = line.indexOf("=");
+      if (at > 6) last.owner[line.slice(6, at)] = line.slice(at + 1);
+    } else if (last && line.startsWith("record:")) last.record = recordFromJson(line.slice(7).trim());
+  }
+  return builds;
+}
+
+/**
+ * Captures a Windows image box as a build of its image (049): asks the guest
+ * to power down through ACPI, and quits QEMU when it has not after
+ * `waitSeconds`, then flattens the box's overlay and its base into the new
+ * build's own disk, read-only, with its UEFI variables, its record and the
+ * owner fields that mark it a refresh's build until it becomes current.
+ * The box's VM then goes. Prints "captured".
+ */
+export function qemuCaptureScript(vm: string, image: string, build: string, record: string, owner: string, waitSeconds: number): string {
+  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"; t="$q/images/"${quote(image)}/${quote(build)}
+[ -d "$v" ] || { echo "There is no VM $vm." >&2; exit 1; }
+[ ! -e "$t" ] || { echo "The image has a build ${build} already." >&2; exit 1; }
+if qrunning "$vm"; then
+  if qmp_open "$vm"; then qmp '{"execute":"system_powerdown"}' >/dev/null; qmp_close; fi
+  i=0; while qrunning "$vm" && [ "$i" -lt $((${Math.max(1, Math.trunc(waitSeconds))} * 2)) ]; do sleep 0.5; i=$((i + 1)); done
+  if qrunning "$vm"; then
+    echo "$vm did not power down in ${Math.max(1, Math.trunc(waitSeconds))} s, so QEMU is quit." >&2
+    if qmp_open "$vm"; then qmp '{"execute":"quit"}' >/dev/null; qmp_close; fi
+    sleep 2
+  fi
+fi
+qrunning "$vm" && { echo "$vm is still running." >&2; exit 1; }
+rm -rf "$t.new"; mkdir -p "$t.new" || exit 1
+qemu-img convert -O qcow2 "$v/disk.qcow2" "$t.new/disk.qcow2" || { rm -rf "$t.new"; exit 1; }
+cp "$v/vars.fd" "$t.new/vars.fd" || { rm -rf "$t.new"; exit 1; }
+printf '%s\n' ${quote(record)} > "$t.new/image.json"
+printf '%s' ${quote(owner)} > "$t.new/owner"
+chmod a-w "$t.new/disk.qcow2" && mv "$t.new" "$t" || { chmod -R u+w "$t.new"; rm -rf "$t.new"; exit 1; }
+rm -rf "$v"
+rm -f "$d/owners/$vm"
+echo captured
+`);
+}
+
+/**
+ * Makes a Windows image's build current (049): the link "current" names it,
+ * in one rename, and it is no refresh's build any more. Builds no VM is an
+ * overlay on, other than the current one, then go. Prints "replaced".
+ */
+export function qemuReplaceScript(image: string, build: string): string {
+  return qemu(String.raw`im="$q/images/"${quote(image)}; b=${quote(build)}
+[ -f "$im/$b/disk.qcow2" ] || { echo "The image has no build $b." >&2; exit 1; }
+ln -sfn "$b" "$im/current" || exit 1
+rm -f "$im/$b/owner"
+for o in "$im"/*; do
+  n=$(basename "$o"); [ "$n" != current ] && [ "$n" != "$b" ] && [ -d "$o" ] && [ ! -L "$o" ] && [ -f "$o/disk.qcow2" ] || continue
+  grep -qx "build=$n" "$q"/vms/*/config 2>/dev/null && continue
+  chmod -R u+w "$o"; rm -rf "$o"
+done
+echo replaced
+`);
+}
+
+/** Removes a refresh's build of a Windows image that is not current and no VM is an overlay on (049). Prints "removed" or "kept". */
+export function qemuRemoveBuildScript(image: string, build: string, installId: string): string {
+  return qemu(String.raw`im="$q/images/"${quote(image)}; b=${quote(build)}
+[ -d "$im/$b" ] || { echo removed; exit 0; }
+grep -qx "install="${quote(installId)} "$im/$b/owner" 2>/dev/null || { echo "Build $b of the image is not a refresh's build of this install's." >&2; exit 1; }
+[ "$(cd "$im/current" 2>/dev/null && pwd -P)" != "$(cd "$im/$b" && pwd -P)" ] || { echo "Build $b is the image's current build." >&2; exit 1; }
+if grep -qx "build=$b" "$q"/vms/*/config 2>/dev/null; then echo kept; exit 0; fi
+chmod -R u+w "$im/$b"; rm -rf "$im/$b"
+echo removed
 `);
 }

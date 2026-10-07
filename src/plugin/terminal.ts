@@ -169,7 +169,10 @@ export class TerminalSession {
 
   resize(size: TerminalSize): void {
     if (this.#ended) return;
-    this.#terminal.resize(clampSize(size)).catch((error) => this.#logError("resize the terminal", error));
+    // One that fails once the session has ended failed because its PTY went with the shell (#564).
+    this.#terminal.resize(clampSize(size)).catch((error) => {
+      if (!this.#ended) this.#logError("resize the terminal", error);
+    });
   }
 
   /** Ends the shell, whatever else fails: the tab is told when it can be, and the shell is killed either way. */
