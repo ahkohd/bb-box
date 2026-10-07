@@ -902,14 +902,14 @@ test("the profile's words: limits, room, where it runs, what it makes, the usual
   expect(statusWords({ status: { state: "active", problem: null, ok: false, summary: "Template 9101 has no build tag.", checkedAt: 0 }, boxes: 3 }, 60_000)).toBe("Needs attention · Template 9101 has no build tag. · 3 boxes on it · checked 1 minute ago");
 });
 
-test("a provider row says how many spares it has ready now (#121)", async () => {
+test("a provider row says it has a spare ready now, with no count (#121, #440)", async () => {
   const [linux, desktop] = KINDS;
   const kinds = [{ ...linux!, spares: { target: 1, ready: 1, making: 0 }, offers: [{ ...linux!.offers[0]!, ready: 1 }] }, desktop!];
   const slot = panel(server([], { kinds }).handlers);
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
   const providers = await screen.findByRole("radiogroup", { name: "Provider" });
-  expect(within(providers).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pveContainer · 1 ready now · usually ~2.2 s"]);
+  expect(within(providers).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pveContainer · ready now · usually ~2.2 s"]);
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pveContainer · usually ~3.1 s"]);
 });
@@ -2561,6 +2561,35 @@ test("the Image choice shows under Type where an image covers the kind, this pro
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Image" }).textContent).toBe("Standard"));
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux image standard"]));
+});
+
+test("ready now follows the box: a spare of the chosen image, at the default size, and none for your machines (#440)", async () => {
+  const [linux] = KINDS;
+  const offer = linux!.offers[0]!;
+  const rows = () => within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent);
+  // This project's image has a spare ready there; the kind has none.
+  const images = [{ ...IMAGES[0]!, spares: [{ kind: "linux", backend: offer.backend, ready: 1, making: 0 }] }, IMAGES[1]!];
+  const slot = panel(server([], { images }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("combobox", { name: "Image" });
+  expect(rows()).toEqual(["pveContainer · ready now · usually ~2.2 s"]);
+  // Another size claims no spare.
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Medium/ }));
+  expect(rows()).toEqual(["pveContainer · usually ~2.2 s"]);
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Small/ }));
+  // Standard claims only the kind's spares.
+  const menu = screen.getByRole("combobox", { name: "Image" });
+  fireEvent.keyDown(menu, { key: "ArrowDown" });
+  fireEvent.click((await screen.findAllByRole("option")).find((option) => option.textContent === "Standard")!);
+  await waitFor(() => expect(rows()).toEqual(["pveContainer · usually ~2.2 s"]));
+  cleanup();
+  // A machine claims none, though the kind has one ready.
+  const settingsSlot = settings(server([], { kinds: [{ ...linux!, offers: [{ ...offer, ready: 1 }] }] }).handlers);
+  await settingsSlot.findByText(/Add a box as a BB machine of your own/);
+  fireEvent.click(settingsSlot.getByRole("button", { name: "Add machine" }));
+  await screen.findByRole("radiogroup", { name: "Provider" });
+  expect(rows()).toEqual(["pveContainer · usually ~2.2 s"]);
 });
 
 test("New box's new-thread inputs offer the Image group with the project's image chosen, and nothing chosen without a project (049)", async () => {

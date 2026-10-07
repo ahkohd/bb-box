@@ -38,6 +38,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { FILE_ROUTE, FileRelay } from "../relay/files.ts";
+import { MSB_ROUTE, msbClientArgv, refuseMsb } from "../relay/msb.ts";
 import { NAME_WINDOWS_SCRIPT, parseNamed } from "../backends/windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
@@ -69,6 +70,8 @@ const NAMES_FRESH_MS = 60_000;
 const RELAY_CALL_TIMEOUT_MS = 15_000;
 /** The longest a streamed box_copy may take (#492). */
 const FILE_CALL_TIMEOUT_MS = 2 * 60 * 60_000;
+/** How long each msb script may run on a BB machine (053), with a minute more for the call. */
+const MSB_SCRIPT_TIMEOUT_MS = { install: 11 * 60_000, status: 2 * 60_000, import: 31 * 60_000 } as const;
 /** How long BB's word on a machine's connection is trusted, so each docker command does not ask again. */
 const MACHINE_STATE_MS = 2_000;
 /** bb-box's version, which the move from BB's settings records. */
@@ -340,6 +343,31 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   });
   bb.http.experimental_websocket(FILE_ROUTE, ({ url }) => fileRelay.route(url), { auth: "none" });
   bb.onDispose(() => relay.dispose());
+  // The msb relay (053): as the Docker relay, with a channel per run of
+  // bb-box's msb on the machine, for its msb client here.
+  const msbRelay = new RelayHub({
+    what: "msb",
+    refuse: refuseMsb,
+    async open(hostId, secret, signal) {
+      const connected = await machineConnected(hostId);
+      if (connected !== true) throw offline(hostId, connected);
+      return host.call("msbRelay", { secret, path: `/api/v1/plugins/${bb.pluginId}/http${MSB_ROUTE}` }, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+    },
+    // While bb-box has a box on a microsandbox backend on the machine, its relay stays open.
+    async keep(hostId) {
+      const ids = new Set(configuration.document.backends.filter((backend) => backend.type === "microsandbox" && backend.fields.host === `bb:${hostId}`).map((backend) => backend.id));
+      return ids.size > 0 && (await boxes.all()).some((box) => ids.has(box.backend) && box.state !== "gone");
+    },
+    async offline(hostId) {
+      machineStates.delete(hostId);
+      const connected = await machineConnected(hostId);
+      return connected === true ? null : offline(hostId, connected).message;
+    },
+    logError,
+    log: (message) => bb.log.info(message),
+  });
+  bb.http.experimental_websocket(MSB_ROUTE, ({ url }) => msbRelay.route(url), { auth: "none" });
+  bb.onDispose(() => msbRelay.dispose());
   const machines: MachineAccess = {
     dockerHost: (hostId) => relay.address(hostId),
     async ready(hostId) {
@@ -350,6 +378,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     name: (hostId) => machineNames.get(hostId) ?? null,
     platform: (hostId) => machinePlatforms.get(hostId),
     connected: machineConnected,
+    msb: (hostId) => ({
+      argv: (args, options) => msbClientArgv(msbRelay.address(hostId).slice("unix://".length), { args, ...(options?.tty ? { tty: true } : {}) }),
+      async ready() {
+        const connected = await machineConnected(hostId);
+        if (connected !== true) throw offline(hostId, connected);
+        await msbRelay.endpoint(hostId);
+      },
+      script: (script, args, signal) => host.call("microsandbox", { script, args: [...args] }, { hostId, signal, timeoutMs: MSB_SCRIPT_TIMEOUT_MS[script] }),
+    }),
   };
 
   // What the doctor judges images by (049): the pins in the plugin's own

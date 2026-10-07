@@ -23,9 +23,14 @@ npm run reference
   GitHub runs it, and the typecheck, on each pull request. It fails when
   the reference is out of date, a link between Markdown files is broken,
   or the skill does not name an agent tool.
-- `scripts/smoke.ts` runs one box on a real backend without BB, with a
-  configuration file in the form `bb box config show --json` prints, with
-  its secrets in it.
+- `scripts/smoke.ts` runs one box on a real backend without BB: it
+  acquires a box, runs a command, opens a desktop as the relay does, and
+  releases the box, printing each step's time. Its settings file is the
+  configuration as `bb box config show --json` prints it, with each secret
+  as a string or `{"file": ...}`; `scripts/smoke.example.json` reads the
+  Proxmox LXC guide's token file and key. `--kind`, `--size`, `--command`
+  and `--doctor` choose what it does. Smoke runs are an install of their
+  own, `smoke`, so they leave a real install's boxes alone.
 - `npm run conformance` runs the [conformance suite](#the-conformance-suite)
   against a real backend.
 - `npm run reference` writes `docs/reference` from the code. Run it after
