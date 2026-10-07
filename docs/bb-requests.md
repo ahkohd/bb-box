@@ -678,8 +678,8 @@ before BB's buttons.
 ## 19. Tool calls longer than five minutes
 
 **What bb-box needs.** A tool call that runs as long as its tool says, such as
-`box_run` with `timeout_seconds` up to 3600, or else to be told when BB gives
-up on one.
+`box_run` with `timeout_seconds` up to an hour, or else to be told when BB
+gives up on one.
 
 **What BB does now.** An agent's call to a plugin tool ends after about 300 s
 with only "terminated", the message of an HTTP response whose body stalled for
