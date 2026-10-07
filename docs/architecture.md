@@ -848,9 +848,15 @@ microVM only when it asks for this backend.
   one.
 - Capacity is the host's memory, less a reserve and the memory of the
   running bb-box microVMs, its cores, and a most-boxes budget counting every
-  install's. `msb` reserves no memory and takes back what a guest frees,
-  but each guest keeps its own page cache, so a box that has joined BB holds
-  about 2 GiB while idle (053). There is no warm pool yet.
+  install's. `msb` reserves no memory and takes back what a guest frees.
+  There is no warm pool yet.
+- A guest keeps its page cache in its own RAM, which the host cannot share
+  or take back, and enrolment fills it. At each boot bb-box sets the guest's
+  `page_reporting_order` to 0, so it reports free memory to `msb` in pages
+  rather than 2 MiB blocks, and each upkeep, every 3 minutes, has each
+  running box whose load is under half its cores and with over 256 MiB
+  cached drop its caches and compact its memory. An enrolled idle box then
+  held 0.5 to 0.65 GiB of the host, where it held 1.6 to 1.9 GiB (053).
 
 ### SSH host pool
 

@@ -46,8 +46,9 @@ the boxes. How bb-box drives a box is in the
   writes. A box's disks are sparse, so they take only what it writes.
 - Memory for the boxes: bb-box keeps 4 GiB of the host's memory free by
   default, and counts each running box's full size, so a host for a few
-  small boxes needs 16 GiB. A box that has joined BB holds about 2 GiB of
-  the host's memory while idle, as its guest keeps its own page cache.
+  small boxes needs 16 GiB. A box that has joined BB holds about 0.5 GiB of
+  the host's memory while idle, once bb-box has had it drop its page cache
+  (below).
 - For a host over SSH: the user BB runs as logs in to it with a key and no
   prompt.
 
@@ -136,6 +137,11 @@ about 2 s. It keeps `msb`, its state and the images in a folder of its own:
 | Over SSH, or BB's server | `~/.local/share/bb-box/microsandbox` |
 
 Each box's Docker disk is in the folder's `disks`, and goes with the box.
+
+A box keeps the files it reads cached in its own memory, which the host
+cannot share. Every 3 minutes bb-box has each idle box drop that cache, so
+the host gets the memory back: an idle box that has joined BB holds about
+0.5 GiB.
 
 `msb` needs a short path for its sockets, so when the folder's is long,
 `msb` reaches it through a link, `/tmp/bb-box-msb-<uid>`. bb-box never uses

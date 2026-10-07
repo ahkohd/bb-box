@@ -192,7 +192,7 @@ test("a start runs the image's command again, which msb start does not, and wait
   // Once as the box was made, once after msb start: neither runs the image's command.
   const exec = fake.calls().filter((call) => call[0] === "exec" && call.some((arg) => arg.includes("bb-box-start")));
   assert.equal(exec.length, 2);
-  assert.match(exec[1]!.at(-1)!, /^\[ -e \/run\/bb-box-started \] \|\| \{ : >\/run\/bb-box-started; setsid -f \/usr\/local\/sbin\/bb-box-start /);
+  assert.match(exec[1]!.at(-1)!, /\[ -e \/run\/bb-box-started \] \|\| \{ : >\/run\/bb-box-started; setsid -f \/usr\/local\/sbin\/bb-box-start /);
 });
 
 test("acts only on its own microVMs: another install's or another box's are left alone, and a failed create's leftover is replaced (018, 053)", async () => {
@@ -327,4 +327,40 @@ test("over ssh://, msb is bb-box's own in the user's home there, and a terminal 
 test("reads the status script's facts", () => {
   const facts = parseFacts("pinned=0.7.7\ninstalled=0.7.7\nos=Linux\narch=x86_64\ncpus=16\nmemory_kib=97656976\nkvm=ok\nlxc=0\nfree_kib=781955776\nused_kib=85956\nreflink=0\ndocker=29.1.3\ndir=/x\n");
   assert.deepEqual([facts.installed, facts.cpus, facts.memoryMiB, facts.kvm, facts.lxc, facts.freeGiB, facts.usedGiB, facts.docker], ["0.7.7", 16, 95368, "ok", false, 745.7, 0.1, "29.1.3"]);
+});
+
+test("each boot sets the guest's page reporting to its smallest blocks, and the upkeep has each running, idle box of this install give its page cache back (053)", async () => {
+  const { fake, backend, make } = setup();
+  const mine = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const stopped = await backend.acquire(identity(), null, hooks().hooks, signal());
+  await backend.stop!(stopped);
+  const theirs = await make("other").acquire(identity(), null, hooks().hooks, signal());
+  const launch = fake.calls().find((call) => call[0] === "exec" && call.some((arg) => arg.includes("bb-box-start")))!;
+  assert.match(launch.at(-1)!, /^echo 0 >\/sys\/module\/page_reporting\/parameters\/page_reporting_order 2>\/dev\/null; /);
+  await backend.maintain(signal());
+  const { readFileSync } = await import("node:fs");
+  assert.deepEqual(readFileSync(join(fake.root, "reclaims"), "utf8").trim().split("\n"), [mine.ref], "not a stopped box, nor another install's");
+  assert.ok(!readFileSync(join(fake.root, "reclaims"), "utf8").includes(theirs.ref));
+  const reclaim = fake.calls().find((call) => call[0] === "exec" && call.some((arg) => arg.includes("drop_caches")))!;
+  assert.ok(!reclaim.includes("-u"), "as root");
+});
+
+test("the reclaim drops caches and compacts only in a box whose load is under half its cores, with more than 256 MiB cached", async () => {
+  const { RECLAIM } = await import("../src/backends/microsandbox/backend.ts");
+  const { mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { execFileSync } = await import("node:child_process");
+  const dir = (await import("./helpers.ts")).tempDir("reclaim");
+  mkdirSync(join(dir, "vm"));
+  const script = RECLAIM.replaceAll("/proc/loadavg", join(dir, "loadavg")).replaceAll("/proc/meminfo", join(dir, "meminfo")).replaceAll("/proc/sys/vm/", `${join(dir, "vm")}/`).replace("sync;", ":;");
+  const run = (load: string, cachedKiB: number) => {
+    writeFileSync(join(dir, "loadavg"), `${load} 0.10 0.05 1/100 1234\n`);
+    writeFileSync(join(dir, "meminfo"), `MemTotal: 4035404 kB\nCached: ${cachedKiB} kB\n`);
+    writeFileSync(join(dir, "vm", "drop_caches"), "");
+    const out = execFileSync("sh", ["-c", script], { encoding: "utf8" });
+    return [out.trim(), readFileSync(join(dir, "vm", "drop_caches"), "utf8").trim()];
+  };
+  assert.deepEqual(run("0.12", 1_600_000), ["reclaimed_kib=1600000", "3"]);
+  const busy = String(Number(execFileSync("nproc", { encoding: "utf8" })) / 2 + 0.1);
+  assert.deepEqual(run(busy, 1_600_000), ["", ""], "a busy box keeps its cache");
+  assert.deepEqual(run("0.02", 100_000), ["", ""], "a small cache stays");
 });

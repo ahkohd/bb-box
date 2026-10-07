@@ -112,6 +112,12 @@ function exec(rest) {
   const sandbox = found(name);
   if (sandbox.status !== "Running") fail(`sandbox '${name}' is not running (status: ${sandbox.status})`);
   const command = rest.slice(i + 2);
+  // The upkeep's reclaim, which needs root and the guest's /proc: logged, not run.
+  if (command.some((arg) => arg.includes("drop_caches"))) {
+    appendFileSync(join(root, "reclaims"), `${name}\n`);
+    if (sandbox.config.labels["fake.cached"]) process.stdout.write(`reclaimed_kib=${sandbox.config.labels["fake.cached"]}\n`);
+    return;
+  }
   if (command.some((arg) => arg.includes("/usr/local/sbin/bb-box-start"))) {
     if (!host.neverReady) writeFileSync(join(dir(name), "run", "bb-box", "ready"), "");
     return;
