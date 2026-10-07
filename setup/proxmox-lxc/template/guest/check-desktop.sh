@@ -20,6 +20,11 @@ t "display mode" sh -c 'echo "$(cat /run/bb-box/display-mode): $(cat /run/bb-box
 t "display :99" sh -c 'xdpyinfo | grep -m1 dimensions | tr -s " "; xdpyinfo -queryExtensions | grep -oE "NV-GLX|GLX|XTEST|RANDR" | sort -u | tr "\n" " "'
 t "XFCE running" sh -c 'pgrep -u "$(id -un)" -x xfwm4 >/dev/null && pgrep -u "$(id -un)" -x xfce4-panel >/dev/null && echo xfwm4 xfce4-panel'
 t "VNC on 5900" bash -c 'exec 3<>/dev/tcp/127.0.0.1/5900; head -c 12 <&3'
+# Selkies (056) waits on the GPU display path, until NVENC is measured.
+t "Selkies on 5980" sh -c 'if [ "$(cat /run/bb-box/display-mode)" = gpu ]; then echo "waits on the GPU path"; exit 0; fi
+  for _ in $(seq 1 100); do code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5980/) && [ "$code" = 200 ] && break; sleep 0.1; done
+  [ "$code" = 200 ] || { echo "no answer on 127.0.0.1:5980 (HTTP $code)"; exit 1; }
+  echo "HTTP $code, $(/usr/bin/selkies --version 2>&1 | head -1)"'
 if [ -c /dev/nvidiactl ]; then
   t "nvidia-smi" nvidia-smi --query-gpu=name,driver_version,memory.used,memory.total --format=csv,noheader
 else
