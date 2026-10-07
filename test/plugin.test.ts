@@ -1376,6 +1376,43 @@ test("a kind keeps a spare box as a BB machine, which box_acquire claims, rename
   await until("its machine", async () => world.hosts.get(`host-${next.id}`)?.name === `${next.name} (spare)`);
 });
 
+test("a Windows kind keeps its spare as a manual machine enrolled ahead, which a claim renames and a release removes, and New box refuses Windows by name (#539)", async (t) => {
+  const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
+  const shell = join(tempDir("windows-shell"), "pwsh");
+  writeFileSync(shell, `#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; esac\nexit 1\n`);
+  chmodSync(shell, 0o755);
+  const { bb, harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell });
+  t.after(() => harness.lifecycle.dispose());
+  world.windowsConnects = true;
+
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
+  const refused = (await provider.validate!({ inputs: { kind: "windows" } } as never)) as { action: string; message: string };
+  assert.equal(refused.action, "refuse");
+  assert.match(refused.message, /^A thread cannot start on a new Windows box: BB adds a new box's machine with its installer for Linux and macOS only\./);
+
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { windows: { spares: 1 } } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  const spare = await until("a spare", async () => (await app.boxes.list(SPARES)).find((box) => box.enrol.state === "enrolled"));
+  const hostId = `host-${spare.id}`;
+  assert.ok(world.events.includes(`create manual ${hostId}`), world.events.join("\n"));
+  assert.equal(world.hosts.get(hostId)?.name, `${spare.name} (spare)`, "named as a spare once it connects");
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), [`manual-machine/${hostId}`]);
+
+  const acquired = text(await tool("box_acquire", { kind: "windows" }));
+  assert.match(acquired, new RegExp(`\\b${spare.name}\\b`));
+  assert.match(acquired, /BB machine: enrolled/);
+  assert.match(acquired, /Timings: claiming a spare/);
+  const box = await only(app);
+  assert.equal(box.id, spare.id);
+  await until("the rename", async () => world.hosts.get(hostId)?.name === box.name);
+  assert.equal(world.hosts.get(hostId)?.status, "connected");
+
+  assert.ok(!isError(await tool("box_release", { box: box.name })));
+  assert.equal(world.hosts.has(hostId), false);
+  assert.ok(!(await bb.storage.kv.list("manual-machine/")).includes(`manual-machine/${hostId}`));
+});
+
 test("an enrolment BB refuses for not knowing bb-box's machine provider, as while the plugin restarts, asks again and enrols (#285)", async (t) => {
   const { harness, app, world, tool } = await start(undefined, { providerRetryMs: 20 });
   t.after(() => harness.lifecycle.dispose());

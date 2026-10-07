@@ -33,7 +33,8 @@ export function NewBoxInputs({ value, onChange }: PluginMachineProviderInputsPro
   useEffect(() => {
     let live = true;
     rpc.call("kinds", null).then(
-      (all) => live && setKinds(all.filter((kind) => kind.enrol)),
+      // A Windows box cannot be a thread's new box: BB adds its machine with its installer for Linux and macOS only (#539).
+      (all) => live && setKinds(all.filter((kind) => kind.enrol && kind.os !== "windows")),
       (error: unknown) => live && setProblem(error instanceof Error ? error.message : String(error)),
     );
     // The images a box of this project can choose (049); without a project, none is marked as its own.
