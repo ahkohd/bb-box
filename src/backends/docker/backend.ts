@@ -288,7 +288,7 @@ export function dockerKinds(config: DockerConfig, rootless = false, gpuDocker = 
     linux: {
       id: "linux",
       label: "Linux",
-      description: "A Linux container for builds, backend services and the agent's own work.",
+      description: "A Linux box for builds, backend services and the agent's own work.",
       requires: [],
       capabilities: {
         os: "linux",
