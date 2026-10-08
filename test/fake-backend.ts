@@ -42,12 +42,14 @@ import {
   type CommandCapability,
   type DoctorReport,
   type Guest,
+  type GuestFact,
   type HeldGuest,
   type Limit,
   type MachineNature,
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type Started,
   type StopReason,
 } from "../src/backends/types.ts";
 import { CommandLine, quote } from "../src/transports/process.ts";
@@ -202,7 +204,9 @@ export class FakeBackend implements Backend {
   stopReason: StopReason | null = null;
   /** The steps a start reports, with the time each took. */
   startSteps: Readonly<Record<string, number>> = { boot: 1_200 };
-  readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void) => Promise<void>;
+  /** The facts a start finds, as a GPU desktop's display mode after it fell back to the CPU (#597); null for none. */
+  startFacts: readonly GuestFact[] | null = null;
+  readonly start?: (guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void) => Promise<Started | void>;
   readonly stop?: (guest: Guest) => Promise<void>;
   readonly members?: () => Promise<readonly PoolMember[]>;
   readonly returnToService?: (ref: string) => Promise<void>;
@@ -246,6 +250,7 @@ export class FakeBackend implements Backend {
       this.start = async (guest, _signal, timing) => {
         await this.#power(guest, "running");
         for (const [step, ms] of Object.entries(this.startSteps)) timing?.(step, ms);
+        if (this.startFacts) return { facts: this.startFacts };
       };
       this.stop = (guest) => this.#power(guest, "stopped");
     }

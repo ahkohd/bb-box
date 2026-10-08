@@ -32,6 +32,7 @@ import {
   type Capacity,
   type DoctorCheck,
   type Guest,
+  type GuestFact,
   type HeldGuest,
   type KindCapabilities,
   type MachineNature,
@@ -1602,16 +1603,17 @@ export class Boxes {
     this.#require((await this.#move(current, "starting")) ?? { ...current, state: "releasing" }, "starting");
     const timings: Record<string, number> = {};
     const began = this.#now();
+    let facts: readonly GuestFact[] | undefined;
     try {
-      await start(current.guest!, signal, (step, ms) => {
+      facts = (await start(current.guest!, signal, (step, ms) => {
         timings[`start.${step}`] = ms;
-      });
+      }))?.facts;
     } catch (error) {
       await this.#observe(current, { signal, moving: true }).catch(() => null);
       throw error;
     }
     timings["start.total"] = this.#now() - began;
-    const started = (await this.#move(current, "ready", timings)) ?? current;
+    const started = (await this.#move(current, "ready", timings, facts)) ?? current;
     if (started.state === "ready" && started.restoredAt) {
       await this.#enrol(started, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
       return (await this.#read(started.threadId, started.id)) ?? started;
@@ -1658,9 +1660,15 @@ export class Boxes {
 
   /**
    * Moves a box to `state` for a stop or start, unless its release began
-   * meanwhile. A start's timings replace the last start's.
+   * meanwhile. A start's timings replace the last start's, and the facts it
+   * found the guest's.
    */
-  #move(box: BoxRecord, state: "stopping" | "stopped" | "starting" | "ready", started?: Readonly<Record<string, number>>): Promise<BoxRecord | null> {
+  #move(
+    box: BoxRecord,
+    state: "stopping" | "stopped" | "starting" | "ready",
+    started?: Readonly<Record<string, number>>,
+    facts?: readonly GuestFact[],
+  ): Promise<BoxRecord | null> {
     const moving = state === "stopping" || state === "starting";
     return this.update(box, (current) => {
       if (current.state === "releasing") return {};
@@ -1668,7 +1676,8 @@ export class Boxes {
       if (moving) return { state, error: null };
       if (!started) return { state };
       const kept = Object.entries(current.timings).filter(([step]) => !step.startsWith("start."));
-      return { state, timings: { ...Object.fromEntries(kept), ...started } };
+      const guest = facts && current.guest ? { guest: { ...current.guest, facts } } : {};
+      return { state, timings: { ...Object.fromEntries(kept), ...started }, ...guest };
     });
   }
 

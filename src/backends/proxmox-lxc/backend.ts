@@ -73,6 +73,7 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type Guest,
+  type GuestFact,
   type HeldGuest,
   type ImageBox,
   type ImageBuild,
@@ -80,6 +81,7 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type Started,
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
@@ -822,13 +824,21 @@ export class ProxmoxLxcBackend implements Backend {
     return status ? powerOf(status.status) : null;
   }
 
-  async start(guest: Guest, signal?: AbortSignal): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal): Promise<Started | void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
     if (!status) throw gone(vmid);
     if (status.status !== "running") await api.start(vmid, signal);
     await this.#waitReady(vmid, null, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal);
+    // A GPU desktop's display takes its path again at each boot, and falls back to the CPU when its GPU is short of memory (#597).
+    const template = typeof guest.data?.template === "number" ? guest.data.template : null;
+    if (!this.#gpuOf(template)) return;
+    const display = await this.#displayMode(vmid, "linux-desktop", this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal).catch((error: unknown) => {
+      this.#context.logError("display mode", error);
+      return null;
+    });
+    return { facts: this.#facts(template, display) };
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -1307,13 +1317,18 @@ export class ProxmoxLxcBackend implements Backend {
     const guest: Guest = { ref: String(vmid), host: node, address: addressFor(this.#config, vmid), size };
     const data = { ...(template !== null ? { template } : {}), ...(build !== null ? { build } : {}), ...(box !== null ? { box } : {}) };
     if (!Object.keys(data).length) return guest;
+    const facts = this.#facts(template, display);
+    return { ...guest, data, ...(facts.length ? { facts } : {}) };
+  }
+
+  /** A GPU desktop's GPU, and a desktop's display mode and why, once it has started; with no display mode known, none. */
+  #facts(template: number | null, display: DisplayMode | null): GuestFact[] {
     const gpu = this.#gpuOf(template);
-    const facts = [
+    return [
       ...(gpu ? [{ label: "GPU", value: gpu }] : []),
       ...(display ? [{ label: "Display mode", value: DISPLAY_MODE_WORDS[display.mode] ?? display.mode }] : []),
       ...(display?.reason ? [{ label: "Display reason", value: displayReason(display.reason) }] : []),
     ];
-    return { ...guest, data, ...(facts.length ? { facts } : {}) };
   }
 
   /** A desktop started without its GPU: new desktops go to other GPUs for a while. */

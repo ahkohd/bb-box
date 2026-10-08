@@ -179,6 +179,12 @@ export interface GuestFact {
   readonly value: string;
 }
 
+/** What a start found changed in the guest. */
+export interface Started {
+  /** The guest's facts now, in place of those kept, as a desktop's display mode when a GPU desktop fell back to the CPU (#597). */
+  readonly facts?: readonly GuestFact[];
+}
+
 export interface BoxOwner {
   readonly boxId: string;
   readonly threadId: string;
@@ -401,10 +407,11 @@ export interface Backend {
   /**
    * Starts a stopped guest and waits until its command transport answers.
    * Only where the provider can. Gives `timing` the time each step took,
-   * where it times them. Throws BackendError("gone") when the guest no
+   * where it times them. Resolves with what changed, where starting can
+   * change the guest's facts. Throws BackendError("gone") when the guest no
    * longer exists.
    */
-  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
+  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<Started | void>;
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
   /**

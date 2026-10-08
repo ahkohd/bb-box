@@ -1227,6 +1227,19 @@ test("stop and start, and a stopped box says so instead of timing out", async ()
   assert.match(boxDetail(again), /\nLast start: resume 0\.3 s, total [^\n]+$/);
 });
 
+test("the facts a start finds replace the box's, so its status says what it has now (#597)", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  await world.boxes.stop(THREAD, box.name);
+  const kept = await world.boxes.start(THREAD, box.name);
+  assert.deepEqual(kept.guest?.facts, box.guest?.facts, "a start that finds none keeps them");
+  await world.boxes.stop(THREAD, box.name);
+  world.backend.startFacts = [{ label: "Display mode", value: "CPU" }];
+  const started = await world.boxes.start(THREAD, box.name);
+  assert.deepEqual(started.guest?.facts, [{ label: "Display mode", value: "CPU" }]);
+  assert.match(boxDetail(started), /\nDisplay mode: CPU\n/);
+});
+
 test("a box that is not enrolled is not reconnected after a start", async () => {
   const world = setup();
   world.general = { ...world.general, enrol: false };
