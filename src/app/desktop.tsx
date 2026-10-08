@@ -586,8 +586,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? { state: "connecting" });
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  /** The box's clipboard text as last seen: from its desktop's cut text, or the RPC where its input reports it. */
-  const [boxClipboard, setBoxClipboard] = useState<string | null>(null);
+  /** The box's clipboard as last seen: text from its desktop's cut text or the RPC where its input reports it, or an image the video client brought (#609). */
+  const [boxClipboard, setBoxClipboard] = useState<string | Blob | null>(null);
   /**
    * A clipboard outcome of the person's own paste or copy, for a moment, in
    * the toolbar: "Pasted", "Copied", or why nothing went. Never from an
@@ -606,7 +606,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   /** The field to paste into when this computer's clipboard cannot be read here: null closed, else its text. */
   const [pasteField, setPasteField] = useState<string | null>(null);
   /** The box's text shown to copy by hand, when this computer's clipboard cannot be written here. */
-  const [copyField, setCopyField] = useState<string | null>(null);
+  const [copyField, setCopyField] = useState<string | Blob | null>(null);
   const ready = showing && path !== null;
   const pathNow = useRef(path);
   pathNow.current = path;
@@ -637,8 +637,14 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       setBoxClipboard(text);
       navigator.clipboard?.writeText?.(text).catch(() => undefined);
     };
-    current.onPaste = (text) => {
-      if (text) flashFor("Pasted");
+    if (current instanceof SelkiesSession) {
+      current.onClipboardImage = (image) => {
+        setBoxClipboard(image);
+        writeImage(image).catch(() => undefined);
+      };
+    }
+    current.onPaste = (pasted: string | Blob | null) => {
+      if (pasted) flashFor("Pasted");
     };
     current.onPasteFailed = (error) => setProblem(message(error));
     // A desktop whose server moves no clipboard, as Tart's macOS VMs: bb-box puts the text there itself, as UTF-8 (#464).
@@ -654,7 +660,10 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       current.onPaste = undefined;
       current.onPasteFailed = undefined;
       current.putClipboard = undefined;
-      if (current instanceof SelkiesSession) current.onFallback = undefined;
+      if (current instanceof SelkiesSession) {
+        current.onFallback = undefined;
+        current.onClipboardImage = undefined;
+      }
       current.element.remove();
       session.current = null;
       if (!claimed.kept) {
@@ -766,8 +775,28 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     }
     session.current?.paste(text);
   };
-  /** The menu's Paste: this computer's clipboard, read on the click, which is a gesture; where the frame still refuses, a field to paste into. */
+  /**
+   * The menu's Paste: this computer's clipboard, read on the click, which is a gesture; where the frame still refuses, a field to paste into.
+   * The video client takes an image too, before text (#609).
+   */
   const pasteFromComputer = async () => {
+    const video = session.current instanceof SelkiesSession ? session.current : null;
+    if (video && navigator.clipboard?.read) {
+      const image = await navigator.clipboard.read().then(
+        async (items) => {
+          for (const item of items) {
+            const type = item.types.find((one) => one.startsWith("image/"));
+            if (type) return item.getType(type);
+          }
+          return null;
+        },
+        () => null,
+      );
+      if (image) {
+        await video.pasteImage(image);
+        return;
+      }
+    }
     let text: string;
     try {
       text = await navigator.clipboard.readText();
@@ -776,28 +805,28 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       return;
     }
     if (!text) {
-      flashFor("This computer's clipboard has no text.");
+      flashFor(video ? "This computer's clipboard has no text or image." : "This computer's clipboard has no text.");
       return;
     }
     pasteText(text);
   };
   /** The menu's Copy: the box's clipboard as last seen, or fetched now where its input reports it, written to this computer's on the click. */
   const copyToComputer = async () => {
-    let text = boxClipboard;
-    if (text === null) {
+    let copied = boxClipboard;
+    if (copied === null) {
       const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => null);
-      text = latest?.text ?? null;
-      if (text !== null) setBoxClipboard(text);
+      copied = latest?.text ?? null;
+      if (copied !== null) setBoxClipboard(copied);
     }
-    if (text === null) {
+    if (copied === null) {
       if (box) flashFor(nothingFromBox(box, mine));
       return;
     }
     try {
-      await navigator.clipboard.writeText(text);
+      await (typeof copied === "string" ? navigator.clipboard.writeText(copied) : writeImage(copied));
       flashFor("Copied");
     } catch {
-      setCopyField(text);
+      setCopyField(copied);
     }
   };
 
@@ -977,9 +1006,28 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Paste into {box?.name ?? "the box"}</AlertDialogTitle>
-            <AlertDialogDescription>This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {stream === "selkies"
+                ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is."
+                : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
-          <Textarea aria-label="Text to paste" value={pasteField ?? ""} onChange={(event) => setPasteField(event.target.value)} rows={4} autoFocus />
+          <Textarea
+            aria-label="Text to paste"
+            value={pasteField ?? ""}
+            onChange={(event) => setPasteField(event.target.value)}
+            onPaste={(event) => {
+              // An image pasted here goes to the box at once, as the video client takes images (#609).
+              const video = session.current instanceof SelkiesSession ? session.current : null;
+              const image = video ? Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/")) : undefined;
+              if (!video || !image) return;
+              event.preventDefault();
+              setPasteField(null);
+              void video.pasteImage(image);
+            }}
+            rows={4}
+            autoFocus
+          />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button
@@ -999,9 +1047,15 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Copied in {box?.name ?? "the box"}</AlertDialogTitle>
-            <AlertDialogDescription>This computer's clipboard cannot be written here. Select the text and copy it.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {copyField instanceof Blob ? "This computer's clipboard cannot be written here. Right-click the image and copy it." : "This computer's clipboard cannot be written here. Select the text and copy it."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
-          <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />
+          {copyField instanceof Blob ? (
+            <CopiedImage image={copyField} />
+          ) : (
+            <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Close</AlertDialogCancel>
           </AlertDialogFooter>
@@ -1009,6 +1063,32 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       </AlertDialog>
     </div>
   );
+}
+
+/** Writes an image to this computer's clipboard, as PNG, the type browsers take (#609). */
+async function writeImage(image: Blob): Promise<void> {
+  if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) throw new Error("This browser cannot copy images.");
+  // A promise, so the browser keeps the click's permission while the PNG is made.
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": asPng(image) })]);
+}
+
+async function asPng(image: Blob): Promise<Blob> {
+  if (image.type === "image/png") return image;
+  const bitmap = await createImageBitmap(image);
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+  return canvas.convertToBlob({ type: "image/png" });
+}
+
+/** An image from the box, to copy by hand where the browser will not write it. */
+function CopiedImage({ image }: { image: Blob }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const made = URL.createObjectURL(image);
+    setUrl(made);
+    return () => URL.revokeObjectURL(made);
+  }, [image]);
+  return url ? <img src={url} alt="The image copied in the box" className="max-h-64 max-w-full self-start rounded border border-border object-contain" /> : null;
 }
 
 /**

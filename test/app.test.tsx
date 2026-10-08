@@ -13,7 +13,7 @@ import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
-import { SelkiesSession } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, SelkiesSession } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
@@ -2027,6 +2027,169 @@ test("a video session stops its video while hidden, and starts again from a key 
     session.dispose();
   } finally {
     vi.useRealTimers();
+    undo();
+  }
+});
+
+/** Bytes as Selkies sends them in a clipboard message: base64. */
+function b64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/** An image's bytes, as a test stands in for a PNG: any bytes, in a Blob of its type. */
+function fakePng(size: number): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from({ length: size }, (_, index) => index % 251);
+}
+
+test("the video client takes the box's images and long text from Selkies, whole or in parts, and the text beside copied markup (#609)", async () => {
+  const undo = withVideo();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const texts: string[] = [];
+    const images: Blob[] = [];
+    session.onClipboard = (text) => texts.push(text);
+    session.onClipboardImage = (image) => images.push(image);
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    const say = (data: string) => socket.onmessage?.({ data });
+    // An image in one message.
+    const small = fakePng(100);
+    say(`clipboard_binary,image/png,${b64(small)}`);
+    // An image in parts, as Selkies sends anything over a chunk.
+    const large = fakePng(40_000);
+    say(`clipboard_start,image/png,${large.byteLength}`);
+    for (let offset = 0; offset < large.byteLength; offset += 16_383) say(`clipboard_data,${b64(large.subarray(offset, offset + 16_383))}`);
+    say("clipboard_finish");
+    // Long text in parts, and markup with its text beside it.
+    const long = "x".repeat(20_000);
+    say(`clipboard_start,text/plain,${long.length}`);
+    say(`clipboard_data,${btoa(long.slice(0, 16_383))}`);
+    say(`clipboard_data,${btoa(long.slice(16_383))}`);
+    say("clipboard_finish");
+    say(`clipboard_binary,application/x-selkies-clipboard-flavours,${btoa(JSON.stringify({ "text/html": "<b>bold</b>", "text/plain": "bold" }))}`);
+    // Parts that do not add up are dropped.
+    say("clipboard_start,image/png,10");
+    say(`clipboard_data,${b64(fakePng(4))}`);
+    say("clipboard_finish");
+    expect(texts).toEqual([long, "bold"]);
+    expect(images.map((image) => image.type)).toEqual(["image/png", "image/png"]);
+    expect(new Uint8Array(await images[0]!.arrayBuffer())).toEqual(small);
+    expect(new Uint8Array(await images[1]!.arrayBuffer())).toEqual(large);
+    session.dispose();
+  } finally {
+    undo();
+  }
+});
+
+test("the video client pastes an image as Selkies' cb, or cbs, cbd and cbe when it is over a chunk, then the box's chord; Cmd+V takes an image too (#609)", async () => {
+  const undo = withVideo();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const pasted: (string | Blob | null)[] = [];
+    const failed: unknown[] = [];
+    session.onPaste = (what) => pasted.push(what);
+    session.onPasteFailed = (error) => failed.push(error);
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    socket.onmessage?.({ data: videoFrame(1, true) });
+    session.setControl(true, true);
+    const clipboardSent = () => socket.sent.filter((sent): sent is string => typeof sent === "string" && /^c[wb][sde]?,/.test(sent));
+
+    const small = new Blob([fakePng(100)], { type: "image/png" });
+    await session.pasteImage(small);
+    expect(clipboardSent()).toEqual([`cb,image/png,${b64(fakePng(100))}`]);
+    await waitFor(() => expect(socket.sent).toContain("ku,118"));
+    expect(pasted).toEqual([small]);
+
+    socket.sent.length = 0;
+    const bytes = fakePng(40_000);
+    await session.pasteImage(new Blob([bytes], { type: "image/png" }));
+    const [start, ...rest] = clipboardSent();
+    const id = start!.split(",")[1]!;
+    expect(start).toBe(`cbs,${id},image/png,40000`);
+    expect(rest).toEqual([
+      `cbd,${id},${b64(bytes.subarray(0, 16_383))}`,
+      `cbd,${id},${b64(bytes.subarray(16_383, 32_766))}`,
+      `cbd,${id},${b64(bytes.subarray(32_766))}`,
+      `cbe,${id}`,
+    ]);
+
+    // Too big for the desktop: nothing goes, and the viewer says why.
+    socket.sent.length = 0;
+    const huge = { size: CLIPBOARD_MAX_BYTES + 1, type: "image/png", arrayBuffer: async () => new ArrayBuffer(0) } as unknown as Blob;
+    await session.pasteImage(huge);
+    expect(clipboardSent()).toEqual([]);
+    expect(String(failed[0])).toMatch(/more than the 64 MiB the desktop takes/);
+
+    // Cmd+V, or Ctrl+V, with an image on this computer's clipboard.
+    socket.sent.length = 0;
+    const image = new File([fakePng(10)], "copied.png", { type: "image/png" });
+    session.element.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true, cancelable: true }));
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", { value: { files: [image], getData: () => "" } });
+    document.dispatchEvent(paste);
+    await waitFor(() => expect(clipboardSent()).toEqual([`cb,image/png,${b64(fakePng(10))}`]));
+    session.dispose();
+  } finally {
+    undo();
+  }
+});
+
+test("with video, an image the box copies reaches this computer's clipboard, and the menu's Copy and Paste carry images, with their notes (#609)", async () => {
+  const undo = withVideo();
+  const written: unknown[] = [];
+  vi.stubGlobal(
+    "ClipboardItem",
+    class {
+      readonly items: Record<string, Blob | Promise<Blob>>;
+      constructor(items: Record<string, Blob | Promise<Blob>>) {
+        this.items = items;
+      }
+      get types() {
+        return Object.keys(this.items);
+      }
+      async getType(type: string) {
+        return this.items[type]!;
+      }
+    },
+  );
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: videoFrame(1, true) }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const fromComputer = new Blob([fakePng(30)], { type: "image/png" });
+    const write = vi.fn(async (items: { items: Record<string, Blob | Promise<Blob>> }[]) => void written.push(await items[0]!.items["image/png"]));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { read: async () => [{ types: ["text/plain", "image/png"], getType: async () => fromComputer }], readText: async () => "", writeText: vi.fn(), write },
+      configurable: true,
+    });
+
+    // The box copies an image: it goes to this computer's clipboard with no note.
+    const copied = fakePng(50);
+    act(() => void socket.onmessage?.({ data: `clipboard_binary,image/png,${b64(copied)}` }));
+    await waitFor(() => expect(written).toHaveLength(1));
+    expect(new Uint8Array(await (written[0] as Blob).arrayBuffer())).toEqual(copied);
+    expect(slot.queryByText("Copied")).toBeNull();
+
+    // The menu's Copy writes it again, and says so.
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Copy to this computer" }));
+    expect(await slot.findByText("Copied")).toBeTruthy();
+    expect(written).toHaveLength(2);
+
+    // The menu's Paste takes this computer's image before its text, and says so.
+    socket.sent.length = 0;
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Paste from this computer" }));
+    expect(await slot.findByText("Pasted")).toBeTruthy();
+    expect(socket.sent).toContain(`cb,image/png,${b64(fakePng(30))}`);
+  } finally {
     undo();
   }
 });

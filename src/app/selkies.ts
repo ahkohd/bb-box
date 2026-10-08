@@ -2,7 +2,9 @@
 // plugin's relay (&stream=selkies), decoded with WebCodecs onto a canvas. It
 // does what DesktopSession does for noVNC, so the toolbar treats both alike:
 // control, the clipboard, the cursor rules (#467), Cmd as Ctrl, and the
-// viewer's size while it has control. Keys are the keysyms of noVNC's own
+// viewer's size while it has control. Its clipboard carries images too, both
+// ways (#609), as Selkies' does: an image goes as its binary clipboard
+// messages, and anything over a chunk in parts. Keys are the keysyms of noVNC's own
 // keyboard handling, sent as Selkies' kd and ku; the pointer and the wheel go
 // as its m and m2. Frames are acknowledged as they come, every 50 ms, as
 // Selkies' own page does, which is how the relay paces this viewer.
@@ -23,20 +25,43 @@ const H264 = 1;
 const CODEC = "avc1.42E01F";
 /** Notches of a wheel turned by pixels, as a mouse's are about this many pixels each. */
 const WHEEL_PIXELS = 50;
+/** The clipboard's chunk, as Selkies' own: bytes in one message, a multiple of 3 so each chunk's base64 stands alone. */
+const CLIPBOARD_CHUNK = Math.floor((16 * 1024) / 3) * 3;
+/** The most a clipboard transfer may carry, either way, as Selkies allows. */
+export const CLIPBOARD_MAX_BYTES = 64 * 1024 * 1024;
+/** Selkies' type for markup copied with its plain text: a JSON object of type to content. */
+const FLAVOURS = "application/x-selkies-clipboard-flavours";
 
 /** Whether this browser can show a desktop as video: WebCodecs, which needs a secure context. */
 export function canShowVideo(): boolean {
   return typeof VideoDecoder !== "undefined" && (typeof isSecureContext === "undefined" || isSecureContext);
 }
 
-function base64(text: string): string {
+function bytesBase64(bytes: Uint8Array): string {
   let binary = "";
-  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
 
+function base64Bytes(value: string): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+}
+
 function fromBase64(value: string): string {
-  return new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+  return new TextDecoder().decode(base64Bytes(value));
+}
+
+/** The text of a copy Selkies sends whole, by its type: plain text, or the plain text beside copied markup; null for anything else. */
+function clipboardText(mime: string, bytes: Uint8Array): string | null {
+  const text = new TextDecoder().decode(bytes);
+  if (mime === "text/plain") return text;
+  if (mime !== FLAVOURS) return null;
+  try {
+    const flavours = JSON.parse(text) as Record<string, unknown>;
+    return typeof flavours["text/plain"] === "string" ? flavours["text/plain"] : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Whether a PNG has a visible pixel; true when the browser cannot tell. */
@@ -70,7 +95,10 @@ export class SelkiesSession implements Kept {
   /** The box's OS: the paste chord is Cmd+V on macOS and Ctrl+V elsewhere, and a Mac browser's Cmd stands for Ctrl there. */
   guestOs = "linux";
   onClipboard?: (text: string) => void;
-  onPaste?: (text: string | null) => void;
+  /** An image the box copied, as Selkies sends it (#609). */
+  onClipboardImage?: (image: Blob) => void;
+  /** A paste: the text or image pasted, or null when the browser's clipboard had none and the box pasted its own. */
+  onPaste?: (pasted: string | Blob | null) => void;
   onPasteFailed?: (error: unknown) => void;
   putClipboard?: (text: string) => Promise<unknown> | null;
   pasteAllowed?: () => boolean;
@@ -108,6 +136,9 @@ export class SelkiesSession implements Kept {
   #pasteWait: ReturnType<typeof setTimeout> | undefined;
   #chord: ReturnType<typeof setTimeout> | undefined;
   readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
+  /** A copy the box sends in parts, until its last. */
+  #incoming: { readonly mime: string; readonly size: number; readonly parts: Uint8Array<ArrayBuffer>[]; received: number } | null = null;
+  #transfers = 0;
 
   constructor(url: string) {
     this.#url = url;
@@ -276,6 +307,48 @@ export class SelkiesSession implements Kept {
           // Not text.
         }
         break;
+      case "clipboard_binary": {
+        const comma = rest.indexOf(",");
+        if (comma < 0) break;
+        try {
+          this.#copied(rest.slice(0, comma), base64Bytes(rest.slice(comma + 1)));
+        } catch {
+          // Not base64.
+        }
+        break;
+      }
+      case "clipboard_start": {
+        const [mime = "", size = ""] = rest.split(",");
+        const total = Number(size);
+        this.#incoming = mime && Number.isInteger(total) && total >= 0 && total <= CLIPBOARD_MAX_BYTES ? { mime, size: total, parts: [], received: 0 } : null;
+        break;
+      }
+      case "clipboard_data": {
+        const incoming = this.#incoming;
+        if (!incoming) break;
+        try {
+          const part = base64Bytes(rest);
+          incoming.received += part.byteLength;
+          if (incoming.received > incoming.size) this.#incoming = null;
+          else incoming.parts.push(part);
+        } catch {
+          this.#incoming = null;
+        }
+        break;
+      }
+      case "clipboard_finish": {
+        const incoming = this.#incoming;
+        this.#incoming = null;
+        if (!incoming || incoming.received !== incoming.size) break;
+        const bytes = new Uint8Array(incoming.size);
+        let offset = 0;
+        for (const part of incoming.parts) {
+          bytes.set(part, offset);
+          offset += part.byteLength;
+        }
+        this.#copied(incoming.mime, bytes);
+        break;
+      }
       case "cursor":
         try {
           const cursor = JSON.parse(rest) as { curdata?: string; hotx?: number; hoty?: number };
@@ -295,6 +368,34 @@ export class SelkiesSession implements Kept {
         this.#reset();
         break;
     }
+  }
+
+  /** A copy in the box that came whole: text, or an image. */
+  #copied(mime: string, bytes: Uint8Array<ArrayBuffer>): void {
+    if (mime.startsWith("image/")) {
+      this.onClipboardImage?.(new Blob([bytes], { type: mime }));
+      return;
+    }
+    const text = clipboardText(mime, bytes);
+    if (text !== null) this.onClipboard?.(text);
+  }
+
+  /**
+   * Puts content on the box's clipboard, in Selkies' messages: one, or in
+   * parts when it is over a chunk. Text as text, anything else as binary.
+   */
+  #putOnBox(mime: string, bytes: Uint8Array): void {
+    const text = mime === "text/plain";
+    if (bytes.byteLength <= CLIPBOARD_CHUNK) {
+      this.#send(text ? `cw,${bytesBase64(bytes)}` : `cb,${mime},${bytesBase64(bytes)}`);
+      return;
+    }
+    const id = `bb${Date.now().toString(36)}${(++this.#transfers).toString(36)}`;
+    this.#send(text ? `cws,${id},${bytes.byteLength}` : `cbs,${id},${mime},${bytes.byteLength}`);
+    for (let offset = 0; offset < bytes.byteLength; offset += CLIPBOARD_CHUNK) {
+      this.#send(`${text ? "cwd" : "cbd"},${id},${bytesBase64(bytes.subarray(offset, offset + CLIPBOARD_CHUNK))}`);
+    }
+    this.#send(`${text ? "cwe" : "cbe"},${id}`);
   }
 
   #draw(frame: VideoFrame): void {
@@ -435,7 +536,7 @@ export class SelkiesSession implements Kept {
     if (this.connection.state !== "connected") return;
     const put = this.putClipboard?.(text);
     if (put) put.catch(() => undefined);
-    else this.#send(`cw,${base64(text)}`);
+    else this.#putOnBox("text/plain", new TextEncoder().encode(text));
   }
 
   /** Puts text on the box's clipboard, then presses the box's own paste chord where the cursor is, and says so. */
@@ -443,7 +544,7 @@ export class SelkiesSession implements Kept {
     if (this.connection.state !== "connected") return;
     const put = this.putClipboard?.(text);
     if (!put) {
-      this.#send(`cw,${base64(text)}`);
+      this.#putOnBox("text/plain", new TextEncoder().encode(text));
       this.#pressPaste();
       this.onPaste?.(text);
       return;
@@ -455,6 +556,20 @@ export class SelkiesSession implements Kept {
       },
       (error: unknown) => this.onPasteFailed?.(error),
     );
+  }
+
+  /** Puts an image on the box's clipboard, then presses the box's paste chord, and says so (#609). */
+  async pasteImage(image: Blob): Promise<void> {
+    if (this.connection.state !== "connected") return;
+    if (image.size > CLIPBOARD_MAX_BYTES) {
+      this.onPasteFailed?.(new Error(`The image is ${Math.ceil(image.size / 1024 / 1024)} MiB, more than the ${CLIPBOARD_MAX_BYTES / 1024 / 1024} MiB the desktop takes.`));
+      return;
+    }
+    const bytes = new Uint8Array(await image.arrayBuffer());
+    if (this.connection.state !== "connected") return;
+    this.#putOnBox(image.type || "image/png", bytes);
+    this.#pressPaste();
+    this.onPaste?.(image);
   }
 
   #pressPaste(): void {
@@ -486,8 +601,13 @@ export class SelkiesSession implements Kept {
     if (this.#pasteArmed === null) return;
     this.#pasteArmed = null;
     clearTimeout(this.#pasteWait);
+    const image = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
     const text = event.clipboardData?.getData("text/plain") ?? "";
     event.preventDefault();
+    if (image) {
+      void this.pasteImage(image);
+      return;
+    }
     if (text) {
       this.paste(text);
       return;
