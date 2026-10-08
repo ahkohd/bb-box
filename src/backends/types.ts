@@ -252,6 +252,31 @@ export interface HostCapacity {
   readonly limits: readonly Limit[];
 }
 
+/**
+ * A GPU's memory as bb-box last read it, from inside a box that has the GPU:
+ * a GPU desktop's display service as it starts, or nvidia-smi in a running
+ * one (#603). The host's own figures are out of the API's reach.
+ */
+export interface GpuReading {
+  /** The GPU, as its desktop templates name it. */
+  readonly id: string;
+  readonly freeMiB: number;
+  /** Null until a running box has read it. */
+  readonly totalMiB: number | null;
+  /** What a GPU desktop needs free on it. */
+  readonly neededMiB: number;
+  /** When it was read, in milliseconds since the epoch. */
+  readonly at: number;
+}
+
+/** The room on the GPUs a GPU desktop kind's boxes use (#603). */
+export interface GpuRoom {
+  /** Each GPU that has been read, as last read. */
+  readonly readings: readonly GpuReading[];
+  /** Until when a new box is refused, as every GPU was lately read full; null when it is not. */
+  readonly fullUntil: number | null;
+}
+
 export interface Limit {
   readonly resource: "memory" | "disk" | "cpu" | "guests" | "gpu-desktops" | "gpu-memory" | "machines";
   /** Which one, where there are several: a GPU's index or UUID. */
@@ -480,6 +505,8 @@ export interface Backend {
   maintain?(signal?: AbortSignal): Promise<void>;
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
+  /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */
+  gpuRoom?(kind: string): Promise<GpuRoom>;
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   /** Building images in boxes and keeping their builds (049). Only backends that can. */

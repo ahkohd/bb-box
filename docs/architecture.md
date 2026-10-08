@@ -144,7 +144,12 @@ backends, and the first with room takes the box.
   `gpu: false`. A `linux-desktop` box whose display fell back to the CPU
   does not meet its kind: the backend releases it and tries another GPU
   within the kind's time, and new desktops avoid that GPU for 10 minutes
-  ([020](decisions/020-control-belongs-to-a-viewer.md)).
+  ([020](decisions/020-control-belongs-to-a-viewer.md)). Proxmox's API
+  cannot read GPU memory, so the Proxmox LXC backend keeps each GPU's free
+  memory as a desktop on it last read it: its display service as it
+  starts, and `nvidia-smi` in a running one during upkeep. A new desktop
+  skips a GPU read with less than it needs in the last 5 minutes, and is
+  refused before it starts when every GPU was (#603).
 - **Time to ready.** `readyTimeoutMs` is 30 s for a Proxmox LXC box, 60 s
   for a Docker box or a Linux pool machine, 3 minutes for a Windows VM or a
   pool's Mac, and 5 minutes for a Tart macOS or Linux VM.

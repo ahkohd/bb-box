@@ -33,6 +33,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.sizes` | Room for each kind | The node holds a box of each kind at its default size. |
 | `template.<vmid>` | <flavour> template <vmid> | A template is there, is a template, and has what its kind needs. |
 | `template.<vmid>.image` | Image of <flavour> template <vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
+| `gpu.<gpu>` | GPU <gpu> | A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs. |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
 
 ## Proxmox QEMU

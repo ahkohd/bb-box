@@ -6,7 +6,8 @@
 // run/bb-box/ in the host's home, where the desktop's display mode starts as
 // gpu, or as $FAKE_SSH_DIR/display/<host> holds it (a mode line, then a reason).
 // /sys/module/nvidia/ maps to sys/module/nvidia/ there, the host's NVIDIA
-// driver, which has none until a test writes its version.
+// driver, which has none until a test writes its version. Programs in bin/
+// in the host's home come first on its PATH, such as a test's nvidia-smi.
 // Starting a shared connection (-N) dials like a command and makes its
 // socket, a plain file, once $FAKE_SSH_DIR/hold-share/<host> is gone; -O
 // succeeds, and -O exit removes the socket. Their log entries have an empty
@@ -89,7 +90,7 @@ const shell = existsSync(powershell) ? [powershell] : ["-c"];
 const [binary, ...argv] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "sh", ...shell, script.replaceAll("/run/bb-box/", `${run}/`).replaceAll("/sys/module/nvidia/", `${home}/sys/module/nvidia/`)];
 const result = spawnSync(binary, argv, {
   cwd: home,
-  env: { PATH: process.env.PATH, HOME: home, USER: target.split("@")[0] },
+  env: { PATH: `${join(home, "bin")}:${process.env.PATH}`, HOME: home, USER: target.split("@")[0] },
   stdio: "inherit",
 });
 process.exit(result.status ?? 1);
