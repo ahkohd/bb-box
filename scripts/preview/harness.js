@@ -94,10 +94,12 @@ class FakeTerminalSocket {
     this.onerror = null;
     this.protocol = "";
     const terminal = scene?.terminal ?? {};
+    // A video stream (056) can fail on its own, as when a box has no Selkies, while VNC connects.
+    const fail = url.includes("stream=selkies") ? terminal.videoFail : terminal.fail;
     setTimeout(() => {
-      if (terminal.fail) {
+      if (fail) {
         this.readyState = 3;
-        this.onclose?.({ code: 1011, reason: terminal.fail });
+        this.onclose?.({ code: 1011, reason: fail });
         return;
       }
       this.readyState = 1;
