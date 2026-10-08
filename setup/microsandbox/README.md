@@ -200,6 +200,28 @@ it is above 1. Tart's VMs share the Mac's memory too.
 `msb` reaches it through a link, `/tmp/bb-box-msb-<uid>`. bb-box never uses
 your own `~/.microsandbox`.
 
+#### Spares
+
+A kind's spares (032) are boxes made ahead and enrolled, so a claimed box is
+a BB machine at once: set a kind's `spares` in the configuration. They go to
+the first backend in the order with room, so for microsandbox to hold them
+it must come before the kind's other backends. microsandbox makes a spare as
+it makes any box: a new microVM, about 2 s, then BB's enrolment, about 20 s,
+which the spare hides. A spare stays running while it waits, as `msb stop`
+does not keep a box's session.
+
+- **On Linux**, an idle enrolled spare holds about 0.5 GiB of the host's
+  memory once the upkeep has had it drop its page cache, and is counted at
+  its full size.
+- **On a Mac**, a box keeps all the memory it has used, so a spare costs
+  about 1.5 GiB from enrolment, and up to its full size, 4 GiB for a small
+  `linux-arm64` box, for as long as it waits. Keep spares there at 0 unless
+  the Mac has room to spare.
+- bb-box does not fork spares from a prepared box. On a Mac, a fork took
+  1.75 s against 1.8 s for a new box, and `msb` refuses to fork a box whose
+  Docker disk is a clone of bb-box's template; on an ext4 host a fork copies
+  the box's disk and is slower still (053).
+
 ## Check it worked
 
 Run `bb box doctor`. For the microsandbox backend it checks:

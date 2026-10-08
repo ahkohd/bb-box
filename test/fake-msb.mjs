@@ -199,8 +199,13 @@ switch (command) {
     break;
   }
   case "modify": {
-    const { many } = flags(rest.slice(1), []);
+    const { values, many } = flags(rest.slice(1), []);
     const sandbox = found(rest[0]);
+    // As msb's: a running box takes changes only with --next-start or --restart, and without them msb applies nothing but exits 0.
+    if (sandbox.status === "Running" && !values["--next-start"] && !values["--restart"]) {
+      process.stderr.write("  → no changes were applied\n");
+      break;
+    }
     for (const label of many["--label"]) {
       const [key, ...value] = label.split("=");
       sandbox.config.labels[key] = value.join("=");

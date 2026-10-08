@@ -972,7 +972,9 @@ export class MsbBackend implements Backend {
   async relabel(guest: Guest, box: BoxIdentity, _from: string, signal?: AbortSignal): Promise<void> {
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) return;
-    await this.#cli.ok(["modify", guest.ref, "--label", `${LABELS.thread}=${box.threadId}`, "--label", `${LABELS.name}=${box.name}`], { timeoutMs: 30_000, signal });
+    // A running box's labels change only with --next-start or --restart: without them msb applies nothing and still exits 0.
+    // --next-start changes the labels msb lists and inspects at once, and the running box's at its next start.
+    await this.#cli.ok(["modify", guest.ref, "--label", `${LABELS.thread}=${box.threadId}`, "--label", `${LABELS.name}=${box.name}`, "--next-start"], { timeoutMs: 30_000, signal });
   }
 
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {

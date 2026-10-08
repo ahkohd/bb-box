@@ -238,6 +238,25 @@ with Tart's Linux VMs, which serve Linux on a Mac now
   3.9 GiB RSS each, 2.3 to 2.8 GB as macOS counts a footprint. msb has no
   Mac host in bb-box yet, so there is no enrolled msb run to set beside it.
 
+### Spares
+
+Spares on microsandbox are new boxes enrolled ahead, as on other backends
+(032), not forks. Measured on 8 October 2026:
+
+- On the Mac, a fork of a running box took 1.75 s with `msb`'s own Docker
+  disk and 1.88 s with none, against 1.8 s for a new box through bb-box with
+  a clone of its template; `msb` refuses to fork a box whose Docker disk is
+  such a clone ("has no immutable-generation provider"). A fork would also
+  need a fresh identity and a prepared box that holds memory.
+- On an ext4 host, a fork copies the box's disk and took 0.84 s plus about
+  0.25 s per GiB written, against 0.56 s for a new box (above).
+- `msb modify --label` changes nothing on a running box unless given
+  `--next-start` or `--restart`, and exits 0 all the same, so a claim's
+  relabel passes `--next-start`, which changes the labels `msb` lists at once.
+- A spare stays running, as `msb stop` keeps no session. On a Mac it holds
+  the memory it has used, about 1.5 GiB once enrolled, for as long as it
+  waits.
+
 ### What it means
 
 - On a Linux host, microsandbox buys isolation and fast removal, not
