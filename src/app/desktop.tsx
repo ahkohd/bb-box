@@ -909,7 +909,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                   </DropdownMenuItem>
                 ) : null}
                 {showing && video === true && canShowVideo() && stream ? (
+                  // A glyph like the other items', so its words line up with theirs; BB's tick sits at the right.
                   <DropdownMenuCheckboxItem
+                    className="gap-2"
                     checked={stream === "selkies"}
                     onCheckedChange={(checked) => {
                       const next = checked ? "selkies" : "rfb";
@@ -918,6 +920,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                       decide(next);
                     }}
                   >
+                    <MonitorGlyph />
                     Show as video
                   </DropdownMenuCheckboxItem>
                 ) : null}

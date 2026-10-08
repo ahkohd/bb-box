@@ -143,6 +143,8 @@ export class SelkiesSession implements Kept {
   constructor(url: string) {
     this.#url = url;
     this.element.className = "absolute inset-0";
+    // noVNC's screen colour, so a desktop looks the same while either stream connects.
+    this.element.style.background = "rgb(40, 40, 40)";
     this.#canvas.style.cssText = "width:100%;height:100%;object-fit:contain;outline:none;display:block";
     this.#canvas.tabIndex = -1;
     this.element.appendChild(this.#canvas);

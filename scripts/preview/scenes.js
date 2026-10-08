@@ -363,7 +363,9 @@ function rpc(boxes, options = {}) {
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
     state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
-    desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH }),
+    desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
+    // The viewer times round trips to BB's server to choose VNC or video (056): this one is as far as options.pingMs.
+    ping: () => new Promise((resolve) => setTimeout(() => resolve(null), options.pingMs ?? 0)),
     allBoxes: () => [
       ...(options.machines ?? []).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
       ...boxes.map((candidate) => ({ threadId: THREAD, box: candidate, owner: "thread" })),
@@ -664,6 +666,33 @@ export const scenes = {
   },
   "terminal-stopped": { slot: "terminal", chrome: terminalChrome("wild-cove"), width: 720, height: 420, props: { threadId: THREAD, params: { box: "box_4" } }, rpc: rpc([stopped]) },
   "desktop-connecting": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([desktop]) },
+  // A desktop shown as video (056): the browser is away from BB's network, so the viewer chose video; the menu's Show as video is ticked.
+  "desktop-video-menu": {
+    slot: "desktop",
+    chrome: desktopChrome("bold-heron"),
+    width: 720,
+    height: 480,
+    props: { threadId: THREAD, params: { box: "box_2" } },
+    rpc: rpc([{ ...desktop, control: { owner: "human", get holder() { return sessionStorage.getItem("bb-box:viewer:box_2") ?? "viewer"; }, takenFrom: null } }], { video: true, pingMs: 25 }),
+    after: async (root) => {
+      await wait(500);
+      openMenu(root, "Desktop actions");
+      await wait(300);
+    },
+  },
+  // Video that cannot start (056): the desktop shows over VNC, and the toolbar says so for a moment, the reason in its tooltip.
+  "desktop-video-fallback": {
+    slot: "desktop",
+    chrome: desktopChrome("bold-heron"),
+    width: 720,
+    height: 480,
+    props: { threadId: THREAD, params: { box: "box_2" } },
+    rpc: rpc([desktop], { video: true, pingMs: 25 }),
+    terminal: { videoFail: "This box's desktop has no Selkies stream" },
+    after: async (root) => {
+      await wait(600);
+    },
+  },
   "desktop-menu": {
     slot: "desktop",
     chrome: desktopChrome("bold-heron"),
