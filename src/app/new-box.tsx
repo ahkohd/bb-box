@@ -5,11 +5,10 @@
 // the browser, keyed by plugin ID.
 
 import { experimental_Icon as Icon, experimental_usePluginId } from "@get-bb/plugin-sdk/app";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { ImageOptionView, KindView, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
@@ -111,7 +110,7 @@ export function NewBox({
   kinds,
   make,
   machine = false,
-  menu,
+  primary = false,
   profile,
   askForImage,
   images = [],
@@ -123,8 +122,8 @@ export function NewBox({
   images?: readonly ImageOptionView[];
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
   machine?: boolean;
-  /** With `machine`, the Boxes page's split button instead (the operator, 8 October 2026): "New box", then a chevron with these menu items. */
-  menu?: ReactNode;
+  /** With `machine`, the Boxes page's "New box", in the style of Automations' New button, rather than "Add machine" (the operator, 8 October 2026). */
+  primary?: boolean;
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
   /** Asks an agent to make the project a box image (049), when it has none. */
@@ -326,28 +325,13 @@ export function NewBox({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      {machine && menu ? (
-        // BB's Automations page's split button: the form opens under the whole of it.
-        <PopoverAnchor asChild>
-          <div className="flex shrink-0 items-stretch">
-            <PopoverTrigger asChild>
-              <Button type="button" size="sm" className="rounded-r-none" disabled={!kinds.length}>
-                <Icon name="Plus" aria-hidden />
-                <span>New box</span>
-              </Button>
-            </PopoverTrigger>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" size="sm" aria-label="New box options" className="select-none rounded-l-none px-1.5">
-                  <Icon name="ChevronDown" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-48" mobileTitle="New box">
-                {menu}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </PopoverAnchor>
+      {machine && primary ? (
+        <PopoverTrigger asChild>
+          <Button type="button" size="sm" disabled={!kinds.length}>
+            <Icon name="Plus" aria-hidden />
+            New box
+          </Button>
+        </PopoverTrigger>
       ) : machine ? (
         <PopoverTrigger asChild>
           <Button type="button" variant="outline" size="sm" className="h-7" disabled={!kinds.length}>
@@ -370,7 +354,7 @@ export function NewBox({
         </TooltipProvider>
       )}
       {/* The form may be taller than the window: it takes the height the popover has and scrolls inside, so a short window scrolls the form rather than losing its bottom. */}
-      <PopoverContent align="end" className="max-h-[var(--radix-popover-content-available-height)] w-80 overflow-y-auto p-4 sm:w-[560px] sm:p-5" mobileTitle={machine && !menu ? "Add machine" : "New box"}>
+      <PopoverContent align="end" className="max-h-[var(--radix-popover-content-available-height)] w-80 overflow-y-auto p-4 sm:w-[560px] sm:p-5" mobileTitle={machine && !primary ? "Add machine" : "New box"}>
         <form
           className="space-y-5"
           onSubmit={(event) => {
@@ -577,7 +561,7 @@ export function NewBox({
             )}
             <Button type="submit" size="sm" className="shrink-0" disabled={!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong !== null}>
               {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-              {machine && !menu ? "Add machine" : "Create box"}
+              {machine && !primary ? "Add machine" : "Create box"}
             </Button>
           </div>
         </form>

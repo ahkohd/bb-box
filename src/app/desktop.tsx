@@ -896,7 +896,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                 {newTab ? (
                   <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, threadId, box.id))}>
                     <Icon name="ExternalLink" aria-hidden />
-                    Open in a browser tab
+                    Open in browser
                   </DropdownMenuItem>
                 ) : (
                   <DropdownMenuItem onSelect={() => navigate.toThread(threadId)}>
@@ -1375,25 +1375,12 @@ function BoxList() {
             selected={tab}
             onSelect={chooseTab}
           />
-          {/* The settings gear, then New box, where Automations has New automation, as a split button: its menu starts a thread
-              on a box of its own, in BB's new-thread screen. The gear is a link: BB's openUrl does nothing with an app path. BB
-              offers no place beside the page's title for it (docs/bb-requests.md #18). */}
+          {/* The settings gear, then New box, where Automations has New automation: a plain button, as BB's new-thread screen
+              already offers a thread on a new box (the operator, 8 October 2026). The gear is a link: BB's openUrl does nothing
+              with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
           <div className="flex shrink-0 items-center gap-1.5">
             <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="size-8" />
-            {kinds.length ? (
-              <NewBox
-                kinds={kinds}
-                make={add}
-                machine
-                profile={(backend) => rpc.call("provider", { backend })}
-                menu={
-                  <DropdownMenuItem onSelect={() => navigate.toCompose({ focusPrompt: true })}>
-                    <Icon name="MessageSquarePlus" aria-hidden />
-                    New thread on a box
-                  </DropdownMenuItem>
-                }
-              />
-            ) : null}
+            {kinds.length ? <NewBox kinds={kinds} make={add} machine primary profile={(backend) => rpc.call("provider", { backend })} /> : null}
           </div>
         </div>
         <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">

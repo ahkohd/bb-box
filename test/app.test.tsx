@@ -12,7 +12,7 @@ import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
-import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
+import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { CLIPBOARD_MAX_BYTES, SelkiesSession } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
@@ -696,6 +696,19 @@ test("a row keeps its name and kind on one line, and its status on one, dropping
   expect((await screen.findByRole("tooltip")).textContent).toBe("Ready in 2.1 s · Another viewer has control · BB machine in 5.3 s · 2 cores · 4 GiB");
 });
 
+test("a list of items separated by dots never starts a line with a dot: each item's dot sits before it, and the one that starts a line is clipped", () => {
+  const { container } = render(<Meta items={["Ready in 2.1 s", null, "Threads: Shopping bot", false, "2 more"]} />);
+  const clip = container.firstElementChild as HTMLElement;
+  expect(clip.className).toContain("overflow-hidden");
+  const list = clip.firstElementChild as HTMLElement;
+  // The list sits one dot's width to the left, in the clip, so the dot of whichever item starts a line is out of sight.
+  expect(list.className).toContain("-ml-[1.25em]");
+  expect(list.className).toContain("flex-wrap");
+  const items = Array.from(list.children);
+  expect(items.map((item) => item.textContent)).toEqual(["·Ready in 2.1 s", "·Threads: Shopping bot", "·2 more"]);
+  for (const item of items) expect(item.firstElementChild!.className).toContain("w-[1.25em]");
+});
+
 test("the status line says the state, then what to act on, then BB enrolment and the size", () => {
   const now = Date.now();
   expect(statusOf(box(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
@@ -747,7 +760,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   const menu = await openMenu(slot.getByRole("button", { name: "bold-heron actions" }));
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
     "Open desktop",
-    "Open desktop in a browser tab",
+    "Open in browser",
     "Open terminal",
     "Copy address",
     "New thread on this box…",
@@ -755,7 +768,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
     "Check now",
     "Release…",
   ]);
-  fireEvent.click(within(menu).getByRole("menuitem", { name: "Open desktop in a browser tab" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Open in browser" }));
   // A full URL: BB's openUrl opens only http(s) URLs, by the person's browser preference, and returns false for a path.
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: new URL("/plugins/bb-box/desktop/thr_panel/box_2", window.location.origin).href });
 });
@@ -2700,12 +2713,20 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   const list = boxesPage(handlers);
   expect(await list.findByText("Machines")).toBeTruthy();
   expect(list.getByText(/Working: Fix the login form/)).toBeTruthy();
+  // Every row has the same padding above and below, in Automations' card (px-4 py-1, rows py-3): none loses it as first or last.
+  const rows = Array.from(list.container.querySelectorAll("[data-resource-row]"));
+  expect(rows).toHaveLength(2);
+  for (const row of rows) {
+    expect(row.className).toContain("py-3");
+    expect(row.className).not.toMatch(/first:pt-0|last:pb-0/);
+  }
+  expect(rows[0]!.parentElement!.parentElement!.className).toContain("px-4 py-1");
   // A machine's desktop opens on the page, with the way back to the page, not settings.
   fireEvent.click(list.getAllByRole("button", { name: "Open desktop" })[0]!);
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "operator/box_m1" } });
   // Remove asks with settings' words, then again, since a thread works there.
   let menu = await openMenu(list.getByRole("button", { name: "build-1 actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toContain("Open desktop in a browser tab");
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toContain("Open in browser");
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove…" }));
   let dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Remove build-1?")).toBeTruthy();
@@ -2732,7 +2753,7 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
 });
 
-test("the Boxes page's tab row has the settings gear, then New box at the far right, where Automations has New automation; the gear is a link to Settings > BB Box", async () => {
+test("the Boxes page's tab row has the settings gear, then New box at the far right, a plain button where Automations has New automation; the gear is a link to Settings > BB Box", async () => {
   const [page] = app.navPanels;
   expect(page!.headerContent).toBeUndefined();
   const list = boxesPage(server([box()]).handlers);
@@ -2741,17 +2762,12 @@ test("the Boxes page's tab row has the settings gear, then New box at the far ri
   const gear = list.getByRole("link", { name: "BB Box settings" });
   expect(gear.getAttribute("href")).toBe("/settings/plugins/bb-box");
   expect(gear.textContent).toBe("");
-  // A pair at the tab row's end: the gear first, then New box with its menu, a split button.
+  // A pair at the tab row's end: the gear first, then New box, a plain button with no menu, as BB's new-thread screen offers New box.
   const newBox = list.getByRole("button", { name: "New box" });
   const pair = gear.closest("div.flex")!;
   expect(pair.contains(newBox)).toBe(true);
   expect(gear.compareDocumentPosition(newBox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(newBox.nextElementSibling).toBe(list.getByRole("button", { name: "New box options" }));
-  // Its menu starts a thread on a box of its own, in BB's new-thread screen.
-  const menu = await openMenu(list.getByRole("button", { name: "New box options" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["New thread on a box"]);
-  fireEvent.click(within(menu).getByRole("menuitem", { name: "New thread on a box" }));
-  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toCompose", options: { focusPrompt: true } });
+  expect(list.queryByRole("button", { name: "New box options" })).toBeNull();
   const row = pair.parentElement!;
   expect(row.contains(list.getByRole("tablist"))).toBe(true);
   expect(row.className).toContain("justify-between");
@@ -2894,7 +2910,7 @@ test("the panel lists the box this thread runs on first in the one list with a B
   expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
   expect(slot.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
   const menu = await openMenu(slot.getByRole("button", { name: "build-1 actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open desktop in a browser tab", "Open terminal", "Copy address", "Check now"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open in browser", "Open terminal", "Copy address", "Check now"]);
 
   cleanup();
   // Only the machine it runs on, no boxes of its own: the list, not the empty state.

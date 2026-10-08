@@ -429,8 +429,17 @@ const THREAD_BOXES = [
   ["thr_docs", { ...stopped, id: "box_10", name: "still-pond", createdAt: now - 3 * 3_600_000 }],
 ];
 const THREAD_TITLES = { [THREAD]: "Add dark mode", thr_login: "Fix the login form", thr_docs: "Docs pass" };
+/** A machine with several threads on it, whose status line wraps on the Boxes page, as the operator's "bot" did. */
+const BOT = {
+  box: box({ id: "box_m3", name: "bot", size: "4 cores, 8 GiB memory, 32 GiB disk", address: "10.200.0.23", enrol: { state: "enrolled", hostId: "host_m3", error: null } }),
+  threads: [
+    { id: "thr_c", title: "Shopping bot", running: false },
+    { id: "thr_d", title: "Weekly grocery order from the three stores", running: false },
+    { id: "thr_e", title: "Price watch for the coffee grinder", running: false },
+  ],
+};
 /** The Boxes page with your machines and three threads' boxes. */
-const boxesPage = (extra = {}) => ({ slot: "boxes-page", width: 1000, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES, threadBoxes: THREAD_BOXES }), threads: THREAD_TITLES, ...extra });
+const boxesPage = (extra = {}) => ({ slot: "boxes-page", width: 1000, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: [...MACHINES, BOT], threadBoxes: THREAD_BOXES }), threads: THREAD_TITLES, ...extra });
 /** Clicks a tab by its label; its count follows the label. */
 const openTab = (root, name) => [...root.querySelectorAll("[role=tab]")].find((tab) => tab.textContent.startsWith(name)).click();
 
@@ -669,7 +678,7 @@ export const scenes = {
   "panel-menu": {
     slot: "boxes",
     chrome: boxesChrome,
-    height: 420,
+    height: 480,
     rpc: rpc([starting, desktop, stopped]),
     after: async (root) => {
       openMenu(root, "bold-heron actions");
@@ -759,14 +768,6 @@ export const scenes = {
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
   "boxes-page": boxesPage(),
   "boxes-page-threads": boxesPage({ after: async (root) => { openTab(root, "Threads"); await wait(300); } }),
-  "boxes-page-new-menu": boxesPage({
-    height: 300,
-    after: async (root) => {
-      // New box's menu, as New automation's on BB's Automations page.
-      openMenu(root, "New box options");
-      await wait(300);
-    },
-  }),
   "boxes-page-filters": boxesPage({
     height: 640,
     after: async (root) => {

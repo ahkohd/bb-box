@@ -8,7 +8,7 @@ You can open a box's desktop from:
 
 - the Box panel: select **Open desktop** on the box's row, which opens a tab named after the box in the thread's right panel
 - the thread's Desktop tab: it opens the thread's desktop straight away, lists them when there are several, or offers the Box panel when there is none
-- a browser tab of its own: select **Open desktop in a browser tab** in the box's menu
+- a browser tab of its own: select **Open in browser** in the box's menu
 - the Boxes page: the desktop shows on the page, with a back arrow to the list
 
 The thread's Desktop tab counts the machine the thread runs on, if it is a desktop.

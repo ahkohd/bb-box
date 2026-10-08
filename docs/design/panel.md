@@ -195,7 +195,7 @@ stop. The menu (BB's overflow menu, three dots) repeats them and adds the
 rest:
 
 1. Open desktop
-2. Open desktop in a browser tab
+2. Open in browser
 3. Open terminal
 4. Copy address
 5. separator
@@ -510,7 +510,7 @@ titled after the box.
 - **Toolbar**: BB's recessed bar (`border-b bg-surface-recessed px-3 py-2
   text-xs`): the monitor glyph, the box's name, then the state in muted
   text with a status dot. On the right the one action that matters now,
-  and a menu with the rest ("Open in a browser tab", "Reconnect", "Open
+  and a menu with the rest ("Open in browser", "Reconnect", "Open
   thread" on the Boxes page, and the clipboard items below).
 - **Clipboard** (the operator's notes of 4 October 2026: "paste to the remote
   desktop does not work", "should we have a menu with Paste and Copy?"): with
@@ -729,8 +729,8 @@ only on its right, and none beside the title, docs/bb-requests.md #18). It is a 
 not a button calling `openUrl`: BB's `openUrl` opens only http(s) URLs, by
 the person's browser preference, and returns false for an app path, so the
 first version did nothing; `UrlLink` routes an app path in the app. The
-viewer's "Back to settings" is a link for the same reason, and "Open
-desktop in a browser tab" passes `openUrl` the full URL.
+viewer's "Back to settings" is a link for the same reason, and "Open in
+browser" passes `openUrl` the full URL.
 Empty: "No boxes" — "No thread has a box, and you have no machines. Add
 one with the plus, or from a thread's Box panel."
 
@@ -746,7 +746,7 @@ one with the plus, or from a thread's Box panel."
 | empty | No boxes yet · A computer for this thread. |
 | not set up | BB Box is not set up yet. Set a backend up in its settings and turn it on. · Open BB Box settings |
 | states | Starting · Ready in 2.2 s · Joining BB… · BB machine in 5.3 s · Could not join BB · Stopping… · Stopped · Releasing… · Failed · Gone |
-| actions | Open desktop · Open desktop in a browser tab · Open terminal · Copy address · Start · Stop · Check now · Release… |
+| actions | Open desktop · Open in browser · Open terminal · Copy address · Start · Stop · Check now · Release… |
 | release | Release bold-heron? · Its disk and everything on it will be deleted. Copy out anything you want to keep first. · Cancel · Release |
 | control | The agent has control · You have control. The desktop follows this tab's size. · Another viewer has control · Control is changing hands… · The agent took control · Take control · Take control again · Hand back to the agent |
 | connection | Connecting… · Disconnected · Reconnect · The connection to the desktop ended. Trying again in 4 s. |
