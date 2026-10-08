@@ -369,6 +369,7 @@ function rpc(boxes, options = {}) {
     allBoxes: () => [
       ...(options.machines ?? []).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
       ...boxes.map((candidate) => ({ threadId: THREAD, box: candidate, owner: "thread" })),
+      ...(options.threadBoxes ?? []).map(([threadId, candidate]) => ({ threadId, box: candidate, owner: "thread" })),
     ],
     acquire: () => ({ box: null, error: options.refuse ?? null }),
     release: ({ box: ref }) => ({ box: find(ref), error: null }),
@@ -403,6 +404,35 @@ const openMenu = (root, name) => {
   const trigger = [...root.querySelectorAll("button")].find((candidate) => candidate.getAttribute("aria-label") === name);
   trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 };
+
+/** Boxes of several threads for the Boxes page's Threads tab: a thread with two, one on a Mac and one stopped. */
+const macDesktop = box({
+  id: "box_9",
+  name: "amber-finch",
+  kind: "macos-desktop",
+  kindLabel: "macOS desktop",
+  backendLabel: "Tart on studio",
+  form: "VM",
+  os: "macos",
+  arch: "arm64",
+  desktop: true,
+  display: { protocol: "rfb", resizable: false },
+  control: { owner: "agent", holder: null },
+  computerUse: true,
+  extras: [],
+  docker: false,
+  createdAt: now - 40 * 60_000,
+  size: "4 cores, 8 GiB memory, 60 GiB disk",
+});
+const THREAD_BOXES = [
+  ["thr_login", macDesktop],
+  ["thr_docs", { ...stopped, id: "box_10", name: "still-pond", createdAt: now - 3 * 3_600_000 }],
+];
+const THREAD_TITLES = { [THREAD]: "Add dark mode", thr_login: "Fix the login form", thr_docs: "Docs pass" };
+/** The Boxes page with your machines and three threads' boxes. */
+const boxesPage = (extra = {}) => ({ slot: "boxes-page", width: 1000, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES, threadBoxes: THREAD_BOXES }), threads: THREAD_TITLES, ...extra });
+/** Clicks a tab by its label; its count follows the label. */
+const openTab = (root, name) => [...root.querySelectorAll("[role=tab]")].find((tab) => tab.textContent.startsWith(name)).click();
 
 const boxesChrome = `<span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>Box</span><span>+</span>`;
 const terminalChrome = (name) => `<span>Box</span><span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>Terminal: ${name}</span><span>+</span>`;
@@ -727,7 +757,16 @@ export const scenes = {
   "desktop-stopped": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([{ ...desktop, state: "stopped" }]) },
   "desktop-released": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([]) },
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
-  "boxes-page": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([box(), desktop], { machines: MACHINES }), threads: { [THREAD]: "Add dark mode" } },
+  "boxes-page": boxesPage(),
+  "boxes-page-threads": boxesPage({ after: async (root) => { openTab(root, "Threads"); await wait(300); } }),
+  "boxes-page-new-menu": boxesPage({
+    height: 300,
+    after: async (root) => {
+      // New box's menu, as New automation's on BB's Automations page.
+      openMenu(root, "New box options");
+      await wait(300);
+    },
+  }),
   "boxes-page-empty": { slot: "boxes-page", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
   "boxes-page-menu": {
     slot: "boxes-page",
@@ -738,6 +777,8 @@ export const scenes = {
     threads: { [THREAD]: "Add dark mode" },
     after: async (root) => {
       // A thread's box on the page has the Box panel's menu (the operator, 5 October 2026).
+      openTab(root, "Threads");
+      await wait(200);
       openMenu(root, "calm-otter actions");
       await wait(300);
     },
@@ -745,13 +786,13 @@ export const scenes = {
   "boxes-page-add": {
     slot: "boxes-page",
     width: 900,
-    height: 980,
+    height: 1160,
     props: { subPath: "" },
     rpc: rpc([box(), desktop], { machines: MACHINES }),
     threads: { [THREAD]: "Add dark mode" },
     after: async (root) => {
-      // The page's plus opens the same form as settings' Add machine, with the Name step (the operator, 4 October 2026).
-      click(root, "button", "Add machine");
+      // The page's New box opens the same form as settings' Add machine, with the Name step (the operator, 4 October 2026).
+      click(root, "button", "New box");
       await wait(400);
     },
   },

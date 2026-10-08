@@ -70,20 +70,27 @@ If BB Box cannot do what you asked, it says why in a red line under the plus. Fo
 
 ## The Boxes page
 
-Select **Boxes** in BB's sidebar. The page lists your machines first, under Machines, and then every thread's boxes, under Threads.
+Select **Boxes** in BB's sidebar. The page has 2 tabs, each with a count:
 
-![The Boxes page with 2 machines and 2 thread boxes](../design/mockups/built/boxes-page-light.png)
+- **Machines** lists your machines.
+- **Threads** lists every thread's boxes, in a card for each thread. The card's title is the thread's title. Select it, or the arrow beside it, to open the thread.
 
-A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. The arrow beside its menu opens its thread. Its status line ends with the thread's title. 'New thread on this box…' is only in the Box panel.
+The page opens on the tab you chose last. The first time, it opens on Machines if you have any.
+
+![The Boxes page's Machines tab, with 2 machines](../design/mockups/built/boxes-page-light.png)
+
+![The Boxes page's Threads tab, with 3 threads](../design/mockups/built/boxes-page-threads-light.png)
+
+A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. 'New thread on this box…' is only in the Box panel.
 
 A desktop or terminal you open from the page shows on the page, with a back arrow to the list.
 
-The gear at the top right opens BB Box's settings. The plus beside it adds one of your machines.
+The gear at the top right opens BB Box's settings. **New box** beside it adds one of your machines, since a box made on this page has no thread. The arrow beside New box has **New thread on a box**, which opens BB's new-thread screen: see [starting a thread on a new box](making-a-box.md#starting-a-thread-on-a-new-box).
 
 ## Your machines
 
 A machine is a box of your own, kept as a BB machine. It belongs to no thread. It shows in BB's machine list and in the new-thread picker, so you can start threads on it, and it stays until you remove it.
 
-You can add a machine from the plus on the Boxes page, or from **Add machine** in Settings, BB Box, Machines. The form is the same as for a new box, with a name at the end. The name is optional: leave it empty and BB Box picks one. A name uses lowercase letters, digits and hyphens, starts with a letter, does not end with a hyphen, and is at most 32 characters.
+You can add a machine from **New box** on the Boxes page, or from **Add machine** in Settings, BB Box, Machines. The form is the same as for a new box, with a name at the end. The name is optional: leave it empty and BB Box picks one. A name uses lowercase letters, digits and hyphens, starts with a letter, does not end with a hyphen, and is at most 32 characters.
 
 A machine's row lists the threads working on it. You can stop, start and remove it from the Boxes page or from settings. Removing a machine deletes it, as releasing a box does. If a thread is working on the machine, Remove and Stop ask again before they go on.

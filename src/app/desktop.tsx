@@ -46,6 +46,7 @@ import {
   type Connection,
 } from "./viewer.ts";
 import { BoxGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { PageTabs } from "./boxes-toolbar.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
@@ -1255,9 +1256,13 @@ export function desktopSubPath(threadId: string, boxId: string, view: "desktop" 
   return [base, ...(view === "terminal" ? ["terminal"] : []), ...(from === "settings" ? ["from-settings"] : [])].join("/");
 }
 
+/** The page's tabs: your machines, and the threads' boxes by thread. */
+type BoxesTab = "machines" | "threads";
+
 function BoxList() {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
+  const pluginId = experimental_usePluginId();
   const { value: all, error, refresh } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
   // Your machines with the threads on each, as settings lists them: settings' rows, actions and warnings (the operator, 5 October 2026).
   const { value: machinesState, refresh: refreshMachines } = useLive<{ machines: MachineEntry[]; kinds: KindView[] }>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
@@ -1269,7 +1274,26 @@ function BoxList() {
   const [open, setOpen] = useState<string | null>(null);
   /** A release or stop of a thread's box left alone because threads work on it, until the person says: the panel's question. */
   const [inUse, setInUse] = useState<(InUse<"release" | "stop"> & { readonly threadId: string }) | null>(null);
-  // The plus adds one of your machines here too (the operator, 4 October 2026), the same form as settings' Add machine; it then shows under Machines.
+  // The tab chosen last, kept in the browser, so the way back from a box's desktop lands on the tab it left.
+  const tabKey = `${pluginId}:boxes-tab`;
+  const [chosenTab, setChosenTab] = useState<BoxesTab | null>(() => {
+    try {
+      const kept = window.localStorage.getItem(tabKey);
+      return kept === "machines" || kept === "threads" ? kept : null;
+    } catch {
+      return null;
+    }
+  });
+  const chooseTab = (tab: BoxesTab) => {
+    setChosenTab(tab);
+    try {
+      window.localStorage.setItem(tabKey, tab);
+    } catch {
+      // Without storage, the page opens on the first tab with boxes each time.
+    }
+  };
+  // New box makes one of your machines here (the operator, 4 October 2026): a box made here has no thread. The same form as settings'
+  // Add machine; the machine then shows under Machines.
   const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
     let refused: string | null;
     try {
@@ -1279,6 +1303,7 @@ function BoxList() {
     }
     await refreshBoth();
     setProblem(refused);
+    if (!refused) chooseTab("machines");
     return refused;
   };
   /** A thread's box: the panel's Start, Stop, Release and Check now, as that thread, with the panel's in-use guard. */
@@ -1297,79 +1322,118 @@ function BoxList() {
   };
   const entries = all ?? [];
   const threads = entries.filter((entry) => entry.owner !== "yours");
-  const titles = useThreadTitles([...new Set(threads.map((entry) => entry.threadId))]);
+  // Each thread once, with its boxes, in the order its first box comes.
+  const threadIds = [...new Set(threads.map((entry) => entry.threadId))];
+  const titles = useThreadTitles(threadIds);
   const now = useNow(
     entries.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting" || entry.box.state === "stopping") || machines.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting"),
     1000,
   );
   const shown = problem ?? machineActions.problem;
+  const tab: BoxesTab = chosenTab ?? (machines.length || !threads.length ? "machines" : "threads");
+  const loaded = !!all && !!machinesState;
   return (
-    <div className="h-full overflow-y-auto p-4 md:p-5">
-      <div className="mx-auto w-full max-w-3xl space-y-4">
-        {/* The settings gear, then the plus at the far right, where the Box panel's plus sits: a pair, BB's gap between icon
-            buttons in a group, as its sidebar header's (the operator, 5 October 2026, for whom 12 px read as two things). A link:
-            BB's openUrl does nothing with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
-        <div className="flex items-center justify-end gap-1">
-          <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} />
-          {kinds.length ? <NewBox kinds={kinds} make={add} machine plus profile={(backend) => rpc.call("provider", { backend })} /> : null}
+    <div className="h-full min-h-0">
+      {/* BB's Automations page's frame and spacing (the operator, 8 October 2026): its width, a line under the title, the tabs
+          with the actions at their right; the list scrolls under them. */}
+      <div className="mx-auto box-border flex h-full min-h-0 w-full max-w-5xl flex-col gap-5 px-4 pb-4 pt-3 md:px-5 md:pt-4">
+        <p className="text-sm leading-5 text-muted-foreground">Computers for your threads, and machines of your own.</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <PageTabs
+            tabs={[
+              { id: "machines", label: "Machines", count: machines.length },
+              { id: "threads", label: "Threads", count: threadIds.length },
+            ]}
+            selected={tab}
+            onSelect={chooseTab}
+          />
+          {/* The settings gear, then New box, where Automations has New automation, as a split button: its menu starts a thread
+              on a box of its own, in BB's new-thread screen. The gear is a link: BB's openUrl does nothing with an app path. BB
+              offers no place beside the page's title for it (docs/bb-requests.md #18). */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="size-8" />
+            {kinds.length ? (
+              <NewBox
+                kinds={kinds}
+                make={add}
+                machine
+                profile={(backend) => rpc.call("provider", { backend })}
+                menu={
+                  <DropdownMenuItem onSelect={() => navigate.toCompose({ focusPrompt: true })}>
+                    <Icon name="MessageSquarePlus" aria-hidden />
+                    New thread on a box
+                  </DropdownMenuItem>
+                }
+              />
+            ) : null}
+          </div>
         </div>
-        {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-        <ProblemLine
-          problem={shown}
-          onDismiss={() => {
-            setProblem(null);
-            machineActions.setProblem(null);
-          }}
-        />
-        {all && machinesState && !threads.length && !machines.length ? <EmptyPanel title="No boxes">No thread has a box, and you have no machines. Add one with the plus, or from a thread's Box panel.</EmptyPanel> : null}
-        {machines.length ? (
-          <div className="space-y-2">
-            <h3 className="text-xs font-medium text-foreground">Machines</h3>
-            <div className="rounded-lg border border-border bg-card px-4 py-3">
-              <div className="divide-y divide-border">
-                {machines.map((entry) => (
-                  <MachineRow
-                    key={entry.box.id}
-                    entry={entry}
-                    now={now}
-                    busy={machineActions.busy}
-                    from="boxes"
-                    onStop={() => void machineActions.act("stop", entry.box)}
-                    onStart={() => void machineActions.act("start", entry.box)}
-                    onRemove={() => machineActions.askRemove(entry.box)}
-                  />
-                ))}
+        <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
+          {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
+          <ProblemLine
+            problem={shown}
+            onDismiss={() => {
+              setProblem(null);
+              machineActions.setProblem(null);
+            }}
+          />
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+            {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. New box adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}
+            {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box. A thread gets one from its Box panel, or from its agent.</EmptyPanel> : null}
+            {tab === "machines" && machines.length ? (
+              <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-1">
+                <div className="divide-y divide-border">
+                  {machines.map((entry) => (
+                    <MachineRow
+                      key={entry.box.id}
+                      entry={entry}
+                      now={now}
+                      busy={machineActions.busy}
+                      from="boxes"
+                      onStop={() => void machineActions.act("stop", entry.box)}
+                      onStart={() => void machineActions.act("start", entry.box)}
+                      onRemove={() => machineActions.askRemove(entry.box)}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : null}
+            {tab === "threads"
+              ? threadIds.map((threadId) => (
+                  // One card per thread, headed by its title, which opens the thread, as a row's title does on the Automations page.
+                  <section key={threadId} aria-label={titles[threadId] ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
+                    <div className="flex items-center gap-3 border-b border-border py-1.5 pl-4 pr-3">
+                      <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
+                        {titles[threadId] ?? threadId}
+                      </button>
+                      <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
+                    </div>
+                    <div className="divide-y divide-border px-4 py-1">
+                      {threads
+                        .filter((entry) => entry.threadId === threadId)
+                        .map(({ box }) => (
+                          <BoxRow
+                            key={box.id}
+                            box={box}
+                            threadId={threadId}
+                            open={open === box.id}
+                            onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
+                            act={actOn(threadId)}
+                            now={now}
+                            opens={{
+                              desktop: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id) }),
+                              terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
+                            }}
+                            meta={[box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
+                            threading={false}
+                          />
+                        ))}
+                    </div>
+                  </section>
+                ))
+              : null}
           </div>
-        ) : null}
-        {threads.length ? (
-          <div className="space-y-2">
-            {machines.length ? <h3 className="text-xs font-medium text-foreground">Threads</h3> : null}
-            <div className="rounded-lg border border-border bg-card px-4 py-1">
-              <div className="divide-y divide-border">
-                {threads.map(({ threadId, box }) => (
-                  <BoxRow
-                    key={box.id}
-                    box={box}
-                    threadId={threadId}
-                    open={open === box.id}
-                    onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
-                    act={actOn(threadId)}
-                    now={now}
-                    opens={{
-                      desktop: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id) }),
-                      terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
-                    }}
-                    meta={[box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null, titles[threadId] ?? null]}
-                    extra={<IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />}
-                    threading={false}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : null}
+        </div>
         {machineActions.dialogs}
         <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void actOn(inUse?.threadId ?? "")(found.method, found.box, true)} />
       </div>
