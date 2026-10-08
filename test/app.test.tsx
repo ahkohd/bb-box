@@ -815,7 +815,7 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
 
 test("with 1 GPU chosen, the form says when no GPU has room, and only then (#603)", async () => {
   const now = Date.now();
-  const reading = (id: string, freeMiB: number) => ({ id, freeMiB, totalMiB: 8192, at: now, neededMiB: 384 });
+  const reading = (id: string, freeMiB: number) => ({ id, freeMiB, totalMiB: 8192, at: now, neededMiB: 384, source: "desktop" as const });
   const full = { readings: [reading("gpu-a", 103)], fullUntil: now + 4 * 60_000 - 1_000 };
   const withRoom = (gpuRoom: GpuRoom) => KINDS.map((kind) => (kind.id === "linux-desktop" ? { ...kind, offers: kind.offers.map((offer) => ({ ...offer, gpuRoom })) } : kind));
   const cpu: KindView = { ...kindView("linux-desktop-cpu", "Linux desktop", "A desktop on the CPU.", 4, true), gpu: false };

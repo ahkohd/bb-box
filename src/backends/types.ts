@@ -253,9 +253,9 @@ export interface HostCapacity {
 }
 
 /**
- * A GPU's memory as bb-box last read it, from inside a box that has the GPU:
- * a GPU desktop's display service as it starts, or nvidia-smi in a running
- * one (#603). The host's own figures are out of the API's reach.
+ * A GPU's memory as bb-box last read it (#603): from the host's report, where
+ * the host makes one, or from inside a box that has the GPU, a GPU desktop's
+ * display service as it starts, or nvidia-smi in a running one.
  */
 export interface GpuReading {
   /** The GPU, as its desktop templates name it. */
@@ -267,6 +267,8 @@ export interface GpuReading {
   readonly neededMiB: number;
   /** When it was read, in milliseconds since the epoch. */
   readonly at: number;
+  /** Who read it: the host, which reports every GPU's memory within seconds of a change, or a desktop that has the GPU. */
+  readonly source: "host" | "desktop";
 }
 
 /** The room on the GPUs a GPU desktop kind's boxes use (#603). */

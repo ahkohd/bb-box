@@ -548,7 +548,7 @@ test("a GPU desktop's offers carry its GPUs' room as last read, and box_list say
   const gpuKind: BoxKind = { ...FAKE_KINDS[1]!, capabilities: { ...FAKE_KINDS[1]!.capabilities, gpu: true } };
   const cpuKind: BoxKind = { ...FAKE_KINDS[1]!, id: "linux-desktop-cpu" };
   const now = 1_790_000_000_000;
-  const reading = (id: string, freeMiB: number, totalMiB: number | null, age: number) => ({ id, freeMiB, totalMiB, at: now - age, neededMiB: 384 });
+  const reading = (id: string, freeMiB: number, totalMiB: number | null, age: number) => ({ id, freeMiB, totalMiB, at: now - age, neededMiB: 384, source: "desktop" as const });
   let room: GpuRoom = { readings: [reading("gpu-a", 6100, 8192, 2 * 60_000)], fullUntil: null };
   const lxc = { id: "proxmox-lxc", label: "Proxmox LXC", hosts: ["pve"], gpuRoom: async () => room } as unknown as Backend;
   const docker = { id: "docker:host_1", label: "Docker", hosts: ["devpc"] } as unknown as Backend;
