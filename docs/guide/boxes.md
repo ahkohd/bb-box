@@ -36,7 +36,9 @@ The line under the name says how the box is doing:
 | Failed | the box could not start, and a red line under it says why |
 | Gone | someone deleted the box outside BB Box |
 
-The line also gives the box's cores, memory and disk. For a desktop, it says when someone has control: 'You have control' or 'Another viewer has control'. 'Display on the CPU' means a GPU desktop is drawn without its graphics card.
+After the state, the line says what needs your attention. For a desktop, it says when someone has control: 'You have control' or 'Another viewer has control'. 'Display on the CPU' means a GPU desktop is drawn without its graphics card. The line then gives the box's cores, memory and disk.
+
+The name and the line under it each keep to one line. In a narrow panel, the line leaves out what does not fit, from its end. Point at the line to see all of it. A long name is shortened in the same way.
 
 Select a row to see its details. They give the box's address, size, backend and system, and whether it is a BB machine. They also say how long each step took to start it, and when it was made.
 
