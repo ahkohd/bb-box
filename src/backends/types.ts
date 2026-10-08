@@ -261,12 +261,14 @@ export interface GpuReading {
   readonly neededMiB: number;
   /** When it was read, in milliseconds since the epoch. */
   readonly at: number;
-  /**
-   * Until when it stands for the GPU's room, so a full GPU refuses desktops
-   * until then; null once it does not, as it is old or a desktop on the GPU
-   * was released since.
-   */
-  readonly currentUntil: number | null;
+}
+
+/** The room on the GPUs a GPU desktop kind's boxes use (#603). */
+export interface GpuRoom {
+  /** Each GPU that has been read, as last read. */
+  readonly readings: readonly GpuReading[];
+  /** Until when a new box is refused, as every GPU was lately read full; null when it is not. */
+  readonly fullUntil: number | null;
 }
 
 export interface Limit {
@@ -497,7 +499,7 @@ export interface Backend {
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */
-  gpuRoom?(kind: string): Promise<readonly GpuReading[]>;
+  gpuRoom?(kind: string): Promise<GpuRoom>;
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   /** Building images in boxes and keeping their builds (049). Only backends that can. */

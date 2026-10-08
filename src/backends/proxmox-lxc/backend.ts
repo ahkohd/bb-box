@@ -72,7 +72,7 @@ import {
   type ComputerUse,
   type DoctorCheck,
   type DoctorReport,
-  type GpuReading,
+  type GpuRoom,
   type Guest,
   type HeldGuest,
   type ImageBox,
@@ -659,11 +659,11 @@ export class ProxmoxLxcBackend implements Backend {
           limits.push({ resource: "gpu-memory", id: gpu, used: reading.totalMiB - reading.freeMiB, total: reading.totalMiB, reserve: 0, unit: "MiB" });
         }
       }
-      const full = this.#fullGpus();
-      if (gpus.length && gpus.every((gpu) => full.has(gpu))) {
+      const until = this.#fullUntil(offer);
+      if (until !== null) {
         const cpu = this.#offers().some((other) => other.flavour === "desktop-cpu");
         const now = this.#now();
-        const minutes = Math.max(1, Math.ceil((Math.min(...gpus.map((gpu) => full.get(gpu)!)) - now) / 60_000));
+        const minutes = Math.max(1, Math.ceil((until - now) / 60_000));
         const age = now - Math.min(...gpus.map((gpu) => readings.get(gpu)!.at));
         fresh.push(gpusFull(api.node, gpus.map((gpu) => ({ gpu, freeMiB: readings.get(gpu)!.freeMiB })), age, minutes, cpu));
       }
@@ -1914,26 +1914,25 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   /**
-   * Until when a reading stands for its GPU's room, or null once it does
-   * not: it stands for 5 minutes, and only until a desktop on the GPU is
-   * released, which frees memory it does not show.
-   */
-  #currentUntil(gpu: string, reading: StoredGpu): number | null {
-    const until = reading.at + GPU_FRESH_MS;
-    return until > this.#now() && reading.at > (this.#freed.get(gpu) ?? 0) ? until : null;
-  }
-
-  /**
-   * GPUs whose current reading has less free than a desktop needs, with
-   * when it stops being current. Readings must have been loaded.
+   * GPUs last read with less free than a desktop needs, with until when the
+   * reading stands: 5 minutes, and only until a desktop on the GPU is
+   * released, which frees memory it does not show. Readings must have been
+   * loaded.
    */
   #fullGpus(): Map<string, number> {
     const full = new Map<string, number>();
     for (const [gpu, reading] of this.#gpus ?? []) {
-      const until = this.#currentUntil(gpu, reading);
-      if (reading.freeMiB < DESKTOP_GPU_MIB && until !== null) full.set(gpu, until);
+      const until = reading.at + GPU_FRESH_MS;
+      if (reading.freeMiB < DESKTOP_GPU_MIB && until > this.#now() && reading.at > (this.#freed.get(gpu) ?? 0)) full.set(gpu, until);
     }
     return full;
+  }
+
+  /** Until when every GPU of the offer stands full, or null when one does not. Readings must have been loaded. */
+  #fullUntil(offer: Offer): number | null {
+    const gpus = gpusOf(offer.config.templates);
+    const full = this.#fullGpus();
+    return gpus.length && gpus.every((gpu) => full.has(gpu)) ? Math.min(...gpus.map((gpu) => full.get(gpu)!)) : null;
   }
 
   /**
@@ -1956,15 +1955,18 @@ export class ProxmoxLxcBackend implements Backend {
     }
   }
 
-  /** Each GPU a kind's boxes would use, as last read, without asking Proxmox (#603). */
-  async gpuRoom(kind: string): Promise<readonly GpuReading[]> {
+  /** The room on the GPUs a kind's boxes would use, as last read, without asking Proxmox (#603). */
+  async gpuRoom(kind: string): Promise<GpuRoom> {
     const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
-    if (!offer?.kind.capabilities.gpu) return [];
+    if (!offer?.kind.capabilities.gpu) return { readings: [], fullUntil: null };
     const readings = await this.#gpuReadings();
-    return gpusOf(offer.config.templates).flatMap((id) => {
-      const reading = readings.get(id);
-      return reading ? [{ id, ...reading, neededMiB: DESKTOP_GPU_MIB, currentUntil: this.#currentUntil(id, reading) }] : [];
-    });
+    return {
+      readings: gpusOf(offer.config.templates).flatMap((id) => {
+        const reading = readings.get(id);
+        return reading ? [{ id, ...reading, neededMiB: DESKTOP_GPU_MIB }] : [];
+      }),
+      fullUntil: this.#fullUntil(offer),
+    };
   }
 
   /** The password the desktop wrote at boot, or null when it asks for none. */

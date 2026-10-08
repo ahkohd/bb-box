@@ -395,7 +395,7 @@ const gpuCheck = async (backend: ProxmoxLxcBackend, gpu = "gpu-a") => (await bac
 test("a GPU's memory is read as a desktop on it starts and each minute while one runs, for capacity, the doctor and gpuRoom (#603)", async () => {
   let now = 1_790_000_000_000;
   const { backend, ssh, storage } = setup({}, new MemoryStorage(), { now: () => now });
-  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [], "nothing is read before a desktop starts");
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), { readings: [], fullUntil: null }, "nothing is read before a desktop starts");
   assert.deepEqual(
     await gpuCheck(backend),
     {
@@ -408,17 +408,17 @@ test("a GPU's memory is read as a desktop on it starts and each minute while one
   );
 
   await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
-  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [{ id: "gpu-a", freeMiB: 7800, totalMiB: null, at: now, neededMiB: 384, currentUntil: now + 5 * 60_000 }]);
-  assert.deepEqual(await backend.gpuRoom("linux"), [], "a kind without a GPU has none");
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), { readings: [{ id: "gpu-a", freeMiB: 7800, totalMiB: null, at: now, neededMiB: 384 }], fullUntil: null });
+  assert.deepEqual(await backend.gpuRoom("linux"), { readings: [], fullUntil: null }, "a kind without a GPU has none");
   const booted = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(booted.hosts[0]!.limits.find((limit) => limit.resource === "gpu-memory"), undefined, "the display service gives no total");
 
   gpuAt(ssh, "192.0.2.100", 6100, 8192);
   await backend.maintain();
-  assert.equal((await backend.gpuRoom("linux-desktop"))[0]!.freeMiB, 7800, "not read again within a minute");
+  assert.equal((await backend.gpuRoom("linux-desktop")).readings[0]!.freeMiB, 7800, "not read again within a minute");
   now += 60_000;
   await backend.maintain();
-  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [{ id: "gpu-a", freeMiB: 6100, totalMiB: 8192, at: now, neededMiB: 384, currentUntil: now + 5 * 60_000 }]);
+  assert.deepEqual((await backend.gpuRoom("linux-desktop")).readings, [{ id: "gpu-a", freeMiB: 6100, totalMiB: 8192, at: now, neededMiB: 384 }]);
   const read = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(read.ok, true);
   assert.deepEqual(read.hosts[0]!.limits.at(-1), { resource: "gpu-memory", id: "gpu-a", used: 2092, total: 8192, reserve: 0, unit: "MiB" });
@@ -460,11 +460,13 @@ test("a desktop goes to a GPU with room, and is refused at once while every GPU 
   assert.equal(warn?.detail, "21 of 8192 MiB free, read just now. A desktop needs 384 MiB, so new desktop boxes cannot use this GPU.");
   assert.equal(warn?.fix, "Free memory on the GPU: release a desktop box, or stop what else uses it on pve. Use linux-desktop-cpu boxes meanwhile.");
 
-  assert.deepEqual((await backend.gpuRoom("linux-desktop")).map((gpu) => [gpu.id, gpu.freeMiB, gpu.currentUntil! - now]), [["gpu-a", 103, 4 * 60_000], ["gpu-b", 21, 5 * 60_000]]);
+  const room = await backend.gpuRoom("linux-desktop");
+  assert.deepEqual(room.readings.map((gpu) => [gpu.id, gpu.freeMiB]), [["gpu-a", 103], ["gpu-b", 21]]);
+  assert.equal(room.fullUntil, now + 4 * 60_000, "until gpu-a's reading is 5 minutes old");
 
   await backend.release(desktop, releasing());
   assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, true, "releasing gpu-b's desktop frees its memory");
-  assert.deepEqual((await backend.gpuRoom("linux-desktop")).map((gpu) => [gpu.id, gpu.currentUntil !== null]), [["gpu-a", true], ["gpu-b", false]]);
+  assert.equal((await backend.gpuRoom("linux-desktop")).fullUntil, null);
 });
 
 test("readings of full GPUs stand for 5 minutes, and a new instance keeps them (#603)", async () => {
@@ -480,7 +482,7 @@ test("readings of full GPUs stand for 5 minutes, and a new instance keeps them (
   now += 5 * 60_000;
   const later = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(later.ok, true, "an old reading does not refuse: the desktop starts and sees");
-  assert.equal((await backend.gpuRoom("linux-desktop"))[0]!.currentUntil, null);
+  assert.equal((await backend.gpuRoom("linux-desktop")).fullUntil, null);
   assert.deepEqual(later.hosts[0]!.limits.at(-1), { resource: "gpu-memory", id: "gpu-a", used: 8089, total: 8192, reserve: 0, unit: "MiB" });
 });
 
