@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { ProxmoxLxcBackend, displayReason, warmNameScript, nameScript, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
@@ -687,6 +687,26 @@ test("power, stop and start, and a box's shared SSH connection closes before it 
   await backend.release(guest, releasing());
   assert.equal(closed(), 2);
   await assert.rejects(backend.start(guest), (error: unknown) => error instanceof BackendError && error.code === "gone");
+});
+
+test("a GPU desktop's start reads its display mode again, as it can fall back to the CPU; other boxes' starts change no facts (#597)", async () => {
+  const { backend, ssh } = setup({ "proxmox-lxc-desktop-templates": "9001 gpu-a" });
+  const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.deepEqual(desktop.facts?.map((fact) => fact.value), ["gpu-a", "GPU", "The GPU had 7800 MiB of memory free."]);
+  await backend.stop(desktop);
+  // The boot clears /run, and the display service takes its path again.
+  rmSync(join(ssh.dir, "home", "192.0.2.100", "run", "bb-box"), { recursive: true, force: true });
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "GPU has 300 MiB free, below MIN_FREE_VRAM_MIB=384");
+  assert.deepEqual(await backend.start(desktop), {
+    facts: [
+      { label: "GPU", value: "gpu-a" },
+      { label: "Display mode", value: "CPU" },
+      { label: "Display reason", value: "The GPU had 300 MiB of memory free, less than the 384 MiB a desktop needs." },
+    ],
+  });
+  const server = await backend.acquire(identity(), null, hooks().value, signal());
+  await backend.stop(server);
+  assert.equal(await backend.start(server), undefined);
 });
 
 const isGone = (error: unknown) => error instanceof BackendError && error.code === "gone";
