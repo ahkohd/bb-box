@@ -230,8 +230,10 @@ The script:
 
 - makes a VM named `bb-box-gpu-memory` that is never started: no disk, no
   network, 16 MiB of memory and protection on. It is outside bb-box's pool,
-  so the pool's role does not reach it. It takes the next free VMID, or
-  `BBBOX_GPU_REPORT_VMID`; choose one outside bb-box's VMID range;
+  so the pool's role does not reach it. Its VMID is
+  `BBBOX_GPU_REPORT_VMID`, and the script refuses to run without it. Choose
+  a free VMID outside bb-box's VMID range. Do not use the next free VMID:
+  `template/build.sh` builds there unless `BBBOX_BUILD_VMID` is set;
 - gives bb-box's user and token `PVEAuditor`, Proxmox's read-only role, on
   `/vms/<vmid>` alone. The token can read the VM's notes, and can change
   nothing it could not before;
