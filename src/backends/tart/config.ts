@@ -162,7 +162,7 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [TART_KEYS.windowsEnrol]: {
     type: "boolean",
     label: "Tart: Windows boxes as BB machines (trial)",
-    description: "A trial of Windows boxes that join BB, so threads and terminals can use them (#539). Off unless you are trying it.",
+    description: "A trial of Windows boxes that join BB, so threads and terminals can use them. Off unless you are trying it.",
     default: false,
   },
   [TART_KEYS.vmsPerHost]: {

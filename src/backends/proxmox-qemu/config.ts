@@ -142,7 +142,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [QEMU_KEYS.enrol]: {
     type: "boolean",
     label: "Windows boxes as BB machines (trial)",
-    description: "A trial of Windows boxes that join BB, so threads and terminals can use them (#539). Off unless you are trying it.",
+    description: "A trial of Windows boxes that join BB, so threads and terminals can use them. Off unless you are trying it.",
     group: "boxes",
     default: false,
   },
