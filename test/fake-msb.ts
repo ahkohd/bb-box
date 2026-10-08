@@ -90,15 +90,24 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
     scripts,
     script: async (name, args) => {
       scripts.push([name, ...args]);
-      if (name === "status") return { exitCode: 0, stdout: lines(facts), stderr: "" };
+      if (name === "status") {
+        const templates = existsSync(join(dir, "templates")) ? readdirSync(join(dir, "templates")).filter((file) => file.endsWith(".ext4")).join(" ") : "";
+        return { exitCode: 0, stdout: lines({ ...facts, templates }), stderr: "" };
+      }
       if (name === "install") {
         facts = { ...facts, installed: "0.7.7" };
         return { exitCode: 0, stdout: "installed=0.7.7\n", stderr: "" };
       }
       if (name === "disk") {
         mkdirSync(join(dir, "disks"), { recursive: true });
-        if (!existsSync(join(dir, "disks", `${args[0]}.ext4`))) writeFileSync(join(dir, "disks", `${args[0]}.ext4`), "");
-        return { exitCode: 0, stdout: `disk=${join(dir, "disks", `${args[0]}.ext4`)}\n`, stderr: "" };
+        const file = join(dir, "disks", `${args[0]}.ext4`);
+        const template = join(dir, "templates", `docker-${args[1]}G.ext4`);
+        if (!existsSync(file)) {
+          // As the script: mkfs.ext4 when the host has it, else a clone of the template, else exit 4.
+          if (facts.mkfs !== "1" && !existsSync(template)) return { exitCode: 4, stdout: "", stderr: `no template ${template}\n` };
+          writeFileSync(file, facts.mkfs === "1" ? "" : readFileSync(template));
+        }
+        return { exitCode: 0, stdout: `disk=${file}\n`, stderr: "" };
       }
       if (name === "undisk") {
         for (const disk of args) rmSync(join(dir, "disks", `${disk}.ext4`), { force: true });

@@ -851,8 +851,13 @@ microVM only when it asks for this backend.
   the kernel to initialise (3 ms, about 5 MB), passes it with
   `--mount-disk`, and deletes it with the box; the upkeep removes one left
   by an acquire that stopped part way. `msb`'s own disk for a box formats
-  it whole, which made 20 creates at once 2 to 3 s slower; bb-box uses it
-  only on a host without `mkfs.ext4`. The image's start
+  it whole, which made 20 creates at once 2 to 3 s slower. On a host
+  without `mkfs.ext4`, as a Mac, bb-box makes one such disk as a template
+  instead, in its folder's `templates`, from a small microVM that sees that
+  folder (with a quota above the disk's size, as `msb` gives a shared
+  folder 4 GiB), and each box's disk is a clone of it (`cp -c` on APFS,
+  reflinks elsewhere); a box made before the template exists gets `msb`'s
+  own. The image's start
   script starts `dockerd` with the first `docker` command
   ([041](decisions/041-every-linux-box-has-docker.md)). It needs no
   privilege on the host: each box has its own kernel.

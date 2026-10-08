@@ -182,6 +182,8 @@ export interface HostFacts {
   readonly docker: string | null;
   /** Whether the host has mkfs.ext4, with which bb-box makes each box's Docker disk. */
   readonly mkfs: boolean;
+  /** The Docker disks' templates bb-box has made there, for a host without mkfs.ext4, such as docker-64G.ext4. */
+  readonly templates: readonly string[];
   readonly dir: string;
 }
 
@@ -202,6 +204,7 @@ export function parseFacts(stdout: string): HostFacts {
     usedGiB: Math.round((kib("used_kib") / 1024 ** 2) * 10) / 10,
     docker: values.docker || null,
     mkfs: values.mkfs === "1",
+    templates: (values.templates ?? "").split(" ").filter(Boolean),
     dir: values.dir ?? "",
   };
 }
@@ -362,6 +365,8 @@ export class MsbBackend implements Backend {
   readonly #cli: MsbCli;
   /** The host's architecture, from its facts, kept in storage for the next start; null until known. */
   #arch: Arch | null = null;
+  /** The Docker disks' template being made (#makeTemplate), while it is. */
+  #templating: Promise<void> | null = null;
   /** A build of an image in a builder microVM (#build), while one runs. */
   #building: { readonly image: string; readonly since: number; readonly work: Promise<void> } | null = null;
   /** The host's facts, as the status script last gave them, and when. */
@@ -567,7 +572,7 @@ export class MsbBackend implements Backend {
 
   /** Removes builder microVMs of this install that no build is using, as after a restart in the middle of one. */
   async #sweepBuilders(signal?: AbortSignal): Promise<void> {
-    if (this.#building) return;
+    if (this.#building || this.#templating) return;
     for (const builder of await this.#cli.list({ [LABELS.builder]: this.#context.installId }, signal)) {
       await this.#cli.run(["remove", "--force", "--quiet", builder.name], { timeoutMs: 120_000, signal });
     }
@@ -588,6 +593,9 @@ export class MsbBackend implements Backend {
       });
     }
     await this.#sweepBuilders(signal).catch((error) => this.#context.logError("remove leftover builders", error));
+    // A host without mkfs.ext4 has its template of a Docker disk made before a box needs it.
+    const facts = await this.#hostFacts(signal).catch(() => null);
+    if (facts && this.#config.docker && !facts.mkfs && !facts.templates.includes(this.#template)) this.#startTemplate();
     await this.#sweepDisks(signal).catch((error) => this.#context.logError("remove leftover Docker disks", error));
     await this.#reclaim(signal).catch((error) => this.#context.logError("reclaim idle boxes' memory", error));
     await this.#oom(signal).catch((error) => this.#context.logError("raise the boxes' oom_score_adj", error));
@@ -636,11 +644,58 @@ export class MsbBackend implements Backend {
    */
   async #dockerDisk(name: string, signal?: AbortSignal): Promise<string[]> {
     const disk = `/var/lib/docker:kind=disk,size=${this.#config.dockerDiskGiB}G`;
-    if (!(await this.#hostFacts(signal)).mkfs) return ["--mount-owned", disk];
     const result = await this.#cli.script("disk", [name, String(this.#config.dockerDiskGiB)], signal);
     const file = scriptValues(result.stdout).disk;
-    if (result.exitCode !== 0 || !file) throw this.#cli.error(`Making ${name}'s Docker disk on ${this.#host}`, result);
-    return ["--mount-disk", `${file}:/var/lib/docker`];
+    if (result.exitCode === 0 && file) return ["--mount-disk", `${file}:/var/lib/docker`];
+    if (result.exitCode === 4) {
+      // No mkfs.ext4 and no template yet, as on a Mac at first: msb's own disk for this box, and a template for the next.
+      this.#startTemplate();
+      return ["--mount-owned", disk];
+    }
+    throw this.#cli.error(`Making ${name}'s Docker disk on ${this.#host}`, result);
+  }
+
+  /** The template's file name, for the configured size. */
+  get #template(): string {
+    return `docker-${this.#config.dockerDiskGiB}G.ext4`;
+  }
+
+  /** Makes the Docker disks' template (#makeTemplate), unless it is being made. */
+  #startTemplate(): void {
+    this.#templating ??= this.#makeTemplate()
+      .catch((error) => this.#context.logError("make the Docker disks' template", error))
+      .finally(() => (this.#templating = null));
+  }
+
+  /**
+   * Makes the template each box's Docker disk is a clone of, on a host
+   * without mkfs.ext4, as a Mac: ext4 with lazy inode tables and journal,
+   * about 8 MB of a sparse file at the configured size. A small microVM from
+   * the builder's image makes it, in the msb folder's templates/, which it
+   * sees with a quota above the file's size, as msb gives a folder 4 GiB by
+   * default. About 1 s; a clone of it then takes milliseconds, where msb's
+   * own disk for a box made 20 boxes at once 0.7 s slower on a Mac (053).
+   */
+  async #makeTemplate(): Promise<void> {
+    const signal = AbortSignal.timeout(10 * 60_000);
+    const { dir } = await this.#hostFacts(signal);
+    const size = this.#config.dockerDiskGiB;
+    const name = `bb-box-mkfs-${randomBytes(4).toString("hex")}`;
+    try {
+      await this.#cli.ok(
+        ["create", BUILDER_IMAGE, "--name", name, "--quiet", "--label", `${LABELS.backend}=microsandbox`, "--label", `${LABELS.builder}=${this.#context.installId}`,
+          "--cpus", "1", "--memory", "1024M", "--net", this.#config.network, "--mount-dir", `${dir}/templates:/work:quota=${size + 1}G`],
+        { timeoutMs: 5 * 60_000, signal },
+      );
+      await this.#cli.ok(
+        ["exec", "--stream", name, "--", "/bin/sh", "-c",
+          `apk add --no-cache e2fsprogs >/dev/null && truncate -s ${size}G /work/docker-${size}G.ext4.new && ` +
+          `mkfs.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 /work/docker-${size}G.ext4.new && mv /work/docker-${size}G.ext4.new /work/docker-${size}G.ext4`],
+        { timeoutMs: 5 * 60_000, signal },
+      );
+    } finally {
+      await this.#cli.run(["remove", "--force", "--quiet", name], { timeoutMs: 120_000 }).catch(() => undefined);
+    }
   }
 
   // Capacity and placement.
@@ -1004,13 +1059,17 @@ export class MsbBackend implements Backend {
       else push("microsandbox.kvm", "KVM", "fail", `${this.#host} has no /dev/kvm, so no box starts.`, "Use a Linux host with KVM: the machine itself, or a VM with nested virtualisation on.");
 
       if (this.#config.docker && !facts.mkfs) {
-        push(
-          "microsandbox.disks",
-          "Docker disks",
-          "warn",
-          `${this.#host} has no mkfs.ext4, so msb formats each box's Docker disk whole, which makes boxes slower to start: about 1 s more each with 20 at once.`,
-          "Install e2fsprogs on the host.",
-        );
+        if (facts.templates.includes(this.#template)) {
+          push("microsandbox.disks", "Docker disks", "ok", `Each box's Docker disk is a clone of bb-box's template, ${this.#template}, as ${this.#host} has no mkfs.ext4.`);
+        } else {
+          push(
+            "microsandbox.disks",
+            "Docker disks",
+            "warn",
+            `${this.#host} has no mkfs.ext4, and bb-box has not made its template of a Docker disk there yet, so msb formats each box's Docker disk whole, which makes boxes slower to start.`,
+            "bb-box makes the template within a few minutes, in a microVM, in about a second. On Linux, installing e2fsprogs does too.",
+          );
+        }
       }
       const overcommit = this.#config.memoryOvercommit;
       if (overcommit > 1) {

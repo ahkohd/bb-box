@@ -118,9 +118,14 @@ them in the backend order. msb uses the Hypervisor framework, so the Mac
 needs nothing installed: reach it as a BB machine, `bb:<machine ID>`, or over
 `ssh://` as Tart's backend does. bb-box keeps `msb`, its state and the
 images in its data folder on the Mac, about 2.4 GiB with the linux image and
-6 GiB with both. A Mac has no `mkfs.ext4`, so each box's Docker disk is
-`msb`'s own. A Mac does not take back memory a box has used, so count each
-box at its full size there.
+6 GiB with both. A Mac has no `mkfs.ext4`, so bb-box makes one Docker disk
+as a template, in a small microVM in about a second, about 8 MB in its
+folder's `templates`, and each box's Docker disk is an APFS clone of it,
+which takes milliseconds and only what Docker writes. Until the template is
+made, a box gets `msb`'s own disk, which formats it whole: with 20 boxes at
+once the median box was ready in 1.84 s that way, against 1.19 s with a
+clone. A Mac does not take back memory a box has used, so count each box at
+its full size there.
 
 ### 3. Configure bb-box
 
