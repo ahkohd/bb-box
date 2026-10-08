@@ -1912,16 +1912,22 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   /**
-   * GPUs whose last reading had less free than a desktop needs and is still
-   * fresh, with when it stops being so. A reading from before a desktop on
-   * the GPU was released is not fresh. Readings must have been loaded.
+   * Whether a reading still stands for its GPU's room: it is under 5
+   * minutes old, and no desktop on the GPU was released since, which frees
+   * memory it does not show.
+   */
+  #current(gpu: string, reading: StoredGpu): boolean {
+    return reading.at + GPU_FRESH_MS > this.#now() && reading.at > (this.#freed.get(gpu) ?? 0);
+  }
+
+  /**
+   * GPUs whose current reading has less free than a desktop needs, with
+   * when it stops being current. Readings must have been loaded.
    */
   #fullGpus(): Map<string, number> {
-    const now = this.#now();
     const full = new Map<string, number>();
     for (const [gpu, reading] of this.#gpus ?? []) {
-      const until = reading.at + GPU_FRESH_MS;
-      if (reading.freeMiB < DESKTOP_GPU_MIB && until > now && reading.at > (this.#freed.get(gpu) ?? 0)) full.set(gpu, until);
+      if (reading.freeMiB < DESKTOP_GPU_MIB && this.#current(gpu, reading)) full.set(gpu, reading.at + GPU_FRESH_MS);
     }
     return full;
   }
@@ -1953,7 +1959,7 @@ export class ProxmoxLxcBackend implements Backend {
     const readings = await this.#gpuReadings();
     return gpusOf(offer.config.templates).flatMap((id) => {
       const reading = readings.get(id);
-      return reading ? [{ id, ...reading, neededMiB: DESKTOP_GPU_MIB }] : [];
+      return reading ? [{ id, ...reading, neededMiB: DESKTOP_GPU_MIB, current: this.#current(id, reading) }] : [];
     });
   }
 

@@ -261,6 +261,8 @@ export interface GpuReading {
   readonly neededMiB: number;
   /** When it was read, in milliseconds since the epoch. */
   readonly at: number;
+  /** Whether it still stands for the GPU's room, so a full GPU refuses desktops; false once it is old or a desktop on the GPU was released since. */
+  readonly current: boolean;
 }
 
 export interface Limit {
