@@ -36,6 +36,7 @@ export const CHECKS = {
   "proxmox.sizes": { name: "Room for each kind", from: ["proxmox-lxc", "proxmox-qemu"], what: "The node holds a box of each kind at its default size." },
   "template.<vmid>": { name: "<flavour> template <vmid>", from: ["proxmox-lxc", "proxmox-qemu"], what: "A template is there, is a template, and has what its kind needs." },
   "template.<vmid>.image": { name: "Image of <flavour> template <vmid>", from: ["proxmox-lxc", "proxmox-qemu"], what: "The template's image record: its age, pins and tools, against this bb-box's." },
+  "gpu.<gpu>": { name: "GPU <gpu>", from: ["proxmox-lxc"], what: "A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs." },
   "ssh.key": { name: "SSH key", from: ["proxmox-lxc", "proxmox-qemu", "ssh-pool"], what: "bb-box's SSH key reads, and, where bb-box made it, its public key to install." },
 
   // Docker.

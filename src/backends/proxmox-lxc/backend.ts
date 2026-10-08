@@ -72,6 +72,7 @@ import {
   type ComputerUse,
   type DoctorCheck,
   type DoctorReport,
+  type GpuReading,
   type Guest,
   type HeldGuest,
   type ImageBox,
@@ -139,6 +140,16 @@ const NEXT_VMID = "next-vmid";
 const READY_TIMEOUT_MS = 30_000;
 /** How long new desktops avoid a GPU whose desktop started without it. */
 const AVOID_GPU_MS = 10 * 60_000;
+/** The GPU memory a desktop needs free as it starts: its display service's MIN_FREE_VRAM_MIB. */
+const DESKTOP_GPU_MIB = 384;
+/** Each GPU's memory as bb-box last read it (#603), by GPU. */
+const GPUS_KEY = "gpu-readings";
+/** How often upkeep reads a GPU's memory in a running desktop that has it. */
+const GPU_READ_EVERY_MS = 60_000;
+/** How long a reading of a GPU stands for its room. Upkeep reads every 3 minutes, as the sweep runs it. */
+const GPU_FRESH_MS = 5 * 60_000;
+/** A GPU's free and total memory in MiB, as a desktop that has it reads them. */
+const GPU_QUERY = "nvidia-smi --query-gpu=memory.free,memory.total --format=csv,noheader,nounits | head -1";
 /** build.sh --replace leaves a template missing, then not yet a template, for about 3 s. A clone waits this long for it. */
 const TEMPLATE_WAIT_MS = 10_000;
 const TEMPLATE_POLL_MS = 250;
@@ -254,6 +265,27 @@ function noGpu(failed: ReadonlyMap<string, string>, why: string): BackendError {
   );
 }
 
+/** "just now", "4 minutes ago", "2 hours ago", "3 days ago". */
+function ago(ms: number): string {
+  const [count, unit] =
+    ms < 60_000 ? [0, ""] : ms < 3_600_000 ? [Math.floor(ms / 60_000), "minute"] : ms < 86_400_000 ? [Math.floor(ms / 3_600_000), "hour"] : [Math.floor(ms / 86_400_000), "day"];
+  return count ? `${count} ${unit}${count === 1 ? "" : "s"} ago` : "just now";
+}
+
+/**
+ * Every GPU was last read with less memory free than a desktop needs, so a
+ * desktop would start without one (#603). The refusal stands for
+ * `minutes`, until the first of the readings is no longer fresh.
+ */
+function gpusFull(node: string, full: readonly { readonly gpu: string; readonly freeMiB: number }[], minutes: number, cpu: boolean): string {
+  const later = `try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  return (
+    `${full.length === 1 ? "The GPU" : "Every GPU"} on ${node} had less memory free than the ${DESKTOP_GPU_MIB} MiB a desktop needs when bb-box last looked: ` +
+    `${full.map(({ gpu, freeMiB }) => `GPU ${gpu} ${freeMiB} MiB`).join(", ")}. ` +
+    (cpu ? `Use a linux-desktop-cpu box, whose desktop runs without a GPU, or ${later}.` : `Free memory on a GPU, or ${later}.`)
+  );
+}
+
 function gone(vmid: number): BackendError {
   return new BackendError("gone", `The box's container ${vmid} no longer exists.`);
 }
@@ -291,6 +323,8 @@ export interface LxcBackendOptions {
   readonly readyTimeoutMs?: number;
   /** Replaces how long a clone waits for a template that is being replaced, for tests. */
   readonly templateWaitMs?: number;
+  /** Replaces the clock that dates GPU readings (#603), for tests. */
+  readonly now?: () => number;
 }
 
 /**
@@ -400,6 +434,18 @@ const REBUILD: Readonly<Record<LxcFlavour, (vmid: number) => string>> = {
 
 const NO_GPUS: ReadonlySet<string> = new Set();
 
+/** A GPU's memory as bb-box keeps it. The total is null until a running desktop reads it. */
+interface StoredGpu {
+  readonly freeMiB: number;
+  readonly totalMiB: number | null;
+  readonly at: number;
+}
+
+/** The GPUs a set of templates carries, each once. */
+function gpusOf(templates: readonly LxcTemplate[]): string[] {
+  return [...new Set(templates.flatMap((template) => (template.gpu ? [template.gpu] : [])))];
+}
+
 const DISPLAY_MODE_WORDS: Readonly<Record<string, string>> = { gpu: "GPU", cpu: "CPU" };
 
 /**
@@ -451,6 +497,10 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #acquiring = new Map<string, { readonly flavour: LxcFlavour; template: number | null; vmid: number | null; held: number | null }>();
   /** GPUs whose desktop lately started without them, and until when new desktops avoid them. */
   readonly #avoid = new Map<string, number>();
+  /** Each GPU's memory as last read (#603); undefined until read from storage. */
+  #gpus: Map<string, StoredGpu> | undefined;
+  /** When a desktop on each GPU was last released, which frees memory older readings do not show. */
+  readonly #freed = new Map<string, number>();
   /** Root disk storage, disk size and memory of each template. */
   readonly #templates = new Map<number, TemplateInfo>();
   readonly #stopping = new AbortController();
@@ -460,7 +510,10 @@ export class ProxmoxLxcBackend implements Backend {
   #nextVmid: number | null = null;
   /** The host's NVIDIA driver as a box last saw it; undefined until read from storage. */
   #nvidia: HostNvidia | null | undefined;
-  readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
+  readonly #upkeep = new Upkeep(async (signal) => {
+    await this.#readGpus(signal).catch((error) => signal.aborted || this.#context.logError("read GPU memory", error));
+    await this.#topUp(signal);
+  });
   /** Image boxes (049) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
 
@@ -597,6 +650,22 @@ export class ProxmoxLxcBackend implements Backend {
     }
     if (choice.gpus) limits.push({ resource: "gpu-desktops", used: choice.gpus.used, total: choice.gpus.total, reserve: 0, unit: "count" });
     if (choice.problem) fresh.push(choice.problem);
+    if (offer.kind.capabilities.gpu) {
+      const readings = await this.#gpuReadings();
+      const gpus = gpusOf(offer.config.templates);
+      for (const gpu of gpus) {
+        const reading = readings.get(gpu);
+        if (reading?.totalMiB != null) {
+          limits.push({ resource: "gpu-memory", id: gpu, used: reading.totalMiB - reading.freeMiB, total: reading.totalMiB, reserve: 0, unit: "MiB" });
+        }
+      }
+      const full = this.#fullGpus();
+      if (gpus.length && gpus.every((gpu) => full.has(gpu))) {
+        const cpu = this.#offers().some((other) => other.flavour === "desktop-cpu");
+        const minutes = Math.max(1, Math.ceil((Math.min(...gpus.map((gpu) => full.get(gpu)!)) - this.#now()) / 60_000));
+        fresh.push(gpusFull(api.node, gpus.map((gpu) => ({ gpu, freeMiB: readings.get(gpu)!.freeMiB })), minutes, cpu));
+      }
+    }
     const cloned = [...memory(memoryMiB, false), ...sized, ...fresh];
     const problems = warmMiB === null ? cloned : [...memory(memoryMiB - warmMiB, true), ...sized];
     const ok = problems.length === 0;
@@ -734,7 +803,7 @@ export class ProxmoxLxcBackend implements Backend {
             if (box.from) {
               acquiring.template = Number(box.from);
             } else {
-              const choice = this.#choose(offer, guests, [], api.node, this.#placing(offer, new Set(failed.keys())));
+              const choice = this.#choose(offer, guests, [], api.node, await this.#placing(offer, new Set(failed.keys())));
               if (failed.size && choice.problem) throw noGpu(failed, choice.problem);
               acquiring.template = choice.template.vmid;
             }
@@ -767,6 +836,7 @@ export class ProxmoxLxcBackend implements Backend {
         const display = offer.kind.capabilities.displays.length
           ? await step("display", () => this.#displayMode(id, box.kind, Math.max(1_000, deadline - Date.now()), signal))
           : null;
+        await this.#sawDisplay(template, display);
         if (!offer.kind.capabilities.gpu || display?.mode === "gpu") {
           const guest = this.#guest(api.node, id, template, box.boxId, display, await size, acquiring.build);
           // Claimed again, so the box's record shows the display's facts as it becomes ready.
@@ -813,6 +883,8 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     if (await this.#still(api, guest, signal)) await api.destroy(this.#vmid(guest), signal);
     hooks.timing("delete", Math.round(performance.now() - started));
+    const gpu = this.#gpuOf(typeof guest.data?.template === "number" ? guest.data.template : null);
+    if (gpu) this.#freed.set(gpu, this.#now());
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
@@ -1065,6 +1137,37 @@ export class ProxmoxLxcBackend implements Backend {
               ? `Build it with the setup guide's template/build.sh, or remove it from the ${FLAVOUR_NAMES[listed.flavour]} templates in bb-box's settings.`
               : audit(error, `Give the token VM.Audit and VM.Clone on /vms/${template}.`),
           );
+        }
+      }
+
+      // Each GPU's room for a desktop (#603), read live where a desktop that has it runs.
+      const gpus = gpusOf(this.#config.flavours.desktop.templates);
+      if (gpus.length) {
+        await this.#readGpus(signal).catch(() => undefined);
+        const readings = await this.#gpuReadings();
+        const cpu = this.#offers().some((offer) => offer.flavour === "desktop-cpu");
+        for (const gpu of gpus) {
+          const check: Check = [`gpu.${gpu}`, `GPU ${gpu}`];
+          const reading = readings.get(gpu);
+          if (!reading) {
+            checks.push({
+              id: check[0],
+              name: check[1],
+              status: "skipped",
+              detail: "No desktop has read its memory yet. A GPU desktop reads it as it starts, and bb-box reads it every few minutes while one runs.",
+              fix: null,
+            });
+            continue;
+          }
+          const read = `${reading.freeMiB}${reading.totalMiB === null ? "" : ` of ${reading.totalMiB}`} MiB free, read ${ago(this.#now() - reading.at)}. A desktop needs ${DESKTOP_GPU_MIB} MiB`;
+          if (reading.freeMiB >= DESKTOP_GPU_MIB) pass(check, `${read}.`);
+          else {
+            warn(
+              check,
+              `${read}, so new desktop boxes cannot use this GPU.`,
+              `Free memory on the GPU: release a desktop box, or stop what else uses it on ${node}.` + (cpu ? " Use linux-desktop-cpu boxes meanwhile." : ""),
+            );
+          }
         }
       }
 
@@ -1323,12 +1426,13 @@ export class ProxmoxLxcBackend implements Backend {
 
   /**
    * The GPUs a new desktop is not placed on: those in `failed`, and those
-   * avoided lately while another GPU is left.
+   * avoided lately or last read full while another GPU is left.
    */
-  #placing(offer: Offer, failed: ReadonlySet<string> = NO_GPUS): ReadonlySet<string> {
+  async #placing(offer: Offer, failed: ReadonlySet<string> = NO_GPUS): Promise<ReadonlySet<string>> {
     const now = Date.now();
     for (const [gpu, until] of this.#avoid) if (until <= now) this.#avoid.delete(gpu);
-    const skip = new Set([...failed, ...this.#avoid.keys()]);
+    await this.#gpuReadings();
+    const skip = new Set([...failed, ...this.#avoid.keys(), ...this.#fullGpus().keys()]);
     return offer.config.templates.some((template) => template.gpu !== null && !skip.has(template.gpu)) ? skip : failed;
   }
 
@@ -1775,6 +1879,84 @@ export class ProxmoxLxcBackend implements Backend {
     }
   }
 
+  /** The time GPU readings are dated by. */
+  #now(): number {
+    return this.#options.now?.() ?? Date.now();
+  }
+
+  /** Each GPU's memory as last read, from storage at first. */
+  async #gpuReadings(): Promise<Map<string, StoredGpu>> {
+    if (!this.#gpus) {
+      const stored = await this.#context.storage.get<Record<string, StoredGpu>>(GPUS_KEY).catch(() => null);
+      this.#gpus ??= new Map(Object.entries(stored ?? {}));
+    }
+    return this.#gpus;
+  }
+
+  /** Keeps a reading of a GPU's memory, with the total an earlier one read when this has none. */
+  async #sawGpu(gpu: string, freeMiB: number, totalMiB: number | null): Promise<void> {
+    try {
+      const readings = await this.#gpuReadings();
+      readings.set(gpu, { freeMiB, totalMiB: totalMiB ?? readings.get(gpu)?.totalMiB ?? null, at: this.#now() });
+      await this.#context.storage.set(GPUS_KEY, Object.fromEntries(readings));
+    } catch (error) {
+      this.#context.logError("record a GPU's memory", error);
+    }
+  }
+
+  /** The free memory a GPU desktop's display service saw on its GPU as it started. */
+  async #sawDisplay(template: number | null, display: DisplayMode | null): Promise<void> {
+    const gpu = this.#gpuOf(template);
+    const free = display ? /^GPU has (\d+) MiB free/.exec(display.reason) : null;
+    if (gpu && free) await this.#sawGpu(gpu, Number(free[1]), null);
+  }
+
+  /**
+   * GPUs whose last reading had less free than a desktop needs and is still
+   * fresh, with when it stops being so. A reading from before a desktop on
+   * the GPU was released is not fresh. Readings must have been loaded.
+   */
+  #fullGpus(): Map<string, number> {
+    const now = this.#now();
+    const full = new Map<string, number>();
+    for (const [gpu, reading] of this.#gpus ?? []) {
+      const until = reading.at + GPU_FRESH_MS;
+      if (reading.freeMiB < DESKTOP_GPU_MIB && until > now && reading.at > (this.#freed.get(gpu) ?? 0)) full.set(gpu, until);
+    }
+    return full;
+  }
+
+  /**
+   * Reads each GPU's memory with nvidia-smi in a running desktop of this
+   * install that has it, where the last reading is a minute old or more. The
+   * host's own figures are out of the API token's reach.
+   */
+  async #readGpus(signal?: AbortSignal): Promise<void> {
+    if (!gpusOf(this.#config.flavours.desktop.templates).length) return;
+    const api = await this.client();
+    const readings = await this.#gpuReadings();
+    for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
+      if (guest.status !== "running" || guest.template || !this.#inRange(guest.vmid) || this.#filling.has(guest.vmid) || guest.tags.includes(FILLING)) continue;
+      if (installFromTags(guest.tags) !== this.#context.installId) continue;
+      const gpu = this.#gpuOf(templateFromTags(guest.tags));
+      if (!gpu || this.#now() - (readings.get(gpu)?.at ?? 0) < GPU_READ_EVERY_MS) continue;
+      const result = await (await this.#command(guest.vmid)).run(GPU_QUERY, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 }).catch(() => null);
+      const read = result?.exitCode === 0 ? /^(\d+),\s*(\d+)$/.exec(result.stdout.trim()) : null;
+      if (read) await this.#sawGpu(gpu, Number(read[1]), Number(read[2]));
+    }
+  }
+
+  /** Each GPU a kind's boxes would use, as last read, without asking Proxmox (#603). */
+  async gpuRoom(kind: string): Promise<readonly GpuReading[]> {
+    const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
+    if (!offer?.kind.capabilities.gpu) return [];
+    const readings = await this.#gpuReadings();
+    return gpusOf(offer.config.templates).flatMap((id) => {
+      const reading = readings.get(id);
+      return reading ? [{ id, ...reading, neededMiB: DESKTOP_GPU_MIB }] : [];
+    });
+  }
+
   /** The password the desktop wrote at boot, or null when it asks for none. */
   async #vncPassword(command: SshTransport, signal?: AbortSignal): Promise<string | null> {
     const result = await command.run(`cat ${VNC_PASSWORD_FILE} 2>/dev/null || :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
@@ -1906,7 +2088,7 @@ export class ProxmoxLxcBackend implements Backend {
     const claimed: number[] = [];
     try {
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
-      const template = this.#choose(offer, guests, [], api.node, this.#placing(offer)).template.vmid;
+      const template = this.#choose(offer, guests, [], api.node, await this.#placing(offer)).template.vmid;
       // Read before the clone, so it is never newer than the clone's build. A
       // template replaced in between retires the guest later, which is safe.
       const build = await templateBuild(api, guests, template, signal);
@@ -1930,6 +2112,7 @@ export class ProxmoxLxcBackend implements Backend {
       await this.#waitReady(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
       if (offer.kind.capabilities.gpu) {
         const display = await this.#displayMode(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
+        await this.#sawDisplay(template, display);
         if (display.mode !== "gpu") {
           this.#avoidGpu(this.#gpuOf(template));
           throw new Error(`A warm linux-desktop box started without GPU ${this.#gpuOf(template) ?? "unknown"} (${display.reason || "no reason given"}), so bb-box released it.`);

@@ -383,6 +383,103 @@ test("a warm desktop that starts without its GPU is deleted, and its GPU avoided
   assert.equal(proxmox.guests.get(7001)?.config.tags?.includes("template.9002"), true, "the next warm desktop goes to gpu-b");
 });
 
+/** Makes nvidia-smi in the box at `host` say the GPU has `free` of `total` MiB free. */
+function gpuAt(ssh: { home(host: string): string }, host: string, free: number, total: number): void {
+  const bin = join(ssh.home(host), "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\necho '${free}, ${total}'\n`, { mode: 0o755 });
+}
+
+const gpuCheck = async (backend: ProxmoxLxcBackend, gpu = "gpu-a") => (await backend.doctor()).checks.find((check) => check.id === `gpu.${gpu}`);
+
+test("a GPU's memory is read as a desktop on it starts and each minute while one runs, for capacity, the doctor and gpuRoom (#603)", async () => {
+  let now = 1_790_000_000_000;
+  const { backend, ssh, storage } = setup({}, new MemoryStorage(), { now: () => now });
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [], "nothing is read before a desktop starts");
+  assert.deepEqual(
+    await gpuCheck(backend),
+    {
+      id: "gpu.gpu-a",
+      name: "GPU gpu-a",
+      status: "skipped",
+      detail: "No desktop has read its memory yet. A GPU desktop reads it as it starts, and bb-box reads it every few minutes while one runs.",
+      fix: null,
+    },
+  );
+
+  await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [{ id: "gpu-a", freeMiB: 7800, totalMiB: null, at: now, neededMiB: 384 }]);
+  assert.deepEqual(await backend.gpuRoom("linux"), [], "a kind without a GPU has none");
+  const booted = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(booted.hosts[0]!.limits.find((limit) => limit.resource === "gpu-memory"), undefined, "the display service gives no total");
+
+  gpuAt(ssh, "192.0.2.100", 6100, 8192);
+  await backend.maintain();
+  assert.equal((await backend.gpuRoom("linux-desktop"))[0]!.freeMiB, 7800, "not read again within a minute");
+  now += 60_000;
+  await backend.maintain();
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [{ id: "gpu-a", freeMiB: 6100, totalMiB: 8192, at: now, neededMiB: 384 }]);
+  const read = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(read.ok, true);
+  assert.deepEqual(read.hosts[0]!.limits.at(-1), { resource: "gpu-memory", id: "gpu-a", used: 2092, total: 8192, reserve: 0, unit: "MiB" });
+  assert.deepEqual(await storage.get("gpu-readings"), { "gpu-a": { freeMiB: 6100, totalMiB: 8192, at: now } }, "kept for the next instance");
+
+  now += 3 * 60_000;
+  gpuAt(ssh, "192.0.2.100", 5000, 8192);
+  const check = await gpuCheck(backend);
+  assert.equal(check?.status, "ok");
+  assert.equal(check?.detail, "5000 of 8192 MiB free, read just now. A desktop needs 384 MiB.", "the doctor reads it again");
+});
+
+test("a desktop goes to a GPU with room, and is refused at once while every GPU was last read full, offering CPU desktops (#603)", async () => {
+  let now = 1_790_000_000_000;
+  const { backend, ssh } = setup(
+    { "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b", "proxmox-lxc-desktop-cpu-templates": "9003" },
+    new MemoryStorage(),
+    { ...RETRY, now: () => now },
+  );
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "GPU has 103 MiB free, below MIN_FREE_VRAM_MIB=384");
+  const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.equal(desktop.data?.template, 9002);
+  assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, true, "gpu-b has room");
+
+  now += 60_000;
+  gpuAt(ssh, "192.0.2.101", 21, 8192);
+  await backend.maintain();
+  const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(full.ok, false);
+  assert.equal(full.hosts[0]!.ok, false);
+  assert.equal(
+    full.message,
+    "Every GPU on pve had less memory free than the 384 MiB a desktop needs when bb-box last looked: GPU gpu-a 103 MiB, GPU gpu-b 21 MiB. " +
+      "Use a linux-desktop-cpu box, whose desktop runs without a GPU, or try again in 4 minutes.",
+  );
+  assert.equal((await backend.capacity("linux-desktop-cpu", sized("linux-desktop-cpu"), waiting(), signal())).ok, true, "CPU desktops use no GPU");
+  const warn = await gpuCheck(backend, "gpu-b");
+  assert.equal(warn?.status, "warn");
+  assert.equal(warn?.detail, "21 of 8192 MiB free, read just now. A desktop needs 384 MiB, so new desktop boxes cannot use this GPU.");
+  assert.equal(warn?.fix, "Free memory on the GPU: release a desktop box, or stop what else uses it on pve. Use linux-desktop-cpu boxes meanwhile.");
+
+  await backend.release(desktop, releasing());
+  assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, true, "releasing gpu-b's desktop frees its memory");
+});
+
+test("readings of full GPUs stand for 5 minutes, and a new instance keeps them (#603)", async () => {
+  let now = 1_790_000_000_000;
+  const storage = new MemoryStorage();
+  await storage.set("gpu-readings", { "gpu-a": { freeMiB: 103, totalMiB: 8192, at: now } });
+  const { backend } = setup({}, storage, { now: () => now });
+  const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(
+    full.message,
+    "The GPU on pve had less memory free than the 384 MiB a desktop needs when bb-box last looked: GPU gpu-a 103 MiB. Free memory on a GPU, or try again in 5 minutes.",
+  );
+  now += 5 * 60_000;
+  const later = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(later.ok, true, "an old reading does not refuse: the desktop starts and sees");
+  assert.deepEqual(later.hosts[0]!.limits.at(-1), { resource: "gpu-memory", id: "gpu-a", used: 8089, total: 8192, reserve: 0, unit: "MiB" });
+});
+
 test("boxes spread across a flavour's templates", async () => {
   const { backend } = setup({ "proxmox-lxc-linux-templates": "9000 9004" });
   const made = await Promise.all([1, 2, 3].map(() => backend.acquire(identity(), null, hooks().value, signal())));
@@ -1270,6 +1367,7 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["template.9000.image", "Image of Linux template 9000", "warn"],
       ["template.9001", "GPU desktop template 9001 (GPU gpu-a)", "ok"],
       ["template.9001.image", "Image of GPU desktop template 9001 (GPU gpu-a)", "warn"],
+      ["gpu.gpu-a", "GPU gpu-a", "skipped"],
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
       ["ssh.key", "SSH key", "ok"],

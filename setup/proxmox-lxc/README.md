@@ -254,6 +254,12 @@ fields against the host; Save and turn on saves them. From a terminal,
 - A new box is a clone of its kind's least used template. A GPU desktop goes
   to the GPU with the fewest desktops. It is refused when every GPU has
   `desktops-per-gpu` desktops, and the refusal suggests `linux-desktop-cpu`.
+- A GPU desktop needs 384 MiB of GPU memory free as it starts. bb-box reads
+  each GPU's free memory as a desktop on it starts, and with `nvidia-smi` in
+  a running one every few minutes; the doctor shows the last reading. A new
+  desktop skips a GPU read with less free in the last 5 minutes, and is
+  refused at once when every GPU was; the refusal suggests
+  `linux-desktop-cpu`.
 - `warm` keeps started boxes waiting per kind, so a new box is ready at once.
   A warm box waits at its template's size: 2 cores and 4 GiB for Linux, 4
   cores and 8 GiB for desktops. It serves only boxes with the same cores,
@@ -349,6 +355,9 @@ Its fix is the `build.sh` command that rebuilds the template.
 - **A `linux-desktop` acquire fails, naming each GPU**: every GPU's desktop
   started on the CPU, for the reasons given. `bb plugin logs bb-box` shows
   each box released. Fix the reason, or ask for `linux-desktop-cpu`.
+- **A `linux-desktop` acquire is refused at once for GPU memory**: every GPU
+  had less than 384 MiB free when bb-box last looked. `bb box doctor` shows
+  each GPU's reading. Free memory on a GPU, or ask for `linux-desktop-cpu`.
 - **The desktop viewer says the box refused its VNC password**: VNC runs with
   another password than `/var/lib/bb-box/vnc-password`. Restart
   `bb-box-display` in the box, or release the box.
