@@ -67,7 +67,7 @@ export function SearchRow({
   const group = <K extends keyof Filters>(key: K, label: string): ReactNode =>
     offered[key].length > 1 || filters[key].length ? (
       <>
-        <DropdownMenuLabel>{label}</DropdownMenuLabel>
+        <DropdownMenuLabel className="font-normal text-subtle-foreground">{label}</DropdownMenuLabel>
         {offered[key].map((value) => (
           <DropdownMenuCheckboxItem
             key={value}
@@ -131,7 +131,7 @@ export function SearchRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-40" mobileTitle="Sort">
-            <DropdownMenuLabel>Sort</DropdownMenuLabel>
+            <DropdownMenuLabel className="font-normal text-subtle-foreground">Sort</DropdownMenuLabel>
             {(Object.keys(SORT_WORDS) as SortKey[]).map((key) => (
               <DropdownMenuItem key={key} className="justify-between gap-4" onSelect={() => onSort(key === sort.key ? { key, ascending: !sort.ascending } : { key, ascending: true })}>
                 {SORT_WORDS[key]}
