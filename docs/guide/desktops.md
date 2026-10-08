@@ -51,6 +51,18 @@ If nothing has come from the box, the menu's Copy says why: take control first, 
 
 Without control, your own pointer shows over the desktop. With control, the pointer takes the box's shape. If the box hides its pointer, yours shows instead, so it never disappears.
 
+## Video (trial)
+
+A Linux desktop can also show as video, which stays smooth on a slow connection where the usual stream (VNC) falls to a few frames a second. It is a trial: it works when **Linux desktops as video (trial)** is on in [settings](settings.md#general), and only for X11 desktops drawn by the CPU. Other desktops show as before.
+
+When you open such a desktop, the viewer times a few round trips to BB. If your browser is on BB's network, it shows VNC, which answers keys faster there. Otherwise it shows video.
+
+To choose yourself, select **Show as video** in the toolbar's menu. It is ticked while the desktop shows as video. Your choice lasts for that box in that tab; next time, the viewer picks again.
+
+If the video cannot start, the desktop shows over VNC, and the toolbar says 'Video did not start, so this shows VNC.' Point at the note to see why: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
+
+Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size.
+
 ## When the desktop is not showing
 
 The screen tells you why, and what you can do. It uses the box's name, here calm-otter:
