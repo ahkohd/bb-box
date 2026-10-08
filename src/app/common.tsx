@@ -130,6 +130,91 @@ export function StatusDot({ tone, className }: { tone: Tone; className?: string 
   );
 }
 
+/** Shows the whole text as a tooltip on hover, only while the trigger, or a part of it marked data-cut, does not show all of it. */
+function WhenCut({ full, children }: { full: string; children: ReactNode }) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const cut = () => {
+    const shown = trigger.current;
+    if (!shown) return false;
+    const over = (element: Element) => element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
+    return over(shown) || Array.from(shown.querySelectorAll("[data-cut]")).some(over);
+  };
+  return (
+    <TooltipProvider delayDuration={250}>
+      <Tooltip open={open} onOpenChange={(next) => setOpen(next && cut())}>
+        <TooltipTrigger ref={trigger} asChild>
+          {children}
+        </TooltipTrigger>
+        <TooltipContent>{full}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/** Text on one line, cut at the end with an ellipsis; when it is cut, hovering shows the whole of it. */
+export function OneLine({ children, full, className }: { children: ReactNode; /** The whole text, for the tooltip. */ full: string; className?: string }) {
+  return (
+    <WhenCut full={full}>
+      <span className={cn("block min-w-0 truncate", className)}>{children}</span>
+    </WhenCut>
+  );
+}
+
+/** One item of a status line, coloured by what it says. */
+export interface LineItem {
+  readonly text: string;
+  /** Foreground for what matters, warning or destructive for what is wrong; muted otherwise. */
+  readonly tone?: "fg" | "warn" | "danger";
+}
+
+/**
+ * A box row's second line: its dot, then its items separated by BB's middle
+ * dot, on one line however narrow the panel. The state comes first and what
+ * to act on next. Items that do not fit drop from the end, whole, with their
+ * dot, rather than being cut mid-word: the BB machine's timing and the size
+ * go first, and the details say both. The state itself is cut only when it
+ * alone does not fit. Hovering a line that lost anything shows all of it.
+ */
+export function StatusLine({ tone, items }: { tone: Tone; items: readonly (LineItem | string | null | undefined | false)[] }) {
+  const shown = items.flatMap((item): LineItem[] => (item ? [typeof item === "string" ? { text: item } : item] : []));
+  return (
+    <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
+      <StatusDot tone={tone} />
+      <WhenCut full={shown.map((item) => item.text).join(" · ")}>
+        {/* One line high: an item that does not fit wraps to the second line, which is out of sight. */}
+        <span data-status-line className="flex h-[1.375em] min-w-0 flex-wrap items-center gap-x-1.5 overflow-hidden">
+          {shown.map((item, index) => (
+            <span key={index} className={cn("inline-flex items-center gap-1.5 whitespace-nowrap", index === 0 && "min-w-0")}>
+              {index ? (
+                <span aria-hidden className="text-subtle-foreground">
+                  ·
+                </span>
+              ) : null}
+              <span data-cut={index === 0 ? "" : undefined} className={cn(index === 0 && "min-w-0 truncate", item.tone === "fg" && "text-foreground", item.tone === "warn" && "text-warning-text", item.tone === "danger" && "text-destructive-text")}>
+                {item.text}
+              </span>
+            </span>
+          ))}
+        </span>
+      </WhenCut>
+    </div>
+  );
+}
+
+/** A box row's first line: its name, then its system and badges, on one line; the name gives way first, cut with its tooltip. */
+export function RowTitle({ name, os, badges }: { name: string; os: string; badges: ReactNode }) {
+  return (
+    <span className="flex min-w-0 items-center gap-x-2">
+      <OneLine full={name} className="text-sm font-medium text-foreground">
+        {name}
+      </OneLine>
+      <span className="shrink-0 text-xs font-normal text-muted-foreground">{os}</span>
+      {badges}
+    </span>
+  );
+}
+
 /** Items on one line, separated by BB's middle dot. */
 export function Meta({ items, className }: { items: readonly (ReactNode | null | undefined | false)[]; className?: string }) {
   const visible = items.filter((item) => item !== null && item !== undefined && item !== false);

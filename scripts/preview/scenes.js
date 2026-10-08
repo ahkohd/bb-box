@@ -444,6 +444,19 @@ export const scenes = {
   "panel-list": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting, desktop, stopped]) },
   "panel-runs-on": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },
   "panel-runs-on-only": { slot: "boxes", chrome: boxesChrome, rpc: rpc([], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },
+  // A desktop row's status line at the panel's 560 px: the size dropped, and the whole line on hover.
+  "panel-list-cut": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 400,
+    rpc: rpc([starting, desktop, stopped]),
+    after: async (root) => {
+      await wait(200);
+      const line = [...root.querySelectorAll("[data-status-line]")].find((candidate) => candidate.textContent.startsWith("Ready"));
+      line.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
+      await wait(600);
+    },
+  },
   "panel-list-narrow": {
     slot: "boxes",
     chrome: boxesChrome,

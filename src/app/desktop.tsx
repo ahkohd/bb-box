@@ -23,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, OPERATOR, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, osName, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { refreshLosslessly, type LosslessRefresh } from "./rfb-refresh.ts";
 import { controlWord, statusOf } from "./status.ts";
@@ -1142,15 +1142,9 @@ export function BoxLine({ box, meta, machine = false, actions }: { box: BoxView;
     <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
       <span className="flex size-6 items-center justify-center text-muted-foreground"><BoxGlyph /></span>
       <div className="min-w-0">
-        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
-          <span className="truncate text-xs text-muted-foreground">{osName(box.os)}</span>
-          <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={machine} />
-        </span>
-        <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-          <StatusDot tone={status.tone} />
-          <Meta items={[status.items[0]?.text, ...status.items.slice(1).map((item) => item.text), control, meta]} />
-        </div>
+        <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={machine} />} />
+        {/* Who has control comes straight after the state, so a narrow chooser keeps it. */}
+        <StatusLine tone={status.tone} items={[status.items[0], control, ...status.items.slice(1), meta]} />
       </div>
       <span className="flex shrink-0 items-center gap-1">{actions}</span>
     </div>

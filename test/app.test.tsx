@@ -673,7 +673,30 @@ test("the app registers the Boxes panel, a desktop tab, the Boxes page and the B
   expect(declared).toContain("box");
 });
 
-test("the status line says the state, the timings, BB enrolment and the display", () => {
+test("a row keeps its name and kind on one line, and its status on one, dropping whole items from the end, with the whole line in a tooltip when it does", async () => {
+  const slot = panel(server([desktopBox({ control: { owner: "human", holder: "viewer-9" } })]).handlers);
+  await slot.findByText("bold-heron");
+  // The first line does not wrap; the name gives way first.
+  const name = slot.getByText("bold-heron");
+  expect(name.className).toContain("truncate");
+  expect(name.parentElement!.className).not.toContain("flex-wrap");
+  // The second is one line high: the state, what to act on, then the rest; what does not fit drops whole from the end.
+  const line = slot.getByText("Ready in 2.1 s").closest<HTMLElement>("[data-status-line]")!;
+  expect(line.className).toContain("overflow-hidden");
+  expect(line.className).toContain("h-[1.375em]");
+  expect(line.textContent).toBe("Ready in 2.1 s·Another viewer has control·BB machine in 5.3 s·2 cores · 4 GiB");
+  // A line that shows all of it has no tooltip on hover; one that lost an item shows the whole of it.
+  fireEvent.pointerMove(line);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  fireEvent.pointerLeave(line);
+  Object.defineProperty(line, "scrollHeight", { configurable: true, value: 33 });
+  Object.defineProperty(line, "clientHeight", { configurable: true, value: 16 });
+  fireEvent.pointerMove(line);
+  expect((await screen.findByRole("tooltip")).textContent).toBe("Ready in 2.1 s · Another viewer has control · BB machine in 5.3 s · 2 cores · 4 GiB");
+});
+
+test("the status line says the state, then what to act on, then BB enrolment and the size", () => {
   const now = Date.now();
   expect(statusOf(box(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
   expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null } }), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Joining BB…", "2 cores · 4 GiB"]);
@@ -684,10 +707,11 @@ test("the status line says the state, the timings, BB enrolment and the display"
   expect(statusOf(box({ state: "failed", error: "No GPU is left." }), now).items).toEqual([{ text: "Failed", tone: "danger" }]);
   expect(statusOf(box({ state: "gone" }), now).items.map((item) => item.text)).toEqual(["Gone", "deleted outside bb-box"]);
   expect(statusOf(desktopBox(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
-  expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items.at(-1)).toEqual({ text: "Display on the CPU", tone: "warn" });
+  // What to act on comes straight after the state, so a narrow row, which cuts the line from its end, keeps it.
+  expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items[1]).toEqual({ text: "Display on the CPU", tone: "warn" });
   const held = desktopBox({ control: { owner: "human", holder: "viewer-1" } });
-  expect(statusOf(held, now, new Set(["viewer-1"])).items.at(-1)).toEqual({ text: "You have control", tone: "fg" });
-  expect(statusOf(held, now, new Set()).items.at(-1)).toEqual({ text: "Another viewer has control", tone: "fg" });
+  expect(statusOf(held, now, new Set(["viewer-1"])).items[1]).toEqual({ text: "You have control", tone: "fg" });
+  expect(statusOf(held, now, new Set()).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Another viewer has control", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
 });
 
 test("the panel lists the thread's boxes as rows, opens a row's details, and opens a desktop", async () => {
