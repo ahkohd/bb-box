@@ -215,21 +215,27 @@ export function RowTitle({ name, os, badges }: { name: string; os: string; badge
   );
 }
 
-/** Items on one line, separated by BB's middle dot. */
+/**
+ * Items separated by BB's middle dot, wrapping where they must. Each item
+ * carries its dot before it, and the list sits one dot's width to the left in
+ * a box that clips, so the dot of whichever item starts a line, the first or
+ * a wrapped one, is out of sight: no line begins with a dot (the operator,
+ * 8 October 2026).
+ */
 export function Meta({ items, className }: { items: readonly (ReactNode | null | undefined | false)[]; className?: string }) {
   const visible = items.filter((item) => item !== null && item !== undefined && item !== false);
   return (
-    <span className={cn("inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5", className)}>
-      {visible.map((item, index) => (
-        <span key={index} className="inline-flex min-w-0 items-center gap-1.5">
-          {index > 0 ? (
-            <span aria-hidden className="text-subtle-foreground">
+    <span className={cn("inline-flex min-w-0 overflow-hidden", className)}>
+      <span className="-ml-[1.25em] inline-flex min-w-0 flex-wrap items-center gap-y-0.5">
+        {visible.map((item, index) => (
+          <span key={index} className="inline-flex min-w-0 items-center">
+            <span aria-hidden className="w-[1.25em] shrink-0 text-center text-subtle-foreground">
               ·
             </span>
-          ) : null}
-          <span className="min-w-0">{item}</span>
-        </span>
-      ))}
+            <span className="min-w-0">{item}</span>
+          </span>
+        ))}
+      </span>
     </span>
   );
 }

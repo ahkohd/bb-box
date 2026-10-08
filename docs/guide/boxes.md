@@ -46,7 +46,7 @@ Select a row to see its details. They give the box's address, size, backend and 
 
 The buttons on a row open the box's desktop or terminal, and stop or start the box where its backend can. The menu at the end of the row has these and more:
 
-- Open desktop in a browser tab: shows the desktop on a page of its own
+- Open in browser: shows the desktop on a page of its own
 - Copy address: copies the box's network address
 - New thread on this box…: starts a child thread that works on this box in its own copy of the project, and is archived with this thread
 - Check now: asks the backend for the box's state again
@@ -92,7 +92,7 @@ A thread's box has the same row and menu as in the Box panel. It asks the same q
 
 A desktop or terminal you open from the page shows on the page, with a back arrow to the list.
 
-The gear at the top right opens BB Box's settings. **New box** beside it adds one of your machines, since a box made on this page has no thread. The arrow beside New box has **New thread on a box**, which opens BB's new-thread screen: see [starting a thread on a new box](making-a-box.md#starting-a-thread-on-a-new-box).
+The gear at the top right opens BB Box's settings. **New box** beside it adds one of your machines, since a box made on this page has no thread. To start a thread on a box of its own, use BB's new-thread screen: see [starting a thread on a new box](making-a-box.md#starting-a-thread-on-a-new-box).
 
 ## Your machines
 

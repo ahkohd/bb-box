@@ -220,7 +220,7 @@ export function BoxRow({
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, threadId, box.id))}>
                   <Icon name="ExternalLink" aria-hidden />
-                  Open desktop in a browser tab
+                  Open in browser
                 </DropdownMenuItem>
               </>
             ) : null}
