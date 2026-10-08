@@ -741,7 +741,7 @@ export class TartBackend implements Backend {
     } else if (os === "windows" && !state.qemu.image) {
       why = `${host.name} has no Windows image ${image ?? ""} in ~/.bb-box/qemu/images. Prepare it there, or set the Windows image in bb-box's settings`;
     } else if (os === "macos" && macos.length + starting >= this.#config.vmsPerHost) {
-      const names = macos.map((vm) => vm.name).join(", ");
+      const names = macos.map((vm) => this.#vmWords(vm.name, state.owners.get(vm.name))).join(", ");
       why =
         `${host.name} runs ${macos.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}. ` +
         "Release or stop a macOS box, or stop another VM there";
@@ -1789,6 +1789,19 @@ export class TartBackend implements Backend {
     const made = (await this.#state(host, signal)).qemu.vms.get(guest.ref);
     if (!made) throw new TransportError("unreachable", `The VM ${guest.ref} on ${host.name} is not there.`);
     return made;
+  }
+
+  /**
+   * A running VM as a refusal or the doctor names it: the box it serves, where
+   * this install's owner file names one, as a claimed warm VM keeps its warm
+   * name (#599); otherwise its own name. The threads of spare boxes and your
+   * machines are core's SPARES and OPERATOR.
+   */
+  #vmWords(vm: string, owner: Readonly<Record<string, string>> | undefined): string {
+    if (!owner?.name || owner.install !== this.#context.installId) return vm;
+    if (owner.thread === "spare") return `spare box ${owner.name}`;
+    if (owner.thread === "operator") return `your machine ${owner.name}`;
+    return owner.thread ? `box ${owner.name} of thread ${owner.thread}` : `box ${owner.name}`;
   }
 
   /** A box's owner file: a Windows box's names its engine, QEMU (046). */

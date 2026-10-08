@@ -378,7 +378,8 @@ test("a Mac takes two macOS VMs; the third is refused with what to release", asy
   const capacity = await backend.capacity("macos", SMALL, []);
   assert.equal(capacity.ok, false);
   assert.match(capacity.message!, /mac1 runs 2 of the 2 macOS VMs/);
-  assert.match(capacity.message!, new RegExp(first.ref));
+  assert.match(capacity.message!, new RegExp(`box calm-otter-\\d+ of thread thr_abc123`), "names the box, not its VM");
+  assert.doesNotMatch(capacity.message!, new RegExp(first.ref));
   const third = identity();
   await assert.rejects(backend.acquire(third, null, hooks().hooks, signal()), (error: unknown) => error instanceof BackendError && error.code === "no_capacity");
   assert.equal(existsSync(join(owners, `bb-box-${third.boxId}`)), false);
