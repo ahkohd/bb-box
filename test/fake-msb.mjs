@@ -14,7 +14,7 @@
 // does. Running bb-box-start writes the ready file, as the image's command
 // does; neither create nor start runs it, as msb's do not. Every call is logged to log, one JSON array per line.
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import { join } from "node:path";
 
@@ -35,8 +35,26 @@ const read = (file, fallback) => (existsSync(join(root, file)) ? JSON.parse(read
 const host = read("host.json", {});
 const dir = (name) => join(root, "sandboxes", name);
 const names = () => readdirSync(join(root, "sandboxes")).filter((name) => existsSync(join(dir(name), "config.json")));
-const load = (name) => (existsSync(join(dir(name), "config.json")) ? JSON.parse(readFileSync(join(dir(name), "config.json"), "utf8")) : null);
-const save = (sandbox) => writeFileSync(join(dir(sandbox.name), "config.json"), JSON.stringify(sandbox, null, 2));
+/**
+ * A sandbox's config, or null when there is none. Other fake msb runs may
+ * remove a sandbox as this one reads it, as the backend's builder and
+ * helpers are removed in the background, so a config that goes as it is
+ * read is none.
+ */
+const load = (name) => {
+  try {
+    return JSON.parse(readFileSync(join(dir(name), "config.json"), "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+};
+/** Writes a config whole, through a file of its own renamed over it, so another run never reads half of one. */
+const save = (sandbox) => {
+  const file = join(dir(sandbox.name), "config.json");
+  writeFileSync(`${file}.${process.pid}`, JSON.stringify(sandbox, null, 2));
+  renameSync(`${file}.${process.pid}`, file);
+};
 const found = (name) => load(name) ?? fail(`sandbox not found: ${name}`);
 const labelled = (sandbox, filters) => filters.every((filter) => {
   const [key, ...value] = filter.split("=");
@@ -168,11 +186,11 @@ switch (command) {
     break;
   case "ls": {
     const { many } = flags(rest, ["--format"]);
-    console.log(JSON.stringify(names().map(load).filter((sandbox) => labelled(sandbox, many["--label"])).map((sandbox) => ({ name: sandbox.name, status: sandbox.status, image: sandbox.config.image.Oci.reference }))));
+    console.log(JSON.stringify(names().map(load).filter((sandbox) => sandbox && labelled(sandbox, many["--label"])).map((sandbox) => ({ name: sandbox.name, status: sandbox.status, image: sandbox.config.image.Oci.reference }))));
     break;
   }
   case "status":
-    console.log(JSON.stringify(names().map(load).map((sandbox) => ({ name: sandbox.name, status: sandbox.status, cpus: sandbox.config.resources.cpus, memory_mib: sandbox.config.resources.memory_mib }))));
+    console.log(JSON.stringify(names().map(load).filter(Boolean).map((sandbox) => ({ name: sandbox.name, status: sandbox.status, cpus: sandbox.config.resources.cpus, memory_mib: sandbox.config.resources.memory_mib }))));
     break;
   case "start": {
     const sandbox = found(rest.at(-1));
