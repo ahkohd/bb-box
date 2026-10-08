@@ -115,7 +115,13 @@ DOCKER_HOST=ssh://user@host setup/docker/build.sh     # on a Docker host over SS
   packages from a pinned snapshot, and checks every other download against
   its pinned SHA-256. When the snapshot service has an outage, the build
   retries for a few minutes, then fails: run it again later.
-- Once the images are built, `docker builder prune` frees the build cache.
+- The Docker host keeps the build's downloads between builds, in two of
+  BuildKit's cache mounts (#96): the pinned tool files (`bb-box-artifacts`)
+  and Ubuntu's packages (`bb-box-apt`). Each holds only what the current
+  pins and snapshot use, and each file is still checked, so a rebuild
+  downloads only what changed.
+- Once the images are built, `docker builder prune` frees the build cache,
+  the downloads too.
 - `--arch arm64`, on an arm64 Docker host, builds `bbbox/linux:1-arm64` and
   `bbbox/linux-desktop:1-arm64` for microsandbox on a Mac (053), from the
   same scripts with their arm64 pins, as for Tart's Linux images. Ubuntu has

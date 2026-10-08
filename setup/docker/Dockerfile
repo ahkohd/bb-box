@@ -9,7 +9,9 @@
 ARG UBUNTU=ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
 
 # The artifacts the guest scripts install, each checked against its pinned
-# SHA-256, as fetch-artifacts.sh does on a Proxmox host.
+# SHA-256, as fetch-artifacts.sh does on a Proxmox host. The pinned files are
+# kept between builds in a cache on the Docker host, bb-box-artifacts, which
+# holds the current pins' files only (#96).
 FROM ${UBUNTU} AS fetch
 # BuildKit's name for the platform's architecture, amd64 or arm64, as the
 # guest scripts' pins name it, x86_64 or arm64.
@@ -18,15 +20,18 @@ RUN apt-get update -q && apt-get install -y -q --no-install-recommends ca-certif
   && rm -rf /var/lib/apt/lists/*
 COPY proxmox-lxc/host/common.sh /src/host/
 COPY proxmox-lxc/template/fetch-artifacts.sh proxmox-lxc/template/pins.json proxmox-lxc/template/desktop-pins.tsv /src/template/
-RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts linux "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
+RUN --mount=type=cache,id=bb-box-artifacts,target=/var/cache/bb-box-artifacts,sharing=locked \
+    BBBOX_ENV=/nonexistent BBBOX_BB_URL= BBBOX_ARTIFACT_CACHE=/var/cache/bb-box-artifacts bash /src/template/fetch-artifacts.sh /artifacts linux "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
 
 FROM fetch AS fetch-desktop
 ARG TARGETARCH
-RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-cpu "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
+RUN --mount=type=cache,id=bb-box-artifacts,target=/var/cache/bb-box-artifacts,sharing=locked \
+    BBBOX_ENV=/nonexistent BBBOX_BB_URL= BBBOX_ARTIFACT_CACHE=/var/cache/bb-box-artifacts bash /src/template/fetch-artifacts.sh /artifacts desktop-cpu "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
 
 FROM fetch AS fetch-desktop-wayland
 ARG TARGETARCH
-RUN BBBOX_ENV=/nonexistent BBBOX_BB_URL= bash /src/template/fetch-artifacts.sh /artifacts desktop-wayland-cpu "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
+RUN --mount=type=cache,id=bb-box-artifacts,target=/var/cache/bb-box-artifacts,sharing=locked \
+    BBBOX_ENV=/nonexistent BBBOX_BB_URL= BBBOX_ARTIFACT_CACHE=/var/cache/bb-box-artifacts bash /src/template/fetch-artifacts.sh /artifacts desktop-wayland-cpu "$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x86_64)"
 
 # BB's host app from BB's server, to pre-install it, so a box enrols without
 # downloading it. Empty BB_URL: boxes download it when they enrol.
@@ -51,6 +56,7 @@ RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch,source=/artifacts,target=/mnt/artifacts \
     --mount=type=bind,from=fetch,source=/etc/ssl/certs/ca-certificates.crt,target=/mnt/ca-certificates.crt \
+    --mount=type=cache,id=bb-box-apt,target=/var/cache/bb-box-apt,sharing=locked \
     bash /mnt/customize.sh linux
 ARG BB_URL=
 ARG BB_APP_SHA256=
@@ -68,6 +74,7 @@ RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch-desktop,source=/artifacts,target=/mnt/artifacts \
     --mount=type=bind,from=fetch,source=/etc/ssl/certs/ca-certificates.crt,target=/mnt/ca-certificates.crt \
+    --mount=type=cache,id=bb-box-apt,target=/var/cache/bb-box-apt,sharing=locked \
     bash /mnt/customize.sh desktop
 ARG BB_URL=
 ARG BB_APP_SHA256=
@@ -89,6 +96,7 @@ RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch-desktop-wayland,source=/artifacts,target=/mnt/artifacts \
     --mount=type=bind,from=fetch,source=/etc/ssl/certs/ca-certificates.crt,target=/mnt/ca-certificates.crt \
+    --mount=type=cache,id=bb-box-apt,target=/var/cache/bb-box-apt,sharing=locked \
     bash /mnt/customize.sh desktop-wayland
 ARG BB_URL=
 ARG BB_APP_SHA256=
