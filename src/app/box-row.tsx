@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { IconButton, isArm64Badge, KindBadges, lacksDocker, Meta, osName, relativeTime, SETTINGS_PATH, StatusDot } from "./common.tsx";
+import { IconButton, isArm64Badge, KindBadges, lacksDocker, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine } from "./common.tsx";
 import { pageUrl, useOpenDesktop } from "./desktop.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
@@ -147,25 +147,10 @@ export function BoxRow({
           onClick={onToggle}
           className="block w-full min-w-0 cursor-pointer rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
-          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="min-w-0 truncate text-sm font-medium text-foreground">{box.name}</span>
-            <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{osName(box.os)}</span>
-            <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={held !== null} />
-          </span>
+          {/* Each line stays one line in the panel's 560 px: the name and kind, then the state and what to act on. */}
+          <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={held !== null} />} />
         </button>
-        <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-          <StatusDot tone={status.tone} />
-          <Meta
-            items={[
-              ...status.items.map((item, index) => (
-                <span key={index} className={cn(item.tone === "fg" && "text-foreground", item.tone === "warn" && "text-warning-text", item.tone === "danger" && "text-destructive-text")}>
-                  {item.text}
-                </span>
-              )),
-              ...meta,
-            ]}
-          />
-        </div>
+        <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
         {box.stopped ? <p className="mt-0.5 text-xs leading-snug text-warning-text">{box.stopped}</p> : null}
         {held ? (

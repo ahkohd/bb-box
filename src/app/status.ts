@@ -48,44 +48,46 @@ export function compactSize(words: string): string {
     .join(" · ");
 }
 
+/**
+ * A box's status line: the state first, then what to act on (a desktop's
+ * display on the CPU, who has control, a failed join), then the BB machine's
+ * timing and the size. A narrow row cuts the line from its end, and the
+ * details say the timing and size too.
+ */
 export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<string> = new Set()): Status {
-  const rest: StatusItem[] = [];
-  if (box.size) rest.push({ text: compactSize(box.size) });
+  const alerts: StatusItem[] = [];
   const display = displayWord(box);
-  if (display) rest.push(display);
+  if (display) alerts.push(display);
   const control = controlWord(box, myViewers);
-  if (control) rest.push(control);
+  if (control) alerts.push(control);
+  const size: StatusItem[] = box.size ? [{ text: compactSize(box.size) }] : [];
 
   switch (box.state) {
     case "acquiring":
     case "starting":
-      return { tone: "busy", items: [{ text: "Starting" }, { text: seconds(Math.max(0, now - box.createdAt)) }, ...rest] };
+      return { tone: "busy", items: [{ text: "Starting" }, { text: seconds(Math.max(0, now - box.createdAt)) }, ...alerts, ...size] };
     case "stopping":
-      return { tone: "busy", items: [{ text: "Stopping…" }, ...rest] };
+      return { tone: "busy", items: [{ text: "Stopping…" }, ...alerts, ...size] };
     case "releasing":
       return { tone: "busy", items: [{ text: "Releasing…" }] };
     case "stopped":
-      return { tone: "off", items: [{ text: "Stopped" }, ...rest] };
+      return { tone: "off", items: [{ text: "Stopped" }, ...alerts, ...size] };
     case "failed":
       return { tone: "bad", items: [{ text: "Failed", tone: "danger" }] };
     case "gone":
       return { tone: "bad", items: [{ text: "Gone" }, { text: "deleted outside bb-box" }] };
     case "ready": {
-      const items: StatusItem[] = [{ text: box.timings.total !== undefined ? `Ready in ${seconds(box.timings.total)}` : "Ready" }];
+      const state: StatusItem = { text: box.timings.total !== undefined ? `Ready in ${seconds(box.timings.total)}` : "Ready" };
       switch (box.enrol.state) {
         case "enrolling":
-          items.push({ text: "Joining BB…" });
-          break;
+          return { tone: "ok", items: [state, ...alerts, { text: "Joining BB…" }, ...size] };
         case "enrolled":
-          items.push({ text: box.role === "machine" ? "This thread's machine" : box.timings.enrol !== undefined ? `BB machine in ${seconds(box.timings.enrol)}` : "BB machine" });
-          break;
+          return { tone: "ok", items: [state, ...alerts, { text: box.role === "machine" ? "This thread's machine" : box.timings.enrol !== undefined ? `BB machine in ${seconds(box.timings.enrol)}` : "BB machine" }, ...size] };
         case "failed":
-          items.push({ text: "Could not join BB", tone: "warn" });
-          break;
+          return { tone: "ok", items: [state, { text: "Could not join BB", tone: "warn" }, ...alerts, ...size] };
         default:
-          break;
+          return { tone: "ok", items: [state, ...alerts, ...size] };
       }
-      return { tone: "ok", items: [...items, ...rest] };
     }
   }
 }
