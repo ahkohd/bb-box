@@ -12,17 +12,30 @@ export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
 # The environment programs on the desktop get: WAYLAND_DISPLAY, SWAYSOCK.
 if [ -r /run/bb-box/display.env ]; then set -a; . /run/bb-box/display.env; set +a; fi
 t() { printf '%-26s ' "$1"; shift; out=$("$@" 2>&1) && echo "ok   ${out:0:400}" || echo "FAIL ${out:0:400}"; }
+# Where it runs (#598): under systemd, as a Proxmox LXC box or a VM, or in a
+# Docker or microsandbox box, whose bb-box-start does what the units do. A
+# line that does not apply there says skip, which no reader takes for a FAIL.
+if [ -d /run/systemd/system ]; then runtime=systemd
+else case "$(tr '\0' ' ' </proc/1/cmdline 2>/dev/null)" in /init.krun*) runtime=microsandbox ;; *) runtime=docker ;; esac; fi
+s() { printf '%-26s skip %s\n' "$1" "$2"; }
+# Docker's lines, where the box has Docker: always under systemd (041), and in
+# a Docker or microsandbox box when bb-box-start listens on its socket.
+docker=; [ "$runtime" = systemd ] || [ -S /run/docker.sock ] && docker=1
+d() { if [ -n "$docker" ]; then t "$@"; else s "$1" "this box has no Docker"; fi; }
 libexec=/usr/local/libexec/bb-box
 home=$(getent passwd "$(id -un)" | cut -d: -f6)
 socket=$home/.cache/cua-driver/cua-driver.sock
 
 # Docker starts on first use (041): stopped after boot, then quick to start.
-t "docker stopped after boot" sh -c '! pgrep -x dockerd >/dev/null || { echo "dockerd runs"; exit 1; }; ! pgrep -x containerd >/dev/null || { echo "containerd runs"; exit 1; }; echo "docker.socket $(systemctl is-active docker.socket)"'
-t "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Server.Version}}" >/dev/null || exit 1; ms=$(( ($(date +%s%N) - s) / 1000000 )); echo "$ms ms (limit 2000)"; [ "$ms" -le 2000 ]'
+d "docker stopped after boot" sh -c '! pgrep -x dockerd >/dev/null || { echo "dockerd runs"; exit 1; }; ! pgrep -x containerd >/dev/null || { echo "containerd runs"; exit 1; }; if [ -d /run/systemd/system ]; then echo "docker.socket $(systemctl is-active docker.socket)"; else echo "bb-box-start listens on /run/docker.sock"; fi'
+d "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Server.Version}}" >/dev/null || exit 1; ms=$(( ($(date +%s%N) - s) / 1000000 )); echo "$ms ms (limit 2000)"; [ "$ms" -le 2000 ]'
 # A TUN device, for Tailscale and other VPNs (050): build.sh gives a
-# template /dev/net/tun, and a VM has its own.
-t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'
-t "services" sh -c 'systemctl is-active bb-box-display bb-box-vnc | paste -sd " "'
+# template /dev/net/tun, a VM and a microsandbox box have their own, and a
+# Docker box has its host's, where the host has one.
+if [ "$runtime" = docker ] && [ ! -e /dev/net/tun ]; then s "TUN device" "none from this Docker host, so Tailscale runs in userspace (050)"
+else t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'; fi
+if [ "$runtime" = systemd ]; then t "services" sh -c 'systemctl is-active bb-box-display bb-box-vnc | paste -sd " "'
+else s "services" "bb-box-start runs Sway and wayvnc, which the lines below check"; fi
 t "display mode" sh -c 'echo "$(cat /run/bb-box/display-mode): $(cat /run/bb-box/display-reason)"'
 t "Sway and its output" sh -c 'swaymsg -r -t get_version | python3 -c "import json,sys; print(json.load(sys.stdin)[\"human_readable\"])" | tr "\n" " "; swaymsg -r -t get_outputs | python3 -c "import json,sys; o=json.load(sys.stdin)[0]; print(o[\"name\"], \"%dx%d\" % (o[\"rect\"][\"width\"], o[\"rect\"][\"height\"]))"'
 t "bar (Waybar)" sh -c 'pgrep -u "$(id -un)" -x waybar >/dev/null && echo waybar'
@@ -33,7 +46,7 @@ t "no Xwayland, no DISPLAY" sh -c '
   swaymsg -r -t get_config | python3 -c "import json,sys; print(json.load(sys.stdin)[\"config\"])" | grep -qx "xwayland disable" || { echo "Sway config lacks xwayland disable"; exit 1; }
   [ -z "${DISPLAY:-}" ] || { echo "DISPLAY=$DISPLAY in this shell"; exit 1; }
   ! grep -rqs "^DISPLAY=" /etc/environment /etc/environment.d || { echo "DISPLAY in /etc/environment"; exit 1; }
-  ! systemctl --user show-environment | grep -q "^DISPLAY=" || { echo "DISPLAY in the user manager"; exit 1; }
+  [ ! -d /run/systemd/system ] || ! systemctl --user show-environment | grep -q "^DISPLAY=" || { echo "DISPLAY in the user manager"; exit 1; }
   echo "none; WAYLAND_DISPLAY=$WAYLAND_DISPLAY"'
 t "VNC sign-in, first frame" node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password
 # As the backend resizes a viewer's desktop (021): display resize, then a new
@@ -77,7 +90,7 @@ t "viewer leaves at a resize" bash -c '
   resize_to "$before" >/dev/null || ok=1
   [ $ok = 0 ] && echo "a new viewer has $got, wayvnc runs on"; exit $ok'
 t "at-spi bus" sh -c 'n=$(pgrep -u "$(id -un)" -c at-spi-bus-laun); a=$(busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress) || exit 1; [ "$n" -le 1 ] || { echo "$n bus launchers"; exit 1; }; echo "$a" | cut -c1-60'
-t "Cua Driver daemon" sh -c 'systemctl --user is-active bb-box-cua-driver && cua-driver telemetry status | sed -n 1p'
+t "Cua Driver daemon" sh -c 'if [ -d /run/systemd/system ]; then systemctl --user is-active bb-box-cua-driver; else pgrep -u "$(id -un)" -x cua-driver >/dev/null && echo "started by bb-box-start"; fi && cua-driver telemetry status | sed -n 1p'
 # Cua's get_screen_size is X11's; on Wayland it lists the windows through Sway.
 t "Cua Driver over MCP" node $libexec/cua-probe.mjs --socket "$socket" --call list_windows
 t "Cua: a GTK 4 window" node $libexec/cua-launch-probe.mjs --socket "$socket" --app gtk4-demo --min 10

@@ -8,14 +8,27 @@ export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 # The environment programs on :99 get for the current display path.
 if [ -r /run/bb-box/display.env ]; then set -a; . /run/bb-box/display.env; set +a; fi
 t() { printf '%-26s ' "$1"; shift; out=$("$@" 2>&1) && echo "ok   ${out:0:400}" || echo "FAIL ${out:0:400}"; }
+# Where it runs (#598): under systemd, as a Proxmox LXC box or a VM, or in a
+# Docker or microsandbox box, whose bb-box-start does what the units do. A
+# line that does not apply there says skip, which no reader takes for a FAIL.
+if [ -d /run/systemd/system ]; then runtime=systemd
+else case "$(tr '\0' ' ' </proc/1/cmdline 2>/dev/null)" in /init.krun*) runtime=microsandbox ;; *) runtime=docker ;; esac; fi
+s() { printf '%-26s skip %s\n' "$1" "$2"; }
+# Docker's lines, where the box has Docker: always under systemd (041), and in
+# a Docker or microsandbox box when bb-box-start listens on its socket.
+docker=; [ "$runtime" = systemd ] || [ -S /run/docker.sock ] && docker=1
+d() { if [ -n "$docker" ]; then t "$@"; else s "$1" "this box has no Docker"; fi; }
 
 # Docker starts on first use (041): stopped after boot, then quick to start.
-t "docker stopped after boot" sh -c '! pgrep -x dockerd >/dev/null || { echo "dockerd runs"; exit 1; }; ! pgrep -x containerd >/dev/null || { echo "containerd runs"; exit 1; }; echo "docker.socket $(systemctl is-active docker.socket)"'
-t "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Server.Version}}" >/dev/null || exit 1; ms=$(( ($(date +%s%N) - s) / 1000000 )); echo "$ms ms (limit 2000)"; [ "$ms" -le 2000 ]'
+d "docker stopped after boot" sh -c '! pgrep -x dockerd >/dev/null || { echo "dockerd runs"; exit 1; }; ! pgrep -x containerd >/dev/null || { echo "containerd runs"; exit 1; }; if [ -d /run/systemd/system ]; then echo "docker.socket $(systemctl is-active docker.socket)"; else echo "bb-box-start listens on /run/docker.sock"; fi'
+d "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Server.Version}}" >/dev/null || exit 1; ms=$(( ($(date +%s%N) - s) / 1000000 )); echo "$ms ms (limit 2000)"; [ "$ms" -le 2000 ]'
 # A TUN device, for Tailscale and other VPNs (050): build.sh gives a
-# template /dev/net/tun, and a VM has its own.
-t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'
-t "services" systemctl is-active bb-box-display bb-box-session
+# template /dev/net/tun, a VM and a microsandbox box have their own, and a
+# Docker box has its host's, where the host has one.
+if [ "$runtime" = docker ] && [ ! -e /dev/net/tun ]; then s "TUN device" "none from this Docker host, so Tailscale runs in userspace (050)"
+else t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'; fi
+if [ "$runtime" = systemd ]; then t "services" systemctl is-active bb-box-display bb-box-session
+else s "services" "bb-box-start runs the display and the session, which the lines below check"; fi
 t "display mode" sh -c 'echo "$(cat /run/bb-box/display-mode): $(cat /run/bb-box/display-reason)"'
 t "display :99" sh -c 'xdpyinfo | grep -m1 dimensions | tr -s " "; xdpyinfo -queryExtensions | grep -oE "NV-GLX|GLX|XTEST|RANDR" | sort -u | tr "\n" " "'
 t "XFCE running" sh -c 'pgrep -u "$(id -un)" -x xfwm4 >/dev/null && pgrep -u "$(id -un)" -x xfce4-panel >/dev/null && echo xfwm4 xfce4-panel'
@@ -59,7 +72,7 @@ t "Mousepad opens a window" sh -c '
   [ -n "$new" ] && echo "$(wmctrl -l | awk -v w="$new" "\$1 == w { \$1 = \$2 = \$3 = \"\"; sub(/^ +/, \"\"); print }")" && wmctrl -ic "$new"'
 
 home=$(getent passwd "$(id -un)" | cut -d: -f6)
-t "Cua Driver daemon" sh -c 'systemctl --user is-active bb-box-cua-driver && cua-driver telemetry status | head -1'
+t "Cua Driver daemon" sh -c 'if [ -d /run/systemd/system ]; then systemctl --user is-active bb-box-cua-driver; else pgrep -u "$(id -un)" -x cua-driver >/dev/null && echo "started by bb-box-start"; fi && cua-driver telemetry status | head -1'
 t "Cua Driver over MCP" node /usr/local/libexec/bb-box/cua-probe.mjs --socket "$home/.cache/cua-driver/cua-driver.sock"
 
 if [ "${1:-}" = --gpui ] && [ -n "${2:-}" ]; then
