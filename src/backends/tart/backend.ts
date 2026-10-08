@@ -397,7 +397,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
     "linux-arm64": {
       id: "linux-arm64",
       label: "Linux on arm64",
-      description: "A Linux VM on arm64, on a Mac with Apple silicon. amd64 container images and x86_64 binaries do not run there.",
+      description: "A Linux box on an arm64 host, such as a Mac with Apple silicon. amd64 container images and x86_64 binaries do not run there.",
       requires: [],
       capabilities: { os: "linux", arch: "arm64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
       readyTimeoutMs: READY_TIMEOUT_MS,
@@ -406,7 +406,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
       id: "linux-arm64-desktop-cpu",
       label: "Linux desktop on arm64",
       description:
-        "A Linux desktop VM on arm64, drawn by the CPU, on a Mac with Apple silicon, for computer use and browsers. amd64 container images and x86_64 binaries do not run there.",
+        "A Linux desktop on an arm64 host, such as a Mac with Apple silicon, drawn by the CPU, for computer use and browsers. amd64 container images and x86_64 binaries do not run there.",
       requires: [],
       capabilities: {
         os: "linux",

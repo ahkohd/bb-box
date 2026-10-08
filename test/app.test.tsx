@@ -16,6 +16,7 @@ import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from 
 import { SelkiesSession } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
+import { backendName } from "../src/app/settings-backends.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
@@ -2890,6 +2891,12 @@ test("New box's new-thread inputs offer the Image group with the project's image
   await waitFor(() => expect(outside.at(-1)).toEqual({ kind: "linux", size: "small", image: "go-tools" }));
 });
 
+test("a second backend of a type shows the name in its ID, unless its label already says it (053)", () => {
+  expect(backendName("microsandbox:homestead", "microsandbox on homestead")).toBeNull();
+  expect(backendName("docker:attic", "Docker")).toBe("attic");
+  expect(backendName("microsandbox", "microsandbox on behemoth")).toBeNull();
+});
+
 test("the form's words: a provider's title, the systems' hosts, the nearest choice and the filters", () => {
   const linux = KINDS[0]!;
   const offer = linux.offers[0]!;
@@ -2899,6 +2906,11 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   // A Docker machine BB has not named yet is never shown by its ID (the operator's rule).
   expect(providerTitle({ ...offer, type: "docker", label: "Docker", hosts: [] })).toBe("an unnamed machine");
   expect(providerTitle({ ...offer, type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
+  // Docker and microsandbox on one host: each says which it is; a host of its own needs no more (053).
+  const onBehemoth = { ...offer, backend: "docker", type: "docker", label: "Docker", hosts: ["behemoth"] };
+  const msb = { ...offer, backend: "microsandbox", type: "microsandbox", label: "microsandbox", hosts: ["behemoth"] };
+  const all = [offer, onBehemoth, msb];
+  expect([providerTitle(onBehemoth, all), providerTitle(msb, all), providerTitle(offer, all)]).toEqual(["behemoth (Docker)", "behemoth (microsandbox)", "pve"]);
   const mac: KindView = { ...linux, id: "macos", os: "macos", arch: "arm64", offers: [{ ...offer, backend: "tart", type: "tart", label: "Tart", hosts: ["mac-mini"], hostOs: "macos" }] };
   const many: KindView = { ...linux, id: "linux-arm64", arch: "arm64", offers: [offer, { ...offer, backend: "b", hosts: ["pve2"] }, { ...offer, backend: "c", hosts: ["pve3"] }] };
   expect(systemsOf([mac, many, linux]).map((system) => [system.label, system.words])).toEqual([

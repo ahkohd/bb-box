@@ -80,7 +80,7 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Host",
     description:
-      "The Linux host with KVM that runs the boxes: ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there, in a folder of its own.",
+      "The host that runs the boxes, a Linux host with KVM or a Mac: ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there, in a folder of its own.",
     group: "connection",
     default: "",
   },
@@ -100,7 +100,7 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   },
   [MSB_KEYS.arm64Image]: {
     type: "string",
-    label: "Linux image on arm64",
+    label: "Linux image (arm64)",
     description:
       "The image linux-arm64 boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off.",
     group: "boxes",
@@ -108,7 +108,7 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   },
   [MSB_KEYS.arm64DesktopImage]: {
     type: "string",
-    label: "Desktop image on arm64",
+    label: "Desktop image (arm64)",
     description:
       "The image linux-arm64-desktop-cpu boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off.",
     group: "boxes",
@@ -159,7 +159,7 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [MSB_KEYS.memoryOvercommit]: {
     type: "number",
     label: "Memory overcommit",
-    description: "The boxes' memory may add up to this many times the host's, less the memory kept free. 1 counts each box at its full memory. Raise it for mostly idle boxes.",
+    description: "How many times the host's memory the boxes may take in all, after the memory kept free: 1 to 4. At 1, each box counts at its full memory. Above 1, a new box also needs memory free on the host now. Raise it for mostly idle boxes.",
     group: "advanced",
     default: MSB_DEFAULTS.memoryOvercommit,
   },

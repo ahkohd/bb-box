@@ -85,6 +85,15 @@ function stateOf(model: BackendRowModel): { tone: Tone; words: string; items: Re
   };
 }
 
+/**
+ * The name in a backend's ID, as a second backend of a type has ("microsandbox:homestead"), for a chip beside its label;
+ * null when it has none, or its label already says it ("microsandbox on homestead").
+ */
+export function backendName(id: string, label: string): string | null {
+  const named = id.includes(":") ? id.slice(id.indexOf(":") + 1) : null;
+  return named && !label.toLowerCase().includes(named.toLowerCase()) ? named : null;
+}
+
 export function BackendRow({
   model,
   open,
@@ -103,7 +112,7 @@ export function BackendRow({
   const { driver, config, state } = model;
   const { tone, words, items } = stateOf(model);
   const label = state?.label ?? config?.label ?? driver.label;
-  const name = config && config.id.includes(":") ? config.id.slice(config.id.indexOf(":") + 1) : null;
+  const name = config ? backendName(config.id, label) : null;
   const boxes = state?.boxes ?? 0;
   return (
     <div className="py-3 first:pt-0 last:pb-0">

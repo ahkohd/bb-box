@@ -155,7 +155,7 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
     id: "linux",
     flavour: "linux",
     label: "Linux",
-    description: "A Linux container for builds, backend services and the agent's own work.",
+    description: "A Linux box for builds, backend services and the agent's own work.",
     requires: [],
     capabilities: { os: "linux", arch: "x86_64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
     readyTimeoutMs: READY_TIMEOUT_MS,

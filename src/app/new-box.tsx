@@ -487,13 +487,14 @@ export function NewBox({
                 <ProviderRow
                   key={offer.backend}
                   offer={offer}
+                  among={offers}
                   ready={readyOn(offer)}
                   selected={onOffer?.backend === offer.backend}
                   onClick={() => setOn(offer.backend)}
                   optionRef={(element) => {
                     providerOptions.current[index + (choiceless ? 0 : 1)] = element;
                   }}
-                  info={profile ? <ProviderInfo offer={offer} loaded={profiles.get(offer.backend)} load={() => loadProfile(offer.backend)} /> : undefined}
+                  info={profile ? <ProviderInfo offer={offer} among={offers} loaded={profiles.get(offer.backend)} load={() => loadProfile(offer.backend)} /> : undefined}
                 />
               ))}
             </div>
