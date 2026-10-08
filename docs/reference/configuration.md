@@ -206,21 +206,21 @@ Setup: [setup/docker/README.md](../../setup/docker/README.md).
 
 ### microsandbox
 
-microsandbox: Linux boxes, with or without a desktop, as microVMs that start in under a second, on a Linux host with KVM. bb-box installs its own msb there.
+microsandbox: Linux boxes, with or without a desktop, as microVMs that start in under a second, on a Linux host with KVM or a Mac. bb-box installs its own msb there.
 
 Setup: [setup/microsandbox/README.md](../../setup/microsandbox/README.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `host` | Host | string | connection |  | The Linux host with KVM that runs the boxes: ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there, in a folder of its own. |
+| `host` | Host | string | connection |  | The host that runs the boxes, a Linux host with KVM or a Mac: ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there, in a folder of its own. |
 | `linux-image` | Linux image | string | boxes | `bbbox/linux:1` | The image linux boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off. |
 | `desktop-image` | Desktop image | string | boxes | `bbbox/linux-desktop:1` | The image linux-desktop-cpu boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off. |
-| `linux-arm64-image` | Linux image on arm64 | string | boxes | `bbbox/linux:1-arm64` | The image linux-arm64 boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off. |
-| `desktop-arm64-image` | Desktop image on arm64 | string | boxes | `bbbox/linux-desktop:1-arm64` | The image linux-arm64-desktop-cpu boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off. |
+| `linux-arm64-image` | Linux image (arm64) | string | boxes | `bbbox/linux:1-arm64` | The image linux-arm64 boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off. |
+| `desktop-arm64-image` | Desktop image (arm64) | string | boxes | `bbbox/linux-desktop:1-arm64` | The image linux-arm64-desktop-cpu boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off. |
 | `docker` | Docker in boxes | boolean | boxes | `true` | Give each box its own Docker daemon, started by its first docker command, with its data on a disk of the box's own. Each box has its own kernel, so this needs no privilege on the host. |
 | `docker-disk-gib` | Docker disk (GiB) | number | advanced | `64` | The most each box's Docker disk may grow to. It takes only what Docker writes, and goes with the box. |
 | `disk-gib` | Root disk (GiB) | number | advanced | `32` | The most a box's root disk may grow to when no disk size is asked for. It takes only what the box writes. |
 | `network` | Network profiles | string | advanced | `public,private` | msb's network profiles for each box, comma-separated: public reaches the internet, private the host's local networks and tailnet, where BB's server often is. |
 | `boxes` | Most boxes | number | advanced | `20` | The most bb-box microVMs on the host at once, running or stopped, counting those of every bb-box install that uses it. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | A new box is refused if the host would have less memory than this left, after the memory of the running boxes. |
-| `memory-overcommit` | Memory overcommit | number | advanced | `1` | The boxes' memory may add up to this many times the host's, less the memory kept free. 1 counts each box at its full memory. Raise it for mostly idle boxes. |
+| `memory-overcommit` | Memory overcommit | number | advanced | `1` | How many times the host's memory the boxes may take in all, after the memory kept free: 1 to 4. At 1, each box counts at its full memory. Above 1, a new box also needs memory free on the host now. Raise it for mostly idle boxes. |

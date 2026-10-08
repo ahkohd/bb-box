@@ -37,12 +37,20 @@ function archOf(kind: KindView): Arch {
   return kind.arch === "arm64" ? "arm64" : "x86_64";
 }
 
-/** The provider's name for a row: its one host, a count of hosts, or the backend's label; never an ID. */
-export function providerTitle(offer: OfferView): string {
-  if (offer.hosts.length === 1) return offer.hosts[0]!;
-  if (offer.hosts.length > 1) return `${offer.hosts.length} ${offer.type === "tart" ? "Macs" : "hosts"}`;
-  if (offer.type === "docker") return "an unnamed machine";
-  return offer.label;
+/**
+ * The provider's name for a row: its one host, a count of hosts, or the backend's label; never an ID. Where another of
+ * `among` has the same name, as Docker and microsandbox on one host, the backend's label goes with it (053).
+ */
+export function providerTitle(offer: OfferView, among: readonly OfferView[] = []): string {
+  const base = (one: OfferView) => {
+    if (one.hosts.length === 1) return one.hosts[0]!;
+    if (one.hosts.length > 1) return `${one.hosts.length} ${one.type === "tart" ? "Macs" : "hosts"}`;
+    if (one.type === "docker") return "an unnamed machine";
+    return one.label;
+  };
+  const title = base(offer);
+  const shared = among.some((other) => other.backend !== offer.backend && other.label !== offer.label && base(other) === title);
+  return shared ? `${title} (${offer.label})` : title;
 }
 
 /** The systems on offer, each with the names of its hosts, or how many providers it has when there are many. */
@@ -74,6 +82,23 @@ export function typeAvailable(kinds: readonly KindView[], os: GuestOs, arch: Arc
 export function gpuChoices(kinds: readonly KindView[], os: GuestOs, arch: Arch, windowing: Windowing): { readonly none: boolean; readonly gpu: boolean } {
   const desktops = kindsAt(kinds, os, arch).filter((kind) => kind.desktop && kind.windowing === windowing);
   return { none: desktops.some((kind) => !kind.gpu), gpu: desktops.some((kind) => kind.gpu) };
+}
+
+/**
+ * The note under the GPU menu when no GPU has room for a desktop (#603):
+ * every offer lately read each of its GPUs full. Null while one has room, or
+ * has not read its GPUs: the form says nothing when nothing is in the way.
+ */
+export function gpuFullNote(offers: readonly OfferView[], now: number): string | null {
+  const rooms = offers.map((offer) => offer.gpuRoom);
+  if (!rooms.length || rooms.some((room) => !room?.readings.length || room.fullUntil === null || room.fullUntil <= now)) return null;
+  const readings = rooms.flatMap((room) => room!.readings);
+  const most = Math.max(...readings.map((reading) => reading.freeMiB));
+  const minutes = Math.max(1, Math.ceil((Math.min(...rooms.map((room) => room!.fullUntil!)) - now) / 60_000));
+  return (
+    `No GPU has room now: ${readings.length > 1 ? "at most " : ""}${most} MiB free, and a desktop needs ${readings[0]!.neededMiB} MiB. ` +
+    `Choose None, or try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`
+  );
 }
 
 /** For a desktop: whether an X11 desktop and a Wayland one both exist, so the windowing is a choice (048). */
@@ -323,7 +348,24 @@ export function OptionCard({
  * shifts; a touch screen, with no hover, shows it on the chosen row (the
  * operator's notes of 2 October 2026).
  */
-export function ProviderRow({ offer, ready, selected, onClick, optionRef, info }: { offer: OfferView; ready?: boolean; selected: boolean; onClick: () => void; optionRef?: (element: HTMLButtonElement | null) => void; info?: ReactNode }) {
+export function ProviderRow({
+  offer,
+  among,
+  ready,
+  selected,
+  onClick,
+  optionRef,
+  info,
+}: {
+  offer: OfferView;
+  /** The kind's other offers, whose names this row's must not repeat. */
+  among?: readonly OfferView[];
+  ready?: boolean;
+  selected: boolean;
+  onClick: () => void;
+  optionRef?: (element: HTMLButtonElement | null) => void;
+  info?: ReactNode;
+}) {
   return (
     <div className={cn("group flex items-center rounded-md border", selected ? "border-transparent bg-state-active" : "border-input hover:bg-state-hover")}>
       <button
@@ -335,7 +377,7 @@ export function ProviderRow({ offer, ready, selected, onClick, optionRef, info }
         onClick={onClick}
         className="flex min-w-0 flex-1 flex-col items-start rounded-md px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
-        <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer)}</span>
+        <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer, among)}</span>
         <OfferWords offer={offer} ready={ready} />
       </button>
       {info ? (

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -18,7 +18,8 @@ import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
 import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
-import { adminText, boxDetail, boxView, kindViews } from "../src/plugin/views.ts";
+import { gpuRoomText } from "../src/plugin/tools.ts";
+import { adminText, boxDetail, boxView, gpuRooms, kindViews } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -541,6 +542,48 @@ test("box details and kind lists say whether the box user can become root", asyn
   assert.equal(linux!.computerUse, false);
   const [desktop] = kindViews([{ kind: FAKE_KINDS[1]!, backend: lxc }], {});
   assert.deepEqual([desktop!.computerUse, desktop!.offers[0]!.resizable], [true, true]);
+});
+
+test("a GPU desktop's offers carry its GPUs' room as last read, and box_list says it (#603)", async () => {
+  const gpuKind: BoxKind = { ...FAKE_KINDS[1]!, capabilities: { ...FAKE_KINDS[1]!.capabilities, gpu: true } };
+  const cpuKind: BoxKind = { ...FAKE_KINDS[1]!, id: "linux-desktop-cpu" };
+  const now = 1_790_000_000_000;
+  const reading = (id: string, freeMiB: number, totalMiB: number | null, age: number) => ({ id, freeMiB, totalMiB, at: now - age, neededMiB: 384 });
+  let room: GpuRoom = { readings: [reading("gpu-a", 6100, 8192, 2 * 60_000)], fullUntil: null };
+  const lxc = { id: "proxmox-lxc", label: "Proxmox LXC", hosts: ["pve"], gpuRoom: async () => room } as unknown as Backend;
+  const docker = { id: "docker:host_1", label: "Docker", hosts: ["devpc"] } as unknown as Backend;
+  const views = async (offered: { kind: BoxKind; backend: Backend }[]) => kindViews(offered, {}, {}, {}, {}, {}, undefined, await gpuRooms(offered));
+
+  const [desktop, cpu] = await views([
+    { kind: gpuKind, backend: lxc },
+    { kind: cpuKind, backend: lxc },
+  ]);
+  assert.deepEqual(desktop!.offers[0]!.gpuRoom, room);
+  assert.equal(cpu!.offers[0]!.gpuRoom, null, "a kind without a GPU shows no GPU room");
+  assert.equal(gpuRoomText(desktop!, [desktop!, cpu!], now), " GPU memory: gpu-a 6100 of 8192 MiB free, 2 minutes ago; a desktop needs 384 MiB.");
+
+  room = { readings: [reading("gpu-a", 103, 8192, 60_000), reading("gpu-b", 21, null, 0)], fullUntil: now + 4 * 60_000 };
+  const [full] = await views([{ kind: gpuKind, backend: lxc }]);
+  assert.equal(
+    gpuRoomText(full!, [full!, cpu!], now),
+    " No GPU has room for a desktop now (gpu-a 103 MiB free, 1 minute ago; gpu-b 21 MiB free, just now; a desktop needs 384 MiB). " +
+      "Acquire linux-desktop-cpu instead, or try again in 4 minutes.",
+  );
+  assert.match(gpuRoomText(full!, [full!], now), /needs 384 MiB\)\. Try again in 4 minutes\.$/, "with no CPU desktop to offer");
+  assert.match(gpuRoomText(full!, [full!, cpu!], now + 4 * 60_000), /^ GPU memory: gpu-a 103 of 8192 MiB free, 5 minutes ago; gpu-b 21 MiB free, 4 minutes ago;/, "once the refusal ends");
+
+  // With several providers, each names itself, and one that reads no GPU says nothing.
+  const [both] = await views([
+    { kind: gpuKind, backend: lxc },
+    { kind: gpuKind, backend: docker },
+  ]);
+  assert.equal(both!.offers[1]!.gpuRoom, null);
+  assert.match(gpuRoomText(both!, [both!], now), /^ No GPU on Proxmox LXC on pve has room for a desktop now \(/);
+
+  room = { readings: [], fullUntil: null };
+  const [unread] = await views([{ kind: gpuKind, backend: lxc }]);
+  assert.equal(unread!.offers[0]!.gpuRoom, null);
+  assert.equal(gpuRoomText(unread!, [], now), "", "nothing before a reading");
 });
 
 test("box details promise a restored box enrols again only when its kind can enrol", async () => {

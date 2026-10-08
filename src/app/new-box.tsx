@@ -15,7 +15,7 @@ import type { ImageOptionView, KindView, OfferView, ProviderProfile, SizeView } 
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
-import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
+import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 /**
  * What "Ask an agent to make one" puts in a new thread's composer (049): the
@@ -228,6 +228,9 @@ export function NewBox({
   const imageSpares = chosenImage && chosenImage !== "standard" ? (covering.find((candidate) => candidate.name === chosenImage)?.spares ?? []) : null;
   const readyOn = (offer: OfferView) =>
     !machine && !!kind && size === kind.defaultPreset && (imageSpares ? imageSpares.some((spare) => spare.kind === kind.id && spare.backend === offer.backend && spare.ready > 0) : offer.ready > 0);
+  // With 1 GPU chosen, why no GPU would take the box (#603); a ready spare holds its GPU already.
+  const placing = onOffer ? [onOffer] : shown;
+  const gpuFull = gpuChoice && picked.gpu && !placing.some(readyOn) ? gpuFullNote(placing, Date.now()) : null;
 
   useEffect(() => {
     if (open) return;
@@ -435,6 +438,7 @@ export function NewBox({
                     ]}
                     onChange={(value) => pick({ gpu: value === "1" })}
                   />
+                  {gpuFull ? <p className="text-xs text-muted-foreground">{gpuFull}</p> : null}
                 </div>
               ) : null}
             </FormSection>
@@ -487,13 +491,14 @@ export function NewBox({
                 <ProviderRow
                   key={offer.backend}
                   offer={offer}
+                  among={offers}
                   ready={readyOn(offer)}
                   selected={onOffer?.backend === offer.backend}
                   onClick={() => setOn(offer.backend)}
                   optionRef={(element) => {
                     providerOptions.current[index + (choiceless ? 0 : 1)] = element;
                   }}
-                  info={profile ? <ProviderInfo offer={offer} loaded={profiles.get(offer.backend)} load={() => loadProfile(offer.backend)} /> : undefined}
+                  info={profile ? <ProviderInfo offer={offer} among={offers} loaded={profiles.get(offer.backend)} load={() => loadProfile(offer.backend)} /> : undefined}
                 />
               ))}
             </div>
