@@ -7,7 +7,7 @@ You make a box with the New box form. You choose its system, whether it has a de
 You can make a box in 4 places:
 
 - the plus in a thread's Box panel: a box for that thread
-- the plus on the Boxes page: one of your machines
+- **New box** on the Boxes page: one of your machines
 - **Add machine** in Settings, BB Box, Machines: one of your machines
 - BB's new-thread screen: a box the new thread runs on, which is described in [starting a thread on a new box](#starting-a-thread-on-a-new-box)
 
