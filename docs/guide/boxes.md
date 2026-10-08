@@ -68,11 +68,18 @@ If BB Box cannot do what you asked, it says why in a red line under the plus. Fo
 
 ## The Boxes page
 
-Select **Boxes** in BB's sidebar. The page lists your machines first, under Machines, and then every thread's boxes, under Threads.
+Select **Boxes** in BB's sidebar. The page has 2 tabs, each with a count:
 
-![The Boxes page with 2 machines and 2 thread boxes](../design/mockups/built/boxes-page-light.png)
+- **Machines** lists your machines.
+- **Threads** lists every thread's boxes, in a card for each thread. The card's title is the thread's title. Select it, or the arrow beside it, to open the thread.
 
-A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. The arrow beside its menu opens its thread. Its status line ends with the thread's title. 'New thread on this box…' is only in the Box panel.
+The page opens on the tab you chose last. The first time, it opens on Machines if you have any.
+
+![The Boxes page's Machines tab, with 2 machines](../design/mockups/built/boxes-page-light.png)
+
+![The Boxes page's Threads tab, with 3 threads](../design/mockups/built/boxes-page-threads-light.png)
+
+A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. 'New thread on this box…' is only in the Box panel.
 
 A desktop or terminal you open from the page shows on the page, with a back arrow to the list.
 
