@@ -1298,7 +1298,8 @@ function BoxList() {
       // Without storage, the page opens on the first tab with boxes each time.
     }
   };
-  // The plus adds one of your machines here too (the operator, 4 October 2026), the same form as settings' Add machine; it then shows under Machines.
+  // New box makes one of your machines here (the operator, 4 October 2026): a box made here has no thread. The same form as settings'
+  // Add machine; the machine then shows under Machines.
   const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
     let refused: string | null;
     try {
@@ -1352,11 +1353,25 @@ function BoxList() {
             selected={tab}
             onSelect={chooseTab}
           />
-          {/* The settings gear, then the plus at the far right, where Automations has its New button. The gear is a link: BB's
-              openUrl does nothing with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
+          {/* The settings gear, then New box, where Automations has New automation, as a split button: its menu starts a thread
+              on a box of its own, in BB's new-thread screen. The gear is a link: BB's openUrl does nothing with an app path. BB
+              offers no place beside the page's title for it (docs/bb-requests.md #18). */}
           <div className="flex shrink-0 items-center gap-1.5">
             <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="size-8" />
-            {kinds.length ? <NewBox kinds={kinds} make={add} machine plus profile={(backend) => rpc.call("provider", { backend })} /> : null}
+            {kinds.length ? (
+              <NewBox
+                kinds={kinds}
+                make={add}
+                machine
+                profile={(backend) => rpc.call("provider", { backend })}
+                menu={
+                  <DropdownMenuItem onSelect={() => navigate.toCompose({ focusPrompt: true })}>
+                    <Icon name="MessageSquarePlus" aria-hidden />
+                    New thread on a box
+                  </DropdownMenuItem>
+                }
+              />
+            ) : null}
           </div>
         </div>
         <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
@@ -1369,7 +1384,7 @@ function BoxList() {
             }}
           />
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-            {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. The plus adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}
+            {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. New box adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}
             {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box. A thread gets one from its Box panel, or from its agent.</EmptyPanel> : null}
             {tab === "machines" && machines.length ? (
               <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-1">

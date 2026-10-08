@@ -2599,7 +2599,7 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   expect(slot.getByText("Starting")).toBeTruthy();
 });
 
-test("the Boxes page's plus adds one of your machines with settings' Add machine form, and the new machine shows under Machines", async () => {
+test("the Boxes page's New box adds one of your machines with settings' Add machine form, and the new machine shows under Machines", async () => {
   const { handlers, changes } = server([box()], { machines: [machine()] });
   // The page lists your machines from allBoxes; here they come from the harness's machines, so a machine added shows up.
   const yours = () => (handlers["machines.list"] as (input: null) => { machines: MachineEntry[] })(null).machines.map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" as const }));
@@ -2609,12 +2609,12 @@ test("the Boxes page's plus adds one of your machines with settings' Add machine
   expect(await list.findByText("build-1")).toBeTruthy();
   expect(list.queryByText(/^\d+ box(es)?$/)).toBeNull();
   expect(list.queryByText("BB machine")).toBeNull();
-  // The plus at the top right, as the Box panel's, named Add machine (the operator, 4 October 2026): the same form, machine mode, with the Name step.
-  fireEvent.click(list.getByRole("button", { name: "Add machine" }));
+  // New box at the top right, as Automations' New automation: settings' Add machine form, machine mode, with the Name step (the operator, 4 October 2026).
+  fireEvent.click(list.getByRole("button", { name: "New box" }));
   expect(await screen.findByText("Of the kinds whose boxes join BB.")).toBeTruthy();
   const name = screen.getByRole("textbox", { name: "Name" });
   fireEvent.change(name, { target: { value: "build-2" } });
-  expect(submitButton().textContent).toBe("Add machine");
+  expect(submitButton().textContent).toBe("Create box");
   fireEvent.click(submitButton());
   await waitFor(() => expect(changes).toEqual(["machines.add linux build-2"]));
   // It shows under Machines, starting; the threads' boxes are on the other tab.
@@ -2706,7 +2706,7 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
 });
 
-test("the Boxes page's tab row has the settings gear, then the plus at the far right, where Automations has its New button; the gear is a link to Settings > BB Box", async () => {
+test("the Boxes page's tab row has the settings gear, then New box at the far right, where Automations has New automation; the gear is a link to Settings > BB Box", async () => {
   const [page] = app.navPanels;
   expect(page!.headerContent).toBeUndefined();
   const list = boxesPage(server([box()]).handlers);
@@ -2715,11 +2715,17 @@ test("the Boxes page's tab row has the settings gear, then the plus at the far r
   const gear = list.getByRole("link", { name: "BB Box settings" });
   expect(gear.getAttribute("href")).toBe("/settings/plugins/bb-box");
   expect(gear.textContent).toBe("");
-  // A pair at the tab row's end: the gear first, the plus last.
-  const plus = list.getByRole("button", { name: "Add machine" });
-  const pair = plus.closest("div.flex")!;
-  expect(pair.contains(gear)).toBe(true);
-  expect(gear.compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // A pair at the tab row's end: the gear first, then New box with its menu, a split button.
+  const newBox = list.getByRole("button", { name: "New box" });
+  const pair = gear.closest("div.flex")!;
+  expect(pair.contains(newBox)).toBe(true);
+  expect(gear.compareDocumentPosition(newBox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(newBox.nextElementSibling).toBe(list.getByRole("button", { name: "New box options" }));
+  // Its menu starts a thread on a box of its own, in BB's new-thread screen.
+  const menu = await openMenu(list.getByRole("button", { name: "New box options" }));
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["New thread on a box"]);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "New thread on a box" }));
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toCompose", options: { focusPrompt: true } });
   const row = pair.parentElement!;
   expect(row.contains(list.getByRole("tablist"))).toBe(true);
   expect(row.className).toContain("justify-between");

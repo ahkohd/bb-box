@@ -746,6 +746,14 @@ export const scenes = {
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
   "boxes-page": boxesPage(),
   "boxes-page-threads": boxesPage({ after: async (root) => { openTab(root, "Threads"); await wait(300); } }),
+  "boxes-page-new-menu": boxesPage({
+    height: 560,
+    after: async (root) => {
+      // New box's menu, as New automation's on BB's Automations page.
+      openMenu(root, "New box options");
+      await wait(300);
+    },
+  }),
   "boxes-page-empty": { slot: "boxes-page", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
   "boxes-page-menu": {
     slot: "boxes-page",
@@ -770,8 +778,8 @@ export const scenes = {
     rpc: rpc([box(), desktop], { machines: MACHINES }),
     threads: { [THREAD]: "Add dark mode" },
     after: async (root) => {
-      // The page's plus opens the same form as settings' Add machine, with the Name step (the operator, 4 October 2026).
-      click(root, "button", "Add machine");
+      // The page's New box opens the same form as settings' Add machine, with the Name step (the operator, 4 October 2026).
+      click(root, "button", "New box");
       await wait(400);
     },
   },
