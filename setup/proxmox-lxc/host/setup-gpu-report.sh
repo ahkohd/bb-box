@@ -3,7 +3,9 @@
 #
 # - a VM named bb-box-gpu-memory, never started, whose notes carry the
 #   report. It has no disk and no network, protection on, and is outside
-#   bb-box's pool, so the token's role on the pool does not reach it;
+#   bb-box's pool, so the token's role on the pool does not reach it. Its
+#   VMID is BBBOX_GPU_REPORT_VMID, which must be set: the next free VMID is
+#   where template builds work unless BBBOX_BUILD_VMID is set;
 # - PVEAuditor on that VM alone for bb-box's user and token, so the token can
 #   read its notes and change nothing new;
 # - bb-box-gpu-memory and bb-box-gpu-memory.timer, which write the notes every
@@ -22,7 +24,9 @@ conf=$(grep -lx "name: $name" /etc/pve/qemu-server/*.conf 2>/dev/null | head -1)
 if [ -n "$conf" ]; then
   vmid=$(basename "$conf" .conf)
 else
-  vmid=${BBBOX_GPU_REPORT_VMID:-$(pvesh get /cluster/nextid)}
+  [ -n "$BBBOX_GPU_REPORT_VMID" ] ||
+    die "set BBBOX_GPU_REPORT_VMID in $BBBOX_ENV to a free VMID outside bb-box's VMID range, not the next free one, which template builds borrow"
+  vmid=$BBBOX_GPU_REPORT_VMID
   qm create "$vmid" --name "$name" --memory 16 --protection 1 --onboot 0 \
     --description "bb-box: each GPU's memory, from bb-box-gpu-memory.timer on this host. It is never started."
 fi
