@@ -408,7 +408,7 @@ test("a GPU's memory is read as a desktop on it starts and each minute while one
   );
 
   await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
-  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [{ id: "gpu-a", freeMiB: 7800, totalMiB: null, at: now, neededMiB: 384, current: true }]);
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [{ id: "gpu-a", freeMiB: 7800, totalMiB: null, at: now, neededMiB: 384, currentUntil: now + 5 * 60_000 }]);
   assert.deepEqual(await backend.gpuRoom("linux"), [], "a kind without a GPU has none");
   const booted = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(booted.hosts[0]!.limits.find((limit) => limit.resource === "gpu-memory"), undefined, "the display service gives no total");
@@ -418,7 +418,7 @@ test("a GPU's memory is read as a desktop on it starts and each minute while one
   assert.equal((await backend.gpuRoom("linux-desktop"))[0]!.freeMiB, 7800, "not read again within a minute");
   now += 60_000;
   await backend.maintain();
-  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [{ id: "gpu-a", freeMiB: 6100, totalMiB: 8192, at: now, neededMiB: 384, current: true }]);
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), [{ id: "gpu-a", freeMiB: 6100, totalMiB: 8192, at: now, neededMiB: 384, currentUntil: now + 5 * 60_000 }]);
   const read = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(read.ok, true);
   assert.deepEqual(read.hosts[0]!.limits.at(-1), { resource: "gpu-memory", id: "gpu-a", used: 2092, total: 8192, reserve: 0, unit: "MiB" });
@@ -451,7 +451,7 @@ test("a desktop goes to a GPU with room, and is refused at once while every GPU 
   assert.equal(full.hosts[0]!.ok, false);
   assert.equal(
     full.message,
-    "Every GPU on pve had less memory free than the 384 MiB a desktop needs when bb-box last looked: GPU gpu-a 103 MiB, GPU gpu-b 21 MiB. " +
+    "Every GPU on pve had less than the 384 MiB free a desktop needs, 1 minute ago: gpu-a 103 MiB, gpu-b 21 MiB. " +
       "Use a linux-desktop-cpu box, whose desktop runs without a GPU, or try again in 4 minutes.",
   );
   assert.equal((await backend.capacity("linux-desktop-cpu", sized("linux-desktop-cpu"), waiting(), signal())).ok, true, "CPU desktops use no GPU");
@@ -460,11 +460,11 @@ test("a desktop goes to a GPU with room, and is refused at once while every GPU 
   assert.equal(warn?.detail, "21 of 8192 MiB free, read just now. A desktop needs 384 MiB, so new desktop boxes cannot use this GPU.");
   assert.equal(warn?.fix, "Free memory on the GPU: release a desktop box, or stop what else uses it on pve. Use linux-desktop-cpu boxes meanwhile.");
 
-  assert.deepEqual((await backend.gpuRoom("linux-desktop")).map((gpu) => [gpu.id, gpu.freeMiB, gpu.current]), [["gpu-a", 103, true], ["gpu-b", 21, true]]);
+  assert.deepEqual((await backend.gpuRoom("linux-desktop")).map((gpu) => [gpu.id, gpu.freeMiB, gpu.currentUntil! - now]), [["gpu-a", 103, 4 * 60_000], ["gpu-b", 21, 5 * 60_000]]);
 
   await backend.release(desktop, releasing());
   assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, true, "releasing gpu-b's desktop frees its memory");
-  assert.deepEqual((await backend.gpuRoom("linux-desktop")).map((gpu) => [gpu.id, gpu.current]), [["gpu-a", true], ["gpu-b", false]]);
+  assert.deepEqual((await backend.gpuRoom("linux-desktop")).map((gpu) => [gpu.id, gpu.currentUntil !== null]), [["gpu-a", true], ["gpu-b", false]]);
 });
 
 test("readings of full GPUs stand for 5 minutes, and a new instance keeps them (#603)", async () => {
@@ -475,12 +475,12 @@ test("readings of full GPUs stand for 5 minutes, and a new instance keeps them (
   const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(
     full.message,
-    "The GPU on pve had less memory free than the 384 MiB a desktop needs when bb-box last looked: GPU gpu-a 103 MiB. Free memory on a GPU, or try again in 5 minutes.",
+    "The GPU on pve had less than the 384 MiB free a desktop needs, just now: gpu-a 103 MiB. Free memory on a GPU, or try again in 5 minutes.",
   );
   now += 5 * 60_000;
   const later = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.equal(later.ok, true, "an old reading does not refuse: the desktop starts and sees");
-  assert.equal((await backend.gpuRoom("linux-desktop"))[0]!.current, false);
+  assert.equal((await backend.gpuRoom("linux-desktop"))[0]!.currentUntil, null);
   assert.deepEqual(later.hosts[0]!.limits.at(-1), { resource: "gpu-memory", id: "gpu-a", used: 8089, total: 8192, reserve: 0, unit: "MiB" });
 });
 

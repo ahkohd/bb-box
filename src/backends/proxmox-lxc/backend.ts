@@ -274,14 +274,14 @@ function ago(ms: number): string {
 
 /**
  * Every GPU was last read with less memory free than a desktop needs, so a
- * desktop would start without one (#603). The refusal stands for
- * `minutes`, until the first of the readings is no longer fresh.
+ * desktop would start without one (#603), as long ago as `age`. The refusal
+ * stands for `minutes`, until the first of the readings is no longer current.
  */
-function gpusFull(node: string, full: readonly { readonly gpu: string; readonly freeMiB: number }[], minutes: number, cpu: boolean): string {
+function gpusFull(node: string, full: readonly { readonly gpu: string; readonly freeMiB: number }[], age: number, minutes: number, cpu: boolean): string {
   const later = `try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
   return (
-    `${full.length === 1 ? "The GPU" : "Every GPU"} on ${node} had less memory free than the ${DESKTOP_GPU_MIB} MiB a desktop needs when bb-box last looked: ` +
-    `${full.map(({ gpu, freeMiB }) => `GPU ${gpu} ${freeMiB} MiB`).join(", ")}. ` +
+    `${full.length === 1 ? "The GPU" : "Every GPU"} on ${node} had less than the ${DESKTOP_GPU_MIB} MiB free a desktop needs, ${ago(age)}: ` +
+    `${full.map(({ gpu, freeMiB }) => `${gpu} ${freeMiB} MiB`).join(", ")}. ` +
     (cpu ? `Use a linux-desktop-cpu box, whose desktop runs without a GPU, or ${later}.` : `Free memory on a GPU, or ${later}.`)
   );
 }
@@ -662,8 +662,10 @@ export class ProxmoxLxcBackend implements Backend {
       const full = this.#fullGpus();
       if (gpus.length && gpus.every((gpu) => full.has(gpu))) {
         const cpu = this.#offers().some((other) => other.flavour === "desktop-cpu");
-        const minutes = Math.max(1, Math.ceil((Math.min(...gpus.map((gpu) => full.get(gpu)!)) - this.#now()) / 60_000));
-        fresh.push(gpusFull(api.node, gpus.map((gpu) => ({ gpu, freeMiB: readings.get(gpu)!.freeMiB })), minutes, cpu));
+        const now = this.#now();
+        const minutes = Math.max(1, Math.ceil((Math.min(...gpus.map((gpu) => full.get(gpu)!)) - now) / 60_000));
+        const age = now - Math.min(...gpus.map((gpu) => readings.get(gpu)!.at));
+        fresh.push(gpusFull(api.node, gpus.map((gpu) => ({ gpu, freeMiB: readings.get(gpu)!.freeMiB })), age, minutes, cpu));
       }
     }
     const cloned = [...memory(memoryMiB, false), ...sized, ...fresh];
@@ -1912,12 +1914,13 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   /**
-   * Whether a reading still stands for its GPU's room: it is under 5
-   * minutes old, and no desktop on the GPU was released since, which frees
-   * memory it does not show.
+   * Until when a reading stands for its GPU's room, or null once it does
+   * not: it stands for 5 minutes, and only until a desktop on the GPU is
+   * released, which frees memory it does not show.
    */
-  #current(gpu: string, reading: StoredGpu): boolean {
-    return reading.at + GPU_FRESH_MS > this.#now() && reading.at > (this.#freed.get(gpu) ?? 0);
+  #currentUntil(gpu: string, reading: StoredGpu): number | null {
+    const until = reading.at + GPU_FRESH_MS;
+    return until > this.#now() && reading.at > (this.#freed.get(gpu) ?? 0) ? until : null;
   }
 
   /**
@@ -1927,7 +1930,8 @@ export class ProxmoxLxcBackend implements Backend {
   #fullGpus(): Map<string, number> {
     const full = new Map<string, number>();
     for (const [gpu, reading] of this.#gpus ?? []) {
-      if (reading.freeMiB < DESKTOP_GPU_MIB && this.#current(gpu, reading)) full.set(gpu, reading.at + GPU_FRESH_MS);
+      const until = this.#currentUntil(gpu, reading);
+      if (reading.freeMiB < DESKTOP_GPU_MIB && until !== null) full.set(gpu, until);
     }
     return full;
   }
@@ -1959,7 +1963,7 @@ export class ProxmoxLxcBackend implements Backend {
     const readings = await this.#gpuReadings();
     return gpusOf(offer.config.templates).flatMap((id) => {
       const reading = readings.get(id);
-      return reading ? [{ id, ...reading, neededMiB: DESKTOP_GPU_MIB, current: this.#current(id, reading) }] : [];
+      return reading ? [{ id, ...reading, neededMiB: DESKTOP_GPU_MIB, currentUntil: this.#currentUntil(id, reading) }] : [];
     });
   }
 
