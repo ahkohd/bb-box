@@ -1,5 +1,5 @@
-// Windows boxes as BB machines, the trial (#539): the script that runs BB's
-// Windows enrolment or reconnect command, and the setting that turns it on.
+// Windows boxes as BB machines (#539): the script that runs BB's Windows
+// enrolment or reconnect command, and the switch that turns it off.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -33,11 +33,13 @@ test("a failed run says how it ended, with its last lines", () => {
   assert.equal(windowsFailure("BB's Windows installer in box calm-otter", result), "BB's Windows installer in box calm-otter exited with 1:\nInstalling bb\n\nbb-box: install.ps1 refused");
 });
 
-test("Windows boxes join BB only when the Proxmox QEMU backend's trial setting is on", () => {
+test("Windows boxes join BB unless the Proxmox QEMU backend's switch is set off (#539)", () => {
   const fields = { url: "https://192.0.2.10:8006", "token-id": "bbbox@pve!plugin", "token-secret": "x", "tls-fingerprint": Array(32).fill("AB").join(":") };
-  const off = parseQemuPart({ fields } as never);
+  const unset = parseQemuPart({ fields } as never);
   const on = parseQemuPart({ fields: { ...fields, "windows-enrol": true } } as never);
-  assert.ok(off.ok && on.ok, JSON.stringify([off, on]));
-  assert.equal(off.ok && off.config.enrol, false);
+  const off = parseQemuPart({ fields: { ...fields, "windows-enrol": false } } as never);
+  assert.ok(unset.ok && on.ok && off.ok, JSON.stringify([unset, on, off]));
+  assert.equal(unset.ok && unset.config.enrol, true, "on by default");
   assert.equal(on.ok && on.config.enrol, true);
+  assert.equal(off.ok && off.config.enrol, false);
 });

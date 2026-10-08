@@ -122,7 +122,7 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   assert.deepEqual(kind!.capabilities.command, { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true });
   assert.equal(kind!.capabilities.os, "windows");
   assert.equal(kind!.capabilities.arch, "x86_64");
-  assert.equal(kind!.capabilities.enrol, false, "BB cannot enrol a Windows box yet");
+  assert.equal(kind!.capabilities.enrol, true, "its boxes join BB unless the switch is set off (#539)");
   assert.deepEqual(kind!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }]);
   assert.deepEqual(kind!.capabilities.computerUse, { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" });
 });
@@ -617,20 +617,28 @@ test("doctor passes on a complete setup, and warns that a template from build.sh
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE KEY|s3cret-token-value/);
 });
 
-test("doctor judges each Windows template's image by the record in its description (049)", async () => {
-  const { proxmox, context, make } = setup({ "windows-templates": "9104 9105" });
+test("doctor judges each Windows template's image by the record in its description, and that its boxes can join BB (049, #539)", async () => {
+  const { proxmox, context, make } = setup({ "windows-templates": "9104 9105 9106" });
+  proxmox.addVmTemplate(9106);
   const day = 24 * 60 * 60 * 1000;
   const pins = "w".repeat(64);
   const images = { pins: async (set: string) => (set === "windows" ? pins : null), bbApp: async () => "a".repeat(64) };
   const record = (days: number, changes: Record<string, unknown> = {}) =>
     JSON.stringify({ contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: "build.20261003-021500-3f9c", built: new Date(Date.now() - days * day).toISOString(), os: "Windows 11 Pro", pins, bbApp: null, tools: { pwsh: "7.6.6" }, ...changes });
-  proxmox.guests.get(9104)!.config.description = `bb-box windows template, built 2026-10-03 from win11.iso: Windows 11 Pro.\n${record(2)}`;
+  // Its boxes join BB, so it carries Node.js and the agent CLIs (#539, #581).
+  const tools = { pwsh: "7.6.6", node: "24.21.0", "claude-code": "2.1.283", codex: "0.157.1", pi: "0.87.1" };
+  proxmox.guests.get(9104)!.config.description = `bb-box windows template, built 2026-10-03 from win11.iso: Windows 11 Pro.\n${record(2, { tools })}`;
+  proxmox.guests.get(9106)!.config.description = `bb-box windows template, built 2026-10-03 from win11.iso: Windows 11 Pro.\n${record(2, { tools: { pwsh: "7.6.6", node: "20.11.0" } })}`;
   proxmox.guests.get(9105)!.config.description = `bb-box windows template, built 2026-08-01 from win11.iso: Windows 11 Pro.\n${record(61, { pins: "o".repeat(64) })}`;
   const report = await make({ ...context, images }).doctor();
   const image = (vmid: number) => report.checks.find((check) => check.id === `template.${vmid}.image`)!;
-  // BB's app does not run on Windows, so a record without it is whole.
-  assert.deepEqual([image(9104).status, image(9104).fix], ["ok", null]);
-  assert.match(image(9104).detail, /^Standard image build\.20261003-021500-3f9c, built \d+ \w+ \(2 days ago\): Windows 11 Pro, pwsh 7\.6\.6\.$/);
+  // A Windows image carries no build of BB's app, so a record without it is whole.
+  assert.deepEqual([image(9104).status, image(9104).fix], ["ok", null], image(9104).detail);
+  assert.match(image(9104).detail, /^Standard image build\.20261003-021500-3f9c, built \d+ \w+ \(2 days ago\): Windows 11 Pro, pwsh 7\.6\.6, /);
+  // An image without them: its boxes install Node.js as they join, and box_thread refuses them.
+  assert.equal(image(9106).status, "warn");
+  assert.match(image(9106).detail, /It has Node\.js 20\.11\.0, and BB's installer needs 22\.19\.0 or later, so each box installs it as it joins BB, about 11 s more\./);
+  assert.match(image(9106).detail, /It has none of the agent CLIs BB runs threads with, Claude Code, Codex, Pi, so box_thread refuses its boxes \(#561\)\./);
   assert.equal(image(9105).status, "warn");
   assert.match(image(9105).detail, /It is 61 days old, more than 60, .* It was built with other pins than this bb-box's/);
   assert.equal(image(9105).fix, "Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on pve: build.sh windows 9105 --replace.");

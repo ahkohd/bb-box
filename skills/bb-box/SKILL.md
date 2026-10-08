@@ -1,6 +1,6 @@
 ---
 name: bb-box
-description: Boxes for BB threads, Linux or macOS computers for commands, builds, tests, servers and Docker, and the bb box command to set up, check and clean up their backends.
+description: Boxes for BB threads, Linux, macOS or Windows computers for commands, builds, tests, servers and Docker, and the bb box command to set up, check and clean up their backends.
 ---
 
 # bb-box
@@ -64,8 +64,9 @@ bb-box restarts. Beyond those:
 The Windows kinds' descriptions in `box_list` say how commands run there.
 Beyond those:
 
-- A Windows box is not a BB machine yet, so `box_thread` cannot start a
-  thread there.
+- A Windows box is a BB machine, as a Linux or macOS box is, so
+  `box_thread` can start a thread there, on an agent CLI in its image. It
+  takes a minute or two to join BB, or none from a spare.
 - `Start-Detached` gives the command it starts the environment variables,
   but not PowerShell variables: pass values in `$env:`.
 - For a GUI program's window to show, call `Start-Detached` in a desktop
@@ -102,11 +103,11 @@ Open an app or a URL with `computer_launch`, then read a window with
 
 ## BB machines
 
-A box joins BB as a machine a few seconds after it is ready, so threads and
-terminals can use it. `box_acquire`, `box_start` and `box_run` wait up to
-20 s for that.
+A box joins BB as a machine a few seconds after it is ready, or a minute or
+two for a Windows box, so threads and terminals can use it. `box_acquire`,
+`box_start` and `box_run` wait up to 20 s for that.
 
-- In a Linux or macOS box that is a BB machine, each command gets `GH_TOKEN`,
+- In a box that is a BB machine, each command gets `GH_TOKEN`,
   your git identity and BB's machine variables from BB. `git` fetches GitHub
   through `gh`, over HTTPS, even for SSH URLs.
 - A project's own variables reach a box only while a thread of that project

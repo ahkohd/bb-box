@@ -48,7 +48,7 @@ import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 export const MACHINE_PROVIDER_ID = "bb-box";
 
 /**
- * BB's manual provider, which makes Windows boxes' machines on trial (#539):
+ * BB's manual provider, which makes Windows boxes' machines (#539):
  * only its machines have a Windows enrolment command. bb-box owns their
  * lifecycle itself, as BB calls no provider of bb-box's for them.
  */
@@ -410,7 +410,7 @@ export class Enrolment {
   }
 
   /**
-   * Enrols a Windows box on trial (#539) as the manual machine bb-box made
+   * Enrols a Windows box (#539) as the manual machine bb-box made
    * for it: names the machine after the box, then runs the machine's
    * enrolment command, in its Windows form, in the box user's desktop
    * session, where BB's daemon has to run. BB's installer names the machine

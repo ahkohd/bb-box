@@ -134,7 +134,7 @@ Fields left empty take proxmox-lxc's, a set at a time: `url`, `token-id`, `token
 | `ssh-private-key` | SSH private key | string, secret | credentials |  | Paste BBBOX_SSH_KEY, the private key build.sh put in the template, or leave it empty to use Proxmox LXC's. With neither, bb-box makes a key, which the template does not accept until you add its public key. |
 | `pool` | Resource pool | string | boxes | `bbbox` | Boxes are made in this pool. The token needs rights on it. |
 | `windows-templates` | Windows templates | string | boxes | `9104` | VMIDs of the Windows templates windows-desktop boxes are linked clones of, separated by spaces or commas. setup/proxmox-qemu/build.sh builds one. A new box is cloned from the least used. |
-| `windows-enrol` | Windows boxes as BB machines (trial) | boolean | boxes | `false` | A trial of Windows boxes that join BB, so threads and terminals can use them (#539). Off unless you are trying it. |
+| `windows-enrol` | Windows boxes as BB machines | boolean | boxes | `true` | Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only. |
 | `bridge` | Network bridge | string | advanced | `vmbr200` | The bridge boxes attach to. |
 | `subnet` | Subnet | string | advanced | `10.200.0.0/24` | The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP. |
 | `gateway` | Gateway | string | advanced | `10.200.0.1` | The host's address on the bridge. |
@@ -171,7 +171,7 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `linux-image` | Linux image (arm64) | string | boxes |  | The Tart VM on each Mac that linux-arm64 boxes are cloned from, as setup/tart/prepare-linux-image.sh builds it (bb-box-linux). Empty turns them off. |
 | `linux-desktop-image` | Linux desktop image (arm64) | string | boxes |  | The Tart VM on each Mac that linux-arm64-desktop-cpu boxes are cloned from, as setup/tart/prepare-linux-image.sh --desktop builds it (bb-box-linux-desktop). Empty turns them off. |
 | `windows-image` | Windows image (arm64) | string | boxes |  | The Windows image on each Mac, in ~/.bb-box/qemu/images, that windows-arm64-desktop boxes are made from, run by QEMU. Empty turns them off. |
-| `windows-enrol` | Windows boxes as BB machines (trial) | boolean | boxes | `false` | A trial of Windows boxes that join BB, so threads and terminals can use them (#539). Off unless you are trying it. |
+| `windows-enrol` | Windows boxes as BB machines | boolean | boxes | `true` | Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only. |
 | `vm-user` | VM user | string | advanced | `admin` | The user in the macOS images that bb-box and BB work as. It is logged in to the desktop automatically. Linux boxes work as box. |
 | `vms-per-host` | VMs per Mac | number | advanced | `2` | The most macOS VMs that run on each Mac at once, counting every VM Tart runs there, not only bb-box's. At most 2, which Apple's licence and the Virtualization framework allow. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `16384` | A new box is refused if the Mac would have less memory than this left for its own use, after its running VMs. |

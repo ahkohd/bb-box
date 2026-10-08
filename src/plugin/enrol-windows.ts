@@ -1,7 +1,7 @@
-// Windows boxes as BB machines: a trial, off unless the setting of the
-// Proxmox QEMU or Tart backend is on (#539). BB's bootstrap runs its POSIX
-// installer, install.sh, whatever the machine's OS, and install.sh runs only
-// on macOS and Linux. A provider's machine gets no Windows enrolment command,
+// Windows boxes as BB machines, unless the Proxmox QEMU or Tart backend's
+// switch is set off (#539). BB's bootstrap runs its POSIX installer,
+// install.sh, whatever the machine's OS, and install.sh runs only on macOS
+// and Linux. A provider's machine gets no Windows enrolment command,
 // and install.ps1 serves only manual enrolments. So bb-box makes a Windows
 // box's machine with BB's manual provider, and runs that machine's enrolment
 // command in its Windows form, `windowsCommand`, which fetches install.ps1

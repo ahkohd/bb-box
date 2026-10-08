@@ -1052,10 +1052,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (box.enrol.state !== "enrolled" || !box.enrol.hostId) {
         const why =
           box.enrol.state === "enrolling"
-            ? "it is still becoming a BB machine. Try again in a few seconds"
+            ? `it is still becoming a BB machine. Try again in ${box.capabilities.os === "windows" ? "a minute or two" : "a few seconds"}`
             : box.enrol.state === "failed"
               ? `its enrolment as a BB machine failed: ${box.enrol.error ?? "no reason given"}`
-              : "it is not a BB machine. Its kind does not enrol, or enrolment is off in bb-box's settings";
+              : box.capabilities.enrol && (await general()).enrol
+                ? // Made before its kind's boxes joined BB, as a Windows box made before #539: it stays a box only, and is not enrolled in place.
+                  `it was made before ${box.kindLabel} boxes joined BB, and stays a box only until it is released. Acquire another ${box.kind} box, which joins BB, for the thread`
+                : "it is not a BB machine. Its kind does not enrol, or enrolment is off in bb-box's settings";
         throw new BoxError("unsupported", `A thread cannot run on box ${box.name}: ${why}.`);
       }
       const projectId = box.projectId ?? (await projectOf(threadId));

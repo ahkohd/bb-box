@@ -57,6 +57,9 @@ export function fakeQemu(home: string): void {
   }
 }
 
+/** What a Windows image carries for its boxes to join BB and run threads (#539, #581). */
+export const WINDOWS_TOOLS = { node: "24.21.0", "claude-code": "2.1.283", codex: "0.157.1", pi: "0.87.1" };
+
 /** A fresh image record (049), as the prepare scripts write one. */
 export function imageRecord(kind: string, changes: Record<string, unknown> = {}): string {
   return JSON.stringify({ contract: 1, image: "standard", kind, arch: "arm64", build: "build.20261003-021500", built: new Date().toISOString(), os: "fake OS", tools: {}, ...changes });
@@ -66,7 +69,7 @@ export function imageRecord(kind: string, changes: Record<string, unknown> = {})
 export function addWindowsImage(home: string, build = "1", name = FAKE_WINDOWS_IMAGE): string {
   const image = join(home, ".bb-box", "qemu", "images", name);
   mkdirSync(join(image, build), { recursive: true });
-  writeFileSync(join(image, build, "image.json"), `${imageRecord("windows-arm64-desktop")}\n`);
+  writeFileSync(join(image, build, "image.json"), `${imageRecord("windows-arm64-desktop", { tools: WINDOWS_TOOLS })}\n`);
   writeFileSync(join(image, build, "disk.qcow2"), "base disk");
   chmodSync(join(image, build, "disk.qcow2"), 0o444);
   writeFileSync(join(image, build, "vars.fd"), "variables");

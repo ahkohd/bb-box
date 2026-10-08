@@ -181,7 +181,7 @@ A two-column grid in `text-xs`, labels muted:
 | Backend | Proxmox LXC on pve |
 | System | Linux x86_64, with docker |
 | each guest fact | GPU, Display, Reason, Template, as the backend gives them |
-| BB machine | its name and whether it is connected; "off" when enrolment is off; "not for this kind" when its kind cannot enrol, as Windows cannot yet; the error when it failed |
+| BB machine | its name and whether it is connected; "off" when enrolment is off; "not for this kind" when its kind cannot enrol, as a Windows kind with its backend's switch off; the error when it failed |
 | Timings | clone 0.75 s · start 1.0 s · ssh 0.45 s · total 2.2 s · BB enrolment 5.3 s |
 | Made | 12 minutes ago |
 

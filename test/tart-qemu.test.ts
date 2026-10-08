@@ -12,7 +12,7 @@ import { ownerText } from "../src/backends/tart/host.ts";
 import { parseQemuState } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE, NAME_WINDOWS_SCRIPT, parseNamed } from "../src/backends/windows.ts";
-import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, addImage, addWindowsImage, fakeMacTools, fakeQemu, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, WINDOWS_TOOLS, addImage, addWindowsImage, fakeMacTools, fakeQemu, imageRecord, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const MAC = FAKE_MAC;
@@ -166,14 +166,14 @@ test("offers windows-arm64-desktop only with a Windows image, as a Windows deskt
     // QEMU with lossy=on: quality 4, as 2 broke text up, and the viewer's refresh, as QEMU's kept some JPEG (056).
     displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4 }],
     computerUse: { driver: "cua", version: "0.30.4", socket: CUA_PIPE },
-    enrol: false,
+    enrol: true,
   });
   assert.equal(kind.readyTimeoutMs, 3 * 60_000);
   assert.match(kind.description, /x64 apps run under Windows' emulation, more slowly; x64 drivers do not/);
-  // Its boxes join BB only on trial, as on Proxmox QEMU (#539), and the macOS and Linux kinds as ever.
-  const trial = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-windows-enrol": true }), testContext()).kinds();
-  assert.equal(trial.find((candidate) => candidate.id === KIND)?.capabilities.enrol, true);
-  assert.ok(trial.filter((candidate) => candidate.id !== KIND).every((candidate) => candidate.capabilities.enrol));
+  // Its boxes join BB unless Tart's switch is set off, as on Proxmox QEMU (#539), and the macOS and Linux kinds as ever.
+  const off = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-windows-enrol": false }), testContext()).kinds();
+  assert.equal(off.find((candidate) => candidate.id === KIND)?.capabilities.enrol, false);
+  assert.ok(off.filter((candidate) => candidate.id !== KIND).every((candidate) => candidate.capabilities.enrol));
 });
 
 test("reads QEMU's VMs and its checks from the state script", () => {
@@ -586,14 +586,19 @@ test("the doctor checks QEMU, the Hypervisor framework, the firmware and the Win
   assert.equal(check("host.mac1")?.detail, "macOS 27.0 on Apple silicon, Tart 2.30.0.");
   assert.deepEqual([check("qemu.mac1")?.status, check("qemu.mac1")?.detail], ["ok", "QEMU 11.1.0, with the Hypervisor framework and its UEFI firmware."]);
   assert.equal(check(`image.mac1.${KIND}`)?.status, "ok");
-  assert.match(check(`image.mac1.${KIND}`)!.detail, /^bb-box-windows, build 1\. Standard image build\.20261003-021500, built \d+ \w+ \(today\): fake OS\.$/);
+  assert.match(check(`image.mac1.${KIND}`)!.detail, /^bb-box-windows, build 1\. Standard image build\.20261003-021500, built \d+ \w+ \(today\): fake OS, node 24\.21\.0, /);
 
   // The build's record (049), beside its disk: older than twice the month Windows images are rebuilt in.
   const day = 24 * 60 * 60 * 1000;
-  writeFileSync(join(build, "image.json"), imageRecord(KIND, { built: new Date(Date.now() - 61 * day).toISOString() }));
+  writeFileSync(join(build, "image.json"), imageRecord(KIND, { built: new Date(Date.now() - 61 * day).toISOString(), tools: WINDOWS_TOOLS }));
   report = await backend.doctor(signal());
   assert.equal(check(`image.mac1.${KIND}`)?.status, "warn");
   assert.match(check(`image.mac1.${KIND}`)!.detail, / It is 61 days old, more than 60, so its tools and packages are behind\.$/);
+  // Its boxes join BB, so an image without Node.js and an agent CLI is behind too (#539).
+  writeFileSync(join(build, "image.json"), imageRecord(KIND));
+  report = await backend.doctor(signal());
+  assert.match(check(`image.mac1.${KIND}`)!.detail, /It has no Node\.js, and BB's installer needs 22\.19\.0 or later, .* It has none of the agent CLIs BB runs threads with, Claude Code, Codex, Pi, so box_thread refuses its boxes \(#561\)\.$/);
+  writeFileSync(join(build, "image.json"), imageRecord(KIND, { built: new Date(Date.now() - 61 * day).toISOString(), tools: WINDOWS_TOOLS }));
   assert.equal(
     check(`image.mac1.${KIND}`)?.fix,
     "Build it again on mac1 with setup/tart/prepare-windows-image.sh --iso <ISO> --iso-sha256 <its SHA-256> --key '<bb-box's public key>' --name bb-box-windows --replace.",

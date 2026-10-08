@@ -1584,6 +1584,25 @@ test("the panel and the CLI release a box with only idle threads at once, and fo
   assert.equal(cli.exitCode, 0, cli.stderr);
   assert.deepEqual(await app.boxes.list(THREAD), []);
 });
+test("a box made before its kind's boxes joined BB stays a box only, and box_status and box_thread say so (#539)", async (t) => {
+  // A Windows kind whose boxes do not join BB, then do, as when the switch comes on.
+  const { harness, app, tool, world } = await start({ "fake-enabled": true }, { kinds: [FAKE_WINDOWS_KIND] });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", { kind: "windows" });
+  const box = await only(app);
+  assert.equal(box.enrol.state, "off");
+  await app.boxes.update(box, (current) => ({ capabilities: { ...current.capabilities, enrol: true } }));
+
+  assert.match(
+    text(await tool("box_status", { box: box.name })),
+    /BB machine: not enrolled: it was made while boxes of its kind did not join BB, and stays so until it is released\. A new one joins BB when bb-box enrols boxes/,
+  );
+  const refused = await tool("box_thread", { box: box.name, prompt: "Run Get-Date" });
+  assert.ok(isError(refused));
+  assert.match(text(refused), new RegExp(`^A thread cannot run on box ${box.name}: it was made before Windows boxes joined BB, and stays a box only until it is released\\. Acquire another windows box, which joins BB, for the thread\\.`));
+  assert.deepEqual(world.spawned, []);
+});
+
 test("a box that is not a BB machine cannot run a thread, and says why (#55)", async (t) => {
   const { harness, tool, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
   t.after(() => harness.lifecycle.dispose());

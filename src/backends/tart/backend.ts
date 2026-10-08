@@ -438,7 +438,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         // lossy=on its JPEG at quality 2 broke text up, and its own refresh of a still area kept some JPEG (056).
         displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4 }],
         computerUse: WINDOWS_CUA,
-        // Windows boxes join BB only on trial, when the setting is on (#539).
+        // Windows boxes join BB unless the switch is set off (#539).
         enrol: config.windowsEnrol,
       },
       readyTimeoutMs: WINDOWS_READY_TIMEOUT_MS,
@@ -1590,8 +1590,8 @@ export class TartBackend implements Backend {
             ? `prepare-linux-image.sh${kind === "linux-arm64-desktop-cpu" ? " --desktop" : ""} ${key} --name ${image} --bb-url <BB's server URL> --replace`
             : `prepare-image.sh ${key} --name ${image} --bb-url <BB's server URL> --replace`;
       const pins = os === "windows" ? windowsPins : os === "macos" ? macosPins : kind === "linux-arm64-desktop-cpu" ? desktopPins : linuxPins;
-      // BB's app does not run on Windows.
-      return judgeImage(record, { os, pins, bbApp: os === "windows" ? null : app }, `Build it again on ${on} with setup/tart/${command}.`);
+      // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB.
+      return judgeImage(record, { os, pins, bbApp: os === "windows" ? null : app, joins: this.#config.windowsEnrol }, `Build it again on ${on} with setup/tart/${command}.`);
     };
     const others = new Map<string, number>();
     const tart = this.#tart();

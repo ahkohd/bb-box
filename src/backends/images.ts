@@ -147,6 +147,25 @@ export interface ImageFacts {
 /** Days after which an image warns: twice the interval it is rebuilt at, a week for Linux and a month for Windows and macOS. */
 export const STALE_DAYS: Readonly<Record<"linux" | "windows" | "macos", number>> = { linux: 14, windows: 60, macos: 60 };
 
+/** The Node.js BB's Windows installer needs (#539). */
+const WINDOWS_NODE = "22.19.0";
+/** The agent CLIs a Windows image carries for BB's threads, as its record names them, with their names (#561). */
+const AGENT_CLIS: readonly (readonly [string, string])[] = [
+  ["claude-code", "Claude Code"],
+  ["codex", "Codex"],
+  ["pi", "Pi"],
+];
+
+/** Whether version `have`, such as 24.21.0 or v24.21.0, is at least `want`. */
+function atLeast(have: string, want: string): boolean {
+  const parts = (version: string) => version.replace(/^v/, "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const [a, b] = [parts(have), parts(want)];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return true;
+}
+
 export interface ImageJudgement {
   readonly status: "ok" | "warn" | "fail";
   /** What the image is, then what is wrong with it. */
@@ -191,6 +210,8 @@ export function judgeImage(
     readonly bbApp: string | null;
     /** The host's NVIDIA driver as a box last saw it, for an image with NVIDIA's userspace. */
     readonly hostNvidia?: { readonly version: string; readonly seen: string } | null;
+    /** Whether its boxes join BB, for a Windows image, which must then carry Node.js and an agent CLI (#539). */
+    readonly joins?: boolean;
     readonly now?: number;
   },
   rebuild: string,
@@ -228,6 +249,15 @@ export function judgeImage(
   }
   if (facts.os === "macos" && !record.tools.xcode) {
     warnings.push("It has no Xcode, so its boxes have no XCTest, Metal compiler or iOS Simulator (#475).");
+  }
+  if (facts.os === "windows" && facts.joins) {
+    const node = record.tools.node;
+    if (!node || !atLeast(node, WINDOWS_NODE)) {
+      warnings.push(`It has ${node ? `Node.js ${node}` : "no Node.js"}, and BB's installer needs ${WINDOWS_NODE} or later, so each box installs it as it joins BB, about 11 s more.`);
+    }
+    if (!AGENT_CLIS.some(([tool]) => record.tools[tool])) {
+      warnings.push(`It has none of the agent CLIs BB runs threads with, ${AGENT_CLIS.map(([, name]) => name).join(", ")}, so box_thread refuses its boxes (#561).`);
+    }
   }
   const problems = [...failures, ...warnings];
   return {
