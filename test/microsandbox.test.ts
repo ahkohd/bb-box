@@ -231,6 +231,8 @@ test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framew
   for (let i = 0; i < 200 && !fake.images()["bbbox/linux:1-arm64"]; i++) await new Promise((r) => setTimeout(r, 25));
   const { readFileSync } = await import("node:fs");
   assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /build\.sh --arch arm64 --tag bbbox\/linux:1-arm64 linux /);
+  // The builder goes in the background after its image is in msb: the next box waits for that, so no fake reads a sandbox as it is removed.
+  for (let i = 0; i < 200 && fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")); i++) await new Promise((r) => setTimeout(r, 25));
   const box = await backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
   assert.deepEqual(after(fake.calls().find((call) => call[0] === "create" && call.includes(box.ref))!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"], "msb's own disk, as a Mac has no mkfs.ext4");
   await backend.maintain(signal());
