@@ -331,6 +331,21 @@ export class Proxmox {
     await this.#change("PUT", this.#guest(vmid, "/config"), params, signal);
   }
 
+  /**
+   * The VMID and notes of the node's VM named `name`, or null when the token
+   * may read no VM of that name: the node's VM list holds only VMs it has
+   * VM.Audit on. For a report the host writes in a VM's notes, such as each
+   * GPU's memory (#603), which the token reads and cannot change.
+   */
+  async vmNotes(name: string, signal?: AbortSignal): Promise<{ readonly vmid: number; readonly notes: string } | null> {
+    const vms = await this.#request<Record<string, unknown>[]>("GET", `/nodes/${enc(this.node)}/qemu`, undefined, signal);
+    const vm = (vms ?? []).find((entry) => entry.name === name);
+    if (!vm) return null;
+    const vmid = Number(vm.vmid);
+    const config = await this.#request<Record<string, unknown>>("GET", `/nodes/${enc(this.node)}/qemu/${vmid}/config`, undefined, signal);
+    return { vmid, notes: typeof config?.description === "string" ? config.description : "" };
+  }
+
   async config(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
     return (await this.#request<Record<string, unknown>>("GET", this.#guest(vmid, "/config"), undefined, signal)) ?? {};
   }
