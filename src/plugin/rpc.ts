@@ -66,8 +66,10 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
           throw error;
         },
       );
-      return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path };
+      const video = !!box && app.configuration.document.general.video === true && box.capabilities.displays.some((display) => display.protocol === "selkies");
+      return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video };
     },
+    ping: async () => null,
     takeControl: ({ threadId, box: ref, viewer }) =>
       change("Taking control", async () => {
         const box = await desktopBox(threadId, ref);

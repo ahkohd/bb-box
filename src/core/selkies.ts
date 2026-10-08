@@ -76,25 +76,38 @@ export function unsequenced(text: string): string {
   return (fields[0] === "m" || fields[0] === "m2") && fields.length > 5 ? fields.slice(0, 5).join(",") : text;
 }
 
+/** The time, and a wait: the system's, or a test's own, which waits for nothing. */
+export interface Clock {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
+
+const SYSTEM_CLOCK: Clock = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
 /** Waits between a box's connections, so Selkies takes each. */
-class Spacing {
+export class Spacing {
   readonly #ms: number;
+  readonly #clock: Clock;
   #next = 0;
 
-  constructor(ms: number) {
+  constructor(ms: number, clock: Clock) {
     this.#ms = ms;
+    this.#clock = clock;
   }
 
   /** Selkies refused one for coming too soon, as after another client of the box: the next waits a whole spacing from now. */
   refused(): void {
-    this.#next = Math.max(this.#next, Date.now() + this.#ms);
+    this.#next = Math.max(this.#next, this.#clock.now() + this.#ms);
   }
 
   async turn(): Promise<void> {
-    const now = Date.now();
+    const now = this.#clock.now();
     const at = Math.max(now, this.#next);
     this.#next = at + this.#ms;
-    if (at > now) await new Promise((resolve) => setTimeout(resolve, at - now));
+    if (at > now) await this.#clock.sleep(at - now);
   }
 }
 
@@ -117,6 +130,8 @@ async function connect(open: OpenStream, spacing: Spacing, query: string, signal
 export class SelkiesBox {
   readonly #open: OpenStream;
   readonly spacing: Spacing;
+  /** The time the box's connections are spaced by, and its viewers paced by. */
+  readonly clock: Clock;
   #input: Promise<BoxWebSocket> | null = null;
   /** The input connection, once open. */
   #ready: BoxWebSocket | null = null;
@@ -124,10 +139,17 @@ export class SelkiesBox {
   #closed = false;
   readonly onError: (error: Error) => void;
 
-  constructor(open: OpenStream, options: { onError?: (error: Error) => void; spacingMs?: number } = {}) {
+  constructor(open: OpenStream, options: { onError?: (error: Error) => void; spacingMs?: number; clock?: Clock } = {}) {
     this.#open = open;
     this.onError = options.onError ?? (() => undefined);
-    this.spacing = new Spacing(options.spacingMs ?? OPEN_SPACING_MS);
+    this.clock = options.clock ?? SYSTEM_CLOCK;
+    this.spacing = new Spacing(options.spacingMs ?? OPEN_SPACING_MS, this.clock);
+  }
+
+  /** Opens the input connection, if it is not open, so the first input does not wait for it. */
+  warm(): void {
+    if (this.#closed) return;
+    this.#connection().catch(() => undefined);
   }
 
   /** Sends one input message to the box; opens the input connection first if needed. */
@@ -169,8 +191,8 @@ export class SelkiesBox {
   async #drain(socket: BoxWebSocket): Promise<void> {
     try {
       for (let message = await socket.next(); message !== null; message = await socket.next()) {
-        if (typeof message !== "string" && Date.now() - this.#stopAsked > STOP_ASK_MS) {
-          this.#stopAsked = Date.now();
+        if (typeof message !== "string" && this.clock.now() - this.#stopAsked > STOP_ASK_MS) {
+          this.#stopAsked = this.clock.now();
           await socket.send("STOP_VIDEO");
         }
       }
@@ -299,7 +321,7 @@ export class SelkiesRelay {
    * again every KEYFRAME_RETRY_MS until one comes.
    */
   #pace(socket: BoxWebSocket, id: number, key: boolean): boolean {
-    const now = Date.now();
+    const now = this.#options.box.clock.now();
     const oldest = this.#oldestUnacked();
     if (!this.#behind && oldest !== null && now - oldest > (this.#options.lagMs ?? LAG_MS)) this.#behind = true;
     if (this.#behind) {

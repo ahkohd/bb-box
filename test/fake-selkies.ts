@@ -1,7 +1,7 @@
 // A stand-in for a box's Selkies 2.0 (056), as the relay meets it: a
 // WebSocket server on in-memory channels, which accepts the upgrade, says
-// "MODE websockets", closes with 4029 a connection that came within
-// `debounceMs` of the last it took, and records what each connection sends. Pages
+// "MODE websockets", closes with 4029 the next `refuse` connections, as
+// Selkies does one that came too soon after another, and records what each connection sends. Pages
 // that asked for role=viewer may only ask for video, as in Selkies; others
 // are controllers. Frames go to every page that has not asked for no video.
 
@@ -68,12 +68,14 @@ export function videoFrame(id: number, key: boolean, width = 1920, height = 1080
 
 export class FakeSelkies {
   readonly pages: SelkiesPage[] = [];
-  debounceMs: number;
-  #lastConnect = 0;
+  /** How many of the next connections to close with 4029, as come too soon. */
+  refuse: number;
+  /** How many it closed so. */
+  refused = 0;
   #server: Server | null = null;
 
-  constructor(options: { debounceMs?: number } = {}) {
-    this.debounceMs = options.debounceMs ?? 0;
+  constructor(options: { refuse?: number } = {}) {
+    this.refuse = options.refuse ?? 0;
   }
 
   /** An in-memory connection, as the display's route opens one. */
@@ -166,14 +168,13 @@ export class FakeSelkies {
         void writer.close().catch(() => undefined);
       },
     };
-    // As Selkies, a connection that came too soon does not count as the last.
-    const now = Date.now();
-    if (now - this.#lastConnect < this.debounceMs) {
+    if (this.refuse > 0) {
+      this.refuse -= 1;
+      this.refused += 1;
       await page.close(4029);
       void reader.cancel().catch(() => undefined);
       return;
     }
-    this.#lastConnect = now;
     this.pages.push(page);
     await page.send("MODE websockets");
     for (;;) {

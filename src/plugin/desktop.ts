@@ -165,7 +165,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     return ready;
   };
   const control = new Control({
-    changed,
+    changed(boxId) {
+      changed(boxId);
+      // A person took control of a box with Selkies viewers: its input connection opens now, not at their first key.
+      if (control.view(boxId).owner === "human") selkiesBoxes.get(boxId)?.box.warm();
+    },
     logError: deps.logError,
     staleMs: deps.staleMs,
     reconnectMs,

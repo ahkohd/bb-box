@@ -3,10 +3,26 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SelkiesBox, SelkiesRelay, classify, unsequenced } from "../src/core/selkies.ts";
+import { SelkiesBox, SelkiesRelay, Spacing, classify, unsequenced, type Clock } from "../src/core/selkies.ts";
 import type { Message } from "../src/core/websocket.ts";
 import { FakeSelkies, videoFrame } from "./fake-selkies.ts";
 import { until } from "./fake-rfb.ts";
+
+/** The relay's clock in a test: time moves only when the test moves it, or a wait asks it to. */
+class FakeClock implements Clock {
+  t = 1_000_000;
+  readonly sleeps: number[] = [];
+  now(): number {
+    return this.t;
+  }
+  async sleep(ms: number): Promise<void> {
+    this.sleeps.push(ms);
+    this.t += ms;
+  }
+  advance(ms: number): void {
+    this.t += ms;
+  }
+}
 
 /** A viewer's end: what the relay sent it, and how it closed. */
 function viewer() {
@@ -22,10 +38,13 @@ function viewer() {
   };
 }
 
-function setup(options: { debounceMs?: number; spacingMs?: number; lagMs?: number } = {}) {
-  const server = new FakeSelkies({ debounceMs: options.debounceMs });
+let marks = 0;
+
+function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number } = {}) {
+  const server = new FakeSelkies({ refuse: options.refuse });
   const open = async () => server.channel();
-  const box = new SelkiesBox(open, { spacingMs: options.spacingMs ?? 0 });
+  const clock = new FakeClock();
+  const box = new SelkiesBox(open, { spacingMs: options.spacingMs ?? 0, clock });
   let control: string | null = null;
   const relay = (name: string) => {
     const end = viewer();
@@ -33,7 +52,19 @@ function setup(options: { debounceMs?: number; spacingMs?: number; lagMs?: numbe
     // Not spread: that would copy `closed` as it is now.
     return Object.assign(end, { relay });
   };
-  return { server, box, relay, give: (name: string | null) => void (control = name) };
+  /**
+   * Waits until each viewer has had everything every page was sent so far,
+   * and Selkies everything the relay sent it so far: a mark each way, which
+   * comes after it. So what has not come by then never will.
+   */
+  const settle = async (...ends: ReturnType<typeof relay>[]) => {
+    const mark = `mark-${++marks}`;
+    for (const page of server.pages) if (!page.closed) await page.send(mark);
+    await until("the viewers to have it all", () => ends.every((end) => end.got.includes(mark)));
+    for (const end of ends) await end.relay.receive("START_VIDEO");
+    await until("Selkies to have it all", () => server.pages.filter((page) => page.role === "viewer" && !page.closed).every((page) => page.received.at(-1) === "START_VIDEO"));
+  };
+  return { server, box, clock, relay, settle, give: (name: string | null) => void (control = name) };
 }
 
 test("a viewer joins as a Selkies viewer, gets what Selkies sends, and may only ask for video", async () => {
@@ -48,9 +79,12 @@ test("a viewer joins as a Selkies viewer, gets what Selkies sends, and may only 
     await a.relay.receive(message);
   }
   await a.relay.receive(Uint8Array.of(2, 0, 0));
-  await until("the video requests", () => page.received.length === 3);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual(page.received, ["SETTINGS,{}", "START_VIDEO", "REQUEST_KEYFRAME"], "nothing else reaches Selkies from a viewer");
+  // Last, a request that passes: what was dropped before it would have come first.
+  await a.relay.receive("STOP_VIDEO");
+  await until("the video requests", () => page.received.at(-1) === "STOP_VIDEO");
+  assert.deepEqual(page.received, ["SETTINGS,{}", "START_VIDEO", "REQUEST_KEYFRAME", "STOP_VIDEO"], "nothing else reaches Selkies from a viewer");
+  await a.relay.receive("START_VIDEO");
+  await until("the video again", () => !page.stopped);
   await server.frame(1, true);
   await server.frame(2, false);
   await until("two frames", () => a.frames().length === 2);
@@ -64,16 +98,16 @@ test("input reaches the box over the input connection only from the viewer with 
   const a = relay("a");
   const b = relay("b");
   await until("both pages", () => server.pages.length === 2);
+  // A receive that passed input on would have opened the input connection before it returned.
   await a.relay.receive("kd,120");
   await b.relay.receive("m,10,10,0,0,5");
-  await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(server.pages.length, 2, "no input connection while no viewer has control");
   give("a");
   await a.relay.receive("kd,120");
   await a.relay.receive("ku,120");
   await a.relay.receive("m,300,200,1,0,42");
   await b.relay.receive("kd,65");
-  await until("the input connection", () => server.pages.length === 3);
+  assert.equal(server.pages.length, 3, "the input connection");
   const input = server.pages[2]!;
   assert.equal(input.role, "controller");
   await until("the input", () => input.received.length === 4);
@@ -105,23 +139,23 @@ test("a viewer with control that goes lets go of what it holds down", async () =
 });
 
 test("the box's clipboard reaches only the viewer with control", async () => {
-  const { server, box, relay, give } = setup();
+  const { server, box, relay, give, settle } = setup();
   const a = relay("a");
   const b = relay("b");
   await until("both pages", () => server.pages.length === 2);
   give("a");
   await server.clipboard("copied in the box");
+  await settle(a, b);
   const text = `clipboard,${Buffer.from("copied in the box").toString("base64")}`;
-  await until("a's clipboard", () => a.got.includes(text));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.ok(!b.got.includes(text), "a viewer without control does not get it");
+  assert.ok(a.got.includes(text), "the viewer with control gets it");
+  assert.ok(!b.got.includes(text), "a viewer without control does not");
   await a.relay.close();
   await b.relay.close();
   await box.close();
 });
 
 test("a viewer that falls behind gets no frames until it has caught up, then from a key frame, which the relay asks for only then", async () => {
-  const { server, box, relay } = setup({ lagMs: 50 });
+  const { server, box, clock, relay, settle } = setup({ lagMs: 50 });
   const a = relay("a");
   await until("the page", () => server.pages.length === 1);
   const page = server.pages[0]!;
@@ -129,10 +163,10 @@ test("a viewer that falls behind gets no frames until it has caught up, then fro
   await server.frame(2, false);
   await until("two frames", () => a.frames().length === 2);
   // It shows nothing for longer than it may.
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  clock.advance(80);
   await server.frame(3, false);
   await server.frame(4, true);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await settle(a);
   assert.deepEqual(a.frames(), [1, 2], "nothing more while it is behind, not even a key frame");
   assert.ok(!page.received.includes("REQUEST_KEYFRAME"), "no key frame for every viewer while this one is behind");
   await a.relay.receive("CLIENT_FRAME_ACK 2 0");
@@ -147,37 +181,38 @@ test("a viewer that falls behind gets no frames until it has caught up, then fro
 });
 
 test("a viewer that caught up asks for its key frame again until one comes, on the input connection when it is open (Selkies takes a viewer's once a second)", async () => {
-  const { server, box, relay, give } = setup({ lagMs: 50 });
+  const { server, box, clock, relay, give, settle } = setup({ lagMs: 50 });
   const a = relay("a");
   await until("the page", () => server.pages.length === 1);
   const page = server.pages[0]!;
+  const requests = () => page.received.filter((message) => message === "REQUEST_KEYFRAME").length;
   await server.frame(1, true);
   await until("a frame", () => a.frames().length === 1);
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  await server.frame(2, false);
+  clock.advance(80);
   // Frame 2 comes while the viewer is behind, and is dropped; then it catches up.
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await server.frame(2, false);
+  await settle(a);
   await a.relay.receive("CLIENT_FRAME_ACK 1 0");
   await server.frame(3, false);
-  await until("the first request", () => page.received.filter((message) => message === "REQUEST_KEYFRAME").length === 1);
+  await until("the first request", () => requests() === 1);
   await server.frame(4, false);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(page.received.filter((message) => message === "REQUEST_KEYFRAME").length, 1, "not again within 250 ms");
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  await settle(a);
+  assert.equal(requests(), 1, "not again within 250 ms");
+  clock.advance(260);
   await server.frame(5, false);
-  await until("the second request", () => page.received.filter((message) => message === "REQUEST_KEYFRAME").length === 2);
+  await until("the second request", () => requests() === 2);
   assert.deepEqual(a.frames(), [1], "no frame until the key frame");
 
   // With the box's input connection open, it asks there instead.
   give("a");
   await a.relay.receive("kd,65");
-  await until("the input connection", () => server.pages.length === 2);
   const input = server.pages[1]!;
   await until("the key", () => input.received.includes("kd,65"));
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  clock.advance(260);
   await server.frame(6, false);
   await until("the request on the input connection", () => input.received.includes("REQUEST_KEYFRAME"));
-  assert.equal(page.received.filter((message) => message === "REQUEST_KEYFRAME").length, 2, "not on the viewer's own");
+  await settle(a);
+  assert.equal(requests(), 2, "not on the viewer's own");
   await server.frame(7, true);
   await until("the key frame", () => a.frames().length === 2);
   assert.deepEqual(a.frames(), [1, 7]);
@@ -185,29 +220,43 @@ test("a viewer that caught up asks for its key frame again until one comes, on t
   await box.close();
 });
 
-test("a box's connections open one at a time, spaced, and one Selkies refuses for coming too soon opens again", async () => {
-  const { server, box, relay, give } = setup({ debounceMs: 40, spacingMs: 60 });
-  const started = Date.now();
+test("a box's connections take turns a spacing apart, and one Selkies refused waits a whole spacing from then", async () => {
+  const clock = new FakeClock();
+  const spacing = new Spacing(60, clock);
+  await Promise.all([spacing.turn(), spacing.turn(), spacing.turn()]);
+  assert.deepEqual(clock.sleeps, [60, 60], "the second and third each waited a spacing");
+  // An attempt that took long, then was refused: the next waits a whole spacing from the refusal, not from its turn.
+  clock.advance(500);
+  await spacing.turn();
+  clock.advance(100);
+  spacing.refused();
+  await spacing.turn();
+  assert.deepEqual(clock.sleeps, [60, 60, 60]);
+
+  // Through the relay: two viewers and the input connection each wait their turn, and Selkies refuses none.
+  const { server, box, clock: boxClock, relay, give } = setup({ spacingMs: 60 });
   const a = relay("a");
   const b = relay("b");
   give("a");
   await a.relay.receive("kd,1");
   await until("three pages", () => server.pages.length === 3);
-  assert.ok(Date.now() - started >= 120, "each waited its turn");
-  assert.ok(a.got.includes("MODE websockets") && b.got.includes("MODE websockets"));
+  assert.deepEqual(boxClock.sleeps, [60, 60]);
+  assert.equal(server.refused, 0);
+  await until("both first messages", () => a.got.includes("MODE websockets") && b.got.includes("MODE websockets"));
   await a.relay.close();
   await b.relay.close();
   await box.close();
+});
 
-  // Spaced less than Selkies wants, as when another client connected: refused, then opened a spacing later.
-  const quick = setup({ debounceMs: 40, spacingMs: 30 });
-  const c = quick.relay("c");
-  const d = quick.relay("d");
-  await until("both pages", () => quick.server.pages.length === 2);
-  await until("both first messages", () => c.got.includes("MODE websockets") && d.got.includes("MODE websockets"));
+test("a connection Selkies refuses for coming too soon (4029) opens again, a spacing later", async () => {
+  const { server, box, clock, relay } = setup({ refuse: 1, spacingMs: 30 });
+  const c = relay("c");
+  await until("the page", () => server.pages.length === 1);
+  await until("its first message", () => c.got.includes("MODE websockets"));
+  assert.equal(server.refused, 1);
+  assert.deepEqual(clock.sleeps, [30]);
   await c.relay.close();
-  await d.relay.close();
-  await quick.box.close();
+  await box.close();
 });
 
 test("the box ending the connection ends the viewer's, with why", async () => {

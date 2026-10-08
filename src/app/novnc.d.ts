@@ -57,3 +57,12 @@ declare module "@novnc/novnc" {
     _screenSize(): { w: number; h: number };
   }
 }
+
+declare module "@novnc/novnc/core/input/keyboard.js" {
+  export default class Keyboard {
+    constructor(target: HTMLElement);
+    onkeyevent: (keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null) => void;
+    grab(): void;
+    ungrab(): void;
+  }
+}

@@ -1376,6 +1376,43 @@ test("a kind keeps a spare box as a BB machine, which box_acquire claims, rename
   await until("its machine", async () => world.hosts.get(`host-${next.id}`)?.name === `${next.name} (spare)`);
 });
 
+test("a Windows kind keeps its spare as a manual machine enrolled ahead, which a claim renames and a release removes, and New box refuses Windows by name (#539)", async (t) => {
+  const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
+  const shell = join(tempDir("windows-shell"), "pwsh");
+  writeFileSync(shell, `#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; esac\nexit 1\n`);
+  chmodSync(shell, 0o755);
+  const { bb, harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell });
+  t.after(() => harness.lifecycle.dispose());
+  world.windowsConnects = true;
+
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
+  const refused = (await provider.validate!({ inputs: { kind: "windows" } } as never)) as { action: string; message: string };
+  assert.equal(refused.action, "refuse");
+  assert.match(refused.message, /^A thread cannot start on a new Windows box: BB adds a new box's machine with its installer for Linux and macOS only\./);
+
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { windows: { spares: 1 } } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  const spare = await until("a spare", async () => (await app.boxes.list(SPARES)).find((box) => box.enrol.state === "enrolled"));
+  const hostId = `host-${spare.id}`;
+  assert.ok(world.events.includes(`create manual ${hostId}`), world.events.join("\n"));
+  assert.equal(world.hosts.get(hostId)?.name, `${spare.name} (spare)`, "named as a spare once it connects");
+  assert.deepEqual(await bb.storage.kv.list("manual-machine/"), [`manual-machine/${hostId}`]);
+
+  const acquired = text(await tool("box_acquire", { kind: "windows" }));
+  assert.match(acquired, new RegExp(`\\b${spare.name}\\b`));
+  assert.match(acquired, /BB machine: enrolled/);
+  assert.match(acquired, /Timings: claiming a spare/);
+  const box = await only(app);
+  assert.equal(box.id, spare.id);
+  await until("the rename", async () => world.hosts.get(hostId)?.name === box.name);
+  assert.equal(world.hosts.get(hostId)?.status, "connected");
+
+  assert.ok(!isError(await tool("box_release", { box: box.name })));
+  assert.equal(world.hosts.has(hostId), false);
+  assert.ok(!(await bb.storage.kv.list("manual-machine/")).includes(`manual-machine/${hostId}`));
+});
+
 test("an enrolment BB refuses for not knowing bb-box's machine provider, as while the plugin restarts, asks again and enrols (#285)", async (t) => {
   const { harness, app, world, tool } = await start(undefined, { providerRetryMs: 20 });
   t.after(() => harness.lifecycle.dispose());
@@ -2292,12 +2329,21 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   assert.match(sentTo(noId).subarray(12).toString(), /The viewer gave no viewer ID/);
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
-  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal" });
+  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false });
 });
 
 test("the desktop route carries a box's Selkies stream message by message, and only the viewer with control reaches the box, sizes it and gets its clipboard (056)", async (t) => {
   const { harness, app, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
   t.after(() => harness.lifecycle.dispose());
+  // The viewer may show it as video only once the general setting is on (056).
+  const video = async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { video: boolean }).video;
+  assert.equal(await video(), false);
+  const exported = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...exported, general: { ...exported.general, video: true } }, revision: exported.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  assert.equal(await video(), true);
+  const refused = (await harness.behavior.callRpc("config.check", { draft: { ...app.configuration.exported(), general: { video: "yes" } } })) as { problems: { path: string; message: string }[] };
+  assert.deepEqual(refused.problems.find((problem) => problem.path === "general.video")?.message, "video is true or false.");
   const selkies = world.backend!.selkies;
   const rfb = world.backend!.rfb;
   const viewer = "viewer-one-0001";
@@ -2319,11 +2365,12 @@ test("the desktop route carries a box's Selkies stream message by message, and o
 
   const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: null };
   assert.equal(took.error, null);
-  await session.receive("kd,97");
+  // The input connection opens as control is taken, before any key.
   const input = await until("the input connection", async () => selkies.pages[1]);
   assert.equal(input.role, "controller");
+  await until("its STOP_VIDEO", async () => input.received[0] === "STOP_VIDEO");
+  await session.receive("kd,97");
   await until("the key", async () => input.received.includes("kd,97"));
-  assert.equal(input.received[0], "STOP_VIDEO", "it asks for no video first");
   await session.receive("r,1024x768");
   await until("the resize", async () => rfb.width === 1024 && rfb.height === 768);
   await selkies.clipboard("copied again");
