@@ -747,7 +747,7 @@ export const scenes = {
   "boxes-page": boxesPage(),
   "boxes-page-threads": boxesPage({ after: async (root) => { openTab(root, "Threads"); await wait(300); } }),
   "boxes-page-new-menu": boxesPage({
-    height: 560,
+    height: 300,
     after: async (root) => {
       // New box's menu, as New automation's on BB's Automations page.
       openMenu(root, "New box options");
