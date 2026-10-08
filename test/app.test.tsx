@@ -10,12 +10,13 @@ import type { ImageOptionView } from "../src/plugin/views.ts";
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
+import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { CLIPBOARD_MAX_BYTES, SelkiesSession } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
-import { choiceOf, displayChoices, formFilterOf, gpuChoices, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
+import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
@@ -324,6 +325,7 @@ function kindView(id: string, label: string, description: string, cores: number,
         typicalReadyMs: desktop ? 3100 : 2200,
         docker: true,
         hostOs: "linux",
+        gpuRoom: null,
       },
     ],
     computerUse: desktop,
@@ -387,7 +389,7 @@ const POOLED: KindView = {
   ...KINDS[0]!,
   offers: [
     KINDS[0]!.offers[0]!,
-    { backend: "ssh-pool", name: "SSH host pool", type: "ssh-pool", label: "SSH host pool", hosts: [], form: "Physical", ready: 0, free: 1, admin: false, resizable: null, typicalReadyMs: null, docker: true, hostOs: "linux" },
+    { backend: "ssh-pool", name: "SSH host pool", type: "ssh-pool", label: "SSH host pool", hosts: [], form: "Physical", ready: 0, free: 1, admin: false, resizable: null, typicalReadyMs: null, docker: true, hostOs: "linux", gpuRoom: null },
   ],
   admin: null,
   forms: ["LXC", "Physical"],
@@ -808,6 +810,36 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
   await choose("GPU", "1 GPU");
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux-desktop"]));
+});
+
+test("with 1 GPU chosen, the form says when no GPU has room, and only then (#603)", async () => {
+  const now = Date.now();
+  const reading = (id: string, freeMiB: number) => ({ id, freeMiB, totalMiB: 8192, at: now, neededMiB: 384 });
+  const full = { readings: [reading("gpu-a", 103)], fullUntil: now + 4 * 60_000 - 1_000 };
+  const withRoom = (gpuRoom: GpuRoom) => KINDS.map((kind) => (kind.id === "linux-desktop" ? { ...kind, offers: kind.offers.map((offer) => ({ ...offer, gpuRoom })) } : kind));
+  const cpu: KindView = { ...kindView("linux-desktop-cpu", "Linux desktop", "A desktop on the CPU.", 4, true), gpu: false };
+  const { handlers } = server([], { kinds: [...withRoom(full), cpu] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("radiogroup", { name: "Type" });
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  const note = "No GPU has room now: 103 MiB free, and a desktop needs 384 MiB. Choose None, or try again in 4 minutes.";
+  expect(screen.queryByText(note)).toBeNull();
+  await choose("GPU", "1 GPU");
+  expect(screen.getByText(note).tagName).toBe("P");
+  expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("1 GPU");
+  await choose("GPU", "None");
+  expect(screen.queryByText(note)).toBeNull();
+
+  // Several GPUs give the most free; room on one, a refusal that has ended, or no reading say nothing.
+  expect(gpuFullNote([{ ...KINDS[1]!.offers[0]!, gpuRoom: { readings: [reading("gpu-a", 103), reading("gpu-b", 21)], fullUntil: now + 60_000 } }], now)).toBe(
+    "No GPU has room now: at most 103 MiB free, and a desktop needs 384 MiB. Choose None, or try again in 1 minute.",
+  );
+  expect(gpuFullNote([{ ...KINDS[1]!.offers[0]!, gpuRoom: { readings: [reading("gpu-a", 6100)], fullUntil: null } }], now)).toBeNull();
+  expect(gpuFullNote([{ ...KINDS[1]!.offers[0]!, gpuRoom: full }], full.fullUntil)).toBeNull();
+  expect(gpuFullNote([{ ...KINDS[1]!.offers[0]!, gpuRoom: null }], now)).toBeNull();
+  expect(gpuFullNote([], now)).toBeNull();
 });
 
 test("one Escape closes the form whatever was used last: a card, a menu, a field", async () => {
@@ -2818,7 +2850,7 @@ test("the steps narrow each other: a system with no server snaps to Desktop, the
     enrol: false,
     computerUse: true,
     docker: false,
-    offers: [{ backend: "proxmox-qemu", name: "Proxmox QEMU on pve1", type: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve1"], form: "VM", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: 30000, docker: false, hostOs: "linux" }],
+    offers: [{ backend: "proxmox-qemu", name: "Proxmox QEMU on pve1", type: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve1"], form: "VM", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: 30000, docker: false, hostOs: "linux", gpuRoom: null }],
   };
   const { handlers, changes } = server([], { kinds: [POOLED, KINDS[1]!, windows] });
   const slot = panel(handlers);
@@ -2884,8 +2916,8 @@ test("Runs on keeps the providers on that machine, and one that does not know it
     forms: ["LXC", "VM", "Docker"],
     offers: [
       KINDS[0]!.offers[0]!,
-      { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos" },
-      { backend: "docker:host_1", name: "Docker", type: "docker", label: "Docker", hosts: [], form: "Docker", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: null, docker: true, hostOs: null },
+      { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos", gpuRoom: null },
+      { backend: "docker:host_1", name: "Docker", type: "docker", label: "Docker", hosts: [], form: "Docker", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: null, docker: true, hostOs: null, gpuRoom: null },
     ],
   };
   const { handlers, changes } = server([], { kinds: [mixed, KINDS[1]!] });
@@ -2920,7 +2952,7 @@ test("filters that leave no provider disable Create and say so", async () => {
     ...KINDS[0]!,
     admin: null,
     forms: ["LXC", "VM"],
-    offers: [KINDS[0]!.offers[0]!, { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos" }],
+    offers: [KINDS[0]!.offers[0]!, { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos", gpuRoom: null }],
   };
   const { handlers, changes } = server([], { kinds: [pair, KINDS[1]!] });
   const slot = panel(handlers);
@@ -3062,7 +3094,7 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   // A Docker machine BB has not named yet is never shown by its ID (the operator's rule).
   expect(providerTitle({ ...offer, type: "docker", label: "Docker", hosts: [] })).toBe("an unnamed machine");
   expect(providerTitle({ ...offer, type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
-  const mac: KindView = { ...linux, id: "macos", os: "macos", arch: "arm64", offers: [{ ...offer, backend: "tart", type: "tart", label: "Tart", hosts: ["mac-mini"], hostOs: "macos" }] };
+  const mac: KindView = { ...linux, id: "macos", os: "macos", arch: "arm64", offers: [{ ...offer, backend: "tart", type: "tart", label: "Tart", hosts: ["mac-mini"], hostOs: "macos", gpuRoom: null }] };
   const many: KindView = { ...linux, id: "linux-arm64", arch: "arm64", offers: [offer, { ...offer, backend: "b", hosts: ["pve2"] }, { ...offer, backend: "c", hosts: ["pve3"] }] };
   expect(systemsOf([mac, many, linux]).map((system) => [system.label, system.words])).toEqual([
     ["Linux", "3 providers"],
@@ -3086,7 +3118,7 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   expect(kindFor(both, { os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" })?.id).toBe("linux-desktop");
   // The filters: a Kind chip keeps its form; Runs on keeps the machine's OS and an offer that does not know it yet; Physical ignores Runs on.
   const pool = { ...offer, backend: "ssh-pool", type: "ssh-pool", form: "Physical" as const };
-  const docker = { ...offer, backend: "docker:1", type: "docker", form: "Docker" as const, hostOs: null };
+  const docker = { ...offer, backend: "docker:1", type: "docker", form: "Docker" as const, hostOs: null, gpuRoom: null };
   const tart = { ...offer, backend: "tart", type: "tart", form: "VM" as const, hostOs: "macos" as const };
   expect((["LXC", "Docker", "VM", "Physical"] as const).map((form) => formFilterOf({ ...offer, form }))).toEqual(["container", "container", "vm", "physical"]);
   expect(runsOnOptions([offer, pool, docker, tart])).toEqual(["macos", "linux"]);
