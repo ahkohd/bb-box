@@ -275,6 +275,8 @@ const DRIVERS = [
     setup: { guide: "setup/docker/README.md", scripts: ["setup/docker/build.sh"] },
   },
 ];
+/** microsandbox's driver, as the server describes it (053): the fields and help the settings page shows. */
+const MICROSANDBOX_DRIVER = {"type": "microsandbox", "label": "microsandbox", "description": "Linux boxes, with or without a desktop, as microVMs that start in under a second, on a Linux host with KVM or a Mac. bb-box installs its own msb there.", "nature": "virtual", "kinds": ["linux", "linux-desktop-cpu", "linux-arm64", "linux-arm64-desktop-cpu"], "fields": [{"key": "host", "type": "string", "label": "Host", "description": "The host that runs the boxes, a Linux host with KVM or a Mac: ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there, in a folder of its own.", "group": "connection", "default": ""}, {"key": "linux-image", "type": "string", "label": "Linux image", "description": "The image linux boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.", "group": "boxes", "default": "bbbox/linux:1"}, {"key": "desktop-image", "type": "string", "label": "Desktop image", "description": "The image linux-desktop-cpu boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.", "group": "boxes", "default": "bbbox/linux-desktop:1"}, {"key": "linux-arm64-image", "type": "string", "label": "Linux image (arm64)", "description": "The image linux-arm64 boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off.", "group": "boxes", "default": "bbbox/linux:1-arm64"}, {"key": "desktop-arm64-image", "type": "string", "label": "Desktop image (arm64)", "description": "The image linux-arm64-desktop-cpu boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off.", "group": "boxes", "default": "bbbox/linux-desktop:1-arm64"}, {"key": "docker", "type": "boolean", "label": "Docker in boxes", "description": "Give each box its own Docker daemon, started by its first docker command, with its data on a disk of the box's own. Each box has its own kernel, so this needs no privilege on the host.", "group": "boxes", "default": true}, {"key": "docker-disk-gib", "type": "number", "label": "Docker disk (GiB)", "description": "The most each box's Docker disk may grow to. It takes only what Docker writes, and goes with the box.", "group": "advanced", "default": 64}, {"key": "disk-gib", "type": "number", "label": "Root disk (GiB)", "description": "The most a box's root disk may grow to when no disk size is asked for. It takes only what the box writes.", "group": "advanced", "default": 32}, {"key": "network", "type": "string", "label": "Network profiles", "description": "msb's network profiles for each box, comma-separated: public reaches the internet, private the host's local networks and tailnet, where BB's server often is.", "group": "advanced", "default": "public,private"}, {"key": "boxes", "type": "number", "label": "Most boxes", "description": "The most bb-box microVMs on the host at once, running or stopped, counting those of every bb-box install that uses it.", "group": "advanced", "default": 20}, {"key": "reserve-memory-mib", "type": "number", "label": "Memory kept free (MiB)", "description": "A new box is refused if the host would have less memory than this left, after the memory of the running boxes.", "group": "advanced", "default": 4096}, {"key": "memory-overcommit", "type": "number", "label": "Memory overcommit", "description": "How many times the host's memory the boxes may take in all, after the memory kept free: 1 to 4. At 1, each box counts at its full memory. Above 1, a new box also needs memory free on the host now. Raise it for mostly idle boxes.", "group": "advanced", "default": 1}], "hostFields": [], "setup": {"guide": "setup/microsandbox/README.md", "scripts": []}};
 const KIND_INFO = [
   { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], docker: null, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
   { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], docker: true, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
@@ -301,8 +303,8 @@ function configState(options = {}) {
     revision: document.revision,
     defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux" }, kinds: { linux: LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
     kinds: KIND_INFO,
-    drivers: DRIVERS,
-    backends: [
+    drivers: [...DRIVERS, ...(options.drivers ?? [])],
+    backends: options.backends ?? [
       tokenSet
         ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", form: "LXC", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 }, warmShort: options.warmShort ?? [] }
         : { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC", form: "LXC", state: "misconfigured", problems: [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }], boxes: 0, kinds: [], doctor: null, warmShort: [] },
@@ -425,6 +427,31 @@ export const scenes = {
     after: (root) => click(root, "button", "bold-heron: details"),
   },
   "panel-problems": { slot: "boxes", chrome: boxesChrome, rpc: rpc([failed, gone, refused]) },
+  // Docker and microsandbox on one host, beside Proxmox LXC (053): the provider rows must tell the two on behemoth apart.
+  "panel-chooser-microsandbox": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 900,
+    rpc: rpc([], {
+      kinds: [
+        {
+          ...KINDS[0],
+          forms: ["LXC", "Docker", "VM"],
+          offers: [
+            offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { ready: 1, typicalReadyMs: 2200 }),
+            offer("docker", "Docker", ["behemoth"], "Docker", { typicalReadyMs: 1800 }),
+            offer("microsandbox", "microsandbox", ["behemoth"], "VM", { typicalReadyMs: 400 }),
+          ],
+        },
+        ...KINDS.slice(1),
+      ],
+    }),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+    },
+  },
   "panel-chooser": {
     slot: "boxes",
     chrome: boxesChrome,
@@ -745,6 +772,39 @@ export const scenes = {
     rpc: rpc([]),
     after: async (root) => {
       root.querySelector('button[aria-label="Set up Tart"]')?.click();
+      await wait(300);
+    },
+  },
+  // Two microsandbox backends beside Docker, as an operator with a Linux host and a Mac has them (053): one named in its ID.
+  "settings-microsandbox": {
+    slot: "settings",
+    width: 860,
+    props: {},
+    rpc: rpc([], {
+      config: {
+        drivers: [MICROSANDBOX_DRIVER],
+        document: {
+          schema: 1,
+          revision: 9,
+          backends: [
+            { id: "docker", type: "docker", enabled: true, fields: { host: "ssh://box@behemoth" } },
+            { id: "microsandbox", type: "microsandbox", enabled: true, fields: { host: "ssh://box@behemoth" } },
+            { id: "microsandbox:homestead", type: "microsandbox", enabled: true, fields: { host: "bb:host_mac1", "memory-overcommit": 2 } },
+          ],
+          kinds: {},
+          general: {},
+        },
+        backends: [
+          { id: "docker", type: "docker", label: "Docker on behemoth", form: "Docker", state: "active", problems: [], boxes: 1, kinds: ["linux", "linux-desktop-cpu"], doctor: { report: { ok: true, summary: "Docker 29.8 on behemoth", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
+          { id: "microsandbox", type: "microsandbox", label: "microsandbox on behemoth", form: "microVM", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop-cpu"], doctor: { report: { ok: true, summary: "msb 0.7.7 on behemoth", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
+          { id: "microsandbox:homestead", type: "microsandbox", label: "microsandbox on homestead", form: "microVM", state: "active", problems: [], boxes: 0, kinds: ["linux-arm64", "linux-arm64-desktop-cpu"], doctor: { report: { ok: true, summary: "msb 0.7.7 on homestead", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
+        ],
+      },
+    }),
+    after: async (root) => {
+      root.querySelector('button[aria-label="Set up microsandbox on homestead"]')?.click();
+      await wait(300);
+      click(root, "button", "Advanced");
       await wait(300);
     },
   },

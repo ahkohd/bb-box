@@ -172,6 +172,38 @@ function kindSizesText(kind: KindView): string {
   return `${presets.join(", ")}; custom up to ${kind.largest.words}`;
 }
 
+/** "just now", "1 minute ago", "3 hours ago", "2 days ago". */
+function ago(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  const [count, unit] = minutes < 60 ? [minutes, "minute"] : minutes < 1440 ? [Math.floor(minutes / 60), "hour"] : [Math.floor(minutes / 1440), "day"];
+  return count ? `${count} ${unit}${count === 1 ? "" : "s"} ago` : "just now";
+}
+
+/**
+ * A GPU desktop kind's room as each provider last read it (#603), for
+ * box_list: each GPU's free memory, or that no GPU has room and what to do
+ * instead. Empty when no provider has read a GPU.
+ */
+export function gpuRoomText(kind: KindView, kinds: readonly KindView[], now = Date.now()): string {
+  const cpu = kinds.find((other) => other.desktop && !other.gpu && other.os === kind.os && other.arch === kind.arch && other.windowing === kind.windowing);
+  return kind.offers
+    .flatMap((offer) => {
+      const room = offer.gpuRoom;
+      if (!room?.readings.length) return [];
+      const on = kind.offers.length > 1 ? ` on ${offer.name}` : "";
+      const needs = `a desktop needs ${room.readings[0]!.neededMiB} MiB`;
+      if (room.fullUntil !== null && room.fullUntil > now) {
+        const minutes = Math.max(1, Math.ceil((room.fullUntil - now) / 60_000));
+        const later = `try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+        const each = room.readings.map((gpu) => `${gpu.id} ${gpu.freeMiB} MiB free, ${ago(now - gpu.at)}`).join("; ");
+        return [` No GPU${on} has room for a desktop now (${each}; ${needs}). ${cpu ? `Acquire ${cpu.id} instead, or ${later}.` : `${later[0]!.toUpperCase()}${later.slice(1)}.`}`];
+      }
+      const each = room.readings.map((gpu) => `${gpu.id} ${gpu.freeMiB}${gpu.totalMiB === null ? "" : ` of ${gpu.totalMiB}`} MiB free, ${ago(now - gpu.at)}`).join("; ");
+      return [` GPU memory${on}: ${each}; ${needs}.`];
+    })
+    .join("");
+}
+
 /** Why the box this thread runs on, but does not own, is not released or stopped from here (036). */
 function runsOnRefusal(box: BoxRecord, action: "release" | "stop"): BoxError {
   // A spare a thread started on becomes your machine at the next spare upkeep (036).
@@ -280,7 +312,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")} On: ${kind.offers.map((offer) => offer.name).join(", ")}.${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")} On: ${kind.offers.map((offer) => offer.name).join(", ")}.${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. Ask the user to set one up in BB Box's settings in BB.",
         );
         const hints = list.length
