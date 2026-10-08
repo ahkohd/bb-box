@@ -139,6 +139,25 @@ test("a box at the default size takes a warm VM, and the pool fills again", asyn
   await backend.release(guest, releasing);
 });
 
+test("a refusal names a claimed warm VM by its box, not by its warm name (#599)", async () => {
+  const { make, warmVms } = setup();
+  const backend = make();
+  await backend.maintain();
+  const [warm] = warmVms();
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.equal(guest.ref, warm);
+  const clone = identity();
+  const other = await backend.acquire(clone, null, hooks().hooks, signal());
+  const capacity = await backend.capacity("macos", SMALL, []);
+  assert.equal(capacity.ok, false);
+  assert.match(capacity.message!, /runs 2 of the 2 macOS VMs it may run \(box /);
+  for (const named of [box, clone]) assert.match(capacity.message!, new RegExp(`box ${named.name} of thread thr_abc123[,)]`));
+  assert.doesNotMatch(capacity.message!, /bb-box-warm-/);
+  await backend.release(guest, releasing);
+  await backend.release(other, releasing);
+});
+
 test("a box at another size clones, and leaves the warm VM", async () => {
   const { make, warmVms, suspended } = setup();
   const backend = make();
