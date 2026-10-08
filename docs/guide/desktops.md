@@ -61,7 +61,7 @@ To choose yourself, select **Show as video** in the toolbar's menu. It is ticked
 
 If the video cannot start, the desktop shows over VNC, and the toolbar says 'Video did not start, so this shows VNC.' Point at the note to see why: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
 
-Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size.
+Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it.
 
 ## When the desktop is not showing
 

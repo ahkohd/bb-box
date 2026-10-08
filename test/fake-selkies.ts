@@ -122,6 +122,14 @@ export class FakeSelkies {
     for (const page of this.pages) if (!page.closed) await page.send(`clipboard,${Buffer.from(text).toString("base64")}`);
   }
 
+  /** Sends every page an image the box copied, in parts of `chunk` bytes, as Selkies sends anything over its chunk (#609). */
+  async clipboardImage(mime: string, bytes: Uint8Array, chunk: number): Promise<void> {
+    const messages = [`clipboard_start,${mime},${bytes.byteLength}`];
+    for (let offset = 0; offset < bytes.byteLength; offset += chunk) messages.push(`clipboard_data,${Buffer.from(bytes.subarray(offset, offset + chunk)).toString("base64")}`);
+    messages.push("clipboard_finish");
+    for (const page of this.pages) if (!page.closed) for (const message of messages) await page.send(message);
+  }
+
   async #serve(reader: ReadableStreamDefaultReader<Uint8Array>, writer: WritableStreamDefaultWriter<Uint8Array>): Promise<void> {
     let buffer = new Uint8Array(0);
     const more = async (): Promise<boolean> => {

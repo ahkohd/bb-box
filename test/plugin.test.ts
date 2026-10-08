@@ -2393,8 +2393,11 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   assert.equal(selkies.pages.length, 1, "no input connection, and no input, without control");
   assert.deepEqual([rfb.width, rfb.height], [1280, 800], "no resize without control");
   await selkies.clipboard("copied");
+  await selkies.clipboardImage("image/png", Uint8Array.of(1, 2, 3, 4, 5), 2);
+  await session.receive("cb,image/png,AQID");
   await new Promise((resolve) => setTimeout(resolve, 30));
-  assert.ok(!session.sent.some((message) => typeof message === "string" && message.startsWith("clipboard,")), "no clipboard without control");
+  assert.ok(!session.sent.some((message) => typeof message === "string" && message.startsWith("clipboard")), "no clipboard, text or image, without control");
+  assert.ok(!page.received.some((message) => typeof message === "string" && message.startsWith("cb,")), "no paste without control");
 
   const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: null };
   assert.equal(took.error, null);
@@ -2408,6 +2411,15 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await until("the resize", async () => rfb.width === 1024 && rfb.height === 768);
   await selkies.clipboard("copied again");
   await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied again").toString("base64")}`));
+  // An image, both ways, in Selkies' parts and in order (#609).
+  await selkies.clipboardImage("image/png", Uint8Array.of(1, 2, 3, 4, 5), 2);
+  const image = ["clipboard_start,image/png,5", "clipboard_data,AQI=", "clipboard_data,AwQ=", "clipboard_data,BQ==", "clipboard_finish"];
+  await until("the image", async () => session.sent.includes("clipboard_finish"));
+  assert.deepEqual(session.sent.filter((message) => typeof message === "string" && message.startsWith("clipboard_")), image);
+  const paste = ["cbs,bb1,image/png,5", "cbd,bb1,AQIDBA==", "cbd,bb1,BQ==", "cbe,bb1"];
+  for (const message of paste) await session.receive(message);
+  await until("the pasted image", async () => input.received.includes("cbe,bb1"));
+  assert.deepEqual(input.received.filter((message) => typeof message === "string" && /^cb[sde],/.test(message)), paste);
 
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name });
   await until("the key let go", async () => input.received.includes("ku,97"));
