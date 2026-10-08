@@ -578,6 +578,16 @@ export class Boxes {
     return this.#load(await this.#deps.kv.list("box/"));
   }
 
+  /**
+   * The names a new name must avoid: `taken`, and every live box's in this
+   * install, whatever its thread. A spare's name is a claimed box's, so a
+   * new spare named only against the spares could share a name, and a BB
+   * machine's, with a box a thread just claimed (#539).
+   */
+  async #liveNames(taken: ReadonlySet<string>): Promise<Set<string>> {
+    return new Set([...taken, ...(await this.all()).filter((box) => box.state !== "gone").map((box) => box.name)]);
+  }
+
   async #load(keys: string[]): Promise<BoxRecord[]> {
     const boxes = await Promise.all(keys.map((key) => this.#deps.kv.get<BoxRecord>(key)));
     return boxes
@@ -705,7 +715,7 @@ export class Boxes {
           id: newBoxId(this.#random),
           threadId: input.threadId,
           projectId: input.projectId,
-          name: input.name ?? generateName(taken, this.#random),
+          name: input.name ?? generateName(await this.#liveNames(taken), this.#random),
           kind: chosen.kind.id,
           kindLabel: chosen.kind.label,
           requires: [...new Set([...chosen.kind.requires, ...features])],
@@ -734,7 +744,13 @@ export class Boxes {
         return { box: await this.#write(box), claimed: null };
       }),
     );
-    if (claimed !== null) this.#claimed(box, claimed);
+    if (claimed !== null && box.state === "stopped") {
+      // A spare that waited stopped (#539): it starts first, as a hibernated VM cannot be relabelled, and the start reconnects its machine.
+      void this.#chain(box.id, () => this.#start(box)).then(
+        (started) => this.#claimed(started, claimed),
+        (error) => this.#deps.logError("start a claimed spare", error),
+      );
+    } else if (claimed !== null) this.#claimed(box, claimed);
     else this.#startAcquire(box);
     return box;
   }
@@ -777,7 +793,7 @@ export class Boxes {
           ...spare,
           threadId: input.threadId,
           projectId: input.projectId,
-          name: input.name ?? (taken.has(spare.name) ? generateName(taken, this.#random) : spare.name),
+          name: input.name ?? (taken.has(spare.name) ? generateName(await this.#liveNames(taken), this.#random) : spare.name),
           requires: [...new Set([...spare.requires, ...features])],
           timings: { spare: ms, total: ms },
         };
@@ -874,10 +890,25 @@ export class Boxes {
     return checks;
   }
 
-  /** Whether a spare can be claimed now: ready, answering, enrolled when it enrols, and with no task running. */
+  /**
+   * Whether a spare can be claimed now: ready, answering, enrolled when it
+   * enrols, and with no task running; or waiting stopped, which the claim
+   * starts (#539).
+   */
   async #claimable(spare: BoxRecord): Promise<boolean> {
-    if (spare.state !== "ready" || spare.restoredAt || spare.error || this.#work.has(spare.id) || this.#reconnects.has(spare.id)) return false;
+    if (spare.restoredAt || spare.error || this.#work.has(spare.id) || this.#reconnects.has(spare.id)) return false;
+    if (spare.state === "stopped") return this.#waitsStopped(spare);
+    if (spare.state !== "ready") return false;
     return spare.enrol.state === "enrolled" || (spare.enrol.state === "off" && !(await this.#enrols(spare)));
+  }
+
+  /**
+   * Whether a spare waits stopped (#539): it is a BB machine, on a backend
+   * whose stop keeps its session, so it holds no memory while it waits and
+   * a start resumes it, BB's daemon included, in a few seconds.
+   */
+  #waitsStopped(spare: BoxRecord): boolean {
+    return spare.enrol.state === "enrolled" && !!this.#deps.backends.get(spare.backend)?.keepsSession?.(spare.kind);
   }
 
   /**
@@ -985,10 +1016,10 @@ export class Boxes {
         await this.#forget(spare);
         continue;
       }
-      // No claim takes these: stopped, or not enrolled when it should be, as when its machine was removed in BB.
+      // No claim takes these: stopped, unless it waits so, or not enrolled when it should be, as when its machine was removed in BB.
       const failed =
         spare.state === "gone" ||
-        spare.state === "stopped" ||
+        (spare.state === "stopped" && !this.#waitsStopped(spare)) ||
         spare.enrol.state === "failed" ||
         (spare.state === "ready" && spare.enrol.state === "off" && !spare.restoredAt && (await this.#enrols(spare)));
       const image = spare.image;
@@ -1013,6 +1044,10 @@ export class Boxes {
         continue;
       }
       kept.set(slot, count + 1);
+      // A spare that can wait stopped does, so it holds no memory until a claim starts it (#539).
+      if (spare.state === "ready" && this.#waitsStopped(spare) && !this.#work.has(spare.id)) {
+        await this.stop(SPARES, spare.id).catch((error) => this.#deps.logError("stop a spare", error));
+      }
     }
     for (const [kind, wanted] of Object.entries(general.spares)) {
       for (let count = kept.get(kind) ?? 0; count < wanted && !this.#disposed; count++) {
@@ -1055,7 +1090,8 @@ export class Boxes {
    * picker (036): it moves to OPERATOR under the spares' lock, as a claim
    * does, its machine drops "(spare)", and the upkeep makes another spare.
    * A stopped one is yours too, not released as failed, and stays stopped
-   * until you start it (#156).
+   * until you start it (#156), unless it waited stopped as a spare: the
+   * thread waits for its machine, so it starts (#539).
    */
   async #adoptIfUsed(spare: BoxRecord): Promise<boolean> {
     if (!this.#deps.spareThread || (spare.state !== "ready" && spare.state !== "stopped") || spare.enrol.state !== "enrolled" || this.#work.has(spare.id)) return false;
@@ -1072,7 +1108,7 @@ export class Boxes {
         const current = await this.#read(SPARES, spare.id);
         if (!current) return null;
         const taken = new Set((await this.list(OPERATOR)).filter((box) => box.state !== "gone").map((box) => box.name));
-        const name = isMachineName(current.name) && !taken.has(current.name) ? current.name : generateName(taken, this.#random);
+        const name = isMachineName(current.name) && !taken.has(current.name) ? current.name : generateName(await this.#liveNames(taken), this.#random);
         const yours: BoxRecord = { ...current, threadId: OPERATOR, projectId: null, name };
         await this.#deps.kv.set(indexKey(yours.id), OPERATOR);
         await this.#write(yours);
@@ -1084,7 +1120,12 @@ export class Boxes {
     const { box, from } = moved;
     this.#deps.log?.(`Spare box ${box.name} is now yours: thread ${threadId} started on it from BB's picker.`);
     this.#deps.notify(SPARES);
-    this.#renamed(box, from);
+    if (box.state === "stopped" && this.#waitsStopped(box)) {
+      void this.#chain(box.id, () => this.#start(box)).then(
+        (started) => this.#renamed(started, from),
+        (error) => this.#deps.logError("start a spare that is yours", error),
+      );
+    } else this.#renamed(box, from);
     return true;
   }
 
@@ -1412,7 +1453,19 @@ export class Boxes {
       enrol: { state: "enrolling", hostId: null, error: null },
       ...(current.restoredAt ? { restoredAt: null } : {}),
     }));
-    if (enrolling) void this.#deps.enrol!(enrolling, options).catch((error) => this.#deps.logError("enrol", error));
+    if (enrolling) {
+      void this.#deps.enrol!(enrolling, options)
+        .catch((error) => this.#deps.logError("enrol", error))
+        .then(async () => {
+          // A spare that can wait stopped does so as soon as it is a BB machine (#539). Any other waits for the next upkeep.
+          if (enrolling.threadId !== SPARES || this.#disposed) return;
+          const now = await this.#read(SPARES, enrolling.id);
+          if (now?.state === "ready" && this.#waitsStopped(now)) void this.keepSpares();
+        })
+        .catch((error) => {
+          if (!this.#disposed) this.#deps.logError("spares", error);
+        });
+    }
   }
 
   /** Whether a box can enrol as a BB machine: its kind can and bb-box enrols boxes. */
@@ -2174,7 +2227,7 @@ export class Boxes {
       const existing = await this.list(owner.threadId);
       const taken = new Set(existing.map((box) => box.name));
       const fits = (name: string) => (yours ? isMachineName(name) : isFriendlyName(name)) && !taken.has(name);
-      const name = owner.name && fits(owner.name) ? owner.name : generateName(taken, this.#random);
+      const name = owner.name && fits(owner.name) ? owner.name : generateName(await this.#liveNames(taken), this.#random);
       const box: BoxRecord = {
         id: owner.boxId,
         threadId: owner.threadId,

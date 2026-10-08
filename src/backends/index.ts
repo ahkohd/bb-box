@@ -274,7 +274,9 @@ export class Backends {
         const document = this.#document;
         const backend = document?.backends.find((candidate) => candidate.id === id);
         if (!document || !backend?.enabled || !kindOn(document, kind)) return 0;
-        return backend.warm?.[kind] ?? 0;
+        // Where a stopped box keeps its session, a spare waits stopped: a warm box that is a BB machine already, so it takes a warm one's place (#539).
+        const spares = this.get(id)?.keepsSession?.(kind) ? (document.kinds[kind]?.spares ?? 0) : 0;
+        return Math.max(0, (backend.warm?.[kind] ?? 0) - spares);
       },
       warmShortfalls: (short) => this.#shortfalls(id).set(short),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,

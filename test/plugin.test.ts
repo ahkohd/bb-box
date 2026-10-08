@@ -62,7 +62,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -346,7 +346,7 @@ async function start(
     },
   });
   const setupOptions: SetupOptions = {
-    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell }), ...(options.drivers ?? [])],
+    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell, keepsSession: options.keepsSession }), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
@@ -1374,6 +1374,39 @@ test("a kind keeps a spare box as a BB machine, which box_acquire claims, rename
   const next = await until("another spare", async () => (await app.boxes.list(SPARES)).find((spare) => spare.enrol.state === "enrolled"));
   assert.notEqual(next.id, box.id);
   await until("its machine", async () => world.hosts.get(`host-${next.id}`)?.name === `${next.name} (spare)`);
+});
+
+test("where a stop keeps a box's session, a spare waits stopped as a BB machine, which a claim starts and then renames, and another takes its place (#539)", async (t) => {
+  const { harness, app, world, tool } = await start(undefined, { keepsSession: (kind) => kind === "linux" });
+  t.after(() => harness.lifecycle.dispose());
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { linux: { spares: 1 } } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  const waiting = async (not?: string) => (await app.boxes.list(SPARES)).find((box) => box.id !== not && box.state === "stopped" && box.enrol.state === "enrolled");
+  const spare = await until("a spare waiting stopped", () => waiting());
+  const hostId = `host-${spare.id}`;
+  assert.equal(world.hosts.get(hostId)?.name, `${spare.name} (spare)`);
+  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { kinds: { id: string; spares: unknown }[] };
+  assert.deepEqual(state.kinds.find((kind) => kind.id === "linux")!.spares, { target: 1, ready: 1, making: 0 }, "it counts as ready");
+
+  // BB shows its machine disconnected while it waits, and the upkeep keeps it.
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await app.boxes.keepSpares();
+  assert.equal((await app.boxes.list(SPARES)).find((box) => box.id === spare.id)?.state, "stopped");
+
+  const relabels = world.backend!.relabels.length;
+  const acquired = text(await tool("box_acquire", { kind: "linux" }));
+  assert.match(acquired, new RegExp(`\\b${spare.name}\\b`));
+  assert.match(acquired, /State: ready/);
+  assert.match(acquired, /BB machine: enrolled/);
+  const box = await only(app);
+  assert.equal(box.id, spare.id);
+  await until("the rename", async () => world.hosts.get(hostId)?.name === box.name);
+  await until("the start to reconnect its machine", async () => world.hosts.get(hostId)?.status === "connected");
+  assert.deepEqual(world.backend!.relabelPowers.slice(relabels), ["running"], "relabelled once it had started");
+  assert.equal(text(await tool("box_run", { box: box.name, command: "echo claimed" })).match(/stdout:\n(\w+)/)?.[1], "claimed");
+
+  await until("another spare waiting stopped", () => waiting(box.id));
 });
 
 test("a Windows kind keeps its spare as a manual machine enrolled ahead, which a claim renames and a release removes, and New box refuses Windows by name (#539)", async (t) => {

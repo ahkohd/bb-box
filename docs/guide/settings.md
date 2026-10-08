@@ -66,6 +66,8 @@ Select a kind's row to change it:
 - Warm boxes: ready boxes kept waiting on each backend, so a new box is ready at once.
 - Spare boxes: ready boxes that are already BB machines and belong to no thread, so a thread can have one at once.
 
+On Proxmox's Windows VMs and Tart's macOS and Windows VMs, a spare waits stopped once it is a BB machine, so it holds no memory. BB's machine list shows its machine as disconnected meanwhile, which is expected. A thread that takes it waits a few seconds while it resumes and its machine connects again. There each spare also takes the place of one of the kind's warm boxes, so the host holds no more than before.
+
 The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md).
 
 ## General

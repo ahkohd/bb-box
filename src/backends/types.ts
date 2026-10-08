@@ -440,6 +440,13 @@ export interface Backend {
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
   /**
+   * Whether `stop` saves a guest of the kind with its running session, as a
+   * hibernate or a suspend does, so that it holds no memory while stopped
+   * and `start` resumes it as it was, BB's daemon included. A spare of such
+   * a kind waits stopped (#539).
+   */
+  keepsSession?(kind: string): boolean;
+  /**
    * Why the guest stopped, when bb-box finds it stopped without having
    * stopped it (#406), such as its VM process's exit status and crash
    * report. Null when the backend cannot tell. Only backends that record it.

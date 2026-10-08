@@ -25,7 +25,9 @@ where it is built ahead, which its boxes claim at once (#440). The
 [kinds reference](../../docs/reference/kinds.md) describes every kind.
 
 - Ask for the kind's default size when you can. A kind can keep spare boxes
-  ready at that size, and then a box is ready at once.
+  ready at that size, and then a box is ready at once. On Proxmox's Windows
+  VMs and Tart's macOS and Windows VMs, a spare waits stopped, and it takes
+  a few seconds to resume.
 - Linux boxes run Ubuntu 24.04 with build tools, Git, Python with `uv`,
   Node.js with pnpm and Yarn, Docker, `gh`, `rg`, `fd`, `jj`, and the Claude
   Code, Codex and Pi CLIs. Desktops add XFCE, Chrome, Mousepad, Ristretto,
