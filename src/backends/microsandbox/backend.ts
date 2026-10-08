@@ -82,6 +82,8 @@ const STARTED = "/run/bb-box-started";
  * free memory is in smaller pieces, so at 0 the host gets more of it.
  */
 const REPORTING_ORDER = "/sys/module/page_reporting/parameters/page_reporting_order";
+/** The TUN device, which msb's guest makes root's alone (#595). */
+const TUN = "/dev/net/tun";
 /**
  * Run as root in an idle box, one whose load is under half its cores, by
  * the upkeep: a guest keeps its page cache in its own RAM, which the host
@@ -854,9 +856,15 @@ export class MsbBackend implements Backend {
     await this.#launch(name, signal);
   }
 
-  /** Starts the image's command as root, detached, once per boot: neither `msb create` nor `msb start` runs it (053). */
+  /**
+   * Starts the image's command as root, detached, once per boot: neither
+   * `msb create` nor `msb start` runs it (053). First it gives
+   * /dev/net/tun the 0666 udev gives it elsewhere, as msb's guest makes it
+   * root's alone, so the box user can open it, as in other Linux boxes
+   * (050, #595).
+   */
   async #launch(name: string, signal?: AbortSignal): Promise<void> {
-    const script = `echo 0 >${REPORTING_ORDER} 2>/dev/null; [ -e ${STARTED} ] || { : >${STARTED}; setsid -f ${START} >/run/bb-box-start.log 2>&1 </dev/null; }`;
+    const script = `echo 0 >${REPORTING_ORDER} 2>/dev/null; chmod 0666 ${TUN} 2>/dev/null; [ -e ${STARTED} ] || { : >${STARTED}; setsid -f ${START} >/run/bb-box-start.log 2>&1 </dev/null; }`;
     await Promise.all([
       this.#cli.ok(["exec", name, "--", "/bin/sh", "-c", script], { timeoutMs: 30_000, signal }),
       this.#oom(signal).catch((error) => this.#context.logError("raise the boxes' oom_score_adj", error)),

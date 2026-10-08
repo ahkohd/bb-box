@@ -465,7 +465,7 @@ test("reads the status script's facts", () => {
   assert.deepEqual([facts.installed, facts.cpus, facts.memoryMiB, facts.kvm, facts.lxc, facts.freeGiB, facts.usedGiB, facts.docker], ["0.7.7", 16, 95368, "ok", false, 745.7, 0.1, "29.1.3"]);
 });
 
-test("each boot sets the guest's page reporting to its smallest blocks, and the upkeep has each running, idle box of this install give its page cache back (053)", async () => {
+test("each boot sets the guest's page reporting to its smallest blocks, gives the box user TUN (#595), and the upkeep has each running, idle box of this install give its page cache back (053)", async () => {
   const { fake, backend, make } = setup();
   const mine = await backend.acquire(identity(), null, hooks().hooks, signal());
   const stopped = await backend.acquire(identity(), null, hooks().hooks, signal());
@@ -473,6 +473,7 @@ test("each boot sets the guest's page reporting to its smallest blocks, and the 
   const theirs = await make("other").acquire(identity(), null, hooks().hooks, signal());
   const launch = fake.calls().find((call) => call[0] === "exec" && call.some((arg) => arg.includes("bb-box-start")))!;
   assert.match(launch.at(-1)!, /^echo 0 >\/sys\/module\/page_reporting\/parameters\/page_reporting_order 2>\/dev\/null; /);
+  assert.match(launch.at(-1)!, /; chmod 0666 \/dev\/net\/tun 2>\/dev\/null; \[ -e \/run\/bb-box-started \]/, "the box user may open TUN (#595)");
   await backend.maintain(signal());
   const { readFileSync } = await import("node:fs");
   assert.deepEqual(readFileSync(join(fake.root, "reclaims"), "utf8").trim().split("\n"), [mine.ref], "not a stopped box, nor another install's");
