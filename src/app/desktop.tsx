@@ -46,7 +46,8 @@ import {
   type Connection,
 } from "./viewer.ts";
 import { BoxGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
-import { PageTabs } from "./boxes-toolbar.tsx";
+import { choices, filtering, NO_FILTERS, shown, type Filters, type Sort } from "./boxes-filter.ts";
+import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
@@ -1292,6 +1293,10 @@ function BoxList() {
       // Without storage, the page opens on the first tab with boxes each time.
     }
   };
+  // The search, filters and sort, as the Automations page has them; Name, ascending, as its default.
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [sort, setSort] = useState<Sort>({ key: "name", ascending: true });
   // New box makes one of your machines here (the operator, 4 October 2026): a box made here has no thread. The same form as settings'
   // Add machine; the machine then shows under Machines.
   const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
@@ -1322,16 +1327,39 @@ function BoxList() {
   };
   const entries = all ?? [];
   const threads = entries.filter((entry) => entry.owner !== "yours");
-  // Each thread once, with its boxes, in the order its first box comes.
   const threadIds = [...new Set(threads.map((entry) => entry.threadId))];
   const titles = useThreadTitles(threadIds);
   const now = useNow(
     entries.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting" || entry.box.state === "stopping") || machines.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting"),
     1000,
   );
-  const shown = problem ?? machineActions.problem;
+  const shownProblem = problem ?? machineActions.problem;
   const tab: BoxesTab = chosenTab ?? (machines.length || !threads.length ? "machines" : "threads");
   const loaded = !!all && !!machinesState;
+  // The filters offer what the tab lists, and keep only what it still offers. A machine's search words are the threads on it.
+  const offered = choices(tab === "machines" ? machines.map((entry) => entry.box) : threads.map((entry) => entry.box));
+  const kept: Filters = {
+    kinds: filters.kinds.filter((value) => offered.kinds.includes(value)),
+    providers: filters.providers.filter((value) => offered.providers.includes(value)),
+    states: filters.states.filter((value) => offered.states.includes(value)),
+  };
+  const machineRows = shown(
+    machines.map((entry) => ({ box: entry.box, entry, words: entry.threads.map((thread) => thread.title ?? "") })),
+    search,
+    kept,
+    sort,
+  );
+  const threadRows = shown(
+    threads.map(({ threadId, box }) => ({ box, threadId, words: [titles[threadId] ?? ""] })),
+    search,
+    kept,
+    sort,
+  );
+  // Each thread once, with its boxes, where its first box comes in the sort's order.
+  const groups = new Map<string, typeof threadRows>();
+  for (const row of threadRows) groups.set(row.threadId, [...(groups.get(row.threadId) ?? []), row]);
+  const narrowed = !!search.trim() || filtering(kept);
+  const listed = tab === "machines" ? machines.length : threads.length;
   return (
     <div className="h-full min-h-0">
       {/* BB's Automations page's frame and spacing (the operator, 8 October 2026): its width, a line under the title, the tabs
@@ -1369,9 +1397,10 @@ function BoxList() {
           </div>
         </div>
         <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
+          {listed ? <SearchRow search={search} onSearch={setSearch} filters={kept} offered={offered} onFilters={setFilters} sort={sort} onSort={setSort} /> : null}
           {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
           <ProblemLine
-            problem={shown}
+            problem={shownProblem}
             onDismiss={() => {
               setProblem(null);
               machineActions.setProblem(null);
@@ -1380,10 +1409,11 @@ function BoxList() {
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
             {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. New box adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}
             {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box. A thread gets one from its Box panel, or from its agent.</EmptyPanel> : null}
-            {tab === "machines" && machines.length ? (
+            {narrowed && listed && !(tab === "machines" ? machineRows : threadRows).length ? <EmptyPanel>No boxes match.</EmptyPanel> : null}
+            {tab === "machines" && machineRows.length ? (
               <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-1">
                 <div className="divide-y divide-border">
-                  {machines.map((entry) => (
+                  {machineRows.map(({ entry }) => (
                     <MachineRow
                       key={entry.box.id}
                       entry={entry}
@@ -1399,7 +1429,7 @@ function BoxList() {
               </div>
             ) : null}
             {tab === "threads"
-              ? threadIds.map((threadId) => (
+              ? [...groups].map(([threadId, rows]) => (
                   // One card per thread, headed by its title, which opens the thread, as a row's title does on the Automations page.
                   <section key={threadId} aria-label={titles[threadId] ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
                     <div className="flex items-center gap-3 border-b border-border py-1.5 pl-4 pr-3">
@@ -1409,25 +1439,23 @@ function BoxList() {
                       <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
                     </div>
                     <div className="divide-y divide-border px-4 py-1">
-                      {threads
-                        .filter((entry) => entry.threadId === threadId)
-                        .map(({ box }) => (
-                          <BoxRow
-                            key={box.id}
-                            box={box}
-                            threadId={threadId}
-                            open={open === box.id}
-                            onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
-                            act={actOn(threadId)}
-                            now={now}
-                            opens={{
-                              desktop: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id) }),
-                              terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
-                            }}
-                            meta={[box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
-                            threading={false}
-                          />
-                        ))}
+                      {rows.map(({ box }) => (
+                        <BoxRow
+                          key={box.id}
+                          box={box}
+                          threadId={threadId}
+                          open={open === box.id}
+                          onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
+                          act={actOn(threadId)}
+                          now={now}
+                          opens={{
+                            desktop: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id) }),
+                            terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
+                          }}
+                          meta={[box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
+                          threading={false}
+                        />
+                      ))}
                     </div>
                   </section>
                 ))

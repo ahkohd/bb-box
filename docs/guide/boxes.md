@@ -81,6 +81,13 @@ The page opens on the tab you chose last. The first time, it opens on Machines i
 
 ![The Boxes page's Threads tab, with 3 threads](../design/mockups/built/boxes-page-threads-light.png)
 
+Under the tabs, a search field finds boxes by name, kind, provider or thread title. Beside it:
+
+- **Filters** keeps the kinds, providers and states you tick. Each filter offers only what the tab lists.
+- **Sort** orders the boxes by name or by when they were made. Select the same choice again to reverse the order.
+
+On Threads, each thread's card comes where its first box falls in that order.
+
 A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. 'New thread on this box…' is only in the Box panel.
 
 A desktop or terminal you open from the page shows on the page, with a back arrow to the list.

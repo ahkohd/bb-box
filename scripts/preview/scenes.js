@@ -767,6 +767,35 @@ export const scenes = {
       await wait(300);
     },
   }),
+  "boxes-page-filters": boxesPage({
+    height: 640,
+    after: async (root) => {
+      openTab(root, "Threads");
+      await wait(200);
+      openMenu(root, "Filters");
+      await wait(300);
+    },
+  }),
+  "boxes-page-sort": boxesPage({
+    height: 560,
+    after: async (root) => {
+      openTab(root, "Threads");
+      await wait(200);
+      openMenu(root, "Sort: Name, ascending");
+      await wait(300);
+    },
+  }),
+  "boxes-page-search": boxesPage({
+    after: async (root) => {
+      openTab(root, "Threads");
+      await wait(200);
+      const input = root.querySelector('input[aria-label="Search boxes"]');
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      set.call(input, "login");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await wait(300);
+    },
+  }),
   "boxes-page-empty": { slot: "boxes-page", width: 900, height: 420, props: { subPath: "" }, rpc: rpc([]) },
   "boxes-page-menu": {
     slot: "boxes-page",

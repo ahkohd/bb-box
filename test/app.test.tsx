@@ -24,6 +24,7 @@ type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" 
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
+import { choices, NO_FILTERS, shown, stateGroup } from "../src/app/boxes-filter.ts";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
@@ -2426,8 +2427,9 @@ test("the Boxes page lists every box under its thread, servers as well as deskto
 
   fireEvent.click(list.getByRole("button", { name: "Open desktop" }));
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_2" } });
+  // The rows sort by name, so bold-heron's terminal comes first.
   fireEvent.click(list.getAllByRole("button", { name: "Open terminal" })[0]!);
-  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_1/terminal" } });
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_2/terminal" } });
   fireEvent.click(list.getAllByRole("button", { name: "Open thread" })[0]!);
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: THREAD });
   cleanup();
@@ -2759,6 +2761,69 @@ test("the Boxes page's tab row has the settings gear, then New box at the far ri
 
 
 
+
+test("the Boxes page's search matches a box's name, kind, provider and thread; its filters tick kinds, providers and states; its sort orders by name or age", () => {
+  const hour = 3_600_000;
+  const rows = [
+    { box: box({ id: "box_1", name: "calm-otter", createdAt: 3 * hour }), words: ["Add dark mode"] },
+    { box: desktopBox({ id: "box_2", name: "bold-heron", backendLabel: "Proxmox LXC on pve", createdAt: 1 * hour }), words: ["Add dark mode"] },
+    { box: box({ id: "box_3", name: "still-pond", state: "stopped", createdAt: 2 * hour }), words: ["Docs pass"] },
+    { box: box({ id: "box_4", name: "quiet-fern", state: "acquiring", createdAt: 4 * hour }), words: ["Docs pass"] },
+  ];
+  const names = (found: readonly { box: BoxView }[]) => found.map((row) => row.box.name);
+  const byName = { key: "name", ascending: true } as const;
+  // Every word typed must match, in any field, whatever its case.
+  expect(names(shown(rows, "", NO_FILTERS, byName))).toEqual(["bold-heron", "calm-otter", "quiet-fern", "still-pond"]);
+  expect(names(shown(rows, "docs", NO_FILTERS, byName))).toEqual(["quiet-fern", "still-pond"]);
+  expect(names(shown(rows, "PVE desktop", NO_FILTERS, byName))).toEqual(["bold-heron"]);
+  expect(names(shown(rows, "dark pond", NO_FILTERS, byName))).toEqual([]);
+  // A filter keeps what it ticks; ticks in one filter widen, filters together narrow.
+  expect(names(shown(rows, "", { ...NO_FILTERS, states: ["Stopped", "Starting"] }, byName))).toEqual(["quiet-fern", "still-pond"]);
+  expect(names(shown(rows, "", { ...NO_FILTERS, kinds: ["Linux"], states: ["Ready"] }, byName))).toEqual(["calm-otter"]);
+  expect(names(shown(rows, "", { ...NO_FILTERS, providers: ["Proxmox LXC on pve"] }, byName))).toEqual(["bold-heron"]);
+  // The sort: name either way, or age, oldest first when ascending.
+  expect(names(shown(rows, "", NO_FILTERS, { key: "name", ascending: false }))).toEqual(["still-pond", "quiet-fern", "calm-otter", "bold-heron"]);
+  expect(names(shown(rows, "", NO_FILTERS, { key: "created", ascending: true }))).toEqual(["bold-heron", "still-pond", "calm-otter", "quiet-fern"]);
+  // The filters offer what is listed, each once; the states in a fixed order.
+  expect(choices(rows.map((row) => row.box))).toEqual({ kinds: ["Linux", "Linux desktop"], providers: ["Fake host", "Proxmox LXC on pve"], states: ["Ready", "Starting", "Stopped"] });
+  expect([box({ state: "starting" }), box({ state: "stopping" }), box({ state: "releasing" }), box({ state: "gone" }), box({ state: "failed" })].map(stateGroup)).toEqual(["Starting", "Stopped", "Stopped", "Failed", "Failed"]);
+});
+
+test("on the Boxes page, the search narrows the list, says when nothing matches, and the filters and sort act on the rows", async () => {
+  const { handlers } = server([box(), desktopBox(), box({ id: "box_6", name: "swift-fox", state: "stopped", createdAt: Date.now() - 60 * 60_000 })]);
+  const list = boxesPage(handlers);
+  await list.findByText("calm-otter");
+  // An open menu hides the page from the accessibility tree, so the rows are read hidden or not.
+  const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
+  // Name, ascending, at first, as on the Automations page.
+  expect(rowNames()).toEqual(["bold-heron", "calm-otter", "swift-fox"]);
+  expect(list.getByRole("button", { name: "Sort: Name, ascending" })).toBeTruthy();
+  const search = list.getByRole("textbox", { name: "Search boxes" });
+  fireEvent.change(search, { target: { value: "fox" } });
+  expect(rowNames()).toEqual(["swift-fox"]);
+  fireEvent.change(search, { target: { value: "nothing like it" } });
+  expect(list.getByText("No boxes match.")).toBeTruthy();
+  fireEvent.click(list.getByRole("button", { name: "Clear search" }));
+  expect(rowNames()).toHaveLength(3);
+  // The tab counts stay totals.
+  expect(list.getByRole("tab", { name: "Threads 1" })).toBeTruthy();
+  // Filters: State, from the states listed; Kind too; Provider has one choice, so no group.
+  let menu = await openMenu(list.getByRole("button", { name: "Filters" }));
+  expect(within(menu).queryByText("Provider")).toBeNull();
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Stopped" }));
+  expect(rowNames()).toEqual(["swift-fox"]);
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Stopped" }));
+  fireEvent.keyDown(menu, { key: "Escape" });
+  expect(rowNames()).toHaveLength(3);
+  // Sort: Created, oldest first; the same again reverses it.
+  menu = await openMenu(list.getByRole("button", { name: "Sort: Name, ascending" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Created" }));
+  expect(rowNames()[0]).toBe("swift-fox");
+  menu = await openMenu(list.getByRole("button", { name: "Sort: Created, ascending" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Created" }));
+  expect(list.getByRole("button", { name: "Sort: Created, descending" })).toBeTruthy();
+  expect(rowNames().at(-1)).toBe("swift-fox");
+});
 
 test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss", async () => {
   const failure = "Stopping the box failed: the host did not answer.";
