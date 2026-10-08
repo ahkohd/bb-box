@@ -400,6 +400,13 @@ The XFCE desktops add:
 - `bb-box-check-desktop`, which checks the display, VNC, Selkies, the GPU,
   Chrome, the fonts, Mousepad and Cua Driver.
 
+The Docker and microsandbox images, made from the same scripts, carry both
+checks. There, with no systemd, the lines for systemd and its units say
+skip, as `bb-box-start` does what they do; Cua Driver's line checks its
+process; and a Docker box whose host gives it no TUN device skips that
+line, as Tailscale runs in userspace there
+([050](../../docs/decisions/050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md)).
+
 Each login of `box` gets `DISPLAY=:99` and
 `XAUTHORITY=/run/bb-box/Xauthority`.
 
