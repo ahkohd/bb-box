@@ -50,7 +50,7 @@ import type { ThreadOnBox } from "./contract.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
-import { boxView, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type ProviderProfile } from "./views.ts";
+import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type ProviderProfile } from "./views.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
@@ -855,7 +855,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     kinds: async () => {
       const config = await general();
-      return kindViews(backends.kinds(), config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id));
+      const offered = backends.kinds();
+      return kindViews(offered, config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id), await gpuRooms(offered));
     },
     async providerProfile(backendId, signal) {
       const status = backends.statuses().find((candidate) => candidate.id === backendId);

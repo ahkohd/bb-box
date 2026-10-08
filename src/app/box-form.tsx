@@ -84,6 +84,23 @@ export function gpuChoices(kinds: readonly KindView[], os: GuestOs, arch: Arch, 
   return { none: desktops.some((kind) => !kind.gpu), gpu: desktops.some((kind) => kind.gpu) };
 }
 
+/**
+ * The note under the GPU menu when no GPU has room for a desktop (#603):
+ * every offer lately read each of its GPUs full. Null while one has room, or
+ * has not read its GPUs: the form says nothing when nothing is in the way.
+ */
+export function gpuFullNote(offers: readonly OfferView[], now: number): string | null {
+  const rooms = offers.map((offer) => offer.gpuRoom);
+  if (!rooms.length || rooms.some((room) => !room?.readings.length || room.fullUntil === null || room.fullUntil <= now)) return null;
+  const readings = rooms.flatMap((room) => room!.readings);
+  const most = Math.max(...readings.map((reading) => reading.freeMiB));
+  const minutes = Math.max(1, Math.ceil((Math.min(...rooms.map((room) => room!.fullUntil!)) - now) / 60_000));
+  return (
+    `No GPU has room now: ${readings.length > 1 ? "at most " : ""}${most} MiB free, and a desktop needs ${readings[0]!.neededMiB} MiB. ` +
+    `Choose None, or try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`
+  );
+}
+
 /** For a desktop: whether an X11 desktop and a Wayland one both exist, so the windowing is a choice (048). */
 export function displayChoices(kinds: readonly KindView[], os: GuestOs, arch: Arch): { readonly x11: boolean; readonly wayland: boolean } {
   const desktops = kindsAt(kinds, os, arch).filter((kind) => kind.desktop);
