@@ -275,6 +275,8 @@ const DRIVERS = [
     setup: { guide: "setup/docker/README.md", scripts: ["setup/docker/build.sh"] },
   },
 ];
+/** Proxmox QEMU's driver, as the server describes it: Windows desktops, and the switch for their trial as BB machines (#539). */
+const PROXMOX_QEMU_DRIVER = {"type": "proxmox-qemu", "label": "Proxmox QEMU", "description": "Windows desktops as VMs on a Proxmox VE host.", "nature": "virtual", "kinds": ["windows-desktop"], "fields": [{"key": "url", "type": "string", "label": "API URL", "description": "For example https://192.0.2.10:8006/api2/json, as the Proxmox LXC setup guide's token file gives it. Leave it, the token, the fingerprint and the CA certificate empty to use Proxmox LXC's.", "group": "connection", "default": "", "inherits": {"from": "proxmox-lxc", "label": "Proxmox LXC", "set": ["url", "token-id", "token-secret", "tls-fingerprint", "ca-certificate"]}}, {"key": "node", "type": "string", "label": "Node", "description": "The node boxes run on. Leave empty on a single-node host.", "group": "connection", "default": ""}, {"key": "tls-fingerprint", "type": "string", "label": "TLS fingerprint", "description": "The SHA-256 fingerprint of the Proxmox API's certificate, from the setup guide's token file. bb-box then trusts that certificate alone. Leave empty to check the certificate against its CA.", "group": "connection", "default": "", "inherits": {"from": "proxmox-lxc", "label": "Proxmox LXC", "set": ["url", "token-id", "token-secret", "tls-fingerprint", "ca-certificate"]}}, {"key": "ca-certificate", "type": "string", "label": "CA certificate", "description": "PEM certificate of the CA that signed the Proxmox API's certificate, when there is no TLS fingerprint. Leave empty for a publicly trusted one.", "experimental_multiline": true, "group": "connection", "default": "", "inherits": {"from": "proxmox-lxc", "label": "Proxmox LXC", "set": ["url", "token-id", "token-secret", "tls-fingerprint", "ca-certificate"]}}, {"key": "token-id", "type": "string", "label": "API token ID", "description": "For example bbbox@pve!plugin. The setup guide lists the privileges it needs.", "group": "credentials", "default": "", "inherits": {"from": "proxmox-lxc", "label": "Proxmox LXC", "set": ["url", "token-id", "token-secret", "tls-fingerprint", "ca-certificate"]}}, {"key": "token-secret", "type": "string", "label": "API token secret", "description": "The secret of the API token, from the setup guide's token file.", "secret": true, "group": "credentials", "inherits": {"from": "proxmox-lxc", "label": "Proxmox LXC", "set": ["url", "token-id", "token-secret", "tls-fingerprint", "ca-certificate"]}}, {"key": "ssh-private-key", "type": "string", "label": "SSH private key", "description": "Paste BBBOX_SSH_KEY, the private key build.sh put in the template, or leave it empty to use Proxmox LXC's. With neither, bb-box makes a key, which the template does not accept until you add its public key.", "secret": true, "group": "credentials", "inherits": {"from": "proxmox-lxc", "label": "Proxmox LXC", "set": ["ssh-private-key"]}}, {"key": "pool", "type": "string", "label": "Resource pool", "description": "Boxes are made in this pool. The token needs rights on it.", "group": "boxes", "default": "bbbox"}, {"key": "windows-templates", "type": "string", "label": "Windows templates", "description": "VMIDs of the Windows templates windows-desktop boxes are linked clones of, separated by spaces or commas. setup/proxmox-qemu/build.sh builds one. A new box is cloned from the least used.", "group": "boxes", "default": "9104"}, {"key": "windows-enrol", "type": "boolean", "label": "Windows boxes as BB machines (trial)", "description": "A trial of Windows boxes that join BB, so threads and terminals can use them. Off unless you are trying it.", "group": "boxes", "default": false}, {"key": "bridge", "type": "string", "label": "Network bridge", "description": "The bridge boxes attach to.", "group": "advanced", "default": "vmbr200"}, {"key": "subnet", "type": "string", "label": "Subnet", "description": "The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP.", "group": "advanced", "default": "10.200.0.0/24"}, {"key": "gateway", "type": "string", "label": "Gateway", "description": "The host's address on the bridge.", "group": "advanced", "default": "10.200.0.1"}, {"key": "addresses", "type": "string", "label": "Box addresses", "description": "The range bb-box hands out. The n-th VMID gets the n-th address. Keep it apart from the Proxmox LXC backend's. Leave empty to use the whole subnet except the gateway.", "group": "advanced", "default": "10.200.0.150-10.200.0.254"}, {"key": "vmid-first", "type": "number", "label": "First box VMID", "description": "Boxes take VMIDs from this range. Keep other guests out of it, the Proxmox LXC backend's too.", "group": "advanced", "default": 9700}, {"key": "vmid-last", "type": "number", "label": "Last box VMID", "description": "The end of the range boxes take VMIDs from.", "group": "advanced", "default": 9799}, {"key": "ssh-user", "type": "string", "label": "SSH user", "description": "The user in the template that bb-box and BB work as.", "group": "advanced", "default": "box"}, {"key": "reserve-memory-mib", "type": "number", "label": "Memory kept free (MiB)", "description": "A new box is refused if the node would have less memory than this left.", "group": "advanced", "default": 4096}, {"key": "reserve-disk-gib", "type": "number", "label": "Disk kept free (GiB)", "description": "A new box is refused if the template's storage has less free space than this.", "group": "advanced", "default": 50}], "hostFields": [], "setup": {"guide": "setup/proxmox-qemu/README.md", "scripts": ["setup/proxmox-qemu/build.sh"]}};
 const KIND_INFO = [
   { id: "linux", label: "Linux", description: "A Linux box for builds, backend services and the agent's own work.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], docker: null, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "ssh-pool", "docker"] },
   { id: "linux-desktop", label: "Linux desktop", description: "A Linux desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], docker: true, spares: { ready: 0, making: 0 }, drivers: ["proxmox-lxc", "docker"] },
@@ -301,8 +303,8 @@ function configState(options = {}) {
     revision: document.revision,
     defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux" }, kinds: { linux: LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
     kinds: KIND_INFO,
-    drivers: DRIVERS,
-    backends: [
+    drivers: [...DRIVERS, ...(options.drivers ?? [])],
+    backends: options.backends ?? [
       tokenSet
         ? { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", form: "LXC", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop"], doctor: { report: DOCTOR_PROXMOX, at: now - 2 * 60_000 }, warmShort: options.warmShort ?? [] }
         : { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC", form: "LXC", state: "misconfigured", problems: [{ path: "backends.proxmox-lxc.token-secret", message: "Set the Proxmox API token secret." }], boxes: 0, kinds: [], doctor: null, warmShort: [] },
@@ -716,6 +718,35 @@ export const scenes = {
     rpc: rpc([]),
     after: async (root) => {
       root.querySelector('button[aria-label="Set up Tart"]')?.click();
+      await wait(300);
+    },
+  },
+  // Windows desktops on Proxmox, with their trial as BB machines on (#539): the form shows the switch with the Windows templates.
+  "settings-windows-trial": {
+    slot: "settings",
+    width: 860,
+    props: {},
+    rpc: rpc([], {
+      config: {
+        drivers: [PROXMOX_QEMU_DRIVER],
+        document: {
+          schema: 1,
+          revision: 9,
+          backends: [
+            { id: "proxmox-lxc", type: "proxmox-lxc", enabled: true, fields: { url: "https://192.0.2.10:8006", node: "pve", "token-id": "bbbox@pve!plugin", "token-secret": { set: true }, "ssh-private-key": { set: true }, "linux-templates": "9800" } },
+            { id: "proxmox-qemu", type: "proxmox-qemu", enabled: true, fields: { "windows-templates": "9803", "windows-enrol": true, "token-secret": { set: false }, "ssh-private-key": { set: false } } },
+          ],
+          kinds: {},
+          general: {},
+        },
+        backends: [
+          { id: "proxmox-lxc", type: "proxmox-lxc", label: "Proxmox LXC on pve", form: "LXC", state: "active", problems: [], boxes: 2, kinds: ["linux"], doctor: { report: { ok: true, summary: "Proxmox VE 9.2 on pve", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
+          { id: "proxmox-qemu", type: "proxmox-qemu", label: "Proxmox QEMU on pve", form: "VM", state: "active", problems: [], boxes: 1, kinds: ["windows-desktop"], doctor: { report: { ok: true, summary: "Proxmox VE 9.2 on pve", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
+        ],
+      },
+    }),
+    after: async (root) => {
+      root.querySelector('button[aria-label="Set up Proxmox QEMU on pve"]')?.click();
       await wait(300);
     },
   },
