@@ -106,8 +106,9 @@ const BUILD_TARGET: Readonly<Record<DockerKind, string>> = {
 
 /**
  * A Docker box's checks as the box user (049): the tools, Docker on first
- * use in a box that has it, and a desktop's display. A line per check, with
- * ok or FAIL, as the templates' checks print them.
+ * use in a box that has it, and a desktop's display and Chrome's DevTools,
+ * which a host's AppArmor profile for Chrome can refuse (#596). A line per
+ * check, with ok or FAIL, as the templates' checks print them.
  */
 export const DOCKER_CHECK = String.raw`t() { name=$1; shift; if out=$("$@" 2>&1); then echo "$name ok   $(echo "$out" | head -n 1)"; else echo "$name FAIL $(echo "$out" | head -n 1)"; fi; }
 for tool in node git gh claude codex pi rg fd jj uv; do t "$tool" "$tool" --version; done
@@ -115,6 +116,7 @@ for tool in node git gh claude codex pi rg fd jj uv; do t "$tool" "$tool" --vers
 if [ -e /usr/local/libexec/bb-box/display ]; then
   for i in $(seq 1 60); do [ -s /run/bb-box/display-mode ] && break; sleep 1; done
   t "display" cat /run/bb-box/display-mode
+  ! command -v google-chrome >/dev/null || t "Chrome DevTools" sh -c 'd=$(mktemp -d); google-chrome --headless=new --no-first-run --user-data-dir="$d" --remote-debugging-port=9334 about:blank >/dev/null 2>&1 & c=$!; v=; for i in $(seq 1 60); do v=$(curl -sf http://127.0.0.1:9334/json/version) && break; sleep 0.25; done; kill $c; wait $c; rm -rf "$d"; echo "$v" | grep -o "Chrome/[0-9.]*"'
 fi`;
 
 /** Runs a script with bash, a line of its output at a time. */

@@ -326,6 +326,15 @@ if [ "$runtime" = docker ]; then
   sandbox=" --no-sandbox"
   printf '{\n  "CommandLineFlagSecurityWarningsEnabled": false\n}\n' >/etc/opt/chrome/policies/managed/bb-box-docker.json
   chmod 0644 /etc/opt/chrome/policies/managed/bb-box-docker.json
+  # A Docker host's own AppArmor policy can name /opt/google/chrome/chrome,
+  # as Ubuntu's chrome profile does. A box with Docker runs privileged and
+  # unconfined, so Chrome took that profile as it started, and its sockets
+  # were refused there: no page loaded and DevTools did not start (#596).
+  # Chrome lives elsewhere, and its old path is a link, which AppArmor
+  # resolves before it matches; the wrapper and apt go through the link.
+  install -d -m 0755 /opt/bb-box
+  mv /opt/google/chrome /opt/bb-box/chrome
+  ln -s /opt/bb-box/chrome /opt/google/chrome
 fi
 # Computer use reads web pages through AT-SPI, which Chrome builds only with
 # --force-renderer-accessibility. The diversion covers every way Chrome
