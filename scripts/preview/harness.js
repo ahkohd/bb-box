@@ -189,6 +189,10 @@ const frame = document.getElementById("frame");
 const chrome = document.getElementById("chrome");
 const root = document.getElementById("root");
 window.__scene = scene;
+// Every scene starts from empty browser storage: the screenshots share one Chrome profile, and the New box form remembers its last choice there.
+try {
+  window.localStorage.clear();
+} catch {}
 frame.style.width = `${scene.width ?? 560}px`;
 if (scene.height) frame.style.height = `${scene.height}px`;
 frame.style.display = "flex";
