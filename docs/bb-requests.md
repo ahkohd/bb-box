@@ -33,6 +33,7 @@ is a log: bb-box does not file these with BB.
 | [Remove a machine whose host is gone](#22-remove-a-machine-whose-host-is-gone) | not met | a Windows box's machine stays in BB's list as "removing" when the box goes before BB has torn down the threads' environments on it, so bb-box waits up to 2 minutes for BB's removal before it releases a Windows box (#539) |
 | [Install commands for the machine's OS](#23-install-commands-for-the-machines-os) | not met | BB's install action for Cursor's CLI on a Windows machine is a bash script, which Windows cannot run (#561) |
 | [End a thread's processes before removing its worktree on Windows](#24-end-a-threads-processes-before-removing-its-worktree-on-windows) | not met | bb-box ends the processes working in BB's worktrees in a Windows box before it asks BB to remove the box's machine, or BB's teardown fails with EBUSY and the machine stays "removing" (#539) |
+| [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met | BB's server stops for up to 1.2 s, 10 to 16 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
 
 ## 1. BB's host app on Windows
 
@@ -922,6 +923,41 @@ down.
 ends every process in the box whose working directory is in BB's worktrees,
 and what those started, keeping BB's daemon and its other workers. It reads
 each process's working directory from its PEB.
+
+## 25. Keep the server's event loop free
+
+**Status in BB 0.45.0: not met.**
+
+**What bb-box needs.** BB's server's event loop free of long synchronous
+work. bb-box's desktop relays run on that loop, inside BB's server process,
+so every desktop's frames and input wait while it is held.
+
+**What BB does now.** On 10 October 2026, through BB's server, a desktop's
+frames stood still for 300 to 700 ms, and once for 1.1 s, in pairs about
+every 11 s, on VNC and video alike, while the box sent them evenly. bb-box's
+loop watch counted 10 to 16 such stalls a minute, with almost no garbage
+collection in them. A window dragged in video mode lagged 0.24 to 0.5 s at
+the 95th percentile, and up to 0.9 s. After the 1.1 s stall, the relay
+dropped 67 frames of a video viewer's to catch up. A CPU profile of the
+server process over 20 s, with a desktop open, showed these busy spans:
+
+- 1181 ms and 230 ms: `resolveGitCredentials` → `runGh` → `spawn`, from
+  `resolveHostEnvironment`, `callPluginHostRpc` and
+  `sweepProviderEnvironmentInSlot`. Spawning `gh` held the loop.
+- 146 ms and 140 ms: `runPeriodicSweepJobs` → `sweepMachineLifecycles` →
+  `get` and `_prepare`, its synchronous SQL.
+- 166 ms: BB's microtask `dispatch`.
+
+bb-box's own code had about 21 ms of its own in those 20 s.
+
+**What we ask.**
+- Spawn `gh` off the main loop, or cache git credentials rather than
+  resolving them on each host environment sweep and plugin host call.
+- Run `sweepMachineLifecycles`' SQL in smaller pieces, or off the loop.
+
+**Until then.** Drags in a desktop lag in bursts, video or VNC. bb-box logs
+each minute in which the loop stood still for 250 ms or more, and the
+`profile` RPC names the code.
 
 ## Checked, no request needed
 

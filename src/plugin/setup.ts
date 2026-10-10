@@ -654,7 +654,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     bakes: imageBakes,
     log: (line) => bb.log.info(line),
   });
-  // Stalls of bb-box's own event loop, which hold up every desktop's frames and input.
+  // Stalls of the event loop bb-box runs on, BB's server's, which hold up every desktop's frames and input.
   const loopWatch = new LoopWatch({ log: (message) => bb.log.warn(message) });
   bb.onDispose(() => loopWatch.dispose());
   bb.onDispose(() => imageJobs.stop());

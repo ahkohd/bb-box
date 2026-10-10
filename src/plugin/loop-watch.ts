@@ -1,10 +1,11 @@
-// Watches bb-box's own event loop for stalls. Measured on 10 October 2026, a
+// Watches the event loop bb-box runs on for stalls: BB's server's, which
+// bb-box's relays share with BB's own work and other plugins. Measured on 10 October 2026, a
 // desktop's frames through BB's server stood still for about 370 ms, twice
 // every 11 s, on VNC and video alike, while the box sent them evenly: a drag
 // lagged by up to a second. A timer that runs every 100 ms finds when the
 // loop could not run it, and garbage collection meanwhile is counted, so the
-// log says whether bb-box's process stalls, and whether collecting garbage is
-// why. One line a minute at most, and none while the loop keeps up.
+// log says whether the process stalls, and whether collecting garbage is
+// why. A CPU profile (profile.ts) names the code. One line a minute at most, and none while the loop keeps up.
 
 import { PerformanceObserver, constants, performance } from "node:perf_hooks";
 
@@ -85,7 +86,7 @@ export class LoopWatch {
     const major = inside.filter((entry) => entry.major).length;
     const times = stalls.length === 1 ? "once" : `${stalls.length} times`;
     this.#options.log(
-      `bb-box's event loop stood still ${times} in the last minute, for up to ${Math.round(longest)} ms: desktops' frames and input waited meanwhile. ` +
+      `BB's server, which runs bb-box, stood still ${times} in the last minute, for up to ${Math.round(longest)} ms: desktops' frames and input waited meanwhile. ` +
         (inside.length
           ? `Garbage collection ran for ${Math.round(gcMs)} ms of it, in ${inside.length} ${inside.length === 1 ? "collection" : "collections"}, ${major} of them major.`
           : "No garbage collection ran then: something else held the loop."),
