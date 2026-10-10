@@ -752,7 +752,16 @@ export class Boxes {
     );
     if (claimed !== null && box.state === "stopped") {
       // A spare that waited stopped (#539): it starts first, as a hibernated VM cannot be relabelled, and the start reconnects its machine.
-      void this.#chain(box.id, () => this.#start(box)).then(
+      void this.#chain(box.id, async () => {
+        const started = await this.#start(box);
+        // The claim's time counts the resume, which its last start's times also show.
+        const timed = await this.update(started, ({ timings }) => {
+          const { spare = 0, total: _, spareResume: __, ...rest } = timings;
+          const spareResume = timings["start.total"] ?? 0;
+          return { timings: { spare, spareResume, total: spare + spareResume, ...rest } };
+        });
+        return timed ?? started;
+      }).then(
         (started) => this.#claimed(started, claimed),
         (error) => this.#deps.logError("start a claimed spare", error),
       );
@@ -1159,7 +1168,8 @@ export class Boxes {
         .then(async () => {
           const ms = this.#now() - started;
           await this.update(box, ({ timings }) => ({
-            timings: { ...timings, relabel: ms, ...(renamed && timings.spare !== undefined ? { total: timings.spare + ms } : {}) },
+            // A claim's total so far is the claim's, and a waiting spare's resume (#539).
+            timings: { ...timings, relabel: ms, ...(renamed && timings.spare !== undefined ? { total: (timings.total ?? timings.spare) + ms } : {}) },
           }));
         })
         .catch((error) => this.#deps.logError("relabel", error));

@@ -1410,12 +1410,19 @@ test("where a stop keeps a box's session, a spare waits stopped as a BB machine,
   assert.equal((await app.boxes.list(SPARES)).find((box) => box.id === spare.id)?.state, "stopped");
 
   const relabels = world.backend!.relabels.length;
+  // Its resume takes a moment, which the claim's time counts.
+  world.backend!.powerGate = new Promise((resolve) => setTimeout(resolve, 300));
   const acquired = text(await tool("box_acquire", { kind: "linux" }));
+  world.backend!.powerGate = null;
   assert.match(acquired, new RegExp(`\\b${spare.name}\\b`));
   assert.match(acquired, /State: ready/);
   assert.match(acquired, /BB machine: enrolled/);
+  assert.match(acquired, /\nTimings: claiming a spare \d+ ms, resuming it [\d.]+ (ms|s), total [\d.]+ (ms|s)/);
   const box = await only(app);
   assert.equal(box.id, spare.id);
+  const { spare: claim = 0, spareResume = 0, total = 0 } = box.timings;
+  assert.ok(spareResume >= 250, `the resume, ${spareResume} ms`);
+  assert.equal(total, claim + spareResume, "the claim's total counts the resume");
   await until("the rename", async () => world.hosts.get(hostId)?.name === box.name);
   await until("the start to reconnect its machine", async () => world.hosts.get(hostId)?.status === "connected");
   assert.deepEqual(world.backend!.relabelPowers.slice(relabels), ["running"], "relabelled once it had started");
