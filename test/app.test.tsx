@@ -2435,6 +2435,9 @@ test("the Boxes page lists every box under its thread, servers as well as deskto
   await waitFor(() => expect(list.getAllByText("UI thread")).toHaveLength(1));
   const card = list.getByRole("region", { name: "UI thread" });
   expect(within(card).getByText("calm-otter")).toBeTruthy();
+  // The title and its boxes are one group: no line under the title, and the first row sits close under it.
+  expect(within(card).getByRole("button", { name: "UI thread" }).parentElement!.className).not.toContain("border-b");
+  expect(card.querySelector("[data-resource-row]")!.parentElement!.className).toContain("[&>*:first-child]:pt-1");
   fireEvent.click(within(card).getByRole("button", { name: "UI thread" }));
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: THREAD });
 
