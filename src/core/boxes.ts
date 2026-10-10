@@ -760,6 +760,17 @@ export class Boxes {
           const spareResume = timings["start.total"] ?? 0;
           return { timings: { spare, spareResume, total: spare + spareResume, ...rest } };
         });
+        // The start reconnects its machine. How long that took from the claim, until BB shows the
+        // machine connected with the thread's access, is a step of its own, as a new box's enrolment is.
+        const reconnect = this.#reconnects.get(box.id);
+        if (reconnect) {
+          this.#waitFor(
+            box.id,
+            reconnect.then(async () => {
+              await this.update(box, ({ timings }) => ({ timings: { ...timings, spareReconnect: this.#now() - requested } })).catch(() => null);
+            }),
+          );
+        }
         return timed ?? started;
       }).then(
         (started) => this.#claimed(started, claimed),
@@ -1179,7 +1190,10 @@ export class Boxes {
     if (!box.enrol.hostId || !claimed) return;
     void claimed(box).then(
       (disconnected) => {
-        if (disconnected && reconnect && box.state === "ready") this.#waitFor(box.id, reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));
+        // Not while a start's reconnect runs, which commands already wait for.
+        if (disconnected && reconnect && box.state === "ready" && !this.#reconnects.has(box.id)) {
+          this.#waitFor(box.id, reconnect(box).catch((error) => this.#deps.logError("reconnect", error)));
+        }
       },
       (error) => this.#deps.logError("claim", error),
     );
