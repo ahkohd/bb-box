@@ -28,6 +28,8 @@ const MAX_CLIPBOARD_BYTES = 4 * 1024 * 1024;
 const CLIPBOARD_TIMEOUT_MS = 10_000;
 /** How long after a VNC viewer's resize its desktop's video viewers follow: the box takes a size in a few milliseconds. */
 const FOLLOW_AFTER_MS = 300;
+/** How long a box's video stays stopped for its capture to restart: Selkies stops a capture within milliseconds. */
+const RESTART_PAUSE_MS = 300;
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const isCount = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0;
@@ -198,19 +200,35 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     },
   });
   const relays = new Set<{ close(): Promise<void> }>();
-  /** Each box's side of its Selkies viewers, while any is connected. */
-  const selkiesBoxes = new Map<string, { box: SelkiesBox; viewers: number }>();
+  /** Each box's side of its Selkies viewers, and their relays, while any is connected. */
+  const selkiesBoxes = new Map<string, { box: SelkiesBox; viewers: number; relays: Set<SelkiesRelay> }>();
   const selkiesBox = (boxId: string, open: OpenStream): SelkiesBox => {
-    const entry = selkiesBoxes.get(boxId) ?? { box: new SelkiesBox(open, { onError: (error) => deps.logError("open the Selkies input", error) }), viewers: 0 };
+    const entry = selkiesBoxes.get(boxId) ?? { box: new SelkiesBox(open, { onError: (error) => deps.logError("open the Selkies input", error) }), viewers: 0, relays: new Set() };
     entry.viewers += 1;
     selkiesBoxes.set(boxId, entry);
     return entry.box;
   };
-  const leftSelkies = (boxId: string) => {
+  const leftSelkies = (boxId: string, relay: SelkiesRelay | null) => {
     const entry = selkiesBoxes.get(boxId);
+    if (relay) entry?.relays.delete(relay);
     if (!entry || --entry.viewers > 0) return;
     selkiesBoxes.delete(boxId);
+    frameSizes.delete(boxId);
     void entry.box.close();
+  };
+  /** The size of each box's video, as its frames last gave it. */
+  const frameSizes = new Map<string, Size>();
+  /**
+   * Restarts a box's video capture, so it takes the desktop's size: Selkies
+   * moves a running capture to a larger desktop without its encoder, so the
+   * picture keeps its old size, cut from the desktop's top left. A capture
+   * that no viewer wants stops, and the next starts at the desktop's size.
+   */
+  const restartVideo = async (boxId: string): Promise<void> => {
+    const paused = [...(selkiesBoxes.get(boxId)?.relays ?? [])].filter((relay) => relay.pause());
+    if (!paused.length) return;
+    await new Promise((resolve) => setTimeout(resolve, RESTART_PAUSE_MS));
+    for (const relay of paused) relay.resume();
   };
   /**
    * Has a box's Selkies capture its desktop at the size the desktop has now,
@@ -220,7 +238,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const followSize = async (boxId: string, shown?: Display): Promise<void> => {
     const entry = selkiesBoxes.get(boxId);
     if (!entry) return;
-    await entry.box.follow(await desktopSize(displayOpener(shown ?? (await display(boxes, boxId)))));
+    const size = await desktopSize(displayOpener(shown ?? (await display(boxes, boxId))));
+    await entry.box.follow(size);
+    const seen = frameSizes.get(boxId);
+    if (seen && (size.width > seen.width || size.height > seen.height)) await restartVideo(boxId);
   };
   /** Each box's check that its video has the desktop's size, while one runs. */
   const matching = new Map<string, Promise<void>>();
@@ -232,7 +253,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       if (!entry) return;
       const desktop = await desktopSize(displayOpener(await display(boxes, boxId)));
       // Selkies makes a size even: a desktop an odd width or height has is one pixel larger than its video.
-      if (desktop.width - (desktop.width % 2) !== size.width || desktop.height - (desktop.height % 2) !== size.height) await entry.box.follow(desktop);
+      if (desktop.width - (desktop.width % 2) !== size.width || desktop.height - (desktop.height % 2) !== size.height) {
+        await entry.box.follow(desktop);
+        await restartVideo(boxId);
+      }
     })()
       .catch((error) => deps.logError("have the video follow the desktop's size", error))
       .finally(() => matching.delete(boxId));
@@ -300,7 +324,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const connection: ViewerConnection = { viewer, release: () => relay?.release() ?? Promise.resolve() };
       const onEnd = (by: "viewer" | "box", error: Error | null) => {
         relays.delete(relay!);
-        if (selkies) leftSelkies(boxId);
+        if (selkies) leftSelkies(boxId, relay instanceof SelkiesRelay ? relay : null);
         // Control goes back to the agent unless the viewer connects again soon (020), so the log says why it may lose it.
         if (by === "box" && control.mayInput(boxId, viewer)) {
           const why = error?.message ?? "It closed the connection.";
@@ -329,6 +353,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               mayInput: () => control.mayInput(boxId, viewer),
               onSize: (size) => {
                 control.seen(boxId, size);
+                frameSizes.set(boxId, size);
                 matchSize(boxId, size);
               },
               onResize: (size) => {
@@ -337,6 +362,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               },
               onEnd,
             });
+            selkiesBoxes.get(boxId)?.relays.add(relay);
           } else {
             const open: OpenDisplay = VIEWER_ID.test(viewer)
               ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)

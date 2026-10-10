@@ -2461,9 +2461,14 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await session.receive("r,1101x701");
   await until("such a size", async () => rfb.width === 1096 && rfb.height === 700);
   await until("the video following it", async () => input.received.includes(follow(1096, 700)));
-  // Frames of another size than the desktop's, as from a capture that missed a resize, have the video follow the desktop.
+  // Frames of another size than the desktop's, as from a capture that missed a resize, have the video follow the desktop,
+  // and restart: Selkies moves a running capture to a larger size without its encoder, and starts a stopped one afresh.
+  const restarts = () => page.received.filter((message) => message === "STOP_VIDEO").length;
+  assert.equal(restarts(), 0, "no restart while the frames had the desktop's size or more");
   await selkies.frame(2, true, 800, 600);
   await until("the video following the desktop", async () => input.received.filter((message) => message === follow(1096, 700)).length === 2);
+  await until("the capture restarted", async () => page.received.join(" ").includes("STOP_VIDEO START_VIDEO REQUEST_KEYFRAME"));
+  assert.equal(page.stopped, false, "the viewer's video runs again");
   await selkies.clipboard("copied again");
   await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied again").toString("base64")}`));
   // An image, both ways, in Selkies' parts and in order (#609).

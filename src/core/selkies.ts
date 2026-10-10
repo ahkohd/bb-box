@@ -270,6 +270,8 @@ export class SelkiesRelay {
   #size = "";
   /** Messages from the viewer before the box's side opened; null once it has. */
   #early: string[] | null = [];
+  /** The viewer wants video: it has not asked for none, as a hidden tab does. */
+  #wants = true;
 
   constructor(options: SelkiesRelayOptions) {
     this.#options = options;
@@ -365,6 +367,29 @@ export class SelkiesRelay {
     return null;
   }
 
+  /** Sends the box a video message for this viewer, after the ones it sent before the box's side opened. */
+  async #toBox(message: string): Promise<void> {
+    if (this.#early) this.#early.push(message);
+    else await (await this.#socket).socket.send(message).catch(() => undefined);
+  }
+
+  /**
+   * Stops this viewer's video, for a restart of the box's capture, when the
+   * viewer wants video; false when it does not. Selkies stops a capture once
+   * no page wants its video, and starts the next at the desktop's size.
+   */
+  pause(): boolean {
+    if (this.#ended || !this.#wants) return false;
+    void this.#toBox("STOP_VIDEO");
+    return true;
+  }
+
+  /** Starts this viewer's video again after `pause`, from a key frame, unless it has since asked for none. */
+  resume(): void {
+    if (this.#ended || !this.#wants) return;
+    void this.#toBox("START_VIDEO").then(() => this.#toBox("REQUEST_KEYFRAME"));
+  }
+
   /** A message from the viewer. */
   async receive(message: Message): Promise<void> {
     if (this.#ended || typeof message !== "string") return;
@@ -380,8 +405,9 @@ export class SelkiesRelay {
         return;
       }
       case "video":
-        if (this.#early) this.#early.push(message);
-        else await (await this.#socket).socket.send(message).catch(() => undefined);
+        if (message === "STOP_VIDEO") this.#wants = false;
+        if (message === "START_VIDEO") this.#wants = true;
+        await this.#toBox(message);
         return;
       case "input":
         if (!this.#options.mayInput()) return;
