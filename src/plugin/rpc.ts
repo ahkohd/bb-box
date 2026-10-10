@@ -6,6 +6,7 @@ import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecor
 import { ControlError } from "../core/control.ts";
 import { contract, type BoxResult } from "./contract.ts";
 import type { BbBox } from "./setup.ts";
+import { profileLoop } from "./profile.ts";
 
 export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
@@ -70,6 +71,11 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video };
     },
     ping: async () => null,
+    async profile({ seconds }) {
+      const lines = await profileLoop(seconds);
+      for (const line of lines) bb.log.info(line);
+      return { lines };
+    },
     takeControl: ({ threadId, box: ref, viewer }) =>
       change("Taking control", async () => {
         const box = await desktopBox(threadId, ref);
