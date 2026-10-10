@@ -1012,6 +1012,16 @@ test("a provider row says it has a spare ready now, with no count (#121, #440)",
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pveContainer · usually ~3.1 s"]);
 });
 
+test("a provider row whose spares wait stopped says ready in seconds, as the claim resumes the spare first (#539)", async () => {
+  const [linux] = KINDS;
+  const kinds = [{ ...linux!, spares: { target: 1, ready: 1, making: 0 }, offers: [{ ...linux!.offers[0]!, ready: 1, spareStarts: true }] }];
+  const slot = panel(server([], { kinds }).handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const providers = await screen.findByRole("radiogroup", { name: "Provider" });
+  expect(within(providers).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pveContainer · ready in seconds · usually ~2.2 s"]);
+});
+
 test("a kind's spares read as ready, part ready or being made, and say nothing while none is coming (#121)", () => {
   expect(sparesWords(0, { ready: 0, making: 0 })).toEqual([]);
   expect(sparesWords(2, { ready: 2, making: 0 })).toEqual(["2 spares ready"]);

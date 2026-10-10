@@ -174,6 +174,8 @@ export interface OfferView {
   readonly form: BoxForm | null;
   /** Spare boxes of this kind ready now on this backend (032). */
   readonly ready: number;
+  /** A spare here waits stopped, so a box that claims one starts it first: ready in seconds, not at once (#539). Absent means no. */
+  readonly spareStarts?: boolean;
   /** Free machines for this kind on a real backend, from its last survey; null for a virtual one or before a survey. */
   readonly free: number | null;
   /** The box user can become root, or Administrator, on this backend. */
@@ -241,6 +243,7 @@ export function kindViews(
       hosts,
       form,
       ready: readyByBackend[key] ?? 0,
+      ...(backend.keepsSession?.(kind.id) ? { spareStarts: true } : {}),
       free: backend.free?.(kind.id) ?? null,
       admin,
       resizable: kind.capabilities.displays.length ? (kind.capabilities.displays[0]!.resizable ?? false) : null,

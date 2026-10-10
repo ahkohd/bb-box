@@ -199,12 +199,13 @@ export function formWords(offer: OfferView): string | null {
 /**
  * A row's second line: what the boxes are, "ready now" (green) when the box would claim a spare there, free machines, the usual start.
  * `ready` is the form's say, as the box's image and size decide (#440); a spare's count is no use to the person, so it is not given.
+ * A spare that waits stopped resumes first, which takes some seconds (about 12 for Windows on Proxmox), so it says "ready in seconds" (#539).
  */
 export function OfferWords({ offer, ready = offer.ready > 0 }: { offer: OfferView; ready?: boolean }) {
   const parts: ReactNode[] = [];
   const form = formWords(offer);
   if (form) parts.push(<span key="form">{form}</span>);
-  if (ready) parts.push(<span key="ready" className="text-emerald-700 dark:text-emerald-400">ready now</span>);
+  if (ready) parts.push(<span key="ready" className="text-emerald-700 dark:text-emerald-400">{offer.spareStarts ? "ready in seconds" : "ready now"}</span>);
   if (offer.free !== null) parts.push(<span key="free">{offer.free} free</span>);
   if (offer.typicalReadyMs !== null) parts.push(<span key="usually">usually ~{seconds(offer.typicalReadyMs)}</span>);
   if (!parts.length) return null;

@@ -58,7 +58,7 @@ A provider is where the box runs, such as a container host or a pool of physical
 Each provider's row says:
 
 - what its boxes are: Container, VM or Physical
-- 'ready now' when a spare box of the image and size you chose is waiting there, so your box is ready at once
+- 'ready now' when a spare box of the image and size you chose is waiting there, so your box is ready at once, or 'ready in seconds' when that spare waits stopped and resumes first, as Windows and macOS VMs' spares do
 - how many machines are free
 - how long a box usually takes to start
 

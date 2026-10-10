@@ -1770,6 +1770,8 @@ test("a kind's spares are made and enrolled ahead, and an acquire of the kind at
     assert.equal(spare.state, "ready");
     assert.equal(spare.enrol.state, "enrolled");
     assert.equal(machineName(spare), `${spare.name} (spare)`);
+    // One that waits stopped says so, as BB shows its machine offline meanwhile (#539).
+    assert.equal(machineName({ ...spare, state: "stopped" }), `${spare.name} (spare, stopped)`);
   }
   assert.deepEqual([...world.enrolled].sort(), spares.map((spare) => spare.name).sort());
   const [spare] = spares;

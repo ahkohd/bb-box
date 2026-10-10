@@ -100,8 +100,9 @@ needs:
 A box takes about a minute to join BB, most of it BB's installer. A spare is
 a BB machine already. Give `windows-desktop` a spare in Kinds, and it waits
 hibernated, holding no memory, in the place of a warm box. BB's machine list
-shows its machine as disconnected while it waits. A box that takes it is a
-BB machine a few seconds later.
+names its machine "(spare, stopped)" and shows it offline while it waits. A
+box that takes it is a BB machine about 12 seconds later, and the New box
+form says "ready in seconds".
 
 A Windows box's machine is a machine of BB's manual provider, which bb-box
 makes and removes with the box. Removing it from BB's machine list does not

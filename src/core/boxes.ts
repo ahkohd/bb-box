@@ -210,9 +210,13 @@ export function isMachineName(name: string): boolean {
   return MACHINE_NAME.test(name);
 }
 
-/** The name of a box's BB machine. A spare's says it is one. */
-export function machineName(box: Pick<BoxRecord, "name" | "threadId">): string {
-  return box.threadId === SPARES ? `${box.name} (spare)` : box.name;
+/**
+ * The name of a box's BB machine. A spare's says it is one, and one that
+ * waits stopped says so too, as BB shows its machine offline meanwhile (#539).
+ */
+export function machineName(box: Pick<BoxRecord, "name" | "threadId" | "state">): string {
+  if (box.threadId !== SPARES) return box.name;
+  return box.state === "stopped" ? `${box.name} (spare, stopped)` : `${box.name} (spare)`;
 }
 
 export interface BoxesDeps {
@@ -286,6 +290,8 @@ export interface BoxesDeps {
    * for that reconnect, as after a start.
    */
   claimed?(box: BoxRecord): Promise<boolean>;
+  /** Names the box's BB machine as `machineName` says, as after a spare stops to wait (#539). */
+  renameMachine?(box: BoxRecord): Promise<void>;
   /**
    * Which of BB's variables commands in a box enrolled as a BB machine take
    * from its daemon, so they have the thread's access. Null for none.
@@ -1044,9 +1050,14 @@ export class Boxes {
         continue;
       }
       kept.set(slot, count + 1);
-      // A spare that can wait stopped does, so it holds no memory until a claim starts it (#539).
+      // A spare that can wait stopped does, so it holds no memory until a claim starts it (#539). Its BB machine's name then says
+      // it is stopped, as BB shows the machine offline.
       if (spare.state === "ready" && this.#waitsStopped(spare) && !this.#work.has(spare.id)) {
-        await this.stop(SPARES, spare.id).catch((error) => this.#deps.logError("stop a spare", error));
+        const stopped = await this.stop(SPARES, spare.id).catch((error) => {
+          this.#deps.logError("stop a spare", error);
+          return null;
+        });
+        if (stopped?.state === "stopped") await this.#deps.renameMachine?.(stopped).catch((error) => this.#deps.logError("rename a spare's machine", error));
       }
     }
     for (const [kind, wanted] of Object.entries(general.spares)) {

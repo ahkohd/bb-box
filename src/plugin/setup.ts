@@ -572,6 +572,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       void names(box).catch(() => {});
       return enrolment.claimed(box);
     },
+    renameMachine: (box) => enrolment.rename(box),
     // A box on Docker on a BB machine whose relay is coming back, as after an update, is waited for (#415).
     reconnecting: (box) => {
       const host = configuration.document.backends.find((backend) => backend.id === box.backend)?.fields.host;
