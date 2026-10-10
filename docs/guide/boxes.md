@@ -27,7 +27,7 @@ The line under the name says how the box is doing:
 | --- | --- |
 | Starting, with a time | the box is being made or started |
 | Ready in 2.2 s | the box is ready, and took that long to start |
-| Joining BB… | the box is becoming a BB machine, which takes a few seconds |
+| Joining BB… | the box is becoming a BB machine, which takes a few seconds, or a minute or two for a Windows box |
 | BB machine in 5.3 s | the box is a BB machine, so the thread's commands and terminals can use it |
 | This thread's machine | the box was made for the thread to run on, from BB's new-thread screen |
 | Could not join BB | the box works, but it is not a BB machine |
@@ -101,3 +101,5 @@ A machine is a box of your own, kept as a BB machine. It belongs to no thread. I
 You can add a machine from **New box** on the Boxes page, or from **Add machine** in Settings, BB Box, Machines. The form is the same as for a new box, with a name at the end. The name is optional: leave it empty and BB Box picks one. A name uses lowercase letters, digits and hyphens, starts with a letter, does not end with a hyphen, and is at most 32 characters.
 
 A machine's row lists the threads working on it. You can stop, start and remove it from the Boxes page or from settings. Removing a machine deletes it, as releasing a box does. If a thread is working on the machine, Remove and Stop ask again before they go on.
+
+Remove a Windows machine here, not from BB's own machine list. Removing it there takes it out of BB, but leaves the Windows box running.

@@ -368,8 +368,10 @@ A box is a resource of its thread and gets what the thread's machine has.
   get none yet.
 - **Direct access.** The agent can reach its boxes itself, with
   `ssh <box name>` or `DOCKER_HOST`, where `access` allows.
-- **Windows** boxes cannot enrol yet, so they lack the thread's
-  credentials and variables, and child threads.
+- **Windows** boxes enrol as machines of BB's manual provider, which
+  bb-box makes and removes with the box (#539), as BB enrols a provider's
+  machine with its installer for Linux and macOS only. A switch on each
+  backend with Windows boxes turns it off.
 
 ### Clean-up and crash recovery
 

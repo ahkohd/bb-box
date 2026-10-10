@@ -56,7 +56,7 @@ export interface BoxView {
   readonly facts: readonly { readonly label: string; readonly value: string }[];
   readonly timings: Readonly<Record<string, number>>;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
-  /** Its kind's boxes join BB as machines when enrolment is on; Windows boxes cannot yet. */
+  /** Its kind's boxes join BB as machines when enrolment is on; Windows kinds unless their backend's switch is off (#539). */
   readonly enrols: boolean;
   readonly canStopStart: boolean;
 }
@@ -455,8 +455,11 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     off:
       box.restoredAt && capabilities.enrol
         ? "not enrolled since bb-box restored its lost record. It enrols again once it runs and answers, if bb-box enrols boxes"
-        : "not enrolled",
-    enrolling: "being added, which takes a few seconds. box_run waits for it, so commands have the thread's access",
+        : capabilities.enrol
+          ? // A box made before its kind's boxes joined BB, as a Windows box made before #539, is not enrolled in place.
+            "not enrolled: it was made while boxes of its kind did not join BB, and stays so until it is released. A new one joins BB when bb-box enrols boxes"
+          : "not enrolled",
+    enrolling: `being added, which takes ${capabilities.os === "windows" ? "a minute or two" : "a few seconds"}. box_run waits for it, so commands have the thread's access`,
     enrolled: "enrolled",
     failed: `enrolment failed${box.enrol.error ? `: ${box.enrol.error}` : ""}`,
   };

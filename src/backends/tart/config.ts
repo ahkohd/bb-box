@@ -45,7 +45,7 @@ export interface TartConfig {
   /** A null key means bb-box generates one and shows its public key. */
   readonly ssh: { readonly privateKey: string | null; readonly vmUser: string };
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
-  /** Windows boxes join BB as machines: a trial, as on Proxmox QEMU (#539). */
+  /** Windows boxes join BB as machines, unless set off, as on Proxmox QEMU (#539). */
   readonly windowsEnrol: boolean;
 }
 
@@ -161,9 +161,9 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
   },
   [TART_KEYS.windowsEnrol]: {
     type: "boolean",
-    label: "Tart: Windows boxes as BB machines (trial)",
-    description: "A trial of Windows boxes that join BB, so threads and terminals can use them. Off unless you are trying it.",
-    default: false,
+    label: "Tart: Windows boxes as BB machines",
+    description: "Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only.",
+    default: true,
   },
   [TART_KEYS.vmsPerHost]: {
     type: "number",
@@ -297,7 +297,7 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
     vmsPerHost,
     ssh: { privateKey, vmUser },
     reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB },
-    windowsEnrol: values[TART_KEYS.windowsEnrol] === true,
+    windowsEnrol: values[TART_KEYS.windowsEnrol] !== false,
   };
 }
 

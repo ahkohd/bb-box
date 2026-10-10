@@ -334,7 +334,7 @@ export class ProxmoxQemuBackend implements Backend {
 
   kinds(): BoxKind[] {
     if (!this.#config.templates.length) return [];
-    // Windows boxes join BB only on trial, when the setting is on (#539).
+    // Windows boxes join BB unless the switch is set off (#539).
     return [this.#config.enrol ? { ...KIND, capabilities: { ...KIND.capabilities, enrol: true } } : KIND];
   }
 
@@ -748,10 +748,10 @@ export class ProxmoxQemuBackend implements Backend {
             } else {
               this.#templates.set(template, { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) });
               pass(name, `VM template ${template} on ${storage}, ${Math.floor((free as { available: number }).available / GiB)} GiB free.`);
-              // BB's app does not run on Windows.
+              // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB.
               const judged = judgeImage(
                 recordInDescription(String(config.description ?? "")),
-                { os: "windows", pins: await pins, bbApp: null },
+                { os: "windows", pins: await pins, bbApp: null, joins: this.#config.enrol },
                 `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh windows ${template} --replace.`,
               );
               checks.push({ id: `template.${template}.image`, name: `Image of ${name[1]}`, ...judged });

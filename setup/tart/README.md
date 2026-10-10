@@ -228,6 +228,7 @@ its boxes and takes no new ones. The backend's own fields:
 | `linux-image` | empty | The image of `linux-arm64` boxes, such as `bb-box-linux`. Empty, the default, turns them off |
 | `linux-desktop-image` | empty | The image of `linux-arm64-desktop-cpu` boxes, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
 | `windows-image` | empty | The image in `~/.bb-box/qemu/images` of `windows-arm64-desktop` boxes: the name `prepare-windows-image.sh` was given with `--name`, or its default. Empty, the default, turns them off |
+| `tart-windows-enrol` | on | Windows boxes join BB as machines, as the Proxmox QEMU backend's do. Off, they are boxes only |
 | `vm-user` | `admin` | The macOS images' user. Linux boxes work as `box` |
 | `vms-per-host` | 2 | At most 2 |
 | `reserve-memory-mib`, `reserve-disk-gib` | 16384, 50 | A new box is refused when the Mac would have less. With 16 GiB kept free, a 32 GiB Mac takes two 8 GiB boxes; lower it on a small Mac you do not use yourself |
@@ -262,7 +263,13 @@ and disk free. For each image it:
 - fails when the image keeps an older contract than bb-box needs;
 - warns when it is older than 14 days (Linux) or 60 days (macOS and Windows),
   has another build of BB's app than BB's server gives (not on Windows), or
-  was built with other pins than this bb-box's copy of its script.
+  was built with other pins than this bb-box's copy of its script;
+- warns, for a Windows image whose boxes join BB, when it has no Node.js
+  22.19 or later, or none of the agent CLIs.
+
+A Windows box takes about 2 minutes to join BB on a Mac, most of it BB's
+installer. What it needs, and what its machine can and cannot do, is in the
+[Proxmox QEMU guide](../proxmox-qemu/README.md#windows-boxes-as-bb-machines).
 
 Its fix gives the prepare script's command that builds the image again.
 

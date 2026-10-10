@@ -83,6 +83,32 @@ The [configuration reference](../../docs/reference/configuration.md#proxmox-qemu
 lists every field. Check tests the fields against the host; Save and turn on
 saves them.
 
+#### Windows boxes as BB machines
+
+A box joins BB as a machine, as a Linux box does, so threads and terminals
+can use it. Set `windows-enrol` off to keep Windows boxes out of BB. It
+needs:
+
+- BB 0.45.0 or later, whose Windows installer each box runs in its desktop
+  session
+- Node.js 22.19 or later in the template, which `build.sh` installs: a
+  template without it still works, but each box then installs it as it
+  joins BB, about 11 s more
+- an agent CLI in the template for `box_thread`: `build.sh` installs Claude
+  Code, Codex and Pi
+
+A box takes about a minute to join BB, most of it BB's installer. A spare is
+a BB machine already. Give `windows-desktop` a spare in Kinds, and it waits
+hibernated, holding no memory, in the place of a warm box. BB's machine list
+shows its machine as disconnected while it waits. A box that takes it is a
+BB machine a few seconds later.
+
+A Windows box's machine is a machine of BB's manual provider, which bb-box
+makes and removes with the box. Removing it from BB's machine list does not
+release the box: release the box instead. "New box" in BB's new-thread
+screen cannot make a Windows box (BB request 1 in the
+[requests log](../../docs/bb-requests.md)).
+
 ## Check it worked
 
 `build.sh`'s own check, above, runs in a clone of the new template. Then run
@@ -90,7 +116,9 @@ saves them.
 
 - fails when the template keeps an older contract than bb-box needs;
 - warns when the template is more than 60 days old, or was built with other
-  pins than this bb-box's `build.sh`.
+  pins than this bb-box's `build.sh`;
+- warns when Windows boxes join BB and the template has no Node.js 22.19 or
+  later, or none of the agent CLIs.
 
 Its fix is the `build.sh windows <vmid> --replace` command.
 

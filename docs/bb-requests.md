@@ -9,7 +9,7 @@ is a log: bb-box does not file these with BB.
 
 | Request | Status | Without it |
 | --- | --- | --- |
-| [BB's host app on Windows](#1-bbs-host-app-on-windows) | partly met | Windows boxes cannot enrol |
+| [BB's host app on Windows](#1-bbs-host-app-on-windows) | partly met | Windows boxes join BB as machines of BB's manual provider, not bb-box's, so BB removing one does not release its box, and "New box" cannot make a Windows box (#539) |
 | [Send backlog on plugin WebSockets](#2-send-backlog-on-plugin-websockets) | not met | the desktop relay cannot slow down for a slow viewer |
 | [Start cleanly after a reboot](#3-start-cleanly-after-a-reboot) | not met | every template and image clears BB's daemon lock and PID file at boot |
 | [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | not met | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
@@ -40,8 +40,8 @@ is a log: bb-box does not file these with BB.
 Node installer that starts the daemon at sign-in from the user's `Run` key, so
 in the desktop session (`bb guide machines`). Asks 1 to 3 are met. The SDK's
 `MachineBootstrapRequest` still names no OS, and ask 4 is not met: #539's
-trial found that a provider's machine cannot enrol on Windows (below). No
-workaround to drop yet.
+trial found that a provider's machine cannot enrol on Windows (below), so
+Windows boxes join BB as manual machines.
 
 **What bb-box needs.** Windows boxes that enrol as BB machines, like Linux and
 macOS boxes. Then a thread's Git credentials and machine variables reach its
@@ -85,18 +85,16 @@ a Windows app.
   provider's bundle, which carries its credential for `--bootstrap-env`, gets
   "This installer needs an enrollment command".
 
-**Until then.** Windows boxes run commands, copy files and stream their
-desktop through bb-box's own transports. They do not get the thread's Git
-credentials and machine variables from BB, and child threads cannot run on
-them. The panel says so on each Windows box.
-
-On trial, behind the Proxmox QEMU backend's "Windows boxes as BB machines"
-setting (#539), a Windows box enrols as a machine of BB's manual provider,
-whose enrolment command has a Windows form, and bb-box owns that machine
-itself: its release removes the machine, a failed enrolment removes it, and
-the sweep removes any whose box is gone. BB's provider hooks do not reach
-such a machine, so BB removing it does not release the box, and "a thread on
-its own box" cannot make one.
+**Until then.** A Windows box enrols as a machine of BB's manual provider,
+whose enrolment command has a Windows form, unless the Proxmox QEMU or Tart
+backend's "Windows boxes as BB machines" switch is set off (#539). bb-box
+owns that machine itself: its release removes the machine once BB has, a
+failed enrolment removes it, and the sweep removes any whose box is gone.
+Its commands take the thread's Git credentials and machine variables, and
+child threads run on it, on an agent CLI in its image. BB's provider hooks do
+not reach such a machine, so BB removing it does not release the box, and
+"New box" refuses Windows kinds. When ask 4 is met, Windows boxes can be
+bb-box's provider machines like the rest, and the switch can go.
 
 We tried BB's Linux host app in WSL2 inside a Windows box as a stopgap
 (#174), and chose not to build it. A Windows command could read GH_TOKEN,

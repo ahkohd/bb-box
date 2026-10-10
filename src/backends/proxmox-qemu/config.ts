@@ -35,7 +35,7 @@ export interface QemuConfig {
   /** A null key means bb-box generates one and shows its public key. */
   readonly ssh: { readonly privateKey: string | null; readonly user: string };
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
-  /** Windows boxes join BB as machines: a trial while Windows enrolment is built (#539). */
+  /** Windows boxes join BB as machines, unless set off (#539). */
   readonly enrol: boolean;
 }
 
@@ -141,10 +141,10 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   },
   [QEMU_KEYS.enrol]: {
     type: "boolean",
-    label: "Windows boxes as BB machines (trial)",
-    description: "A trial of Windows boxes that join BB, so threads and terminals can use them. Off unless you are trying it.",
+    label: "Windows boxes as BB machines",
+    description: "Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only.",
     group: "boxes",
-    default: false,
+    default: true,
   },
   [QEMU_KEYS.bridge]: {
     type: "string",
@@ -246,5 +246,5 @@ export function parseQemuPart(part: BackendPart): ParsedBackend<QemuConfig> {
   const reserve = checkReserve(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { proxmox, templates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] === true } };
+  return { ok: true, config: { proxmox, templates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false } };
 }
