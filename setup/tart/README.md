@@ -294,7 +294,7 @@ that stays plugged in. Make each a link to a folder on it; nothing else
 changes, as everything that uses them, Tart and QEMU too, follows the link:
 
 ```sh
-# With bb-box's backend for the Mac turned off, and no VM running:
+# With bb-box's backend for the Mac turned off, no VM running, and warm VMs deleted:
 mkdir -p /Volumes/<volume>/bb-box
 ditto ~/.tart /Volumes/<volume>/bb-box/tart
 ditto ~/.bb-box/qemu /Volumes/<volume>/bb-box/qemu
