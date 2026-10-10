@@ -162,6 +162,9 @@ and the Metal toolchain), plus:
   telemetry and update checks off. The script grants it Accessibility and
   Screen Recording in the stopped VM's disk, and approves its screen capture
   ahead, so nobody has to approve anything;
+- BlackHole 2ch, pinned by SHA-256, a virtual audio device that is the
+  default input: what is played to its output comes back as the
+  microphone, so a test can feed speech in with `say -a BlackHole`;
 - bb-box's launcher, which commands in the desktop session (`box_run` with
   `desktop: true`) go through. TCC attributes what a command over SSH starts
   to `sshd-keygen-wrapper`, for which macOS never asks, so an app started
@@ -171,8 +174,8 @@ and the Metal toolchain), plus:
   and what `sshd-keygen-wrapper` is allowed, so nobody has to approve
   anything. An app opened with `open -a` is its own responsible process, and
   macOS asks about it, in a prompt computer use can answer. A VM that can be
-  suspended has no audio input device, so apps can be given the microphone
-  but cannot record from one;
+  suspended has no audio input device of its own, so BlackHole is the
+  microphone;
 - BB's app, with `--bb-url`.
 
 #### Linux (arm64)
