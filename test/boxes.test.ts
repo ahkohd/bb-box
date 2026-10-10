@@ -13,7 +13,7 @@ import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
-import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
+import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, MAC_LAUNCHER, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
 import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
 import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
@@ -2526,9 +2526,9 @@ exec env -i HOME="$HOME" PATH="$PATH" BBX_SESSION=Aqua "$@"
   const zsh = spawnSync("zsh", ["-fc", "command -v zsh"], { encoding: "utf8" }).stdout?.trim();
   const shells = ["/bin/sh", ...(zsh ? [zsh] : [])];
   for (const shell of shells) {
-    const run = (env: Record<string, string>) => {
+    const run = (env: Record<string, string>, body = script) => {
       const log = tempDir("mac-desktop-log");
-      const result = spawnSync(shell, ["-c", script], {
+      const result = spawnSync(shell, ["-c", body], {
         input: "hello\n",
         encoding: "utf8",
         env: { PATH: `${fakes}:/usr/bin:/bin`, HOME: home, SHELL: shell, FAKE_LOG: log, FAKE_CONSOLE: username, ...env },
@@ -2543,6 +2543,13 @@ exec env -i HOME="$HOME" PATH="$PATH" BBX_SESSION=Aqua "$@"
     const wrapper = ["-n", "/bin/launchctl", "asuser", String(uid), "/usr/bin/sudo", "-n", "-u", username, "--"];
     assert.deepEqual(ran.calls[0], [...wrapper, "/usr/bin/true"], `${shell}: a no-op checks the wrapper first`);
     assert.deepEqual(ran.calls[1]!.slice(0, -1), [...wrapper, shell, "-c"], `${shell}: the command runs through the wrapper`);
+
+    // Where the box has bb-box's launcher (#628), the command goes through it, with the same result.
+    const launcher = join(dir, "launcher");
+    writeFileSync(launcher, '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
+    const launched = run({}, script.replaceAll(MAC_LAUNCHER, launcher));
+    assert.deepEqual([launched.status, launched.stdout, launched.stderr], [5, `Aqua|one|${work}\nhello\n`, "to-stderr\n"], shell);
+    assert.deepEqual(launched.calls[1]!.slice(0, -1), [...wrapper, launcher, shell, "-c"], `${shell}: the command goes through the launcher`);
 
     const away = run({ FAKE_CONSOLE: "root" });
     assert.equal(away.status, DESKTOP_EXITS.noSession, shell);

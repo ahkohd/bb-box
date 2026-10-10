@@ -4,8 +4,9 @@
 #
 #   ./prepare-image.sh --key '<bb-box public key>' [--key <another>]... [--from <image>] [--name <vm>] [--bb-url <url>] [--replace]
 #
-# It clones the base image to <name>-build, boots it, runs guest/customize.sh
-# in it as its user, shuts it down, grants Cua Driver Accessibility and Screen
+# It clones the base image to <name>-build, boots it, runs guest/customize.sh,
+# guest/xcode.sh and guest/launcher.sh in it as its user, shuts it down, grants
+# Cua Driver Accessibility and Screen
 # Recording on its disk (grant-tcc.sh), boots it again to check the grants,
 # shuts it down and renames it to <name>. Boxes cloned from an image it
 # replaces keep running. Its record (049) is in the image, in
@@ -91,6 +92,8 @@ tart exec -i "$build" env BBBOX_SSH_PUBLIC_KEY="$key" CUA_VERSION="$CUA_VERSION"
 step "setting Xcode up in $build"
 tart exec -i "$build" /bin/sh -s <"$here/guest/xcode.sh" >"$work/xcode.txt" || { cat "$work/xcode.txt"; die "setting Xcode up failed"; }
 grep -v '^[a-z-]*=' "$work/xcode.txt" || :
+step "building bb-box's launcher for desktop commands in $build"
+tart exec -i "$build" /bin/sh -s <"$here/guest/launcher.sh" || die "building bb-box's launcher failed"
 # The pins' SHA-256 is of this script's pin lines, as bb-box hashes them.
 step "recording $build_id in $build"
 os=$(tart exec "$build" sw_vers -productVersion)
