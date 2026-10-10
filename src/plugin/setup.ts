@@ -28,6 +28,7 @@ import { agentFor } from "./agents.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
+import { LoopWatch } from "./loop-watch.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, type RetiredTerminals } from "./holder.ts";
@@ -653,6 +654,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     bakes: imageBakes,
     log: (line) => bb.log.info(line),
   });
+  // Stalls of bb-box's own event loop, which hold up every desktop's frames and input.
+  const loopWatch = new LoopWatch({ log: (message) => bb.log.warn(message) });
+  bb.onDispose(() => loopWatch.dispose());
   bb.onDispose(() => imageJobs.stop());
   bb.onDispose(() => imageBakes.stop());
   bb.onDispose(() => backends.dispose());
