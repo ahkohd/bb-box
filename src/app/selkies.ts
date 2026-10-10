@@ -417,6 +417,8 @@ export class SelkiesSession implements Kept {
         this.#failures = 0;
         this.#set({ state: "connected" });
         this.#apply();
+        // Control held before this connection, as after a reload, a reconnect or a switch from VNC: the desktop takes the viewer's size now.
+        this.#sendSize();
       }
     } finally {
       frame.close();

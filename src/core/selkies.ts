@@ -176,6 +176,18 @@ export class SelkiesBox {
   }
 
   /**
+   * Has Selkies capture the desktop at `size`, the size it has now. Selkies
+   * follows a screen that shrinks, but captures one that grows at its old
+   * size, so a viewer sees a small picture, or part of the desktop. A
+   * controller's SETTINGS with the size as its manual resolution moves the
+   * capture at once, without a restart, and tells every page the new size.
+   */
+  async follow(size: { readonly width: number; readonly height: number }): Promise<void> {
+    const settings = { displayId: "primary", manual_resolution: true, manual_width: size.width, manual_height: size.height, force_aligned_resolution: false };
+    await this.input(`SETTINGS,${JSON.stringify(settings)}`);
+  }
+
+  /**
    * Asks for a key frame over the input connection, a controller, which
    * Selkies lets ask four times a second. False when it is not open: the
    * viewer asks itself.

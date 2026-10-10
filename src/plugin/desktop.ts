@@ -12,7 +12,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { BoxRecord, Boxes } from "../core/boxes.ts";
 import { Control, RECONNECT_MS, STALE_MS, type KeptControl, type ViewerConnection } from "../core/control.ts";
 import { clipboardCommands } from "../core/in-box.ts";
-import { RfbRelay, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
+import { RfbRelay, desktopSize, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Screen } from "../core/rfb.ts";
 import { SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
 import { openRoute } from "../transports/route.ts";
@@ -26,6 +26,8 @@ const KEPT_KEY = "desktop-control";
 const MAX_CLIPBOARD_BYTES = 4 * 1024 * 1024;
 /** How long reading or writing a box's clipboard with a command may take. */
 const CLIPBOARD_TIMEOUT_MS = 10_000;
+/** How long after a VNC viewer's resize its desktop's video viewers follow: the box takes a size in a few milliseconds. */
+const FOLLOW_AFTER_MS = 300;
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const isCount = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0;
@@ -192,6 +194,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       // can come back on the CPU after a stop and start, and take it (021).
       await restoreSize(displayOpener(shown), size, screen);
       if (shown.resize) await resizes.request(boxId, (each) => shown.resize!(each), size);
+      await followSize(boxId, shown).catch((error) => deps.logError("have the video follow the desktop's size", error));
     },
   });
   const relays = new Set<{ close(): Promise<void> }>();
@@ -209,16 +212,49 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     selkiesBoxes.delete(boxId);
     void entry.box.close();
   };
-  /** Sets a box's desktop to a Selkies viewer's size, through its RFB display, which Selkies follows. */
+  /**
+   * Has a box's Selkies capture its desktop at the size the desktop has now,
+   * read through its RFB display, while it has Selkies viewers. Selkies
+   * follows a desktop that shrinks, not one that grows.
+   */
+  const followSize = async (boxId: string, shown?: Display): Promise<void> => {
+    const entry = selkiesBoxes.get(boxId);
+    if (!entry) return;
+    await entry.box.follow(await desktopSize(displayOpener(shown ?? (await display(boxes, boxId)))));
+  };
+  /** Each box's check that its video has the desktop's size, while one runs. */
+  const matching = new Map<string, Promise<void>>();
+  /** A Selkies viewer's frames are `size`: when the desktop has another, as one that grew while no viewer had it follow, the video follows. */
+  const matchSize = (boxId: string, size: Size): void => {
+    if (matching.has(boxId)) return;
+    const check = (async () => {
+      const entry = selkiesBoxes.get(boxId);
+      if (!entry) return;
+      const desktop = await desktopSize(displayOpener(await display(boxes, boxId)));
+      // Selkies makes a size even: a desktop an odd width or height has is one pixel larger than its video.
+      if (desktop.width - (desktop.width % 2) !== size.width || desktop.height - (desktop.height % 2) !== size.height) await entry.box.follow(desktop);
+    })()
+      .catch((error) => deps.logError("have the video follow the desktop's size", error))
+      .finally(() => matching.delete(boxId));
+    matching.set(boxId, check);
+  };
+  /**
+   * Sets a box's desktop to a Selkies viewer's size, through its RFB display,
+   * then has Selkies capture it at that size. Its width is a multiple of 8 and
+   * its height even: Selkies widens the screen to the one, and narrows its
+   * video to the other.
+   */
   const sizeForSelkies = async (boxId: string, size: Size): Promise<void> => {
     const shown = await display(boxes, boxId);
     const min = shown.minSize;
-    const raised = { width: Math.max(size.width, min?.width ?? 0), height: Math.max(size.height, min?.height ?? 0) };
+    const step = (value: number, least: number, by: number) => Math.max(value, least) - (Math.max(value, least) % by);
+    const raised = { width: step(size.width, min?.width ?? 0, 8), height: step(size.height, min?.height ?? 0, 2) };
     await resizes.request(
       boxId,
       async (each) => {
         await restoreSize(displayOpener(shown), each, SELKIES_SCREEN);
         if (shown.resize) await shown.resize(each);
+        await followSize(boxId, shown);
       },
       raised,
     );
@@ -291,7 +327,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               box: selkiesBox(boxId, open),
               open,
               mayInput: () => control.mayInput(boxId, viewer),
-              onSize: (size) => control.seen(boxId, size),
+              onSize: (size) => {
+                control.seen(boxId, size);
+                matchSize(boxId, size);
+              },
               onResize: (size) => {
                 control.resized(boxId, viewer, SELKIES_SCREEN);
                 sizeForSelkies(boxId, size).catch((error) => deps.logError("resize the desktop", error));
@@ -316,6 +355,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 const resize = shown?.resize;
                 if (resize) {
                   resizes.request(boxId, (each) => resize(each), size).catch((error) => deps.logError("resize the desktop", error));
+                }
+                // Video viewers of the same desktop follow, once the box has taken the size.
+                if (selkiesBoxes.has(boxId)) {
+                  setTimeout(() => void followSize(boxId).catch((error) => deps.logError("have the video follow the desktop's size", error)), FOLLOW_AFTER_MS);
                 }
               },
               onClipboard: (text) => {

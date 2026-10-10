@@ -2112,6 +2112,34 @@ test("a video session stops its video while hidden, and starts again from a key 
   }
 });
 
+test("a video viewer sends its size as it takes control, and as its video connects with control already held, as VNC does", async () => {
+  const undo = withVideo();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    // jsdom lays nothing out: the viewer's size, as a browser gives it.
+    Object.defineProperty(session.element, "clientWidth", { value: 1366.5, configurable: true });
+    Object.defineProperty(session.element, "clientHeight", { value: 768, configurable: true });
+    const socket = FakeSocket.made.at(-1)!;
+    const sizes = () => socket.sent.filter((sent) => String(sent).startsWith("r,"));
+    act(() => socket.open());
+    session.setControl(true, true);
+    expect(sizes()).toEqual([]);
+    socket.onmessage?.({ data: videoFrame(1, true) });
+    expect(session.connection.state).toBe("connected");
+    expect(sizes()).toEqual(["r,1366x768"]);
+    session.setControl(false, true);
+    session.setControl(true, true);
+    expect(sizes()).toEqual(["r,1366x768", "r,1366x768"]);
+    // A desktop that cannot follow the viewer is not asked to.
+    session.setControl(false, false);
+    session.setControl(true, false);
+    expect(sizes()).toHaveLength(2);
+    session.dispose();
+  } finally {
+    undo();
+  }
+});
+
 /** Bytes as Selkies sends them in a clipboard message: base64. */
 function b64(bytes: Uint8Array): string {
   let binary = "";
