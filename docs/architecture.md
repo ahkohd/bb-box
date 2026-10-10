@@ -318,8 +318,9 @@ timer: boxes do not expire.
   thread's box, bb-box releases a spare to make room. A spare that a
   thread starts on through BB's picker becomes your machine
   ([036](decisions/036-your-machines-are-boxes-you-own.md)). The upkeep
-  replaces a spare its backend's `fromCurrentBuild` says comes from a build
-  of the kind's image that a refresh (049) has replaced since, so a claim
+  replaces a spare, ready or waiting stopped, that its backend's
+  `fromCurrentBuild` says comes from a build of the kind's image that a
+  refresh (049) has replaced since, so a claim
   never takes an old build, and never waits on the backend for it. Proxmox
   LXC and QEMU compare the build recorded at the clone with the template's,
   Docker the container's image ID with the tag's, and microsandbox the

@@ -98,6 +98,7 @@ The core uses only the two `types.ts` files.
    size. Where the backend's images are rebuilt (049), give it
    `fromCurrentBuild()`, so the upkeep replaces a spare of a build that a
    refresh has replaced: false for such a guest, null when it cannot tell.
+   It may be asked of a stopped guest, so answer without starting it.
 5. Add the driver to `DRIVERS` in
    [src/backends/index.ts](../src/backends/index.ts).
 6. Add `setup/<type>/` with the guide and its scripts. Keep deployment

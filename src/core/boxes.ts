@@ -1118,11 +1118,13 @@ export class Boxes {
   /**
    * Whether a kind's spare comes from a build of its image that is no
    * longer the one its backend starts boxes from, as the backend tells. A
-   * backend that cannot tell, or does not answer, keeps the spare.
+   * backend that cannot tell, or does not answer, keeps the spare. It asks of
+   * a spare that is ready or waits stopped, never one starting, stopping or
+   * failed; the backend answers without starting the guest.
    */
   async #oldBuild(spare: BoxRecord): Promise<boolean> {
     const backend = this.#deps.backends.get(spare.backend);
-    if (!backend?.fromCurrentBuild || !spare.guest || spare.state !== "ready") return false;
+    if (!backend?.fromCurrentBuild || !spare.guest || (spare.state !== "ready" && spare.state !== "stopped")) return false;
     const current = await backend.fromCurrentBuild(spare.guest, spare.kind).catch((error) => {
       this.#deps.logError("spares", error);
       return null;
