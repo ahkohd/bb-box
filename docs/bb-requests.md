@@ -32,6 +32,7 @@ is a log: bb-box does not file these with BB.
 | [Stop a plugin's machine workers after its tool calls](#21-stop-a-plugins-machine-workers-after-its-tool-calls) | not met | a command in a Docker box on a BB machine loses its box first at a deploy, so `box_run` waits up to 10 s to see that bb-box is stopping before it names the job (#415) |
 | [Remove a machine whose host is gone](#22-remove-a-machine-whose-host-is-gone) | not met | a Windows box's machine stays in BB's list as "removing" when the box goes before BB has torn down the threads' environments on it, so bb-box waits up to 2 minutes for BB's removal before it releases a Windows box (#539) |
 | [Install commands for the machine's OS](#23-install-commands-for-the-machines-os) | not met | BB's install action for Cursor's CLI on a Windows machine is a bash script, which Windows cannot run (#561) |
+| [End a thread's processes before removing its worktree on Windows](#24-end-a-threads-processes-before-removing-its-worktree-on-windows) | not met | bb-box ends the processes working in BB's worktrees in a Windows box before it asks BB to remove the box's machine, or BB's teardown fails with EBUSY and the machine stays "removing" (#539) |
 
 ## 1. BB's host app on Windows
 
@@ -897,6 +898,30 @@ machine, or none where BB has no Windows installer for it.
 
 **Until then.** bb-box installs no agent CLI itself. Its Windows images are
 to carry Claude Code, Codex and Pi (#450).
+
+## 24. End a thread's processes before removing its worktree on Windows
+
+**Status in BB 0.45.0: not met.**
+
+**What bb-box needs.** BB to remove a Windows box's machine when the box
+goes, with the worktrees of the threads that ran on it (#539).
+
+**What BB does now.** Before it removes a machine, BB tears down each
+thread's worktree on it. On Windows the teardown fails with "EBUSY: resource
+busy or locked, rmdir" while the thread's agent, and the worker of BB's
+daemon that runs it, still work in the worktree, as they do after the
+thread's turn ends. Windows does not remove a folder a process works in, as
+Linux does. BB tries again, but nothing ends those processes, so the machine
+stays "removing" until its box is gone, and then for good (request 22).
+
+**What we ask.** On Windows, end a thread's processes that work in its
+worktree, the agent and its worker included, before tearing the worktree
+down.
+
+**Until then.** Before bb-box asks BB to remove a Windows box's machine, it
+ends every process in the box whose working directory is in BB's worktrees,
+and what those started, keeping BB's daemon and its other workers. It reads
+each process's working directory from its PEB.
 
 ## Checked, no request needed
 

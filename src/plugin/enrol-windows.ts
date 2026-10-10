@@ -84,3 +84,99 @@ export function windowsFailure(what: string, result: RunResult): string {
   const tail = `${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-8).join("\n");
   return `${what} exited with ${result.exitCode ?? (result.timedOut ? "a timeout" : "no code")}${tail ? `:\n${tail}` : "."}`;
 }
+
+/**
+ * Reads a process's working directory from its PEB: the process parameters'
+ * CurrentDirectory, at the offsets of 64-bit Windows, x64 and arm64 alike.
+ * Null where the process cannot be opened or read.
+ */
+const DIRECTORY_READER = String.raw`using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class BbProcessDirectory {
+  [StructLayout(LayoutKind.Sequential)]
+  struct Basic { public IntPtr ExitStatus; public IntPtr Peb; public IntPtr Affinity; public IntPtr Priority; public IntPtr Pid; public IntPtr Parent; }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int kind, ref Basic info, int length, out int returned);
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(int access, bool inherit, int pid);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr process, IntPtr address, byte[] buffer, IntPtr size, out IntPtr read);
+
+  static byte[] Read(IntPtr handle, IntPtr address, int size) {
+    var buffer = new byte[size];
+    IntPtr read;
+    return ReadProcessMemory(handle, address, buffer, (IntPtr)size, out read) && (long)read == size ? buffer : null;
+  }
+
+  public static string Of(int pid) {
+    // PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
+    IntPtr handle = OpenProcess(0x0410, false, pid);
+    if (handle == IntPtr.Zero) return null;
+    try {
+      var basic = new Basic();
+      int returned;
+      if (NtQueryInformationProcess(handle, 0, ref basic, Marshal.SizeOf(basic), out returned) != 0 || basic.Peb == IntPtr.Zero) return null;
+      byte[] parameters = Read(handle, basic.Peb + 0x20, 8);
+      if (parameters == null) return null;
+      IntPtr at = (IntPtr)BitConverter.ToInt64(parameters, 0);
+      // CurrentDirectory.DosPath: a UNICODE_STRING, its length then its buffer.
+      byte[] length = Read(handle, at + 0x38, 2);
+      byte[] buffer = Read(handle, at + 0x40, 8);
+      if (length == null || buffer == null) return null;
+      int size = BitConverter.ToUInt16(length, 0);
+      if (size == 0) return null;
+      byte[] text = Read(handle, (IntPtr)BitConverter.ToInt64(buffer, 0), size);
+      return text == null ? null : Encoding.Unicode.GetString(text);
+    } finally {
+      CloseHandle(handle);
+    }
+  }
+}`;
+
+/**
+ * Ends the processes BB's daemon runs for threads in the box: each whose
+ * working directory is in BB's worktrees, such as a thread's agent and the
+ * worker that runs it, and what they started. Windows does not remove a
+ * folder a process works in, so BB's teardown of a thread's worktree fails
+ * with EBUSY while they run, and the box's machine stays "removing" (#539).
+ * BB's daemon and its other workers work elsewhere, and go on. Prints
+ * `ended=<count>`.
+ */
+export const END_THREADS_SCRIPT = `$ErrorActionPreference = 'Stop'
+$bbRoots = @(Get-ChildItem -Directory -Path (Join-Path $HOME '.bb-machines\\*\\plugins\\environment-git-worktree\\host-data\\worktrees') -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.TrimEnd('\\') })
+if (-not $bbRoots.Count) { 'ended=0'; exit 0 }
+Add-Type -TypeDefinition @'
+${DIRECTORY_READER}
+'@
+$bbAll = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CommandLine)
+$bbEnd = @{}
+foreach ($bbProcess in $bbAll) {
+  $bbDir = [BbProcessDirectory]::Of([int]$bbProcess.ProcessId)
+  if (-not $bbDir) { continue }
+  $bbDir = $bbDir.TrimEnd('\\')
+  foreach ($bbRoot in $bbRoots) {
+    if ($bbDir.StartsWith($bbRoot + '\\', [StringComparison]::OrdinalIgnoreCase)) { $bbEnd[[int]$bbProcess.ProcessId] = $true }
+  }
+}
+# And what they started.
+do {
+  $bbMore = $false
+  foreach ($bbProcess in $bbAll) {
+    if (-not $bbEnd.ContainsKey([int]$bbProcess.ProcessId) -and $bbEnd.ContainsKey([int]$bbProcess.ParentProcessId)) { $bbEnd[[int]$bbProcess.ProcessId] = $true; $bbMore = $true }
+  }
+} while ($bbMore)
+$bbEnded = 0
+foreach ($bbProcess in $bbAll) {
+  $bbId = [int]$bbProcess.ProcessId
+  # Never BB's daemon, nor this command.
+  if (-not $bbEnd.ContainsKey($bbId) -or $bbId -eq $PID -or "$($bbProcess.CommandLine)" -match 'bb-app\\.js"?\\s+host-daemon') { continue }
+  try { Stop-Process -Id $bbId -Force -ErrorAction Stop; $bbEnded++ } catch {}
+}
+"ended=$bbEnded"`;
+
+/** Ends the threads' processes in a Windows box (END_THREADS_SCRIPT), and says how many. */
+export async function endThreadProcesses(transport: CommandTransport, options: { timeoutMs: number; signal?: AbortSignal }): Promise<number> {
+  const result = await transport.run(inBoxCommand("windows", END_THREADS_SCRIPT, { timeoutMs: options.timeoutMs }), { timeoutMs: options.timeoutMs + 10_000, signal: options.signal });
+  if (result.exitCode !== 0) throw new Error(windowsFailure("Ending the threads' processes in the box", result));
+  return Number(/ended=(\d+)/.exec(result.stdout)?.[1] ?? 0);
+}

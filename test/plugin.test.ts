@@ -780,10 +780,16 @@ test("a Windows box on trial enrols as a machine of BB's manual provider, which 
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
 });
 
-test("a Windows box's release waits for BB to finish removing its manual machine, and bb-box keeps its record of one BB is slow to remove (#539)", async (t) => {
+test("a Windows box's release ends its threads' processes, waits for BB to finish removing its manual machine, and keeps its record of one BB is slow to remove (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
-  const shell = join(tempDir("windows-shell"), "pwsh");
-  writeFileSync(shell, `#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; esac\nexit 1\n`);
+  const dir = tempDir("windows-shell");
+  const shell = join(dir, "pwsh");
+  // The script that ends the threads' processes leaves a mark, and says it ended 2.
+  const ended = join(dir, "ended");
+  writeFileSync(
+    shell,
+    `#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; *BbProcessDirectory*) : > '${ended}'; echo ended=2; exit 0 ;; esac\nexit 1\n`,
+  );
   chmodSync(shell, 0o755);
   const { bb, harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell, manualRemoveMs: 300 });
   t.after(() => harness.lifecycle.dispose());
@@ -802,7 +808,9 @@ test("a Windows box's release waits for BB to finish removing its manual machine
 
   const first = await acquire();
   let releasedFirst: boolean | null = null;
+  let endedFirst: boolean | null = null;
   world.bbRemovals.set(first.hostId, async () => {
+    endedFirst = existsSync(ended);
     removing(first.hostId, null);
     setTimeout(() => {
       releasedFirst = world.backend!.calls.some((call) => call.startsWith("release "));
@@ -811,6 +819,8 @@ test("a Windows box's release waits for BB to finish removing its manual machine
   });
   assert.ok(!isError(await tool("box_release", { box: first.box.name })));
   assert.equal(releasedFirst, false, "the box goes once BB has removed its machine");
+  assert.equal(endedFirst, true, "the threads' processes ended before BB was asked to remove the machine");
+  assert.ok(harness.inspection.logEntries.some((entry) => entry.message === `Ended 2 processes of threads in box ${first.box.name} before its BB machine's removal, so that BB can remove their worktrees.`));
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
 
   // BB is still removing it when the wait ends, as when the box went first: the box goes, and bb-box keeps its record and logs it once.
@@ -821,7 +831,8 @@ test("a Windows box's release waits for BB to finish removing its manual machine
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), [`manual-machine/${second.hostId}`]);
   const stuck = () => harness.inspection.logEntries.map((entry) => entry.message).filter((line) => line.startsWith(`BB has not finished removing machine ${second.hostId}`));
   assert.equal(stuck().length, 1);
-  assert.match(stuck()[0]!, /s after bb-box asked: removing, Host is not connected\. bb-box keeps its record, and its sweep looks again\.$/);
+  // With the machine's name, which is its box's.
+  assert.match(stuck()[0]!, new RegExp(`s after bb-box asked: "${second.box.name}" is removing, Host is not connected\\. bb-box keeps its record, and its sweep looks again\\.$`));
   // The sweep looks again without logging it again, and forgets it once BB no longer has it.
   await app.enrolment.sweep();
   assert.equal(stuck().length, 1);
