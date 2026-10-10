@@ -93,12 +93,22 @@ const LINUX_DESKTOP =
   'export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"; ';
 
 /**
+ * bb-box's launcher in a macOS image (#628), which a desktop command goes
+ * through where the box has it: what the command starts is attributed by
+ * TCC to the launcher, which has the microphone, the camera, the system's
+ * audio and what sshd has, rather than to sshd, for which nothing can be
+ * asked (setup/tart/guest/launcher.sh).
+ */
+export const MAC_LAUNCHER = "/usr/local/libexec/bb-box/Launcher.app/Contents/MacOS/bb-box-launcher";
+
+/**
  * Puts a macOS command in the box user's desktop session (030). sudo gives
  * `launchctl asuser` the root it needs, and runs the command as the box user
  * again, with a fresh environment, so `script` sources the env file itself.
  * A no-op goes through the wrapper first, so a Mac whose sudoers lacks the
  * rule fails with the rule to add. `sudo -l` would not do: it allows a
- * command that needs a password.
+ * command that needs a password. The command goes through the launcher where
+ * the box has it.
  */
 function macDesktop(script: string): string {
   const wrapper = '/bin/launchctl asuser "$bb_uid" /usr/bin/sudo -n -u "$bb_user" --';
@@ -110,7 +120,8 @@ function macDesktop(script: string): string {
     `if ! sudo -n ${wrapper} /usr/bin/true </dev/null >/dev/null 2>&1; then ` +
     `printf 'bb-box: sudo does not let %s run commands in the desktop session. Mac setup adds this rule as /etc/sudoers.d/bb-box-desktop:\\n%s ALL=(root) NOPASSWD: /bin/launchctl asuser %s /usr/bin/sudo -n -u %s -- *\\n' "$bb_user" "$bb_user" "$bb_uid" "$bb_user" >&2; ` +
     `exit ${DESKTOP_EXITS.refused}; fi; ` +
-    `exec sudo -n ${wrapper} "\${SHELL:-/bin/sh}" -c ${sh(LOADS_ENV + script)}`
+    `bb_launch=; [ ! -x ${MAC_LAUNCHER} ] || bb_launch=${MAC_LAUNCHER}; ` +
+    `exec sudo -n ${wrapper} $bb_launch "\${SHELL:-/bin/sh}" -c ${sh(LOADS_ENV + script)}`
   );
 }
 

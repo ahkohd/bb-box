@@ -32,6 +32,7 @@ Mac. A clone boots to SSH in about 10 s and to a logged-in desktop in about
 | `prepare-windows-image.sh` | Builds the Windows image, in QEMU (046) |
 | `windows/` | What that script adds to the Proxmox Windows template's files |
 | `guest/customize.sh` | Runs inside the image's VM while it is built |
+| `guest/launcher.sh` | Builds bb-box's launcher for desktop commands in the image, with its permissions (#628) |
 | `grant-tcc.sh` | Grants Cua Driver its permissions in a stopped VM's disk |
 
 ## What you need
@@ -160,6 +161,17 @@ and the Metal toolchain), plus:
   telemetry and update checks off. The script grants it Accessibility and
   Screen Recording in the stopped VM's disk, and approves its screen capture
   ahead, so nobody has to approve anything;
+- bb-box's launcher, which commands in the desktop session (`box_run` with
+  `desktop: true`) go through. TCC attributes what a command over SSH starts
+  to `sshd-keygen-wrapper`, for which macOS never asks, so an app started
+  that way could not have the microphone or record the system's audio. The
+  launcher makes itself the responsible process instead, as Terminal does
+  for what it starts, and has the microphone, the camera, the system's audio
+  and what `sshd-keygen-wrapper` is allowed, so nobody has to approve
+  anything. An app opened with `open -a` is its own responsible process, and
+  macOS asks about it, in a prompt computer use can answer. A VM that can be
+  suspended has no audio input device, so apps can be given the microphone
+  but cannot record from one;
 - BB's app, with `--bb-url`.
 
 #### Linux (arm64)
