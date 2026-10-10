@@ -439,6 +439,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
+    profile: async () => ({ lines: [] }),
     ping: async () => {
       if (options.pingMs) await new Promise((resolve) => setTimeout(resolve, options.pingMs));
       return null;
