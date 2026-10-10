@@ -22,6 +22,8 @@ export const STEP_WORDS: Readonly<Record<string, string>> = {
   enrol: "BB enrolment",
   total: "total",
   spare: "claiming a spare",
+  spareResume: "resuming it",
+  spareReconnect: "BB machine reconnecting",
   relabel: "naming it for its owner",
   clock: "setting the clock",
 };
@@ -46,6 +48,18 @@ export function compactSize(words: string): string {
     .split(", ")
     .map((part) => part.replace(/ memory$/, "").replace(/ disk$/, ""))
     .join(" · ");
+}
+
+/**
+ * What the status line says of an enrolled box's BB machine: how long it took
+ * to join BB, or for a spare that waited stopped, how long after the claim BB
+ * showed it connected again with the thread's access (#539). A claimed spare
+ * that ran has neither, and says "BB machine".
+ */
+function machineWords(box: BoxView): string {
+  if (box.role === "machine") return "This thread's machine";
+  const ms = box.timings.enrol ?? box.timings.spareReconnect;
+  return ms !== undefined ? `BB machine in ${seconds(ms)}` : "BB machine";
 }
 
 /**
@@ -82,7 +96,7 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
         case "enrolling":
           return { tone: "ok", items: [state, ...alerts, { text: "Joining BB…" }, ...size] };
         case "enrolled":
-          return { tone: "ok", items: [state, ...alerts, { text: box.role === "machine" ? "This thread's machine" : box.timings.enrol !== undefined ? `BB machine in ${seconds(box.timings.enrol)}` : "BB machine" }, ...size] };
+          return { tone: "ok", items: [state, ...alerts, { text: machineWords(box) }, ...size] };
         case "failed":
           return { tone: "ok", items: [state, { text: "Could not join BB", tone: "warn" }, ...alerts, ...size] };
         default:
@@ -93,7 +107,8 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
 }
 
 function stepWords(timings: [string, number][]): string {
-  return timings.map(([step, ms]) => `${STEP_WORDS[step] ?? step} ${seconds(ms)}`).join(" · ");
+  // A time keeps to its unit and to the word before it, so a narrow row never starts a line with "s" or a lone time.
+  return timings.map(([step, ms]) => `${STEP_WORDS[step] ?? step}\u00a0${seconds(ms).replace(" ", "\u00a0")}`).join(" · ");
 }
 
 /** The box's acquire timings as words, in the order they happened, for its details. */
