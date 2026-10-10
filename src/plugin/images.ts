@@ -242,6 +242,14 @@ export class ImageJobs {
             lines.push({ name: view.name, outcome: "waiting", detail: reason });
             continue;
           }
+          // Room the backend needs to build, such as disk where it builds.
+          const short = await backend.images?.room?.(view.build, signal).catch(() => null);
+          if (short) {
+            const reason = `no room for its build: ${short}`;
+            await this.#record(view.name, { at: this.#now(), ok: false, waiting: true, reason, build: view.build.build, seconds: 0, output: [], from });
+            lines.push({ name: view.name, outcome: "waiting", detail: reason });
+            continue;
+          }
         }
         say(`refreshing ${view.name}: ${view.due}`);
         const result = await this.#refreshOne(backend, view, { pinned: !!options.pinned, replace: true, signal, from, log: (line) => say(`${view.name}: ${line}`) });

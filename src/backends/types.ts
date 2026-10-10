@@ -631,6 +631,12 @@ export interface BackendImages {
    * (049). A refresh then checks it on a trial box, as a capture.
    */
   build?(current: ImageBuild, setup: string, options: { readonly bbUrl: string | null; readonly log: (line: string) => void; readonly signal: AbortSignal }): Promise<ImageBuild>;
+  /**
+   * Why the backend cannot take a refresh's build now, beyond the room for
+   * its boxes, such as disk where it builds; null when it can. The refresh
+   * then waits for the next night, and the doctor says why.
+   */
+  room?(build: ImageBuild, signal?: AbortSignal): Promise<string | null>;
   /** The kind's check a trial box runs as the box user, printing a line per check with ok or FAIL, where it is not the template's own. */
   check?(kind: string): string;
   /**
@@ -715,7 +721,7 @@ export interface MachineAccess {
 }
 
 /** The scripts bb-box runs on an msb host (src/backends/microsandbox/release.ts). */
-export type MsbScriptName = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "memory" | "oom" | "transfer";
+export type MsbScriptName = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "retag";
 
 /** How a backend runs bb-box's msb on a BB machine, through bb-box's msb relay (053). */
 export interface MsbAccess {

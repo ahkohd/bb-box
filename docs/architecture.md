@@ -854,6 +854,15 @@ microVM only when it asks for this backend.
   on the host), and removes the builder. One build runs at a time; a box of
   its kind is refused as `no_capacity` until it is done, so the registry
   tries the next offer, such as Tart.
+- On such a host the nightly refresh (049) rebuilds the images too: the
+  backend's `build` makes a new one in a builder with `--bb-url`, under
+  `<image>:refresh-<time>`; a trial box of it, `bbbox-image-<id>`, runs
+  Docker's check; and `replace` puts it under the image's name with
+  `msb save` into `msb load`, as `msb` has no tag command, which share their
+  layers. The images' `room` asks for 80 GiB free on the volume `msb` keeps
+  them on, measured through any link, so a short host's image waits rather
+  than fails. On a host with Docker it lists no builds: `msb` imports
+  Docker's.
 - A box is a microVM named `bbbox-<box ID>`, with labels set at creation
   that name the backend, install, box, thread, name and kind; `msb modify`
   changes the thread and name when the box changes hands. Its size is

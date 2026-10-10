@@ -46,11 +46,12 @@ export const hostContract = defineRpcContract({
    * Runs one of bb-box's msb scripts on the machine (053,
    * src/backends/microsandbox/release.ts): install the pinned msb, report on
    * the machine, give Docker's IDs of images there, import one, make, list
-   * and remove boxes' Docker disks, or move an image from a builder microVM
-   * into msb. `dir` is bb-box's msb folder, in the plugin's data folder.
+   * and remove boxes' Docker disks, move an image from a builder microVM
+   * into msb, or put a build under an image's name. `dir` is bb-box's msb
+   * folder, in the plugin's data folder.
    */
   microsandbox: {
-    input: z.object({ script: z.enum(["install", "status", "images", "import", "disk", "undisk", "disks", "memory", "oom", "transfer"]), args: z.array(z.string().max(512)).max(4) }).strict(),
+    input: z.object({ script: z.enum(["install", "status", "images", "import", "disk", "undisk", "disks", "memory", "oom", "transfer", "retag"]), args: z.array(z.string().max(512)).max(4) }).strict(),
     output: z.object({ dir: z.string(), exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string() }).strict(),
   },
   /**
