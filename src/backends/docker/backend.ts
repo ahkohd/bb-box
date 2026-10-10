@@ -767,6 +767,17 @@ export class DockerBackend implements Backend {
     await this.#cli.ok(["container", "stop", "--time", "10", found.id], { timeoutMs: 60_000, signal });
   }
 
+  /** Whether a container comes from the build its kind's image names now: false once a refresh has moved the tag (049); null without either. */
+  async fromCurrentBuild(guest: Guest, kind: string, signal?: AbortSignal): Promise<boolean | null> {
+    const image = this.#config.images[kind as DockerKind];
+    if (!image) return null;
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found?.imageId) return null;
+    const current = await this.#cli.run(["image", "inspect", "--format", "{{.Id}}", image], { timeoutMs: 30_000, signal });
+    const id = current.exitCode === 0 ? current.stdout.trim() : "";
+    return id ? id === found.imageId : null;
+  }
+
   /** This install's containers, from their labels. */
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {
     const [info, containers] = await Promise.all([

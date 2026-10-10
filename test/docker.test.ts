@@ -242,6 +242,7 @@ test("reads the daemon's facts and its containers", () => {
       {
         Id: "abc",
         Name: "/bbbox-bx1",
+        Image: "sha256:1111",
         State: { Status: "running", ExitCode: 0 },
         Config: { Labels: { "bbbox.box": "bx1", other: 3 } },
         HostConfig: { NanoCpus: 2.5e9, Memory: 4096 * MiB },
@@ -258,6 +259,7 @@ test("reads the daemon's facts and its containers", () => {
     cores: 2.5,
     memoryMiB: 4096,
     addresses: { bbbox: "172.30.0.2" },
+    imageId: "sha256:1111",
   });
   assert.deepEqual(parseContainers(""), []);
 });
@@ -1155,4 +1157,15 @@ test("on a BB machine, a command or a capacity check stops waiting when its sign
     assert.ok(Date.now() - started < 2_000);
   }
   assert.deepEqual(fake.calls(), [], "nothing reached the machine");
+});
+
+test("a container comes from its kind's image's current build until a refresh moves the tag (049)", async () => {
+  const { fake, backend } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(await backend.fromCurrentBuild!(guest, "linux"), true);
+  // A refresh's new build takes the tag.
+  const ids = join(fake.root, "image-ids.json");
+  writeFileSync(ids, JSON.stringify({ "bbbox/linux:1": `sha256:${"9".repeat(64)}` }));
+  assert.equal(await backend.fromCurrentBuild!(guest, "linux"), false);
+  assert.equal(await backend.fromCurrentBuild!({ ...guest, ref: "bbbox-gone" }, "linux"), null, "a container that is gone cannot tell");
 });

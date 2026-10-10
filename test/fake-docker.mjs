@@ -110,6 +110,8 @@ function create(rest) {
   save({
     Id: id,
     Name: `/${name}`,
+    // The ID of the image it was made from, as docker gives it: a tag moved later names another.
+    Image: read("image-ids.json", {})[image] ?? `sha256:${createHash("sha256").update(image).digest("hex")}`,
     State: { Status: "created", ExitCode: 0 },
     Config: { Hostname: options["--hostname"], Image: image, Labels: labels, Env: env, Cmd: command },
     HostConfig: {

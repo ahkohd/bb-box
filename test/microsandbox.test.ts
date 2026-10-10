@@ -567,3 +567,13 @@ test("on a host without Docker, the nightly refresh's image operations build wit
   assert.deepEqual((await linux.backend.images!.list(signal())).builds, []);
   assert.equal(await linux.backend.images!.room!(builds[0]!, signal()), null);
 });
+
+test("a microVM comes from its kind's image's current build until a refresh or an import brings a new one (049)", async () => {
+  const { fake, backend } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(await backend.fromCurrentBuild!(guest, "linux"), true);
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(join(fake.root, "images.json"), JSON.stringify({ ...fake.images(), "bbbox/linux:1": imageLabels("linux", "build.newer") }));
+  assert.equal(await backend.fromCurrentBuild!(guest, "linux"), false);
+  assert.equal(await backend.fromCurrentBuild!({ ...guest, ref: "bbbox-gone" }, "linux"), null);
+});

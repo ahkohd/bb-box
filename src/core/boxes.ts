@@ -1054,7 +1054,9 @@ export class Boxes {
       const stale = !!image && wants !== null && (!want || image.state !== "baked" || image.from !== want.ref);
       const unwanted = image ? wants !== null && (stale || count >= 1) : count >= (general.spares[spare.kind] ?? 0);
       const resized = !sameSize(await this.#size(spare), defaultSize(kindSizes(spare.kind, general.sizes)));
-      if (failed || unwanted || resized) {
+      // A kind's spare from a build of its image that a refresh has replaced since (049): a claim would take the old build.
+      const old = !image && !failed && !unwanted && !resized && (await this.#oldBuild(spare));
+      if (failed || unwanted || resized || old) {
         // A spare of a build that failed is not made again from it for a day: no loop of making and releasing.
         if (failed && image?.from) await this.#spareFailed(image.name, spare.backend, spare.kind, image.from);
         await this.#release(
@@ -1065,7 +1067,9 @@ export class Boxes {
               ? `its image ${image!.name} is not in use, or its build on ${spare.backend} is not current`
               : unwanted
                 ? `bb-box keeps ${count} spare ${image ? `${image.name} ` : ""}${spare.kind} boxes${image ? ` on ${spare.backend}` : ""}`
-                : "its kind's default size changed",
+                : resized
+                  ? "its kind's default size changed"
+                  : `its ${spare.kind} image on ${spare.backend} has a newer build`,
         );
         continue;
       }
@@ -1109,6 +1113,23 @@ export class Boxes {
         if (!(error instanceof BoxError && error.code === "no_capacity")) await this.#spareFailed(want.name, want.backend, want.kind, want.ref);
       }
     }
+  }
+
+  /**
+   * Whether a kind's spare comes from a build of its image that is no
+   * longer the one its backend starts boxes from, as the backend tells. A
+   * backend that cannot tell, or does not answer, keeps the spare. It asks of
+   * a spare that is ready or waits stopped, never one starting, stopping or
+   * failed; the backend answers without starting the guest.
+   */
+  async #oldBuild(spare: BoxRecord): Promise<boolean> {
+    const backend = this.#deps.backends.get(spare.backend);
+    if (!backend?.fromCurrentBuild || !spare.guest || (spare.state !== "ready" && spare.state !== "stopped")) return false;
+    const current = await backend.fromCurrentBuild(spare.guest, spare.kind).catch((error) => {
+      this.#deps.logError("spares", error);
+      return null;
+    });
+    return current === false;
   }
 
   /** Remembers that a spare of an image's build failed, so the upkeep makes none from it for a day (#440). */

@@ -1493,6 +1493,18 @@ export class ProxmoxLxcBackend implements Backend {
     return fromBuild(guest, await templateBuild(await this.client(), [], template, signal), createdAt);
   }
 
+  /** Whether a guest comes from the build its template has now: false once a refresh has replaced it, or the kind no longer lists the template; null when the guest or template records no build. */
+  async fromCurrentBuild(guest: Guest, kind: string, signal?: AbortSignal): Promise<boolean | null> {
+    const template = guest.data?.template;
+    const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
+    if (typeof template !== "number" || !offer) return null;
+    if (!offer.config.templates.some((listed) => listed.vmid === template)) return false;
+    const current = await templateBuild(await this.client(), [], template, signal);
+    if (current === undefined) return false;
+    const recorded = guest.data?.build;
+    return current && typeof recorded === "string" ? recorded === current : null;
+  }
+
   #offer(kind: string): Offer {
     const offer = this.#offers().find((candidate) => candidate.kind.id === kind);
     if (!offer) throw new BackendError("unsupported", `${this.label} has no ${kind} boxes.`);

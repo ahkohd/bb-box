@@ -2685,3 +2685,77 @@ test("a desktop's clipboard commands: pbcopy and pbpaste on macOS, Get-Clipboard
   assert.match(wrapped, /Schedule\.Service/);
   assert.match(wrapped, /OpenStandardInput\(\)\.CopyTo\(\$bbFile\)/);
 });
+
+test("the upkeep replaces a kind's spare whose image has a newer build, keeps one its backend says is current or cannot tell of, and a claim never waits for it (049)", async () => {
+  const logs: string[] = [];
+  const world = setup({}, { log: (line) => logs.push(line) });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  const answers: (boolean | null)[] = [];
+  let current: boolean | null = true;
+  let asked = 0;
+  Object.defineProperty(world.backend, "fromCurrentBuild", {
+    value: async () => {
+      asked++;
+      answers.push(current);
+      return current;
+    },
+  });
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [first] = await world.boxes.list(SPARES);
+  assert.equal(first?.enrol.state, "enrolled");
+
+  // Current, then cannot tell: the spare stays.
+  await world.boxes.keepSpares();
+  current = null;
+  await world.boxes.keepSpares();
+  assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => spare.id), [first.id]);
+
+  // A refresh replaced the build: the upkeep releases the spare and makes another.
+  current = false;
+  await world.boxes.keepSpares();
+  current = true;
+  await until(async () => (await world.boxes.list(SPARES)).some((spare) => spare.id !== first.id && spare.enrol.state === "enrolled"));
+  assert.ok(!(await world.boxes.list(SPARES)).some((spare) => spare.id === first.id));
+  assert.match(logs.join("\n"), /its linux image on .+ has a newer build/);
+
+  // A claim takes the spare without asking the backend.
+  const before = asked;
+  const claimed = await world.boxes.acquire({ threadId: "thr_a", projectId: null, kind: "linux" });
+  assert.ok(claimed.timings?.spare !== undefined, "from the spare");
+  assert.equal(asked, before, "the claim did not wait on the backend");
+  assert.deepEqual(world.errors, []);
+});
+
+test("the upkeep replaces a spare that waits stopped when its image has a newer build, without starting it (#539, 049)", async () => {
+  const logs: string[] = [];
+  const world = setup({ keepsSession: () => true }, { log: (line) => logs.push(line) });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  let current = true;
+  const states: string[] = [];
+  Object.defineProperty(world.backend, "fromCurrentBuild", {
+    value: async () => current,
+  });
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  await until(async () => (await world.boxes.list(SPARES))[0]?.state === "stopped");
+  const [first] = await world.boxes.list(SPARES);
+  await world.boxes.keepSpares();
+  assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => [spare.id, spare.state]), [[first!.id, "stopped"]], "a current spare waits on");
+
+  current = false;
+  const original = world.backend.start!.bind(world.backend);
+  Object.defineProperty(world.backend, "start", {
+    value: async (...args: Parameters<typeof original>) => {
+      states.push("started");
+      return original(...args);
+    },
+  });
+  await world.boxes.keepSpares();
+  current = true;
+  await until(async () => (await world.boxes.list(SPARES)).some((spare) => spare.id !== first!.id && spare.state === "stopped"));
+  assert.ok(!(await world.boxes.list(SPARES)).some((spare) => spare.id === first!.id));
+  assert.deepEqual(states, [], "the old spare was not started to ask");
+  assert.match(logs.join("\n"), /its linux image on .+ has a newer build/);
+  assert.deepEqual(world.errors, []);
+});
