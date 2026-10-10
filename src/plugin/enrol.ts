@@ -41,7 +41,7 @@ import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
 import type { BackendStorage } from "../backends/types.ts";
-import { runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
+import { endThreadProcesses, runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 
@@ -106,6 +106,7 @@ export interface HostApi {
 
 export interface HostState {
   readonly id: string;
+  readonly name?: string;
   readonly status: "connected" | "disconnected";
   readonly lifecycle: { readonly phase: string; readonly message: string | null };
 }
@@ -665,7 +666,29 @@ export class Enrolment {
 
   /** Removes a box's machine from BB, before its release. */
   async unenrol(box: BoxRecord): Promise<void> {
-    if (box.enrol.hostId) await this.#remove(box.enrol.hostId);
+    if (!box.enrol.hostId) return;
+    if (box.capabilities.os === "windows") await this.#endThreads(box);
+    await this.#remove(box.enrol.hostId);
+  }
+
+  /**
+   * Ends the processes of threads in a Windows box before its machine is
+   * removed (#539). A thread's agent, and the worker of BB's daemon that runs
+   * it, work in the thread's worktree, and Windows does not remove a folder
+   * a process works in: BB's teardown of the worktree failed with EBUSY, and
+   * the machine stayed "removing" once the box was gone. Best effort: a box
+   * that does not answer, as a stopped one, is removed as before.
+   */
+  async #endThreads(box: BoxRecord): Promise<void> {
+    try {
+      // The box is releasing, but its guest runs until the backend releases it.
+      const { command } = await this.#deps.boxes.transports({ ...box, state: "ready" });
+      if (!command) return;
+      const ended = await endThreadProcesses(command, { timeoutMs: 60_000 });
+      if (ended) this.#deps.log?.(`Ended ${ended} processes of threads in box ${box.name} before its BB machine's removal, so that BB can remove their worktrees.`);
+    } catch (error) {
+      this.#deps.logError("end the threads' processes", error);
+    }
   }
 
   /**
@@ -702,7 +725,8 @@ export class Enrolment {
         throw error;
       }
       if (host.lifecycle.phase === "removed") return null;
-      if (Date.now() >= deadline) return `${host.lifecycle.phase}, ${host.lifecycle.message ?? host.status}`;
+      // With the machine's name, which is its box's, to see which machine stays and why (#539).
+      if (Date.now() >= deadline) return `${host.name ? `"${host.name}" is ` : ""}${host.lifecycle.phase}, ${host.lifecycle.message ?? host.status}`;
       await new Promise((resolve) => setTimeout(resolve, this.#pollMs));
     }
   }

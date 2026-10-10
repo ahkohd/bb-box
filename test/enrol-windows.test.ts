@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseQemuPart } from "../src/backends/proxmox-qemu/config.ts";
-import { WINDOWS_COMMAND_SCRIPT, runWindowsCommand, windowsFailure } from "../src/plugin/enrol-windows.ts";
+import { END_THREADS_SCRIPT, WINDOWS_COMMAND_SCRIPT, endThreadProcesses, runWindowsCommand, windowsFailure } from "../src/plugin/enrol-windows.ts";
 import type { CommandTransport, RunOptions, RunResult } from "../src/transports/types.ts";
 
 test("BB's Windows command runs in the desktop session, after Node.js is made sure of, and goes as stdin, never in the script", async () => {
@@ -42,4 +42,24 @@ test("Windows boxes join BB unless the Proxmox QEMU backend's switch is set off 
   assert.equal(unset.ok && unset.config.enrol, true, "on by default");
   assert.equal(on.ok && on.config.enrol, true);
   assert.equal(off.ok && off.config.enrol, false);
+});
+
+test("the threads' processes end before a Windows box's machine is removed: each working in BB's worktrees, and what it started, never BB's daemon (#539)", async () => {
+  // The working directory from the PEB's process parameters, at 64-bit Windows' offsets.
+  assert.match(END_THREADS_SCRIPT, /Read\(handle, basic\.Peb \+ 0x20, 8\)/);
+  assert.match(END_THREADS_SCRIPT, /Read\(handle, at \+ 0x38, 2\)/);
+  assert.match(END_THREADS_SCRIPT, /Read\(handle, at \+ 0x40, 8\)/);
+  // Under BB's worktrees, and their descendants.
+  assert.match(END_THREADS_SCRIPT, /plugins\\environment-git-worktree\\host-data\\worktrees/);
+  assert.match(END_THREADS_SCRIPT, /\$bbDir\.StartsWith\(\$bbRoot \+ '\\', \[StringComparison\]::OrdinalIgnoreCase\)/);
+  assert.match(END_THREADS_SCRIPT, /\$bbEnd\.ContainsKey\(\[int\]\$bbProcess\.ParentProcessId\)/);
+  // Never BB's daemon, nor the command itself.
+  assert.match(END_THREADS_SCRIPT, /\$bbId -eq \$PID -or "\$\(\$bbProcess\.CommandLine\)" -match 'bb-app\\\.js"\?\\s\+host-daemon'/);
+
+  const sent: string[] = [];
+  const transport = {
+    run: async (script: string) => (sent.push(script), { exitCode: 0, stdout: "ended=3\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult),
+  } as unknown as CommandTransport;
+  assert.equal(await endThreadProcesses(transport, { timeoutMs: 60_000 }), 3);
+  assert.ok(!sent[0]!.includes("Schedule.Service"), "over SSH, not in the desktop session");
 });
