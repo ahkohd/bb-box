@@ -1665,7 +1665,10 @@ export class TartBackend implements Backend {
         `capacity.${host.name}`,
         `Room on ${host.name}`,
         room.capacity.ok ? "ok" : "warn",
-        room.why ?? room.capacity.limits.map((limit) => `${limit.resource} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}`).join(", "),
+        room.why ??
+          room.capacity.limits
+            .map((limit) => `${limit.resource} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}${limit.id ? ` on ${limit.id}` : ""}`)
+            .join(", "),
         room.capacity.ok ? null : "Release or stop a macOS box, or stop another VM on the Mac.",
       );
       const { reserve } = this.#config;

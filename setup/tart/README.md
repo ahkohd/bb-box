@@ -294,19 +294,27 @@ that stays plugged in. Make each a link to a folder on it; nothing else
 changes, as everything that uses them, Tart and QEMU too, follows the link:
 
 ```sh
-# With bb-box's backend for the Mac turned off, no VM running, and warm VMs deleted:
+# With bb-box's backend for the Mac turned off, no VM running, and warm VMs deleted.
+# Tart makes its control.sock sockets again, and ditto cannot copy them.
+find ~/.tart/vms -name control.sock -type s -delete
 mkdir -p /Volumes/<volume>/bb-box
 ditto ~/.tart /Volumes/<volume>/bb-box/tart
 ditto ~/.bb-box/qemu /Volumes/<volume>/bb-box/qemu
+# ditto fills a Tart disk image's holes: a 6 GB Linux image takes 60 GB. dd keeps it sparse.
+for f in ~/.tart/vms/*/disk.img; do
+  t=/Volumes/<volume>/bb-box/tart/vms/${f#$HOME/.tart/vms/}
+  dd if="$f" of="$t" bs=1m conv=sparse && touch -r "$f" "$t"
+done
+# Compare each copy with its original (cmp) before you switch.
 mv ~/.tart ~/.tart.pre-move && ln -s /Volumes/<volume>/bb-box/tart ~/.tart
 mv ~/.bb-box/qemu ~/.bb-box/qemu.pre-move && ln -s /Volumes/<volume>/bb-box/qemu ~/.bb-box/qemu
 ```
 
 - **Keep both on the one volume.** APFS clones share blocks only within a
   volume: a box is a clone of its image, and costs only what it writes,
-  when both are there. `ditto` keeps sparse disks sparse, but copies each
-  clone in full, so copy the images and let warm VMs be made again on the
-  volume rather than copying them.
+  when both are there. A copy holds each clone in full, so copy the images
+  and let warm VMs be made again on the volume rather than copying them. Measured on an external PCIe NVMe drive,
+  boxes boot and build as fast as on the Mac's own disk (#632).
 - **The disk reserve is the volume's.** bb-box measures the free space where
   `~/.tart` leads, and its messages name the volume.
 - **When the volume is not mounted**, bb-box counts the Mac as unreachable
