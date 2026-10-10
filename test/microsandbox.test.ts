@@ -515,3 +515,55 @@ test("the reclaim drops caches and compacts only in a box whose load is under ha
   assert.deepEqual(run(busy, 1_600_000), ["", ""], "a busy box keeps its cache");
   assert.deepEqual(run("0.02", 100_000), ["", ""], "a small cache stays");
 });
+
+test("on a host without Docker, the nightly refresh's image operations build with BB's app in a builder, check a trial box, put the build under the image's name, and wait when the volume msb builds on is short (053)", async () => {
+  const { fake, backend } = setup();
+  fake.facts({ os: "Darwin", arch: "arm64", mkfs: "0", docker: "" });
+  const images = backend.images!;
+  const { builds, boxes } = await images.list(signal());
+  assert.deepEqual(builds.map((one) => [one.ref, one.kind, one.image, one.current]), [["bbbox/linux:1-arm64", "linux-arm64", "standard", true], ["bbbox/linux-desktop:1-arm64", "linux-arm64-desktop-cpu", "standard", true]]);
+  assert.deepEqual(boxes, []);
+  assert.equal(images.startsFrom, undefined, "no project images on microsandbox yet");
+  assert.match(images.check!("linux-arm64"), /docker on first use/);
+
+  // The build: in a builder, from the refresh's setup/, with BB's app, under a tag of its own.
+  const lines: string[] = [];
+  const setupCopy = (await import("./helpers.ts")).tempDir("refresh-setup");
+  const made = await images.build!(builds[0]!, setupCopy, { bbUrl: "https://bb.example.com", log: (line) => lines.push(line), signal: signal() });
+  assert.match(made.ref, /^bbbox\/linux:refresh-[a-z0-9]+$/);
+  assert.equal(made.current, false);
+  const { readFileSync } = await import("node:fs");
+  assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /build\.sh --arch arm64 --bb-url 'https:\/\/bb\.example\.com' --tag bbbox\/linux:refresh-[a-z0-9]+ linux /);
+  assert.ok(fake.images()[made.ref], "the build is in msb under its own tag");
+  assert.ok(fake.images()["bbbox/linux:1-arm64"], "and the image stays until the build passes");
+
+  // A trial box of it, as a box of its kind, which no sweep takes.
+  const trial = await images.box(made, "trial of a build", signal());
+  assert.match(trial.ref, /^bbbox-image-[0-9a-f]{12}$/);
+  const created = fake.calls().find((call) => call[0] === "create" && call.includes(trial.ref))!;
+  assert.equal(created[1], made.ref);
+  assert.ok(after(created, "--label").includes("bbbox.image-box=test"));
+  assert.equal((await trial.command.run("echo hi")).stdout, "hi\n");
+  assert.deepEqual((await backend.held()).map((held) => held.ref), [], "not a box");
+  assert.deepEqual((await images.list(signal())).boxes, [trial.ref]);
+  await images.remove(trial.ref, signal());
+  assert.ok(!fake.sandboxes().includes(trial.ref));
+
+  // The build replaces the image: under the image's name, and its own tag goes.
+  const replaced = await images.replace(made, builds[0]!, signal());
+  assert.deepEqual([replaced.ref, replaced.current], ["bbbox/linux:1-arm64", true]);
+  assert.ok(!fake.images()[made.ref]);
+  assert.equal(JSON.parse(fake.images()["bbbox/linux:1-arm64"]!["bbbox.image-record"]!).build, "build.builder");
+  await assert.rejects(images.remove("bbbox/linux:1-arm64", signal()), /is not a refresh's build, so bb-box leaves it/);
+
+  // Room: the volume msb keeps its images and build files on, through any link.
+  assert.equal(await images.room!(builds[0]!, signal()), null);
+  fake.facts({ free_kib: String(37 * 1024 * 1024) });
+  assert.match((await images.room!(builds[0]!, signal())) ?? "", /has 37 GiB free where msb keeps its images and build files \(.+\), and bb-box builds an image there only with 80 GiB free/);
+  await assert.rejects(images.build!(builds[0]!, "/nowhere", { bbUrl: null, log: () => {}, signal: signal() }), /only with 80 GiB free/);
+
+  // On a host with Docker, msb's images follow Docker's, so the refresh builds none here.
+  const linux = setup();
+  assert.deepEqual((await linux.backend.images!.list(signal())).builds, []);
+  assert.equal(await linux.backend.images!.room!(builds[0]!, signal()), null);
+});

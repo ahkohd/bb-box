@@ -236,6 +236,12 @@ switch (command) {
     break;
   case "image": {
     const images = read("images.json", {});
+    if (rest[0] === "remove") {
+      if (!(rest[1] in images)) fail(`image not found: ${rest[1]}`);
+      delete images[rest[1]];
+      writeFileSync(join(root, "images.json"), JSON.stringify(images));
+      break;
+    }
     if (rest[0] !== "inspect") fail(`fake msb: unknown command image ${rest[0]}`, 2);
     if (!(rest[1] in images)) fail(`image not found: ${rest[1]}`);
     console.log(JSON.stringify({ reference: rest[1], config: { labels: images[rest[1]] } }));

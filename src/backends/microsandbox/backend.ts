@@ -40,6 +40,9 @@ import { MIN_DESKTOP, type Display } from "../../transports/types.ts";
 import {
   type Arch,
   BackendError,
+  type BackendImages,
+  type ImageBox,
+  type ImageBuild,
   type AcquireHooks,
   type Backend,
   type BackendContext,
@@ -61,8 +64,9 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { CUA_DRIVER } from "../docker/backend.ts";
+import { CUA_DRIVER, DOCKER_CHECK } from "../docker/backend.ts";
 import { judgeImage, recordFromJson } from "../images.ts";
+import { quote } from "../../transports/process.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { MsbCli, MsbError, NOT_FOUND, type MsbCliOptions, type SandboxInfo } from "./cli.ts";
 import { MSB_KINDS, type MsbConfig, type MsbKind } from "./config.ts";
@@ -151,6 +155,8 @@ export const LABELS = {
   name: "bbbox.name",
   kind: "bbbox.kind",
   created: "bbbox.created",
+  /** On a refresh's trial box: the install's ID, so no sweep takes it. */
+  imageBox: "bbbox.image-box",
   /** On a builder microVM (#build): the install's ID. */
   builder: "bbbox.builder",
   /** On an image setup/docker/build.sh made: its record, as JSON (049). */
@@ -529,11 +535,21 @@ export class MsbBackend implements Backend {
    * images; it needs BUILD_FREE_GIB free.
    */
   async #build(image: string, kind: MsbKind): Promise<void> {
-    const signal = AbortSignal.timeout(BUILD_MS);
+    await this.#buildImage(image, kind, {});
+    await this.#context.storage.set(this.#importedKey(image), `built:${Date.now()}`);
+  }
+
+  /**
+   * Builds `kind`'s image as `tag` in a builder microVM and moves it into
+   * msb. `setup` is the setup/ to build from, the plugin's own by default,
+   * or the refresh's copy with the versions it takes (049); `bbUrl` puts
+   * BB's app in the image. `log` gets the build's last lines.
+   */
+  async #buildImage(tag: string, kind: MsbKind, options: { setup?: string; bbUrl?: string | null; log?: (line: string) => void; signal?: AbortSignal }): Promise<void> {
+    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(BUILD_MS)]) : AbortSignal.timeout(BUILD_MS);
     const facts = await this.#hostFacts(signal, true);
-    if (facts.freeGiB < BUILD_FREE_GIB) {
-      throw new Error(`${this.#host} has ${facts.freeGiB} GiB free, and bb-box builds an image there only with ${BUILD_FREE_GIB} GiB free, so the host keeps 60 GiB.`);
-    }
+    const short = this.#buildShort(facts);
+    if (short) throw new Error(short);
     const name = `bb-box-builder-${randomBytes(4).toString("hex")}`;
     const exec = (script: string, options: { stdin?: string; timeoutMs?: number } = {}) =>
       this.#cli.ok(["exec", "--stream", name, "--", "/bin/sh", "-c", script], { timeoutMs: options.timeoutMs ?? 10 * 60_000, signal, stdin: options.stdin });
@@ -559,15 +575,134 @@ export class MsbBackend implements Backend {
         "apk add --no-cache bash coreutils curl jq >/dev/null && { nohup dockerd >/var/log/dockerd.log 2>&1 </dev/null & } && " +
           "i=0; until docker info >/dev/null 2>&1; do i=$((i+1)); [ $i -lt 600 ] || { tail -5 /var/log/dockerd.log >&2; exit 3; }; sleep 0.1; done",
       );
-      await exec("mkdir -p /build && base64 -d | tar -xz -C /build", { stdin: (await setupArchive(this.#options.setup ?? setupDir())).toString("base64") });
+      await exec("mkdir -p /build && base64 -d | tar -xz -C /build", { stdin: (await setupArchive(options.setup ?? this.#options.setup ?? setupDir())).toString("base64") });
       const target = kind.includes("desktop") ? "desktop" : "linux";
-      await exec(`cd /build && bash setup/docker/build.sh --arch ${archOf(facts.arch) ?? "x86_64"} --tag ${image} ${target} >/build/build.log 2>&1 || { tail -20 /build/build.log >&2; exit 1; }`, { timeoutMs: BUILD_MS });
-      const moved = await this.#cli.script("transfer", [name, image], signal);
-      if (moved.exitCode !== 0) throw this.#cli.error(`Moving ${image} from the builder into msb on ${this.#host}`, moved);
-      await this.#context.storage.set(this.#importedKey(image), `built:${Date.now()}`);
+      const url = options.bbUrl ? ` --bb-url ${quote(options.bbUrl)}` : "";
+      try {
+        await exec(`cd /build && bash setup/docker/build.sh --arch ${archOf(facts.arch) ?? "x86_64"}${url} --tag ${tag} ${target} >/build/build.log 2>&1 || { tail -20 /build/build.log >&2; exit 1; }`, { timeoutMs: BUILD_MS });
+      } finally {
+        if (options.log) for (const line of (await exec("tail -40 /build/build.log 2>/dev/null || :").catch(() => "")).split("\n")) if (line.trim()) options.log(line);
+      }
+      const moved = await this.#cli.script("transfer", [name, tag], signal);
+      if (moved.exitCode !== 0) throw this.#cli.error(`Moving ${tag} from the builder into msb on ${this.#host}`, moved);
     } finally {
       await this.#cli.run(["remove", "--force", "--quiet", name], { timeoutMs: 120_000 }).catch(() => undefined);
     }
+  }
+
+  /**
+   * Why the host cannot take a build now, or null: it needs BUILD_FREE_GIB
+   * free on the volume where msb keeps its images and the builder's disks,
+   * which the status script measures through any link to another volume.
+   */
+  #buildShort(facts: HostFacts): string | null {
+    if (facts.freeGiB >= BUILD_FREE_GIB) return null;
+    return `${this.#host} has ${facts.freeGiB} GiB free where msb keeps its images and build files (${facts.dir}), and bb-box builds an image there only with ${BUILD_FREE_GIB} GiB free, so the host keeps 60 GiB.`;
+  }
+
+  /**
+   * Image operations (049) on a host without Docker, as a Mac, where bb-box
+   * builds the kinds' images itself: each night's refresh builds a new one
+   * in a builder microVM, with BB's app, under a tag of its own; checks a
+   * trial box of it; then moves it under the image's name. On a host with
+   * Docker, msb imports what Docker's own images become, so they list no
+   * builds here.
+   */
+  readonly images: BackendImages = {
+    list: (signal) => this.#imageList(signal),
+    box: (build, label, signal) => this.#imageBox(build, label, signal),
+    capture: async () => {
+      throw new BackendError("unsupported", "microsandbox builds its images with setup/docker/build.sh; it captures no box.");
+    },
+    replace: (build, current, signal) => this.#replaceImage(build, current, signal),
+    remove: (ref, signal) => this.#removeImage(ref, signal),
+    build: (current, setup, options) => this.#buildStandard(current, setup, options),
+    check: () => DOCKER_CHECK,
+    room: async (_build, signal) => {
+      const facts = await this.#hostFacts(signal, true);
+      return facts.docker ? null : this.#buildShort(facts);
+    },
+  };
+
+  /** The kinds' images that bb-box builds here, as standard builds, and the trial boxes a refresh left. */
+  async #imageList(signal?: AbortSignal): Promise<{ builds: ImageBuild[]; boxes: string[] }> {
+    await this.#knowArch(signal);
+    const facts = await this.#hostFacts(signal);
+    const builds: ImageBuild[] = [];
+    if (!facts.docker && facts.installed) {
+      const seen = new Set<string>();
+      for (const kind of this.kinds()) {
+        const image = this.#config.images[kind.id as MsbKind];
+        if (!image || seen.has(image)) continue;
+        seen.add(image);
+        const labels = await this.#cli.imageLabels(image, signal);
+        if (!labels) continue;
+        const record = recordFromJson(labels[LABELS.imageRecord]);
+        builds.push({ ref: image, image: "standard", kind: kind.id, build: record?.build ?? null, record, current: true });
+      }
+    }
+    const boxes = facts.installed ? (await this.#cli.list({ [LABELS.imageBox]: this.#context.installId }, signal)).map((box) => box.name) : [];
+    return { builds, boxes };
+  }
+
+  /** A new build of a kind's image, built as `<image>:refresh-<time>` from the refresh's setup/, with BB's app. */
+  async #buildStandard(current: ImageBuild, setup: string, options: { bbUrl: string | null; log: (line: string) => void; signal: AbortSignal }): Promise<ImageBuild> {
+    const kind = current.kind as MsbKind;
+    if (!current.current || this.#config.images[kind] !== current.ref) throw new Error(`${current.ref} is not a configured image of microsandbox.`);
+    const tag = `${current.ref.replace(/:[^:/]*$/, "")}:refresh-${Date.now().toString(36)}`;
+    await this.#buildImage(tag, kind, { setup, bbUrl: options.bbUrl, log: options.log, signal: options.signal });
+    const labels = await this.#cli.imageLabels(tag, options.signal);
+    if (!labels) throw new Error(`The build made no image ${tag} in msb.`);
+    const record = recordFromJson(labels[LABELS.imageRecord]);
+    return { ref: tag, image: "standard", kind, build: record?.build ?? null, record, current: false };
+  }
+
+  /** A trial box of a build, made as a box of its kind is, labelled so that no sweep takes it. */
+  async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
+    const kind = this.#kind(build.kind);
+    const name = `bbbox-image-${randomBytes(6).toString("hex")}`;
+    const { cores, memoryMiB } = this.#context.kind(build.kind).defaultSize;
+    try {
+      const docker = this.#config.docker ? [...(await this.#dockerDisk(name, signal)), "--env", "BBBOX_DOCKERD=1"] : [];
+      await this.#cli.ok(
+        [
+          "create", build.ref, "--name", name, "--pull", "never", "--quiet",
+          "--label", `${LABELS.backend}=microsandbox`, "--label", `${LABELS.imageBox}=${this.#context.installId}`, "--label", `${LABELS.name}=${label.slice(0, 120).replace(/[^\w .:()/-]/g, "-")}`,
+          "--hostname", "bb-box-image", "--cpus", String(cores), "--memory", `${memoryMiB}M`, "--root-disk", `${this.#config.diskGiB}G`,
+          "--tmpfs", "/run", "--net", this.#config.network, ...docker,
+        ],
+        { timeoutMs: 120_000, signal },
+      );
+      await this.#launch(name, signal);
+      await this.#ready(name, Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs), signal);
+      return { ref: name, command: new MsbTransport(this.#cli, name) };
+    } catch (error) {
+      await this.#removeImage(name).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Puts a build under the image's name, which msb cannot tag: saved under the one and loaded under the other, sharing its layers, then its own tag goes. */
+  async #replaceImage(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
+    if (!current.current || build.current) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is one.`);
+    const moved = await this.#cli.script("retag", [build.ref, current.ref], signal);
+    if (moved.exitCode !== 0) throw this.#cli.error(`Putting ${build.ref} under ${current.ref} on ${this.#host}`, moved);
+    await this.#context.storage.set(this.#importedKey(current.ref), `built:${Date.now()}`);
+    return { ...build, ref: current.ref, image: "standard", current: true };
+  }
+
+  /** Removes a trial box of this install's, or a refresh's build, and nothing else. */
+  async #removeImage(ref: string, signal?: AbortSignal): Promise<void> {
+    if (ref.startsWith("bbbox-image-")) {
+      const found = await this.#cli.inspect(ref, signal);
+      if (found && found.labels[LABELS.imageBox] !== this.#context.installId) throw new Error(`The microVM ${ref} is not a trial box of this install's, so bb-box leaves it.`);
+      if (found) await this.#cli.run(["remove", "--force", "--quiet", ref], { timeoutMs: 120_000, signal });
+      await this.#cli.script("undisk", [ref], signal);
+      return;
+    }
+    const refreshing = MSB_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
+    if (!refreshing) throw new Error(`The image ${ref} is not a refresh's build, so bb-box leaves it.`);
+    await this.#cli.run(["image", "remove", ref], { timeoutMs: 120_000, signal });
   }
 
   /** Removes builder microVMs of this install that no build is using, as after a restart in the middle of one. */

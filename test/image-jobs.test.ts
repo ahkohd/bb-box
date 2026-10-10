@@ -32,7 +32,7 @@ const record = (days: number, changes: Partial<ImageRecord> = {}): ImageRecord =
 const build = (ref: string, kind: string, rec: ImageRecord | null, changes: Partial<ImageBuild> = {}): ImageBuild => ({ ref, image: "standard", kind, build: rec?.build ?? null, record: rec, current: true, ...changes });
 
 /** A backend with image operations whose builds are `builds`, and room unless `full`. */
-function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; full?: string; boxless?: boolean; windows?: boolean } = {}) {
+function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; full?: string; boxless?: boolean; windows?: boolean; short?: string } = {}) {
   const removed: string[] = [];
   /** The boxes each room check counted besides the one asked about. */
   const pending: number[] = [];
@@ -44,6 +44,7 @@ function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; 
     remove: async (ref) => void removed.push(ref),
     ...(options.boxless ? { build: async () => assert.fail("the job does not build") } : {}),
     ...(options.windows ? { windows: true } : {}),
+    ...(options.short ? { room: async () => options.short! } : {}),
   };
   const capacity: Capacity = { ok: !options.full, message: options.full ?? null, warm: null, hosts: [] };
   const made = {
@@ -175,6 +176,15 @@ test("a failed image is tried again once BB's app changes, and an image waits wh
   const alone = await jobs([docker.backend]).job.refreshAll();
   assert.deepEqual([alone.lines[0]!.outcome, alone.lines[0]!.detail], ["waiting", "no room for its trial box: The host has 2 GiB of memory free."]);
   assert.deepEqual(docker.pending, [0]);
+
+  // A backend with room for its boxes but not to build, as a host short of disk where it builds, waits too, saying why (053).
+  const disk = backend("microsandbox", [build("bbbox/linux:1-arm64", "linux-arm64", record(10))], { boxless: true, short: "The Mac has 37 GiB free where msb keeps its images." });
+  const short = jobs([disk.backend]);
+  const skipped = await short.job.refreshAll();
+  assert.deepEqual([skipped.lines[0]!.outcome, skipped.lines[0]!.detail], ["waiting", "no room for its build: The Mac has 37 GiB free where msb keeps its images."]);
+  assert.deepEqual(short.refreshed, []);
+  assert.equal(skipped.ok, true, "waiting is not failing");
+  assert.match((await short.job.checks()).find((one) => one.id === "images.microsandbox/bbbox/linux:1-arm64")!.detail, /waited: no room for its build: The Mac has 37 GiB free where msb keeps its images\. It waits for the next night\.$/);
 });
 
 test("a run starts no image after its time limit, and one run at a time", async () => {

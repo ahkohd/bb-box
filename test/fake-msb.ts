@@ -117,6 +117,13 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
         const disks = existsSync(join(dir, "disks")) ? readdirSync(join(dir, "disks")) : [];
         return { exitCode: 0, stdout: disks.map((file) => `${file.replace(/\.ext4$/, "")}=${Math.round((Date.now() - statSync(join(dir, "disks", file)).mtimeMs) / 1000)}\n`).join(""), stderr: "" };
       }
+      if (name === "retag") {
+        const images = readImages();
+        if (!images[args[0]!]) return { exitCode: 1, stdout: "", stderr: `error: image not found: ${args[0]}\n` };
+        const { [args[0]!]: moved, ...rest } = images;
+        writeFileSync(imagesFile, JSON.stringify({ ...rest, [args[1]!]: moved }));
+        return { exitCode: 0, stdout: `retagged=${args[1]}\n`, stderr: "" };
+      }
       if (name === "transfer") {
         const kind = args[1]!.includes("desktop") ? "linux-arm64-desktop-cpu" : "linux-arm64";
         writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[1]!]: imageLabels(kind, "build.builder") }));

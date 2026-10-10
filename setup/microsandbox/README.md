@@ -253,10 +253,20 @@ npm run conformance -- --backend microsandbox --settings msb.json
   SHA-256. Do not run `msb self update` on bb-box's `msb`: bb-box would put
   its own release back. To free the space, remove the old release's folder,
   named by its version, such as `0.7.7`.
-- **Images.** Rebuild them with `build.sh`, or let the nightly run rebuild
-  Docker's ([setup](../README.md#rebuild-images-each-night)). bb-box imports
-  each changed image into `msb` within a few minutes. Boxes made before keep
-  running from the image they started with.
+- **Images.** On a host with Docker, rebuild them with `build.sh`, or let the
+  nightly run rebuild Docker's
+  ([setup](../README.md#rebuild-images-each-night)). bb-box imports each
+  changed image into `msb` within a few minutes.
+- **Images on a host without Docker**, such as a Mac: the nightly run
+  rebuilds them there itself, once set up. It builds each in a builder
+  microVM with BB's app, so boxes enrol without downloading it, under a tag
+  of its own, then checks a box of the new build. Only when that passes
+  does the build take the image's name. It needs 80 GiB free on the volume
+  where `msb` keeps its images and build files, measured through any link
+  to another volume. With less, the image waits for the next night, and
+  `bb box doctor` says so. `bb box images build <name>`, with the name
+  `bb box images list` gives, rebuilds one now.
+- Boxes made before keep running from the image they started with.
 
 ## Remove
 

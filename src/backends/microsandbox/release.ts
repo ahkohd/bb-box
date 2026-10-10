@@ -40,7 +40,7 @@ export const MSB_HOME_MAX = 57;
 export const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 
 /** The scripts a host runs for bb-box, by name. */
-export type MsbScript = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "memory" | "oom" | "transfer";
+export type MsbScript = "install" | "status" | "images" | "import" | "disk" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "retag";
 
 /** A builder microVM's name (#build in backend.ts). */
 export const BUILDER_NAME = /^bb-box-builder-[a-z0-9]{1,32}$/;
@@ -151,7 +151,8 @@ else
   echo "lxc=0"
 fi
 mkdir -p "$dir/home" "$dir/templates"
-echo "free_kib=$(df -Pk "$dir/home" | awk 'NR==2 {print $4}')"
+# The volume msb's images and build files are on, through any link to another volume.
+echo "free_kib=$(df -Pk "$dir/home/." | awk 'NR==2 {print $4}')"
 echo "templates=$(cd "$dir/templates" && ls -- *.ext4 2>/dev/null | tr '\n' ' ')"
 echo "used_kib=$(du -sk "$dir/home" "$dir/disks" "$dir/templates" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
 if PATH=$PATH:/sbin:/usr/sbin command -v mkfs.ext4 >/dev/null; then echo "mkfs=1"; else echo "mkfs=0"; fi
@@ -242,6 +243,16 @@ echo "adjusted=$n"
 `,
 
   /**
+   * Puts image $1 under the reference $2, which msb cannot tag: `msb save`
+   * of the one into `msb load` of the other, which share their layers, then
+   * $1's own reference goes.
+   */
+  retag: () => `${PRELUDE}"$msb" save "$1" | "$msb" load --quiet --tag "$2"
+"$msb" image remove "$1" >/dev/null
+echo "retagged=$2"
+`,
+
+  /**
    * Moves image $2 from Docker in builder microVM $1 into msb on the host,
    * under the same reference, with `docker save` there and `msb load` here.
    */
@@ -269,6 +280,7 @@ export function scriptArgsOk(name: string, args: readonly string[]): name is Msb
   if (name === "disk") return args.length === 2 && DISK_NAME.test(args[0]!) && /^[1-9][0-9]{0,3}$/.test(args[1]!);
   if (name === "undisk") return args.length >= 1 && args.length <= 4 && args.every((arg) => DISK_NAME.test(arg));
   if (name === "disks" || name === "memory" || name === "oom") return args.length === 0;
+  if (name === "retag") return args.length === 2 && args.every((arg) => IMAGE_REF.test(arg)) && /:refresh-[a-z0-9]+$/.test(args[0]!);
   if (name === "transfer") return args.length === 2 && BUILDER_NAME.test(args[0]!) && IMAGE_REF.test(args[1]!);
   if (name === "images") return args.length >= 1 && args.length <= 4 && args.every((arg) => IMAGE_REF.test(arg));
   return false;
