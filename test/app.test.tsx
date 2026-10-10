@@ -23,7 +23,7 @@ import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
-import { statusOf } from "../src/app/status.ts";
+import { statusOf, timingWords } from "../src/app/status.ts";
 import { choices, NO_FILTERS, shown, stateGroup } from "../src/app/boxes-filter.ts";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
@@ -713,6 +713,12 @@ test("the status line says the state, then what to act on, then BB enrolment and
   const now = Date.now();
   expect(statusOf(box(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
   expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null } }), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Joining BB…", "2 cores · 4 GiB"]);
+  // A claimed spare that waited stopped says how long its BB machine took to reconnect with the thread's access, as a new box says
+  // how long it took to join (#539); one that ran has no such time, and says "BB machine".
+  const resumed = box({ timings: { spare: 3, spareResume: 4100, total: 4100, spareReconnect: 17_200 } });
+  expect(statusOf(resumed, now).items.map((item) => item.text)).toEqual(["Ready in 4.1 s", "BB machine in 17.2 s", "2 cores · 4 GiB"]);
+  expect(timingWords(resumed)).toBe("claiming a spare\u00a03\u00a0ms · resuming it\u00a04.1\u00a0s · total\u00a04.1\u00a0s · BB machine reconnecting\u00a017.2\u00a0s");
+  expect(statusOf(box({ timings: { spare: 3, total: 3 } }), now).items.map((item) => item.text)).toEqual(["Ready in 3 ms", "BB machine", "2 cores · 4 GiB"]);
   expect(statusOf(box({ enrol: { state: "failed", hostId: null, error: "no route" } }), now).items[1]).toEqual({ text: "Could not join BB", tone: "warn" });
   expect(statusOf(box({ enrol: { state: "off", hostId: null, error: null }, timings: {}, size: null }), now).items.map((item) => item.text)).toEqual(["Ready"]);
   expect(statusOf(box({ state: "acquiring", createdAt: now - 1400 }), now)).toEqual({ tone: "busy", items: [{ text: "Starting" }, { text: "1.4 s" }, { text: "2 cores · 4 GiB" }] });

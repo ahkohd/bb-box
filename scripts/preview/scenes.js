@@ -481,6 +481,35 @@ export const scenes = {
     after: (root) => click(root, "button", "bold-heron: details"),
   },
   "panel-problems": { slot: "boxes", chrome: boxesChrome, rpc: rpc([failed, gone, refused]) },
+  // A Windows spare that waited stopped, claimed (#539): ready once it resumed, then a BB machine with the thread's access once BB shows it
+  // connected again, which its row says as a new box's says its enrolment.
+  "panel-list-claimed": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    rpc: rpc([
+      box({
+        id: "box_11",
+        name: "clever-summit",
+        kind: "windows-desktop",
+        kindLabel: "Windows desktop",
+        backendLabel: "Proxmox QEMU on pve",
+        form: "VM",
+        os: "windows",
+        desktop: true,
+        display: { protocol: "rfb", resizable: true },
+        control: { owner: "agent", holder: null },
+        computerUse: true,
+        extras: [],
+        docker: false,
+        address: "10.200.0.151",
+        size: "4 cores, 8 GiB memory, 64 GiB disk",
+        facts: [{ label: "Template", value: "9104" }],
+        timings: { spare: 3, spareResume: 4100, total: 4100, spareReconnect: 17_200 },
+      }),
+    ]),
+    after: (root) => click(root, "button", "clever-summit: details"),
+  },
+
   // Docker and microsandbox on one host, beside Proxmox LXC (053): the provider rows must tell the two on behemoth apart.
   "panel-chooser-microsandbox": {
     slot: "boxes",
