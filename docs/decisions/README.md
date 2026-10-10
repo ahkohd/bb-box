@@ -61,4 +61,4 @@ which records still stand as written. The current design as a whole is in
 | [053](053-microsandbox-runs-light-linux-boxes-as-microvms.md) | microsandbox runs light Linux boxes as microVMs | Current, amended: an option beside Docker, not the default |
 | [054](054-windows-images-are-refreshed-in-a-box-of-the-current-build.md) | Windows images are refreshed in a box of the current build | Being built |
 | [055](055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md) | Cloud boxes run on cloud hosts first, and a cloud VM per box later | Not built yet |
-| [056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) | Linux X11 desktops add a Selkies stream, and RFB stays for the rest, tuned | Not built yet |
+| [056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) | Linux X11 desktops add a Selkies stream, and RFB stays for the rest, tuned | Current, amended: video for every viewer when the setting is on |

@@ -67,9 +67,7 @@ const FLASH_MS = 3_000;
  */
 export const QUALITY_LEVEL = 2;
 export { PASTE_CHORD_DELAY_MS, SETTLE_MS };
-/** The round trip to BB's server under which a viewer shows VNC, not video: the same host or a LAN, where VNC answers keys faster (056). */
-export const VIDEO_ROUND_TRIP_MS = 10;
-/** Where the tab keeps the person's choice of stream for a box, from the viewer's menu: next time, the round trip decides again. */
+/** Where the tab keeps the person's choice of stream for a box, from the viewer's menu: VNC, or video again. */
 export function streamChoiceKey(boxId: string): string {
   return `bb-box:stream:${boxId}`;
 }
@@ -102,17 +100,6 @@ const lastStream = new Map<string, Stream>();
 /** Forgets every viewer's last stream, for tests. */
 export function forgetStreams(): void {
   lastStream.clear();
-}
-
-/** The fastest of three round trips to BB's server. */
-async function roundTrip(ping: () => Promise<unknown>): Promise<number> {
-  let fastest = Number.POSITIVE_INFINITY;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const started = performance.now();
-    await ping();
-    fastest = Math.min(fastest, performance.now() - started);
-  }
-  return fastest;
 }
 
 /**
@@ -545,8 +532,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   mineNow.current = mine;
   const boxNow = useRef(box);
   boxNow.current = box;
-  // The stream: VNC, unless the box may show as video (056), this browser can decode it, and the
-  // round trip to BB's server is slow, or the person chose video. Video that cannot start falls back to VNC.
+  // The stream: video whenever the box may show as video (056) and this browser can decode it, unless the
+  // person chose VNC in the viewer's menu. Video that cannot start falls back to VNC. Through BB's server,
+  // video drags with a twentieth of VNC's median lag, and answers keys as quickly (056's comparison).
   const shown = `${boxId}:${viewer}`;
   const [stream, setStream] = useState<Stream | null>(() => lastStream.get(shown) ?? null);
   const [videoFailed, setVideoFailed] = useState(false);
@@ -562,21 +550,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       decide("rfb");
       return;
     }
-    const choice = storedChoice(boxId);
-    if (choice) {
-      decide(choice);
-      return;
-    }
-    if (stream) return;
-    let stopped = false;
-    void roundTrip(() => rpc.call("ping", null)).then(
-      (ms) => !stopped && decide(ms < VIDEO_ROUND_TRIP_MS ? "rfb" : "selkies"),
-      () => !stopped && decide("rfb"),
-    );
-    return () => {
-      stopped = true;
-    };
-  }, [video, videoPossible, rpc]);
+    decide(storedChoice(boxId) ?? "selkies");
+  }, [video, videoPossible]);
   const key = stream ? `desktop:${shown}:${stream}` : null;
   // The session of a stream given up for another is ended, not kept.
   const keyBefore = useRef(key);
@@ -914,16 +889,16 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                   // A glyph like the other items', so its words line up with theirs; BB's tick sits at the right.
                   <DropdownMenuCheckboxItem
                     className="gap-2"
-                    checked={stream === "selkies"}
+                    checked={stream === "rfb"}
                     onCheckedChange={(checked) => {
-                      const next = checked ? "selkies" : "rfb";
+                      const next = checked ? "rfb" : "selkies";
                       storeChoice(boxId, next);
                       setVideoFailed(false);
                       decide(next);
                     }}
                   >
                     <MonitorGlyph />
-                    Show as video
+                    Show as VNC
                   </DropdownMenuCheckboxItem>
                 ) : null}
                 {showing ? (
