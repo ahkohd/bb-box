@@ -1865,3 +1865,16 @@ test("a box is from its template as built now only while the template has the bu
   template.config.tags = "";
   assert.equal(await backend.asOffered(unrecorded, "linux", Date.UTC(2026, 8, 26)), false, "a template with no build keeps what boxes have");
 });
+
+test("a box comes from its template's current build until build.sh --replace swaps it, or the kind drops the template (049)", async () => {
+  const { backend, proxmox } = setup();
+  proxmox.guests.get(9000)!.config.tags = "build.20261001-000000-aaaa";
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(guest.data?.build, "20261001-000000-aaaa");
+  assert.equal(await backend.fromCurrentBuild(guest, "linux"), true);
+  proxmox.guests.get(9000)!.config.tags = "build.20261009-000000-bbbb";
+  assert.equal(await backend.fromCurrentBuild(guest, "linux"), false);
+  assert.equal(await backend.fromCurrentBuild({ ...guest, data: { ...guest.data, template: 9999 } }, "linux"), false, "a template the kind no longer lists");
+  const { build: _, ...data } = guest.data!;
+  assert.equal(await backend.fromCurrentBuild({ ...guest, data }, "linux"), null, "no build recorded");
+});

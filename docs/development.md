@@ -95,7 +95,9 @@ The core uses only the two `types.ts` files.
    of each `maintain()` (#356). Give `sizesCheck()` in
    [src/backends/fit.ts](../src/backends/fit.ts) each host's cores and
    memory, so the doctor warns about a host too small for a kind's default
-   size.
+   size. Where the backend's images are rebuilt (049), give it
+   `fromCurrentBuild()`, so the upkeep replaces a spare of a build that a
+   refresh has replaced: false for such a guest, null when it cannot tell.
 5. Add the driver to `DRIVERS` in
    [src/backends/index.ts](../src/backends/index.ts).
 6. Add `setup/<type>/` with the guide and its scripts. Keep deployment

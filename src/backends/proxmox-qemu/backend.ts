@@ -916,6 +916,17 @@ export class ProxmoxQemuBackend implements Backend {
     return fromBuild(guest, await templateBuild(await this.client(), [], template, signal), createdAt);
   }
 
+  /** Whether a guest comes from the build its template has now: false once a refresh has replaced it, or the template is no longer listed; null when the guest or template records no build. */
+  async fromCurrentBuild(guest: Guest, _kind: string, signal?: AbortSignal): Promise<boolean | null> {
+    const template = guest.data?.template;
+    if (typeof template !== "number") return null;
+    if (!this.#config.templates.includes(template)) return false;
+    const current = await templateBuild(await this.client(), [], template, signal);
+    if (current === undefined) return false;
+    const recorded = guest.data?.build;
+    return current && typeof recorded === "string" ? recorded === current : null;
+  }
+
   /** Whether the guest at the reference is still `guest` (018): it names this install and the box in `guest.data.box`, or no box when that is absent. */
   async #still(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<boolean> {
     const config = await this.#guestConfig(api, this.#vmid(guest), signal);

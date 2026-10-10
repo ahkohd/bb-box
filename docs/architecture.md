@@ -317,7 +317,15 @@ timer: boxes do not expire.
   BB lists a spare as "<name> (spare)". When no backend has room for a
   thread's box, bb-box releases a spare to make room. A spare that a
   thread starts on through BB's picker becomes your machine
-  ([036](decisions/036-your-machines-are-boxes-you-own.md)).
+  ([036](decisions/036-your-machines-are-boxes-you-own.md)). The upkeep
+  replaces a spare its backend's `fromCurrentBuild` says comes from a build
+  of the kind's image that a refresh (049) has replaced since, so a claim
+  never takes an old build, and never waits on the backend for it. Proxmox
+  LXC and QEMU compare the build recorded at the clone with the template's,
+  Docker the container's image ID with the tag's, and microsandbox the
+  image record a microVM took at creation with the image's. Tart and the
+  SSH host pool cannot tell (a Tart box records no build of its image, and
+  a pool machine has none), so their spares stay until they go otherwise.
 - **Spares of projects' images.** Where a project's image is baked, on
   Proxmox LXC or Docker, bb-box also keeps one spare of the build for each
   kind, while the image is in use: a box started from the build, or the

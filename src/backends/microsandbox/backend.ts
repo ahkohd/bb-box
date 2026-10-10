@@ -1112,6 +1112,20 @@ export class MsbBackend implements Backend {
     await this.#cli.ok(["modify", guest.ref, "--label", `${LABELS.thread}=${box.threadId}`, "--label", `${LABELS.name}=${box.name}`, "--next-start"], { timeoutMs: 30_000, signal });
   }
 
+  /**
+   * Whether a microVM comes from the build its kind's image is now: its
+   * labels keep the image's record as it was made, which a refresh's or an
+   * import's new build changes (049). Null without either record.
+   */
+  async fromCurrentBuild(guest: Guest, kind: string, signal?: AbortSignal): Promise<boolean | null> {
+    const image = this.#config.images[kind as MsbKind];
+    if (!image) return null;
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    const made = found ? recordFromJson(found.labels[LABELS.imageRecord])?.build : null;
+    const now = made ? recordFromJson((await this.#cli.imageLabels(image, signal))?.[LABELS.imageRecord])?.build : null;
+    return made && now ? made === now : null;
+  }
+
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {
     const listed = await this.#cli.list({ [LABELS.backend]: "microsandbox", [LABELS.install]: this.#context.installId }, signal);
     const found = await Promise.all(listed.map((entry) => this.#cli.inspect(entry.name, signal)));

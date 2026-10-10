@@ -492,6 +492,16 @@ export interface Backend {
    */
   asOffered?(guest: Guest, kind: string, createdAt: number, signal?: AbortSignal): Promise<boolean>;
 
+  /**
+   * Whether `guest`, made as a box of `kind`, comes from the build of the
+   * kind's image that the backend starts boxes from now: false once a
+   * refresh (049) has replaced that build, null when the backend cannot
+   * tell. The upkeep replaces a kind's spare that is false, so a claim never
+   * takes an old build, and never waits for this. Without it, the core
+   * cannot tell either, and keeps the spare.
+   */
+  fromCurrentBuild?(guest: Guest, kind: string, signal?: AbortSignal): Promise<boolean | null>;
+
   /** What its boxes take that another backend's must not, for the doctor. */
   footprint?(): Footprint;
 

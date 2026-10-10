@@ -685,6 +685,17 @@ test("a Windows box is from its template as built now only while the template ha
   assert.equal(await backend.asOffered({ ...old, data }, KIND, Date.UTC(2026, 8, 26)), true, "with no recorded build, by the build's time");
 });
 
+test("a Windows box comes from its template's current build until a refresh replaces it, and cannot tell with no build recorded (049)", async () => {
+  const { backend, proxmox } = setup();
+  for (const vmid of [9104, 9105]) proxmox.guests.get(vmid)!.config.tags = "bbbox;windows;build.20260920-000000-aaaa";
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(await backend.fromCurrentBuild(guest, KIND), true);
+  for (const vmid of [9104, 9105]) proxmox.guests.get(vmid)!.config.tags = "bbbox;windows;build.20260925-000000-bbbb";
+  assert.equal(await backend.fromCurrentBuild(guest, KIND), false);
+  const { build: _, ...data } = guest.data!;
+  assert.equal(await backend.fromCurrentBuild({ ...guest, data }, KIND), null, "no build recorded");
+});
+
 test("the doctor warns when Proxmox QEMU's VMIDs or box addresses overlap Proxmox LXC's, and says nothing when they are apart (#194)", () => {
   const url = "https://pve.example.com:8006/";
   const lxc = (values: Record<string, unknown> = {}) => ({

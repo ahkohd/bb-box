@@ -94,6 +94,8 @@ export interface ContainerInfo {
   readonly memoryMiB: number | null;
   /** Its address on each network. */
   readonly addresses: Readonly<Record<string, string>>;
+  /** The ID of the image it was made from, which a tag moved to a new build no longer names. */
+  readonly imageId: string;
 }
 
 const MiB = 1024 * 1024;
@@ -165,6 +167,7 @@ export function parseContainers(text: string): ContainerInfo[] {
       cores: nanoCpus ? Math.round((nanoCpus / 1e9) * 100) / 100 : null,
       memoryMiB: memory ? Math.round(memory / MiB) : null,
       addresses,
+      imageId: typeof container.Image === "string" ? container.Image : "",
     };
   });
 }
