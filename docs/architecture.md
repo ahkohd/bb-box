@@ -495,7 +495,11 @@ route and carries messages, not bytes:
   size, even for later viewers. So after each resize bb-box makes, and when
   a viewer's frames have another size than the desktop's, the input
   connection sends SETTINGS with the desktop's size as a manual resolution,
-  which moves the capture at once, without a restart.
+  which moves the capture at once, without a restart. A capture moved to a
+  larger size keeps its encoder's old size, so the picture is cut from the
+  desktop's top left. So when the desktop grew past its video's size, every
+  viewer's video stops for 300 ms: Selkies stops a capture no page wants,
+  and starts the next at the desktop's size, from a key frame.
 
 **Each desktop's server.**
 

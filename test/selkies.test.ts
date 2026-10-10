@@ -93,6 +93,24 @@ test("a viewer joins as a Selkies viewer, gets what Selkies sends, and may only 
   await box.close();
 });
 
+test("a viewer's video is stopped and started again for a restart of the capture, unless the viewer asked for none, as a hidden tab does", async () => {
+  const { server, relay } = setup();
+  const a = relay("a");
+  const b = relay("b");
+  await until("both pages", () => server.pages.length === 2);
+  await until("Selkies' first messages", () => a.got.includes("MODE websockets") && b.got.includes("MODE websockets"));
+  await b.relay.receive("STOP_VIDEO");
+  assert.equal(a.relay.pause(), true);
+  assert.equal(b.relay.pause(), false, "a viewer that asked for no video is left so");
+  a.relay.resume();
+  b.relay.resume();
+  const [pageA, pageB] = server.pages;
+  await until("a's restart", () => pageA!.received.join(" ").endsWith("STOP_VIDEO START_VIDEO REQUEST_KEYFRAME"));
+  await until("b's own stop", () => pageB!.received.includes("STOP_VIDEO"));
+  assert.deepEqual(pageB!.received.filter((message) => typeof message === "string" && /_VIDEO|KEYFRAME/.test(message)), ["STOP_VIDEO"]);
+  assert.equal(pageA!.stopped, false);
+});
+
 test("input reaches the box over the input connection only from the viewer with control, with no pointer sequence", async () => {
   const { server, box, relay, give } = setup();
   const a = relay("a");
