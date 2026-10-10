@@ -20,7 +20,7 @@ test("the event loop watch tells, once a minute, how often bb-box's loop stood s
   assert.deepEqual(lines, [], "nothing before a minute");
   for (let i = 0; i < 400; i++) tick(100);
   assert.deepEqual(lines, [
-    "bb-box's event loop stood still 2 times in the last minute, for up to 470 ms: desktops' frames and input waited meanwhile. " +
+    "BB's server, which runs bb-box, stood still 2 times in the last minute, for up to 470 ms: desktops' frames and input waited meanwhile. " +
       "Garbage collection ran for 350 ms of it, in 1 collection, 1 of them major.",
   ]);
   // A minute without stalls says nothing; one stall without collection says so.
@@ -28,6 +28,6 @@ test("the event loop watch tells, once a minute, how often bb-box's loop stood s
   assert.equal(lines.length, 1);
   tick(260);
   for (let i = 0; i < 700; i++) tick(100);
-  assert.equal(lines[1], "bb-box's event loop stood still once in the last minute, for up to 260 ms: desktops' frames and input waited meanwhile. No garbage collection ran then: something else held the loop.");
+  assert.equal(lines[1], "BB's server, which runs bb-box, stood still once in the last minute, for up to 260 ms: desktops' frames and input waited meanwhile. No garbage collection ran then: something else held the loop.");
   watch.dispose();
 });

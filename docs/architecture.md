@@ -495,11 +495,12 @@ route and carries messages, not bytes:
   goes to every viewer, and resumes from it. It asks on the input
   connection when that is open, as Selkies takes a viewer's request once a
   second, and again every 250 ms until one comes.
-- Every relay runs on bb-box's event loop, so code that holds the loop
-  holds every desktop's frames and input. bb-box logs, at most once a
-  minute, when its loop stood still for 250 ms or more, and how much of it
-  was garbage collection. A CPU profile of its process, 1 to 30 s, one at a
-  time, names the code (`bb plugin rpc call bb-box profile` with
+- Every relay runs on the event loop of BB's server, whose process runs
+  bb-box, so code there that holds the loop holds every desktop's frames
+  and input, whether it is bb-box's, BB's or another plugin's. bb-box logs,
+  at most once a minute, when the loop stood still for 250 ms or more, and
+  how much of it was garbage collection. A CPU profile of the process, 1 to
+  30 s, one at a time, names the code (`bb plugin rpc call bb-box profile` with
   `{"seconds": 15}`). It logs only functions' names, files, lines and
   times.
 - Selkies refuses a connection within 500 ms of another from the same

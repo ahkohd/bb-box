@@ -118,7 +118,7 @@ export const contract = defineRpcContract({
   desktop: { input: oneBox, output: z.custom<DesktopState>() },
   /** Answers at once: the viewer times it, for its round trip to BB's server (056). */
   ping: { input: z.null(), output: z.null() },
-  /** A CPU profile of bb-box's process for 1 to 30 s, summed up in lines that are logged too: functions' names, files, lines and times only. */
+  /** A CPU profile of BB's server process, which runs bb-box, for 1 to 30 s, summed up in lines that are logged too: functions' names, files, lines and times only. */
   profile: { input: z.object({ seconds: z.number().int().min(1).max(30) }), output: z.object({ lines: z.array(z.string()) }) },
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },

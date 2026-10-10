@@ -19,7 +19,7 @@ test("a profile's summary names a long busy span by the frames it ran under, fil
     timeDeltas: Array(500).fill(1000),
   };
   assert.deepEqual(summarise(profile, 1), [
-    "A CPU profile of bb-box over 1 s: busy 66% of it, with 1 span busy for 100 ms or more, the longest 300 ms.",
+    "A CPU profile of BB's server, which runs bb-box, over 1 s: busy 66% of it, with 1 span busy for 100 ms or more, the longest 300 ms.",
     "Busy 300 ms from 0.1 s, under: slow (src/core/views.ts:41) 100%, handler (src/plugin/rpc.ts:11) 100%.",
     "Most time of their own: slow (src/core/views.ts:41) 300 ms, handler (src/plugin/rpc.ts:11) 30 ms.",
   ]);
@@ -27,9 +27,9 @@ test("a profile's summary names a long busy span by the frames it ran under, fil
 
 test("one profile runs at a time, for whole seconds of at most 30", async () => {
   const first = profileLoop(1);
-  await assert.rejects(profileLoop(1), /A profile of bb-box is running already: one runs at a time\./);
+  await assert.rejects(profileLoop(1), /A profile of BB's server is running already: one runs at a time\./);
   const lines = await first;
-  assert.match(lines[0]!, /^A CPU profile of bb-box over 1 s: busy \d+% of it/);
+  assert.match(lines[0]!, /^A CPU profile of BB's server, which runs bb-box, over 1 s: busy \d+% of it/);
   // Free again once it ends.
   assert.match((await profileLoop(0.4))[0]!, /over 1 s/);
 });

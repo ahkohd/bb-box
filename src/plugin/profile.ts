@@ -1,5 +1,5 @@
-// A CPU profile of bb-box's own process, on demand only, to name the code
-// that holds its event loop: the loop watch found it standing still for
+// A CPU profile of the process bb-box runs in, BB's server, on demand only,
+// to name the code that holds its event loop: the loop watch found it standing still for
 // about half a second, about every 5 s, which every desktop's frames and
 // input wait out. One profile at a time, for at most 30 s. It reports only
 // functions' names, files, lines and times: no arguments, no data.
@@ -36,9 +36,9 @@ export interface CpuProfile {
 
 let running = false;
 
-/** Profiles bb-box's process for `seconds`, at most 30, and sums it up in lines for people. */
+/** Profiles BB's server process, which runs bb-box, for `seconds`, at most 30, and sums it up in lines for people. */
 export async function profileLoop(seconds: number): Promise<string[]> {
-  if (running) throw new Error("A profile of bb-box is running already: one runs at a time.");
+  if (running) throw new Error("A profile of BB's server is running already: one runs at a time.");
   const span = Math.min(Math.max(1, Math.round(seconds)), MAX_PROFILE_SECONDS);
   running = true;
   const session = new Session();
@@ -108,7 +108,7 @@ export function summarise(profile: CpuProfile, seconds: number): string[] {
     }
   }
   const lines = [
-    `A CPU profile of bb-box over ${seconds} s: busy ${Math.round((busy / Math.max(at, 1)) * 100)}% of it, with ${spans.length} ${spans.length === 1 ? "span" : "spans"} busy for ${BUSY_MS} ms or more` +
+    `A CPU profile of BB's server, which runs bb-box, over ${seconds} s: busy ${Math.round((busy / Math.max(at, 1)) * 100)}% of it, with ${spans.length} ${spans.length === 1 ? "span" : "spans"} busy for ${BUSY_MS} ms or more` +
       (spans.length ? `, the longest ${Math.round(Math.max(...spans.map((span) => span.ms)))} ms.` : "."),
   ];
   for (const span of [...spans].sort((a, b) => b.ms - a.ms).slice(0, SPANS_TOLD)) {
