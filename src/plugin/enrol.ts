@@ -428,6 +428,11 @@ export class Enrolment {
     phases.mark("bootstrapped");
   }
 
+  /** Names the box's BB machine after the box, as a spare that stops to wait says it does (#539). */
+  async rename(box: BoxRecord): Promise<void> {
+    if (box.enrol.hostId) await this.#rename(box, box.enrol.hostId);
+  }
+
   /** Names the box's machine in BB after the box. Nothing fails without it, so it only logs an error. */
   async #rename(box: BoxRecord, hostId: string): Promise<void> {
     await this.#deps

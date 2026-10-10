@@ -1385,9 +1385,13 @@ test("where a stop keeps a box's session, a spare waits stopped as a BB machine,
   const waiting = async (not?: string) => (await app.boxes.list(SPARES)).find((box) => box.id !== not && box.state === "stopped" && box.enrol.state === "enrolled");
   const spare = await until("a spare waiting stopped", () => waiting());
   const hostId = `host-${spare.id}`;
-  assert.equal(world.hosts.get(hostId)?.name, `${spare.name} (spare)`);
-  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { kinds: { id: string; spares: unknown }[] };
-  assert.deepEqual(state.kinds.find((kind) => kind.id === "linux")!.spares, { target: 1, ready: 1, making: 0 }, "it counts as ready");
+  // Its machine's name says it waits stopped, as BB shows the machine offline meanwhile.
+  await until("its machine named as a stopped spare", async () => world.hosts.get(hostId)?.name === `${spare.name} (spare, stopped)`);
+  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { kinds: { id: string; spares: unknown; offers: { ready: number; spareStarts?: boolean }[] }[] };
+  const linux = state.kinds.find((kind) => kind.id === "linux")!;
+  assert.deepEqual(linux.spares, { target: 1, ready: 1, making: 0 }, "it counts as ready");
+  // The form says the spare is ready in seconds rather than now, as a claim resumes it first.
+  assert.deepEqual(linux.offers.map((offer) => [offer.ready, offer.spareStarts]), [[1, true]]);
 
   // BB shows its machine disconnected while it waits, and the upkeep keeps it.
   world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });

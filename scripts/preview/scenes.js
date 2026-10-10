@@ -623,6 +623,24 @@ export const scenes = {
       await wait(200);
     },
   },
+  // A Windows spare waits stopped (#539): its provider row says ready in seconds, as the claim resumes it first.
+  "panel-chooser-windows-spare": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 760,
+    rpc: rpc([], {
+      kinds: KINDS.map((candidate) =>
+        candidate.id === "windows-desktop" ? { ...candidate, spares: { target: 1, ready: 1, making: 0 }, offers: candidate.offers.map((item) => ({ ...item, ready: 1, spareStarts: true })) } : candidate,
+      ),
+    }),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      pick("radio", "Windows");
+      await wait(200);
+    },
+  },
   "panel-chooser-narrow": {
     slot: "boxes",
     chrome: boxesChrome,
