@@ -41,8 +41,9 @@ where it is built ahead, which its boxes claim at once (#440). The
 - A `linux-desktop` box always has its GPU. When no GPU is free, the refusal
   suggests `linux-desktop-cpu`.
 - Windows boxes have Visual Studio Build Tools (MSVC and the Windows SDK),
-  LLVM (`clang`) and Rust (`cargo`, `rustc`). They have no GPU: DirectX apps
-  render on WARP, Windows' software renderer.
+  LLVM (`clang`), Rust (`cargo`, `rustc`), Node.js, and the Claude Code,
+  Codex and Pi CLIs. They have no GPU: DirectX apps render on WARP,
+  Windows' software renderer.
 
 ## Running commands
 
@@ -68,6 +69,8 @@ Beyond those:
 
 - A Windows box is not a BB machine yet, so `box_thread` cannot start a
   thread there.
+- Type `pwsh` for PowerShell 7, never `powershell`, which is Windows
+  PowerShell 5.1.
 - `Start-Detached` gives the command it starts the environment variables,
   but not PowerShell variables: pass values in `$env:`.
 - For a GUI program's window to show, call `Start-Detached` in a desktop

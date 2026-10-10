@@ -314,7 +314,7 @@ test("a Windows refresh that fails, or that Windows keeps asking to restart, kee
 
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {
   const pins = (JSON.parse(readFileSync(join(SETUP, "windows", "pins.json"), "utf8")) as { tools: { name: string; arch: string; version: string; url: string; sha256: string }[] }).tools;
-  const names: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node" };
+  const names: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node", CLAUDE: "claude-code", CODEX: "codex", PI: "pi" };
   for (const [script, arch] of [["proxmox-qemu/build.sh", "x86_64"], ["tart/prepare-windows-image.sh", "arm64"]] as const) {
     const lines = Object.fromEntries([...readFileSync(join(SETUP, script), "utf8").matchAll(/^([A-Z0-9]+)_(VERSION|SHA256)=(\S+)$/gm)].map((match) => [`${match[1]}_${match[2]}`, match[3]!]));
     const ours = pins.filter((pin) => pin.arch === arch);

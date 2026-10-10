@@ -32,6 +32,17 @@ Check 'Node.js 22.19 or later on PATH' {
   $v = node --version; $n = npm --version
   if (-not $v -or [version]($v.TrimStart('v')) -lt [version]'22.19') { throw "node $v" }; "node $v, npm $n"
 }
+Check 'Claude Code, Codex and Pi on PATH' {
+  $said = foreach ($tool in 'claude', 'codex', 'pi') { $v = & $tool --version 2>&1 | Select-Object -First 1; if ($LASTEXITCODE -or -not $v) { throw "$tool did not run" }; "$v" }
+  $said -join '; '
+}
+Check "Claude Code's PowerShell tool on PowerShell 7" {
+  # Its init frame says which shell tools it has and which PowerShell runs, with no sign-in.
+  $init = ('hi' | claude -p --output-format stream-json --verbose 2>$null | Select-Object -First 1) | ConvertFrom-Json
+  if ($init.tools -notcontains 'PowerShell') { throw "tools: $($init.tools -join ', ')" }
+  if ($init.powershell_path -notlike '*\PowerShell\7\pwsh.exe') { throw "PowerShell is $($init.powershell_path)" }
+  "$($init.powershell_path), beside $(@($init.tools | Where-Object { $_ -eq 'Bash' }).Count) Bash tool"
+}
 Check 'NO_COLOR set' { if ($env:NO_COLOR -ne '1') { throw "NO_COLOR is '$env:NO_COLOR'" }; 'NO_COLOR=1' }
 Check 'C++ build tools and SDK' {
   $tools = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }

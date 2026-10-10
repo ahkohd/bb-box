@@ -60,6 +60,27 @@
       "sha256": "158F7685B44DE51F6C0DF1D153526CBCD3E1BC739A8DFC607721CEF75DE9E541"
     },
     {
+      "name": "claude-code",
+      "arch": "x86_64",
+      "version": "2.1.283",
+      "url": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.283/win32-x64/claude.exe",
+      "sha256": "9DBE16DAFED59DA5CDABBFE11AD0335738C753FAD794989B47F9446ACCD6DE3A"
+    },
+    {
+      "name": "codex",
+      "arch": "x86_64",
+      "version": "0.157.1",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-x86_64-pc-windows-msvc.exe",
+      "sha256": "8CB0E69E99FF2A158C54815DB82D0F2E524D8F301BC30184722CFD1AE5973574"
+    },
+    {
+      "name": "pi",
+      "arch": "x86_64",
+      "version": "0.87.1",
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.87.1/pi-windows-x64.zip",
+      "sha256": "AAB2BA67BAF8FF97A52D05B62D88E9E65A840C6EA8FA1029A28D62D210D4E5FC"
+    },
+    {
       "name": "pwsh",
       "arch": "arm64",
       "version": "7.6.6",
@@ -118,6 +139,27 @@
       "version": "24.21.0",
       "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-arm64.zip",
       "sha256": "8779B1BDE1D39F8D420E3B57AA657B39891AF434D3DE44A919044CEC06785921"
+    },
+    {
+      "name": "claude-code",
+      "arch": "arm64",
+      "version": "2.1.283",
+      "url": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.283/win32-arm64/claude.exe",
+      "sha256": "1D0AAA255E3B9BA304840F260F4993B98F10516D3AA5B7D60ECD3392CCA34DF4"
+    },
+    {
+      "name": "codex",
+      "arch": "arm64",
+      "version": "0.157.1",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-aarch64-pc-windows-msvc.exe",
+      "sha256": "04CB2F6143DA840F33F0061ED9E13FCB0F4D7CD9BFCE27299C456A6BC47B410D"
+    },
+    {
+      "name": "pi",
+      "arch": "arm64",
+      "version": "0.87.1",
+      "url": "https://github.com/earendil-works/pi/releases/download/v0.87.1/pi-windows-arm64.zip",
+      "sha256": "2E0D544999A765018EE5C2FF1A8B1A7E0F5D5B6B1E00B32D8C025D6C1DBCC833"
     }
   ]
 }
