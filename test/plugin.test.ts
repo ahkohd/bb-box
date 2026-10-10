@@ -2428,6 +2428,17 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await until("the key", async () => input.received.includes("kd,97"));
   await session.receive("r,1024x768");
   await until("the resize", async () => rfb.width === 1024 && rfb.height === 768);
+  // Selkies captures a desktop that grew at its old size, so the input connection tells it the size the desktop took.
+  const follow = (width: number, height: number) =>
+    `SETTINGS,${JSON.stringify({ displayId: "primary", manual_resolution: true, manual_width: width, manual_height: height, force_aligned_resolution: false })}`;
+  await until("the video following the size", async () => input.received.includes(follow(1024, 768)));
+  // A width of a multiple of 8 and an even height, which Selkies keeps as they are.
+  await session.receive("r,1101x701");
+  await until("such a size", async () => rfb.width === 1096 && rfb.height === 700);
+  await until("the video following it", async () => input.received.includes(follow(1096, 700)));
+  // Frames of another size than the desktop's, as from a capture that missed a resize, have the video follow the desktop.
+  await selkies.frame(2, true, 800, 600);
+  await until("the video following the desktop", async () => input.received.filter((message) => message === follow(1096, 700)).length === 2);
   await selkies.clipboard("copied again");
   await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied again").toString("base64")}`));
   // An image, both ways, in Selkies' parts and in order (#609).
@@ -2443,6 +2454,7 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name });
   await until("the key let go", async () => input.received.includes("ku,97"));
   await until("the size the agent had", async () => rfb.width === 1280 && rfb.height === 800);
+  await until("the video following it back", async () => input.received.includes(follow(1280, 800)));
   await session.close();
   await until("the page closed", async () => page.closed);
 });

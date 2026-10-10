@@ -489,8 +489,13 @@ route and carries messages, not bytes:
 - Selkies refuses a connection within 500 ms of another from the same
   address, and the relay's all come from the box's loopback, so it spaces
   them and tries again.
-- A resize from the viewer with control goes through the RFB display, which
-  Selkies follows.
+- A resize from the viewer with control goes through the RFB display, at a
+  width of a multiple of 8 and an even height, as Selkies keeps them. Selkies
+  follows a desktop that shrinks, but captures one that grows at its old
+  size, even for later viewers. So after each resize bb-box makes, and when
+  a viewer's frames have another size than the desktop's, the input
+  connection sends SETTINGS with the desktop's size as a manual resolution,
+  which moves the capture at once, without a restart.
 
 **Each desktop's server.**
 
