@@ -336,6 +336,16 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Whether Tart keeps its VMs on a volume other than the Mac's own disk, through a link (#632). */
+function otherVolume(disk: HostState["disk"]): boolean {
+  return disk.volume.startsWith("/Volumes/");
+}
+
+/** The free space where Tart keeps its VMs, naming the volume when it is not the Mac's own disk. */
+function diskFree(disk: HostState["disk"]): string {
+  return `${formatMiB(disk.freeMiB)} of disk free${otherVolume(disk) ? ` on ${disk.volume}` : ""}`;
+}
+
 function formatMiB(value: number): string {
   return value >= MiB_PER_GiB ? `${Math.round((value / MiB_PER_GiB) * 10) / 10} GiB` : `${value} MiB`;
 }
@@ -728,7 +738,7 @@ export class TartBackend implements Backend {
     const limits: Limit[] = [
       { resource: "guests", used: macos.length + starting, total: this.#config.vmsPerHost, reserve: 0, unit: "count" },
       { resource: "memory", used: memoryUsed, total: state.memoryMiB, reserve: reserve.memoryMiB, unit: "MiB" },
-      { resource: "disk", used: state.disk.totalMiB - state.disk.freeMiB, total: state.disk.totalMiB, reserve: diskReserveMiB, unit: "MiB" },
+      { resource: "disk", ...(otherVolume(state.disk) ? { id: state.disk.volume } : {}), used: state.disk.totalMiB - state.disk.freeMiB, total: state.disk.totalMiB, reserve: diskReserveMiB, unit: "MiB" },
     ];
     let why: string | null = null;
     if (size.diskGiB !== null && os !== "windows") {
@@ -756,21 +766,21 @@ export class TartBackend implements Backend {
               ? "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings"
               : "Release a box, or lower the memory kept free in bb-box's settings");
     } else if (state.disk.freeMiB < diskReserveMiB) {
-      why = `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than the ${formatMiB(diskReserveMiB)} kept free. Release boxes or free some space`;
+      why = `${host.name} has ${diskFree(state.disk)}, less than the ${formatMiB(diskReserveMiB)} kept free. Release boxes or free some space`;
     } else if (state.disk.freeMiB - grow * MiB_PER_GiB < diskReserveMiB) {
       why =
         grow * MiB_PER_GiB > state.disk.freeMiB
-          ? `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than the ${grow} GiB a ${size.diskGiB} GiB disk adds to the Windows image's. ` +
+          ? `${host.name} has ${diskFree(state.disk)}, less than the ${grow} GiB a ${size.diskGiB} GiB disk adds to the Windows image's. ` +
             "Ask for a smaller disk or release boxes"
-          : `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free and keeps ${formatMiB(diskReserveMiB)} free, ` +
+          : `${host.name} has ${diskFree(state.disk)} and keeps ${formatMiB(diskReserveMiB)} free, ` +
             `so a ${size.diskGiB} GiB disk, ${grow} GiB more than the Windows image's, does not fit. ` +
             "Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings";
     } else if (saved && state.disk.freeMiB - grow * MiB_PER_GiB - size.memoryMiB < diskReserveMiB) {
       const vm = `a warm VM saved with its ${formatMiB(size.memoryMiB)} of memory`;
       why =
         grow * MiB_PER_GiB + size.memoryMiB > state.disk.freeMiB
-          ? `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free, less than ${vm} needs`
-          : `${host.name} has ${formatMiB(state.disk.freeMiB)} of disk free and keeps ${formatMiB(diskReserveMiB)} free, so ${vm} does not fit`;
+          ? `${host.name} has ${diskFree(state.disk)}, less than ${vm} needs`
+          : `${host.name} has ${diskFree(state.disk)} and keeps ${formatMiB(diskReserveMiB)} free, so ${vm} does not fit`;
     }
     return { capacity: { host: host.name, ok: why === null, limits }, why };
   }

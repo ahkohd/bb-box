@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
-import { baseScript, crashSummary, endReason, parseEnded, parseState, parseVnc, pruneBaseScript, type RunEnd } from "../src/backends/tart/host.ts";
+import { baseScript, crashSummary, endReason, parseEnded, parseState, parseVnc, pruneBaseScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
@@ -102,6 +102,22 @@ test("offers macos and macos-desktop from the image, each only when it has one",
   assert.equal(desktop.computerUse?.socket, "/Users/admin/Library/Caches/cua-driver/cua-driver.sock");
 });
 
+test("the Mac's state fails when Tart's home or the QEMU folder links to a volume that is not mounted, so its boxes are kept (#632)", () => {
+  const home = mkdtempSync(join(tmpdir(), "bbbox-volume-"));
+  after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, ".bb-box", "tart", "owners"), { recursive: true });
+  const run = () => spawnSync("/bin/sh", ["-c", stateScript(true)], { encoding: "utf8", env: { HOME: home, PATH: "/usr/bin:/bin" } });
+  for (const [link, at] of [[join(home, ".tart"), join(home, "gone", "tart")], [join(home, ".bb-box", "qemu"), join(home, "gone", "qemu")]] as const) {
+    symlinkSync(at, link);
+    const missing = run();
+    assert.notEqual(missing.status, 0);
+    assert.equal(missing.stderr.trim(), `${link} links to ${at}, which is not there: is its volume mounted?`);
+    // Mounted again: the state goes on, here to say there is no tart.
+    mkdirSync(at, { recursive: true });
+    assert.doesNotMatch(run().stderr, /is its volume mounted/u);
+  }
+});
+
 test("reads Tart's pretty-printed listing and its VNC URL", () => {
   const state = parseState(
     [
@@ -131,6 +147,9 @@ test("reads Tart's pretty-printed listing and its VNC URL", () => {
   assert.deepEqual(state.owners.get("bb-box-bx1"), { install: "k3v9q2m7xa", box: "bx1" });
   assert.equal(state.memoryMiB, 131072);
   assert.equal(state.disk.freeMiB, Math.floor(150000000 / 1024));
+  assert.equal(state.disk.volume, "");
+  // df's mount point, which may have spaces: Tart's VMs on another volume, through a link (#632).
+  assert.deepEqual(parseState("@disk\n1900000000 150000000 /Volumes/Fast VMs\n").disk, { totalMiB: Math.floor(1900000000 / 1024), freeMiB: Math.floor(150000000 / 1024), volume: "/Volumes/Fast VMs" });
   assert.deepEqual(parseVnc("vnc://:open-sesame-word-four@127.0.0.1:61234\n"), { port: 61234, password: "open-sesame-word-four" });
   assert.equal(parseVnc(""), null);
 });

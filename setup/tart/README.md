@@ -44,7 +44,8 @@ Mac. A clone boots to SSH in about 10 s and to a logged-in desktop in about
   relying on it (see Update).
 - Disk: the macOS base image with Xcode takes about 80 GiB, and the prepared
   image a few GiB more. A box adds what it writes: about 2.5 GiB after its
-  first boot, and its memory while it is suspended.
+  first boot, and its memory while it is suspended. The VMs can be on
+  another volume (see below).
 - Memory: each box takes the memory of its size, 8, 16 or 32 GiB for the
   small, medium and large presets. bb-box keeps a reserve free for the Mac
   itself.
@@ -284,6 +285,37 @@ installer. What it needs, and what its machine can and cannot do, is in the
 [Proxmox QEMU guide](../proxmox-qemu/README.md#windows-boxes-as-bb-machines).
 
 Its fix gives the prepare script's command that builds the image again.
+
+### VMs on another volume
+
+Tart's VMs and images, `~/.tart`, and bb-box's QEMU files for Windows,
+`~/.bb-box/qemu`, can be on another volume, such as an external NVMe drive
+that stays plugged in. Make each a link to a folder on it; nothing else
+changes, as everything that uses them, Tart and QEMU too, follows the link:
+
+```sh
+# With bb-box's backend for the Mac turned off, and no VM running:
+mkdir -p /Volumes/<volume>/bb-box
+ditto ~/.tart /Volumes/<volume>/bb-box/tart
+ditto ~/.bb-box/qemu /Volumes/<volume>/bb-box/qemu
+mv ~/.tart ~/.tart.pre-move && ln -s /Volumes/<volume>/bb-box/tart ~/.tart
+mv ~/.bb-box/qemu ~/.bb-box/qemu.pre-move && ln -s /Volumes/<volume>/bb-box/qemu ~/.bb-box/qemu
+```
+
+- **Keep both on the one volume.** APFS clones share blocks only within a
+  volume: a box is a clone of its image, and costs only what it writes,
+  when both are there. `ditto` keeps sparse disks sparse, but copies each
+  clone in full, so copy the images and let warm VMs be made again on the
+  volume rather than copying them.
+- **The disk reserve is the volume's.** bb-box measures the free space where
+  `~/.tart` leads, and its messages name the volume.
+- **When the volume is not mounted**, bb-box counts the Mac as unreachable
+  and keeps its boxes, saying which link leads nowhere. Check that the
+  volume mounts after a restart, before boxes are needed.
+- **The way back:** remove the links and move the `.pre-move` folders back,
+  or, once those are deleted, copy the folders back with `ditto`.
+- Spotlight indexes a new volume: `sudo mdutil -i off /Volumes/<volume>`
+  keeps it from indexing VM disks.
 
 ## Update
 
