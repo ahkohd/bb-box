@@ -6,6 +6,8 @@
 #   BBBOX_SSH_PUBLIC_KEY  bb-box's public keys, one per line, which the user accepts
 #   CUA_VERSION           Cua Driver release to install, for example 0.30.4
 #   CUA_SHA256            SHA-256 of its darwin-arm64 archive
+#   BLACKHOLE_VERSION     BlackHole 2ch release to install, for example 0.7.1
+#   BLACKHOLE_SHA256      SHA-256 of its package
 #   BB_URL                optional: BB's server URL, to pre-install bb-app
 set -eu
 user=$(id -un)
@@ -88,6 +90,18 @@ cat >"$home/Library/LaunchAgents/com.trycua.cua-driver.plist" <<PLIST
 <key>ProcessType</key><string>Interactive</string>
 </dict></plist>
 PLIST
+
+# BlackHole 2ch (#631), a virtual audio device with two channels in and out:
+# what is played to its output comes back on its input, which apps see as
+# the microphone, so a test can feed speech in. A VM that can be suspended
+# has no audio input of its own, so BlackHole is the default input. It is a
+# Core Audio plug-in, not a kernel extension.
+tmp=$(mktemp -d)
+curl -fsSL --retry 3 -o "$tmp/blackhole.pkg" "https://existential.audio/downloads/BlackHole2ch-$BLACKHOLE_VERSION.pkg"
+echo "$BLACKHOLE_SHA256  $tmp/blackhole.pkg" | shasum -a 256 -c --quiet - || die "BlackHole's package does not match BLACKHOLE_SHA256"
+sudo installer -pkg "$tmp/blackhole.pkg" -target / >/dev/null
+rm -rf "$tmp"
+sudo killall coreaudiod 2>/dev/null || :
 
 # Screen capture without a person. On macOS 26 and later, an app's first
 # capture that bypasses the system's window picker raises a consent dialog,
