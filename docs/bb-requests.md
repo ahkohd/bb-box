@@ -977,6 +977,13 @@ each minute in which the loop stood still for 250 ms or more, and the
   finds the thread from `create`'s key, which BB sets to the thread's ID.
   That is not documented. bb-box would ask for the thread's ID, or none,
   in `create`'s context.
+- **A plugin WebSocket route served off the server's loop.** bb-box's
+  desktop relays run on BB's server's event loop, so anything that holds
+  it holds every desktop's frames and input (request 25). bb-box would ask
+  for a WebSocket route that BB serves in a worker thread, or in a process
+  of the plugin's own, still behind BB's auth. Without it, the only way off
+  the loop is a port of bb-box's own that each install would have to
+  expose, so bb-box waits for request 25 instead.
 - **Linger in the installer.** Where the installer makes a systemd user
   service, it could enable linger, so the service outlives the session that
   installed it. bb-box does this in its templates meanwhile.
