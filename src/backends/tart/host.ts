@@ -160,6 +160,16 @@ export function sections(text: string): Map<string, string> {
 }
 
 /**
+ * Tart's VMs and bb-box's QEMU files may be on another volume, through a
+ * link (#632). When that volume is not mounted, the state fails, so the Mac
+ * counts as unreachable and keeps its boxes, rather than as a Mac with none.
+ */
+const VOLUME_CHECK = String.raw`for f in "${"$"}{TART_HOME:-$HOME/.tart}" "$HOME/.bb-box/qemu"; do
+  [ ! -L "$f" ] || [ -d "$f" ] || { echo "$f links to $(readlink "$f"), which is not there: is its volume mounted?" >&2; exit 1; }
+done
+`;
+
+/**
  * Everything bb-box needs to know about a Mac at once: Tart's VMs, the owner
  * files, the configuration of each running VM, the host's memory and the free
  * space where Tart keeps its VMs. Tart's part only when `tart`, as a Mac
@@ -184,12 +194,12 @@ for vm in $(ls "$home/vms" 2>/dev/null); do
   [ -f "$f" ] && printf '%s %s\\n' "$vm" "$(if stat --version >/dev/null 2>&1; then stat -c '%i.%Y' "$f"; else stat -f '%i.%m' "$f"; fi)"
 done
 `;
-  return script(`${tart ? tartPart : 'home="${TART_HOME:-$HOME/.tart}"\n'}echo @owners
+  return script(`${VOLUME_CHECK}${tart ? tartPart : 'home="${TART_HOME:-$HOME/.tart}"\n'}echo @owners
 for vm in $(ls "$d/owners"); do [ -f "$d/owners/$vm" ] || continue; printf '=%s\\n' "$vm"; cat "$d/owners/$vm"; done
 ${extra}echo @memory; sysctl -n hw.memsize
 echo @cpus; sysctl -n hw.ncpu
 [ -d "$home" ] || home=$HOME
-echo @disk; df -k "$home" | awk 'NR == 2 { print $2, $4 }'
+echo @disk; df -P -k "$home" | awk 'NR == 2 { m = $6; for (i = 7; i <= NF; i++) m = m " " $i; print $2, $4, m }'
 echo @arch; uname -m
 echo @macos; sw_vers -productVersion
 echo @macosbuild; sw_vers -buildVersion
@@ -227,7 +237,8 @@ export interface HostState {
   readonly memoryMiB: number;
   /** The Mac's cores, or 0 when it did not say. */
   readonly cpus: number;
-  readonly disk: { readonly totalMiB: number; readonly freeMiB: number };
+  /** The free space where Tart keeps its VMs, and that volume's mount point. */
+  readonly disk: { readonly totalMiB: number; readonly freeMiB: number; readonly volume: string };
   readonly arch: string;
   readonly macos: string;
   /** The Mac's macOS build, such as 26A428: a VM saved under another may not restore. */
@@ -296,7 +307,7 @@ export function parseState(text: string): HostState {
   }
   const owners = new Map<string, Record<string, string>>();
   for (const [name, fields] of named(parts.get("owners") ?? "")) owners.set(name, parseFields(fields));
-  const [total = 0, free = 0] = (parts.get("disk") ?? "").trim().split(/\s+/).map(Number);
+  const [total = "0", free = "0", ...volume] = (parts.get("disk") ?? "").trim().split(/\s+/);
   return {
     version: parts.get("version")?.trim() ?? "",
     vms,
@@ -306,7 +317,7 @@ export function parseState(text: string): HostState {
     owners,
     memoryMiB: Math.floor(Number(parts.get("memory")?.trim() || 0) / 1024 / 1024),
     cpus: Number(parts.get("cpus")?.trim()) || 0,
-    disk: { totalMiB: Math.floor(total / 1024), freeMiB: Math.floor(free / 1024) },
+    disk: { totalMiB: Math.floor(Number(total) / 1024), freeMiB: Math.floor(Number(free) / 1024), volume: volume.join(" ") },
     arch: parts.get("arch")?.trim() ?? "",
     macos: parts.get("macos")?.trim() ?? "",
     macosBuild: parts.get("macosbuild")?.trim() ?? "",
