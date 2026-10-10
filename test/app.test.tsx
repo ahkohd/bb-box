@@ -415,7 +415,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; video?: boolean; pingMs?: number } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; video?: boolean } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -441,7 +441,6 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
     profile: async () => ({ lines: [] }),
     ping: async () => {
-      if (options.pingMs) await new Promise((resolve) => setTimeout(resolve, options.pingMs));
       return null;
     },
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
@@ -1987,26 +1986,13 @@ function videoSocket(): FakeSocket {
   return socket;
 }
 
-test("with the setting on, a desktop shows as video when the round trip to BB's server is slow, and over VNC when it is quick or the setting is off (056)", async () => {
+test("with the setting on, a desktop shows as video whatever the round trip to BB's server, and over VNC with the setting off (056)", async () => {
   const undo = withVideo();
   try {
-    // Quick: VNC, after the viewer timed its round trips.
-    const quick = server([desktopBox()], { video: true });
-    const first = desktopTab(quick.handlers);
-    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
-    const pings = () => first.inspection.rpcCalls.filter((call) => call.method === "ping").length;
-    expect(pings()).toBe(3);
-    cleanup();
-    dropAllKept();
-    forgetStreams();
-    forgetLive();
-    novnc.FakeRfb.made = [];
-
-    // The setting off: VNC, with no round trips timed.
+    // The setting off: VNC.
     const off = server([desktopBox()]);
     desktopTab(off.handlers);
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
-    expect(pings()).toBe(3);
     cleanup();
     dropAllKept();
     forgetStreams();
@@ -2014,11 +2000,12 @@ test("with the setting on, a desktop shows as video when the round trip to BB's 
     novnc.FakeRfb.made = [];
     FakeSocket.made = [];
 
-    // Slow: video, through the relay.
-    const slow = server([desktopBox()], { video: true, pingMs: 12 });
-    const slot = desktopTab(slow.handlers);
+    // On: video, through the relay, with no round trips timed, however quick BB's server answers.
+    const on = server([desktopBox()], { video: true });
+    const slot = desktopTab(on.handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
     expect(novnc.FakeRfb.made).toHaveLength(0);
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "ping")).toEqual([]);
     const socket = videoSocket();
     const url = new URL(socket.url);
     expect([url.pathname, url.searchParams.get("box")]).toEqual([DESKTOP_PATH, "box_2"]);
@@ -2053,15 +2040,15 @@ test("with the setting on, a desktop shows as video when the round trip to BB's 
     act(() => void socket.onmessage?.({ data: `clipboard,${btoa("from the box")}` }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("from the box"));
 
-    // The menu's "Show as video", ticked, turns it off: VNC, which the tab keeps for this box only.
-    const item = within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as video" });
-    expect(item.getAttribute("aria-checked")).toBe("true");
+    // The menu's "Show as VNC", unticked while video shows, turns it to VNC, which the tab keeps for this box only.
+    const item = within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" });
+    expect(item.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(item);
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
     expect(window.sessionStorage.getItem(streamChoiceKey("box_2"))).toBe("rfb");
     expect(window.localStorage.length).toBe(0);
     expect(socket.readyState).toBe(3);
-    expect(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as video" }).getAttribute("aria-checked")).toBe("false");
+    expect(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" }).getAttribute("aria-checked")).toBe("true");
   } finally {
     undo();
   }

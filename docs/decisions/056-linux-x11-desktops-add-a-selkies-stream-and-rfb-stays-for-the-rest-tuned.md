@@ -314,3 +314,40 @@ with Sway nested in Selkies' compositor, checking Cua, resize and CPU.
 
 Later: Selkies on Wayland with Sway nested; JPEG in the Tart holder; a
 better Windows stream.
+
+## Amended, 10 October 2026: video for every viewer
+
+With video on in bb-box's settings, a Linux X11 desktop drawn by the CPU
+now shows as video to every viewer, whatever its round trip to BB's server.
+The rule that showed VNC under a 10 ms round trip is dropped. The viewer's
+menu keeps a way back: **Show as VNC**, which the tab remembers for that
+box. Video that cannot start falls back to VNC, as before. Video stays a
+setting, off by default for new installs.
+
+The operator found video better than VNC, and the numbers agree. Both were
+measured through BB's server on the same host: a viewer in headless Chrome
+on a second box, with the panel's own video client, and noVNC at the
+panel's quality 2. The viewer dragged a 1354x814 window by its title bar,
+scrolled a terminal with the wheel, and pressed a key that a square on the
+desktop shows. Two runs each:
+
+| | VNC | Video |
+| --- | --- | --- |
+| Drag: frames a second | 56 to 59 | 60 to 62 |
+| Drag: window positions shown a second | 46 to 48 | 49 to 51 |
+| Drag: lag behind the pointer, median | 179 to 244 ms | 19 to 23 ms |
+| Drag: lag, 95th percentile | 1382 to 1391 ms | 239 to 499 ms |
+| Drag: lag, worst | 1549 to 1572 ms | 504 to 919 ms |
+| Scroll: frames a second | 78 to 87 | 62 |
+| Key-to-screen while scrolling, median | 15 ms | 19 to 20 ms |
+| Key-to-screen idle, median | 10 ms | 10 to 13 ms |
+| Idle: frames sent a second | 0 | 60 |
+| Idle: Selkies' CPU | none | 18% of a core |
+
+Video drags with about a twentieth of VNC's median lag, and answers keys
+about as quickly, so the round trip no longer decides. Both streams' worst
+lags come from BB's server's event loop standing still, not from the box
+(request 25 in [What bb-box asks of BB](../bb-requests.md)). Tuning
+Selkies did not help: at 30 fps the drag was no better, and with its
+streaming mode off, which costs nothing idle, drags lagged as badly as VNC.
+

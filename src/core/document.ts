@@ -96,9 +96,9 @@ export interface GeneralSettings {
   /** Files for every box (#455): paths under the box user's home, whose contents are secrets. */
   readonly files?: readonly BoxFileSetting[];
   /**
-   * Whether a viewer of a Linux X11 desktop on the CPU may show it as video,
-   * through Selkies (056): when its round trip to BB's server is slow, or
-   * when the viewer chose it. Off while it is tried.
+   * Whether viewers of a Linux X11 desktop on the CPU show it as video,
+   * through Selkies (056), unless one chose VNC in its menu. Off while it is
+   * tried.
    */
   readonly video?: boolean;
 }

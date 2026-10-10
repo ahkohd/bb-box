@@ -234,7 +234,7 @@ export function SettingsSection() {
         </GeneralRow>
         <GeneralRow
           label="Linux desktops as video (trial)"
-          description="A trial of video for X11 desktops, smoother than VNC on a slow connection. A browser that is not on BB's network gets it. Off unless you are trying it."
+          description="A trial of video for X11 desktops: drags follow closely, and it stays smooth on a slow connection. Every viewer gets it, with Show as VNC in its menu to go back. Off unless you are trying it."
         >
           <Switch aria-label="Linux desktops as video (trial)" checked={general.video} disabled={busy === "general"} onCheckedChange={(video) => void applyNow("general", withGeneral(document, { video: video === state.defaults.general.video ? undefined : video }))} />
         </GeneralRow>

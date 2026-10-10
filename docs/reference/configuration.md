@@ -23,7 +23,7 @@ bb-box's configuration is one document (029): `bb box config show --json` prints
 | `enrol` | `boolean` | `true` | Whether boxes join BB as machines, so threads and terminals can use them with the thread's credentials. |
 | `defaultKind` | `string` | `"linux"` | The kind a thread gets when it asks for none. |
 | `files` | `readonly BoxFileSetting[]` |  | Files for every box (#455): paths under the box user's home, whose contents are secrets. |
-| `video` | `boolean` | `false` | Whether a viewer of a Linux X11 desktop on the CPU may show it as video, through Selkies (056): when its round trip to BB's server is slow, or when the viewer chose it. Off while it is tried. |
+| `video` | `boolean` | `false` | Whether viewers of a Linux X11 desktop on the CPU show it as video, through Selkies (056), unless one chose VNC in its menu. Off while it is tried. |
 
 ## kinds
 
