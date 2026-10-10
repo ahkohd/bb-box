@@ -576,6 +576,11 @@ export class ProxmoxQemuBackend implements Backend {
     await step("clock", () => this.#setClock(vmid, signal));
   }
 
+  /** A stop hibernates the VM to disk, which frees its memory, and a start resumes it. */
+  keepsSession(): boolean {
+    return true;
+  }
+
   /** Hibernates the VM, so a start resumes Windows' session as it was, with its apps open (039). */
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
     const vmid = this.#vmid(guest);

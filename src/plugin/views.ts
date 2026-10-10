@@ -4,7 +4,7 @@
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases, kindInfo } from "../backends/kinds.ts";
-import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GuestOs, Windowing } from "../backends/types.ts";
+import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GpuRoom, GuestOs, Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
@@ -186,6 +186,8 @@ export interface OfferView {
   readonly docker: boolean;
   /** The OS of the machine the boxes run on, for "Runs on"; null while the backend does not know it yet, which the form treats as "could be any". */
   readonly hostOs: GuestOs | null;
+  /** A GPU desktop's GPUs as the backend last read them (#603); null when it reads none. */
+  readonly gpuRoom: GpuRoom | null;
 }
 
 /** A kind's spare boxes (032): how many it keeps, and how many are ready or being made. */
@@ -193,6 +195,18 @@ export interface SparesView {
   readonly target: number;
   readonly ready: number;
   readonly making: number;
+}
+
+/** The GPUs of each GPU desktop kind's offers, as their backends last read them (#603), keyed "<kind>|<backend>". */
+export async function gpuRooms(offered: readonly OfferedKind[]): Promise<Record<string, GpuRoom>> {
+  const rooms: Record<string, GpuRoom> = {};
+  await Promise.all(
+    offered.map(async ({ kind, backend }) => {
+      const room = kind.capabilities.gpu ? await backend.gpuRoom?.(kind.id).catch(() => null) : null;
+      if (room?.readings.length) rooms[`${kind.id}|${backend.id}`] = room;
+    }),
+  );
+  return rooms;
 }
 
 export function kindViews(
@@ -206,6 +220,8 @@ export function kindViews(
   readyByBackend: Readonly<Record<string, number>> = {},
   /** The driver's label for a backend ID, as settings names it; the registry's, which knows the drivers in use. */
   labelOf: (backendId: string) => string = driverLabel,
+  /** GPU desktops' GPUs as last read, keyed "<kind>|<backend>" (`gpuRooms`). */
+  gpus: Readonly<Record<string, GpuRoom>> = {},
 ): KindView[] {
   const views = new Map<string, KindView>();
   for (const { kind, backend } of offered) {
@@ -231,6 +247,7 @@ export function kindViews(
       typicalReadyMs: typical[key] ?? null,
       docker,
       hostOs: backend.hostOs ?? null,
+      gpuRoom: gpus[key] ?? null,
     };
     const computerUse = kind.capabilities.computerUse !== null;
     if (existing) {

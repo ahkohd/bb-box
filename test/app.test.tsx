@@ -10,18 +10,21 @@ import type { ImageOptionView } from "../src/plugin/views.ts";
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
+import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
-import { forgetLive, isArm64Badge, lacksDocker } from "../src/app/common.tsx";
+import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
-import { SelkiesSession } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, SelkiesSession } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
-import { choiceOf, displayChoices, formFilterOf, gpuChoices, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
+import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
+import { backendName } from "../src/app/settings-backends.tsx";
 import { limitWords, makesWords, roomWords, runsOnWords, statusWords, usuallyWords } from "../src/app/provider-profile.tsx";
 import { providerKeys, providerName } from "../src/core/provider-name.ts";
 type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" };
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf } from "../src/app/status.ts";
+import { choices, NO_FILTERS, shown, stateGroup } from "../src/app/boxes-filter.ts";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
@@ -324,6 +327,7 @@ function kindView(id: string, label: string, description: string, cores: number,
         typicalReadyMs: desktop ? 3100 : 2200,
         docker: true,
         hostOs: "linux",
+        gpuRoom: null,
       },
     ],
     computerUse: desktop,
@@ -387,7 +391,7 @@ const POOLED: KindView = {
   ...KINDS[0]!,
   offers: [
     KINDS[0]!.offers[0]!,
-    { backend: "ssh-pool", name: "SSH host pool", type: "ssh-pool", label: "SSH host pool", hosts: [], form: "Physical", ready: 0, free: 1, admin: false, resizable: null, typicalReadyMs: null, docker: true, hostOs: "linux" },
+    { backend: "ssh-pool", name: "SSH host pool", type: "ssh-pool", label: "SSH host pool", hosts: [], form: "Physical", ready: 0, free: 1, admin: false, resizable: null, typicalReadyMs: null, docker: true, hostOs: "linux", gpuRoom: null },
   ],
   admin: null,
   forms: ["LXC", "Physical"],
@@ -669,7 +673,43 @@ test("the app registers the Boxes panel, a desktop tab, the Boxes page and the B
   expect(declared).toContain("box");
 });
 
-test("the status line says the state, the timings, BB enrolment and the display", () => {
+test("a row keeps its name and kind on one line, and its status on one, dropping whole items from the end, with the whole line in a tooltip when it does", async () => {
+  const slot = panel(server([desktopBox({ control: { owner: "human", holder: "viewer-9" } })]).handlers);
+  await slot.findByText("bold-heron");
+  // The first line does not wrap; the name gives way first.
+  const name = slot.getByText("bold-heron");
+  expect(name.className).toContain("truncate");
+  expect(name.parentElement!.className).not.toContain("flex-wrap");
+  // The second is one line high: the state, what to act on, then the rest; what does not fit drops whole from the end.
+  const line = slot.getByText("Ready in 2.1 s").closest<HTMLElement>("[data-status-line]")!;
+  expect(line.className).toContain("overflow-hidden");
+  expect(line.className).toContain("h-[1.375em]");
+  expect(line.textContent).toBe("Ready in 2.1 s·Another viewer has control·BB machine in 5.3 s·2 cores · 4 GiB");
+  // A line that shows all of it has no tooltip on hover; one that lost an item shows the whole of it.
+  fireEvent.pointerMove(line);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  fireEvent.pointerLeave(line);
+  Object.defineProperty(line, "scrollHeight", { configurable: true, value: 33 });
+  Object.defineProperty(line, "clientHeight", { configurable: true, value: 16 });
+  fireEvent.pointerMove(line);
+  expect((await screen.findByRole("tooltip")).textContent).toBe("Ready in 2.1 s · Another viewer has control · BB machine in 5.3 s · 2 cores · 4 GiB");
+});
+
+test("a list of items separated by dots never starts a line with a dot: each item's dot sits before it, and the one that starts a line is clipped", () => {
+  const { container } = render(<Meta items={["Ready in 2.1 s", null, "Threads: Shopping bot", false, "2 more"]} />);
+  const clip = container.firstElementChild as HTMLElement;
+  expect(clip.className).toContain("overflow-hidden");
+  const list = clip.firstElementChild as HTMLElement;
+  // The list sits one dot's width to the left, in the clip, so the dot of whichever item starts a line is out of sight.
+  expect(list.className).toContain("-ml-[1.25em]");
+  expect(list.className).toContain("flex-wrap");
+  const items = Array.from(list.children);
+  expect(items.map((item) => item.textContent)).toEqual(["·Ready in 2.1 s", "·Threads: Shopping bot", "·2 more"]);
+  for (const item of items) expect(item.firstElementChild!.className).toContain("w-[1.25em]");
+});
+
+test("the status line says the state, then what to act on, then BB enrolment and the size", () => {
   const now = Date.now();
   expect(statusOf(box(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
   expect(statusOf(box({ enrol: { state: "enrolling", hostId: null, error: null } }), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Joining BB…", "2 cores · 4 GiB"]);
@@ -680,10 +720,11 @@ test("the status line says the state, the timings, BB enrolment and the display"
   expect(statusOf(box({ state: "failed", error: "No GPU is left." }), now).items).toEqual([{ text: "Failed", tone: "danger" }]);
   expect(statusOf(box({ state: "gone" }), now).items.map((item) => item.text)).toEqual(["Gone", "deleted outside bb-box"]);
   expect(statusOf(desktopBox(), now).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
-  expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items.at(-1)).toEqual({ text: "Display on the CPU", tone: "warn" });
+  // What to act on comes straight after the state, so a narrow row, which cuts the line from its end, keeps it.
+  expect(statusOf(desktopBox({ facts: [{ label: "Display mode", value: "cpu" }] }), now).items[1]).toEqual({ text: "Display on the CPU", tone: "warn" });
   const held = desktopBox({ control: { owner: "human", holder: "viewer-1" } });
-  expect(statusOf(held, now, new Set(["viewer-1"])).items.at(-1)).toEqual({ text: "You have control", tone: "fg" });
-  expect(statusOf(held, now, new Set()).items.at(-1)).toEqual({ text: "Another viewer has control", tone: "fg" });
+  expect(statusOf(held, now, new Set(["viewer-1"])).items[1]).toEqual({ text: "You have control", tone: "fg" });
+  expect(statusOf(held, now, new Set()).items.map((item) => item.text)).toEqual(["Ready in 2.1 s", "Another viewer has control", "BB machine in 5.3 s", "2 cores · 4 GiB"]);
 });
 
 test("the panel lists the thread's boxes as rows, opens a row's details, and opens a desktop", async () => {
@@ -719,7 +760,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   const menu = await openMenu(slot.getByRole("button", { name: "bold-heron actions" }));
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
     "Open desktop",
-    "Open desktop in a browser tab",
+    "Open in browser",
     "Open terminal",
     "Copy address",
     "New thread on this box…",
@@ -727,7 +768,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
     "Check now",
     "Release…",
   ]);
-  fireEvent.click(within(menu).getByRole("menuitem", { name: "Open desktop in a browser tab" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Open in browser" }));
   // A full URL: BB's openUrl opens only http(s) URLs, by the person's browser preference, and returns false for a path.
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: new URL("/plugins/bb-box/desktop/thr_panel/box_2", window.location.origin).href });
 });
@@ -808,6 +849,36 @@ test("a desktop whose system has a GPU desktop and a CPU one takes the GPU from 
   await choose("GPU", "1 GPU");
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(["acquire linux-desktop"]));
+});
+
+test("with 1 GPU chosen, the form says when no GPU has room, and only then (#603)", async () => {
+  const now = Date.now();
+  const reading = (id: string, freeMiB: number) => ({ id, freeMiB, totalMiB: 8192, at: now, neededMiB: 384, source: "desktop" as const });
+  const full = { readings: [reading("gpu-a", 103)], fullUntil: now + 4 * 60_000 - 1_000 };
+  const withRoom = (gpuRoom: GpuRoom) => KINDS.map((kind) => (kind.id === "linux-desktop" ? { ...kind, offers: kind.offers.map((offer) => ({ ...offer, gpuRoom })) } : kind));
+  const cpu: KindView = { ...kindView("linux-desktop-cpu", "Linux desktop", "A desktop on the CPU.", 4, true), gpu: false };
+  const { handlers } = server([], { kinds: [...withRoom(full), cpu] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  await screen.findByRole("radiogroup", { name: "Type" });
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  const note = "No GPU has room now: 103 MiB free, and a desktop needs 384 MiB. Choose None, or try again in 4 minutes.";
+  expect(screen.queryByText(note)).toBeNull();
+  await choose("GPU", "1 GPU");
+  expect(screen.getByText(note).tagName).toBe("P");
+  expect(screen.getByRole("combobox", { name: "GPU" }).textContent).toBe("1 GPU");
+  await choose("GPU", "None");
+  expect(screen.queryByText(note)).toBeNull();
+
+  // Several GPUs give the most free; room on one, a refusal that has ended, or no reading say nothing.
+  expect(gpuFullNote([{ ...KINDS[1]!.offers[0]!, gpuRoom: { readings: [reading("gpu-a", 103), reading("gpu-b", 21)], fullUntil: now + 60_000 } }], now)).toBe(
+    "No GPU has room now: at most 103 MiB free, and a desktop needs 384 MiB. Choose None, or try again in 1 minute.",
+  );
+  expect(gpuFullNote([{ ...KINDS[1]!.offers[0]!, gpuRoom: { readings: [reading("gpu-a", 6100)], fullUntil: null } }], now)).toBeNull();
+  expect(gpuFullNote([{ ...KINDS[1]!.offers[0]!, gpuRoom: full }], full.fullUntil)).toBeNull();
+  expect(gpuFullNote([{ ...KINDS[1]!.offers[0]!, gpuRoom: null }], now)).toBeNull();
+  expect(gpuFullNote([], now)).toBeNull();
 });
 
 test("one Escape closes the form whatever was used last: a card, a menu, a field", async () => {
@@ -2031,6 +2102,169 @@ test("a video session stops its video while hidden, and starts again from a key 
   }
 });
 
+/** Bytes as Selkies sends them in a clipboard message: base64. */
+function b64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/** An image's bytes, as a test stands in for a PNG: any bytes, in a Blob of its type. */
+function fakePng(size: number): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from({ length: size }, (_, index) => index % 251);
+}
+
+test("the video client takes the box's images and long text from Selkies, whole or in parts, and the text beside copied markup (#609)", async () => {
+  const undo = withVideo();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const texts: string[] = [];
+    const images: Blob[] = [];
+    session.onClipboard = (text) => texts.push(text);
+    session.onClipboardImage = (image) => images.push(image);
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    const say = (data: string) => socket.onmessage?.({ data });
+    // An image in one message.
+    const small = fakePng(100);
+    say(`clipboard_binary,image/png,${b64(small)}`);
+    // An image in parts, as Selkies sends anything over a chunk.
+    const large = fakePng(40_000);
+    say(`clipboard_start,image/png,${large.byteLength}`);
+    for (let offset = 0; offset < large.byteLength; offset += 16_383) say(`clipboard_data,${b64(large.subarray(offset, offset + 16_383))}`);
+    say("clipboard_finish");
+    // Long text in parts, and markup with its text beside it.
+    const long = "x".repeat(20_000);
+    say(`clipboard_start,text/plain,${long.length}`);
+    say(`clipboard_data,${btoa(long.slice(0, 16_383))}`);
+    say(`clipboard_data,${btoa(long.slice(16_383))}`);
+    say("clipboard_finish");
+    say(`clipboard_binary,application/x-selkies-clipboard-flavours,${btoa(JSON.stringify({ "text/html": "<b>bold</b>", "text/plain": "bold" }))}`);
+    // Parts that do not add up are dropped.
+    say("clipboard_start,image/png,10");
+    say(`clipboard_data,${b64(fakePng(4))}`);
+    say("clipboard_finish");
+    expect(texts).toEqual([long, "bold"]);
+    expect(images.map((image) => image.type)).toEqual(["image/png", "image/png"]);
+    expect(new Uint8Array(await images[0]!.arrayBuffer())).toEqual(small);
+    expect(new Uint8Array(await images[1]!.arrayBuffer())).toEqual(large);
+    session.dispose();
+  } finally {
+    undo();
+  }
+});
+
+test("the video client pastes an image as Selkies' cb, or cbs, cbd and cbe when it is over a chunk, then the box's chord; Cmd+V takes an image too (#609)", async () => {
+  const undo = withVideo();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const pasted: (string | Blob | null)[] = [];
+    const failed: unknown[] = [];
+    session.onPaste = (what) => pasted.push(what);
+    session.onPasteFailed = (error) => failed.push(error);
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    socket.onmessage?.({ data: videoFrame(1, true) });
+    session.setControl(true, true);
+    const clipboardSent = () => socket.sent.filter((sent): sent is string => typeof sent === "string" && /^c[wb][sde]?,/.test(sent));
+
+    const small = new Blob([fakePng(100)], { type: "image/png" });
+    await session.pasteImage(small);
+    expect(clipboardSent()).toEqual([`cb,image/png,${b64(fakePng(100))}`]);
+    await waitFor(() => expect(socket.sent).toContain("ku,118"));
+    expect(pasted).toEqual([small]);
+
+    socket.sent.length = 0;
+    const bytes = fakePng(40_000);
+    await session.pasteImage(new Blob([bytes], { type: "image/png" }));
+    const [start, ...rest] = clipboardSent();
+    const id = start!.split(",")[1]!;
+    expect(start).toBe(`cbs,${id},image/png,40000`);
+    expect(rest).toEqual([
+      `cbd,${id},${b64(bytes.subarray(0, 16_383))}`,
+      `cbd,${id},${b64(bytes.subarray(16_383, 32_766))}`,
+      `cbd,${id},${b64(bytes.subarray(32_766))}`,
+      `cbe,${id}`,
+    ]);
+
+    // Too big for the desktop: nothing goes, and the viewer says why.
+    socket.sent.length = 0;
+    const huge = { size: CLIPBOARD_MAX_BYTES + 1, type: "image/png", arrayBuffer: async () => new ArrayBuffer(0) } as unknown as Blob;
+    await session.pasteImage(huge);
+    expect(clipboardSent()).toEqual([]);
+    expect(String(failed[0])).toMatch(/more than the 64 MiB the desktop takes/);
+
+    // Cmd+V, or Ctrl+V, with an image on this computer's clipboard.
+    socket.sent.length = 0;
+    const image = new File([fakePng(10)], "copied.png", { type: "image/png" });
+    session.element.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true, cancelable: true }));
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", { value: { files: [image], getData: () => "" } });
+    document.dispatchEvent(paste);
+    await waitFor(() => expect(clipboardSent()).toEqual([`cb,image/png,${b64(fakePng(10))}`]));
+    session.dispose();
+  } finally {
+    undo();
+  }
+});
+
+test("with video, an image the box copies reaches this computer's clipboard, and the menu's Copy and Paste carry images, with their notes (#609)", async () => {
+  const undo = withVideo();
+  const written: unknown[] = [];
+  vi.stubGlobal(
+    "ClipboardItem",
+    class {
+      readonly items: Record<string, Blob | Promise<Blob>>;
+      constructor(items: Record<string, Blob | Promise<Blob>>) {
+        this.items = items;
+      }
+      get types() {
+        return Object.keys(this.items);
+      }
+      async getType(type: string) {
+        return this.items[type]!;
+      }
+    },
+  );
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: videoFrame(1, true) }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const fromComputer = new Blob([fakePng(30)], { type: "image/png" });
+    const write = vi.fn(async (items: { items: Record<string, Blob | Promise<Blob>> }[]) => void written.push(await items[0]!.items["image/png"]));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { read: async () => [{ types: ["text/plain", "image/png"], getType: async () => fromComputer }], readText: async () => "", writeText: vi.fn(), write },
+      configurable: true,
+    });
+
+    // The box copies an image: it goes to this computer's clipboard with no note.
+    const copied = fakePng(50);
+    act(() => void socket.onmessage?.({ data: `clipboard_binary,image/png,${b64(copied)}` }));
+    await waitFor(() => expect(written).toHaveLength(1));
+    expect(new Uint8Array(await (written[0] as Blob).arrayBuffer())).toEqual(copied);
+    expect(slot.queryByText("Copied")).toBeNull();
+
+    // The menu's Copy writes it again, and says so.
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Copy to this computer" }));
+    expect(await slot.findByText("Copied")).toBeTruthy();
+    expect(written).toHaveLength(2);
+
+    // The menu's Paste takes this computer's image before its text, and says so.
+    socket.sent.length = 0;
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Paste from this computer" }));
+    expect(await slot.findByText("Pasted")).toBeTruthy();
+    expect(socket.sent).toContain(`cb,image/png,${b64(fakePng(30))}`);
+  } finally {
+    undo();
+  }
+});
+
 test("the tab the agent took control back from says so, and takes it again; another tab does not (038)", async () => {
   const { handlers } = server([desktopBox()]);
   // No RPC makes the agent's take: the server shows it in the box's control.
@@ -2188,7 +2422,7 @@ test("the Desktop tab opened bare opens the thread's one desktop, lists several,
   expect(none.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "boxes", title: "Box" } }]);
 });
 
-test("the Boxes page lists every box with its thread, servers as well as desktops, and shows one desktop for a browser tab", async () => {
+test("the Boxes page lists every box under its thread, servers as well as desktops, and shows one desktop for a browser tab", async () => {
   const { handlers } = server([box(), desktopBox()]);
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
@@ -2196,12 +2430,19 @@ test("the Boxes page lists every box with its thread, servers as well as desktop
   expect(list.getByText("calm-otter")).toBeTruthy(); // a server box, not only desktops
   expect(list.getByText("Desktop")).toBeTruthy();
   expect(list.getByText("The agent has control")).toBeTruthy();
-  await waitFor(() => expect(list.getAllByText("UI thread")).toHaveLength(2));
+  // With no machines of yours, the page opens on Threads: one card for the thread, headed by its title, which opens it.
+  expect(list.getByRole("tab", { name: "Threads 1" }).getAttribute("aria-selected")).toBe("true");
+  await waitFor(() => expect(list.getAllByText("UI thread")).toHaveLength(1));
+  const card = list.getByRole("region", { name: "UI thread" });
+  expect(within(card).getByText("calm-otter")).toBeTruthy();
+  fireEvent.click(within(card).getByRole("button", { name: "UI thread" }));
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: THREAD });
 
   fireEvent.click(list.getByRole("button", { name: "Open desktop" }));
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_2" } });
+  // The rows sort by name, so bold-heron's terminal comes first.
   fireEvent.click(list.getAllByRole("button", { name: "Open terminal" })[0]!);
-  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_1/terminal" } });
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "thr_panel/box_2/terminal" } });
   fireEvent.click(list.getAllByRole("button", { name: "Open thread" })[0]!);
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: THREAD });
   cleanup();
@@ -2397,27 +2638,28 @@ test("Add machine takes a kind, a size and a name it checks as you type, and the
   expect(slot.getByText("Starting")).toBeTruthy();
 });
 
-test("the Boxes page's plus adds one of your machines with settings' Add machine form, and the new machine shows under Machines", async () => {
+test("the Boxes page's New box adds one of your machines with settings' Add machine form, and the new machine shows under Machines", async () => {
   const { handlers, changes } = server([box()], { machines: [machine()] });
   // The page lists your machines from allBoxes; here they come from the harness's machines, so a machine added shows up.
   const yours = () => (handlers["machines.list"] as (input: null) => { machines: MachineEntry[] })(null).machines.map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" as const }));
   const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, allBoxes: () => [...yours(), ...(handlers.allBoxes as () => BoxEntryLike[])()] };
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
-  expect(await list.findByText("Machines")).toBeTruthy();
+  expect(await list.findByText("build-1")).toBeTruthy();
   expect(list.queryByText(/^\d+ box(es)?$/)).toBeNull();
   expect(list.queryByText("BB machine")).toBeNull();
-  // The plus at the top right, as the Box panel's, named Add machine (the operator, 4 October 2026): the same form, machine mode, with the Name step.
-  fireEvent.click(list.getByRole("button", { name: "Add machine" }));
+  // New box at the top right, as Automations' New automation: settings' Add machine form, machine mode, with the Name step (the operator, 4 October 2026).
+  fireEvent.click(list.getByRole("button", { name: "New box" }));
   expect(await screen.findByText("Of the kinds whose boxes join BB.")).toBeTruthy();
   const name = screen.getByRole("textbox", { name: "Name" });
   fireEvent.change(name, { target: { value: "build-2" } });
-  expect(submitButton().textContent).toBe("Add machine");
+  expect(submitButton().textContent).toBe("Create box");
   fireEvent.click(submitButton());
   await waitFor(() => expect(changes).toEqual(["machines.add linux build-2"]));
-  // It shows under Machines, starting.
+  // It shows under Machines, starting; the threads' boxes are on the other tab.
   expect(await list.findByText("build-2")).toBeTruthy();
-  expect(list.getAllByText(/build-1|build-2|calm-otter/).map((node) => node.textContent)).toEqual(["build-1", "build-2", "calm-otter"]);
+  expect(list.getAllByText(/build-1|build-2|calm-otter/).map((node) => node.textContent)).toEqual(["build-1", "build-2"]);
+  expect(list.getByRole("tab", { name: "Machines 2" }).getAttribute("aria-selected")).toBe("true");
 });
 
 /** The Boxes page, with thread titles from the SDK. */
@@ -2430,11 +2672,11 @@ test("the Boxes page manages a thread's boxes with the Box panel's menu: Stop, S
   const { handlers, changes } = server([box(), box({ id: "box_6", name: "swift-fox", state: "stopped" })]);
   const list = boxesPage(handlers);
   expect(await list.findByText("calm-otter")).toBeTruthy();
-  // The panel's menu, without "New thread on this box…", whose "this thread" names none here; the Open thread arrow stays.
+  // The panel's menu, without "New thread on this box…", whose "this thread" names none here; the Open thread arrow heads the thread's card, once.
   let menu = await openMenu(list.getByRole("button", { name: "calm-otter actions" }));
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Copy address", "Stop", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
-  expect(list.getAllByRole("button", { name: "Open thread" })).toHaveLength(2);
+  expect(list.getAllByRole("button", { name: "Open thread" })).toHaveLength(1);
   // A stopped box offers Start.
   menu = await openMenu(list.getByRole("button", { name: "swift-fox actions" }));
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Start" }));
@@ -2471,12 +2713,20 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   const list = boxesPage(handlers);
   expect(await list.findByText("Machines")).toBeTruthy();
   expect(list.getByText(/Working: Fix the login form/)).toBeTruthy();
+  // Every row has the same padding above and below, in Automations' card (px-4 py-1, rows py-3): none loses it as first or last.
+  const rows = Array.from(list.container.querySelectorAll("[data-resource-row]"));
+  expect(rows).toHaveLength(2);
+  for (const row of rows) {
+    expect(row.className).toContain("py-3");
+    expect(row.className).not.toMatch(/first:pt-0|last:pb-0/);
+  }
+  expect(rows[0]!.parentElement!.parentElement!.className).toContain("px-4 py-1");
   // A machine's desktop opens on the page, with the way back to the page, not settings.
   fireEvent.click(list.getAllByRole("button", { name: "Open desktop" })[0]!);
   expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "operator/box_m1" } });
   // Remove asks with settings' words, then again, since a thread works there.
   let menu = await openMenu(list.getByRole("button", { name: "build-1 actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toContain("Open desktop in a browser tab");
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toContain("Open in browser");
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove…" }));
   let dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Remove build-1?")).toBeTruthy();
@@ -2503,27 +2753,93 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(changes.at(-1)).toBe("machines.remove box_m2"));
 });
 
-test("the Boxes page's top row has the settings gear, then the plus at the far right, as a pair; the gear is a link to Settings > BB Box", async () => {
+test("the Boxes page's tab row has the settings gear, then New box at the far right, a plain button where Automations has New automation; the gear is a link to Settings > BB Box", async () => {
   const [page] = app.navPanels;
   expect(page!.headerContent).toBeUndefined();
   const list = boxesPage(server([box()]).handlers);
   await list.findByText("calm-otter");
+  expect(list.getByText("Computers for your threads, and machines of your own.")).toBeTruthy();
   const gear = list.getByRole("link", { name: "BB Box settings" });
   expect(gear.getAttribute("href")).toBe("/settings/plugins/bb-box");
   expect(gear.textContent).toBe("");
-  // One row: the gear first, the plus last, BB's gap between icon buttons in a group.
-  const plus = list.getByRole("button", { name: "Add machine" });
-  const row = plus.closest("div.flex")!;
-  expect(row.contains(gear)).toBe(true);
-  expect(gear.compareDocumentPosition(plus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(row.className).toContain("justify-end");
-  expect(row.className).toContain("gap-1");
+  // A pair at the tab row's end: the gear first, then New box, a plain button with no menu, as BB's new-thread screen offers New box.
+  const newBox = list.getByRole("button", { name: "New box" });
+  const pair = gear.closest("div.flex")!;
+  expect(pair.contains(newBox)).toBe(true);
+  expect(gear.compareDocumentPosition(newBox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(list.queryByRole("button", { name: "New box options" })).toBeNull();
+  const row = pair.parentElement!;
+  expect(row.contains(list.getByRole("tablist"))).toBe(true);
+  expect(row.className).toContain("justify-between");
   // Before the lists, not under them.
   expect(gear.compareDocumentPosition(list.getByRole("button", { name: "calm-otter: details" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 
 
+
+test("the Boxes page's search matches a box's name, kind, provider and thread; its filters tick kinds, providers and states; its sort orders by name or age", () => {
+  const hour = 3_600_000;
+  const rows = [
+    { box: box({ id: "box_1", name: "calm-otter", createdAt: 3 * hour }), words: ["Add dark mode"] },
+    { box: desktopBox({ id: "box_2", name: "bold-heron", backendLabel: "Proxmox LXC on pve", createdAt: 1 * hour }), words: ["Add dark mode"] },
+    { box: box({ id: "box_3", name: "still-pond", state: "stopped", createdAt: 2 * hour }), words: ["Docs pass"] },
+    { box: box({ id: "box_4", name: "quiet-fern", state: "acquiring", createdAt: 4 * hour }), words: ["Docs pass"] },
+  ];
+  const names = (found: readonly { box: BoxView }[]) => found.map((row) => row.box.name);
+  const byName = { key: "name", ascending: true } as const;
+  // Every word typed must match, in any field, whatever its case.
+  expect(names(shown(rows, "", NO_FILTERS, byName))).toEqual(["bold-heron", "calm-otter", "quiet-fern", "still-pond"]);
+  expect(names(shown(rows, "docs", NO_FILTERS, byName))).toEqual(["quiet-fern", "still-pond"]);
+  expect(names(shown(rows, "PVE desktop", NO_FILTERS, byName))).toEqual(["bold-heron"]);
+  expect(names(shown(rows, "dark pond", NO_FILTERS, byName))).toEqual([]);
+  // A filter keeps what it ticks; ticks in one filter widen, filters together narrow.
+  expect(names(shown(rows, "", { ...NO_FILTERS, states: ["Stopped", "Starting"] }, byName))).toEqual(["quiet-fern", "still-pond"]);
+  expect(names(shown(rows, "", { ...NO_FILTERS, kinds: ["Linux"], states: ["Ready"] }, byName))).toEqual(["calm-otter"]);
+  expect(names(shown(rows, "", { ...NO_FILTERS, providers: ["Proxmox LXC on pve"] }, byName))).toEqual(["bold-heron"]);
+  // The sort: name either way, or age, oldest first when ascending.
+  expect(names(shown(rows, "", NO_FILTERS, { key: "name", ascending: false }))).toEqual(["still-pond", "quiet-fern", "calm-otter", "bold-heron"]);
+  expect(names(shown(rows, "", NO_FILTERS, { key: "created", ascending: true }))).toEqual(["bold-heron", "still-pond", "calm-otter", "quiet-fern"]);
+  // The filters offer what is listed, each once; the states in a fixed order.
+  expect(choices(rows.map((row) => row.box))).toEqual({ kinds: ["Linux", "Linux desktop"], providers: ["Fake host", "Proxmox LXC on pve"], states: ["Ready", "Starting", "Stopped"] });
+  expect([box({ state: "starting" }), box({ state: "stopping" }), box({ state: "releasing" }), box({ state: "gone" }), box({ state: "failed" })].map(stateGroup)).toEqual(["Starting", "Stopped", "Stopped", "Failed", "Failed"]);
+});
+
+test("on the Boxes page, the search narrows the list, says when nothing matches, and the filters and sort act on the rows", async () => {
+  const { handlers } = server([box(), desktopBox(), box({ id: "box_6", name: "swift-fox", state: "stopped", createdAt: Date.now() - 60 * 60_000 })]);
+  const list = boxesPage(handlers);
+  await list.findByText("calm-otter");
+  // An open menu hides the page from the accessibility tree, so the rows are read hidden or not.
+  const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
+  // Name, ascending, at first, as on the Automations page.
+  expect(rowNames()).toEqual(["bold-heron", "calm-otter", "swift-fox"]);
+  expect(list.getByRole("button", { name: "Sort: Name, ascending" })).toBeTruthy();
+  const search = list.getByRole("textbox", { name: "Search boxes" });
+  fireEvent.change(search, { target: { value: "fox" } });
+  expect(rowNames()).toEqual(["swift-fox"]);
+  fireEvent.change(search, { target: { value: "nothing like it" } });
+  expect(list.getByText("No boxes match.")).toBeTruthy();
+  fireEvent.click(list.getByRole("button", { name: "Clear search" }));
+  expect(rowNames()).toHaveLength(3);
+  // The tab counts stay totals.
+  expect(list.getByRole("tab", { name: "Threads 1" })).toBeTruthy();
+  // Filters: State, from the states listed; Kind too; Provider has one choice, so no group.
+  let menu = await openMenu(list.getByRole("button", { name: "Filters" }));
+  expect(within(menu).queryByText("Provider")).toBeNull();
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Stopped" }));
+  expect(rowNames()).toEqual(["swift-fox"]);
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Stopped" }));
+  fireEvent.keyDown(menu, { key: "Escape" });
+  expect(rowNames()).toHaveLength(3);
+  // Sort: Created, oldest first; the same again reverses it.
+  menu = await openMenu(list.getByRole("button", { name: "Sort: Name, ascending" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Created" }));
+  expect(rowNames()[0]).toBe("swift-fox");
+  menu = await openMenu(list.getByRole("button", { name: "Sort: Created, ascending" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Created" }));
+  expect(list.getByRole("button", { name: "Sort: Created, descending" })).toBeTruthy();
+  expect(rowNames().at(-1)).toBe("swift-fox");
+});
 
 test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss", async () => {
   const failure = "Stopping the box failed: the host did not answer.";
@@ -2544,18 +2860,33 @@ test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss
   await waitFor(() => expect(list.queryByRole("alert")).toBeNull());
 });
 
-test("the Boxes page lists your machines first, without Open thread, and shows a machine's terminal", async () => {
+test("the Boxes page has a Machines tab and a Threads tab with counts, opens on the tab chosen last, and shows a machine's terminal", async () => {
   const { handlers } = server([desktopBox()], { machines: [machine()] });
   const mine = { threadId: "operator", box: desktopBox({ id: "box_m1", name: "build-1" }), owner: "yours" as const };
   const withMine: PluginRpcTestHandlers<Contract> = { ...handlers, allBoxes: () => [...(handlers.allBoxes as () => BoxEntryLike[])(), mine] };
   const [page] = app.navPanels;
-  const list = renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
-  expect(await list.findByText("Machines")).toBeTruthy();
-  const rows = list.getAllByRole("button", { name: "Open desktop" });
-  expect(rows).toHaveLength(2);
+  const render = () => renderSlot(page!, { subPath: "" }, { rpc: withMine, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  // Your machines first, without Open thread.
+  let list = render();
+  expect(await list.findByText("build-1")).toBeTruthy();
+  expect(list.getAllByRole("tab").map((tab) => [tab.textContent, tab.getAttribute("aria-selected")])).toEqual([
+    ["Machines1", "true"],
+    ["Threads1", "false"],
+  ]);
+  expect(list.getAllByRole("button", { name: "Open desktop" })).toHaveLength(1);
+  expect(list.queryByRole("button", { name: "Open thread" })).toBeNull();
+  expect(list.queryByText("bold-heron")).toBeNull();
+  // The threads' boxes on the other tab.
+  fireEvent.click(list.getByRole("tab", { name: "Threads 1" }));
+  expect(await list.findByText("bold-heron")).toBeTruthy();
+  expect(list.queryByText("build-1")).toBeNull();
   expect(list.getAllByRole("button", { name: "Open thread" })).toHaveLength(1);
-  const names = list.getAllByText(/build-1|bold-heron/).map((node) => node.textContent);
-  expect(names[0]).toBe("build-1");
+  // The page opens again on the tab chosen last, so the way back from a desktop lands there.
+  cleanup();
+  list = render();
+  expect(await list.findByText("bold-heron")).toBeTruthy();
+  expect(list.getByRole("tab", { name: "Threads 1" }).getAttribute("aria-selected")).toBe("true");
+  cleanup();
 
   const terminal = renderSlot(page!, { subPath: "operator/box_m1/terminal/from-settings" }, { rpc: withMine, pluginId: "bb-box" });
   // Back to settings is a link to the app's settings page, for the same reason.
@@ -2579,7 +2910,7 @@ test("the panel lists the box this thread runs on first in the one list with a B
   expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
   expect(slot.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
   const menu = await openMenu(slot.getByRole("button", { name: "build-1 actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open desktop in a browser tab", "Open terminal", "Copy address", "Check now"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open in browser", "Open terminal", "Copy address", "Check now"]);
 
   cleanup();
   // Only the machine it runs on, no boxes of its own: the list, not the empty state.
@@ -2655,7 +2986,7 @@ test("the steps narrow each other: a system with no server snaps to Desktop, the
     enrol: false,
     computerUse: true,
     docker: false,
-    offers: [{ backend: "proxmox-qemu", name: "Proxmox QEMU on pve1", type: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve1"], form: "VM", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: 30000, docker: false, hostOs: "linux" }],
+    offers: [{ backend: "proxmox-qemu", name: "Proxmox QEMU on pve1", type: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve1"], form: "VM", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: 30000, docker: false, hostOs: "linux", gpuRoom: null }],
   };
   const { handlers, changes } = server([], { kinds: [POOLED, KINDS[1]!, windows] });
   const slot = panel(handlers);
@@ -2721,8 +3052,8 @@ test("Runs on keeps the providers on that machine, and one that does not know it
     forms: ["LXC", "VM", "Docker"],
     offers: [
       KINDS[0]!.offers[0]!,
-      { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos" },
-      { backend: "docker:host_1", name: "Docker", type: "docker", label: "Docker", hosts: [], form: "Docker", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: null, docker: true, hostOs: null },
+      { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos", gpuRoom: null },
+      { backend: "docker:host_1", name: "Docker", type: "docker", label: "Docker", hosts: [], form: "Docker", ready: 0, free: null, admin: true, resizable: true, typicalReadyMs: null, docker: true, hostOs: null, gpuRoom: null },
     ],
   };
   const { handlers, changes } = server([], { kinds: [mixed, KINDS[1]!] });
@@ -2757,7 +3088,7 @@ test("filters that leave no provider disable Create and say so", async () => {
     ...KINDS[0]!,
     admin: null,
     forms: ["LXC", "VM"],
-    offers: [KINDS[0]!.offers[0]!, { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos" }],
+    offers: [KINDS[0]!.offers[0]!, { backend: "tart", name: "Tart on mac-mini", type: "tart", label: "Tart", hosts: ["mac-mini"], form: "VM", ready: 0, free: null, admin: true, resizable: false, typicalReadyMs: 26000, docker: true, hostOs: "macos", gpuRoom: null }],
   };
   const { handlers, changes } = server([], { kinds: [pair, KINDS[1]!] });
   const slot = panel(handlers);
@@ -2890,6 +3221,12 @@ test("New box's new-thread inputs offer the Image group with the project's image
   await waitFor(() => expect(outside.at(-1)).toEqual({ kind: "linux", size: "small", image: "go-tools" }));
 });
 
+test("a second backend of a type shows the name in its ID, unless its label already says it (053)", () => {
+  expect(backendName("microsandbox:homestead", "microsandbox on homestead")).toBeNull();
+  expect(backendName("docker:attic", "Docker")).toBe("attic");
+  expect(backendName("microsandbox", "microsandbox on behemoth")).toBeNull();
+});
+
 test("the form's words: a provider's title, the systems' hosts, the nearest choice and the filters", () => {
   const linux = KINDS[0]!;
   const offer = linux.offers[0]!;
@@ -2899,7 +3236,12 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   // A Docker machine BB has not named yet is never shown by its ID (the operator's rule).
   expect(providerTitle({ ...offer, type: "docker", label: "Docker", hosts: [] })).toBe("an unnamed machine");
   expect(providerTitle({ ...offer, type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
-  const mac: KindView = { ...linux, id: "macos", os: "macos", arch: "arm64", offers: [{ ...offer, backend: "tart", type: "tart", label: "Tart", hosts: ["mac-mini"], hostOs: "macos" }] };
+  // Docker and microsandbox on one host: each says which it is; a host of its own needs no more (053).
+  const onBehemoth = { ...offer, backend: "docker", type: "docker", label: "Docker", hosts: ["behemoth"] };
+  const msb = { ...offer, backend: "microsandbox", type: "microsandbox", label: "microsandbox", hosts: ["behemoth"] };
+  const all = [offer, onBehemoth, msb];
+  expect([providerTitle(onBehemoth, all), providerTitle(msb, all), providerTitle(offer, all)]).toEqual(["behemoth (Docker)", "behemoth (microsandbox)", "pve"]);
+  const mac: KindView = { ...linux, id: "macos", os: "macos", arch: "arm64", offers: [{ ...offer, backend: "tart", type: "tart", label: "Tart", hosts: ["mac-mini"], hostOs: "macos", gpuRoom: null }] };
   const many: KindView = { ...linux, id: "linux-arm64", arch: "arm64", offers: [offer, { ...offer, backend: "b", hosts: ["pve2"] }, { ...offer, backend: "c", hosts: ["pve3"] }] };
   expect(systemsOf([mac, many, linux]).map((system) => [system.label, system.words])).toEqual([
     ["Linux", "3 providers"],
@@ -2923,7 +3265,7 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   expect(kindFor(both, { os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" })?.id).toBe("linux-desktop");
   // The filters: a Kind chip keeps its form; Runs on keeps the machine's OS and an offer that does not know it yet; Physical ignores Runs on.
   const pool = { ...offer, backend: "ssh-pool", type: "ssh-pool", form: "Physical" as const };
-  const docker = { ...offer, backend: "docker:1", type: "docker", form: "Docker" as const, hostOs: null };
+  const docker = { ...offer, backend: "docker:1", type: "docker", form: "Docker" as const, hostOs: null, gpuRoom: null };
   const tart = { ...offer, backend: "tart", type: "tart", form: "VM" as const, hostOs: "macos" as const };
   expect((["LXC", "Docker", "VM", "Physical"] as const).map((form) => formFilterOf({ ...offer, form }))).toEqual(["container", "container", "vm", "physical"]);
   expect(runsOnOptions([offer, pool, docker, tart])).toEqual(["macos", "linux"]);

@@ -45,6 +45,12 @@ const ICONS = {
   CircleCheck: '<circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
   AlertTriangle: '<path d="M12 3 2.5 20h19z"/><path d="M12 9v5M12 17h.01"/>',
   X: '<path d="M6 6l12 12M18 6 6 18"/>',
+  Search: '<path d="M17 17l4 4"/><circle cx="11" cy="11" r="8"/>',
+  FilterHorizontal: '<path d="M4 5h6M13 5h7M4 12h12M19 12h1M4 19h3M10 19h10M10 2v6M16 9v6M7 16v6"/>',
+  ArrowUpDown: '<path d="M7 4v16M17 19V4M10 7S7.8 4 7 4 4 7 4 7M20 17s-2.2 3-3 3-3-3-3-3"/>',
+  ArrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  ArrowDown: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+  MessageSquarePlus: '<path d="M21 12a9 9 0 0 1-13.5 7.8L3 21l1.2-4.5A9 9 0 1 1 21 12z"/><path d="M15.5 12h-7M12 8.5v7"/>',
   Minus: '<path d="M6 12h12"/>',
   Info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
   ArrowLeft: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
@@ -94,10 +100,12 @@ class FakeTerminalSocket {
     this.onerror = null;
     this.protocol = "";
     const terminal = scene?.terminal ?? {};
+    // A video stream (056) can fail on its own, as when a box has no Selkies, while VNC connects.
+    const fail = url.includes("stream=selkies") ? terminal.videoFail : terminal.fail;
     setTimeout(() => {
-      if (terminal.fail) {
+      if (fail) {
         this.readyState = 3;
-        this.onclose?.({ code: 1011, reason: terminal.fail });
+        this.onclose?.({ code: 1011, reason: fail });
         return;
       }
       this.readyState = 1;
@@ -146,7 +154,7 @@ const pluginSdkApp = {
   useRpc: () => ({ call: async (method, input) => structuredClone(await scene.rpc[method](input)) }),
   useRealtime() {},
   useRealtimeConnectionState: () => "connected",
-  useBbNavigate: () => ({ openThreadPanel: log("openThreadPanel"), openUrl: log("openUrl"), toThread: log("toThread"), toPluginPanel: log("toPluginPanel") }),
+  useBbNavigate: () => ({ openThreadPanel: log("openThreadPanel"), openUrl: log("openUrl"), toThread: log("toThread"), toPluginPanel: log("toPluginPanel"), toCompose: log("toCompose") }),
   useSdk: () => ({ threads: { get: async ({ threadId }) => ({ title: scene.threads?.[threadId] ?? threadId }) } }),
   UrlLink: ({ href, children, ...rest }) => h("a", { href, ...rest }, children),
   useSettings: () => ({ values: {}, isLoading: false }),
@@ -187,6 +195,10 @@ const frame = document.getElementById("frame");
 const chrome = document.getElementById("chrome");
 const root = document.getElementById("root");
 window.__scene = scene;
+// Every scene starts from empty browser storage: the screenshots share one Chrome profile, and the New box form remembers its last choice there.
+try {
+  window.localStorage.clear();
+} catch {}
 frame.style.width = `${scene.width ?? 560}px`;
 if (scene.height) frame.style.height = `${scene.height}px`;
 frame.style.display = "flex";

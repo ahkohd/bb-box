@@ -7,7 +7,7 @@ You make a box with the New box form. You choose its system, whether it has a de
 You can make a box in 4 places:
 
 - the plus in a thread's Box panel: a box for that thread
-- the plus on the Boxes page: one of your machines
+- **New box** on the Boxes page: one of your machines
 - **Add machine** in Settings, BB Box, Machines: one of your machines
 - BB's new-thread screen: a box the new thread runs on, which is described in [starting a thread on a new box](#starting-a-thread-on-a-new-box)
 
@@ -49,7 +49,7 @@ For a Linux box, if your project has no image, the form offers to make one. Sele
 
 Choose Small, Medium or Large, or Custom to set the cores, memory in GiB and disk in GiB yourself. Each field says the most you can ask for. Leave the disk empty to keep the size the box's image comes with. The sizes for each kind are in [kinds and sizes](../reference/kinds.md).
 
-Where a desktop can have a graphics card, a GPU menu offers None or 1 GPU.
+Where a desktop can have a graphics card, a GPU menu offers None or 1 GPU. A desktop needs some of the graphics card's memory free. If you choose 1 GPU when no graphics card had enough free a few minutes ago, a note under the menu says so, with when to try again. Choose None for a desktop drawn without a graphics card.
 
 ### Provider
 

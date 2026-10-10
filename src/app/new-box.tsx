@@ -15,7 +15,7 @@ import type { ImageOptionView, KindView, OfferView, ProviderProfile, SizeView } 
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
-import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
+import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
 /**
  * What "Ask an agent to make one" puts in a new thread's composer (049): the
@@ -110,7 +110,7 @@ export function NewBox({
   kinds,
   make,
   machine = false,
-  plus = false,
+  primary = false,
   profile,
   askForImage,
   images = [],
@@ -122,8 +122,8 @@ export function NewBox({
   images?: readonly ImageOptionView[];
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
   machine?: boolean;
-  /** With `machine`, the Box panel's plus instead of the labelled button: the Boxes page's "Add machine" (the operator, 4 October 2026). */
-  plus?: boolean;
+  /** With `machine`, the Boxes page's "New box", in the style of Automations' New button, rather than "Add machine" (the operator, 8 October 2026). */
+  primary?: boolean;
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
   /** Asks an agent to make the project a box image (049), when it has none. */
@@ -228,6 +228,9 @@ export function NewBox({
   const imageSpares = chosenImage && chosenImage !== "standard" ? (covering.find((candidate) => candidate.name === chosenImage)?.spares ?? []) : null;
   const readyOn = (offer: OfferView) =>
     !machine && !!kind && size === kind.defaultPreset && (imageSpares ? imageSpares.some((spare) => spare.kind === kind.id && spare.backend === offer.backend && spare.ready > 0) : offer.ready > 0);
+  // With 1 GPU chosen, why no GPU would take the box (#603); a ready spare holds its GPU already.
+  const placing = onOffer ? [onOffer] : shown;
+  const gpuFull = gpuChoice && picked.gpu && !placing.some(readyOn) ? gpuFullNote(placing, Date.now()) : null;
 
   useEffect(() => {
     if (open) return;
@@ -322,7 +325,14 @@ export function NewBox({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      {machine && !plus ? (
+      {machine && primary ? (
+        <PopoverTrigger asChild>
+          <Button type="button" size="sm" disabled={!kinds.length}>
+            <Icon name="Plus" aria-hidden />
+            New box
+          </Button>
+        </PopoverTrigger>
+      ) : machine ? (
         <PopoverTrigger asChild>
           <Button type="button" variant="outline" size="sm" className="h-7" disabled={!kinds.length}>
             <Icon name="Plus" aria-hidden />
@@ -334,17 +344,17 @@ export function NewBox({
           <Tooltip>
             <TooltipTrigger asChild>
               <PopoverTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={machine ? "Add machine" : "New box"} disabled={!kinds.length}>
+                <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label="New box" disabled={!kinds.length}>
                   <Icon name="Plus" className="size-4" aria-hidden />
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>{machine ? "Add machine" : "New box"}</TooltipContent>
+            <TooltipContent>New box</TooltipContent>
           </Tooltip>
         </TooltipProvider>
       )}
       {/* The form may be taller than the window: it takes the height the popover has and scrolls inside, so a short window scrolls the form rather than losing its bottom. */}
-      <PopoverContent align="end" className="max-h-[var(--radix-popover-content-available-height)] w-80 overflow-y-auto p-4 sm:w-[560px] sm:p-5" mobileTitle={machine ? "Add machine" : "New box"}>
+      <PopoverContent align="end" className="max-h-[var(--radix-popover-content-available-height)] w-80 overflow-y-auto p-4 sm:w-[560px] sm:p-5" mobileTitle={machine && !primary ? "Add machine" : "New box"}>
         <form
           className="space-y-5"
           onSubmit={(event) => {
@@ -435,6 +445,7 @@ export function NewBox({
                     ]}
                     onChange={(value) => pick({ gpu: value === "1" })}
                   />
+                  {gpuFull ? <p className="text-xs text-muted-foreground">{gpuFull}</p> : null}
                 </div>
               ) : null}
             </FormSection>
@@ -487,13 +498,14 @@ export function NewBox({
                 <ProviderRow
                   key={offer.backend}
                   offer={offer}
+                  among={offers}
                   ready={readyOn(offer)}
                   selected={onOffer?.backend === offer.backend}
                   onClick={() => setOn(offer.backend)}
                   optionRef={(element) => {
                     providerOptions.current[index + (choiceless ? 0 : 1)] = element;
                   }}
-                  info={profile ? <ProviderInfo offer={offer} loaded={profiles.get(offer.backend)} load={() => loadProfile(offer.backend)} /> : undefined}
+                  info={profile ? <ProviderInfo offer={offer} among={offers} loaded={profiles.get(offer.backend)} load={() => loadProfile(offer.backend)} /> : undefined}
                 />
               ))}
             </div>
@@ -549,7 +561,7 @@ export function NewBox({
             )}
             <Button type="submit" size="sm" className="shrink-0" disabled={!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong !== null}>
               {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-              {machine ? "Add machine" : "Create box"}
+              {machine && !primary ? "Add machine" : "Create box"}
             </Button>
           </div>
         </form>

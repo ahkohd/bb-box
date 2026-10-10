@@ -25,7 +25,9 @@ where it is built ahead, which its boxes claim at once (#440). The
 [kinds reference](../../docs/reference/kinds.md) describes every kind.
 
 - Ask for the kind's default size when you can. A kind can keep spare boxes
-  ready at that size, and then a box is ready at once.
+  ready at that size, and then a box is ready at once. On Proxmox's Windows
+  VMs and Tart's macOS and Windows VMs, a spare waits stopped, and it takes
+  a few seconds to resume.
 - Linux boxes run Ubuntu 24.04 with build tools, Git, Python with `uv`,
   Node.js with pnpm and Yarn, Docker, `gh`, `rg`, `fd`, `jj`, and the Claude
   Code, Codex and Pi CLIs. Desktops add XFCE, Chrome, Mousepad, Ristretto,
@@ -39,8 +41,9 @@ where it is built ahead, which its boxes claim at once (#440). The
 - A `linux-desktop` box always has its GPU. When no GPU is free, the refusal
   suggests `linux-desktop-cpu`.
 - Windows boxes have Visual Studio Build Tools (MSVC and the Windows SDK),
-  LLVM (`clang`) and Rust (`cargo`, `rustc`). They have no GPU: DirectX apps
-  render on WARP, Windows' software renderer.
+  LLVM (`clang`), Rust (`cargo`, `rustc`), Node.js, and the Claude Code,
+  Codex and Pi CLIs. They have no GPU: DirectX apps render on WARP,
+  Windows' software renderer.
 
 ## Running commands
 
@@ -67,6 +70,8 @@ Beyond those:
 - A Windows box is a BB machine, as a Linux or macOS box is, so
   `box_thread` can start a thread there, on an agent CLI in its image. It
   takes a minute or two to join BB, or none from a spare.
+- Type `pwsh` for PowerShell 7, never `powershell`, which is Windows
+  PowerShell 5.1.
 - `Start-Detached` gives the command it starts the environment variables,
   but not PowerShell variables: pass values in `$env:`.
 - For a GUI program's window to show, call `Start-Detached` in a desktop

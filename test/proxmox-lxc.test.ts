@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { ProxmoxLxcBackend, displayReason, warmNameScript, nameScript, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
+import { ProxmoxLxcBackend, displayReason, namesGpu, parseGpuReport, warmNameScript, nameScript, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { installFromDescription, ownerFromDescription, ownerFromTags, templateFromTags } from "../src/backends/proxmox/owner.ts";
 import { parseImageRecord, recordInDescription } from "../src/backends/images.ts";
@@ -381,6 +381,301 @@ test("a warm desktop that starts without its GPU is deleted, and its GPU avoided
   assert.equal(proxmox.guests.has(7000), false);
   await backend.maintain();
   assert.equal(proxmox.guests.get(7001)?.config.tags?.includes("template.9002"), true, "the next warm desktop goes to gpu-b");
+});
+
+/** Makes nvidia-smi in the box at `host` say the GPU has `free` of `total` MiB free. */
+function gpuAt(ssh: { home(host: string): string }, host: string, free: number, total: number): void {
+  const bin = join(ssh.home(host), "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\necho '${free}, ${total}'\n`, { mode: 0o755 });
+}
+
+const gpuCheck = async (backend: ProxmoxLxcBackend, gpu = "gpu-a") => (await backend.doctor()).checks.find((check) => check.id === `gpu.${gpu}`);
+
+test("a GPU's memory is read as a desktop on it starts and each minute while one runs, for capacity, the doctor and gpuRoom (#603)", async () => {
+  let now = 1_790_000_000_000;
+  const { backend, ssh, storage } = setup({}, new MemoryStorage(), { now: () => now });
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), { readings: [], fullUntil: null }, "nothing is read before a desktop starts");
+  assert.deepEqual(
+    await gpuCheck(backend),
+    {
+      id: "gpu.gpu-a",
+      name: "GPU gpu-a",
+      status: "skipped",
+      detail: "No desktop has read its memory yet. A GPU desktop reads it as it starts, and bb-box reads it every few minutes while one runs.",
+      fix: null,
+    },
+  );
+
+  await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), { readings: [{ id: "gpu-a", freeMiB: 7800, totalMiB: null, at: now, neededMiB: 384, source: "desktop" }], fullUntil: null });
+  assert.deepEqual(await backend.gpuRoom("linux"), { readings: [], fullUntil: null }, "a kind without a GPU has none");
+  const booted = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(booted.hosts[0]!.limits.find((limit) => limit.resource === "gpu-memory"), undefined, "the display service gives no total");
+
+  gpuAt(ssh, "192.0.2.100", 6100, 8192);
+  await backend.maintain();
+  assert.equal((await backend.gpuRoom("linux-desktop")).readings[0]!.freeMiB, 7800, "not read again within a minute");
+  now += 60_000;
+  await backend.maintain();
+  assert.deepEqual((await backend.gpuRoom("linux-desktop")).readings, [{ id: "gpu-a", freeMiB: 6100, totalMiB: 8192, at: now, neededMiB: 384, source: "desktop" }]);
+  const read = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(read.ok, true);
+  assert.deepEqual(read.hosts[0]!.limits.at(-1), { resource: "gpu-memory", id: "gpu-a", used: 2092, total: 8192, reserve: 0, unit: "MiB" });
+  assert.deepEqual(await storage.get("gpu-readings"), { "gpu-a": { freeMiB: 6100, totalMiB: 8192, at: now } }, "kept for the next instance");
+
+  now += 3 * 60_000;
+  gpuAt(ssh, "192.0.2.100", 5000, 8192);
+  const check = await gpuCheck(backend);
+  assert.equal(check?.status, "ok");
+  assert.equal(check?.detail, "5000 of 8192 MiB free, read just now in a desktop. A desktop needs 384 MiB.", "the doctor reads it again");
+});
+
+test("a desktop goes to a GPU with room, and is refused at once while every GPU was last read full, offering CPU desktops (#603)", async () => {
+  let now = 1_790_000_000_000;
+  const { backend, ssh } = setup(
+    { "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b", "proxmox-lxc-desktop-cpu-templates": "9003" },
+    new MemoryStorage(),
+    { ...RETRY, now: () => now },
+  );
+  displayAt(ssh.dir, "192.0.2.100", "cpu", "GPU has 103 MiB free, below MIN_FREE_VRAM_MIB=384");
+  const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.equal(desktop.data?.template, 9002);
+  assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, true, "gpu-b has room");
+
+  now += 60_000;
+  gpuAt(ssh, "192.0.2.101", 21, 8192);
+  await backend.maintain();
+  const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(full.ok, false);
+  assert.equal(full.hosts[0]!.ok, false);
+  assert.equal(
+    full.message,
+    "Every GPU on pve had less than the 384 MiB free a desktop needs, 1 minute ago: gpu-a 103 MiB, gpu-b 21 MiB. " +
+      "Use a linux-desktop-cpu box, whose desktop runs without a GPU, or try again in 4 minutes.",
+  );
+  assert.equal((await backend.capacity("linux-desktop-cpu", sized("linux-desktop-cpu"), waiting(), signal())).ok, true, "CPU desktops use no GPU");
+  const warn = await gpuCheck(backend, "gpu-b");
+  assert.equal(warn?.status, "warn");
+  assert.equal(warn?.detail, "21 of 8192 MiB free, read just now in a desktop. A desktop needs 384 MiB, so new desktop boxes cannot use this GPU.");
+  assert.equal(warn?.fix, "Free memory on the GPU: release a desktop box, or stop what else uses it on pve. Use linux-desktop-cpu boxes meanwhile.");
+
+  const room = await backend.gpuRoom("linux-desktop");
+  assert.deepEqual(room.readings.map((gpu) => [gpu.id, gpu.freeMiB]), [["gpu-a", 103], ["gpu-b", 21]]);
+  assert.equal(room.fullUntil, now + 4 * 60_000, "until gpu-a's reading is 5 minutes old");
+
+  await backend.release(desktop, releasing());
+  assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, true, "releasing gpu-b's desktop frees its memory");
+  assert.equal((await backend.gpuRoom("linux-desktop")).fullUntil, null);
+});
+
+test("readings of full GPUs stand for 5 minutes, and a new instance keeps them (#603)", async () => {
+  let now = 1_790_000_000_000;
+  const storage = new MemoryStorage();
+  await storage.set("gpu-readings", { "gpu-a": { freeMiB: 103, totalMiB: 8192, at: now } });
+  const { backend } = setup({}, storage, { now: () => now });
+  const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(
+    full.message,
+    "The GPU on pve had less than the 384 MiB free a desktop needs, just now: gpu-a 103 MiB. Free memory on a GPU, or try again in 5 minutes.",
+  );
+  now += 5 * 60_000;
+  const later = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(later.ok, true, "an old reading does not refuse: the desktop starts and sees");
+  assert.equal((await backend.gpuRoom("linux-desktop")).fullUntil, null);
+  assert.deepEqual(later.hosts[0]!.limits.at(-1), { resource: "gpu-memory", id: "gpu-a", used: 8089, total: 8192, reserve: 0, unit: "MiB" });
+});
+
+const UUID_A = "GPU-8f3c1a2b-0000-4000-8000-00000000000a";
+const UUID_B = "GPU-8f3c1a2b-0000-4000-8000-00000000000b";
+
+/** The notes host/bb-box-gpu-memory writes, with each GPU's free and total MiB, written `at` (ms). */
+function reportNotes(at: number, gpus: readonly [uuid: string, bus: string, free: number][]): string {
+  return [
+    "bb-box: each GPU's memory, from bb-box-gpu-memory.timer on this host. Do not edit.",
+    "",
+    `    at ${Math.floor(at / 1000)}`,
+    ...gpus.map(([uuid, bus, free], index) => `    gpu ${uuid} ${bus} ${index} ${free} 8192`),
+  ].join("\n");
+}
+
+/** The never-started VM whose notes carry the host's report, as host/setup-gpu-report.sh makes it. */
+function reportVm(proxmox: FakeProxmox, notes: string, vmid = 9190): void {
+  proxmox.guests.set(vmid, { vmid, type: "qemu", name: "bb-box-gpu-memory", status: "stopped", template: false, config: { name: "bb-box-gpu-memory", description: notes } });
+}
+
+test("the host's GPU report reads as written, and names a GPU by its UUID, PCI address or index (#603)", () => {
+  const notes = reportNotes(1_790_000_000_000, [
+    [UUID_A, "00000000:01:00.0", 103],
+    [UUID_B, "00000000:02:00.0", 6100],
+  ]);
+  const report = parseGpuReport(notes)!;
+  assert.deepEqual(report, {
+    at: 1_790_000_000_000,
+    gpus: [
+      { uuid: UUID_A, bus: "00000000:01:00.0", index: "0", freeMiB: 103, totalMiB: 8192 },
+      { uuid: UUID_B, bus: "00000000:02:00.0", index: "1", freeMiB: 6100, totalMiB: 8192 },
+    ],
+  });
+  assert.equal(parseGpuReport("Notes the operator wrote."), null);
+  const [a] = report.gpus;
+  for (const id of [UUID_A, UUID_A.toLowerCase(), "0000:01:00.0", "01:00.0", "00000000:01:00.0", "0"]) assert.equal(namesGpu(id, a!), true, id);
+  for (const id of [UUID_B, "0000:02:00.0", "1", "gpu-a"]) assert.equal(namesGpu(id, a!), false, id);
+});
+
+test("a GPU the host reports has room again as soon as the host says so, and readings in desktops stand in when its report is old (#603)", async () => {
+  let now = 1_790_000_000_000;
+  const { backend, proxmox } = setup(
+    { "proxmox-lxc-desktop-templates": `9001 ${UUID_A}\n9002 0000:02:00.0`, "proxmox-lxc-desktop-cpu-templates": "9003" },
+    new MemoryStorage(),
+    { now: () => now },
+  );
+  reportVm(proxmox, reportNotes(now - 30_000, [
+    [UUID_A, "00000000:01:00.0", 103],
+    [UUID_B, "00000000:02:00.0", 21],
+  ]));
+  const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
+  assert.equal(
+    full.message,
+    `Every GPU on pve had less than the 384 MiB free a desktop needs, just now: ${UUID_A} 103 MiB, 0000:02:00.0 21 MiB. ` +
+      "Use a linux-desktop-cpu box, whose desktop runs without a GPU, or try again in 1 minute.",
+  );
+  assert.deepEqual(
+    full.hosts[0]!.limits.filter((limit) => limit.resource === "gpu-memory"),
+    [
+      { resource: "gpu-memory", id: UUID_A, used: 8089, total: 8192, reserve: 0, unit: "MiB" },
+      { resource: "gpu-memory", id: "0000:02:00.0", used: 8171, total: 8192, reserve: 0, unit: "MiB" },
+    ],
+  );
+  assert.deepEqual(await backend.gpuRoom("linux-desktop"), {
+    readings: [
+      { id: UUID_A, freeMiB: 103, totalMiB: 8192, at: now, neededMiB: 384, source: "host" },
+      { id: "0000:02:00.0", freeMiB: 21, totalMiB: 8192, at: now, neededMiB: 384, source: "host" },
+    ],
+    fullUntil: now + 60_000,
+  });
+
+  // Other work frees the second GPU; bb-box reads the report again within 10 s.
+  reportVm(proxmox, reportNotes(now, [
+    [UUID_A, "00000000:01:00.0", 103],
+    [UUID_B, "00000000:02:00.0", 7000],
+  ]));
+  assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, false, "a read serves 10 s");
+  now += 10_000;
+  assert.equal((await backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal())).ok, true);
+  const desktop = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+  assert.equal(desktop.data?.template, 9002, "the full GPU is skipped");
+
+  const report = await backend.doctor();
+  const check = (id: string) => report.checks.find((candidate) => candidate.id === id);
+  assert.deepEqual([check("proxmox.gpu-report")?.status, check("proxmox.gpu-report")?.detail], ["ok", "The host reports 2 GPUs in VM 9190, written just now."]);
+  assert.equal(check(`gpu.${UUID_A}`)?.detail, "103 of 8192 MiB free, read just now from the host's report. A desktop needs 384 MiB, so new desktop boxes cannot use this GPU.");
+
+  // A report 10 minutes old no longer stands: the desktops' own readings do.
+  now += 10 * 60_000;
+  assert.deepEqual(
+    (await backend.gpuRoom("linux-desktop")).readings.map((reading) => [reading.id, reading.freeMiB, reading.source]),
+    [["0000:02:00.0", 7800, "desktop"]],
+  );
+  const stale = (await backend.doctor()).checks.find((candidate) => candidate.id === "proxmox.gpu-report");
+  assert.deepEqual([stale?.status, stale?.detail], ["warn", "The host's report in VM 9190 is from 10 minutes ago, so bb-box reads GPU memory in desktops."]);
+  assert.equal(stale?.fix, "Run systemctl status bb-box-gpu-memory.timer as root on pve, and check the host's clock.");
+});
+
+const GPU_REPORTER = new URL("../setup/proxmox-lxc/host/bb-box-gpu-memory", import.meta.url).pathname;
+
+/** host/bb-box-gpu-memory with a fake nvidia-smi, qm and clock, and a VM 9190 named for it unless `vm` is false. */
+function gpuReporter(vm = true) {
+  const dir = tempDir("gpu-reporter");
+  const bin = join(dir, "bin");
+  const configs = join(dir, "qemu-server");
+  mkdirSync(bin);
+  mkdirSync(configs);
+  mkdirSync(join(dir, "calls"));
+  if (vm) writeFileSync(join(configs, "9190.conf"), "memory: 16\nname: bb-box-gpu-memory\nprotection: 1\n");
+  writeFileSync(join(configs, "100.conf"), "name: something-else\n");
+  writeFileSync(join(bin, "nvidia-smi"), `#!/bin/sh\ncat "${join(dir, "smi")}"\n`, { mode: 0o755 });
+  writeFileSync(join(bin, "date"), `#!/bin/sh\ncat "${join(dir, "now")}"\n`, { mode: 0o755 });
+  // Each call's arguments, then its notes.
+  writeFileSync(
+    join(bin, "qm"),
+    `#!/bin/sh\nn=$(ls "${join(dir, "calls")}" | wc -l)\necho "$1 $2 $3" >"${join(dir, "calls")}/$n.args"\nprintf '%s' "$4" >"${join(dir, "calls")}/$n.notes"\n`,
+    { mode: 0o755 },
+  );
+  const bash = spawnSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim();
+  return {
+    run(now: number, smi: string) {
+      writeFileSync(join(dir, "now"), `${now}\n`);
+      writeFileSync(join(dir, "smi"), smi);
+      return spawnSync(bash, [GPU_REPORTER], {
+        encoding: "utf8",
+        env: { PATH: `${bin}:/usr/bin:/bin`, BBBOX_QEMU_CONFIGS: configs, BBBOX_GPU_REPORT_STATE: join(dir, "last") },
+      });
+    },
+    /** The notes of each qm set, oldest first. */
+    writes(): string[] {
+      const calls = readdirSync(join(dir, "calls")).filter((name) => name.endsWith(".args")).length;
+      return Array.from({ length: calls }, (_, index) => {
+        assert.equal(readFileSync(join(dir, "calls", `${index * 2}.args`), "utf8"), "set 9190 --description\n");
+        return readFileSync(join(dir, "calls", `${index * 2}.notes`), "utf8");
+      });
+    },
+  };
+}
+
+const smi = (a: number, b: number) => `${UUID_A}, 00000000:01:00.0, 0, ${a}, 8192\n${UUID_B}, 00000000:02:00.0, 1, ${b}, 8192\n`;
+
+test("the host's reporter writes each GPU's memory in the VM's notes as bb-box reads them, when a GPU's memory moves a step, and every 4 minutes (#603)", () => {
+  const reporter = gpuReporter();
+  const at = 1_790_000_000;
+  assert.equal(reporter.run(at, smi(103, 6100)).status, 0);
+  const [first] = reporter.writes();
+  assert.match(first!, /^bb-box: each GPU's memory, from bb-box-gpu-memory\.timer on this host\. Do not edit\.\n\n    at 1790000000\n    gpu /);
+  assert.deepEqual(parseGpuReport(first!), {
+    at: at * 1000,
+    gpus: [
+      { uuid: UUID_A, bus: "00000000:01:00.0", index: "0", freeMiB: 103, totalMiB: 8192 },
+      { uuid: UUID_B, bus: "00000000:02:00.0", index: "1", freeMiB: 6100, totalMiB: 8192 },
+    ],
+  });
+
+  // Within a 64 MiB step, nothing is written until 4 minutes have passed.
+  assert.equal(reporter.run(at + 15, smi(103, 6100)).status, 0);
+  assert.equal(reporter.run(at + 30, smi(120, 6120)).status, 0);
+  assert.equal(reporter.writes().length, 1);
+  // 383 to 384 MiB is a step: the room a desktop needs.
+  assert.equal(reporter.run(at + 45, smi(384, 6120)).status, 0);
+  assert.equal(parseGpuReport(reporter.writes()[1]!)!.gpus[0]!.freeMiB, 384);
+  assert.equal(reporter.run(at + 45 + 239, smi(384, 6120)).status, 0);
+  assert.equal(reporter.writes().length, 2);
+  assert.equal(reporter.run(at + 45 + 240, smi(384, 6120)).status, 0);
+  assert.equal(parseGpuReport(reporter.writes()[2]!)!.at, (at + 285) * 1000, "a quiet GPU is written again after 4 minutes");
+});
+
+test("the host's reporter fails, writing nothing, without its VM or GPU memory (#603)", () => {
+  const novm = gpuReporter(false);
+  const missing = novm.run(1_790_000_000, smi(103, 6100));
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /no VM named bb-box-gpu-memory on this node; run setup-gpu-report\.sh/);
+  const reporter = gpuReporter();
+  const unread = reporter.run(1_790_000_000, `${UUID_A}, 00000000:01:00.0, 0, [N/A], [N/A]\n`);
+  assert.equal(unread.status, 1);
+  assert.match(unread.stderr, /nvidia-smi gave no GPU memory/);
+  assert.deepEqual([novm.writes(), reporter.writes()], [[], []]);
+});
+
+test("the doctor says when the host's report has no report yet, or does not name a GPU (#603)", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-desktop-templates": `9001 ${UUID_A}\n9002 gpu-b` });
+  const report = async () => (await backend.doctor()).checks.find((check) => check.id === "proxmox.gpu-report");
+  reportVm(proxmox, "bb-box: each GPU's memory, from bb-box-gpu-memory.timer. It is never started.");
+  assert.deepEqual([(await report())?.status, (await report())?.detail], ["warn", "VM 9190 (bb-box-gpu-memory) has no report in its notes yet."]);
+  reportVm(proxmox, reportNotes(Date.now(), [[UUID_A, "00000000:01:00.0", 6100]]));
+  const unnamed = await report();
+  assert.deepEqual([unnamed?.status, unnamed?.detail, unnamed?.fix], [
+    "warn",
+    "The host's report has no GPU gpu-b, so bb-box reads its memory in desktops.",
+    "Name each GPU in bb-box's settings by the UUID nvidia-smi -L shows on the host.",
+  ]);
 });
 
 test("boxes spread across a flavour's templates", async () => {
@@ -1290,6 +1585,8 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["template.9000.image", "Image of Linux template 9000", "warn"],
       ["template.9001", "GPU desktop template 9001 (GPU gpu-a)", "ok"],
       ["template.9001.image", "Image of GPU desktop template 9001 (GPU gpu-a)", "warn"],
+      ["proxmox.gpu-report", "Host's GPU report", "skipped"],
+      ["gpu.gpu-a", "GPU gpu-a", "skipped"],
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
       ["ssh.key", "SSH key", "ok"],

@@ -22,6 +22,7 @@ box or a spare is ready at once. How bb-box drives a box is in the
 | `host/setup-host.sh` | Kernel modules for Docker and TUN in boxes, NVIDIA device nodes at boot |
 | `host/setup-network.sh` | The box bridge, NAT and a unit that keeps them up |
 | `host/setup-token.sh` | Pool, user, role, API token and ACLs for bb-box |
+| `host/setup-gpu-report.sh` | With GPU desktops: the host's report of each GPU's free memory, which bb-box reads |
 | `template/build.sh` | Builds the templates |
 | `test/smoke.sh` | Clones, starts, checks and deletes a box with bb-box's token |
 
@@ -211,6 +212,42 @@ The script writes the token to `BBBOX_TOKEN_FILE` (mode 0600), with the API
 URL, the node and the SHA-256 fingerprint of the host's certificate. It never
 prints the secret.
 
+#### The GPU memory report
+
+With GPU desktops, have the host report each GPU's free memory:
+
+```sh
+host/setup-gpu-report.sh
+```
+
+Proxmox's API cannot read GPU memory, and the token cannot read files on the
+host. Without the report, bb-box reads GPU memory in desktops, as one starts
+and every few minutes while one runs, so a GPU that other work frees shows as
+free only once a desktop reads it. With the report, it shows within about
+25 s.
+
+The script:
+
+- makes a VM named `bb-box-gpu-memory` that is never started: no disk, no
+  network, 16 MiB of memory and protection on. It is outside bb-box's pool,
+  so the pool's role does not reach it. Its VMID is
+  `BBBOX_GPU_REPORT_VMID`, and the script refuses to run without it. Choose
+  a free VMID outside bb-box's VMID range. Do not use the next free VMID:
+  `template/build.sh` builds there unless `BBBOX_BUILD_VMID` is set;
+- gives bb-box's user and token `PVEAuditor`, Proxmox's read-only role, on
+  `/vms/<vmid>` alone. The token can read the VM's notes, and can change
+  nothing it could not before;
+- installs `/usr/local/sbin/bb-box-gpu-memory` and
+  `bb-box-gpu-memory.timer`, which runs it as root every 15 s. It reads
+  `nvidia-smi` and writes each GPU's free and total memory in the VM's notes
+  with `qm set --description`. It writes only when a GPU's free memory moves
+  to another 64 MiB step, or after 4 minutes, so `/etc/pve` sees few writes.
+
+bb-box reads the notes at most every 10 s, and finds each GPU by the ID its
+desktop templates give it: its UUID, its PCI address or its index. A report
+under 10 minutes old stands for every GPU it names. Without one, bb-box
+reads memory in desktops. The doctor's "Host's GPU report" check says which.
+
 ### 6. Configure bb-box
 
 On BB Box's settings page in BB, open Proxmox LXC's setup and fill in its
@@ -254,6 +291,13 @@ fields against the host; Save and turn on saves them. From a terminal,
 - A new box is a clone of its kind's least used template. A GPU desktop goes
   to the GPU with the fewest desktops. It is refused when every GPU has
   `desktops-per-gpu` desktops, and the refusal suggests `linux-desktop-cpu`.
+- A GPU desktop needs 384 MiB of GPU memory free as it starts. bb-box reads
+  each GPU's free memory from [the host's report](#the-gpu-memory-report).
+  Without it, bb-box reads it as a desktop on it starts, and with
+  `nvidia-smi` in a running one every few minutes. The doctor shows each
+  GPU's last reading. A new desktop skips a GPU that has less free, and is
+  refused at once when every GPU has; the refusal suggests
+  `linux-desktop-cpu`. A reading in a desktop stands for 5 minutes.
 - `warm` keeps started boxes waiting per kind, so a new box is ready at once.
   A warm box waits at its template's size: 2 cores and 4 GiB for Linux, 4
   cores and 8 GiB for desktops. It serves only boxes with the same cores,
@@ -335,7 +379,12 @@ Its fix is the `build.sh` command that rebuilds the template.
    Delete `/etc/systemd/system/bb-box-network.*`,
    `/usr/local/sbin/bb-box-network` and, if nothing else needs forwarding,
    `/etc/sysctl.d/90-bb-box.conf`.
-5. Remove the host's parts: `systemctl disable --now
+5. Remove the GPU memory report: `systemctl disable --now
+   bb-box-gpu-memory.timer`, delete `/etc/systemd/system/bb-box-gpu-memory.*`
+   and `/usr/local/sbin/bb-box-gpu-memory`, then
+   `qm set <vmid> --protection 0 && qm destroy <vmid>`. Proxmox removes the
+   VM's ACLs with it.
+6. Remove the host's parts: `systemctl disable --now
    bb-box-nvidia-devices.service`, then delete that unit,
    `/etc/modules-load.d/bb-box.conf`, `/etc/bb-box` and
    `/var/cache/bb-box`.
@@ -349,6 +398,13 @@ Its fix is the `build.sh` command that rebuilds the template.
 - **A `linux-desktop` acquire fails, naming each GPU**: every GPU's desktop
   started on the CPU, for the reasons given. `bb plugin logs bb-box` shows
   each box released. Fix the reason, or ask for `linux-desktop-cpu`.
+- **A `linux-desktop` acquire is refused at once for GPU memory**: every GPU
+  had less than 384 MiB free when bb-box last looked. `bb box doctor` shows
+  each GPU's reading. Free memory on a GPU, or ask for `linux-desktop-cpu`.
+- **The doctor says the host's GPU report is old**: run
+  `systemctl status bb-box-gpu-memory` on the host. Its log names a missing
+  VM or an `nvidia-smi` that gave no memory. A host clock 10 minutes or more
+  behind the BB server's also makes the report look old.
 - **The desktop viewer says the box refused its VNC password**: VNC runs with
   another password than `/var/lib/bb-box/vnc-password`. Restart
   `bb-box-display` in the box, or release the box.

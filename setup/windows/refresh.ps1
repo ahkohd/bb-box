@@ -51,28 +51,46 @@ function Update-Windows {
 $ErrorActionPreference = 'Stop'
 $log = 'C:\bb-box\build\updates.log'
 function Say($text) { Add-Content $log "$(Get-Date -Format HH:mm:ss) $text" }
+# Another installation is going on: Windows' own updates, as Defender's run whatever the policy.
+$BUSY = 0x80240016
 try {
   $session = New-Object -ComObject Microsoft.Update.Session
-  $found = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'").Updates
-  $updates = New-Object -ComObject Microsoft.Update.UpdateColl
-  foreach ($update in $found) {
-    if (-not $update.EulaAccepted) { $update.AcceptEula() }
-    Say "update: $($update.Title)"
-    [void] $updates.Add($update)
-  }
-  $installed = 0; $failed = 0; $reboot = $false
-  if ($updates.Count) {
-    $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $updates; [void] $downloader.Download()
-    $installer = $session.CreateUpdateInstaller(); $installer.Updates = $updates
-    $result = $installer.Install()
-    for ($i = 0; $i -lt $updates.Count; $i++) {
-      # 2 succeeded, 3 succeeded with errors.
-      $code = $result.GetUpdateResult($i).ResultCode
-      if ($code -in 2, 3) { $installed++ } else { $failed++; Say "update failed ($code): $($updates.Item($i).Title)" }
+  $installer = $session.CreateUpdateInstaller()
+  $found = 0; $installed = 0; $failed = 0; $reboot = $false; $busy = 0
+  # Passes until a search finds nothing: installing one update can offer the next, as Defender's do.
+  for ($pass = 1; $pass -le 5; $pass++) {
+    for ($waited = 0; $installer.IsBusy -and $waited -lt 900; $waited += 10) { if (-not $waited) { Say 'Windows is installing updates of its own: waiting' }; Start-Sleep -Seconds 10 }
+    $offered = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'").Updates
+    if (-not $offered.Count) { $busy = 0; break }
+    $updates = New-Object -ComObject Microsoft.Update.UpdateColl
+    foreach ($update in $offered) {
+      if (-not $update.EulaAccepted) { $update.AcceptEula() }
+      Say "update: $($update.Title)"
+      [void] $updates.Add($update)
     }
-    $reboot = $result.RebootRequired
+    $found += $updates.Count
+    $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $updates
+    $downloaded = $downloader.Download()
+    for ($i = 0; $i -lt $updates.Count; $i++) {
+      $one = $downloaded.GetUpdateResult($i)
+      if ($one.ResultCode -notin 2, 3) { Say ('download failed ({0}, HResult 0x{1:X8}): {2}' -f $one.ResultCode, $one.HResult, $updates.Item($i).Title) }
+    }
+    $installer.Updates = $updates
+    $result = $installer.Install()
+    $busy = 0
+    for ($i = 0; $i -lt $updates.Count; $i++) {
+      # 2 succeeded, 3 succeeded with errors; the HResult says why one did not.
+      $one = $result.GetUpdateResult($i)
+      if ($one.ResultCode -in 2, 3) { $installed++ }
+      elseif (($one.HResult -band 0xFFFFFFFF) -eq $BUSY) { $busy++; Say "update waits for Windows' own installation: $($updates.Item($i).Title)" }
+      else { $failed++; Say ('update failed ({0}, HResult 0x{1:X8}): {2}' -f $one.ResultCode, $one.HResult, $updates.Item($i).Title) }
+    }
+    if ($result.RebootRequired) { $reboot = $true }
+    # A restart first, or a failure: the refresh restarts the box and runs this again, or stops.
+    if ($reboot -or $failed) { break }
   }
-  Set-Content 'C:\bb-box\build\updates.json' (@{ found = $updates.Count; installed = $installed; failed = $failed; reboot = $reboot } | ConvertTo-Json -Compress)
+  if ($busy) { $failed += $busy; Say "Windows was still installing updates of its own after 5 passes" }
+  Set-Content 'C:\bb-box\build\updates.json' (@{ found = $found; installed = $installed; failed = $failed; reboot = $reboot } | ConvertTo-Json -Compress)
 } catch {
   Say "FAILED: $_"
   Set-Content 'C:\bb-box\build\updates.json' (@{ error = "$_" } | ConvertTo-Json -Compress)
@@ -109,6 +127,8 @@ function Version-Of([scriptblock] $ask) {
   if ("$said" -match '\d+(\.\d+)+') { $Matches[0] }
 }
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+# The agent CLIs, each in a directory of its own on the machine's PATH (#561).
+$tools = 'C:\Program Files\bb-box-tools'
 $versions = @{
   'pwsh' = { & 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' }
   'git' = { git --version }
@@ -118,6 +138,20 @@ $versions = @{
   'llvm' = { & 'C:\Program Files\LLVM\bin\clang.exe' --version }
   'rustup' = { & (Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe') --version }
   'node' = { & 'C:\Program Files\nodejs\node.exe' --version }
+  'claude-code' = { & "$tools\claude\claude.exe" --version }
+  'codex' = { & "$tools\codex\codex.exe" --version }
+  'pi' = { & "$tools\pi\pi.exe" --version }
+}
+
+# Puts an agent CLI's program in its directory, in place of what was there, on the machine's PATH.
+function Install-Tool($name, $file, $exe) {
+  $to = Join-Path $tools $name
+  Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith("$to\", 'OrdinalIgnoreCase') } | Stop-Process -Force
+  Remove-Item $to -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force $to | Out-Null
+  if ($file -like '*.zip') { Expand-Archive $file -DestinationPath $to -Force } else { Copy-Item $file (Join-Path $to $exe) }
+  if (-not (Test-Path (Join-Path $to $exe))) { throw "$name has no $exe" }
+  Add-MachinePath $to
 }
 
 # Each tool, installed as the template's first logon installs it.
@@ -164,6 +198,9 @@ $installers = @{
     Add-MachinePath $to
     if ((& "$to\node.exe" --version) -ne "v$($pin.version)") { throw "node.exe is not $($pin.version)" }
   }
+  'claude-code' = { param($pin, $file) Install-Tool claude $file claude.exe }
+  'codex' = { param($pin, $file) Install-Tool codex $file codex.exe }
+  'pi' = { param($pin, $file) Install-Tool pi $file pi.exe }
 }
 
 try {
@@ -187,6 +224,9 @@ try {
     Step "Rust $((& (Join-Path $env:USERPROFILE '.cargo\bin\rustc.exe') --version) -replace '^rustc ', '')"
   }
 
+  # Claude Code's PowerShell tool, beside its Bash tool in Git Bash: it runs PowerShell 7 (#561).
+  [Environment]::SetEnvironmentVariable('CLAUDE_CODE_USE_POWERSHELL_TOOL', '1', 'Machine')
+
   # Edge updates itself, and its update writes its handler again without the
   # flag the first logon gave it: give it again, as the first logon does.
   Step 'Edge: its whole page in the accessibility tree'
@@ -199,8 +239,12 @@ try {
 
   if ($restart) { Step 'a restart, then this again'; exit 3010 }
 
-  Step 'The image record, C:\bb-box\image.json'
-  [IO.File]::WriteAllText('C:\bb-box\image.json', "$((Get-Content $Record -Raw).Trim())`n")
+  # The record, with the edition this Windows says it is, such as Windows 11 Pro.
+  $edition = (Get-CimInstance Win32_OperatingSystem).Caption -replace '^Microsoft ', ''
+  Step "The image record, C:\bb-box\image.json ($edition)"
+  $new = Get-Content $Record -Raw | ConvertFrom-Json
+  if ($edition) { $new.os = $edition }
+  [IO.File]::WriteAllText('C:\bb-box\image.json', "$($new | ConvertTo-Json -Compress -Depth 5)`n")
   Step 'Cleaning up: temporary files and update downloads'
   Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
   Remove-Item "$env:SystemRoot\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue

@@ -62,7 +62,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -346,7 +346,7 @@ async function start(
     },
   });
   const setupOptions: SetupOptions = {
-    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell }), ...(options.drivers ?? [])],
+    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell, keepsSession: options.keepsSession }), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
@@ -1376,6 +1376,39 @@ test("a kind keeps a spare box as a BB machine, which box_acquire claims, rename
   await until("its machine", async () => world.hosts.get(`host-${next.id}`)?.name === `${next.name} (spare)`);
 });
 
+test("where a stop keeps a box's session, a spare waits stopped as a BB machine, which a claim starts and then renames, and another takes its place (#539)", async (t) => {
+  const { harness, app, world, tool } = await start(undefined, { keepsSession: (kind) => kind === "linux" });
+  t.after(() => harness.lifecycle.dispose());
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, kinds: { linux: { spares: 1 } } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  const waiting = async (not?: string) => (await app.boxes.list(SPARES)).find((box) => box.id !== not && box.state === "stopped" && box.enrol.state === "enrolled");
+  const spare = await until("a spare waiting stopped", () => waiting());
+  const hostId = `host-${spare.id}`;
+  assert.equal(world.hosts.get(hostId)?.name, `${spare.name} (spare)`);
+  const state = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { kinds: { id: string; spares: unknown }[] };
+  assert.deepEqual(state.kinds.find((kind) => kind.id === "linux")!.spares, { target: 1, ready: 1, making: 0 }, "it counts as ready");
+
+  // BB shows its machine disconnected while it waits, and the upkeep keeps it.
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await app.boxes.keepSpares();
+  assert.equal((await app.boxes.list(SPARES)).find((box) => box.id === spare.id)?.state, "stopped");
+
+  const relabels = world.backend!.relabels.length;
+  const acquired = text(await tool("box_acquire", { kind: "linux" }));
+  assert.match(acquired, new RegExp(`\\b${spare.name}\\b`));
+  assert.match(acquired, /State: ready/);
+  assert.match(acquired, /BB machine: enrolled/);
+  const box = await only(app);
+  assert.equal(box.id, spare.id);
+  await until("the rename", async () => world.hosts.get(hostId)?.name === box.name);
+  await until("the start to reconnect its machine", async () => world.hosts.get(hostId)?.status === "connected");
+  assert.deepEqual(world.backend!.relabelPowers.slice(relabels), ["running"], "relabelled once it had started");
+  assert.equal(text(await tool("box_run", { box: box.name, command: "echo claimed" })).match(/stdout:\n(\w+)/)?.[1], "claimed");
+
+  await until("another spare waiting stopped", () => waiting(box.id));
+});
+
 test("a Windows kind keeps its spare as a manual machine enrolled ahead, which a claim renames and a release removes, and New box refuses Windows by name (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
   const shell = join(tempDir("windows-shell"), "pwsh");
@@ -2379,8 +2412,11 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   assert.equal(selkies.pages.length, 1, "no input connection, and no input, without control");
   assert.deepEqual([rfb.width, rfb.height], [1280, 800], "no resize without control");
   await selkies.clipboard("copied");
+  await selkies.clipboardImage("image/png", Uint8Array.of(1, 2, 3, 4, 5), 2);
+  await session.receive("cb,image/png,AQID");
   await new Promise((resolve) => setTimeout(resolve, 30));
-  assert.ok(!session.sent.some((message) => typeof message === "string" && message.startsWith("clipboard,")), "no clipboard without control");
+  assert.ok(!session.sent.some((message) => typeof message === "string" && message.startsWith("clipboard")), "no clipboard, text or image, without control");
+  assert.ok(!page.received.some((message) => typeof message === "string" && message.startsWith("cb,")), "no paste without control");
 
   const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: null };
   assert.equal(took.error, null);
@@ -2394,6 +2430,15 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await until("the resize", async () => rfb.width === 1024 && rfb.height === 768);
   await selkies.clipboard("copied again");
   await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied again").toString("base64")}`));
+  // An image, both ways, in Selkies' parts and in order (#609).
+  await selkies.clipboardImage("image/png", Uint8Array.of(1, 2, 3, 4, 5), 2);
+  const image = ["clipboard_start,image/png,5", "clipboard_data,AQI=", "clipboard_data,AwQ=", "clipboard_data,BQ==", "clipboard_finish"];
+  await until("the image", async () => session.sent.includes("clipboard_finish"));
+  assert.deepEqual(session.sent.filter((message) => typeof message === "string" && message.startsWith("clipboard_")), image);
+  const paste = ["cbs,bb1,image/png,5", "cbd,bb1,AQIDBA==", "cbd,bb1,BQ==", "cbe,bb1"];
+  for (const message of paste) await session.receive(message);
+  await until("the pasted image", async () => input.received.includes("cbe,bb1"));
+  assert.deepEqual(input.received.filter((message) => typeof message === "string" && /^cb[sde],/.test(message)), paste);
 
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name });
   await until("the key let go", async () => input.received.includes("ku,97"));

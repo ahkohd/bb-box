@@ -295,7 +295,7 @@ export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
     linux: {
       id: "linux",
       label: "Linux",
-      description: "A Linux microVM for builds, backend services and the agent's own work.",
+      description: "A Linux box for builds, backend services and the agent's own work.",
       requires: [],
       capabilities: { os: "linux", arch: "x86_64", gpu: false, features: docker, command: MSB_COMMAND, displays: [], computerUse: null, enrol: true },
       readyTimeoutMs: READY_TIMEOUT_MS,
@@ -322,7 +322,7 @@ export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
     "linux-arm64": {
       id: "linux-arm64",
       label: "Linux on arm64",
-      description: "A Linux microVM on arm64, on a Mac with Apple silicon or another arm64 host. amd64 container images and x86_64 binaries do not run there.",
+      description: "A Linux box on an arm64 host, such as a Mac with Apple silicon. amd64 container images and x86_64 binaries do not run there.",
       requires: [],
       capabilities: { os: "linux", arch: "arm64", gpu: false, features: docker, command: MSB_COMMAND, displays: [], computerUse: null, enrol: true },
       readyTimeoutMs: READY_TIMEOUT_MS,
@@ -331,7 +331,7 @@ export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
       id: "linux-arm64-desktop-cpu",
       label: "Linux desktop on arm64",
       description:
-        "A Linux desktop microVM on arm64, drawn by the CPU, on a Mac with Apple silicon or another arm64 host, for computer use and browsers. amd64 container images and x86_64 binaries do not run there.",
+        "A Linux desktop on an arm64 host, such as a Mac with Apple silicon, drawn by the CPU, for computer use and browsers. amd64 container images and x86_64 binaries do not run there.",
       requires: [],
       capabilities: {
         os: "linux",
@@ -972,7 +972,9 @@ export class MsbBackend implements Backend {
   async relabel(guest: Guest, box: BoxIdentity, _from: string, signal?: AbortSignal): Promise<void> {
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) return;
-    await this.#cli.ok(["modify", guest.ref, "--label", `${LABELS.thread}=${box.threadId}`, "--label", `${LABELS.name}=${box.name}`], { timeoutMs: 30_000, signal });
+    // A running box's labels change only with --next-start or --restart: without them msb applies nothing and still exits 0.
+    // --next-start changes the labels msb lists and inspects at once, and the running box's at its next start.
+    await this.#cli.ok(["modify", guest.ref, "--label", `${LABELS.thread}=${box.threadId}`, "--label", `${LABELS.name}=${box.name}`, "--next-start"], { timeoutMs: 30_000, signal });
   }
 
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {

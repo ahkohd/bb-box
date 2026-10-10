@@ -106,12 +106,24 @@ export const HOVER_CLOSE_MS = 250;
  * or the keyboard opens it and keeps it until Escape or a click away, for
  * touch and screen readers.
  */
-export function ProviderInfo({ offer, loaded, load: ask, now = () => Date.now() }: { offer: OfferView; loaded: Loaded | undefined; load: () => void; now?: () => number }) {
+export function ProviderInfo({
+  offer,
+  among,
+  loaded,
+  load: ask,
+  now = () => Date.now(),
+}: {
+  offer: OfferView;
+  among?: readonly OfferView[];
+  loaded: Loaded | undefined;
+  load: () => void;
+  now?: () => number;
+}) {
   const [open, setOpen] = useState(false);
   /** Opened, or kept, by a click or the keyboard: the pointer leaving does not close it. */
   const pinned = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const title = providerTitle(offer);
+  const title = providerTitle(offer, among);
   const clear = () => {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;

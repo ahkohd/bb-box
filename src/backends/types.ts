@@ -252,6 +252,33 @@ export interface HostCapacity {
   readonly limits: readonly Limit[];
 }
 
+/**
+ * A GPU's memory as bb-box last read it (#603): from the host's report, where
+ * the host makes one, or from inside a box that has the GPU, a GPU desktop's
+ * display service as it starts, or nvidia-smi in a running one.
+ */
+export interface GpuReading {
+  /** The GPU, as its desktop templates name it. */
+  readonly id: string;
+  readonly freeMiB: number;
+  /** Null until a running box has read it. */
+  readonly totalMiB: number | null;
+  /** What a GPU desktop needs free on it. */
+  readonly neededMiB: number;
+  /** When it was read, in milliseconds since the epoch. */
+  readonly at: number;
+  /** Who read it: the host, which reports every GPU's memory within seconds of a change, or a desktop that has the GPU. */
+  readonly source: "host" | "desktop";
+}
+
+/** The room on the GPUs a GPU desktop kind's boxes use (#603). */
+export interface GpuRoom {
+  /** Each GPU that has been read, as last read. */
+  readonly readings: readonly GpuReading[];
+  /** Until when a new box is refused, as every GPU was lately read full; null when it is not. */
+  readonly fullUntil: number | null;
+}
+
 export interface Limit {
   readonly resource: "memory" | "disk" | "cpu" | "guests" | "gpu-desktops" | "gpu-memory" | "machines";
   /** Which one, where there are several: a GPU's index or UUID. */
@@ -415,6 +442,13 @@ export interface Backend {
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
   /**
+   * Whether `stop` saves a guest of the kind with its running session, as a
+   * hibernate or a suspend does, so that it holds no memory while stopped
+   * and `start` resumes it as it was, BB's daemon included. A spare of such
+   * a kind waits stopped (#539).
+   */
+  keepsSession?(kind: string): boolean;
+  /**
    * Why the guest stopped, when bb-box finds it stopped without having
    * stopped it (#406), such as its VM process's exit status and crash
    * report. Null when the backend cannot tell. Only backends that record it.
@@ -480,6 +514,8 @@ export interface Backend {
   maintain?(signal?: AbortSignal): Promise<void>;
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
+  /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */
+  gpuRoom?(kind: string): Promise<GpuRoom>;
   /** Puts back a machine the operator has fixed. */
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   /** Building images in boxes and keeping their builds (049). Only backends that can. */

@@ -36,7 +36,9 @@ The line under the name says how the box is doing:
 | Failed | the box could not start, and a red line under it says why |
 | Gone | someone deleted the box outside BB Box |
 
-The line also gives the box's cores, memory and disk. For a desktop, it says when someone has control: 'You have control' or 'Another viewer has control'. 'Display on the CPU' means a GPU desktop is drawn without its graphics card.
+After the state, the line says what needs your attention. For a desktop, it says when someone has control: 'You have control' or 'Another viewer has control'. 'Display on the CPU' means a GPU desktop is drawn without its graphics card. The line then gives the box's cores, memory and disk.
+
+The name and the line under it each keep to one line. In a narrow panel, the line leaves out what does not fit, from its end. Point at the line to see all of it. A long name is shortened in the same way.
 
 Select a row to see its details. They give the box's address, size, backend and system, and whether it is a BB machine. They also say how long each step took to start it, and when it was made.
 
@@ -44,7 +46,7 @@ Select a row to see its details. They give the box's address, size, backend and 
 
 The buttons on a row open the box's desktop or terminal, and stop or start the box where its backend can. The menu at the end of the row has these and more:
 
-- Open desktop in a browser tab: shows the desktop on a page of its own
+- Open in browser: shows the desktop on a page of its own
 - Copy address: copies the box's network address
 - New thread on this box…: starts a child thread that works on this box in its own copy of the project, and is archived with this thread
 - Check now: asks the backend for the box's state again
@@ -68,21 +70,35 @@ If BB Box cannot do what you asked, it says why in a red line under the plus. Fo
 
 ## The Boxes page
 
-Select **Boxes** in BB's sidebar. The page lists your machines first, under Machines, and then every thread's boxes, under Threads.
+Select **Boxes** in BB's sidebar. The page has 2 tabs, each with a count:
 
-![The Boxes page with 2 machines and 2 thread boxes](../design/mockups/built/boxes-page-light.png)
+- **Machines** lists your machines.
+- **Threads** lists every thread's boxes, in a card for each thread. The card's title is the thread's title. Select it, or the arrow beside it, to open the thread.
 
-A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. The arrow beside its menu opens its thread. Its status line ends with the thread's title. 'New thread on this box…' is only in the Box panel.
+The page opens on the tab you chose last. The first time, it opens on Machines if you have any.
+
+![The Boxes page's Machines tab, with 2 machines](../design/mockups/built/boxes-page-light.png)
+
+![The Boxes page's Threads tab, with 3 threads](../design/mockups/built/boxes-page-threads-light.png)
+
+Under the tabs, a search field finds boxes by name, kind, provider or thread title. Beside it:
+
+- **Filters** keeps the kinds, providers and states you tick. Each filter offers only what the tab lists.
+- **Sort** orders the boxes by name or by when they were made. Select the same choice again to reverse the order.
+
+On Threads, each thread's card comes where its first box falls in that order.
+
+A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. 'New thread on this box…' is only in the Box panel.
 
 A desktop or terminal you open from the page shows on the page, with a back arrow to the list.
 
-The gear at the top right opens BB Box's settings. The plus beside it adds one of your machines.
+The gear at the top right opens BB Box's settings. **New box** beside it adds one of your machines, since a box made on this page has no thread. To start a thread on a box of its own, use BB's new-thread screen: see [starting a thread on a new box](making-a-box.md#starting-a-thread-on-a-new-box).
 
 ## Your machines
 
 A machine is a box of your own, kept as a BB machine. It belongs to no thread. It shows in BB's machine list and in the new-thread picker, so you can start threads on it, and it stays until you remove it.
 
-You can add a machine from the plus on the Boxes page, or from **Add machine** in Settings, BB Box, Machines. The form is the same as for a new box, with a name at the end. The name is optional: leave it empty and BB Box picks one. A name uses lowercase letters, digits and hyphens, starts with a letter, does not end with a hyphen, and is at most 32 characters.
+You can add a machine from **New box** on the Boxes page, or from **Add machine** in Settings, BB Box, Machines. The form is the same as for a new box, with a name at the end. The name is optional: leave it empty and BB Box picks one. A name uses lowercase letters, digits and hyphens, starts with a letter, does not end with a hyphen, and is at most 32 characters.
 
 A machine's row lists the threads working on it. You can stop, start and remove it from the Boxes page or from settings. Removing a machine deletes it, as releasing a box does. If a thread is working on the machine, Remove and Stop ask again before they go on.
 

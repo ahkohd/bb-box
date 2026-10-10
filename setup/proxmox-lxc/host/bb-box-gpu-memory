@@ -1,0 +1,41 @@
+#!/bin/bash
+# Reports each NVIDIA GPU's free memory to bb-box (#603), so a GPU that other
+# work frees shows as free within seconds. Proxmox's API cannot read GPU
+# memory, and bb-box's API token cannot read files on the host, so this
+# writes the notes of the VM named bb-box-gpu-memory, which is never started.
+# The token may read that VM's config, through PVEAuditor on it, and change
+# nothing there. setup-gpu-report.sh makes the VM and installs this.
+#
+# The notes say when they were written, then one line per GPU:
+#   at <seconds since the epoch>
+#   gpu <UUID> <PCI bus ID> <index> <free MiB> <total MiB>
+# They change only when a GPU's free memory moves to another 64 MiB step (384
+# MiB, what a desktop needs, is a step), or after 4 minutes, so bb-box can
+# tell a stopped timer from a quiet GPU.
+#
+# Run as root by bb-box-gpu-memory.timer every 15 s. usage: bb-box-gpu-memory
+set -euo pipefail
+name=bb-box-gpu-memory
+configs=${BBBOX_QEMU_CONFIGS:-/etc/pve/qemu-server}
+last=${BBBOX_GPU_REPORT_STATE:-/run/bb-box-gpu-memory}
+step=64
+beat=240
+
+conf=$(grep -lx "name: $name" "$configs"/*.conf 2>/dev/null | head -1) || true
+[ -n "$conf" ] || { echo "$name: no VM named $name on this node; run setup-gpu-report.sh" >&2; exit 1; }
+vmid=$(basename "$conf" .conf)
+
+smi=$(nvidia-smi --query-gpu=uuid,pci.bus_id,index,memory.free,memory.total --format=csv,noheader,nounits)
+gpus=$(awk -F', *' 'NF == 5 && $4 ~ /^[0-9]+$/ && $5 ~ /^[0-9]+$/ { print "    gpu", $1, $2, $3, $4, $5 }' <<<"$smi")
+[ -n "$gpus" ] || { echo "$name: nvidia-smi gave no GPU memory: $smi" >&2; exit 1; }
+steps=$(awk -v step=$step '{ print $2, int($5 / step), $6 }' <<<"$gpus")
+now=$(date +%s)
+if [ -f "$last" ] && [ "$(tail -n +2 "$last")" = "$steps" ] && [ $((now - $(head -1 "$last"))) -lt $beat ]; then
+  exit 0
+fi
+# Indented, so the notes panel shows the lines as written.
+qm set "$vmid" --description "bb-box: each GPU's memory, from bb-box-gpu-memory.timer on this host. Do not edit.
+
+    at $now
+$gpus" >/dev/null
+printf '%s\n%s\n' "$now" "$steps" >"$last"

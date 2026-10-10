@@ -23,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, Notice, OPERATOR, osName, SETTINGS_PATH, StatusDot, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, osName, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { refreshLosslessly, type LosslessRefresh } from "./rfb-refresh.ts";
 import { controlWord, statusOf } from "./status.ts";
@@ -46,6 +46,8 @@ import {
   type Connection,
 } from "./viewer.ts";
 import { BoxGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { choices, filtering, NO_FILTERS, shown, type Filters, type Sort } from "./boxes-filter.ts";
+import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
@@ -586,8 +588,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? { state: "connecting" });
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  /** The box's clipboard text as last seen: from its desktop's cut text, or the RPC where its input reports it. */
-  const [boxClipboard, setBoxClipboard] = useState<string | null>(null);
+  /** The box's clipboard as last seen: text from its desktop's cut text or the RPC where its input reports it, or an image the video client brought (#609). */
+  const [boxClipboard, setBoxClipboard] = useState<string | Blob | null>(null);
   /**
    * A clipboard outcome of the person's own paste or copy, for a moment, in
    * the toolbar: "Pasted", "Copied", or why nothing went. Never from an
@@ -606,7 +608,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   /** The field to paste into when this computer's clipboard cannot be read here: null closed, else its text. */
   const [pasteField, setPasteField] = useState<string | null>(null);
   /** The box's text shown to copy by hand, when this computer's clipboard cannot be written here. */
-  const [copyField, setCopyField] = useState<string | null>(null);
+  const [copyField, setCopyField] = useState<string | Blob | null>(null);
   const ready = showing && path !== null;
   const pathNow = useRef(path);
   pathNow.current = path;
@@ -637,8 +639,14 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       setBoxClipboard(text);
       navigator.clipboard?.writeText?.(text).catch(() => undefined);
     };
-    current.onPaste = (text) => {
-      if (text) flashFor("Pasted");
+    if (current instanceof SelkiesSession) {
+      current.onClipboardImage = (image) => {
+        setBoxClipboard(image);
+        writeImage(image).catch(() => undefined);
+      };
+    }
+    current.onPaste = (pasted: string | Blob | null) => {
+      if (pasted) flashFor("Pasted");
     };
     current.onPasteFailed = (error) => setProblem(message(error));
     // A desktop whose server moves no clipboard, as Tart's macOS VMs: bb-box puts the text there itself, as UTF-8 (#464).
@@ -654,7 +662,10 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       current.onPaste = undefined;
       current.onPasteFailed = undefined;
       current.putClipboard = undefined;
-      if (current instanceof SelkiesSession) current.onFallback = undefined;
+      if (current instanceof SelkiesSession) {
+        current.onFallback = undefined;
+        current.onClipboardImage = undefined;
+      }
       current.element.remove();
       session.current = null;
       if (!claimed.kept) {
@@ -766,8 +777,28 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     }
     session.current?.paste(text);
   };
-  /** The menu's Paste: this computer's clipboard, read on the click, which is a gesture; where the frame still refuses, a field to paste into. */
+  /**
+   * The menu's Paste: this computer's clipboard, read on the click, which is a gesture; where the frame still refuses, a field to paste into.
+   * The video client takes an image too, before text (#609).
+   */
   const pasteFromComputer = async () => {
+    const video = session.current instanceof SelkiesSession ? session.current : null;
+    if (video && navigator.clipboard?.read) {
+      const image = await navigator.clipboard.read().then(
+        async (items) => {
+          for (const item of items) {
+            const type = item.types.find((one) => one.startsWith("image/"));
+            if (type) return item.getType(type);
+          }
+          return null;
+        },
+        () => null,
+      );
+      if (image) {
+        await video.pasteImage(image);
+        return;
+      }
+    }
     let text: string;
     try {
       text = await navigator.clipboard.readText();
@@ -776,28 +807,28 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       return;
     }
     if (!text) {
-      flashFor("This computer's clipboard has no text.");
+      flashFor(video ? "This computer's clipboard has no text or image." : "This computer's clipboard has no text.");
       return;
     }
     pasteText(text);
   };
   /** The menu's Copy: the box's clipboard as last seen, or fetched now where its input reports it, written to this computer's on the click. */
   const copyToComputer = async () => {
-    let text = boxClipboard;
-    if (text === null) {
+    let copied = boxClipboard;
+    if (copied === null) {
       const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => null);
-      text = latest?.text ?? null;
-      if (text !== null) setBoxClipboard(text);
+      copied = latest?.text ?? null;
+      if (copied !== null) setBoxClipboard(copied);
     }
-    if (text === null) {
+    if (copied === null) {
       if (box) flashFor(nothingFromBox(box, mine));
       return;
     }
     try {
-      await navigator.clipboard.writeText(text);
+      await (typeof copied === "string" ? navigator.clipboard.writeText(copied) : writeImage(copied));
       flashFor("Copied");
     } catch {
-      setCopyField(text);
+      setCopyField(copied);
     }
   };
 
@@ -865,7 +896,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                 {newTab ? (
                   <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, threadId, box.id))}>
                     <Icon name="ExternalLink" aria-hidden />
-                    Open in a browser tab
+                    Open in browser
                   </DropdownMenuItem>
                 ) : (
                   <DropdownMenuItem onSelect={() => navigate.toThread(threadId)}>
@@ -880,7 +911,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                   </DropdownMenuItem>
                 ) : null}
                 {showing && video === true && canShowVideo() && stream ? (
+                  // A glyph like the other items', so its words line up with theirs; BB's tick sits at the right.
                   <DropdownMenuCheckboxItem
+                    className="gap-2"
                     checked={stream === "selkies"}
                     onCheckedChange={(checked) => {
                       const next = checked ? "selkies" : "rfb";
@@ -889,6 +922,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                       decide(next);
                     }}
                   >
+                    <MonitorGlyph />
                     Show as video
                   </DropdownMenuCheckboxItem>
                 ) : null}
@@ -977,9 +1011,28 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Paste into {box?.name ?? "the box"}</AlertDialogTitle>
-            <AlertDialogDescription>This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {stream === "selkies"
+                ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is."
+                : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
-          <Textarea aria-label="Text to paste" value={pasteField ?? ""} onChange={(event) => setPasteField(event.target.value)} rows={4} autoFocus />
+          <Textarea
+            aria-label="Text to paste"
+            value={pasteField ?? ""}
+            onChange={(event) => setPasteField(event.target.value)}
+            onPaste={(event) => {
+              // An image pasted here goes to the box at once, as the video client takes images (#609).
+              const video = session.current instanceof SelkiesSession ? session.current : null;
+              const image = video ? Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/")) : undefined;
+              if (!video || !image) return;
+              event.preventDefault();
+              setPasteField(null);
+              void video.pasteImage(image);
+            }}
+            rows={4}
+            autoFocus
+          />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <Button
@@ -999,9 +1052,15 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Copied in {box?.name ?? "the box"}</AlertDialogTitle>
-            <AlertDialogDescription>This computer's clipboard cannot be written here. Select the text and copy it.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {copyField instanceof Blob ? "This computer's clipboard cannot be written here. Right-click the image and copy it." : "This computer's clipboard cannot be written here. Select the text and copy it."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
-          <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />
+          {copyField instanceof Blob ? (
+            <CopiedImage image={copyField} />
+          ) : (
+            <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Close</AlertDialogCancel>
           </AlertDialogFooter>
@@ -1009,6 +1068,32 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       </AlertDialog>
     </div>
   );
+}
+
+/** Writes an image to this computer's clipboard, as PNG, the type browsers take (#609). */
+async function writeImage(image: Blob): Promise<void> {
+  if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) throw new Error("This browser cannot copy images.");
+  // A promise, so the browser keeps the click's permission while the PNG is made.
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": asPng(image) })]);
+}
+
+async function asPng(image: Blob): Promise<Blob> {
+  if (image.type === "image/png") return image;
+  const bitmap = await createImageBitmap(image);
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+  return canvas.convertToBlob({ type: "image/png" });
+}
+
+/** An image from the box, to copy by hand where the browser will not write it. */
+function CopiedImage({ image }: { image: Blob }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const made = URL.createObjectURL(image);
+    setUrl(made);
+    return () => URL.revokeObjectURL(made);
+  }, [image]);
+  return url ? <img src={url} alt="The image copied in the box" className="max-h-64 max-w-full self-start rounded border border-border object-contain" /> : null;
 }
 
 /**
@@ -1057,15 +1142,9 @@ export function BoxLine({ box, meta, machine = false, actions }: { box: BoxView;
     <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
       <span className="flex size-6 items-center justify-center text-muted-foreground"><BoxGlyph /></span>
       <div className="min-w-0">
-        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="truncate text-sm font-medium text-foreground">{box.name}</span>
-          <span className="truncate text-xs text-muted-foreground">{osName(box.os)}</span>
-          <KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={machine} />
-        </span>
-        <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-          <StatusDot tone={status.tone} />
-          <Meta items={[status.items[0]?.text, ...status.items.slice(1).map((item) => item.text), control, meta]} />
-        </div>
+        <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={machine} />} />
+        {/* Who has control comes straight after the state, so a narrow chooser keeps it. */}
+        <StatusLine tone={status.tone} items={[status.items[0], control, ...status.items.slice(1), meta]} />
       </div>
       <span className="flex shrink-0 items-center gap-1">{actions}</span>
     </div>
@@ -1178,9 +1257,13 @@ export function desktopSubPath(threadId: string, boxId: string, view: "desktop" 
   return [base, ...(view === "terminal" ? ["terminal"] : []), ...(from === "settings" ? ["from-settings"] : [])].join("/");
 }
 
+/** The page's tabs: your machines, and the threads' boxes by thread. */
+type BoxesTab = "machines" | "threads";
+
 function BoxList() {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
+  const pluginId = experimental_usePluginId();
   const { value: all, error, refresh } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
   // Your machines with the threads on each, as settings lists them: settings' rows, actions and warnings (the operator, 5 October 2026).
   const { value: machinesState, refresh: refreshMachines } = useLive<{ machines: MachineEntry[]; kinds: KindView[] }>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
@@ -1192,7 +1275,30 @@ function BoxList() {
   const [open, setOpen] = useState<string | null>(null);
   /** A release or stop of a thread's box left alone because threads work on it, until the person says: the panel's question. */
   const [inUse, setInUse] = useState<(InUse<"release" | "stop"> & { readonly threadId: string }) | null>(null);
-  // The plus adds one of your machines here too (the operator, 4 October 2026), the same form as settings' Add machine; it then shows under Machines.
+  // The tab chosen last, kept in the browser, so the way back from a box's desktop lands on the tab it left.
+  const tabKey = `${pluginId}:boxes-tab`;
+  const [chosenTab, setChosenTab] = useState<BoxesTab | null>(() => {
+    try {
+      const kept = window.localStorage.getItem(tabKey);
+      return kept === "machines" || kept === "threads" ? kept : null;
+    } catch {
+      return null;
+    }
+  });
+  const chooseTab = (tab: BoxesTab) => {
+    setChosenTab(tab);
+    try {
+      window.localStorage.setItem(tabKey, tab);
+    } catch {
+      // Without storage, the page opens on the first tab with boxes each time.
+    }
+  };
+  // The search, filters and sort, as the Automations page has them; Name, ascending, as its default.
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [sort, setSort] = useState<Sort>({ key: "name", ascending: true });
+  // New box makes one of your machines here (the operator, 4 October 2026): a box made here has no thread. The same form as settings'
+  // Add machine; the machine then shows under Machines.
   const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
     let refused: string | null;
     try {
@@ -1202,6 +1308,7 @@ function BoxList() {
     }
     await refreshBoth();
     setProblem(refused);
+    if (!refused) chooseTab("machines");
     return refused;
   };
   /** A thread's box: the panel's Start, Stop, Release and Check now, as that thread, with the panel's in-use guard. */
@@ -1220,79 +1327,128 @@ function BoxList() {
   };
   const entries = all ?? [];
   const threads = entries.filter((entry) => entry.owner !== "yours");
-  const titles = useThreadTitles([...new Set(threads.map((entry) => entry.threadId))]);
+  const threadIds = [...new Set(threads.map((entry) => entry.threadId))];
+  const titles = useThreadTitles(threadIds);
   const now = useNow(
     entries.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting" || entry.box.state === "stopping") || machines.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting"),
     1000,
   );
-  const shown = problem ?? machineActions.problem;
+  const shownProblem = problem ?? machineActions.problem;
+  const tab: BoxesTab = chosenTab ?? (machines.length || !threads.length ? "machines" : "threads");
+  const loaded = !!all && !!machinesState;
+  // The filters offer what the tab lists, and keep only what it still offers. A machine's search words are the threads on it.
+  const offered = choices(tab === "machines" ? machines.map((entry) => entry.box) : threads.map((entry) => entry.box));
+  const kept: Filters = {
+    kinds: filters.kinds.filter((value) => offered.kinds.includes(value)),
+    providers: filters.providers.filter((value) => offered.providers.includes(value)),
+    states: filters.states.filter((value) => offered.states.includes(value)),
+  };
+  const machineRows = shown(
+    machines.map((entry) => ({ box: entry.box, entry, words: entry.threads.map((thread) => thread.title ?? "") })),
+    search,
+    kept,
+    sort,
+  );
+  const threadRows = shown(
+    threads.map(({ threadId, box }) => ({ box, threadId, words: [titles[threadId] ?? ""] })),
+    search,
+    kept,
+    sort,
+  );
+  // Each thread once, with its boxes, where its first box comes in the sort's order.
+  const groups = new Map<string, typeof threadRows>();
+  for (const row of threadRows) groups.set(row.threadId, [...(groups.get(row.threadId) ?? []), row]);
+  const narrowed = !!search.trim() || filtering(kept);
+  const listed = tab === "machines" ? machines.length : threads.length;
   return (
-    <div className="h-full overflow-y-auto p-4 md:p-5">
-      <div className="mx-auto w-full max-w-3xl space-y-4">
-        {/* The settings gear, then the plus at the far right, where the Box panel's plus sits: a pair, BB's gap between icon
-            buttons in a group, as its sidebar header's (the operator, 5 October 2026, for whom 12 px read as two things). A link:
-            BB's openUrl does nothing with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
-        <div className="flex items-center justify-end gap-1">
-          <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} />
-          {kinds.length ? <NewBox kinds={kinds} make={add} machine plus profile={(backend) => rpc.call("provider", { backend })} /> : null}
+    <div className="h-full min-h-0">
+      {/* BB's Automations page's frame and spacing (the operator, 8 October 2026): its width, a line under the title, the tabs
+          with the actions at their right; the list scrolls under them. */}
+      <div className="mx-auto box-border flex h-full min-h-0 w-full max-w-5xl flex-col gap-5 px-4 pb-4 pt-3 md:px-5 md:pt-4">
+        <p className="text-sm leading-5 text-muted-foreground">Computers for your threads, and machines of your own.</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <PageTabs
+            tabs={[
+              { id: "machines", label: "Machines", count: machines.length },
+              { id: "threads", label: "Threads", count: threadIds.length },
+            ]}
+            selected={tab}
+            onSelect={chooseTab}
+          />
+          {/* The settings gear, then New box, where Automations has New automation: a plain button, as BB's new-thread screen
+              already offers a thread on a new box (the operator, 8 October 2026). The gear is a link: BB's openUrl does nothing
+              with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="size-8" />
+            {kinds.length ? <NewBox kinds={kinds} make={add} machine primary profile={(backend) => rpc.call("provider", { backend })} /> : null}
+          </div>
         </div>
-        {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-        <ProblemLine
-          problem={shown}
-          onDismiss={() => {
-            setProblem(null);
-            machineActions.setProblem(null);
-          }}
-        />
-        {all && machinesState && !threads.length && !machines.length ? <EmptyPanel title="No boxes">No thread has a box, and you have no machines. Add one with the plus, or from a thread's Box panel.</EmptyPanel> : null}
-        {machines.length ? (
-          <div className="space-y-2">
-            <h3 className="text-xs font-medium text-foreground">Machines</h3>
-            <div className="rounded-lg border border-border bg-card px-4 py-3">
-              <div className="divide-y divide-border">
-                {machines.map((entry) => (
-                  <MachineRow
-                    key={entry.box.id}
-                    entry={entry}
-                    now={now}
-                    busy={machineActions.busy}
-                    from="boxes"
-                    onStop={() => void machineActions.act("stop", entry.box)}
-                    onStart={() => void machineActions.act("start", entry.box)}
-                    onRemove={() => machineActions.askRemove(entry.box)}
-                  />
-                ))}
+        <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
+          {listed ? <SearchRow search={search} onSearch={setSearch} filters={kept} offered={offered} onFilters={setFilters} sort={sort} onSort={setSort} /> : null}
+          {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
+          <ProblemLine
+            problem={shownProblem}
+            onDismiss={() => {
+              setProblem(null);
+              machineActions.setProblem(null);
+            }}
+          />
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+            {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. New box adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}
+            {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box. A thread gets one from its Box panel, or from its agent.</EmptyPanel> : null}
+            {narrowed && listed && !(tab === "machines" ? machineRows : threadRows).length ? <EmptyPanel>No boxes match.</EmptyPanel> : null}
+            {tab === "machines" && machineRows.length ? (
+              <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-1">
+                <div className="divide-y divide-border">
+                  {machineRows.map(({ entry }) => (
+                    <MachineRow
+                      key={entry.box.id}
+                      entry={entry}
+                      now={now}
+                      busy={machineActions.busy}
+                      from="boxes"
+                      onStop={() => void machineActions.act("stop", entry.box)}
+                      onStart={() => void machineActions.act("start", entry.box)}
+                      onRemove={() => machineActions.askRemove(entry.box)}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : null}
+            {tab === "threads"
+              ? [...groups].map(([threadId, rows]) => (
+                  // One card per thread, headed by its title, which opens the thread, as a row's title does on the Automations page.
+                  <section key={threadId} aria-label={titles[threadId] ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
+                    <div className="flex items-center gap-3 border-b border-border py-1.5 pl-4 pr-3">
+                      <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
+                        {titles[threadId] ?? threadId}
+                      </button>
+                      <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
+                    </div>
+                    <div className="divide-y divide-border px-4 py-1">
+                      {rows.map(({ box }) => (
+                        <BoxRow
+                          key={box.id}
+                          box={box}
+                          threadId={threadId}
+                          open={open === box.id}
+                          onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
+                          act={actOn(threadId)}
+                          now={now}
+                          opens={{
+                            desktop: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id) }),
+                            terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
+                          }}
+                          meta={[box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
+                          threading={false}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))
+              : null}
           </div>
-        ) : null}
-        {threads.length ? (
-          <div className="space-y-2">
-            {machines.length ? <h3 className="text-xs font-medium text-foreground">Threads</h3> : null}
-            <div className="rounded-lg border border-border bg-card px-4 py-1">
-              <div className="divide-y divide-border">
-                {threads.map(({ threadId, box }) => (
-                  <BoxRow
-                    key={box.id}
-                    box={box}
-                    threadId={threadId}
-                    open={open === box.id}
-                    onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
-                    act={actOn(threadId)}
-                    now={now}
-                    opens={{
-                      desktop: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id) }),
-                      terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
-                    }}
-                    meta={[box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null, titles[threadId] ?? null]}
-                    extra={<IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />}
-                    threading={false}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : null}
+        </div>
         {machineActions.dialogs}
         <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void actOn(inUse?.threadId ?? "")(found.method, found.box, true)} />
       </div>

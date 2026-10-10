@@ -91,6 +91,12 @@ RUSTUP_VERSION=1.29.1
 RUSTUP_SHA256=01AA49CF9574A8BD0AE52005D7DE2590E8F27181DED6748236E702C92AEF826D
 NODE_VERSION=24.21.0
 NODE_SHA256=8779B1BDE1D39F8D420E3B57AA657B39891AF434D3DE44A919044CEC06785921
+CLAUDE_VERSION=2.1.283
+CLAUDE_SHA256=1D0AAA255E3B9BA304840F260F4993B98F10516D3AA5B7D60ECD3392CCA34DF4
+CODEX_VERSION=0.157.1
+CODEX_SHA256=04CB2F6143DA840F33F0061ED9E13FCB0F4D7CD9BFCE27299C456A6BC47B410D
+PI_VERSION=0.87.1
+PI_SHA256=2E0D544999A765018EE5C2FF1A8B1A7E0F5D5B6B1E00B32D8C025D6C1DBCC833
 # The drivers Setup needs for the disk, and Windows for the network and display.
 VIRTIO_VERSION=0.1.302
 VIRTIO_SHA256=303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d
@@ -136,9 +142,9 @@ free=$(kib)
 
 build=build.$(date -u +%Y%m%d-%H%M%S)
 # The image's record (049). The pins' SHA-256 is of this script's pin lines.
-record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
+record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","claude-code":"%s","codex":"%s","pi":"%s","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
   "$build" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$edition" "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-windows-image.sh" | shasum -a 256 | cut -d' ' -f1)" \
-  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$NODE_VERSION" "$VIRTIO_VERSION")
+  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$NODE_VERSION" "$CLAUDE_VERSION" "$CODEX_VERSION" "$PI_VERSION" "$VIRTIO_VERSION")
 d=$images/$build.new
 # Kept on a failure, to look at: the screen and QEMU's output.
 png=$images/$build.png
@@ -293,6 +299,12 @@ pin() { printf '"%s": {"version": "%s", "sha256": "%s", "url": "%s"}' "$1" "$2" 
   pin rustup "$RUSTUP_VERSION" "$RUSTUP_SHA256" "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/aarch64-pc-windows-msvc/rustup-init.exe"
   printf ',\n  '
   pin node "$NODE_VERSION" "$NODE_SHA256" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-win-arm64.zip"
+  printf ',\n  '
+  pin claude "$CLAUDE_VERSION" "$CLAUDE_SHA256" "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/win32-arm64/claude.exe"
+  printf ',\n  '
+  pin codex "$CODEX_VERSION" "$CODEX_SHA256" "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-aarch64-pc-windows-msvc.exe"
+  printf ',\n  '
+  pin pi "$PI_VERSION" "$PI_SHA256" "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-windows-arm64.zip"
   printf ',\n  "record": "%s"' "$(json "$record")"
   printf '\n}\n'
 } >"$a/bb-box/build.json"

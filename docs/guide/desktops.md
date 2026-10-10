@@ -8,7 +8,7 @@ You can open a box's desktop from:
 
 - the Box panel: select **Open desktop** on the box's row, which opens a tab named after the box in the thread's right panel
 - the thread's Desktop tab: it opens the thread's desktop straight away, lists them when there are several, or offers the Box panel when there is none
-- a browser tab of its own: select **Open desktop in a browser tab** in the box's menu
+- a browser tab of its own: select **Open in browser** in the box's menu
 - the Boxes page: the desktop shows on the page, with a back arrow to the list
 
 The thread's Desktop tab counts the machine the thread runs on, if it is a desktop.
@@ -61,7 +61,7 @@ To choose yourself, select **Show as video** in the toolbar's menu. It is ticked
 
 If the video cannot start, the desktop shows over VNC, and the toolbar says 'Video did not start, so this shows VNC.' Point at the note to see why: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
 
-Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size.
+Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it.
 
 ## When the desktop is not showing
 

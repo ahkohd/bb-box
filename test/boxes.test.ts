@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -18,7 +18,8 @@ import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
 import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
-import { adminText, boxDetail, boxView, kindViews } from "../src/plugin/views.ts";
+import { gpuRoomText } from "../src/plugin/tools.ts";
+import { adminText, boxDetail, boxView, gpuRooms, kindViews } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -26,7 +27,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -46,6 +47,8 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
     notified: [] as string[],
     errors: [] as string[],
     enrolled: [] as string[],
+    /** The IDs of the boxes enrolled, in order: a new spare can take a claimed one's name. */
+    enrolledIds: [] as string[],
     unenrolled: [] as string[],
     reconnected: [] as string[],
     boxes: null as unknown as Boxes,
@@ -78,6 +81,7 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
       },
       enrol: async (box, options) => {
         world.enrolled.push(options?.restored ? `${box.name}, restored` : box.name);
+        world.enrolledIds.push(box.id);
         await world.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId: `host-${box.id}`, error: null } }));
       },
       unenrol: async (box) => {
@@ -538,6 +542,48 @@ test("box details and kind lists say whether the box user can become root", asyn
   assert.equal(linux!.computerUse, false);
   const [desktop] = kindViews([{ kind: FAKE_KINDS[1]!, backend: lxc }], {});
   assert.deepEqual([desktop!.computerUse, desktop!.offers[0]!.resizable], [true, true]);
+});
+
+test("a GPU desktop's offers carry its GPUs' room as last read, and box_list says it (#603)", async () => {
+  const gpuKind: BoxKind = { ...FAKE_KINDS[1]!, capabilities: { ...FAKE_KINDS[1]!.capabilities, gpu: true } };
+  const cpuKind: BoxKind = { ...FAKE_KINDS[1]!, id: "linux-desktop-cpu" };
+  const now = 1_790_000_000_000;
+  const reading = (id: string, freeMiB: number, totalMiB: number | null, age: number) => ({ id, freeMiB, totalMiB, at: now - age, neededMiB: 384, source: "desktop" as const });
+  let room: GpuRoom = { readings: [reading("gpu-a", 6100, 8192, 2 * 60_000)], fullUntil: null };
+  const lxc = { id: "proxmox-lxc", label: "Proxmox LXC", hosts: ["pve"], gpuRoom: async () => room } as unknown as Backend;
+  const docker = { id: "docker:host_1", label: "Docker", hosts: ["devpc"] } as unknown as Backend;
+  const views = async (offered: { kind: BoxKind; backend: Backend }[]) => kindViews(offered, {}, {}, {}, {}, {}, undefined, await gpuRooms(offered));
+
+  const [desktop, cpu] = await views([
+    { kind: gpuKind, backend: lxc },
+    { kind: cpuKind, backend: lxc },
+  ]);
+  assert.deepEqual(desktop!.offers[0]!.gpuRoom, room);
+  assert.equal(cpu!.offers[0]!.gpuRoom, null, "a kind without a GPU shows no GPU room");
+  assert.equal(gpuRoomText(desktop!, [desktop!, cpu!], now), " GPU memory: gpu-a 6100 of 8192 MiB free, 2 minutes ago; a desktop needs 384 MiB.");
+
+  room = { readings: [reading("gpu-a", 103, 8192, 60_000), reading("gpu-b", 21, null, 0)], fullUntil: now + 4 * 60_000 };
+  const [full] = await views([{ kind: gpuKind, backend: lxc }]);
+  assert.equal(
+    gpuRoomText(full!, [full!, cpu!], now),
+    " No GPU has room for a desktop now (gpu-a 103 MiB free, 1 minute ago; gpu-b 21 MiB free, just now; a desktop needs 384 MiB). " +
+      "Acquire linux-desktop-cpu instead, or try again in 4 minutes.",
+  );
+  assert.match(gpuRoomText(full!, [full!], now), /needs 384 MiB\)\. Try again in 4 minutes\.$/, "with no CPU desktop to offer");
+  assert.match(gpuRoomText(full!, [full!, cpu!], now + 4 * 60_000), /^ GPU memory: gpu-a 103 of 8192 MiB free, 5 minutes ago; gpu-b 21 MiB free, 4 minutes ago;/, "once the refusal ends");
+
+  // With several providers, each names itself, and one that reads no GPU says nothing.
+  const [both] = await views([
+    { kind: gpuKind, backend: lxc },
+    { kind: gpuKind, backend: docker },
+  ]);
+  assert.equal(both!.offers[1]!.gpuRoom, null);
+  assert.match(gpuRoomText(both!, [both!], now), /^ No GPU on Proxmox LXC on pve has room for a desktop now \(/);
+
+  room = { readings: [], fullUntil: null };
+  const [unread] = await views([{ kind: gpuKind, backend: lxc }]);
+  assert.equal(unread!.offers[0]!.gpuRoom, null);
+  assert.equal(gpuRoomText(unread!, [], now), "", "nothing before a reading");
 });
 
 test("box details promise a restored box enrols again only when its kind can enrol", async () => {
@@ -1754,10 +1800,31 @@ test("a kind's spares are made and enrolled ahead, and an acquire of the kind at
   const after = await world.boxes.list(SPARES);
   assert.ok(!after.some((spare) => spare.id === box.id));
   assert.equal(world.enrolled.length, 3);
-  assert.ok(!world.enrolled.slice(2).includes(box.name));
+  // By ID: the new spare's name is free to be the claimed box's, which left the spares.
+  assert.ok(!world.enrolledIds.slice(2).includes(box.id));
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" }), /already has 1 boxes/);
   assert.equal((await world.boxes.list(SPARES)).length, 2, "a claim keeps to the thread's limit");
   assert.deepEqual(world.errors, []);
+});
+
+test("a new spare's name avoids a box a thread claimed with that name, so no two live boxes, or their BB machines, share one (#539)", async () => {
+  // Every name is drawn from the same bytes, so a new name meets each name it could take; box IDs stay random.
+  const { randomBytes } = await import("node:crypto");
+  const world = setup({}, { enrolWaitMs: 5_000, random: (bytes) => (bytes === 2 ? new Uint8Array(2) : randomBytes(bytes)) });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [spare] = await world.boxes.list(SPARES);
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux" });
+  assert.equal(box.id, spare!.id);
+  assert.equal(box.name, spare!.name);
+  await until(async () => (await world.boxes.list(SPARES)).some((other) => other.enrol.state === "enrolled"));
+  const [next] = await world.boxes.list(SPARES);
+  assert.notEqual(next!.id, box.id);
+  assert.notEqual(next!.name, box.name, "the new spare's name is not the claimed box's");
+  // A thread's new box avoids the spare's name too.
+  const other = await world.boxes.acquire({ threadId: "thr_two", projectId: "prj", kind: "linux", size: { preset: "medium" } });
+  assert.ok(![box.name, next!.name].includes(other.name), other.name);
 });
 
 test("a claimed spare whose BB machine BB shows disconnected reconnects, and its commands wait for that (#128)", async () => {

@@ -83,7 +83,9 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
   const openTerminal = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "terminal", back) });
   const acting = busy !== null && busy.endsWith(`:${box.id}`);
   return (
-    <div data-resource-row className={cn("grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3 first:pt-0 last:pb-0", box.state === "releasing" && "opacity-60")}>
+    // In settings' card, the first and last rows meet its own padding; on the Boxes page, in Automations' card, every row has the same
+    // padding above and below, as Automations' rows do (the operator, 8 October 2026).
+    <div data-resource-row className={cn("grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3", from === "settings" && "first:pt-0 last:pb-0", box.state === "releasing" && "opacity-60")}>
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
         <BoxGlyph />
       </span>
@@ -129,7 +131,7 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
             {from === "boxes" && box.desktop && ready ? (
               <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, OPERATOR, box.id))}>
                 <Icon name="ExternalLink" aria-hidden />
-                Open desktop in a browser tab
+                Open in browser
               </DropdownMenuItem>
             ) : null}
             {canOpenTerminal(box) ? (
