@@ -1417,15 +1417,17 @@ function BoxList() {
             ) : null}
             {tab === "threads"
               ? [...groups].map(([threadId, rows]) => (
-                  // One card per thread, headed by its title, which opens the thread, as a row's title does on the Automations page.
+                  // One card per thread, headed by its title, which opens the thread, as a row's title does on the Automations page. The
+                  // title and its boxes read as one group (the operator, 10 October 2026): no line under the title, which sits 16 px from
+                  // the card's top as the last row does from its bottom, and 8 px above the first row; the rows keep their dividers.
                   <section key={threadId} aria-label={titles[threadId] ?? threadId} className="overflow-hidden rounded-lg border border-border bg-card">
-                    <div className="flex items-center gap-3 border-b border-border py-1.5 pl-4 pr-3">
+                    <div className="flex items-center gap-3 pl-4 pr-3 pt-3">
                       <button type="button" className="min-w-0 flex-1 truncate rounded-sm text-left text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => navigate.toThread(threadId)}>
                         {titles[threadId] ?? threadId}
                       </button>
                       <IconButton label="Open thread" icon="ArrowUpRight" onClick={() => navigate.toThread(threadId)} />
                     </div>
-                    <div className="divide-y divide-border px-4 py-1">
+                    <div className="divide-y divide-border px-4 pb-1 [&>*:first-child]:pt-1">
                       {rows.map(({ box }) => (
                         <BoxRow
                           key={box.id}
