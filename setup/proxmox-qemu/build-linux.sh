@@ -232,6 +232,14 @@ log "a clone's root is ${root_gib:-?} GiB on a $((disk + 4)) GiB disk"
 [ "${root_gib:-0}" -gt "$disk" ] || { log "the clone's root did not grow over its disk"; checked=1; }
 ssh_box 'bash -lc bb-box-check-headless' </dev/null | tee "$stage/check.txt" || checked=1
 ! grep -q '^[^ ].* FAIL ' "$stage/check.txt" || checked=1
+# KVM in the box, as the box user: where it works, the backend's linux-kvm
+# setting can offer it. Not a failure: the host may not allow nested
+# virtualization.
+if ssh_box 'python3 -c "import fcntl, os; fcntl.ioctl(os.open(\"/dev/kvm\", os.O_RDWR), 0xAE01, 0)"' </dev/null 2>/dev/null; then
+  log "KVM works in a clone, as the box user: turn on linux-kvm in Proxmox QEMU's settings to offer it"
+else
+  log "KVM does not work in a clone: the host may not allow nested virtualization, so leave linux-kvm off"
+fi
 # Spares wait hibernated (#612), so the clone must hibernate and resume.
 if [ "$checked" = 0 ]; then
   clone_boot=$(boot_id)

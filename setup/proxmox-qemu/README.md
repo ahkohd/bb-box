@@ -133,6 +133,11 @@ Then add the template's VMID to `linux-templates` in Proxmox QEMU's setup.
 A `linux` acquire chooses a VM only when it asks for one, with `on` or the
 `linux-vm` kind, or when the other backends have no room.
 
+The build also says whether KVM works in a clone, which needs the host to
+allow nested virtualization. If it does, turn on `linux-kvm` too: boxes
+then have `/dev/kvm`, for VMs and emulators of their own, and the
+`linux-kvm` kind asks for one.
+
 ## Check it worked
 
 `build.sh`'s own check, above, runs in a clone of the new template. Then run

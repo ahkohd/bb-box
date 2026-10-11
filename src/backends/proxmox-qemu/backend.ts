@@ -148,7 +148,7 @@ const LINUX_KIND: BoxKind = {
   id: "linux",
   label: "Linux",
   description:
-    "A Linux VM with its own kernel, for kernel modules, systemd as on a machine, and work a container cannot do. It starts slower and holds its memory while it runs, so ask for it by its provider or the feature kernel; a linux box elsewhere starts sooner.",
+    "A Linux VM with its own kernel, for kernel modules, systemd as on a machine, and work a container cannot do. It starts slower and holds its memory while it runs, so ask for it as linux-vm, or as linux-kvm for KVM inside where the host allows it; a linux box elsewhere starts sooner.",
   requires: [],
   capabilities: {
     os: "linux",
@@ -363,7 +363,10 @@ export class ProxmoxQemuBackend implements Backend {
     const kinds: BoxKind[] = [];
     // Windows boxes join BB unless the switch is set off (#539).
     if (this.#config.templates.length) kinds.push(this.#config.enrol ? { ...KIND, capabilities: { ...KIND.capabilities, enrol: true } } : KIND);
-    if (this.#config.linuxTemplates.length) kinds.push(LINUX_KIND);
+    // KVM where the settings say the host allows nested virtualization (057).
+    if (this.#config.linuxTemplates.length) {
+      kinds.push(this.#config.kvm ? { ...LINUX_KIND, capabilities: { ...LINUX_KIND.capabilities, features: [...LINUX_KIND.capabilities.features, "kvm"] } } : LINUX_KIND);
+    }
     return kinds;
   }
 

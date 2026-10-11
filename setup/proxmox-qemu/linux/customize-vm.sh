@@ -17,6 +17,12 @@ here=$(cd "$(dirname "$0")" && pwd)
 # From the build's apt snapshot, as customize-base.sh installs the rest.
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends qemu-guest-agent cloud-guest-utils
 
+# The box user's groups as in other boxes, and kvm, for /dev/kvm where the
+# host allows nested virtualization. cloud-init gave it adm, cdrom, dip and
+# lxd as Ubuntu's default user.
+for group in adm cdrom dip lxd; do gpasswd -d "$BOX_USER" "$group" >/dev/null 2>&1 || true; done
+usermod -aG kvm "$BOX_USER"
+
 install -m 0755 "$here/boot.sh" /usr/local/sbin/bb-box-boot
 cat >/etc/systemd/system/bb-box-boot.service <<'EOF'
 [Unit]

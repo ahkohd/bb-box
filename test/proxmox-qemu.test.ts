@@ -138,6 +138,9 @@ test("the settings list Windows and Linux templates by VMID", () => {
   // Linux templates (057): none by default, alone or beside Windows', never the same VMID.
   assert.deepEqual(qemuConfig({}).linuxTemplates, []);
   assert.deepEqual(qemuConfig({ "windows-templates": "", "linux-templates": "9120" }).linuxTemplates, [9120]);
+  // KVM in Linux VM boxes (057): off unless set.
+  assert.equal(qemuConfig({}).kvm, false);
+  assert.equal(qemuConfig({ "linux-kvm": true }).kvm, true);
   assert.deepEqual(problems({ "linux-templates": "9104" }), [{ path: "linux-templates", message: "Template 9104 is listed more than once. List each template once." }]);
   assert.deepEqual(problems({ "windows-templates": "9104 win" }), [{ path: "windows-templates", message: 'Use VMIDs from 100 for the Windows templates. "win" is not one.' }]);
   assert.deepEqual(problems({ "windows-templates": "9104 9104" }), [{ path: "windows-templates", message: "Template 9104 is listed more than once. List each template once." }]);
@@ -314,7 +317,7 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   rmSync(join(ssh.dir, "windows", "192.0.2.150"));
   const linux = backend.kinds().find((kind) => kind.id === "linux");
   assert.ok(linux, "offered beside windows-desktop");
-  assert.deepEqual(linux.capabilities.features, ["docker", "kernel"]);
+  assert.deepEqual(linux.capabilities.features, ["docker", "kernel"], "no KVM unless the settings say the host allows it");
   assert.equal(linux.capabilities.os, "linux");
   assert.equal(linux.capabilities.enrol, true, "it joins BB as other Linux boxes do");
   assert.equal((await backend.capacity("linux", sized(), [])).ok, true);
@@ -346,6 +349,10 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   const timings: Record<string, number> = {};
   await backend.start!(guest, signal(), (step, ms) => void (timings[step] = ms));
   assert.ok(!("clock" in timings), JSON.stringify(timings));
+
+  // KVM is offered where the settings say the host allows nested virtualization.
+  const withKvm = setup({ "linux-templates": "9120", "linux-kvm": true }).backend.kinds().find((kind) => kind.id === "linux");
+  assert.deepEqual(withKvm?.capabilities.features, ["docker", "kernel", "kvm"]);
 });
 
 test("the desktop resizes to the viewer's size, else to the listed mode that best covers it, set by Windows in the box user's session, and gives Windows' reason when it cannot", async () => {
