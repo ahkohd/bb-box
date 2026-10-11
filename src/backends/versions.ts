@@ -40,7 +40,9 @@ export const SIGNERS = {
 export type Signer = keyof typeof SIGNERS;
 
 /** A signature that did not verify, or could not be checked. */
-export class SignatureError extends Error {}
+export class SignatureError extends Error {
+  override name = "SignatureError";
+}
 
 /**
  * Checks a signature by a signer's pinned key, and gives the signed text:
