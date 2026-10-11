@@ -799,6 +799,11 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** A driver's answer that its session has ended, which every later call in it gets too (#662). */
+function sessionEnded(result: McpResult): boolean {
+  return !!result.isError && /\bSession '[^']*' has ended\b/i.test(rawText(result));
+}
+
 export class Computer {
   readonly #deps: ComputerDeps;
   readonly #boxes = new Map<string, BoxState>();
@@ -1364,11 +1369,11 @@ export class Computer {
       this.#gate(use);
       const live = await this.#live(use);
       this.#gate(use);
+      const unsure = options.readOnly ? "" : " bb-box cannot tell whether it was done.";
+      let result: McpResult;
       try {
-        const result = await live.mcp.call(name, args, { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal: use.signal });
-        return { result, live };
+        result = await live.mcp.call(name, args, { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal: use.signal });
       } catch (error) {
-        const unsure = options.readOnly ? "" : " bb-box cannot tell whether it was done.";
         if (error instanceof McpError) {
           throw new ComputerError("driver", `bb-box's request to the desktop failed: ${sentence(error.message)}`, "This is probably a bb-box bug: tell the user.");
         }
@@ -1389,6 +1394,16 @@ export class Computer {
         const message = error instanceof Error ? error.message : String(error);
         throw new ComputerError("driver", `${sentence(message)}${unsure}`, "Call computer_observe to see the window, then try again.");
       }
+      // The driver can end its session by itself, as after a while idle, and keep the connection: every call then
+      // answers that the session has ended (#662). A new session takes over, for a read at once.
+      if (!sessionEnded(result)) return { result, live };
+      void live.mcp.close("The computer-use driver ended its session.");
+      if (options.readOnly && attempt === 0) continue;
+      throw new ComputerError(
+        "interrupted",
+        `The computer-use driver had ended its session, as it can after a while idle, so this was not done.`,
+        "Call it again: bb-box opens a new session with the driver.",
+      );
     }
   }
 
