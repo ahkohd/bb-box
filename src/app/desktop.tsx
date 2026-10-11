@@ -1370,7 +1370,7 @@ function BoxList() {
           />
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
             {loaded && tab === "machines" && !machines.length ? <EmptyPanel>You have no machines. New box adds one: a box of your own that shows in BB's machine list.</EmptyPanel> : null}
-            {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box. A thread gets one from its Box panel, or from its agent.</EmptyPanel> : null}
+            {loaded && tab === "threads" && !threads.length ? <EmptyPanel>No thread has a box.</EmptyPanel> : null}
             {narrowed && listed && !(tab === "machines" ? machineRows : threadRows).length ? <EmptyPanel>No boxes match.</EmptyPanel> : null}
             {tab === "machines" && machineRows.length ? (
               <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-1">
