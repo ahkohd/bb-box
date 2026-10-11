@@ -25,6 +25,7 @@
 | [`bb box images refresh`](#bb-box-images-refresh) | Rebuild the standard images that are due (049), one at a time, most needed first, and start none after the time limit. A BB script automation runs it each night. It ends with a line per image, and exits 1 if one failed. Should this command end first, the run goes on. |
 | [`bb box images build`](#bb-box-images-build) | Rebuild one standard image now, due or not, and whatever its last rebuild did (049), and replace it when its trial box passes. --try checks a new build and keeps the old one. |
 | [`bb box images versions`](#bb-box-images-versions) | Show what a rebuild of the standard Linux images would take now (049): upstream's latest stable Claude Code, Codex, pi, gh and Chrome, each with the SHA-256 it publishes, and the day's apt snapshot, against this bb-box's pins. |
+| [`bb box setup docker`](#bb-box-setup-docker) | Set up Docker for boxes, as the Box panel's first run does: on the BB machine that runs BB, or --machine, turn Docker on with the Linux image alone and wait while it builds, usually 5 to 12 min. Where something stands in the way, it gives that machine's line to fix it. --no-wait starts it and says how far the build is; run it again to see. |
 | [`bb box docker-check`](#bb-box-docker-check) | Check that Docker on a BB machine answers through bb-box's Docker relay (042), with its version, cores and memory. |
 | [`bb box docker-build`](#bb-box-docker-build) | Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout or with another build of BB's app, through bb-box's relay (042). Waits for the build. Building all three needs about 36 GB free there; with less, it does not start. |
 | [`bb box install-id`](#bb-box-install-id) | Show this install's ID, which it records on its guests. --set takes back the ID it had before it lost its storage. |
@@ -334,6 +335,20 @@ Options:
   --json      Print JSON.
   --pinned    Take the repository's pins alone, as a build with --pinned does.
   --help, -h  Show this help and exit
+```
+
+## bb box setup docker
+
+Set up Docker for boxes, as the Box panel's first run does: on the BB machine that runs BB, or --machine, turn Docker on with the Linux image alone and wait while it builds, usually 5 to 12 min. Where something stands in the way, it gives that machine's line to fix it. --no-wait starts it and says how far the build is; run it again to see.
+
+```text
+Usage:
+  bb box setup docker [--machine <value>] [--no-wait]
+
+Options:
+  --machine <value>  The BB machine, by ID or name, from bb machine list. The one that runs BB by default.
+  --no-wait          Start the build, and say how far it is, without waiting for it.
+  --help, -h         Show this help and exit
 ```
 
 ## bb box docker-check

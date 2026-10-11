@@ -11,6 +11,7 @@ import { PRESETS } from "../core/sizes.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
+import { setupDocker } from "./setup-docker.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -133,7 +134,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           async run({ options }) {
             const kinds = await app.kinds();
             if (options.json) return json(kinds);
-            if (!kinds.length) return out("No backend is on, so there are no kinds. Turn one on in bb-box's settings.");
+            if (!kinds.length) return out("No backend is on, so there are no kinds. bb box setup docker sets up Docker on the machine that runs BB; or turn one on in bb-box's settings.");
             return out(
               kinds
                 .map((kind) => {
@@ -403,6 +404,22 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               if (options.json) return json({ ...versions, files: undefined });
               return out(versionsText(versions));
             }),
+        }),
+        "setup docker": cliCommand({
+          summary:
+            "Set up Docker for boxes, as the Box panel's first run does: on the BB machine that runs BB, or --machine, turn Docker on with the Linux image alone and wait while it builds, usually 5 to 12 min. " +
+            "Where something stands in the way, it gives that machine's line to fix it. --no-wait starts it and says how far the build is; run it again to see.",
+          options: {
+            machine: { type: "string", description: "The BB machine, by ID or name, from bb machine list. The one that runs BB by default." },
+            "no-wait": { type: "boolean", description: "Start the build, and say how far it is, without waiting for it." },
+          },
+          run: ({ options }, ctx) =>
+            guard("Setting up Docker", () =>
+              setupDocker(
+                { setups: () => app.setups(), setDockerHost: (hostId, enabled, linuxOnly) => app.setDockerHost(hostId, enabled, linuxOnly), ensure: (hostId) => app.dockerImages.ensure(hostId), machineAccess: () => app.machineAccess() },
+                { ...(options.machine ? { machine: String(options.machine) } : {}), wait: !options["no-wait"], ...(ctx.signal ? { signal: ctx.signal } : {}) },
+              ),
+            ),
         }),
         "docker-check": cliCommand({
           summary: "Check that Docker on a BB machine answers through bb-box's Docker relay (042), with its version, cores and memory.",

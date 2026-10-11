@@ -606,7 +606,7 @@ export function doctorText(view: DoctorView): string {
     }
     for (const note of report.notes) lines.push(`  Note: ${note}`);
   }
-  if (!view.sections.length) lines.push("No backend is on. Turn one on in bb-box's settings, or with bb box config apply.");
+  if (!view.sections.length) lines.push("No backend is on. bb box setup docker sets up Docker on the machine that runs BB; or turn one on in bb-box's settings, or with bb box config apply.");
   return lines.join("\n");
 }
 
