@@ -42,7 +42,7 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
 | [Proxmox LXC](setup/proxmox-lxc/README.md) | Linux; Linux desktop on the CPU or a GPU; Wayland desktop on the CPU | containers on a Proxmox VE host |
 | [Proxmox QEMU](setup/proxmox-qemu/README.md) | Windows desktop | virtual machines on a Proxmox VE host |
 | [Tart](setup/tart/README.md) | macOS, with or without a desktop; Linux on arm64, with or without a desktop; Windows desktop on arm64 | virtual machines on your Macs with Apple silicon |
-| [SSH host pool](setup/ssh-pool/README.md) | Linux; macOS, with or without a desktop | computers you lend it over SSH, physical or a VPS, one thread at a time, reset after each |
+| [SSH host pool](setup/ssh-pool/README.md) | Linux; macOS, with or without a desktop | computers you lend it over SSH, physical or a VPS |
 
 Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md).
 
