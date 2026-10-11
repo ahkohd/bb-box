@@ -6,7 +6,7 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 
 - **Each thread gets its own computers.** Boxes have the thread's Git access, its variables and BB itself.
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
-- **Any provider.** Docker, Proxmox, Micro Sandbox, Macs with Tart, or your own machines over SSH.
+- **Any provider.** Docker, Proxmox, Micro Sandbox, Macs with Tart, or your own physical machines over SSH.
 - **Ready in seconds.** A warm box is ready at once.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
 
