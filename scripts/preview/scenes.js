@@ -325,7 +325,7 @@ const MACHINES = [
 
 /** A BB machine's first-run setup (the setup job): the one that runs BB, with Docker ready. */
 function setupOf(overrides = {}) {
-  return { hostId: "host_bb", name: "bb", here: true, state: "ready", docker: "29.8.1", problem: null, fix: null, restart: null, kvm: "ok", freeGb: 120, build: null, ...overrides };
+  return { hostId: "host_bb", name: "bb", here: true, state: "ready", docker: "29.8.1", problem: null, fix: null, restart: null, kvm: "ok", freeGb: 120, build: null, took: {}, ...overrides };
 }
 
 function rpc(boxes, options = {}) {
@@ -497,7 +497,7 @@ export const scenes = {
     height: 760,
     rpc: rpc([], {
       kinds: [{ ...KINDS[0], forms: ["Docker"], admin: true, docker: true, offers: [offer("docker:devpc", "Docker", ["devpc"], "Docker", { typicalReadyMs: 400 })] }],
-      desktopOnDemand: { hostId: "host_bb", name: "devpc", kind: { ...KINDS[2], forms: ["Docker"], offers: [offer("docker:devpc", "Docker", ["devpc"], "Docker", { resizable: true })] } },
+      desktopOnDemand: { hostId: "host_bb", name: "devpc", took: null, kind: { ...KINDS[2], forms: ["Docker"], offers: [offer("docker:devpc", "Docker", ["devpc"], "Docker", { resizable: true })] } },
     }),
     after: async (root) => {
       click(root, "button", "New box");

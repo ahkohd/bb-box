@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import type { ImageOptionView, KindView, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
-import { DESKTOP_BUILD_WORDS } from "./first-run.tsx";
+import { DESKTOP_BUILD_WORDS, estimate } from "./first-run.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
@@ -134,7 +134,7 @@ export function NewBox({
    * A desktop whose image is not built yet (the setup plan's PR 4): the form offers it, saying it builds first, and
    * Create asks `build`, which resolves with the refusal to show, or null once the build has started.
    */
-  onDemand?: { readonly kind: KindView; readonly machine: string; readonly build: (size?: SizeRequest) => Promise<string | null> } | null;
+  onDemand?: { readonly kind: KindView; readonly machine: string; readonly took: number | null; readonly build: (size?: SizeRequest) => Promise<string | null> } | null;
 }) {
   // The desktop to build is offered only where no desktop of its system is: once one is, it is that.
   const added = !!onDemand && !offeredKinds.some((offered) => offered.os === onDemand.kind.os && offered.arch === onDemand.kind.arch && offered.desktop);
@@ -330,7 +330,7 @@ export function NewBox({
   // The footer says what stands in the way: a refusal, or filters that leave no provider.
   const standing =
     problem ??
-    (noMatch ? "No provider matches these filters." : buildsFirst ? `BB Box builds the desktop image on ${onDemand!.machine} first, ${DESKTOP_BUILD_WORDS}, then makes the box.` : null);
+    (noMatch ? "No provider matches these filters." : buildsFirst ? `BB Box builds the desktop image on ${onDemand!.machine} first, ${estimate(onDemand!.took, DESKTOP_BUILD_WORDS)}, then makes the box.` : null);
   const rowClass = (selected: boolean) =>
     cn(
       "flex w-full flex-col items-start rounded-md border px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
@@ -393,7 +393,7 @@ export function NewBox({
           <FormSection title="Type">
             <div role="radiogroup" aria-label="Type" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, 2, picked.desktop ? 1 : 0, (position) => pick({ desktop: position === 1 }))}>
               <OptionCard title="Server" words="Terminal" glyph={TYPE_GLYPHS.server} selected={!picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, false)} onClick={() => pick({ desktop: false })} />
-              <OptionCard title="Desktop" words={added && picked.os === onDemand!.kind.os && picked.arch === onDemand!.kind.arch ? `Builds first, ${DESKTOP_BUILD_WORDS}` : "Screen · Terminal · Computer use"} glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
+              <OptionCard title="Desktop" words={added && picked.os === onDemand!.kind.os && picked.arch === onDemand!.kind.arch ? `Builds first, ${estimate(onDemand!.took, DESKTOP_BUILD_WORDS)}` : "Screen · Terminal · Computer use"} glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
             </div>
             {displayChoice ? (
               // The windowing is a detail of a desktop, as a GPU is of its resources (the operator's notes of 3 October 2026): a dim sub-label under

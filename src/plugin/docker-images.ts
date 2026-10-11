@@ -58,6 +58,8 @@ export interface DockerImagesDeps {
   changed(hostId: string): void;
   logError(operation: string, error: unknown): void;
   log?(message: string): void;
+  /** Where each machine's last build times are kept, so an estimate outlives a restart. None keeps them in memory. */
+  readonly storage?: { get<T>(key: string): Promise<T | null | undefined>; set(key: string, value: unknown): Promise<void> };
   /** Runs build.sh with `args`; spawn by default. Resolves with its exit code. */
   run?(script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void): Promise<number | null>;
   now?(): number;
@@ -106,10 +108,14 @@ function run(script: string, args: readonly string[], env: NodeJS.ProcessEnv, on
   });
 }
 
+const TOOK_KEY = "image-build-took/";
+
 export class DockerImages {
   readonly #deps: DockerImagesDeps;
   readonly #builds = new Map<string, ImageBuild>();
   readonly #running = new Map<string, Promise<ImageBuild>>();
+  /** Each machine's last build time of each target built alone, in ms, as read from storage or since. */
+  readonly #took = new Map<string, Readonly<Record<string, number>>>();
 
   constructor(deps: DockerImagesDeps) {
     this.#deps = deps;
@@ -118,6 +124,25 @@ export class DockerImages {
   /** The machine's last build, or the one running. */
   state(hostId: string): ImageBuild | null {
     return this.#builds.get(hostId) ?? null;
+  }
+
+  /**
+   * How long each target last took to build alone on the machine, in ms: the estimate for its next build there, as
+   * build times vary with the host (4 to 11 min for the Linux image in the newcomer checks). A build of several
+   * targets at once is not counted.
+   */
+  async took(hostId: string): Promise<Readonly<Record<string, number>>> {
+    const known = this.#took.get(hostId);
+    if (known) return known;
+    const stored = (await this.#deps.storage?.get<Record<string, number>>(`${TOOK_KEY}${hostId}`).catch(() => null)) ?? {};
+    this.#took.set(hostId, stored);
+    return stored;
+  }
+
+  async #record(hostId: string, target: string, ms: number): Promise<void> {
+    const next = { ...(await this.took(hostId)), [target]: ms };
+    this.#took.set(hostId, next);
+    await this.#deps.storage?.set(`${TOOK_KEY}${hostId}`, next).catch((error) => this.#deps.logError("image build times", error));
   }
 
   /** Builds what the machine lacks, unless a build is running there already. Resolves when it ends. */
@@ -170,6 +195,7 @@ export class DockerImages {
       });
       if (code === 0) {
         this.#deps.log?.(`Built ${targets.join(" and ")} on BB machine ${hostId} in ${Math.round((now() - startedAt) / 1000)} s.`);
+        if (targets.length === 1) await this.#record(hostId, targets[0]!, now() - startedAt);
         return set({ state: "built", detail: null, endedAt: now() });
       }
       const why = tail.join(" ").slice(-500);

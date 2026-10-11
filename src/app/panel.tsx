@@ -2,7 +2,7 @@
 
 import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DelayedLoading } from "@/components/ui/delayed-loading";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -61,6 +61,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     ? {
         kind: state.desktopOnDemand.kind,
         machine: state.desktopOnDemand.name,
+        took: state.desktopOnDemand.took ?? null,
         build: async (size?: SizeRequest): Promise<string | null> => {
           const hostId = state.desktopOnDemand!.hostId;
           try {
@@ -74,6 +75,14 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
         },
       }
     : null;
+  // A desktop box not made after its image was built shows as a refused acquire does, once, until dismissed.
+  const shownProblem = useRef<number | null>(null);
+  const desktopProblem = state?.desktopProblem ?? null;
+  useEffect(() => {
+    if (!desktopProblem || shownProblem.current === desktopProblem.at) return;
+    shownProblem.current = desktopProblem.at;
+    setProblem(desktopProblem.message);
+  }, [desktopProblem]);
   const act = async (method: BoxAction, box: BoxView, force = false) => {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && force ? { force: true } : {}) };
