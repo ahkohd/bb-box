@@ -335,7 +335,8 @@ export class ProxmoxQemuBackend implements Backend {
    * Image operations (054): a box from a template, its capture as a template
    * with the image's record in its description, and a template replaced in
    * place under its VMID, as build.sh --replace does. refreshImage runs the
-   * Windows refresh script in the box.
+   * Windows refresh script in a Windows box, and the Linux template's guest
+   * scripts in a Linux one (057).
    */
   readonly images: BackendImages = {
     list: (signal) => this.#imageList(signal),
@@ -791,6 +792,8 @@ export class ProxmoxQemuBackend implements Backend {
 
       // What images are judged by (049), read while the templates are.
       const pins = (this.#context.images?.pins("windows") ?? Promise.resolve(null)).catch(() => null);
+      const linuxPins = this.#config.linuxTemplates.length ? (this.#context.images?.pins("linux") ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
+      const bbApp = this.#config.linuxTemplates.length ? (this.#context.images?.bbApp(signal) ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
       for (const template of this.#allTemplates()) {
         const name = templateCheck(template);
         const os = this.#osOf(template);
@@ -809,13 +812,11 @@ export class ProxmoxQemuBackend implements Backend {
             } else {
               this.#templates.set(template, { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) });
               pass(name, `VM template ${template} on ${storage}, ${Math.floor((free as { available: number }).available / GiB)} GiB free.`);
-              // A Linux template's image record comes with its refresh (057).
-              if (os === "linux") continue;
-              // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB.
+              // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB. A Linux one does (057).
               const judged = judgeImage(
                 recordInDescription(String(config.description ?? "")),
-                { os: "windows", pins: await pins, bbApp: null, joins: this.#config.enrol },
-                `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh windows ${template} --replace.`,
+                os === "linux" ? { os, pins: await linuxPins, bbApp: await bbApp } : { os, pins: await pins, bbApp: null, joins: this.#config.enrol },
+                `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh ${os} ${template} --replace.`,
               );
               checks.push({ id: `template.${template}.image`, name: `Image of ${name[1]}`, ...judged });
             }
@@ -1232,7 +1233,7 @@ export class ProxmoxQemuBackend implements Backend {
       throw new Error(
         `Nothing answered on port ${port} of ${host} within ${seconds(timeoutMs)}. ` +
           (os === "linux"
-            ? "Check that BB's server can reach the boxes' subnet, and how the template set the box's address, in journalctl -u bb-box-address from the VM's console in Proxmox."
+            ? "Check that BB's server can reach the boxes' subnet, and how the template set the box's address, in journalctl -u bb-box-boot from the VM's console in Proxmox."
             : `Check that BB's server can reach the boxes' subnet, and how boot.ps1 set the box's address in ${BOOT_LOG}, from the VM's console in Proxmox.`),
       );
     }
@@ -1426,9 +1427,9 @@ export class ProxmoxQemuBackend implements Backend {
     const api = await this.client();
     const install = installTag(this.#context.installId);
     const builds: ImageBuild[] = [];
-    for (const vmid of this.#config.templates) {
+    for (const vmid of this.#allTemplates()) {
       const config = await api.config(vmid, signal).catch(() => null);
-      if (config && isTemplate(config)) builds.push(this.#imageBuild(vmid, KIND.id, "standard", config, true));
+      if (config && isTemplate(config)) builds.push(this.#imageBuild(vmid, this.#osOf(vmid) === "linux" ? LINUX_KIND.id : KIND.id, "standard", config, true));
     }
     const boxes: string[] = [];
     for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
@@ -1452,27 +1453,31 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /**
-   * A clone of a build's template, started as a box of its kind is, with its
-   * desktop up, tagged so that no sweep takes it.
+   * A clone of a build's template, started as a box of its kind is, with a
+   * Windows box's desktop up, tagged so that no sweep takes it.
    */
   async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
     const api = await this.client();
     const template = Number(build.ref);
+    const kind = build.kind === LINUX_KIND.id ? LINUX_KIND : KIND;
+    const os = kind.capabilities.os;
     let vmid: number | null = null;
     try {
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
       const description = `bb-box image box: ${label}\ninstall ${this.#context.installId}`;
       vmid = await this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal, () => {});
       const id = vmid;
-      await api.configure(id, this.#settings(this.#context.kind(KIND.id).defaultSize, id, await api.config(id, signal)), signal);
+      await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal)), signal);
       await api.configure(id, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
       await api.start(id, signal);
-      const timeoutMs = this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs;
-      await this.#waitReady(id, timeoutMs, signal);
-      await this.#setClock(id, signal);
-      // The kind's check runs in the desktop session, which comes up soon after SSH.
-      await this.#desktopUp(id, timeoutMs, signal);
-      return { ref: String(id), command: await this.#command(id) };
+      const timeoutMs = this.#options.readyTimeoutMs ?? kind.readyTimeoutMs;
+      await this.#waitReady(id, timeoutMs, signal, untimed, os);
+      if (os === "windows") {
+        await this.#setClock(id, signal);
+        // The kind's check runs in the desktop session, which comes up soon after SSH.
+        await this.#desktopUp(id, timeoutMs, signal);
+      }
+      return { ref: String(id), command: await this.#command(id, os) };
     } catch (error) {
       if (vmid !== null) {
         await this.#forget(vmid);
@@ -1492,13 +1497,16 @@ export class ProxmoxQemuBackend implements Backend {
   async #capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
     const api = await this.client();
     const vmid = Number(box.ref);
-    const read = await box.command.run("Get-Content C:\\bb-box\\image.json -Raw", { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
+    const linux = from.kind === LINUX_KIND.id;
+    // Where the refresh writes the record: finalize.sh's on Linux (049), refresh.ps1's on Windows (054).
+    const at = linux ? "/usr/share/bb-box/image.json" : "C:\\bb-box\\image.json";
+    const read = await box.command.run(linux ? `cat ${at}` : `Get-Content ${at} -Raw`, { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
     const record = read.exitCode === 0 ? recordFromJson(read.stdout.trim()) : null;
-    if (!record) throw new Error(`Image box ${vmid} has no image record in C:\\bb-box\\image.json, which the refresh writes.`);
+    if (!record) throw new Error(`Image box ${vmid} has no image record in ${at}, which the refresh writes.`);
     const source = await api.config(Number(from.ref), signal);
     const build = record.build.startsWith(BUILD) ? record.build : `${BUILD}${record.build}`;
-    // Clones start with an empty boot log, as build.sh leaves the template's.
-    await box.command.run(`Clear-Content ${BOOT_LOG} -ErrorAction SilentlyContinue`, { timeoutMs: 15_000, signal });
+    // Clones start with an empty boot log, as build.sh leaves the template's. finalize.sh empties Linux' logs.
+    if (!linux) await box.command.run(`Clear-Content ${BOOT_LOG} -ErrorAction SilentlyContinue`, { timeoutMs: 15_000, signal });
     await this.#forget(vmid);
     await api.shutdown(vmid, 300, signal);
     await api.configure(
@@ -1539,9 +1547,11 @@ export class ProxmoxQemuBackend implements Backend {
     const old = await api.config(target, signal);
     const disk = bootDisk(old);
     const storage = disk ? (String(old[disk]).split(":")[0] ?? "") : "";
-    if (!storage) throw new Error(`Windows template ${target} has no boot disk.`);
+    const os = this.#osOf(target);
+    const Os = os === "linux" ? "Linux" : "Windows";
+    if (!storage) throw new Error(`${Os} template ${target} has no boot disk.`);
     const thin = (await api.storageStatus(storage, signal)).type === "lvmthin";
-    const name = typeof old.name === "string" ? old.name : "bb-box-windows";
+    const name = typeof old.name === "string" ? old.name : `bb-box-${os}`;
     const pool = this.#config.proxmox.pool;
     const install = installTag(this.#context.installId);
     const guests = await api.listPool(pool, signal);
@@ -1558,7 +1568,7 @@ export class ProxmoxQemuBackend implements Backend {
     for (;;) {
       const free = this.#freeVmid(taken, this.#nextVmid ?? this.#config.vmids.first);
       if (free === null) throw new BackendError("no_capacity", `No VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is free for the rollback of template ${target}. Release a box first.`);
-      kept = `bb-box rollback of Windows template ${target}${oldBuild ? `, ${BUILD}${oldBuild}` : ""}, kept until its next refresh. To use it, list ${free} as the Windows template in bb-box's settings.`;
+      kept = `bb-box rollback of ${Os} template ${target}${oldBuild ? `, ${BUILD}${oldBuild}` : ""}, kept until its next refresh. To use it, list ${free} as the ${Os} template in bb-box's settings.`;
       this.#reserved.add(free);
       try {
         if (thin) await api.cloneLinked({ template: target, vmid: free, hostname: `${name}-rollback`, pool, description: kept }, signal);
@@ -1587,7 +1597,7 @@ export class ProxmoxQemuBackend implements Backend {
     } finally {
       this.#reserved.delete(rollback);
     }
-    const first = String(old.description ?? "bb-box windows template.").split("\n")[0]!;
+    const first = String(old.description ?? `bb-box ${os} template.`).split("\n")[0]!;
     const today = new Date().toISOString().slice(0, 10);
     const line = /, (built|refreshed) \d{4}-\d{2}-\d{2}/.test(first) ? first.replace(/, (built|refreshed) \d{4}-\d{2}-\d{2}/, `, refreshed ${today}`) : first;
     const description = `${line}${build.record ? `\n${JSON.stringify(build.record)}` : ""}`;

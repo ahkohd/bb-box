@@ -323,7 +323,9 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   assert.equal(check?.status, "ok", "the doctor checks the Linux template");
   assert.equal(check?.name, "Linux template 9120", "and names it as Linux");
   assert.equal(report.checks.find((one) => one.id === "template.9104")?.name, "Windows template 9104");
-  assert.ok(!report.checks.some((check) => check.id === "template.9120.image"), "its image record comes with its refresh");
+  const image = report.checks.find((one) => one.id === "template.9120.image");
+  assert.deepEqual([image?.name, image?.status], ["Image of Linux template 9120", "warn"], "judged as a Linux image, which this one has no record of");
+  assert.match(image!.fix!, /build\.sh linux 9120 --replace\.$/);
 
   const box = identity(sized(), "linux");
   const hook = hooks();
@@ -1012,6 +1014,47 @@ function imageSetup(record: Record<string, unknown>) {
   }
   return env;
 }
+
+test("image operations on a Linux template: its build box has no Windows steps, its capture reads the record finalize.sh wrote, and its rollback says Linux (057)", async () => {
+  const record = { contract: 1, image: "standard", kind: "linux", arch: "x86_64", build: "build.20261012-030000-1a2b", built: "2026-10-12T03:00:00Z", os: "Ubuntu 24.04", pins: "p".repeat(64), tools: { node: "24.21.0" } };
+  const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
+  proxmox.addVmTemplate(9120);
+  const template = proxmox.guests.get(9120)!;
+  template.name = template.config.name = "bb-box-linux";
+  template.config.tags = "bbbox;linux;build.20261011-090550-3ca0";
+  template.config.description = "bb-box linux vm template, built 2026-10-11 from Ubuntu 24.04's cloud image 20260926.";
+  for (let last = 150; last <= 159; last++) {
+    const host = `192.0.2.${last}`;
+    rmSync(join(ssh.dir, "windows", host), { force: true });
+    mkdirSync(ssh.home(host), { recursive: true });
+    ssh.powershell(host, `case "$1" in\n  *"cat /usr/share/bb-box/image.json"*) echo '${JSON.stringify(record)}';;\n  *) exec sh -c "$1";;\nesac\n`);
+  }
+  const images = backend.images;
+  const standard = (await images.list()).builds.find((build) => build.ref === "9120")!;
+  assert.deepEqual([standard.image, standard.kind, standard.build, standard.current], ["standard", "linux", "build.20261011-090550-3ca0", true]);
+
+  const before = ssh.log().length;
+  const box = await images.box(standard, "refresh of 9120", signal());
+  assert.equal(box.ref, "9700");
+  assert.equal(proxmox.calls.find((call) => call.path.endsWith("/clone"))!.path, "/nodes/pve/qemu/9120/clone");
+  assert.equal(proxmox.guests.get(9700)!.config.cores, "2", "at the linux kind's default size");
+  assert.ok(!ssh.log().slice(before).some((entry) => /Set-Date|explorer/.test(entry.command)), "no clock or desktop to wait for");
+  const echoed = await box.command.run("echo hi from $USER", { timeoutMs: 10_000 });
+  assert.equal(echoed.stdout, "hi from box\n", "commands go to sh");
+
+  const captured = await images.capture(box, standard, "standard", signal());
+  assert.deepEqual([captured.kind, captured.build, captured.record?.build], ["linux", "build.20261012-030000-1a2b", "build.20261012-030000-1a2b"]);
+  const vm = proxmox.guests.get(9700)!;
+  assert.deepEqual([vm.template, vm.name], [true, "bb-box-linux"]);
+  assert.ok(parseTags(vm.config.tags).includes("kind.linux"));
+
+  const replaced = await images.replace(captured, standard, signal());
+  assert.deepEqual([replaced.ref, replaced.build], ["9120", "build.20261012-030000-1a2b"]);
+  assert.match(proxmox.guests.get(9120)!.config.description!, /^bb-box linux vm template, refreshed \d{4}-\d{2}-\d{2} from Ubuntu 24\.04's cloud image 20260926\.\n\{"contract":1,/);
+  const rollback = [...proxmox.guests.values()].find((guest) => parseTags(guest.config.tags).includes("image.rollback"))!;
+  assert.equal(rollback.name, "bb-box-linux-rollback");
+  assert.match(rollback.config.description!, /^bb-box rollback of Linux template 9120, build\.20261011-090550-3ca0, kept until its next refresh\. To use it, list \d+ as the Linux template in bb-box's settings\.$/);
+});
 
 test("image operations: a box from the Windows template, its capture as a template with its record, a trial box, and the template replaced in place (054)", async () => {
   const record = { contract: 1, image: "standard", kind: KIND, arch: "x86_64", build: "build.20261007-030000-5e1f", built: "2026-10-07T03:00:00Z", os: "Windows 11 Pro", pins: "p".repeat(64), tools: { node: "24.21.0" } };

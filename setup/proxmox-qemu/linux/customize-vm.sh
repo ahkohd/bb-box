@@ -2,20 +2,22 @@
 # What a Proxmox VM needs beyond the Linux template's guest scripts, run as
 # root in the build VM after guest/customize-base.sh: the QEMU guest agent,
 # growpart, the boot script that gives each box its address and grows its
-# disk, DNS, and the end of what cloud-init set up for the build.
+# disk, DNS, and the end of what cloud-init set up for the build. A refresh
+# of the image (057) runs it again, after customize-base.sh.
 #
-# usage: customize-vm.sh <build-dir>
+# usage: customize-vm.sh <build-dir>, the directory with build.env
 set -euo pipefail
 umask 022
 
 build=$1
+here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$build/build.env"
 
 # From the build's apt snapshot, as customize-base.sh installs the rest.
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends qemu-guest-agent cloud-guest-utils
 
-install -m 0755 "$build/linux/boot.sh" /usr/local/sbin/bb-box-boot
+install -m 0755 "$here/boot.sh" /usr/local/sbin/bb-box-boot
 cat >/etc/systemd/system/bb-box-boot.service <<'EOF'
 [Unit]
 Description=bb-box: the box's address from the SMBIOS serial, and its disk grown

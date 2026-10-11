@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -225,6 +227,26 @@ test("the build script runs the guest scripts as build.sh does for each kind", (
   assert.doesNotMatch(linux, /customize-desktop|DESKTOP_/);
   assert.match(linux, /finalize\.sh \S+ linux$/m);
   assert.throws(() => buildScript("macos", null, "build.x"), /bb-box refreshes no macos image/);
+});
+
+test("the build script runs the guest scripts in a VM's way in a VM, and in a container's in a container (057)", () => {
+  const script = buildScript("linux", null, "build.x");
+  assert.ok(script.split("\n").includes("BOX_RUNTIME=$runtime"));
+  assert.match(script, /^\[ "\$runtime" != vm \] \|\| sudo bash \S+\/proxmox-qemu\/linux\/customize-vm\.sh \S+$/m);
+  assert.ok(script.indexOf("customize-vm.sh") > script.indexOf("customize-base.sh"), "after customize-base.sh");
+  // The runtime as systemd-detect-virt says: "none" in a VM, the container's name in one.
+  const line = script.split("\n").find((one) => one.startsWith("runtime="))!;
+  const bin = mkdtempSync(join(tmpdir(), "detect-virt-"));
+  try {
+    const runtime = (says: string) => {
+      writeFileSync(join(bin, "systemd-detect-virt"), `#!/bin/sh\necho ${says}\n[ ${says} != none ]\n`, { mode: 0o755 });
+      return execFileSync("bash", ["-c", `${line}; echo $runtime`], { env: { PATH: `${bin}:/usr/bin:/bin` } }).toString().trim();
+    };
+    assert.equal(runtime("none"), "vm");
+    assert.equal(runtime("lxc"), "lxc");
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
 });
 
 const WINDOWS_OLD = record("build.20260901-020000-77aa", { pwsh: "7.6.6", git: "2.56.0", "cua-driver": "0.30.4" }, { kind: "windows-desktop", os: "Windows 11 Pro", aptSnapshot: null, bbApp: null, sizeGiB: null });
