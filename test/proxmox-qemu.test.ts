@@ -1061,6 +1061,12 @@ test("image operations on a Linux template: its build box has no Windows steps, 
   const rollback = [...proxmox.guests.values()].find((guest) => parseTags(guest.config.tags).includes("image.rollback"))!;
   assert.equal(rollback.name, "bb-box-linux-rollback");
   assert.match(rollback.config.description!, /^bb-box rollback of Linux template 9120, build\.20261011-090550-3ca0, kept until its next refresh\. To use it, list \d+ as the Linux template in bb-box's settings\.$/);
+  // The doctor lists it, as it holds a box's VMID and address (054, 057).
+  const notes = (await backend.doctor()).notes.join("\n");
+  assert.match(
+    notes,
+    new RegExp(`^VMID ${rollback.vmid} is the rollback of Linux template 9120, build\\.20261011-090550-3ca0\\. It holds a box's VMID and address until the template's next refresh replaces it\\. To go back to it, list ${rollback.vmid} as the Linux template in bb-box's settings\\.$`, "m"),
+  );
 });
 
 test("image operations: a box from the Windows template, its capture as a template with its record, a trial box, and the template replaced in place (054)", async () => {

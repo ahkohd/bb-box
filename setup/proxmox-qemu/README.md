@@ -163,7 +163,8 @@ template, a trial box of it runs `check.ps1`, and the new template takes the
 old one's place under its VMID only if every check passes. The old template
 stays as a rollback, at a free VMID of bb-box's range with "rollback" in its
 name, until the next refresh succeeds: to go back to it, list its VMID as the
-Windows template in bb-box's settings. To refresh one now, or to try a
+Windows template in bb-box's settings. `bb box doctor` lists each rollback,
+which holds one of the range's VMIDs and box addresses meanwhile. To refresh one now, or to try a
 refresh and keep the old template:
 
 ```sh
