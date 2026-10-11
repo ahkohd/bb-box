@@ -37,12 +37,12 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
 
 | Backend | Boxes | Where they run |
 | --- | --- | --- |
-| Docker | Linux; Linux desktop on the CPU or an NVIDIA GPU; Wayland desktop on the CPU | containers on the machine that runs BB, another host over SSH, or a BB machine with Docker, such as a Windows PC with WSL |
-| microsandbox | Linux; Linux desktop on the CPU | microVMs, each with a kernel of its own, on a Linux host with KVM or a Mac with Apple silicon: an option beside Docker, not the default |
-| Proxmox LXC | Linux; Linux desktop on the CPU or a GPU; Wayland desktop on the CPU | containers on a Proxmox VE host |
-| Proxmox QEMU | Windows desktop | virtual machines on a Proxmox VE host |
-| [Tart](https://tart.run) | macOS, with or without a desktop; Linux on arm64, with or without a desktop; Windows desktop on arm64 | virtual machines on your Macs with Apple silicon |
-| SSH host pool | Linux; macOS, with or without a desktop | your own physical machines, lent to one thread at a time and reset after |
+| [Docker](setup/docker/README.md) | Linux; Linux desktop on the CPU or an NVIDIA GPU; Wayland desktop on the CPU | containers on the machine that runs BB, another host over SSH, or a BB machine with Docker, such as a [Windows PC with WSL](setup/docker-wsl/README.md) |
+| [microsandbox](setup/microsandbox/README.md) | Linux; Linux desktop on the CPU | microVMs, each with a kernel of its own, on a Linux host with KVM or a Mac with Apple silicon: an option beside Docker, not the default |
+| [Proxmox LXC](setup/proxmox-lxc/README.md) | Linux; Linux desktop on the CPU or a GPU; Wayland desktop on the CPU | containers on a Proxmox VE host |
+| [Proxmox QEMU](setup/proxmox-qemu/README.md) | Windows desktop | virtual machines on a Proxmox VE host |
+| [Tart](setup/tart/README.md) | macOS, with or without a desktop; Linux on arm64, with or without a desktop; Windows desktop on arm64 | virtual machines on your Macs with Apple silicon |
+| [SSH host pool](setup/ssh-pool/README.md) | Linux; macOS, with or without a desktop | your own physical machines, lent to one thread at a time and reset after |
 
 Notes:
 
@@ -53,14 +53,7 @@ Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.m
 ## Documentation
 
 - [User guide](docs/guide/README.md): the Box panel, making a box, spares, desktops and video, the terminal, images and their nightly rebuild, jobs, files and settings
-- [Setting up bb-box](setup/README.md): choose a backend, install, rebuild images each night, upgrade and remove
-- Setup guides for each backend:
-  - [Docker](setup/docker/README.md), and [Docker in WSL on a Windows PC](setup/docker-wsl/README.md)
-  - [microsandbox](setup/microsandbox/README.md), an option beside Docker for boxes with a kernel of their own
-  - [Proxmox LXC](setup/proxmox-lxc/README.md)
-  - [Proxmox QEMU](setup/proxmox-qemu/README.md)
-  - [Tart](setup/tart/README.md)
-  - [SSH host pool](setup/ssh-pool/README.md)
+- [Setting up bb-box](setup/README.md): choose a backend, install, rebuild images each night, upgrade and remove; each backend's guide is linked from the table above
 - [Reference](docs/reference/README.md): the command line, agent tools, configuration, kinds and health checks, made from the code
 - [Architecture](docs/architecture.md), and [developing bb-box and writing a backend](docs/development.md)
 - [Decision records](docs/decisions), [research notes](docs/research) and [design specs](docs/design)
