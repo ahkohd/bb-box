@@ -2553,9 +2553,11 @@ exec env -i HOME="$HOME" PATH="$PATH" BBX_SESSION=Aqua "$@"
     assert.deepEqual([launched.status, launched.stdout, launched.stderr], [5, `Aqua|one|${work}\nhello\n`, "to-stderr\n"], shell);
     assert.deepEqual(launched.calls[1]!.slice(0, -1), [...wrapper, launcher, shell, "-c"], `${shell}: the command goes through the launcher`);
 
-    const away = run({ FAKE_CONSOLE: "root" });
+    // Another user has the console: root, as at the login window, unless the tests run as root.
+    const other = username === "root" ? "nobody" : "root";
+    const away = run({ FAKE_CONSOLE: other });
     assert.equal(away.status, DESKTOP_EXITS.noSession, shell);
-    assert.equal(away.stderr, `bb-box: there is no desktop session to join: ${username} is not logged in to the desktop (the console belongs to root).\n`);
+    assert.equal(away.stderr, `bb-box: there is no desktop session to join: ${username} is not logged in to the desktop (the console belongs to ${other}).\n`);
     assert.deepEqual([away.stdout, away.calls.length], ["", 0]);
 
     const refused = run({ FAKE_REFUSES: "1" });

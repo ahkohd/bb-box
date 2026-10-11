@@ -873,6 +873,15 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   // The thread's access is set up while BB's installer runs: it sees ~/.bashrc change.
   world.installer =
     'for i in $(seq 50); do grep -qs "Added by bb-box" .bashrc && break; sleep 0.1; done; grep -c "Added by bb-box" .bashrc > access-during-install; echo installed > bb-installed';
+  // A box has gh, which the access setup makes git's helper: here a stand-in whose setup-git fails, as when gh is not
+  // logged in, so the setup adds the helper itself, whether or not this machine has gh.
+  const bin = tempDir("fake-gh");
+  writeFileSync(join(bin, "gh"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path ?? ""}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
 
   // box_acquire waits for enrolment, as box_run would, and says how long it took.
   const acquired = text(await tool("box_acquire", { kind: "linux" }));
