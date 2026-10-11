@@ -61,4 +61,3 @@ Notes:
 - [Research notes](docs/research)
 - [Design specs](docs/design)
 - [What bb-box asks of BB](docs/bb-requests.md)
-- [Third-party software](THIRD-PARTY.md)
