@@ -37,7 +37,7 @@ Each thread then has a Box panel, and agents have the `box_` tools.
 
 ## Rebuild images each night
 
-bb-box rebuilds its standard Linux and macOS images itself, so new boxes have current agent tools, gh and Chrome. Windows images are not rebuilt yet. To turn this on, have a BB automation run the job each night, in a project of yours:
+bb-box rebuilds its standard Linux, macOS and Windows images itself, so new boxes have current agent tools, gh and Chrome, and Windows boxes have Windows' updates. To turn this on, have a BB automation run the job each night, in a project of yours:
 
 ```sh
 bb automation create --project <project> --name "bb-box images" \
