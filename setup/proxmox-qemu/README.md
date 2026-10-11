@@ -13,6 +13,9 @@ token and SSH key. How bb-box drives a box is in the
 | Path | What it does |
 | --- | --- |
 | `build.sh` | Builds and checks the template, on the Proxmox host as root |
+| `build-linux.sh` | Builds and checks the Linux VM template, for `build.sh linux` |
+| `linux/boot.sh` | Gives each Linux VM box its address at boot, and grows its disk |
+| `linux/customize-vm.sh` | Sets the Linux VM template up beyond the Proxmox LXC guest scripts |
 | `answer/autounattend.xml` | The answer file: disk, edition, user `box`, no setup screens |
 | `answer/bb-box/firstlogon.ps1` | Runs once at the first logon and sets the VM up |
 | `answer/bb-box/boot.ps1` | Gives each box its address at boot |
@@ -109,6 +112,26 @@ makes and removes with the box. Removing it from BB's machine list does not
 release the box: release the box instead. "New box" in BB's new-thread
 screen cannot make a Windows box (BB request 1 in the
 [requests log](../../docs/bb-requests.md)).
+
+### 3. Linux VM boxes, if you want them
+
+The backend can also make `linux` boxes as VMs, for a kernel of their own
+([057](../../docs/decisions/057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md)).
+Build their template with:
+
+```sh
+./build.sh linux 9106
+```
+
+It needs no ISO: it downloads Ubuntu 24.04's cloud image, pinned by its
+SHA-256, and sets it up with the Proxmox LXC Linux template's guest scripts.
+It needs about 16 GiB on the box storage. At the end it checks a clone of
+the new template: its address, its disk grown, the box user's tools, and a
+hibernate and resume. `--replace` and `--keep` work as for Windows.
+
+Then add the template's VMID to `linux-templates` in Proxmox QEMU's setup.
+A `linux` acquire chooses a VM only when it asks for one, with `on` or the
+`linux-vm` kind, or when the other backends have no room.
 
 ## Check it worked
 
