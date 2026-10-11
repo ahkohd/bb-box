@@ -5,10 +5,11 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 ## Why bb-box
 
 - A box belongs to its thread. It has what the thread has: its Git credentials, its machine variables, BB itself, and the same network reach.
+- You can keep one as a machine of your own. It joins BB's machine list, threads run on it, and it stays until you remove it: an always-on agent with its own desktop, for example. See [your machines](docs/guide/boxes.md#your-machines).
 - It works with any provider. A hypervisor, a container host, a physical machine or a cloud is a backend behind one interface.
 - It is fast. A box is ready in seconds, and a warm box at once.
 - You share control. You and the agent use the same desktop, and the agent waits while you have control.
-- There are no surprises. A box lasts until someone releases it or its thread ends, with no expiry and no idle timeout.
+- A box lasts until someone releases it or its thread ends, with no expiry and no idle timeout.
 - It is easy to set up. Each backend has a short guide, `bb box doctor` says what is missing, and one conformance suite runs against every backend. See the [architecture](docs/architecture.md).
 
 bb-box assumes one trusted user. It is not a sandbox for code you do not trust.
