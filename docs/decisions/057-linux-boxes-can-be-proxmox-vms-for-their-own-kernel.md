@@ -1,6 +1,6 @@
 # 057: Linux boxes can be Proxmox VMs, for their own kernel
 
-Status: proposed, 11 October 2026.
+Status: accepted, 11 October 2026.
 
 ## Context
 

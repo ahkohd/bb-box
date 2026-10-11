@@ -184,6 +184,15 @@ change a tool's version, change its pin in `../windows/pins.json` and its
 pin lines in `build.sh` (`NAME_VERSION=`, `NAME_SHA256=` and `NAME_URL=`),
 which a test keeps equal.
 
+bb-box refreshes each Linux template weekly, as other Linux images
+([057](../../docs/decisions/057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md)).
+In a box cloned from the template it runs the Proxmox LXC template's guest
+scripts and `linux/customize-vm.sh`, with the versions a rebuild takes. The
+checks, the replace and the rollback are as for Windows: to go back, list
+the rollback's VMID as the Linux template. For a new Ubuntu cloud image,
+change its pin lines in `build-linux.sh` (`IMAGE_RELEASE=` and
+`IMAGE_SHA256=`) and build it again with `./build.sh linux 9106 --replace`.
+
 ## Remove
 
 1. In BB, release the backend's boxes, turn the backend off and remove it on

@@ -38,6 +38,12 @@ where it is built ahead, which its boxes claim at once (#440). The
 - Ask for `linux-docker` when you need Docker for sure: it skips offers
   without it. A box in Docker runs no systemd, so `systemctl` does not work
   there.
+- Ask for `linux-vm` when you need a kernel of your own: to load kernel
+  modules, or for systemd as on a real machine. Ask for `linux-kvm` when
+  the box must run VMs or emulators itself, through `/dev/kvm`. Both are
+  VMs on Proxmox, which start in about 10 s and hold their memory while
+  they run. A plain `linux` box starts sooner, so ask for these only when
+  you need them.
 - A `linux-desktop` box always has its GPU. When no GPU is free, the refusal
   suggests `linux-desktop-cpu`.
 - Windows boxes have Visual Studio Build Tools (MSVC and the Windows SDK),
