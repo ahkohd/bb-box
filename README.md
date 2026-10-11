@@ -61,16 +61,4 @@ Notes:
 - [Research notes](docs/research)
 - [Design specs](docs/design)
 - [What bb-box asks of BB](docs/bb-requests.md)
-
-## Develop
-
-```sh
-npm run typecheck
-npm test
-```
-
-The tests need Node 22.18 or later, which runs TypeScript directly. They use fakes of each provider, so they need no host. To check a backend against a real provider, and to write a new one, see [developing bb-box](docs/development.md).
-
-## Third-party code
-
-What bb-box bundles, and what its images install, is in [third-party software](THIRD-PARTY.md), with each licence.
+- [Third-party software](THIRD-PARTY.md)
