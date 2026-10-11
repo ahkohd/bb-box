@@ -680,6 +680,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     bakes: imageBakes,
     log: (line) => bb.log.info(line),
     afterBbUpdates: () => configuration.document.general.nightlyImages ?? GENERAL_DEFAULTS.nightlyImages,
+    changed: () => notify(null),
   });
   // Stalls of the event loop bb-box runs on, BB's server's, which hold up every desktop's frames and input.
   const loopWatch = new LoopWatch({ log: (message) => bb.log.warn(message) });

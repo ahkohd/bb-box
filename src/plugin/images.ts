@@ -64,6 +64,8 @@ export interface ImageJobsDeps {
   /** Projects' images' builds: no bake while a run removes what runs left, and their upkeep after the rebuilds. */
   readonly bakes?: Pick<ImageBakes, "exclusive" | "maintain">;
   readonly log?: (line: string) => void;
+  /** Says a run's progress changed: an image started or ended, or a build's step moved. */
+  readonly changed?: () => void;
   /** Whether a BB update starts a refresh of the images it leaves behind: General's nightly switch. Off without it. */
   readonly afterBbUpdates?: () => boolean;
   readonly now?: () => number;
@@ -106,6 +108,26 @@ export interface RunOptions {
   readonly only?: "bb-app";
 }
 
+/** Where a refresh run is, image by image, for the settings page's Rebuild now: the run going on, or the last one. */
+export interface RunProgress {
+  readonly started: number;
+  /** When it ended, or null while it runs. */
+  readonly ended: number | null;
+  /** "bb-app" for a BB update's run. */
+  readonly only: "bb-app" | null;
+  /** The images it takes, in turn. */
+  readonly images: readonly {
+    readonly name: string;
+    readonly kind: string;
+    readonly state: "next" | "refreshing" | "refreshed" | "failed" | "waiting" | "skipped" | "not started";
+    readonly detail: string | null;
+    /** While it refreshes: when it started, its last line, and the step a Docker build last started. */
+    readonly since?: number;
+    readonly line?: string | null;
+    readonly step?: { readonly at: number; readonly of: number };
+  }[];
+}
+
 export interface RunLine {
   readonly name: string;
   readonly outcome: "refreshed" | "baked" | "removed" | "failed" | "skipped" | "waiting" | "not started";
@@ -130,6 +152,7 @@ function pinSet(kind: string): PinSet {
 export class ImageJobs {
   readonly #deps: ImageJobsDeps;
   #running: { readonly started: number; readonly done: Promise<RunResult>; readonly stop: AbortController; readonly only?: "bb-app" } | null = null;
+  #progress: RunProgress | null = null;
 
   constructor(deps: ImageJobsDeps) {
     this.#deps = deps;
@@ -194,6 +217,22 @@ export class ImageJobs {
     if (osOf(build.kind) === "windows") return createHash("sha256").update(JSON.stringify({ pins, month: new Date(this.#now()).toISOString().slice(0, 7), current: build.build })).digest("hex").slice(0, 16);
     const tools = versions?.tools.filter((tool) => tool.arch === (build.record?.arch === "arm64" ? "arm64" : "x86_64")).map((tool) => `${tool.name}@${tool.version}`) ?? [];
     return createHash("sha256").update(JSON.stringify({ pins, app, tools, current: build.build })).digest("hex").slice(0, 16);
+  }
+
+  /** Where the run going on is, image by image, or the last run of this bb-box's life; null before any. */
+  progress(): RunProgress | null {
+    return this.#progress;
+  }
+
+  #setProgress(next: RunProgress): void {
+    this.#progress = next;
+    this.#deps.changed?.();
+  }
+
+  #setImage(name: string, change: Partial<RunProgress["images"][number]>): void {
+    const progress = this.#progress;
+    if (!progress) return;
+    this.#setProgress({ ...progress, images: progress.images.map((image) => (image.name === name ? { ...image, ...change } : image)) });
   }
 
   /** Whether a run is going on, and since when. */
@@ -270,6 +309,20 @@ export class ImageJobs {
     return names.length ? { at: Math.max(this.#now(), kept.noticed + BB_UPDATE_DELAY_MS), names } : null;
   }
 
+  /**
+   * Rebuild now (the operator, 11 October 2026): starts the night's refresh, unless a run goes on, which is not joined
+   * but refused, with when it started, so the page says so rather than showing another's run as its own.
+   */
+  startNow(): { readonly started: boolean; readonly message: string | null } {
+    const running = this.#running;
+    if (running) {
+      const what = running.only === "bb-app" ? "A refresh after a BB update" : "A rebuild";
+      return { started: false, message: `${what} has gone on since ${new Date(running.started).toISOString().slice(11, 16)} UTC, one image at a time. Start another once it ends.` };
+    }
+    void this.refreshAll().catch(() => null);
+    return { started: true, message: null };
+  }
+
   /** Stops a run: the image being refreshed fails, its old build stays, and no other starts. */
   stop(): void {
     this.#running?.stop.abort(new Error("bb-box is stopping."));
@@ -308,17 +361,23 @@ export class ImageJobs {
       const limit = started + (options.limitMs ?? RUN_LIMIT_MS);
       // After a BB update, the images with BB's old app alone; the others stay for the night.
       const taken = (view: ImageView) => !!view.due && (options.only !== "bb-app" || this.#appStale(view.build, app));
+      /** A taken image's outcome, in the run's lines and its progress. */
+      const note = (line: RunLine & { outcome: RunProgress["images"][number]["state"] }) => {
+        lines.push(line);
+        this.#setImage(line.name, { state: line.outcome, detail: line.detail, line: null });
+      };
+      this.#setProgress({ started, ended: null, only: options.only ?? null, images: views.filter(taken).map((view) => ({ name: view.name, kind: view.build.kind, state: "next", detail: view.due })) });
       for (const view of views) {
         if (!taken(view)) continue;
         if (signal.aborted || this.#now() >= limit) {
-          lines.push({ name: view.name, outcome: "not started", detail: signal.aborted ? "the run was stopped" : "the run's time limit came first" });
+          note({ name: view.name, outcome: "not started", detail: signal.aborted ? "the run was stopped" : "the run's time limit came first" });
           continue;
         }
         const backend = this.#deps.backends().find((candidate) => candidate.id === view.backend)!;
         const pins = await this.#deps.facts.pins(pinSet(view.build.kind)).catch(() => null);
         const from = this.#from(view.build, pins, app, versions);
         if (view.last && !view.last.ok && !view.last.waiting && view.last.from === from) {
-          lines.push({ name: view.name, outcome: "skipped", detail: `its last rebuild failed and nothing it is built from has changed; bb box images build ${view.name} tries again` });
+          note({ name: view.name, outcome: "skipped", detail: `its last rebuild failed and nothing it is built from has changed; bb box images build ${view.name} tries again` });
           continue;
         }
         // Room for the build's boxes, as for any boxes of the kind at its default size (049): a build box and a trial box, or
@@ -330,7 +389,7 @@ export class ImageJobs {
           if (room && !room.ok) {
             const reason = `no room for its ${boxless ? "trial box" : "build and trial boxes"}: ${room.message ?? "the host is full"}`;
             await this.#record(view.name, { at: this.#now(), ok: false, waiting: true, reason, build: view.build.build, seconds: 0, output: [], from });
-            lines.push({ name: view.name, outcome: "waiting", detail: reason });
+            note({ name: view.name, outcome: "waiting", detail: reason });
             continue;
           }
           // Room the backend needs to build, such as disk where it builds.
@@ -338,21 +397,45 @@ export class ImageJobs {
           if (short) {
             const reason = `no room for its build: ${short}`;
             await this.#record(view.name, { at: this.#now(), ok: false, waiting: true, reason, build: view.build.build, seconds: 0, output: [], from });
-            lines.push({ name: view.name, outcome: "waiting", detail: reason });
+            note({ name: view.name, outcome: "waiting", detail: reason });
             continue;
           }
         }
         say(`refreshing ${view.name}: ${view.due}`);
-        const result = await this.#refreshOne(backend, view, { pinned: !!options.pinned, replace: true, signal, from, log: (line) => say(`${view.name}: ${line}`) });
+        this.#setImage(view.name, { state: "refreshing", since: this.#now(), line: null });
+        let step: { at: number; of: number } | undefined;
+        const result = await this.#refreshOne(backend, view, {
+          pinned: !!options.pinned,
+          replace: true,
+          signal,
+          from,
+          log: (line) => {
+            say(`${view.name}: ${line}`);
+            // The page follows the image's steps, as first-run setup's card does, and its last line; only a new step says so at once.
+            const header = /\[[^\]\s]+ (\d+)\/(\d+)\]/.exec(line);
+            const moved = header && (Number(header[1]) !== step?.at || Number(header[2]) !== step?.of);
+            if (header) step = { at: Number(header[1]), of: Number(header[2]) };
+            const image = this.#progress?.images.find((one) => one.name === view.name);
+            if (image) this.#progress = { ...this.#progress!, images: this.#progress!.images.map((one) => (one === image ? { ...one, line: line.slice(0, 300), ...(step ? { step } : {}) } : one)) };
+            if (moved) this.#deps.changed?.();
+          },
+        });
+        this.#setImage(view.name, result.ok ? { state: "refreshed", detail: `now ${result.build?.build ?? "a new build"}, in ${result.seconds} s`, line: null } : { state: "failed", detail: result.reason ?? "no reason given", line: null });
         lines.push(result.ok ? { name: view.name, outcome: "refreshed", detail: `now ${result.build?.build ?? "a new build"}, in ${result.seconds} s` } : { name: view.name, outcome: "failed", detail: result.reason ?? "no reason given" });
       }
       for (const view of views) if (!taken(view)) lines.push({ name: view.name, outcome: "skipped", detail: view.due ? "it is due for another reason than a BB update: the night refreshes it" : "not due" });
       if (bakes && options.only !== "bb-app") lines.push(...(await bakes.maintain({ until: limit, signal })));
       const ok = !lines.some((line) => line.outcome === "failed");
       await this.#deps.storage.set(LAST_RUN, { at: this.#now(), ok, lines });
+      if (this.#progress) this.#setProgress({ ...this.#progress, ended: this.#now() });
       return { ok, lines, seconds: Math.round((this.#now() - started) / 1000) };
     } finally {
       await this.#deps.storage.delete(LOCK);
+      // A run that threw ends too: what it did not reach did not start.
+      const progress = this.#progress;
+      if (progress && progress.ended === null) {
+        this.#setProgress({ ...progress, ended: this.#now(), images: progress.images.map((image) => (image.state === "next" || image.state === "refreshing" ? { ...image, state: "not started", line: null } : image)) });
+      }
     }
   }
 

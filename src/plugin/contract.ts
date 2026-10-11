@@ -1,6 +1,7 @@
 // The panel's RPC contract. The panel imports only its type.
 
 import type { MachineAccessProblem, MachineSetup } from "./setup-offer.ts";
+import type { RunProgress } from "./images.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { DockerHostView } from "./docker-hosts.ts";
@@ -39,6 +40,23 @@ export interface DesktopOnDemandView {
   readonly kind: KindView;
   /** How long the desktop image last took to build there, in ms, or null when it has not: its estimate. */
   readonly took: number | null;
+}
+
+/** The settings page's Rebuild now: the standard images, most needed first, and where a refresh run is. */
+export interface ImagesStatus {
+  readonly images: readonly {
+    readonly name: string;
+    readonly kind: string;
+    /** Its build and age, as "build.2026-10-01, 10 days old", or "no record". */
+    readonly built: string;
+    /** Why it is due, or null. */
+    readonly due: string | null;
+    /** What its last rebuild did, as a phrase such as "Last rebuilt 2026-10-10", or null. */
+    readonly last: string | null;
+  }[];
+  readonly progress: RunProgress | null;
+  /** When the run going on started, or null. */
+  readonly running: number | null;
 }
 
 /** One box's desktop or terminal, for its tab. */
@@ -165,6 +183,12 @@ export const contract = defineRpcContract({
   backends: { input: z.null(), output: z.custom<BackendView[]>() },
   doctor: { input: z.null(), output: z.custom<DoctorView>() },
   /** The configuration, its defaults and problems, and each backend's state (029). */
+  /** The standard images bb-box rebuilds, most needed first, with why each is due (Rebuild now). Lists each backend's images. */
+  "images.list": { input: z.null(), output: z.custom<{ readonly images: ImagesStatus["images"] }>() },
+  /** Where a refresh run is, image by image, at once: the run going on, or the last one. */
+  "images.progress": { input: z.null(), output: z.custom<Pick<ImagesStatus, "progress" | "running">>() },
+  /** Starts the night's refresh now; refused, with why, while a run goes on. */
+  "images.refresh": { input: z.null(), output: z.custom<{ readonly started: boolean; readonly message: string | null }>() },
   "config.get": { input: z.null(), output: z.custom<ConfigState>() },
   /** Problems with a draft, saving nothing. `test`, a backend's ID, also runs its doctor against the draft, within 30 s. */
   "config.check": { input: z.object({ draft, test: z.string().min(1).optional() }), output: z.custom<CheckResult>() },

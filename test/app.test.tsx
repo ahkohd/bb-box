@@ -13,6 +13,7 @@ import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from
 import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
+import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
@@ -417,7 +418,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; video?: boolean } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -444,6 +445,12 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
+    "images.list": () => ({ images: options.rebuildable ?? [] }),
+    "images.progress": () => ({ progress: options.progress ?? null, running: options.progress && options.progress.ended === null ? options.progress.started : null }),
+    "images.refresh": () => {
+      changes.push("images.refresh");
+      return options.refusal ? { started: false, message: options.refusal } : { started: true, message: null };
+    },
     "setup.desktop": ({ hostId, size }) => {
       changes.push(`setup.desktop ${hostId}${size ? ` ${JSON.stringify(size)}` : ""}`);
       return { result: { ok: true, state: {} as ConfigState, problems: [] } };
@@ -1590,6 +1597,44 @@ test("the general settings save at once, leaving out a value at its default", as
   fireEvent.click(nightly);
   await waitFor(() => expect(changes).toHaveLength(3));
   expect(JSON.parse(changes[2]!.slice(changes[2]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3, enrol: false, nightlyImages: true });
+});
+
+test("Rebuild now lists the due images and why, starts the night's refresh, and says why when one is going already", async () => {
+  const images: ImagesStatus["images"] = [
+    { name: "docker/linux", kind: "linux", built: "build.2026-10-01, 10 days old", due: "it is 10 days old, past its 7-day interval", last: null },
+    { name: "docker/desktop", kind: "linux-desktop-cpu", built: "build.2026-10-10, 1 day old", due: null, last: "Last rebuilt 2026-10-10" },
+  ];
+  const { handlers, changes } = server([], { rebuildable: images, refusal: "A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends." });
+  const slot = settings(handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "Rebuild now" }));
+  expect(await slot.findByText("1 of 2 images are due. A rebuild takes them one at a time, as the night does.")).toBeTruthy();
+  expect(slot.getByText("Due, as it is 10 days old, past its 7-day interval")).toBeTruthy();
+  expect(slot.queryByText("docker/desktop")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Rebuild 1 image" }));
+  await waitFor(() => expect(changes).toContain("images.refresh"));
+  expect(await slot.findByText("A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends.")).toBeTruthy();
+});
+
+test("while a rebuild runs, Rebuild now shows it image by image, with the step of the one being rebuilt", async () => {
+  const progress: ImagesStatus["progress"] = {
+    started: Date.now() - 125_000,
+    ended: null,
+    only: null,
+    images: [
+      { name: "docker/linux", kind: "linux", state: "refreshed", detail: "now build.2026-10-11, in 300 s" },
+      { name: "docker/desktop", kind: "linux-desktop-cpu", state: "refreshing", detail: "it is 40 days old", since: Date.now() - 20_000, line: "#9 [desktop 3/9] RUN", step: { at: 3, of: 9 } },
+      { name: "pve/9100", kind: "linux", state: "next", detail: "it fails the doctor" },
+    ],
+  };
+  const slot = settings(server([], { progress }).handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "Rebuild now" }));
+  expect(await slot.findByText("Rebuilding images")).toBeTruthy();
+  expect(slot.getByText("2 of 3 · docker/desktop")).toBeTruthy();
+  expect(slot.getByText("Started 2 min ago. One image at a time; it goes on if you leave this page.")).toBeTruthy();
+  expect(slot.getByText("Rebuilt, now build.2026-10-11, in 300 s")).toBeTruthy();
+  expect(slot.getByText("Rebuilding · step 3 of 9")).toBeTruthy();
+  expect(slot.getByText("Next")).toBeTruthy();
+  expect(slot.getByRole("progressbar", { name: "Rebuilding images" })).toBeTruthy();
 });
 
 test("files for every box show each path and whether it is set, never a content, and save at once, sending a kept file's path alone (#455)", async () => {

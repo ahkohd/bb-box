@@ -60,7 +60,7 @@ function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; 
 
 const versions = (async () => ({ resolvedAt: "", following: true, aptSnapshot: { pinned: "", version: "" }, tools: [{ name: "node", arch: "x86_64", pinned: "24.21.0", version: "24.21.0", source: "", kept: null }], files: { "pins.json": "", "desktop-pins.tsv": "", "apt-snapshot": "" } })) as unknown as () => Promise<Versions>;
 
-function jobs(backends: Backend[], options: { app?: string | { value: string }; fail?: string[]; clock?: { now: number }; follow?: { on: boolean }; gate?: () => Promise<void> } = {}) {
+function jobs(backends: Backend[], options: { app?: string | { value: string }; fail?: string[]; clock?: { now: number }; follow?: { on: boolean }; gate?: () => Promise<void>; changes?: { count: number } } = {}) {
   const clock = options.clock ?? { now: NOW };
   const refreshed: string[] = [];
   const storage = new MemoryStorage();
@@ -71,10 +71,12 @@ function jobs(backends: Backend[], options: { app?: string | { value: string }; 
     facts: { pins: async () => PINS, bbApp: async () => (typeof options.app === "object" ? options.app.value : (options.app ?? APP)) },
     storage,
     afterBbUpdates: () => options.follow?.on ?? false,
+    changed: () => void (options.changes && options.changes.count++),
     now: () => clock.now,
     versions: versions as never,
     refresh: (async (refresh: RefreshOptions): Promise<RefreshResult> => {
       refreshed.push(`${refresh.current.ref}${refresh.replace === false ? " (try)" : ""}`);
+      refresh.log?.("#7 [linux 3/9] RUN apt-get install");
       await options.gate?.();
       clock.now += 60_000;
       const failed = options.fail?.includes(refresh.current.ref);
@@ -312,4 +314,42 @@ test("a full run asked for during a BB update's run waits for it, then runs ever
   await update;
   await night;
   assert.deepEqual(refreshed, ["9100", "9102", "9100"]);
+});
+
+test("Rebuild now starts the night's refresh, shows it image by image with its build's step, and refuses a second while it runs", async () => {
+  const lxc = backend("proxmox-lxc", [build("9100", "linux", record(10)), build("9101", "linux-desktop-cpu", record(10)), build("9102", "linux-desktop-wayland-cpu", record(1))]);
+  let open: () => void = () => {};
+  const held = new Promise<void>((resolve) => (open = resolve));
+  const changes = { count: 0 };
+  const { job } = jobs([lxc.backend], { gate: () => held, fail: ["9101"], changes });
+  assert.equal(job.progress(), null);
+  assert.deepEqual(job.startNow(), { started: true, message: null });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const during = job.progress()!;
+  assert.equal(during.ended, null);
+  assert.deepEqual(
+    during.images.map((image) => [image.name, image.state]),
+    [
+      ["proxmox-lxc/9100", "refreshing"],
+      ["proxmox-lxc/9101", "next"],
+    ],
+    "the due images alone, in turn",
+  );
+  assert.deepEqual(during.images[0]!.step, { at: 3, of: 9 });
+  assert.equal(during.images[0]!.line, "#7 [linux 3/9] RUN apt-get install");
+  assert.deepEqual(job.startNow(), { started: false, message: "A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends." });
+  open();
+  const result = await job.refreshAll();
+  assert.equal(result.ok, false);
+  const after = job.progress()!;
+  assert.notEqual(after.ended, null);
+  assert.deepEqual(
+    after.images.map((image) => [image.name, image.state, image.detail]),
+    [
+      ["proxmox-lxc/9100", "refreshed", "now build.new-9100, in 60 s"],
+      ["proxmox-lxc/9101", "failed", "The new build failed the kind's check: docker FAIL"],
+    ],
+  );
+  assert.ok(changes.count >= 5, `the page heard of each change: ${changes.count}`);
 });
