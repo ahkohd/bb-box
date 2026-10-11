@@ -75,7 +75,7 @@ The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md
 - Default kind: the kind a thread gets when it does not say.
 - Boxes per thread: the most boxes a thread can have at once. 0 means no limit.
 - Enrol boxes as BB machines: when on, each box joins BB as a machine, so the thread's commands and terminals can use it, with the thread's access.
-- Rebuild images each night: at 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it also refreshes the Linux images with BB's old app within the hour. See [images](images.md#standard-images-stay-up-to-date). Setting up Docker from the Box panel turns it on; otherwise it is off unless you turn it on.
+- Rebuild images each night: at 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it also refreshes the Linux images with BB's old app within the hour. **Rebuild now**, beside it, lists the images that are due and why, and starts the same rebuild at once, one image at a time, showing how far each is. It does not start while a rebuild goes on, and says so. See [images](images.md#standard-images-stay-up-to-date). Setting up Docker from the Box panel turns it on; otherwise it is off unless you turn it on.
 - Linux desktops as video: a Linux X11 desktop drawn by the CPU shows as video, with **Show as VNC** in the viewer's menu to go back. See [video](desktops.md#video). On unless you turn it off.
 
 ## Files for every box

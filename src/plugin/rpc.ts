@@ -134,6 +134,25 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     "config.apply": ({ draft, revision }) => app.configuration.apply(draft, revision),
     "docker.hosts": async () => ({ hosts: await app.dockerHosts.list() }),
     "setup.offer": async () => ({ machines: await app.setups(), access: await app.machineAccess() }),
+    "images.progress": async () => ({ progress: app.imageJobs.progress(), running: app.imageJobs.running() }),
+    "images.list": async () => {
+      const views = await app.imageJobs.list().catch(() => []);
+      return {
+        images: views.map((view) => {
+          const record = view.build.record;
+          const age = record ? Math.floor((Date.now() - Date.parse(record.built)) / 86_400_000) : null;
+          const when = view.last ? new Date(view.last.at).toISOString().slice(0, 10) : null;
+          return {
+            name: view.name,
+            kind: view.build.kind,
+            built: record ? `${record.build}, ${age === 0 ? "built today" : `${age} ${age === 1 ? "day" : "days"} old`}` : "no record",
+            due: view.due,
+            last: view.last ? (view.last.ok ? `Last rebuilt ${when}` : view.last.waiting ? `Its last rebuild waited, on ${when}: ${view.last.reason}` : `Its last rebuild failed, on ${when}: ${view.last.reason}`) : null,
+          };
+        }),
+      };
+    },
+    "images.refresh": async () => app.imageJobs.startNow(),
     "setup.desktop": async ({ threadId, hostId, size }) => ({ result: await app.buildDesktop({ threadId, hostId, ...(size ? { size } : {}) }) }),
     "setup.docker": async ({ hostId }) => {
       const result = await app.setDockerHost(hostId, true, true);

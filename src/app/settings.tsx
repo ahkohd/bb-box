@@ -7,6 +7,7 @@
 import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useState, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -20,6 +21,7 @@ import { KindForm, KindRow, kindRowModel } from "./settings-kinds.tsx";
 import { DockerHostsSection } from "./settings-docker-hosts.tsx";
 import { BoxFilesSection } from "./settings-files.tsx";
 import { MachinesSection } from "./settings-machines.tsx";
+import { RebuildNow } from "./rebuild-now.tsx";
 
 const STALE = "Someone saved the configuration first. It has been reloaded; make your change again.";
 
@@ -54,6 +56,8 @@ export function SettingsSection() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [boxesPerThread, setBoxesPerThread] = useState<string | null>(null);
+  /** Rebuild now's card, under the nightly switch. */
+  const [rebuilding, setRebuilding] = useState(false);
 
   /**
    * Saves a document as the whole configuration. `saved` with problems means
@@ -242,6 +246,9 @@ export function SettingsSection() {
           <Switch aria-label="Linux desktops as video" checked={general.video} disabled={busy === "general"} onCheckedChange={(video) => void applyNow("general", withGeneral(document, { video: video === state.defaults.general.video ? undefined : video }))} />
         </GeneralRow>
         <GeneralRow label="Rebuild images each night" description="At 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it refreshes the Linux images within the hour.">
+          <Button type="button" variant="outline" size="sm" className="mr-3" aria-expanded={rebuilding} onClick={() => setRebuilding((open) => !open)}>
+            Rebuild now
+          </Button>
           <Switch
             aria-label="Rebuild images each night"
             checked={general.nightlyImages}
@@ -249,6 +256,7 @@ export function SettingsSection() {
             onCheckedChange={(nightlyImages) => void applyNow("general", withGeneral(document, { nightlyImages: nightlyImages === state.defaults.general.nightlyImages ? undefined : nightlyImages }))}
           />
         </GeneralRow>
+        {rebuilding ? <RebuildNow /> : null}
       </Section>
       <BoxFilesSection
         files={document.general.files ?? []}

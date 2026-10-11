@@ -364,6 +364,9 @@ function rpc(boxes, options = {}) {
     }),
     "docker.host.set": () => ({ result: { ok: true, problems: [] }, hosts: [] }),
     "setup.offer": () => ({ machines: options.setups ?? [], access: options.access ?? null }),
+    "images.list": () => ({ images: options.rebuildable ?? [] }),
+    "images.progress": () => ({ progress: options.progress ?? null, running: options.progress && options.progress.ended === null ? options.progress.started : null }),
+    "images.refresh": () => ({ started: true, message: null }),
     "setup.docker": () => ({ result: { ok: true, problems: [] }, machines: options.setups ?? [] }),
     "machines.add": () => ({ box: null, error: options.refuse ?? null }),
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
@@ -946,6 +949,54 @@ export const scenes = {
     rpc: rpc([], { setups: [setupOf()], config: { document: { schema: 1, revision: 1, backends: [], kinds: {}, general: {} } } }),
   },
   // The General section, with the video switch, on by default (056).
+  // Rebuild now (the operator, 11 October 2026): the due images and why, then a run image by image.
+  "settings-rebuild": {
+    slot: "settings",
+    width: 860,
+    height: 640,
+    props: {},
+    rpc: rpc([], {
+      machines: MACHINES,
+      rebuildable: [
+        { name: "docker/linux", kind: "linux", built: "build.2026-10-01, 10 days old", due: "it is 10 days old, past its 7-day interval", last: null },
+        { name: "pve/9101", kind: "linux-desktop-cpu", built: "build.2026-10-09, 2 days old", due: "it has another build of BB's app than BB's server gives", last: "Last rebuilt 2026-10-09" },
+        { name: "pve/9102", kind: "linux-desktop-wayland-cpu", built: "build.2026-10-10, 1 day old", due: null, last: "Last rebuilt 2026-10-10" },
+      ],
+    }),
+    after: async (root) => {
+      await wait(400);
+      click(root, "button", "Rebuild now");
+      await wait(300);
+      [...root.querySelectorAll("p")].find((node) => node.textContent?.trim() === "Rebuild images each night")?.scrollIntoView({ block: "start" });
+      await wait(200);
+    },
+  },
+  "settings-rebuild-running": {
+    slot: "settings",
+    width: 860,
+    height: 640,
+    props: {},
+    rpc: rpc([], {
+      machines: MACHINES,
+      progress: {
+        started: now - 380_000,
+        ended: null,
+        only: null,
+        images: [
+          { name: "docker/linux", kind: "linux", state: "refreshed", detail: "now build.2026-10-11, in 262 s" },
+          { name: "pve/9101", kind: "linux-desktop-cpu", state: "refreshing", detail: "it has another build of BB's app than BB's server gives", since: now - 118_000, line: "#9 [desktop 3/9] RUN", step: { at: 3, of: 9 } },
+          { name: "tart/mac1/bb-box-macos", kind: "macos", state: "next", detail: "it is 31 days old, past its 30-day interval" },
+        ],
+      },
+    }),
+    after: async (root) => {
+      await wait(400);
+      click(root, "button", "Rebuild now");
+      await wait(300);
+      [...root.querySelectorAll("p")].find((node) => node.textContent?.trim() === "Rebuild images each night")?.scrollIntoView({ block: "start" });
+      await wait(200);
+    },
+  },
   "settings-general": {
     slot: "settings",
     width: 860,
