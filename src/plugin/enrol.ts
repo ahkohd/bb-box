@@ -71,6 +71,27 @@ interface ManualMachine {
 const LOADED = /Bootstrap failed: 5: Input\/output error/;
 
 /**
+ * Removes a Linux box's pre-installed BB app when BB's server has another
+ * build of it and the box's root is an overlay, as on microsandbox and
+ * Docker (#701). BB's installer then installs the server's build into an
+ * empty prefix, in about 3 s. Replacing the image's copy in place took npm
+ * about 43 s on microsandbox and 19 s on Docker, as overlayfs cannot rename
+ * a directory of the image's layer, so npm copies each file it moves. The
+ * old app's digest is the one BB's installer wrote, and the server's is in
+ * the package's headers; a box that cannot tell keeps its app.
+ */
+export function removeStaleApp(bbUrl: string): string {
+  return `/bin/sh -c ${quote(String.raw`[ "$(stat -f -c %T / 2>/dev/null)" = overlayfs ] || exit 0
+want=$(curl -fsSI --max-time 10 ${quote(`${bbUrl.replace(/\/+$/, "")}/install/bb-app.tgz`)} | tr -d '\r' | sed -n 's/^x-bb-artifact-sha256: *\([a-f0-9]\{64\}\)$/\1/Ip' | tail -n 1)
+[ -n "$want" ] || exit 0
+for d in "$HOME"/.bb-machines/*/; do
+  [ -d "$d/npm/lib/node_modules/bb-app" ] || continue
+  [ "$(cat "$d/host-artifact.sha256" 2>/dev/null)" = "$want" ] || rm -rf "$d/npm/lib/node_modules/bb-app"
+done
+`)}`;
+}
+
+/**
  * Unloads BB's daemon's LaunchAgent for machine `hostId` in the box user's
  * session, and waits up to 10 s for it to go, as `launchctl bootstrap` fails
  * the same way while it is going (#416). In /bin/sh, as the box user's zsh
@@ -124,6 +145,8 @@ export interface EnrolmentDeps {
   bootstrap(request: { key: string; executor: MachineExecutor; report: Progress; signal: AbortSignal }): Promise<{ hostId: string }>;
   logError(operation: string, error: unknown): void;
   log?(message: string): void;
+  /** BB's server URL, to tell whether a box's pre-installed app is the server's build (#701). */
+  bbUrl?(): string | null;
   /** How long an enrolment may take before bb-box gives up on it. */
   readonly timeoutMs?: number;
   /** How often to ask BB about the machine, until bootstrap returns. */
@@ -355,6 +378,8 @@ export class Enrolment {
           const transport = await this.#transport(box);
           phases?.mark("prepared");
           report.step(`Installing BB in box ${box.name}`);
+          const bbUrl = box.capabilities.os === "windows" ? null : this.#deps.bbUrl?.();
+          if (bbUrl) await transport.run(removeStaleApp(bbUrl), { timeoutMs: 30_000, signal }).catch((error) => this.#deps.logError("remove a stale BB app", error));
           await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
