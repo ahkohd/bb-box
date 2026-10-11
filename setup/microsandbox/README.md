@@ -265,7 +265,10 @@ npm run conformance -- --backend microsandbox --settings msb.json
   where `msb` keeps its images and build files, measured through any link
   to another volume. With less, the image waits for the next night, and
   `bb box doctor` says so. `bb box images build <name>`, with the name
-  `bb box images list` gives, rebuilds one now.
+  `bb box images list` gives, rebuilds one now. When a build fails, its
+  last lines in `bb box images list --json` include the builder's last
+  `msb logs` lines, from its runtime and guest kernel, as bb-box removes
+  the builder.
 - Boxes made before keep running from the image they started with.
 
 ## Remove
