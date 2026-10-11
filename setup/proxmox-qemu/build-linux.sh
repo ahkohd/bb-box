@@ -172,6 +172,10 @@ trap 'exit 1' INT TERM
 # prefix, then the gateway. The build VM has it too, for its boots after
 # cloud-init's.
 serial=$(printf '%s/%s %s' "$BBBOX_BUILD_ADDRESS" "$BBBOX_PREFIX" "$BBBOX_GATEWAY" | base64 -w0)
+# Cloud-init gives the first boot its address, the key and the box user,
+# and nothing from apt: --ciupgrade 0, as Proxmox's default upgrades every
+# package from the live archive at first boot, past the apt snapshot the
+# guest scripts install from, whose -dev packages then cannot match.
 log "creating build VM $vm from the cloud image"
 created=1
 qm create "$vm" --name "$name-build" --pool "$BBBOX_POOL" --ostype l26 --machine q35 --cpu host \
@@ -179,7 +183,7 @@ qm create "$vm" --name "$name-build" --pool "$BBBOX_POOL" --ostype l26 --machine
   --scsi0 "$BBBOX_STORAGE:0,import-from=$image,discard=on,iothread=1,ssd=1" --boot order=scsi0 \
   --ide2 "$BBBOX_STORAGE:cloudinit" --serial0 socket --net0 "virtio,bridge=$BBBOX_BRIDGE" \
   --smbios1 "base64=1,uuid=$(cat /proc/sys/kernel/random/uuid),serial=$serial" --tags "$build" \
-  --ciuser box --sshkeys "$BBBOX_SSH_KEY.pub" --ipconfig0 "ip=$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX,gw=$BBBOX_GATEWAY" \
+  --ciuser box --ciupgrade 0 --sshkeys "$BBBOX_SSH_KEY.pub" --ipconfig0 "ip=$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX,gw=$BBBOX_GATEWAY" \
   --nameserver "$BBBOX_DNS" --onboot 0 >/dev/null
 qm resize "$vm" scsi0 "${disk}G" >/dev/null
 qm start "$vm"
