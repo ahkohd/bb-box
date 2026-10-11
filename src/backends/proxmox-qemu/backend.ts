@@ -79,6 +79,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription } from "../images.ts";
+import { displayReason } from "../proxmox-lxc/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -192,6 +193,7 @@ const LINUX_VNC_PORT = 5900;
 const LINUX_VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 /** What the desktop's display service writes once it is up: cpu here. */
 const LINUX_DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
+const LINUX_DISPLAY_REASON_FILE = "/run/bb-box/display-reason";
 
 /** A doctor check's stable ID and its name. */
 type Check = readonly [id: CheckId, name: string];
@@ -557,6 +559,7 @@ export class ProxmoxQemuBackend implements Backend {
     };
     try {
       let resumed = false;
+      let display: { mode: string; reason: string } | null = null;
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
         vmid = Number(previous.ref);
         template = typeof previous.data?.template === "number" ? previous.data.template : null;
@@ -630,14 +633,14 @@ export class ProxmoxQemuBackend implements Backend {
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step, os);
       // A Linux template's bb-box-boot grows its root filesystem at each boot. Its desktop starts after SSH, as in Proxmox LXC.
       if (linux && this.#kindOf(template).capabilities.displays.length) {
-        await step("display", () => this.#linuxDisplay(id, Math.max(1_000, deadline - Date.now()), signal));
+        display = await step("display", () => this.#linuxDisplay(id, Math.max(1_000, deadline - Date.now()), signal));
       }
       if (!linux) {
         // A resumed acquire may have grown the disk before it stopped.
         if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
         this.#compileDisplay(id);
       }
-      return this.#guest(api.node, id, template, box.boxId, await size, build);
+      return this.#guest(api.node, id, template, box.boxId, await size, build, display);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
@@ -1039,10 +1042,22 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** `template` and `box` are kept with the box. */
-  #guest(node: string, vmid: number, template: number | null = null, box: string | null = null, size: BoxSize | null = null, build: string | null = null): Guest {
+  #guest(
+    node: string,
+    vmid: number,
+    template: number | null = null,
+    box: string | null = null,
+    size: BoxSize | null = null,
+    build: string | null = null,
+    display: { mode: string; reason: string } | null = null,
+  ): Guest {
     const guest: Guest = { ref: String(vmid), host: node, address: addressFor(this.#config, vmid), size };
     const data = { ...(template !== null ? { template } : {}), ...(build !== null ? { build } : {}), ...(box !== null ? { box } : {}) };
-    return Object.keys(data).length ? { ...guest, data } : guest;
+    // A Linux desktop's display mode and why, as Proxmox LXC's desktops show them.
+    const facts = display
+      ? [{ label: "Display mode", value: display.mode === "cpu" ? "CPU" : display.mode }, ...(display.reason ? [{ label: "Display reason", value: displayReason(display.reason) }] : [])]
+      : [];
+    return Object.keys(data).length ? { ...guest, data, ...(facts.length ? { facts } : {}) } : guest;
   }
 
   /** The guest's config, or null when it does not exist. */
@@ -1304,13 +1319,14 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** Waits for a Linux desktop's display service to say its mode, as Proxmox LXC's desktops do. */
-  async #linuxDisplay(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  async #linuxDisplay(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<{ mode: string; reason: string }> {
     const deadline = Date.now() + timeoutMs;
     const command = await this.#command(vmid, "linux");
     const sleep = this.#options.sleep ?? pause;
     for (;;) {
-      const result = await command.run(`cat ${LINUX_DISPLAY_MODE_FILE} 2>/dev/null; :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
-      if (result.stdout.trim()) return;
+      const result = await command.run(`cat ${LINUX_DISPLAY_MODE_FILE} 2>/dev/null && cat ${LINUX_DISPLAY_REASON_FILE} 2>/dev/null; :`, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+      const [mode = "", reason = ""] = result.stdout.split("\n").map((line) => line.trim());
+      if (mode) return { mode, reason };
       if (Date.now() >= deadline) {
         throw new Error(`The box's desktop did not start: ${LINUX_DISPLAY_MODE_FILE} is missing after ${Math.round(timeoutMs / 1000)} s. Check bb-box-display.service in the Linux desktop template.`);
       }
