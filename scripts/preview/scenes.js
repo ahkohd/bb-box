@@ -303,7 +303,7 @@ function configState(options = {}) {
   return {
     document,
     revision: document.revision,
-    defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux" }, kinds: { linux: LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
+    defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true }, kinds: { linux: LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
     kinds: KIND_INFO,
     drivers: [...DRIVERS, ...(options.drivers ?? [])],
     backends: options.backends ?? [
@@ -874,6 +874,20 @@ export const scenes = {
   },
   "boxes-page-starting": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "Add dark mode" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([], { machines: MACHINES }) },
+  // The General section, with the video switch, on by default (056).
+  "settings-general": {
+    slot: "settings",
+    width: 860,
+    height: 560,
+    props: {},
+    rpc: rpc([], { machines: MACHINES }),
+    after: async (root) => {
+      await wait(400);
+      const heading = [...root.querySelectorAll("h2, h3, p, div")].find((node) => node.textContent?.trim() === "General");
+      heading?.scrollIntoView({ block: "start" });
+      await wait(200);
+    },
+  },
   "settings-machines-empty": { slot: "settings", width: 860, height: 420, props: {}, rpc: rpc([]) },
   "settings-machines-add": {
     slot: "settings",

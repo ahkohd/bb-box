@@ -233,10 +233,10 @@ export function SettingsSection() {
           <Switch aria-label="Enrol boxes as BB machines" checked={general.enrol} disabled={busy === "general"} onCheckedChange={(enrol) => void applyNow("general", withGeneral(document, { enrol: enrol === state.defaults.general.enrol ? undefined : enrol }))} />
         </GeneralRow>
         <GeneralRow
-          label="Linux desktops as video (trial)"
-          description="A trial of video for X11 desktops: drags follow closely, and it stays smooth on a slow connection. Every viewer gets it, with Show as VNC in its menu to go back. Off unless you are trying it."
+          label="Linux desktops as video"
+          description="X11 desktops drawn by the CPU show as video: drags follow closely, and it stays smooth on a slow connection. Every viewer can go back with Show as VNC in its menu."
         >
-          <Switch aria-label="Linux desktops as video (trial)" checked={general.video} disabled={busy === "general"} onCheckedChange={(video) => void applyNow("general", withGeneral(document, { video: video === state.defaults.general.video ? undefined : video }))} />
+          <Switch aria-label="Linux desktops as video" checked={general.video} disabled={busy === "general"} onCheckedChange={(video) => void applyNow("general", withGeneral(document, { video: video === state.defaults.general.video ? undefined : video }))} />
         </GeneralRow>
       </Section>
       <BoxFilesSection

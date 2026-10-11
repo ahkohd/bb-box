@@ -2421,12 +2421,18 @@ test("the desktop route relays a box's desktop, and only the viewer with control
 test("the desktop route carries a box's Selkies stream message by message, and only the viewer with control reaches the box, sizes it and gets its clipboard (056)", async (t) => {
   const { harness, app, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
   t.after(() => harness.lifecycle.dispose());
-  // The viewer may show it as video only once the general setting is on (056).
+  // Video is on by default (056): an install with no value set, as one upgrading, gets it; one that sets it off keeps it off.
   const video = async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { video: boolean }).video;
-  assert.equal(await video(), false);
-  const exported = app.configuration.exported();
-  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...exported, general: { ...exported.general, video: true } }, revision: exported.revision })) as { ok: boolean };
-  assert.ok(applied.ok, JSON.stringify(applied));
+  assert.equal(app.configuration.exported().general.video, undefined, "no value set");
+  assert.equal(await video(), true);
+  const set = async (value: boolean) => {
+    const exported = app.configuration.exported();
+    const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...exported, general: { ...exported.general, video: value } }, revision: exported.revision })) as { ok: boolean };
+    assert.ok(applied.ok, JSON.stringify(applied));
+  };
+  await set(false);
+  assert.equal(await video(), false, "set off, it stays off");
+  await set(true);
   assert.equal(await video(), true);
   const refused = (await harness.behavior.callRpc("config.check", { draft: { ...app.configuration.exported(), general: { video: "yes" } } })) as { problems: { path: string; message: string }[] };
   assert.deepEqual(refused.problems.find((problem) => problem.path === "general.video")?.message, "video is true or false.");

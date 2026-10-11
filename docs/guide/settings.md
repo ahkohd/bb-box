@@ -75,7 +75,7 @@ The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md
 - Default kind: the kind a thread gets when it does not say.
 - Boxes per thread: the most boxes a thread can have at once. 0 means no limit.
 - Enrol boxes as BB machines: when on, each box joins BB as a machine, so the thread's commands and terminals can use it, with the thread's access.
-- Linux desktops as video (trial): when on, a Linux X11 desktop drawn by the CPU shows as video, with **Show as VNC** in the viewer's menu to go back. See [video](desktops.md#video-trial). Off unless you are trying it.
+- Linux desktops as video: a Linux X11 desktop drawn by the CPU shows as video, with **Show as VNC** in the viewer's menu to go back. See [video](desktops.md#video). On unless you turn it off.
 
 ## Files for every box
 
