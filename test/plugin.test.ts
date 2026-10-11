@@ -3808,6 +3808,20 @@ test("a click on the desktop says it was done when a person takes control while 
   await session.close();
 });
 
+test("a session the driver ended by itself, keeping its connection, gives way to a new one, for reads and actions alike (#662)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  assert.match(text(await tool("computer_windows", { box: box.name })), /Tasks/);
+  editDesktop(file, (desktop) => void (desktop.endedSession = desktop.sessions));
+  assert.match(text(await tool("computer_windows", { box: box.name })), /Tasks/, "a read goes on in a new session");
+  assert.equal(readDesktop(file).sessions, 2);
+  await tool("computer_screenshot", { box: box.name, window: "desktop" });
+  editDesktop(file, (desktop) => void (desktop.endedSession = desktop.sessions));
+  // The action's first read finds the session ended, so the action itself goes to the new one.
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 10, y: 10 })), /^Clicked \(10, 10\) on the desktop/);
+  assert.equal(readDesktop(file).sessions, 3);
+});
+
 test("a computer-use session closes when idle, opens again when needed, and goes with its box", async (t) => {
   const { harness, app, box, file, tool } = await desktopBox({ computer: { idleMs: 100 } });
   t.after(() => harness.lifecycle.dispose());

@@ -92,6 +92,8 @@ export interface FakeDesktop {
   calls: { tool: string; args: Record<string, unknown> }[];
   /** How many sessions have started. */
   sessions: number;
+  /** A session the driver has ended by itself, by number, while keeping its connection: every call in it is refused (#662). */
+  endedSession?: number;
   /** A read of a menu gives its window's elements, moved to the menu. */
   misreadPopups?: boolean;
   /** A Tasks window's tree holds the items of its open menu, as a GTK app's does. */
@@ -364,8 +366,10 @@ export class FakeCua {
     // Only a file under the box's home holds the desktop; any other socket gets a desktop of its own.
     this.#file = isAbsolute(socket) ? null : socket;
     this.#memory = this.#file && existsSync(this.#file) ? (JSON.parse(readFileSync(this.#file, "utf8")) as FakeDesktop) : emptyDesktop();
-    this.#change((desktop) => desktop.sessions++);
+    this.#session = this.#change((desktop) => ++desktop.sessions);
   }
+
+  readonly #session: number;
 
   #load(): FakeDesktop {
     if (this.#file && existsSync(this.#file)) this.#memory = JSON.parse(readFileSync(this.#file, "utf8")) as FakeDesktop;
@@ -412,6 +416,7 @@ export class FakeCua {
       return desktop.delays[tool] ?? 0;
     });
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (this.#load().endedSession === this.#session) return text(`Session 'mcp-${this.#session}' has ended; tool call '${tool}' was rejected.`, undefined, true);
     switch (tool) {
       case "list_windows":
         return this.#listWindows();
