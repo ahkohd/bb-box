@@ -1,5 +1,6 @@
 // The panel's RPC contract. The panel imports only its type.
 
+import type { MachineSetup } from "./setup-offer.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { DockerHostView } from "./docker-hosts.ts";
@@ -162,6 +163,8 @@ export const contract = defineRpcContract({
   "config.apply": { input: z.object({ draft, revision: z.number().int().min(0) }), output: z.custom<ApplyResult>() },
   /** BB machines that can host Docker boxes, with Docker as it answers through bb-box's relay (042). */
   "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
+  /** What each BB machine offers first-run setup, the server's first. */
+  "setup.offer": { input: z.null(), output: z.custom<{ machines: MachineSetup[] }>() },
   /**
    * Turns a BB machine on or off as a Docker host: on adds a Docker backend
    * on it, last in acquire order; off removes it, or turns it off while it

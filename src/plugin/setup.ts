@@ -2,6 +2,9 @@
 // enrolment, thread events, the sweep, and the tools, RPC and CLI that use
 // them. server.ts calls setup with the built-in drivers; tests pass fakes.
 
+import { hostname } from "node:os";
+import { machineSetups, type MachineSetup } from "./setup-offer.ts";
+import type { SetupFacts } from "../host/relay.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { Backends, DRIVERS, offerChecks, overlapChecks } from "../backends/index.ts";
@@ -99,6 +102,8 @@ export interface BbBox {
   readonly dockerHosts: DockerHosts;
   /** Builds bb-box's images on BB machines that host Docker boxes (042). */
   readonly dockerImages: DockerImages;
+  /** What each BB machine offers first-run setup: its Docker, and the one line that fixes what stands in the way. */
+  setups(): Promise<MachineSetup[]>;
   /** BB machine `machine`, by ID or name, and its Docker backend, from BB's record and the configuration, with no call to it. */
   dockerHostOf(machine: string): Promise<{ hostId: string; name: string; backend: BackendConfig | null } | null>;
   /** Turns a BB machine on or off as a Docker host (042), through the configuration. */
@@ -755,6 +760,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
     log: (message) => bb.log.info(message),
   });
+  /** What each BB machine's host entry last said for first-run setup. */
+  const setupFactsOf = new Map<string, SetupFacts>();
   const dockerHosts = new DockerHosts({
     images: (hostId) => dockerImages.state(hostId),
     machines: async () => (await bb.sdk.hosts.list({ includeCreating: false } as never)) as unknown as readonly MachineRecord[],
@@ -762,6 +769,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],
     async found(hostId, signal) {
       const answer = await host.call("docker", {}, { hostId, signal, timeoutMs: RELAY_CALL_TIMEOUT_MS });
+      if (answer.setup) setupFactsOf.set(hostId, answer.setup);
       // A machine's OS newly known: panels with the form open learn it for "Runs on".
       if (answer.platform && (await machinePlatforms.learn(hostId, answer.platform))) notify(null);
       // A socket that refused BB's daemon is Docker to fix, not a machine without Docker.
@@ -786,6 +794,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     files: fileRelay,
     dockerHosts,
     dockerImages,
+    setups: async () => machineSetups(await dockerHosts.list(), setupFactsOf, hostname()),
     async dockerHostOf(machine) {
       const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];
       const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);

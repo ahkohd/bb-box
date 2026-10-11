@@ -6,7 +6,9 @@
 
 import { execFile } from "node:child_process";
 import { connect, type NetConnectOpts } from "node:net";
-import { release, userInfo } from "node:os";
+import { constants } from "node:fs";
+import { access, readFile, stat, statfs } from "node:fs/promises";
+import { hostname, release, userInfo } from "node:os";
 import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
 import { Mux, type Channel, type MuxOptions } from "../relay/mux.ts";
 
@@ -101,6 +103,54 @@ export function refusal(endpoint: DockerEndpoint, error: NodeJS.ErrnoException, 
   return `${username} may not use Docker's socket ${endpoint.path}. Add ${username} to its group, usually docker, then ${restart}.`;
 }
 
+/** What first-run setup needs to know of this machine (#setup): who BB's daemon runs as, how to restart it, KVM, and free disk. */
+export interface SetupFacts {
+  readonly hostname: string;
+  readonly user: string;
+  /** The group of Docker's socket, and whether the daemon has it now. Null where there is no socket to read. */
+  readonly socketGroup: string | null;
+  readonly inSocketGroup: boolean | null;
+  /** The command that restarts BB's daemon with new groups, or null when bb-box cannot tell how it runs. */
+  readonly restart: string | null;
+  readonly kvm: "ok" | "denied" | "absent";
+  /** Free disk where Docker keeps images, else at the root, in GB. */
+  readonly freeGb: number | null;
+}
+
+/** How BB's daemon restarts with new groups, from its cgroup: a user service needs its user's manager restarted, a system one itself. */
+export function restartFor(cgroup: string, uid: number): string | null {
+  const path = cgroup.trim().split("\n").find((line) => line.startsWith("0::"))?.slice(3) ?? "";
+  if (path.includes(`/user@${uid}.service/`)) return `sudo systemctl restart user@${uid}.service`;
+  const unit = /\/system\.slice\/([^/]+\.service)$/.exec(path)?.[1];
+  return unit ? `sudo systemctl restart ${unit}` : null;
+}
+
+export async function setupFacts(endpoint: DockerEndpoint | null, platform: NodeJS.Platform = process.platform): Promise<SetupFacts> {
+  const { username, uid } = userInfo();
+  let socketGroup: string | null = null;
+  let inSocketGroup: boolean | null = null;
+  if (endpoint && "path" in endpoint && platform !== "win32") {
+    const gid = await stat(endpoint.path).then((found) => found.gid, () => null);
+    if (gid !== null) {
+      const groups = await readFile("/etc/group", "utf8").catch(() => "");
+      socketGroup = groups.split("\n").find((line) => line.split(":")[2] === String(gid))?.split(":")[0] ?? String(gid);
+      inSocketGroup = process.getgroups?.().includes(gid) ?? null;
+    }
+  }
+  const cgroup = platform === "linux" ? await readFile("/proc/self/cgroup", "utf8").catch(() => "") : "";
+  const kvm = platform !== "linux" ? "absent" : await access("/dev/kvm", constants.R_OK | constants.W_OK).then(() => "ok" as const, (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? ("absent" as const) : ("denied" as const)));
+  const disk = await statfs("/var/lib/docker").catch(() => statfs("/")).catch(() => null);
+  return {
+    hostname: hostname(),
+    user: username,
+    socketGroup,
+    inSocketGroup,
+    restart: restartFor(cgroup, uid),
+    kvm,
+    freeGb: disk ? Math.floor((disk.bavail * disk.bsize) / 1e9) : null,
+  };
+}
+
 /** Connects to Docker's endpoint and closes at once: whether it is there to relay to, and if not, why and whether it refused BB's daemon. */
 function reachable(endpoint: DockerEndpoint, timeoutMs = 3_000): Promise<{ reason: string; refused: boolean } | null> {
   return new Promise((resolve) => {
@@ -135,10 +185,10 @@ export function relayHandlers(options: RelayOptions = {}) {
         try {
           endpoint = await (options.endpoint ?? dockerEndpoint)();
         } catch (error) {
-          return { endpoint: "", found: false, reason: error instanceof Error ? error.message : String(error), platform: machinePlatform() };
+          return { endpoint: "", found: false, reason: error instanceof Error ? error.message : String(error), platform: machinePlatform(), setup: await setupFacts(null) };
         }
         const failed = await reachable(endpoint);
-        return { endpoint: describe(endpoint), found: failed === null, reason: failed?.reason ?? null, ...(failed?.refused ? { refused: true } : {}), platform: machinePlatform() };
+        return { endpoint: describe(endpoint), found: failed === null, reason: failed?.reason ?? null, ...(failed?.refused ? { refused: true } : {}), platform: machinePlatform(), setup: await setupFacts(endpoint) };
       },
       relay: async ({ secret, path }: { secret: string; path: string }, context: ExperimentalHostRpcContext) => {
         const endpoint = await (options.endpoint ?? dockerEndpoint)();
