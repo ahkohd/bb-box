@@ -12,7 +12,7 @@ You can open a box's terminal from:
 
 The thread's Terminal tab counts the machine the thread runs on.
 
-![A box's terminal](../design/mockups/built/terminal-light.png)
+![A box's terminal](../media/terminal-box.png)
 
 ## Using the terminal
 

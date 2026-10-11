@@ -17,7 +17,7 @@ Agents make boxes with the `box_acquire` tool: see [agent tools](../reference/to
 
 The form asks what you want, one step at a time. Each step narrows the next, so a choice that no provider offers is greyed out and says 'Not available'.
 
-![The New box form](../design/mockups/built/panel-chooser-light.png)
+![The New box form](../media/new-box-form.png)
 
 ### System
 
@@ -82,6 +82,8 @@ Name shows only when you add one of your machines. See [your machines](boxes.md#
 Select **Create box**, or **Add machine** for a machine. The box shows in the list at once, starting, and is usually ready in seconds. If no provider has room, the form stays open and says why.
 
 The form remembers the system, type and size you chose last, separately for boxes and machines. It does not remember the image.
+
+![The Box panel with a server box and a desktop box](../media/box-panel.png)
 
 ## Starting a thread on a new box
 
