@@ -7,6 +7,7 @@ import { ControlError } from "../core/control.ts";
 import { contract, type BoxResult } from "./contract.ts";
 import type { BbBox } from "./setup.ts";
 import { profileLoop } from "./profile.ts";
+import { GENERAL_DEFAULTS } from "../core/document.ts";
 
 export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
@@ -67,7 +68,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
           throw error;
         },
       );
-      const video = !!box && app.configuration.document.general.video === true && box.capabilities.displays.some((display) => display.protocol === "selkies");
+      const video = !!box && (app.configuration.document.general.video ?? GENERAL_DEFAULTS.video) && box.capabilities.displays.some((display) => display.protocol === "selkies");
       return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video };
     },
     ping: async () => null,

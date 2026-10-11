@@ -97,8 +97,8 @@ export interface GeneralSettings {
   readonly files?: readonly BoxFileSetting[];
   /**
    * Whether viewers of a Linux X11 desktop on the CPU show it as video,
-   * through Selkies (056), unless one chose VNC in its menu. Off while it is
-   * tried.
+   * through Selkies (056), unless one chose VNC in its menu. On unless set
+   * off: an install with no value takes the default.
    */
   readonly video?: boolean;
 }
@@ -126,7 +126,7 @@ export interface Problem {
   readonly message: string;
 }
 
-export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: false } as const;
+export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true } as const;
 
 export const MAX_WARM = 20;
 export const MAX_SPARES = 10;

@@ -37,7 +37,7 @@ Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.m
 ## Spares, video, sound and images
 
 - A kind can keep spare boxes, made and joined to BB ahead, so a thread gets one in seconds. A Windows or macOS VM's spare waits stopped, holding no memory. See [settings](docs/guide/settings.md#kinds).
-- A Linux desktop on X11, drawn by the CPU, can show as video, which stays smooth on a slow connection. It is a trial setting: with it on, every viewer gets video, and **Show as VNC** goes back. See [desktops](docs/guide/desktops.md#video-trial).
+- A Linux desktop on X11, drawn by the CPU, can show as video, which stays smooth on a slow connection. Every viewer gets video, and **Show as VNC** goes back; a setting turns it off. See [desktops](docs/guide/desktops.md#video).
 - A macOS box on Tart has a microphone a test can speak into, and what an agent runs in its desktop session can use the microphone, the camera and the system's audio without a prompt. See the [Tart guide](setup/tart/README.md#macos).
 - bb-box rebuilds its standard images as they come due, each night: Linux weekly, macOS and Windows monthly. A new build replaces the old one only once a trial box passes its checks, and a Windows image keeps the build before as a rollback. See [images](docs/guide/images.md#standard-images-stay-up-to-date).
 

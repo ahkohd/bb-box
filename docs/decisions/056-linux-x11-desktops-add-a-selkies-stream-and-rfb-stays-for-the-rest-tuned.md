@@ -351,3 +351,12 @@ lags come from BB's server's event loop standing still, not from the box
 Selkies did not help: at 30 fps the drag was no better, and with its
 streaming mode off, which costs nothing idle, drags lagged as badly as VNC.
 
+## Amended, 11 October 2026: out of trial, on by default
+
+Video is no longer a trial, and `general.video` is on by default. An
+install that set it off keeps it off; one with no value takes the default.
+A desktop without a Selkies stream, or a browser that cannot decode video,
+shows over VNC as before, and **Show as VNC** stays in the viewer's menu.
+The reason is the comparison above: through BB's server, video drags with
+about a twentieth of VNC's median lag, and answers keys as quickly.
+
