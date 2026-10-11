@@ -661,7 +661,7 @@ export class Boxes {
         "unknown_kind",
         kinds.length
           ? `There is no "${input.kind}" kind. The kinds are: ${kinds.join(", ")}.`
-          : "No backend is set up, so there are no boxes to acquire. Set one up in bb-box's settings.",
+          : "No backend is set up, so there are no boxes to acquire. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
       );
     }
     if (!everywhere.length) {

@@ -166,5 +166,12 @@ The `bb box` command checks and sets up bb-box; the
 
 - `bb box doctor`, which checks each backend and says how to fix what is
   wrong.
+- `bb box setup docker`, when no backend is set up and the user agrees: it
+  turns Docker on, on the machine that runs BB, as the Box panel's first run
+  does, and waits while the Linux image builds, usually 5 to 12 minutes. A
+  box there is a privileged container, root on that machine, so ask first.
+  `--no-wait` starts it and says how far the build is; run it again to see.
+  Where BB's user cannot use Docker, it prints the lines that fix it, for
+  the user to run.
 - `bb plugin logs bb-box`, which says why each box was released, and how long
   each step of joining BB took.

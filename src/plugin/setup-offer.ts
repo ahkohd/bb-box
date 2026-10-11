@@ -124,3 +124,30 @@ export function machineAccessProblem(config: AccessConfig | null): MachineAccess
 export function needsSignIn(words: string | null): boolean {
   return !!words && /sign in to your bb account/i.test(words);
 }
+
+/** Whether the machine's image build is going on. */
+export const building = (setup: MachineSetup) => setup.build?.state === "checking" || setup.build?.state === "building";
+
+/** The machine setup is about: one building, else the one that runs BB if it can be set up, else the first that can. */
+export function setupTarget(machines: readonly MachineSetup[]): MachineSetup | null {
+  return (
+    machines.find(building) ??
+    machines.find((setup) => setup.here && (setup.state === "ready" || setup.state === "fix")) ??
+    machines.find((setup) => setup.state === "ready") ??
+    machines.find((setup) => setup.state === "fix") ??
+    null
+  );
+}
+
+/**
+ * What the restart does, beside its line. A user service's restart restarts all of that user's services, so on a machine
+ * where the user also has a desktop it ends its audio, notifications and the like too; logging out and in, or rebooting,
+ * is the gentler way. Every way ends the turns of threads running there.
+ */
+export function restartWords(restart: string | null): string {
+  if (!restart) return "Then restart BB there, or log out and in again, or reboot. That ends the turns of threads running there.";
+  if (/^sudo systemctl restart user@\d+\.service$/.test(restart)) {
+    return "The second line restarts all of that user's services, BB's daemon among them. That ends the turns of threads running there and, if the user has a desktop there, its audio, notifications and other services too. Logging out and in again, or rebooting, does the same more gently.";
+  }
+  return "The second line restarts BB's daemon there, which ends the turns of threads running there. Rebooting does the same.";
+}

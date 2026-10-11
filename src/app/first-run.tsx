@@ -10,7 +10,7 @@ import { experimental_Icon as Icon, UrlLink, useRpc } from "@get-bb/plugin-sdk/a
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { Contract } from "../plugin/contract.ts";
-import { needsSignIn, type MachineAccessProblem, type MachineSetup } from "../plugin/setup-offer.ts";
+import { building, needsSignIn, restartWords, setupTarget, type MachineAccessProblem, type MachineSetup } from "../plugin/setup-offer.ts";
 import { forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { REPOSITORY_URL } from "./settings-backends.tsx";
 
@@ -43,19 +43,7 @@ export function buildStep(line: string | null): { readonly step: number; readonl
 
 /** A build of desktop images alone, as when a desktop was first asked for. */
 const isDesktopBuild = (build: NonNullable<MachineSetup["build"]>) => build.targets.length > 0 && build.targets.every((target) => target.startsWith("desktop"));
-const building = (setup: MachineSetup) => setup.build?.state === "checking" || setup.build?.state === "building";
 const whose = (setup: MachineSetup) => (setup.here ? "this machine" : setup.name);
-
-/** The machine setup is about: one building, else the one that runs BB if it can be set up, else the first that can. */
-export function setupTarget(machines: readonly MachineSetup[]): MachineSetup | null {
-  return (
-    machines.find(building) ??
-    machines.find((setup) => setup.here && (setup.state === "ready" || setup.state === "fix")) ??
-    machines.find((setup) => setup.state === "ready") ??
-    machines.find((setup) => setup.state === "fix") ??
-    null
-  );
-}
 
 function useSetups() {
   const rpc = useRpc<Contract>();
@@ -200,19 +188,6 @@ export function FirstRun({ fallback, others = true }: { fallback: ReactNode; oth
       ) : null}
     </div>
   );
-}
-
-/**
- * What the restart does, beside its line. A user service's restart restarts all of that user's services, so on a machine
- * where the user also has a desktop it ends its audio, notifications and the like too; logging out and in, or rebooting,
- * is the gentler way. Every way ends the turns of threads running there.
- */
-export function restartWords(restart: string | null): string {
-  if (!restart) return "Then restart BB there, or log out and in again, or reboot. That ends the turns of threads running there.";
-  if (/^sudo systemctl restart user@\d+\.service$/.test(restart)) {
-    return "The second line restarts all of that user's services, BB's daemon among them. That ends the turns of threads running there and, if the user has a desktop there, its audio, notifications and other services too. Logging out and in again, or rebooting, does the same more gently.";
-  }
-  return "The second line restarts BB's daemon there, which ends the turns of threads running there. Rebooting does the same.";
 }
 
 /** Where the guide says how boxes join BB, and what to do when they cannot. */

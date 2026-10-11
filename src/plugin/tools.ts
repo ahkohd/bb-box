@@ -313,7 +313,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(
           kinds.length
             ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")} On: ${kind.offers.map((offer) => offer.name).join(", ")}.${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
-            : "No backend is set up, so there are no kinds. Ask the user to set one up in BB Box's settings in BB.",
+            : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         const hints = list.length
           ? ["Call box_status for a box's details.", "box_acquire gets another box, at a preset or a custom size."]
