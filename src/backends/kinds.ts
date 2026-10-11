@@ -28,6 +28,12 @@ const ALIASES: ReadonlyMap<string, KindAlias> = new Map([
 /** Features only a VM's offer has (057): its offers come after the others', unless the request asks for one. */
 export const VM_FEATURES: readonly string[] = ["kernel"];
 
+/** Offers with VMs' after the others', each part in its order (057): the order acquire tries them in. */
+export function vmOffersLast<T extends { readonly kind: { readonly capabilities: { readonly features: readonly string[] } } }>(offers: readonly T[]): T[] {
+  const vm = (offer: T) => offer.kind.capabilities.features.some((feature) => VM_FEATURES.includes(feature));
+  return [...offers.filter((offer) => !vm(offer)), ...offers.filter(vm)];
+}
+
 /** A kind, and the features a box of it must have, given a kind's current or earlier ID or an alias. */
 export function kindRequest(id: string): KindAlias {
   const renamed = RENAMED.get(id) ?? id;
