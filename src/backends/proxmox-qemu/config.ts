@@ -24,7 +24,7 @@ import {
 } from "../proxmox/settings.ts";
 import type { BackendDriver, BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
-export const QEMU_KINDS = ["windows-desktop"] as const;
+export const QEMU_KINDS = ["windows-desktop", "linux", "linux-desktop-cpu"] as const;
 
 export interface QemuConfig {
   readonly proxmox: ProxmoxConnection;
@@ -32,6 +32,8 @@ export interface QemuConfig {
   readonly templates: readonly number[];
   /** VMIDs of the Linux templates, for linux boxes as VMs (057). None by default. */
   readonly linuxTemplates: readonly number[];
+  /** VMIDs of the Linux desktop templates, for linux-desktop-cpu boxes as VMs (057). None by default. */
+  readonly linuxDesktopTemplates: readonly number[];
   readonly vmids: VmidRange;
   readonly network: ProxmoxNetwork;
   /** A null key means bb-box generates one and shows its public key. */
@@ -68,6 +70,7 @@ export const QEMU_KEYS = {
   pool: "pool",
   templates: "windows-templates",
   linuxTemplates: "linux-templates",
+  linuxDesktopTemplates: "linux-desktop-templates",
   vmidFirst: "vmid-first",
   vmidLast: "vmid-last",
   bridge: "bridge",
@@ -150,6 +153,14 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     label: "Linux templates",
     description:
       "VMIDs of the Linux templates that linux boxes as VMs are linked clones of, separated by spaces or commas, for a box with its own kernel. setup/proxmox-qemu/build.sh linux builds one. Empty offers no Linux VMs.",
+    group: "boxes",
+    default: "",
+  },
+  [QEMU_KEYS.linuxDesktopTemplates]: {
+    type: "string",
+    label: "Linux desktop templates",
+    description:
+      "VMIDs of the Linux desktop templates that linux-desktop-cpu boxes as VMs are linked clones of, separated by spaces or commas, for a desktop with its own kernel. setup/proxmox-qemu/build.sh linux-desktop builds one. Empty offers no Linux desktop VMs.",
     group: "boxes",
     default: "",
   },
@@ -262,12 +273,13 @@ export function parseQemuPart(part: BackendPart): ParsedBackend<QemuConfig> {
   const proxmox = checkConnection(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
   const templates = templateList(values, problem, QEMU_KEYS.templates, "Windows", String(QEMU_DEFAULTS.windowsTemplate));
   const linuxTemplates = templateList(values, problem, QEMU_KEYS.linuxTemplates, "Linux", "", templates);
-  if (!templates.length && !linuxTemplates.length) problem(QEMU_KEYS.templates, "Set the VMID of at least one Windows or Linux template.");
-  const vmids = checkVmids(values, QEMU_KEYS, QEMU_DEFAULTS, [...templates, ...linuxTemplates], problem);
+  const linuxDesktopTemplates = templateList(values, problem, QEMU_KEYS.linuxDesktopTemplates, "Linux desktop", "", [...templates, ...linuxTemplates]);
+  if (!templates.length && !linuxTemplates.length && !linuxDesktopTemplates.length) problem(QEMU_KEYS.templates, "Set the VMID of at least one Windows or Linux template.");
+  const vmids = checkVmids(values, QEMU_KEYS, QEMU_DEFAULTS, [...templates, ...linuxTemplates, ...linuxDesktopTemplates], problem);
   const network = checkNetwork(values, QEMU_KEYS, QEMU_DEFAULTS, vmids, problem);
   const ssh = checkSsh(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
   const reserve = checkReserve(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { proxmox, templates, linuxTemplates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false, kvm: values[QEMU_KEYS.kvm] === true } };
+  return { ok: true, config: { proxmox, templates, linuxTemplates, linuxDesktopTemplates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false, kvm: values[QEMU_KEYS.kvm] === true } };
 }
