@@ -12,6 +12,7 @@
 // host is bb:<machine ID>, last in acquire order; off removes it, or, while
 // it still has boxes, turns it off so it takes no new ones.
 
+import { DOCKER_KEYS } from "../backends/docker/config.ts";
 import type { BackendStorage, GuestOs } from "../backends/types.ts";
 import type { BackendConfig, ConfigDocument } from "../core/document.ts";
 import type { DockerInfo } from "../backends/docker/cli.ts";
@@ -185,7 +186,11 @@ export class DockerHosts {
  * are privileged containers, root on the machine, as on any Docker host
  * (041). Off removes it, or turns it off while it still has boxes.
  */
-export function withDockerHost(document: ConfigDocument, machine: { readonly id: string; readonly name: string }, on: boolean, boxes: number): ConfigDocument {
+/**
+ * The configuration with BB machine `machine`'s Docker on or off. A new backend from first-run setup (`linuxOnly`) has no
+ * desktop images, so turning it on builds the Linux image alone; a desktop's image builds when one is first asked for.
+ */
+export function withDockerHost(document: ConfigDocument, machine: { readonly id: string; readonly name: string }, on: boolean, boxes: number, linuxOnly = false): ConfigDocument {
   const existing = backendOn(document, machine.id);
   if (on) {
     if (existing) return { ...document, backends: document.backends.map((backend) => (backend === existing ? { ...backend, enabled: true } : backend)) };
@@ -193,7 +198,8 @@ export function withDockerHost(document: ConfigDocument, machine: { readonly id:
     const base = `docker:${machine.name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "machine"}`;
     let id = base;
     for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
-    const backend: BackendConfig = { id, type: "docker", label: `Docker on ${machine.name}`.slice(0, 64), enabled: true, fields: { host: machineHost(machine.id), privileged: true } };
+    const fields = { host: machineHost(machine.id), privileged: true, ...(linuxOnly ? { [DOCKER_KEYS.desktopImage]: "", [DOCKER_KEYS.waylandImage]: "" } : {}) };
+    const backend: BackendConfig = { id, type: "docker", label: `Docker on ${machine.name}`.slice(0, 64), enabled: true, fields };
     return { ...document, backends: [...document.backends, backend] };
   }
   if (!existing) return document;

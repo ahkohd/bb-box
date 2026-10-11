@@ -13,6 +13,7 @@ import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from
 import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineSetup } from "../src/plugin/setup-offer.ts";
+import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { CLIPBOARD_MAX_BYTES, SelkiesSession } from "../src/app/selkies.ts";
@@ -420,6 +421,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
+  let setups = [...(options.setups ?? [])];
   const changes: string[] = [];
   /** The providers whose profiles the form asked for, in order. */
   const asked: string[] = [];
@@ -441,7 +443,12 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
     profile: async () => ({ lines: [] }),
-    "setup.offer": () => ({ machines: options.setups ?? [] }),
+    "setup.offer": () => ({ machines: setups }),
+    "setup.docker": ({ hostId }) => {
+      changes.push(`setup.docker ${hostId}`);
+      setups = setups.map((setup) => (setup.hostId === hostId ? { ...setup, state: "on" as const, build: { state: "building" as const, targets: ["linux"], detail: "#14 12.3 Setting up git (1:2.43.0) ...", step: { at: 7, of: 12 }, startedAt: Date.now() - 75_000, endedAt: null } } : setup));
+      return { result: { ok: true, state: {} as ConfigState, problems: [] }, machines: setups };
+    },
     ping: async () => {
       return null;
     },
@@ -1196,6 +1203,64 @@ test("the panel says so when no backend is on, and links the settings", async ()
   expect(await slot.findByText("BB Box is not set up yet")).toBeTruthy();
   expect(slot.queryByRole("button", { name: "New box" })).toBeNull();
   expect(slot.getByRole("link", { name: /Open BB Box settings/ }).getAttribute("href")).toBe("/settings/plugins/bb-box");
+});
+
+function setup(overrides: Partial<MachineSetup> = {}): MachineSetup {
+  return { hostId: "host_bb", name: "bb", here: true, state: "ready", docker: "29.8.1", problem: null, fix: null, restart: null, kvm: "ok", freeGb: 120, build: null, ...overrides };
+}
+
+test("first run: the panel offers Docker on the machine that runs BB, and one click turns it on and shows the Linux image's build", async () => {
+  const { handlers, changes } = server([], { kinds: [], setups: [setup({ hostId: "host_far", name: "far", here: false }), setup()] });
+  const slot = panel(handlers);
+  expect(await slot.findByText("This machine has Docker 29.8.1. BB Box can make Linux boxes there.")).toBeTruthy();
+  expect(slot.getByText("Builds the Linux image first, about 5 to 8 min.")).toBeTruthy();
+  expect(slot.getByRole("link", { name: "Other backends" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
+  fireEvent.click(slot.getByRole("button", { name: "Use Docker on this machine" }));
+  await waitFor(() => expect(changes).toEqual(["setup.docker host_bb"]));
+  expect(await slot.findByText("Setting up Docker on this machine")).toBeTruthy();
+  // The step is the one the build kept, not its last line; the time is what it usually takes, as it varies with the host.
+  expect(slot.getByText("Building the Linux image · Step 7 of 12")).toBeTruthy();
+  expect(slot.getByText("Started 1 min ago. It usually takes 5 to 8 min, and goes on if you close this panel.")).toBeTruthy();
+  expect(slot.getByRole("progressbar", { name: "Building the Linux image" })).toBeTruthy();
+});
+
+test("first run: where BB's user cannot use Docker, the panel gives that machine's own fix and restart lines, says a restart ends turns, and checks again", async () => {
+  const fix = setup({ state: "fix", problem: "Docker is on bb, but BB's user, dev, cannot use it. Add dev to the docker group, then restart BB's daemon there.", fix: "sudo usermod -aG docker dev", restart: "sudo systemctl restart user@1000.service" });
+  const { handlers } = server([], { kinds: [], setups: [fix] });
+  const slot = panel(handlers);
+  expect(await slot.findByText(/^Docker is on bb, but BB's user, dev, cannot use it\./)).toBeTruthy();
+  expect(slot.getByText("sudo usermod -aG docker dev")).toBeTruthy();
+  expect(slot.getByText("sudo systemctl restart user@1000.service")).toBeTruthy();
+  expect(slot.getByText(/^The second line restarts all of that user's services, BB's daemon among them\. That ends the turns of threads running there and, if the user has a desktop there, its audio, notifications and other services too\. Logging out and in again, or rebooting, does the same more gently\.$/)).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Check again" }));
+  await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "setup.offer").length).toBeGreaterThan(1));
+  cleanup();
+  // Where bb-box cannot tell how BB runs, it says so in words, with the usermod line alone.
+  const words = panel(server([], { kinds: [], setups: [{ ...fix, restart: null }] }).handlers);
+  expect(await words.findByText("Then restart BB there, or log out and in again, or reboot. That ends the turns of threads running there.")).toBeTruthy();
+  expect(words.queryByText(/systemctl/)).toBeNull();
+});
+
+test("once the Linux image is built, the panel says it is ready until the thread has a box", async () => {
+  const built = setup({ state: "on", build: { state: "built", targets: ["linux"], detail: null, startedAt: Date.now() - 400_000, endedAt: Date.now() - 5_000 } });
+  const slot = panel(server([], { setups: [built] }).handlers);
+  expect(await slot.findByText("The Linux image is ready")).toBeTruthy();
+  expect(slot.getByText("Make a box with the plus.")).toBeTruthy();
+  cleanup();
+  const withBox = panel(server([box()], { setups: [built] }).handlers);
+  await withBox.findByText("calm-otter");
+  expect(withBox.queryByText("The Linux image is ready")).toBeNull();
+});
+
+test("first run: with no machine to set up, the panel says BB Box is not set up yet, as before", async () => {
+  const slot = panel(server([], { kinds: [], setups: [setup({ state: "none", docker: null })] }).handlers);
+  expect(await slot.findByText("BB Box is not set up yet")).toBeTruthy();
+});
+
+test("a build's time reads in whole seconds under a minute and minutes after, and its step comes from Docker's build line", () => {
+  expect([roughly(800), roughly(45_400), roughly(75_000), roughly(4 * 60_000)]).toEqual(["1 s", "45 s", "1 min", "4 min"]);
+  expect(buildStep("#14 [linux 7/12] RUN /tmp/install-tools.sh")).toEqual({ step: 7, of: 12 });
+  expect(buildStep("Sending build context")).toBeNull();
 });
 
 test("the panel refetches on its thread's change signals and after a reconnect", async () => {

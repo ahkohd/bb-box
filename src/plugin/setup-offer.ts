@@ -59,7 +59,7 @@ export function machineSetups(hosts: readonly DockerHostView[], facts: ReadonlyM
       if (host.backend?.enabled) return { ...base, state: "on" };
       if (host.docker) {
         if (known?.freeGb !== null && known?.freeGb !== undefined && known.freeGb < LINUX_BUILD_GB) {
-          return { ...base, state: "fix", problem: `The Linux image needs about ${LINUX_BUILD_GB} GB free to build, and ${host.name} has ${known.freeGb} GB. Free some, for example with docker builder prune, then check again.` };
+          return { ...base, state: "fix", problem: `The Linux image needs about ${LINUX_BUILD_GB} GB free to build, and ${base.here ? "this machine" : host.name} has ${known.freeGb} GB. Free some, for example with docker builder prune, then check again.` };
         }
         return { ...base, state: "ready" };
       }
@@ -70,7 +70,7 @@ export function machineSetups(hosts: readonly DockerHostView[], facts: ReadonlyM
         return {
           ...base,
           state: "fix",
-          problem: `Docker is on ${host.name}, but BB's user, ${known.user}, cannot use it. Add ${known.user} to the ${group} group, then restart BB's daemon there.`,
+          problem: `Docker is on ${base.here ? "this machine" : host.name}, but BB's user, ${known.user}, cannot use it. Add ${known.user} to the ${group} group, then restart BB's daemon there.`,
           fix: `sudo usermod -aG ${group} ${known.user}`,
           restart: known.restart,
         };

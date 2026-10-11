@@ -323,6 +323,11 @@ const MACHINES = [
   { box: { ...stopped, id: "box_m2", name: "scratch", form: "LXC", backendLabel: "Proxmox LXC on pve", nature: "virtual" }, threads: [] },
 ];
 
+/** A BB machine's first-run setup (the setup job): the one that runs BB, with Docker ready. */
+function setupOf(overrides = {}) {
+  return { hostId: "host_bb", name: "bb", here: true, state: "ready", docker: "29.8.1", problem: null, fix: null, restart: null, kvm: "ok", freeGb: 120, build: null, ...overrides };
+}
+
 function rpc(boxes, options = {}) {
   const find = (ref) => boxes.find((candidate) => candidate.id === ref) ?? null;
   return {
@@ -358,6 +363,8 @@ function rpc(boxes, options = {}) {
       ],
     }),
     "docker.host.set": () => ({ result: { ok: true, problems: [] }, hosts: [] }),
+    "setup.offer": () => ({ machines: options.setups ?? [] }),
+    "setup.docker": () => ({ result: { ok: true, problems: [] }, machines: options.setups ?? [] }),
     "machines.add": () => ({ box: null, error: options.refuse ?? null }),
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
@@ -449,6 +456,26 @@ const desktopChrome = (name) => `<span>Box</span><span class="pill"><svg viewBox
 export const scenes = {
   "panel-empty": { slot: "boxes", chrome: boxesChrome, rpc: rpc([]) },
   "panel-nobackend": { slot: "boxes", chrome: boxesChrome, rpc: rpc([], { kinds: [] }) },
+  // First run (the setup job): Docker on the machine that runs BB, one click; what stands in the way, with its line; the build.
+  "first-run-offer": { slot: "boxes", chrome: boxesChrome, height: 300, rpc: rpc([], { kinds: [], setups: [setupOf()] }) },
+  "first-run-fix": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 420,
+    rpc: rpc([], { kinds: [], setups: [setupOf({ state: "fix", problem: "Docker is on this machine, but BB's user, dev, cannot use it. Add dev to the docker group, then restart BB's daemon there.", fix: "sudo usermod -aG docker dev", restart: "sudo systemctl restart user@1000.service" })] }),
+  },
+  "first-run-building": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 300,
+    rpc: rpc([], { kinds: [], setups: [setupOf({ state: "on", build: { state: "building", targets: ["linux"], detail: "#14 12.3 Setting up git (1:2.43.0) ...", step: { at: 7, of: 12 }, startedAt: now - 150_000, endedAt: null } })] }),
+  },
+  "first-run-ready": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 300,
+    rpc: rpc([], { setups: [setupOf({ state: "on", build: { state: "built", targets: ["linux"], detail: null, startedAt: now - 430_000, endedAt: now - 5_000 } })] }),
+  },
   "panel-list": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting, desktop, stopped]) },
   "panel-runs-on": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },
   "panel-runs-on-only": { slot: "boxes", chrome: boxesChrome, rpc: rpc([], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },

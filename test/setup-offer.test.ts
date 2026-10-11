@@ -11,7 +11,7 @@ function host(overrides: Partial<DockerHostView> = {}): DockerHostView {
 }
 
 function facts(overrides: Partial<SetupFacts> = {}): SetupFacts {
-  return { hostname: "devpc", user: "var", socketGroup: "docker", inSocketGroup: true, restart: "sudo systemctl restart user@1000.service", kvm: "ok", freeGb: 120, ...overrides };
+  return { hostname: "devpc", user: "dev", socketGroup: "docker", inSocketGroup: true, restart: "sudo systemctl restart user@1000.service", kvm: "ok", freeGb: 120, ...overrides };
 }
 
 test("BB's daemon restarts with new groups through its user's manager for a user service, itself for a system one, and in words when bb-box cannot tell", () => {

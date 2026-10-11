@@ -32,6 +32,8 @@ export interface ImageBuild {
   readonly targets: readonly string[];
   /** The build's last line of output while it runs, or why it failed. */
   readonly detail: string | null;
+  /** The last step Docker's build started, as "[linux 7/12]" says it, while it runs. Absent before the first. */
+  readonly step?: { readonly at: number; readonly of: number };
   readonly startedAt: number;
   readonly endedAt: number | null;
 }
@@ -162,7 +164,9 @@ export class DockerImages {
         if (!clean) return;
         tail.push(clean);
         if (tail.length > 5) tail.shift();
-        set({ detail: clean.slice(0, 300) });
+        // Docker prints a step's header once, then its output: the step is kept from the header, not the last line.
+        const header = /\[[^\]\s]+ (\d+)\/(\d+)\]/.exec(clean);
+        set({ detail: clean.slice(0, 300), ...(header ? { step: { at: Number(header[1]), of: Number(header[2]) } } : {}) });
       });
       if (code === 0) {
         this.#deps.log?.(`Built ${targets.join(" and ")} on BB machine ${hostId} in ${Math.round((now() - startedAt) / 1000)} s.`);

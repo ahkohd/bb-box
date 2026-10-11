@@ -8,7 +8,9 @@ Open a thread and select the **Box** tab in its right panel. Each box is a row. 
 
 ![The Box panel with 3 boxes: one starting, one ready desktop and one stopped](../design/mockups/built/panel-list-light.png)
 
-When the thread has no boxes, the panel says 'No boxes yet'. When no backend is set up, it says 'BB Box is not set up yet' and links to BB Box's settings.
+When the thread has no boxes, the panel says 'No boxes yet'.
+
+When no backend is set up, the panel looks for Docker on your BB machines, the one that runs BB first. Where it finds Docker, select **Use Docker on this machine**: BB Box turns it on and builds the Linux image, which usually takes 5 to 8 minutes, and the panel shows how far it is, then says when the image is ready. Desktop images are left off; turn them on in [settings](settings.md#backends). Where Docker is there but BB's user cannot use it, the panel gives the line to fix it, and the line that restarts BB there. A restart ends the turns of threads running there; where the line restarts all of the user's services, it also restarts a desktop's audio and notifications, so logging out and in again, or rebooting, is gentler. Then select **Check again**. Where no machine has Docker, the panel says 'BB Box is not set up yet' and links to BB Box's settings.
 
 ### What a row tells you
 
