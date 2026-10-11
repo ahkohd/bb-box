@@ -19,7 +19,7 @@
 import { foldName, providerKeys, providerName } from "./provider-name.ts";
 import { randomBytes } from "node:crypto";
 import type { OfferedKind } from "../backends/index.ts";
-import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
+import { VM_FEATURES, currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -654,7 +654,11 @@ export class Boxes {
     const { kind: wanted, features } = kindRequest(input.kind);
     const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
     // An alias takes only the offers that have its features (041).
-    const everywhere = ofKind.filter((candidate) => hasFeatures(candidate.kind.capabilities, features));
+    // A VM's offer comes after the others', which start sooner and hold less, unless the request asks for a VM (057).
+    const vm = (candidate: OfferedKind) => candidate.kind.capabilities.features.some((feature) => VM_FEATURES.includes(feature));
+    const asksVm = features.some((feature) => VM_FEATURES.includes(feature));
+    const matching = ofKind.filter((candidate) => hasFeatures(candidate.kind.capabilities, features));
+    const everywhere = asksVm ? matching : [...matching.filter((candidate) => !vm(candidate)), ...matching.filter(vm)];
     if (!ofKind.length) {
       const kinds = this.kinds().map((kind) => kind.id);
       throw new BoxError(

@@ -1677,6 +1677,19 @@ test("an acquire may name its provider, by name, ID or host, without case; only 
   assert.equal((await acquire()).backend, world.backend.id);
 });
 
+test("a plain linux acquire takes a VM's offer last, whatever the backends' order, unless it asks for a VM by linux-vm or on (057)", async () => {
+  // The first backend's linux boxes are VMs, with the feature kernel; the second's are not.
+  const vm: BoxKind = { ...FAKE_KINDS[0]!, capabilities: { ...FAKE_KINDS[0]!.capabilities, features: ["docker", "kernel"] } };
+  const world = setup({ kinds: [vm] });
+  const plain = new FakeBackend({ root: tempDir("boxes-plain"), storage: scopedStorage(world.kv, "backend/fake:plain/"), id: "fake:plain", hosts: ["devpc"] }) as unknown as Backend;
+  world.others = [plain];
+  const acquire = (kind: string, on?: readonly string[]) => world.boxes.acquire({ threadId: THREAD, projectId: null, kind, ...(on ? { on } : {}) });
+  assert.equal((await acquire("linux")).backend, "fake:plain", "the VM's offer comes last");
+  assert.equal((await acquire("linux-vm")).backend, world.backend.id, "linux-vm asks for a VM");
+  assert.equal((await acquire("linux", [world.backend.id])).backend, world.backend.id, "on names it");
+  await world.boxes.idle();
+});
+
 test("an acquire may name several providers: the first with room among them in acquire order, strict, a list with a mistake refused whole (044)", async () => {
   const world = setup();
   const other = new FakeBackend({ root: tempDir("boxes-list-other"), storage: scopedStorage(world.kv, "backend/fake:second/"), id: "fake:second", hosts: ["devpc"] }) as unknown as Backend;

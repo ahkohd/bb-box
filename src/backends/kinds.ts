@@ -21,7 +21,12 @@ export interface KindAlias {
 const ALIASES: ReadonlyMap<string, KindAlias> = new Map([
   ["linux-docker", { kind: "linux", features: ["docker"] }],
   ["linux-arm64-docker", { kind: "linux-arm64", features: ["docker"] }],
+  // A Linux VM, with its own kernel (057).
+  ["linux-vm", { kind: "linux", features: ["kernel"] }],
 ]);
+
+/** Features only a VM's offer has (057): its offers come after the others', unless the request asks for one. */
+export const VM_FEATURES: readonly string[] = ["kernel"];
 
 /** A kind, and the features a box of it must have, given a kind's current or earlier ID or an alias. */
 export function kindRequest(id: string): KindAlias {

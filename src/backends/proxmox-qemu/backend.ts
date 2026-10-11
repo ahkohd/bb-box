@@ -81,7 +81,7 @@ import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription } from "../images.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import { MIN_DESKTOP, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
 import { CUA_PIPE, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
 import type { QemuConfig } from "./config.ts";
 
@@ -133,6 +133,32 @@ const KIND: BoxKind = {
     displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }],
     computerUse: CUA_DRIVER,
     enrol: false,
+  },
+  readyTimeoutMs: READY_TIMEOUT_MS,
+};
+
+/**
+ * Linux boxes as VMs (057): a linked clone of an Ubuntu template, with its
+ * own kernel, which can load modules and run systemd as on a machine. The
+ * template sets its address from the SMBIOS fields bb-box gives each clone,
+ * as Windows' boot.ps1 does, and takes bb-box's key for the box user, who
+ * may use sudo. It joins BB as other Linux boxes do.
+ */
+const LINUX_KIND: BoxKind = {
+  id: "linux",
+  label: "Linux",
+  description:
+    "A Linux VM with its own kernel, for kernel modules, systemd as on a machine, and work a container cannot do. It starts slower and holds its memory while it runs, so ask for it by its provider or the feature kernel; a linux box elsewhere starts sooner.",
+  requires: [],
+  capabilities: {
+    os: "linux",
+    arch: "x86_64",
+    gpu: false,
+    features: ["docker", "kernel"],
+    command: { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true },
+    displays: [],
+    computerUse: null,
+    enrol: true,
   },
   readyTimeoutMs: READY_TIMEOUT_MS,
 };
@@ -333,15 +359,34 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   kinds(): BoxKind[] {
-    if (!this.#config.templates.length) return [];
+    const kinds: BoxKind[] = [];
     // Windows boxes join BB unless the switch is set off (#539).
-    return [this.#config.enrol ? { ...KIND, capabilities: { ...KIND.capabilities, enrol: true } } : KIND];
+    if (this.#config.templates.length) kinds.push(this.#config.enrol ? { ...KIND, capabilities: { ...KIND.capabilities, enrol: true } } : KIND);
+    if (this.#config.linuxTemplates.length) kinds.push(LINUX_KIND);
+    return kinds;
+  }
+
+  /** The templates of a kind's boxes. */
+  #templatesOf(kind: string): readonly number[] {
+    return kind === LINUX_KIND.id ? this.#config.linuxTemplates : this.#config.templates;
+  }
+
+  /** Every template, Windows' and Linux'. */
+  #allTemplates(): readonly number[] {
+    return [...this.#config.templates, ...this.#config.linuxTemplates];
+  }
+
+  /** The OS of a guest from its template: Linux for a Linux template's clone, Windows otherwise. */
+  #osOf(template: unknown): GuestOs {
+    return typeof template === "number" && this.#config.linuxTemplates.includes(template) ? "linux" : "windows";
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     this.#offer(kind);
     const api = await this.client();
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
+    // Linux boxes have no warm pool here: their spares wait hibernated (#612).
+    if (kind === LINUX_KIND.id) return this.#room(api, size, guests, pending, { ready: 0, target: 0 }, false, signal, kind);
     const ready = await this.#ready(api, guests, signal);
     // Acquires here that hold a warm VM need no other.
     const waiting = Math.max(0, pending.length - this.#claimed.size);
@@ -362,9 +407,9 @@ export class ProxmoxQemuBackend implements Backend {
     warm: { ready: number; target: number },
     fromPool: boolean,
     signal?: AbortSignal,
+    kind: string = KIND.id,
   ): Promise<Capacity> {
-    const kind = KIND.id;
-    const template = await this.#templateOf(api, this.#choose(guests), signal);
+    const template = await this.#templateOf(api, this.#choose(guests, kind), signal);
     const { storage } = template;
     const [node, disk] = await Promise.all([api.nodeStatus(signal), api.storageStatus(storage, signal)]);
     const reserve = this.#config.reserve;
@@ -425,7 +470,7 @@ export class ProxmoxQemuBackend implements Backend {
    * The least used template, counting guests in the range by their template
    * tag, and acquires and fills here that have chosen one.
    */
-  #choose(guests: readonly PoolGuest[]): number {
+  #choose(guests: readonly PoolGuest[], kind: string = KIND.id): number {
     const counts = new Map<number, number>();
     const add = (template: number | null) => {
       if (template !== null) counts.set(template, (counts.get(template) ?? 0) + 1);
@@ -436,11 +481,13 @@ export class ProxmoxQemuBackend implements Backend {
     const tagged = new Set(guests.filter((guest) => templateFromTags(guest.tags) !== null).map((guest) => guest.vmid));
     for (const [vmid, template] of this.#filling) if (!tagged.has(vmid)) add(template);
     const uses = (template: number) => counts.get(template) ?? 0;
-    return this.#config.templates.reduce((best, template) => (uses(template) < uses(best) ? template : best));
+    return this.#templatesOf(kind).reduce((best, template) => (uses(template) < uses(best) ? template : best));
   }
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     this.#offer(box.kind);
+    const linux = box.kind === LINUX_KIND.id;
+    const os: GuestOs = linux ? "linux" : "windows";
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs);
     const api = await this.client();
     const installId = this.#context.installId;
@@ -462,7 +509,8 @@ export class ProxmoxQemuBackend implements Backend {
         build = typeof previous.data?.build === "string" ? previous.data.build : null;
         resumed = true;
       }
-      if (vmid === null) {
+      // Linux boxes have no warm pool here: their spares wait hibernated (#612).
+      if (vmid === null && !linux) {
         const member = await step("warm", () =>
           this.#warm.claim(KIND.id, box, {
             fits: (candidate) => {
@@ -501,7 +549,7 @@ export class ProxmoxQemuBackend implements Backend {
         const cloning = performance.now();
         try {
           const guests = await api.listPool(this.#config.proxmox.pool, signal);
-          template = this.#choose(guests);
+          template = this.#choose(guests, box.kind);
           this.#acquiring.set(box.boxId, template);
           // Read before the clone, so it is never newer than the clone's: a replace in between leaves the box what it has.
           build = (await templateBuild(api, guests, template, signal)) ?? null;
@@ -525,10 +573,13 @@ export class ProxmoxQemuBackend implements Backend {
       });
       // Read while the box comes up: the size it has, as Proxmox gives it.
       const size = api.config(id, signal).then(sizeOf, () => null);
-      await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step);
-      // A resumed acquire may have grown the disk before it stopped.
-      if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
-      this.#compileDisplay(id);
+      await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step, os);
+      // A Linux template's cloud-init grows its root filesystem at each boot.
+      if (!linux) {
+        // A resumed acquire may have grown the disk before it stopped.
+        if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
+        this.#compileDisplay(id);
+      }
       return this.#guest(api.node, id, template, box.boxId, await size, build);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
@@ -572,8 +623,10 @@ export class ProxmoxQemuBackend implements Backend {
     const step = timed(timing);
     // A hibernated VM resumes; one shut down from Windows boots.
     if (status.status !== "running") await step(status.lock === "suspended" ? "resume" : "boot", () => api.start(vmid, signal));
-    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step);
-    await step("clock", () => this.#setClock(vmid, signal));
+    const os = this.#osOf(guest.data?.template);
+    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step, os);
+    // Linux keeps its clock with its own time service.
+    if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));
   }
 
   /** A stop hibernates the VM to disk, which frees its memory, and a start resumes it. */
@@ -629,7 +682,9 @@ export class ProxmoxQemuBackend implements Backend {
 
   async transports(guest: Guest): Promise<BoxTransports> {
     const vmid = this.#vmid(guest);
-    const command = await this.#command(vmid);
+    const os = this.#osOf(guest.data?.template);
+    const command = await this.#command(vmid, os);
+    if (os === "linux") return { command, displays: [], access: { ssh: this.#access(vmid), dockerHost: null } };
     const desktop: Display = {
       ...KIND.capabilities.displays[0]!,
       label: "Desktop",
@@ -671,7 +726,7 @@ export class ProxmoxQemuBackend implements Backend {
       for (const [id, name] of skipped) checks.push({ id, name, status: "skipped", detail: "Skipped until the checks above pass.", fix: null });
     };
     const templateCheck = (template: number): Check => [`template.${template}`, `Windows template ${template}`];
-    const later = [NODE, MEMORY, POOL, ...this.#config.templates.map(templateCheck), BRIDGE, VMIDS];
+    const later = [NODE, MEMORY, POOL, ...this.#allTemplates().map(templateCheck), BRIDGE, VMIDS];
     let version = "";
 
     try {
@@ -731,8 +786,9 @@ export class ProxmoxQemuBackend implements Backend {
 
       // What images are judged by (049), read while the templates are.
       const pins = (this.#context.images?.pins("windows") ?? Promise.resolve(null)).catch(() => null);
-      for (const template of this.#config.templates) {
+      for (const template of this.#allTemplates()) {
         const name = templateCheck(template);
+        const os = this.#osOf(template);
         try {
           const config = await api.config(template, signal);
           const disk = bootDisk(config);
@@ -748,6 +804,8 @@ export class ProxmoxQemuBackend implements Backend {
             } else {
               this.#templates.set(template, { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) });
               pass(name, `VM template ${template} on ${storage}, ${Math.floor((free as { available: number }).available / GiB)} GiB free.`);
+              // A Linux template's image record comes with its refresh (057).
+              if (os === "linux") continue;
               // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB.
               const judged = judgeImage(
                 recordInDescription(String(config.description ?? "")),
@@ -763,7 +821,7 @@ export class ProxmoxQemuBackend implements Backend {
             name,
             missing ? `VM ${template} does not exist on ${node}, or is not in pool ${pool}.` : message(error),
             missing
-              ? "Build it with setup/proxmox-qemu/build.sh, or remove it from the Windows templates in bb-box's settings."
+              ? `Build it with setup/proxmox-qemu/build.sh, or remove it from the ${os === "linux" ? "Linux" : "Windows"} templates in bb-box's settings.`
               : audit(error, `Give the token VM.Audit and VM.Clone on /vms/${template}.`),
           );
         }
@@ -912,7 +970,7 @@ export class ProxmoxQemuBackend implements Backend {
   /** A guest of a Windows template listed now, from that template's build as it is now. */
   async asOffered(guest: Guest, _kind: string, createdAt: number, signal?: AbortSignal): Promise<boolean> {
     const template = guest.data?.template;
-    if (typeof template !== "number" || !this.#config.templates.includes(template)) return false;
+    if (typeof template !== "number" || !this.#allTemplates().includes(template)) return false;
     return fromBuild(guest, await templateBuild(await this.client(), [], template, signal), createdAt);
   }
 
@@ -920,7 +978,7 @@ export class ProxmoxQemuBackend implements Backend {
   async fromCurrentBuild(guest: Guest, _kind: string, signal?: AbortSignal): Promise<boolean | null> {
     const template = guest.data?.template;
     if (typeof template !== "number") return null;
-    if (!this.#config.templates.includes(template)) return false;
+    if (!this.#allTemplates().includes(template)) return false;
     const current = await templateBuild(await this.client(), [], template, signal);
     if (current === undefined) return false;
     const recorded = guest.data?.build;
@@ -1139,8 +1197,8 @@ export class ProxmoxQemuBackend implements Backend {
     }
   }
 
-  async #command(vmid: number): Promise<SshTransport> {
-    return new SshTransport((await this.#keys()).ssh, this.#access(vmid), "windows");
+  async #command(vmid: number, os: GuestOs = "windows"): Promise<SshTransport> {
+    return new SshTransport((await this.#keys()).ssh, this.#access(vmid), os);
   }
 
   /** Closes the shared SSH connection to a guest that is going, as another guest may take its address. */
@@ -1159,7 +1217,7 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** Waits for port 22 to open, which is cheap to poll, then for SSH to answer. */
-  async #waitReady(vmid: number, timeoutMs: number, signal?: AbortSignal, step: Step = untimed): Promise<void> {
+  async #waitReady(vmid: number, timeoutMs: number, signal?: AbortSignal, step: Step = untimed, os: GuestOs = "windows"): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     const { host, port, user } = this.#access(vmid);
     const sleep = this.#options.sleep;
@@ -1168,18 +1226,22 @@ export class ProxmoxQemuBackend implements Backend {
     if (!open) {
       throw new Error(
         `Nothing answered on port ${port} of ${host} within ${seconds(timeoutMs)}. ` +
-          `Check that BB's server can reach the boxes' subnet, and how boot.ps1 set the box's address in ${BOOT_LOG}, from the VM's console in Proxmox.`,
+          (os === "linux"
+            ? "Check that BB's server can reach the boxes' subnet, and how the template set the box's address, in journalctl -u bb-box-address from the VM's console in Proxmox."
+            : `Check that BB's server can reach the boxes' subnet, and how boot.ps1 set the box's address in ${BOOT_LOG}, from the VM's console in Proxmox.`),
       );
     }
     const left = Math.max(1_000, deadline - Date.now());
-    const command = await this.#command(vmid);
+    const command = await this.#command(vmid, os);
     // Through the shared connection, which the box's first commands then use.
     const answers = { probe: (signal?: AbortSignal) => command.answers(signal) };
     const ready = await step("ssh", () => waitUntilAnswers(answers, { timeoutMs: left, intervalMs: 100, signal, sleep }));
     if (!ready) {
       throw new Error(
         `Port ${port} of ${host} is open, but SSH as ${user} did not answer within ${seconds(left)}. ` +
-          `Check that the template accepts bb-box's key in C:\\ProgramData\\ssh\\administrators_authorized_keys.`,
+          (os === "linux"
+            ? `Check that the template accepts bb-box's key in ~${user}/.ssh/authorized_keys.`
+            : `Check that the template accepts bb-box's key in C:\\ProgramData\\ssh\\administrators_authorized_keys.`),
       );
     }
   }
@@ -1479,7 +1541,7 @@ export class ProxmoxQemuBackend implements Backend {
     const install = installTag(this.#context.installId);
     const guests = await api.listPool(pool, signal);
     const earlier = guests
-      .filter((guest) => guest.type === "qemu" && this.#inRange(guest.vmid) && !this.#config.templates.includes(guest.vmid))
+      .filter((guest) => guest.type === "qemu" && this.#inRange(guest.vmid) && !this.#allTemplates().includes(guest.vmid))
       .filter((guest) => guest.tags.includes(install) && guest.tags.includes(`${IMAGE_TAG}${ROLLBACK}`) && templateFromTags(guest.tags) === target)
       .map((guest) => guest.vmid);
     // The old template as it is, at a free VMID, made before anything changes. A VMID taken outside the pool is skipped.
@@ -1551,7 +1613,7 @@ export class ProxmoxQemuBackend implements Backend {
     if (!config) return;
     const tags = parseTags(config.tags);
     const ours = tags.includes(installTag(this.#context.installId)) && (tags.includes(IMAGE_BOX) || tags.some((tag) => tag.startsWith(IMAGE_TAG)));
-    if (this.#config.templates.includes(vmid) || !ours || !this.#inRange(vmid)) throw new Error(`VM ${vmid} is not an image box or build of this install's, so bb-box leaves it.`);
+    if (this.#allTemplates().includes(vmid) || !ours || !this.#inRange(vmid)) throw new Error(`VM ${vmid} is not an image box or build of this install's, so bb-box leaves it.`);
     await this.#forget(vmid);
     // A captured build is protected, as templates are.
     if (config.protection) await api.configure(vmid, { delete: ["protection"] }, signal);
