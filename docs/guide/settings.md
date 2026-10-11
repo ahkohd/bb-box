@@ -8,6 +8,8 @@ To open it, select the gear on the Boxes page, or open BB Box in BB's settings.
 
 The page has 6 parts, in this order: Machines, Backends, Docker on BB machines, Kinds, General, and Files for every box. A switch saves at once. A form you open, such as a backend's setup, saves when you select **Save**.
 
+When no backend is on yet, the page starts with the same offer as the Box panel: where one of your BB machines has Docker, **Use Docker on this machine** turns it on and builds the Linux image. See [the Box panel](boxes.md).
+
 ## Machines
 
 Machines lists your own boxes, kept as BB machines. See [your machines](boxes.md#your-machines).

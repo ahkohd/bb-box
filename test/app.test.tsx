@@ -1241,6 +1241,16 @@ test("first run: where BB's user cannot use Docker, the panel gives that machine
   expect(words.queryByText(/systemctl/)).toBeNull();
 });
 
+test("first run in settings: with no backend on, the offer leads the page, without the link to settings itself; with one on, it is not there", async () => {
+  const none = settings(server([], { setups: [setup()], config: { document: { schema: 1, revision: 1, backends: [], kinds: {}, general: {} } } }).handlers);
+  expect(await none.findByRole("button", { name: "Use Docker on this machine" })).toBeTruthy();
+  expect(none.queryByRole("link", { name: "Other backends" })).toBeNull();
+  cleanup();
+  const on = settings(server([], { setups: [setup({ state: "on" })] }).handlers);
+  await on.findByText("Backends");
+  expect(on.queryByRole("button", { name: "Use Docker on this machine" })).toBeNull();
+});
+
 test("once the Linux image is built, the panel says it is ready until the thread has a box", async () => {
   const built = setup({ state: "on", build: { state: "built", targets: ["linux"], detail: null, startedAt: Date.now() - 400_000, endedAt: Date.now() - 5_000 } });
   const slot = panel(server([], { setups: [built] }).handlers);

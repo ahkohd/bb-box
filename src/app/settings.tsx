@@ -4,6 +4,7 @@
 // with config.get and writes with config.apply.
 // The design is in docs/design/settings.md.
 
+import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
@@ -123,6 +124,8 @@ export function SettingsSection() {
           {notice}
         </p>
       ) : null}
+      {/* First run (the setup job): with no backend on, the Box panel's offer leads the page; once one is, its build's progress. */}
+      {document.backends.some((backend) => backend.enabled) ? <SetupProgress empty={false} /> : <FirstRun fallback={null} others={false} />}
       <MachinesSection />
       <Section title="Backends" description="Where boxes come from.">
         {backends.map((model) => {
