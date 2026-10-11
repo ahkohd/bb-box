@@ -376,6 +376,11 @@ export class ProxmoxQemuBackend implements Backend {
     return [...this.#config.templates, ...this.#config.linuxTemplates];
   }
 
+  /** A template as messages name it: "Linux template 9106" or "Windows template 9104". */
+  #templateName(template: number): string {
+    return `${this.#osOf(template) === "linux" ? "Linux" : "Windows"} template ${template}`;
+  }
+
   /** The OS of a guest from its template: Linux for a Linux template's clone, Windows otherwise. */
   #osOf(template: unknown): GuestOs {
     return typeof template === "number" && this.#config.linuxTemplates.includes(template) ? "linux" : "windows";
@@ -725,7 +730,7 @@ export class ProxmoxQemuBackend implements Backend {
     const skip = (...skipped: Check[]) => {
       for (const [id, name] of skipped) checks.push({ id, name, status: "skipped", detail: "Skipped until the checks above pass.", fix: null });
     };
-    const templateCheck = (template: number): Check => [`template.${template}`, `Windows template ${template}`];
+    const templateCheck = (template: number): Check => [`template.${template}`, this.#templateName(template)];
     const later = [NODE, MEMORY, POOL, ...this.#allTemplates().map(templateCheck), BRIDGE, VMIDS];
     let version = "";
 
@@ -1085,13 +1090,13 @@ export class ProxmoxQemuBackend implements Backend {
       config = await api.config(template, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.gone) {
-        throw new Error(`Windows template ${template} does not exist on ${api.node}, or is not in pool ${this.#config.proxmox.pool}. Run the doctor check in bb-box's panel.`);
+        throw new Error(`${this.#templateName(template)} does not exist on ${api.node}, or is not in pool ${this.#config.proxmox.pool}. Run the doctor check in bb-box's panel.`);
       }
       throw error;
     }
     const disk = bootDisk(config);
     const storage = disk ? String(config[disk]).split(":")[0] : "";
-    if (!disk || !storage) throw new Error(`Windows template ${template} has no boot disk.`);
+    if (!disk || !storage) throw new Error(`${this.#templateName(template)} has no boot disk.`);
     const found = { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) };
     this.#templates.set(template, found);
     return found;
@@ -1179,7 +1184,7 @@ export class ProxmoxQemuBackend implements Backend {
         if (state === null) throw error;
         if (state === "away") {
           throw new Error(
-            `Windows template ${template} on ${api.node} was still missing, or not yet a template, after ${Math.round(this.#templateWaitMs / 1000)} s ` +
+            `${this.#templateName(template)} on ${api.node} was still missing, or not yet a template, after ${Math.round(this.#templateWaitMs / 1000)} s ` +
               `(${message(error)}). Run the doctor check in bb-box's panel.`,
           );
         }
