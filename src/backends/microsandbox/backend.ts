@@ -113,6 +113,9 @@ const ORPHAN_DISK_S = 15 * 60;
 export const BUILDER_IMAGE = "docker:29.1.3-dind@sha256:173f284a4299164772a90f52b373e73e087583c0963f1334c9995f190ef6f3f5";
 /** How long a build may take, and the disk it needs free first, so the host keeps 60 GiB. */
 const BUILD_MS = 90 * 60_000;
+/** How often bb-box asks a detached build whether it has ended, and after how many failed asks in a row it gives up. */
+const BUILD_POLL_MS = 10_000;
+const BUILD_POLL_MISSES = 6;
 const BUILD_FREE_GIB = 80;
 
 /**
@@ -579,17 +582,57 @@ export class MsbBackend implements Backend {
       const target = kind.includes("desktop") ? "desktop" : "linux";
       const url = options.bbUrl ? ` --bb-url ${quote(options.bbUrl)}` : "";
       try {
-        await exec(`cd /build && bash setup/docker/build.sh --arch ${archOf(facts.arch) ?? "x86_64"}${url} --tag ${tag} ${target} >/build/build.log 2>&1 || { tail -20 /build/build.log >&2; exit 1; }`, { timeoutMs: BUILD_MS });
+        // Detached, as dockerd: a heavy build has ended msb's exec session while
+        // the microVM ran on (053), so short execs follow it to its exit code.
+        await exec(
+          `cd /build && { nohup sh -c ${quote(`bash setup/docker/build.sh --arch ${archOf(facts.arch) ?? "x86_64"}${url} --tag ${tag} ${target} >/build/build.log 2>&1; echo $? >/build/build.exit`)} </dev/null >/dev/null 2>&1 & }`,
+        );
+        const code = await this.#buildExit((script) => exec(script, { timeoutMs: 60_000 }), signal);
+        if (code !== "0") throw new Error(`build.sh failed in the builder with exit code ${code}: ${(await exec("tail -20 /build/build.log 2>/dev/null || :").catch(() => "")).trim().split("\n").slice(-3).join(" | ").slice(-600)}`);
       } finally {
         if (options.log) for (const line of (await exec("tail -40 /build/build.log 2>/dev/null || :").catch(() => "")).split("\n")) if (line.trim()) options.log(line);
       }
       const moved = await this.#cli.script("transfer", [name, tag], signal);
       if (moved.exitCode !== 0) throw this.#cli.error(`Moving ${tag} from the builder into msb on ${this.#host}`, moved);
     } catch (error) {
+      await this.#withGuestLog(exec, error, options.log);
       throw await this.#withBuilderLog(name, error, options.log);
     } finally {
       await this.#cli.run(["remove", "--force", "--quiet", name], { timeoutMs: 120_000 }).catch(() => undefined);
     }
+  }
+
+  /**
+   * A detached build's exit code, asked for with short execs until it has
+   * one. A few failed asks in a row are tolerated, as the agent may be slow
+   * under the build; more end the wait with the last error.
+   */
+  async #buildExit(exec: (script: string) => Promise<string>, signal: AbortSignal): Promise<string> {
+    let misses = 0;
+    for (;;) {
+      signal.throwIfAborted();
+      try {
+        const code = (await exec("cat /build/build.exit 2>/dev/null || :")).trim();
+        if (code) return code;
+        misses = 0;
+      } catch (error) {
+        if (++misses >= BUILD_POLL_MISSES) throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, BUILD_POLL_MS));
+    }
+  }
+
+  /**
+   * A failed build's error with what the builder's guest says, when its agent
+   * answers: its kernel's last lines and its memory, which show an
+   * out-of-memory kill. `log` gets them all, and the error any such kill.
+   */
+  async #withGuestLog(exec: (script: string, options?: { timeoutMs?: number }) => Promise<string>, error: unknown, log?: (line: string) => void): Promise<void> {
+    const said = await exec("dmesg 2>/dev/null | tail -30; free -m", { timeoutMs: 30_000 }).catch(() => "");
+    const lines = said.split("\n").filter((line) => line.trim());
+    for (const line of lines) log?.(`guest: ${line}`);
+    const killed = lines.filter((line) => /out of memory|oom-kill|killed process/i.test(line));
+    if (killed.length && error instanceof Error) error.message += ` The builder's kernel says: ${killed.slice(-2).join(" | ").slice(-600)}`;
   }
 
   /**

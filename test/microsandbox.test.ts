@@ -230,6 +230,8 @@ test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framew
   await assert.rejects(backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal()), /bb-box is building it there/);
   for (let i = 0; i < 200 && !fake.images()["bbbox/linux:1-arm64"]; i++) await new Promise((r) => setTimeout(r, 25));
   const { readFileSync } = await import("node:fs");
+  assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /nohup sh -c .*build\.sh --arch arm64.*echo \$\? >\/build\/build\.exit/, "detached, as a heavy build has ended msb's exec session");
+  assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /cat \/build\/build\.exit/);
   assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /build\.sh --arch arm64 --tag bbbox\/linux:1-arm64 linux /);
   // The builder goes in the background after its image is in msb: the next box waits for that, so no fake reads a sandbox as it is removed.
   for (let i = 0; i < 200 && fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")); i++) await new Promise((r) => setTimeout(r, 25));
@@ -533,7 +535,7 @@ test("on a host without Docker, the nightly refresh's image operations build wit
   assert.match(made.ref, /^bbbox\/linux:refresh-[a-z0-9]+$/);
   assert.equal(made.current, false);
   const { readFileSync } = await import("node:fs");
-  assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /build\.sh --arch arm64 --bb-url 'https:\/\/bb\.example\.com' --tag bbbox\/linux:refresh-[a-z0-9]+ linux /);
+  assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /build\.sh --arch arm64 --bb-url \S*https:\/\/bb\.example\.com\S* --tag bbbox\/linux:refresh-[a-z0-9]+ linux /);
   assert.ok(fake.images()[made.ref], "the build is in msb under its own tag");
   assert.ok(fake.images()["bbbox/linux:1-arm64"], "and the image stays until the build passes");
 
@@ -559,8 +561,9 @@ test("on a host without Docker, the nightly refresh's image operations build wit
   // A failed build says what the builder's msb log ended with, which goes with the builder.
   fake.set({ failBuild: true });
   const failed: string[] = [];
-  await assert.rejects(images.build!(builds[0]!, setupCopy, { bbUrl: null, log: (line) => failed.push(line), signal: signal() }), /msb exec failed: .*The builder's msb log ended: .*agent relay: client disconnected/);
+  await assert.rejects(images.build!(builds[0]!, setupCopy, { bbUrl: null, log: (line) => failed.push(line), signal: signal() }), /build\.sh failed in the builder with exit code 1.*The builder's kernel says: .*Out of memory: Killed process 812.*The builder's msb log ended: .*agent relay: client disconnected/);
   assert.ok(failed.some((line) => /^msb: .*unexpected EOF/.test(line)));
+  assert.ok(failed.some((line) => /^guest: .*Out of memory/.test(line)));
   assert.ok(!fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")), "the builder is removed");
   fake.set({ failBuild: false });
 

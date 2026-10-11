@@ -145,7 +145,13 @@ function exec(rest) {
   if (name.startsWith("bb-box-builder-")) {
     appendFileSync(join(root, "builder"), `${rest.slice(i + 2).join(" ")}\n`);
     process.stdin.resume();
-    process.stdin.on("end", () => process.exit(host.failBuild && rest.join(" ").includes("build.sh") ? 1 : 0));
+    const command = rest.join(" ");
+    process.stdin.on("end", () => {
+      // A detached build's exit code, and a guest whose kernel killed a process for memory.
+      if (command.includes("cat /build/build.exit")) process.stdout.write(host.failBuild ? "1\n" : "0\n");
+      if (command.includes("dmesg")) process.stdout.write("[  98.1] Out of memory: Killed process 812 (node) total-vm:6000000kB\n");
+      process.exit(0);
+    });
     return;
   }
   if (sandbox.status !== "Running") fail(`sandbox '${name}' is not running (status: ${sandbox.status})`);
