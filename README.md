@@ -44,11 +44,11 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
 | [Tart](setup/tart/README.md) | macOS, with or without a desktop; Linux on arm64, with or without a desktop; Windows desktop on arm64 | virtual machines on your Macs with Apple silicon |
 | [SSH host pool](setup/ssh-pool/README.md) | Linux; macOS, with or without a desktop | your own physical machines, lent to one thread at a time and reset after |
 
+Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md).
+
 Notes:
 
 - Windows boxes join BB as machines too. A thread cannot yet start on a new Windows box from BB's new-thread screen ([BB requests](docs/bb-requests.md)).
-
-Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md).
 
 ## Documentation
 
