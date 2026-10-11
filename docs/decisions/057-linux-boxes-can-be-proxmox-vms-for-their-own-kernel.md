@@ -71,7 +71,7 @@ Otherwise a `linux` box from LXC or microsandbox starts sooner.
 
 ## The live check
 
-On Moonstead's Proxmox, with the template in bb-box's VMID range, applied by
+On a Proxmox host, with the template in bb-box's VMID range, applied by
 the operator:
 
 - a cold `linux` VM box and a claimed spare, timed, against LXC and
