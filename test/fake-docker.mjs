@@ -212,10 +212,15 @@ function container(command, rest) {
 function exec(rest) {
   const env = {};
   let workdir = null;
+  let detach = false;
   let i = 0;
   for (; i < rest.length && rest[i].startsWith("-"); i++) {
     const flag = rest[i];
     if (flag === "-i") continue;
+    if (flag === "-d" || flag === "--detach") {
+      detach = true;
+      continue;
+    }
     if (flag === "-e" || flag === "--env") {
       const [key, ...parts] = rest[++i].split("=");
       env[key] = parts.join("=");
@@ -227,6 +232,13 @@ function exec(rest) {
   const found = find(ref) ?? fail(`Error response from daemon: No such container: ${ref}`);
   if (found.State.Status !== "running") fail(`Error response from daemon: container ${found.Id} is not running`);
   const name = found.Name.slice(1);
+  // A detached command is recorded, not run: it would outlive the test, as a box's forwarder of BB's port does.
+  if (detach) {
+    const file = join(dir(name), "detached.json");
+    const before = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
+    writeFileSync(file, JSON.stringify([...before, rest.slice(i + 1)]));
+    process.exit(0);
+  }
   const home = join(dir(name), "home");
   const own = (text) =>
     text
@@ -267,7 +279,9 @@ switch (command) {
     if (sub === "inspect") {
       if (!(network in networks)) fail(`Error response from daemon: network ${network} not found`);
       const format = more[more.indexOf("--format") + 1];
-      console.log(format === "{{json .Labels}}" ? JSON.stringify(networks[network]) : network);
+      // Its IPAM, as "<gateway> <subnet> ", where the host says one.
+      if (format.includes(".IPAM")) console.log(`${host.gateway ?? "172.18.0.1"} ${host.subnet ?? "172.18.0.0/16"} `);
+      else console.log(format === "{{json .Labels}}" ? JSON.stringify(networks[network]) : network);
     } else if (sub === "create") {
       if (network in networks) fail(`Error response from daemon: network with name ${network} already exists`);
       const labels = {};

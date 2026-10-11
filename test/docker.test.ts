@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { connect, createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { toConfiguration } from "../scripts/smoke.ts";
@@ -262,6 +263,44 @@ test("reads the daemon's facts and its containers", () => {
     imageId: "sha256:1111",
   });
   assert.deepEqual(parseContainers(""), []);
+});
+
+test("where BB listens on loopback alone and Docker is on the machine that runs BB, a box gets BB's port through the network's gateway; with the backend off, the relay goes", async (t) => {
+  // BB, on loopback; the network's gateway is a second loopback address here, so the test can listen there.
+  const bb = createServer((socket) => socket.end("hello from BB\n"));
+  await new Promise<void>((resolve) => bb.listen({ host: "127.0.0.1", port: 0 }, () => resolve()));
+  t.after(() => bb.close());
+  const port = (bb.address() as AddressInfo).port;
+  const fake = fakeDockerHost({ name: hostname(), gateway: "127.0.0.2", subnet: "127.0.0.0/8" });
+  let loopback: { port: number } | null = { port };
+  const backend = new DockerBackend(dockerConfig(), { ...testContext(), bbLoopback: () => loopback }, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  t.after(() => backend.dispose());
+  const box = identity();
+  const seen = hooks();
+  await backend.acquire(box, null, seen.hooks, signal());
+  assert.ok("bb address" in seen.timings, "carrying BB's address is a step of its own");
+  // The box runs a forwarder from its own 127.0.0.1 at BB's port to the gateway, as root, detached.
+  const detached = JSON.parse(readFileSync(join(fake.root, "containers", containerName(box.boxId), "detached.json"), "utf8")) as string[][];
+  assert.deepEqual(detached, [["socat", `TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,fork`, `TCP:127.0.0.2:${port}`]]);
+  const read = () =>
+    new Promise<string>((resolve) => {
+      const socket = connect({ host: "127.0.0.2", port });
+      let got = "";
+      socket.on("data", (chunk) => (got += chunk.toString()));
+      socket.on("close", () => resolve(got));
+      socket.on("error", () => resolve("refused"));
+    });
+  assert.equal(await read(), "hello from BB\n", "the gateway carries the box's connection to BB");
+  // Turned off, the backend lets go of the relay at once.
+  backend.switched(false);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(await read(), "refused");
+  // With BB on another address, a box gets no forwarder and no step.
+  loopback = null;
+  const other = identity();
+  const plain = hooks();
+  await backend.acquire(other, null, plain.hooks, signal());
+  assert.ok(!("bb address" in plain.timings));
 });
 
 test("acquires a box as a container labelled from its first write, claimed before it is made", async () => {

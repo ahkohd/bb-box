@@ -206,7 +206,23 @@ interface Entry {
   readonly backend: Backend;
 }
 
+/** BB's port when its address is loopback: 127.0.0.1, ::1 or localhost. Null for any other address, or none. */
+export function loopbackPort(url: string | null): { readonly port: number } | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (host !== "localhost" && host !== "::1" && !/^127\./.test(host)) return null;
+  const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+  return Number.isInteger(port) && port > 0 ? { port } : null;
+}
+
 export class Backends {
+  readonly #bbUrl: () => string | null;
   readonly #drivers: readonly BackendDriver<any>[];
   readonly #storage: BackendStorage;
   readonly #logError: (operation: string, error: unknown) => void;
@@ -236,7 +252,10 @@ export class Backends {
     machines?: MachineAccess;
     /** What the doctor judges images by (049). */
     images?: ImageFacts;
+    /** BB's address as its app gives it, for a backend that carries a loopback one to its boxes. */
+    bbUrl?(): string | null;
   }) {
+    this.#bbUrl = options.bbUrl ?? (() => null);
     this.#machines = options.machines;
     this.#images = options.images;
     this.#drivers = options.drivers ?? DRIVERS;
@@ -279,6 +298,7 @@ export class Backends {
         return Math.max(0, (backend.warm?.[kind] ?? 0) - spares);
       },
       warmShortfalls: (short) => this.#shortfalls(id).set(short),
+      bbLoopback: () => (this.#document?.backends.find((candidate) => candidate.id === id)?.enabled ? loopbackPort(this.#bbUrl()) : null),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
       kind: (kind) => {
         const document = this.#document;
@@ -325,6 +345,7 @@ export class Backends {
         const backend = driver.create(parsed.config, this.context(config.id));
         this.#entries.set(config.id, { id: config.id, driver, signature, backend });
       }
+      this.#entries.get(config.id)?.backend.switched?.(config.enabled);
       statuses.push({ ...base, state: config.enabled ? "active" : "off", problems: [], fieldProblems: [], kinds: [] });
     }
     // The registry tries backends in the document's order.

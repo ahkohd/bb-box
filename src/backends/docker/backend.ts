@@ -58,6 +58,7 @@ import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc } from "../wayvnc.ts";
+import { boxForwarder, LoopbackRelay, type LoopbackTarget } from "./loopback.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
 const READY_TIMEOUT_MS = 60_000;
@@ -387,6 +388,8 @@ export class DockerBackend implements Backend {
   readonly #cli: DockerCli;
   /** The daemon's facts, as it last gave them. */
   #info: DockerInfo | null = null;
+  /** BB's loopback address, carried to boxes when Docker here is on the machine that runs BB (src/backends/docker/loopback.ts). */
+  readonly #loopback = new LoopbackRelay();
   /** Whether the desktop image's start points Xorg at the GPU placed, from its labels as last seen; null until bb-box has looked (#283). */
   #gpuBusId: boolean | null = null;
   /** The host's name as last known, kept in storage so a restart shows it before the daemon or BB has answered again (#265). */
@@ -711,6 +714,8 @@ export class DockerBackend implements Backend {
       await hooks.starting();
       await step("start", () => this.#cli.ok(["container", "start", name], { timeoutMs: 120_000, signal }));
       await step("ready", () => this.#ready(name, deadline, signal));
+      // A step of its own only where there is BB's loopback address to carry.
+      if (this.#context.bbLoopback?.()) await step("bb address", () => this.#carryBb(name, signal));
       const [made] = await this.#cli.inspect([name], signal);
       if (!made) throw new Error(`The container ${name} went from ${host} as it started.`);
       const ready = guest(this.#address(made), sizeOf(made));
@@ -760,6 +765,46 @@ export class DockerBackend implements Backend {
     if (!found) throw this.#gone(guest);
     await this.#cli.ok(["container", "start", found.id], { timeoutMs: 120_000, signal });
     await this.#ready(found.id, deadline, signal);
+    // A start runs no forwarder of the last run, so the box's daemon reconnects through a new one.
+    await this.#carryBb(found.id, signal);
+  }
+
+  switched(on: boolean): void {
+    if (!on) void this.#loopback.close();
+  }
+
+  async dispose(): Promise<void> {
+    await this.#loopback.close();
+  }
+
+  /**
+   * Whether Docker here runs on the machine that runs BB: Linux with rootful Docker, not Docker Desktop's VM, on this
+   * hostname. Only then do boxes' addresses and the network's gateway mean anything here.
+   */
+  #local(facts: DockerInfo | null): boolean {
+    return !!facts && facts.osType === "linux" && !/Docker Desktop/i.test(facts.operatingSystem) && !facts.rootless && facts.name === localHostname();
+  }
+
+  /**
+   * Where BB listens on loopback alone, as BB's desktop app does, and Docker is on the machine that runs BB: listens on
+   * the network's gateway at BB's port, and starts a forwarder in the box from its own 127.0.0.1 there, so its daemon
+   * reaches BB at the address BB gave it. Anywhere else, or with the backend off, it lets go of the listener.
+   */
+  async #carryBb(container: string, signal?: AbortSignal): Promise<LoopbackTarget | null> {
+    const want = this.#context.bbLoopback?.() ?? null;
+    if (!want) {
+      await this.#loopback.close();
+      return null;
+    }
+    this.#info ??= await this.#cli.info(signal);
+    if (!this.#local(this.#info)) return null;
+    const found = await this.#cli.run(["network", "inspect", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{.Subnet}} {{end}}", this.#config.network], { timeoutMs: 30_000, signal });
+    const [gateway, subnet] = found.stdout.trim().split(/\s+/);
+    if (found.exitCode !== 0 || !gateway || !subnet) throw this.#cli.error("docker network inspect", found);
+    const target = { gateway, subnet, port: want.port };
+    await this.#loopback.open(target);
+    await this.#cli.ok(["exec", "--detach", "--user", "root", container, ...boxForwarder(target)], { timeoutMs: 30_000, signal });
+    return target;
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -1364,8 +1409,7 @@ export class DockerBackend implements Backend {
   #address(container: ContainerInfo): string | null {
     const facts = this.#info;
     if (!facts) return null;
-    const local = facts.osType === "linux" && !/Docker Desktop/i.test(facts.operatingSystem) && !facts.rootless && facts.name === localHostname();
-    return local ? (container.addresses[this.#config.network] ?? null) : null;
+    return this.#local(facts) ? (container.addresses[this.#config.network] ?? null) : null;
   }
 
   async #vncPassword(command: DockerTransport, signal?: AbortSignal): Promise<string | null> {

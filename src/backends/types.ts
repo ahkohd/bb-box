@@ -530,6 +530,8 @@ export interface Backend {
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   /** Building images in boxes and keeping their builds (049). Only backends that can. */
   readonly images?: BackendImages;
+  /** The configuration turned the backend on or off; it is kept either way. A backend lets go of what it holds only while on. */
+  switched?(on: boolean): void;
   dispose?(): Promise<void>;
 }
 
@@ -704,6 +706,11 @@ export interface BackendContext {
    * for want of room (#356), for the log, the doctor and the settings.
    */
   warmShortfalls(short: readonly WarmShortfall[]): void;
+  /**
+   * BB's port, when BB's address is loopback, as BB's desktop app's is, and the backend is on: boxes on this machine
+   * cannot reach it there, so a backend whose host is the machine that runs BB carries it to them. Null otherwise. Read each time.
+   */
+  bbLoopback?(): { readonly port: number } | null;
   logError(operation: string, error: unknown): void;
 }
 
