@@ -1,7 +1,7 @@
 // The microsandbox backend (053) against a fake msb host (fake-msb.ts).
 
 import assert from "node:assert/strict";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { dockerKinds } from "../src/backends/docker/backend.ts";
@@ -557,6 +557,17 @@ test("on a host without Docker, the nightly refresh's image operations build wit
   assert.ok(!fake.images()[made.ref]);
   assert.equal(JSON.parse(fake.images()["bbbox/linux:1-arm64"]!["bbbox.image-record"]!).build, "build.builder");
   await assert.rejects(images.remove("bbbox/linux:1-arm64", signal()), /is not a refresh's build, so bb-box leaves it/);
+
+  // The upkeep's sweep of leftover builders leaves the one a refresh's build is using.
+  fake.set({ holdBuild: true });
+  const held = images.build!(builds[0]!, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
+  while (!fake.sandboxes().some((name) => name.startsWith("bb-box-builder-"))) await new Promise((resolve) => setTimeout(resolve, 20));
+  await backend.maintain(signal());
+  assert.ok(fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")), "the sweep left the refresh's builder");
+  writeFileSync(join(fake.root, "release"), "");
+  await images.remove((await held).ref, signal());
+  assert.ok(!fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")));
+  fake.set({ holdBuild: false });
 
   // A failed build says what the builder's msb log ended with, which goes with the builder.
   fake.set({ failBuild: true });
