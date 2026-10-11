@@ -10,8 +10,9 @@ import { experimental_Icon as Icon, UrlLink, useRpc } from "@get-bb/plugin-sdk/a
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { Contract } from "../plugin/contract.ts";
-import type { MachineSetup } from "../plugin/setup-offer.ts";
+import { needsSignIn, type MachineAccessProblem, type MachineSetup } from "../plugin/setup-offer.ts";
 import { forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
+import { REPOSITORY_URL } from "./settings-backends.tsx";
 
 /** How long the Linux image usually takes to build from an empty cache: 7 min on 8 cores in the newcomer check, 4 on a fast host. */
 export const LINUX_BUILD_WORDS = "5 to 8 min";
@@ -46,7 +47,7 @@ export function setupTarget(machines: readonly MachineSetup[]): MachineSetup | n
 
 function useSetups() {
   const rpc = useRpc<Contract>();
-  return useLive<{ machines: MachineSetup[] }>("setup.offer", () => rpc.call("setup.offer"), forThread(""));
+  return useLive<{ machines: MachineSetup[]; access: MachineAccessProblem | null }>("setup.offer", () => rpc.call("setup.offer"), forThread(""));
 }
 
 const CARD = "rounded-lg border border-border bg-card px-4 py-4";
@@ -162,6 +163,11 @@ export function FirstRun({ fallback, others = true }: { fallback: ReactNode; oth
       <p className={problem || failed ? "mt-2 text-xs leading-snug text-destructive-text" : "mt-2 text-xs text-subtle-foreground"} role={problem || failed ? "alert" : undefined}>
         {problem ?? (failed ? `The Linux image did not build: ${failed}` : `Builds the Linux image first, about ${LINUX_BUILD_WORDS}.`)}
       </p>
+      {value?.access ? (
+        <p className="mt-2 text-xs leading-snug text-warning-text">
+          Boxes will not join BB yet. <JoinHelp words={value.access.message} />
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -177,6 +183,33 @@ export function restartWords(restart: string | null): string {
     return "The second line restarts all of that user's services, BB's daemon among them. That ends the turns of threads running there and, if the user has a desktop there, its audio, notifications and other services too. Logging out and in again, or rebooting, does the same more gently.";
   }
   return "The second line restarts BB's daemon there, which ends the turns of threads running there. Rebooting does the same.";
+}
+
+/** Where the guide says how boxes join BB, and what to do when they cannot. */
+export const JOIN_GUIDE = `${REPOSITORY_URL}/docs/guide/boxes.md#when-a-box-does-not-join-bb`;
+
+/**
+ * What to do when boxes cannot join BB, from BB's words. A box joins BB through BB's machine access, and BB's desktop
+ * app starts with bb connect, which needs a sign-in (the newcomer check): then the words say the two ways out.
+ */
+export function JoinHelp({ words }: { words: string | null }) {
+  const guide = (
+    <UrlLink href={JOIN_GUIDE} className="text-foreground underline underline-offset-2">
+      How boxes join BB
+    </UrlLink>
+  );
+  if (needsSignIn(words)) {
+    return (
+      <>
+        BB's machine access, bb connect, needs you signed in to your bb account. Sign in to it in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach. {guide}
+      </>
+    );
+  }
+  return (
+    <>
+      {words ? `${words.replace(/\.?$/, ".")} ` : ""}See Machine access in BB's settings, under Machines. {guide}
+    </>
+  );
 }
 
 function CopyLine({ line }: { line: string }) {

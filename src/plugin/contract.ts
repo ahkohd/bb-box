@@ -1,6 +1,6 @@
 // The panel's RPC contract. The panel imports only its type.
 
-import type { MachineSetup } from "./setup-offer.ts";
+import type { MachineAccessProblem, MachineSetup } from "./setup-offer.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { DockerHostView } from "./docker-hosts.ts";
@@ -163,8 +163,8 @@ export const contract = defineRpcContract({
   "config.apply": { input: z.object({ draft, revision: z.number().int().min(0) }), output: z.custom<ApplyResult>() },
   /** BB machines that can host Docker boxes, with Docker as it answers through bb-box's relay (042). */
   "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
-  /** What each BB machine offers first-run setup, the server's first. */
-  "setup.offer": { input: z.null(), output: z.custom<{ machines: MachineSetup[] }>() },
+  /** What each BB machine offers first-run setup, the server's first, and what stands in the way of boxes joining BB, if anything. */
+  "setup.offer": { input: z.null(), output: z.custom<{ machines: MachineSetup[]; access: MachineAccessProblem | null }>() },
   /** First-run setup: turns on Docker on BB machine `hostId` with the Linux image alone, which then builds. */
   "setup.docker": { input: z.object({ hostId: z.string().min(1) }), output: z.custom<{ result: ApplyResult; machines: MachineSetup[] }>() },
   /**

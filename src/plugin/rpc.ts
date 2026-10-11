@@ -133,7 +133,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     "config.check": ({ draft, test }) => app.configuration.check(draft, test),
     "config.apply": ({ draft, revision }) => app.configuration.apply(draft, revision),
     "docker.hosts": async () => ({ hosts: await app.dockerHosts.list() }),
-    "setup.offer": async () => ({ machines: await app.setups() }),
+    "setup.offer": async () => ({ machines: await app.setups(), access: await app.machineAccess() }),
     "setup.docker": async ({ hostId }) => {
       const result = await app.setDockerHost(hostId, true, true);
       return { result, machines: await app.setups() };

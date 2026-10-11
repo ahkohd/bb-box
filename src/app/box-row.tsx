@@ -21,6 +21,7 @@ import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { IconButton, isArm64Badge, KindBadges, lacksDocker, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine } from "./common.tsx";
 import { pageUrl, useOpenDesktop } from "./desktop.tsx";
+import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
@@ -152,6 +153,11 @@ export function BoxRow({
         </button>
         <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
+        {ready && box.enrol.state === "failed" ? (
+          <p className="mt-0.5 text-xs leading-snug text-warning-text">
+            <JoinHelp words={box.enrol.error} />
+          </p>
+        ) : null}
         {box.stopped ? <p className="mt-0.5 text-xs leading-snug text-warning-text">{box.stopped}</p> : null}
         {held ? (
           <p className="mt-0.5 text-xs leading-snug text-muted-foreground">

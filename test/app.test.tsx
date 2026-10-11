@@ -12,7 +12,7 @@ import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
-import type { MachineSetup } from "../src/plugin/setup-offer.ts";
+import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
@@ -417,7 +417,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; video?: boolean } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; video?: boolean } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -443,7 +443,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
     profile: async () => ({ lines: [] }),
-    "setup.offer": () => ({ machines: setups }),
+    "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
     "setup.docker": ({ hostId }) => {
       changes.push(`setup.docker ${hostId}`);
       setups = setups.map((setup) => (setup.hostId === hostId ? { ...setup, state: "on" as const, build: { state: "building" as const, targets: ["linux"], detail: "#14 12.3 Setting up git (1:2.43.0) ...", step: { at: 7, of: 12 }, startedAt: Date.now() - 75_000, endedAt: null } } : setup));
@@ -1239,6 +1239,26 @@ test("first run: where BB's user cannot use Docker, the panel gives that machine
   const words = panel(server([], { kinds: [], setups: [{ ...fix, restart: null }] }).handlers);
   expect(await words.findByText("Then restart BB there, or log out and in again, or reboot. That ends the turns of threads running there.")).toBeTruthy();
   expect(words.queryByText(/systemctl/)).toBeNull();
+});
+
+test("a box that could not join BB says why in its row; for bb connect without a sign-in, in words with the two ways out and the guide", async () => {
+  const signIn = "Enrolling box calm-otter failed: Sign in to your bb account to use bb connect";
+  const slot = panel(server([box({ enrol: { state: "failed", hostId: null, error: signIn } })]).handlers);
+  expect(await slot.findByText(/^BB's machine access, bb connect, needs you signed in to your bb account\. Sign in to it in BB, or set Machine access to Manual/)).toBeTruthy();
+  expect(slot.getByRole("link", { name: "How boxes join BB" }).getAttribute("href")).toMatch(/docs\/guide\/boxes\.md#when-a-box-does-not-join-bb$/);
+  cleanup();
+  // Any other reason is BB's own words.
+  const other = panel(server([box({ enrol: { state: "failed", hostId: null, error: "BB removed the machine before it connected" } })]).handlers);
+  expect(await other.findByText(/^BB removed the machine before it connected\. See Machine access in BB's settings, under Machines\./)).toBeTruthy();
+});
+
+test("first run: where BB's machine access will not let boxes join, the offer says so up front", async () => {
+  const slot = panel(server([], { kinds: [], setups: [setup()], access: { provider: "bb connect", message: "Sign in to your bb account to use bb connect" } }).handlers);
+  expect(await slot.findByText(/^Boxes will not join BB yet\. BB's machine access, bb connect, needs you signed in to your bb account\./)).toBeTruthy();
+  cleanup();
+  const fine = panel(server([], { kinds: [], setups: [setup()] }).handlers);
+  await fine.findByRole("button", { name: "Use Docker on this machine" });
+  expect(fine.queryByText(/Boxes will not join BB yet/)).toBeNull();
 });
 
 test("first run in settings: with no backend on, the offer leads the page, without the link to settings itself; with one on, it is not there", async () => {

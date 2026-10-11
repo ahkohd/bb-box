@@ -363,7 +363,7 @@ function rpc(boxes, options = {}) {
       ],
     }),
     "docker.host.set": () => ({ result: { ok: true, problems: [] }, hosts: [] }),
-    "setup.offer": () => ({ machines: options.setups ?? [] }),
+    "setup.offer": () => ({ machines: options.setups ?? [], access: options.access ?? null }),
     "setup.docker": () => ({ result: { ok: true, problems: [] }, machines: options.setups ?? [] }),
     "machines.add": () => ({ box: null, error: options.refuse ?? null }),
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
@@ -475,6 +475,19 @@ export const scenes = {
     chrome: boxesChrome,
     height: 300,
     rpc: rpc([], { setups: [setupOf({ state: "on", build: { state: "built", targets: ["linux"], detail: null, startedAt: now - 430_000, endedAt: now - 5_000 } })] }),
+  },
+  // BB's machine access (the newcomer check): bb connect without a sign-in, up front and on the box that did not join.
+  "first-run-access": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 340,
+    rpc: rpc([], { kinds: [], setups: [setupOf()], access: { provider: "bb connect", message: "Sign in to your bb account to use bb connect" } }),
+  },
+  "join-failed": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 300,
+    rpc: rpc([box({ id: "box_j", name: "silver-harbor", timings: { total: 422 }, enrol: { state: "failed", hostId: null, error: "Enrolling box silver-harbor failed: Sign in to your bb account to use bb connect" } })]),
   },
   "panel-list": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting, desktop, stopped]) },
   "panel-runs-on": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },
