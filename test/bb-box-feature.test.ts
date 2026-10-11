@@ -84,7 +84,10 @@ async function run(dir: string, args: string[]) {
   return { ...result, environment, out };
 }
 
-test("bb-box-feature installs a feature from a registry: an anonymous token, its layer, its options with their defaults, and its containerEnv (049)", async () => {
+/** bb-box-feature reads JSON with jq, which a box has. */
+const JQ = { skip: spawnSync("jq", ["--version"]).status !== 0 && "needs jq" };
+
+test("bb-box-feature installs a feature from a registry: an anonymous token, its layer, its options with their defaults, and its containerEnv (049)", JQ, async () => {
   const dir = tempDir("feature");
   const { host, asked } = await registry(featureTar(dir, SPEC));
   writeFileSync(join(dir, "environment"), 'PATH="/home/box/.local/bin:/usr/local/bin:/usr/bin:/bin"\nLANG=C.UTF-8\n');
@@ -108,7 +111,7 @@ test("bb-box-feature installs a feature from a registry: an anonymous token, its
   assert.equal(readFileSync(ran.environment, "utf8").split("\n")[0], 'PATH="/opt/hello/bin:/home/box/.local/bin:/usr/local/bin:/usr/bin:/bin"');
 });
 
-test("bb-box-feature takes a tarball's URL, with the feature in a directory of its own, and says what it cannot do (049)", async () => {
+test("bb-box-feature takes a tarball's URL, with the feature in a directory of its own, and says what it cannot do (049)", JQ, async () => {
   const dir = tempDir("feature-tar");
   const { host } = await registry(featureTar(dir, { id: "hello", options: { greeting: { default: "hello there" } } }, "hello"));
   const ran = await run(dir, [`http://${host}/hello.tar`]);

@@ -105,7 +105,8 @@ echo @hvf; sysctl -n kern.hv_support 2>/dev/null
 echo @qemu-firmware; f="$(qshare)/edk2-aarch64-code.fd" && [ -f "$f" ] && echo "$f"
 echo @qemu-image
 b=$(cd "$q/images/"${quote(image)}"/current" 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] && {
-  mode=read-only; [ -w "$b/disk.qcow2" ] && mode=writable
+  # By its mode, which chmod a-w set, not by whether this user may write it: root always may.
+  mode=read-only; [ -n "$(find "$b/disk.qcow2" -prune -perm -200 2>/dev/null)" ] && mode=writable
   echo "$(basename "$b") $mode $(qbytes "$b/disk.qcow2")"
   echo @qemu-record; tr -d '\n' < "$b/image.json" 2>/dev/null; echo
 }

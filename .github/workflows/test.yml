@@ -15,10 +15,15 @@ jobs:
     runs-on: [self-hosted, linux, X64]
     container:
       image: node:26-bookworm
-      options: --memory=8g --cpus=8
+      # --init reaps what the tests' commands leave behind, which the runner's own first process does not.
+      options: --init --memory=8g --cpus=8
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # The job runs as root on the runner user's checkout, which git refuses without this.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # bb-box-feature's tests run it with jq, as a box has.
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends jq
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
