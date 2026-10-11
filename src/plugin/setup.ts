@@ -69,6 +69,8 @@ const SWEEP_EVERY_MS = 3 * 60_000;
 const NIGHTLY_SCHEDULE = "nightly-images";
 const NIGHTLY_CRON = "0 3 * * *";
 const NIGHTLY_HOURS = 4;
+/** How often bb-box looks for a BB update that leaves the images behind. */
+const BB_UPDATE_LOOK_MS = 5 * 60_000;
 const DOCTOR_TIMEOUT_MS = 30_000;
 /**
  * What BB's daemon gives its workers besides the machine variables: the
@@ -676,6 +678,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     storage: kv,
     bakes: imageBakes,
     log: (line) => bb.log.info(line),
+    afterBbUpdates: () => configuration.document.general.nightlyImages ?? GENERAL_DEFAULTS.nightlyImages,
   });
   // Stalls of the event loop bb-box runs on, BB's server's, which hold up every desktop's frames and input.
   const loopWatch = new LoopWatch({ log: (message) => bb.log.warn(message) });
@@ -730,6 +733,19 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     if (imageJobs.running()) return;
     bb.log.info("Rebuilding the standard images that are due, as General's Rebuild images each night is on.");
     void imageJobs.refreshAll({ limitMs: NIGHTLY_HOURS * 60 * 60_000 }).catch((error) => logError("nightly images", error));
+  });
+
+  // After a BB update, the images with BB's old app are refreshed within the hour, while the nightly switch is on.
+  bb.background.service("bb-update-images", {
+    async start(signal) {
+      while (!signal.aborted) {
+        await imageJobs.afterBbUpdate(signal).catch((error) => logError("images after a BB update", error));
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, BB_UPDATE_LOOK_MS);
+          signal.addEventListener("abort", () => (clearTimeout(timer), resolve(null)), { once: true });
+        });
+      }
+    },
   });
 
   bb.background.service("sweeper", {

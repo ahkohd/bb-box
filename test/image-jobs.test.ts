@@ -60,7 +60,7 @@ function backend(id: string, builds: ImageBuild[], options: { boxes?: string[]; 
 
 const versions = (async () => ({ resolvedAt: "", following: true, aptSnapshot: { pinned: "", version: "" }, tools: [{ name: "node", arch: "x86_64", pinned: "24.21.0", version: "24.21.0", source: "", kept: null }], files: { "pins.json": "", "desktop-pins.tsv": "", "apt-snapshot": "" } })) as unknown as () => Promise<Versions>;
 
-function jobs(backends: Backend[], options: { app?: string; fail?: string[]; clock?: { now: number } } = {}) {
+function jobs(backends: Backend[], options: { app?: string | { value: string }; fail?: string[]; clock?: { now: number }; follow?: { on: boolean }; gate?: () => Promise<void> } = {}) {
   const clock = options.clock ?? { now: NOW };
   const refreshed: string[] = [];
   const storage = new MemoryStorage();
@@ -68,12 +68,14 @@ function jobs(backends: Backend[], options: { app?: string; fail?: string[]; clo
     backends: () => backends,
     setup: "/plugin/setup",
     bbUrl: () => "https://bb.example.com",
-    facts: { pins: async () => PINS, bbApp: async () => options.app ?? APP },
+    facts: { pins: async () => PINS, bbApp: async () => (typeof options.app === "object" ? options.app.value : (options.app ?? APP)) },
     storage,
+    afterBbUpdates: () => options.follow?.on ?? false,
     now: () => clock.now,
     versions: versions as never,
     refresh: (async (refresh: RefreshOptions): Promise<RefreshResult> => {
       refreshed.push(`${refresh.current.ref}${refresh.replace === false ? " (try)" : ""}`);
+      await options.gate?.();
       clock.now += 60_000;
       const failed = options.fail?.includes(refresh.current.ref);
       return {
@@ -243,4 +245,71 @@ test("a backend that refreshes its Windows images has them due monthly, and a fa
   clock.now = Date.parse("2026-11-01T02:00:00Z");
   await job.refreshAll();
   assert.equal(refreshed.filter((ref) => ref === "9104").length, 2);
+});
+
+test("after a BB update, the Linux images with BB's old app are refreshed within the hour, alone, once, after any run going on, while the nightly switch is on", async () => {
+  const NEW = "n".repeat(64);
+  const lxc = backend("proxmox-lxc", [
+    build("9100", "linux", record(1)),
+    build("9101", "linux-desktop-cpu", record(10)),
+    // Due for its age alone, and BB's app is not judged on macOS: it waits for the night.
+    build("mac1", "macos", record(40, { bbApp: null })),
+  ]);
+  const app = { value: APP };
+  const follow = { on: true };
+  let open: () => void = () => {};
+  let held: Promise<void> | null = null;
+  const { job, refreshed, clock } = jobs([lxc.backend], { app, follow, gate: () => held ?? Promise.resolve() });
+
+  // Nothing carries another app: nothing to do.
+  assert.equal(await job.afterBbUpdate(), null);
+  assert.equal(await job.dueSoon(), null);
+
+  // BB is updated: noticed, and due soon, as the doctor and images list say.
+  app.value = NEW;
+  assert.equal(await job.afterBbUpdate(), "noticed");
+  assert.deepEqual(await job.dueSoon(), { at: NOW + 15 * 60_000, names: ["proxmox-lxc/9101", "proxmox-lxc/9100"] });
+  const check = (await job.checks()).find((one) => one.id === "images.bb-update");
+  assert.equal(check?.detail, "BB was updated: proxmox-lxc/9101, proxmox-lxc/9100 have another build of BB's app than BB's server gives. A refresh of them starts by 02:15 UTC.");
+  clock.now += 10 * 60_000;
+  assert.equal(await job.afterBbUpdate(), "waiting");
+
+  // Its time comes while the night's run goes on: it waits for it.
+  clock.now += 6 * 60_000;
+  held = new Promise((resolve) => (open = resolve));
+  const night = job.refreshAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(await job.afterBbUpdate(), "waiting");
+  held = null;
+  open();
+  await night;
+  refreshed.length = 0;
+
+  // Then it starts, with the images that have BB's old app alone, and once for this build of the app.
+  assert.equal(await job.afterBbUpdate(), "started");
+  const run = await job.refreshAll({ only: "bb-app" });
+  assert.deepEqual(refreshed, ["9101", "9100"]);
+  assert.deepEqual(
+    run.lines.filter((line) => line.name === "proxmox-lxc/mac1").map((line) => line.detail),
+    ["it is due for another reason than a BB update: the night refreshes it"],
+  );
+  assert.equal(await job.afterBbUpdate(), null);
+  assert.equal(await job.dueSoon(), null);
+
+  // With the nightly switch off, a BB update starts nothing.
+  app.value = "m".repeat(64);
+  follow.on = false;
+  assert.equal(await job.afterBbUpdate(), null);
+  assert.equal(await job.dueSoon(), null);
+});
+
+test("a full run asked for during a BB update's run waits for it, then runs every due image", async () => {
+  const NEW = "n".repeat(64);
+  const lxc = backend("proxmox-lxc", [build("9100", "linux", record(1)), build("9102", "linux-desktop-wayland-cpu", record(10, { bbApp: NEW }))]);
+  const { job, refreshed } = jobs([lxc.backend], { app: NEW });
+  const update = job.refreshAll({ only: "bb-app" });
+  const night = job.refreshAll();
+  await update;
+  await night;
+  assert.deepEqual(refreshed, ["9100", "9102", "9100"]);
 });

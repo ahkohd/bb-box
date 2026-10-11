@@ -4,7 +4,9 @@
  * last did, and the doctor's checks of them. `bb box images refresh`, which
  * a BB script automation runs each night, starts a run here and waits for
  * it; the run goes on should the command's call end first. Projects'
- * images' builds are kept in order after the rebuilds (bakes.ts).
+ * images' builds are kept in order after the rebuilds (bakes.ts). After a
+ * BB update, the Linux images with BB's old app are refreshed within the
+ * hour rather than at night (afterBbUpdate).
  */
 import { createHash } from "node:crypto";
 import { judgeImage, type ImageFacts, type PinSet } from "../backends/images.ts";
@@ -26,6 +28,26 @@ const DAY_MS = 24 * 60 * 60_000;
 const STATE = "images/state/";
 const LAST_RUN = "images/last-run";
 const LOCK = "images/lock";
+const BB_UPDATE = "images/bb-update";
+/**
+ * After BB's server gives another build of BB's app, as after a BB update, the images that carry the old one are
+ * refreshed this long after bb-box notices, rather than at night (the operator, 11 October 2026): time for BB to settle,
+ * and, with a look every few minutes, well within the hour.
+ */
+export const BB_UPDATE_DELAY_MS = 15 * 60_000;
+
+/** A BB update bb-box noticed: the app's build, when it noticed, and when its refresh started. */
+interface BbUpdate {
+  readonly app: string;
+  readonly noticed: number;
+  readonly started: number | null;
+}
+
+/** A refresh that starts soon, for a BB update: when, and the images it takes. */
+export interface DueSoon {
+  readonly at: number;
+  readonly names: readonly string[];
+}
 
 /** The automation that runs the job each night, as the setup guide gives it. */
 export const AUTOMATION = 'bb automation create --project <project> --name "bb-box images" --cron "0 2 * * *" --timezone <zone> --script "bb box images refresh" --timeout 900000';
@@ -42,6 +64,8 @@ export interface ImageJobsDeps {
   /** Projects' images' builds: no bake while a run removes what runs left, and their upkeep after the rebuilds. */
   readonly bakes?: Pick<ImageBakes, "exclusive" | "maintain">;
   readonly log?: (line: string) => void;
+  /** Whether a BB update starts a refresh of the images it leaves behind: General's nightly switch. Off without it. */
+  readonly afterBbUpdates?: () => boolean;
   readonly now?: () => number;
   /** Replace refreshImage and resolveVersions, for tests. */
   readonly refresh?: typeof refreshImage;
@@ -74,6 +98,14 @@ export interface ImageView {
   readonly last: ImageState | null;
 }
 
+export interface RunOptions {
+  readonly pinned?: boolean;
+  readonly limitMs?: number;
+  readonly log?: (line: string) => void;
+  /** "bb-app": only the images that carry another build of BB's app than BB's server gives, after a BB update; the night does the rest. */
+  readonly only?: "bb-app";
+}
+
 export interface RunLine {
   readonly name: string;
   readonly outcome: "refreshed" | "baked" | "removed" | "failed" | "skipped" | "waiting" | "not started";
@@ -97,7 +129,7 @@ function pinSet(kind: string): PinSet {
 
 export class ImageJobs {
   readonly #deps: ImageJobsDeps;
-  #running: { readonly started: number; readonly done: Promise<RunResult>; readonly stop: AbortController } | null = null;
+  #running: { readonly started: number; readonly done: Promise<RunResult>; readonly stop: AbortController; readonly only?: "bb-app" } | null = null;
 
   constructor(deps: ImageJobsDeps) {
     this.#deps = deps;
@@ -119,6 +151,11 @@ export class ImageJobs {
       for (const build of builds) if (build.current && build.image === "standard" && (osOf(build.kind) !== "windows" || backend.images.windows)) found.push({ backend, build });
     }
     return found;
+  }
+
+  /** Whether a Linux image carries another build of BB's app than BB's server gives: one a BB update leaves behind. */
+  #appStale(build: ImageBuild, app: string | null): boolean {
+    return osOf(build.kind) === "linux" && !!app && !!build.record && build.record.bbApp !== app;
   }
 
   /** Why an image is due (049), in the decision's order of need, or null: [rank, reason]. */
@@ -170,15 +207,67 @@ export class ImageJobs {
    * Image boxes left by a run that did not end go first. An image whose last
    * rebuild failed is not tried again until what it is built from changes.
    */
-  refreshAll(options: { pinned?: boolean; limitMs?: number; log?: (line: string) => void } = {}): Promise<RunResult> {
-    if (this.#running) return this.#running.done;
+  refreshAll(options: RunOptions = {}): Promise<RunResult> {
+    const running = this.#running;
+    // A full run asked for during a BB update's run waits for it, then runs: that run took only the images with BB's old app.
+    if (running?.only && !options.only) return running.done.then(() => this.refreshAll(options));
+    if (running) return running.done;
     const stop = new AbortController();
     const started = this.#now();
     const done = this.#run(options, stop.signal).finally(() => {
       this.#running = null;
     });
-    this.#running = { started, done, stop };
+    this.#running = { started, done, stop, ...(options.only ? { only: options.only } : {}) };
     return done;
+  }
+
+  /**
+   * After a BB update (the operator, 11 October 2026): when BB's server gives another build of BB's app than Linux
+   * images carry, bb-box notes it, and BB_UPDATE_DELAY_MS later starts a refresh of those images alone, once per build
+   * of the app. A run going on is waited for: this is asked again every few minutes. With nothing that carries an old
+   * build, it forgets what it noted. The nightly switch decides whether it is asked at all.
+   */
+  async afterBbUpdate(signal?: AbortSignal): Promise<"noticed" | "started" | "waiting" | null> {
+    if (!this.#deps.afterBbUpdates?.()) return null;
+    const app = await this.#deps.facts.bbApp(signal).catch(() => null);
+    if (!app) return null;
+    const stale = (await this.list(signal)).filter((view) => this.#appStale(view.build, app));
+    const kept = await this.#deps.storage.get<BbUpdate>(BB_UPDATE);
+    if (!stale.length) {
+      if (kept) await this.#deps.storage.delete(BB_UPDATE);
+      return null;
+    }
+    const now = this.#now();
+    if (kept?.app !== app) {
+      await this.#deps.storage.set(BB_UPDATE, { app, noticed: now, started: null } satisfies BbUpdate);
+      this.#deps.log?.(
+        `images: BB's server gives another build of BB's app than ${stale.map((view) => view.name).join(", ")} ${stale.length === 1 ? "carries" : "carry"}, as after a BB update. A refresh of ${stale.length === 1 ? "it" : "them"} starts by ${new Date(now + BB_UPDATE_DELAY_MS).toISOString()}.`,
+      );
+      return "noticed";
+    }
+    if (kept.started !== null) return null;
+    if (now < kept.noticed + BB_UPDATE_DELAY_MS) return "waiting";
+    if (this.#running) return "waiting";
+    await this.#deps.storage.set(BB_UPDATE, { ...kept, started: now } satisfies BbUpdate);
+    this.#deps.log?.(`images: refreshing ${stale.map((view) => view.name).join(", ")}, as BB was updated.`);
+    void this.refreshAll({ only: "bb-app" }).then(
+      async (result) => {
+        // Another bb-box's run held the lock: this one is tried again at the next look.
+        if (result.lines[0]?.name === "images" && result.lines[0].outcome === "not started") await this.#deps.storage.set(BB_UPDATE, { ...kept, started: null } satisfies BbUpdate);
+      },
+      () => {},
+    );
+    return "started";
+  }
+
+  /** The refresh a BB update will start, while it waits: when, and the images it takes; null when none waits. */
+  async dueSoon(signal?: AbortSignal): Promise<DueSoon | null> {
+    if (!this.#deps.afterBbUpdates?.()) return null;
+    const kept = await this.#deps.storage.get<BbUpdate>(BB_UPDATE);
+    if (!kept || kept.started !== null) return null;
+    const views = await this.list(signal).catch(() => [] as ImageView[]);
+    const names = views.filter((view) => this.#appStale(view.build, kept.app)).map((view) => view.name);
+    return names.length ? { at: Math.max(this.#now(), kept.noticed + BB_UPDATE_DELAY_MS), names } : null;
   }
 
   /** Stops a run: the image being refreshed fails, its old build stays, and no other starts. */
@@ -186,7 +275,7 @@ export class ImageJobs {
     this.#running?.stop.abort(new Error("bb-box is stopping."));
   }
 
-  async #run(options: { pinned?: boolean; limitMs?: number; log?: (line: string) => void }, signal: AbortSignal): Promise<RunResult> {
+  async #run(options: RunOptions, signal: AbortSignal): Promise<RunResult> {
     const started = this.#now();
     const say = (line: string) => {
       options.log?.(line);
@@ -217,8 +306,10 @@ export class ImageJobs {
       const app = await this.#deps.facts.bbApp(signal).catch(() => null);
       const views = await this.list(signal);
       const limit = started + (options.limitMs ?? RUN_LIMIT_MS);
+      // After a BB update, the images with BB's old app alone; the others stay for the night.
+      const taken = (view: ImageView) => !!view.due && (options.only !== "bb-app" || this.#appStale(view.build, app));
       for (const view of views) {
-        if (!view.due) continue;
+        if (!taken(view)) continue;
         if (signal.aborted || this.#now() >= limit) {
           lines.push({ name: view.name, outcome: "not started", detail: signal.aborted ? "the run was stopped" : "the run's time limit came first" });
           continue;
@@ -255,8 +346,8 @@ export class ImageJobs {
         const result = await this.#refreshOne(backend, view, { pinned: !!options.pinned, replace: true, signal, from, log: (line) => say(`${view.name}: ${line}`) });
         lines.push(result.ok ? { name: view.name, outcome: "refreshed", detail: `now ${result.build?.build ?? "a new build"}, in ${result.seconds} s` } : { name: view.name, outcome: "failed", detail: result.reason ?? "no reason given" });
       }
-      for (const view of views) if (!view.due) lines.push({ name: view.name, outcome: "skipped", detail: "not due" });
-      if (bakes) lines.push(...(await bakes.maintain({ until: limit, signal })));
+      for (const view of views) if (!taken(view)) lines.push({ name: view.name, outcome: "skipped", detail: view.due ? "it is due for another reason than a BB update: the night refreshes it" : "not due" });
+      if (bakes && options.only !== "bb-app") lines.push(...(await bakes.maintain({ until: limit, signal })));
       const ok = !lines.some((line) => line.outcome === "failed");
       await this.#deps.storage.set(LAST_RUN, { at: this.#now(), ok, lines });
       return { ok, lines, seconds: Math.round((this.#now() - started) / 1000) };
@@ -328,6 +419,16 @@ export class ImageJobs {
             fix: `Turn on Rebuild images each night under General in BB Box's settings, or have a BB script automation run it each night: ${AUTOMATION}`,
           },
     );
+    const soon = await this.dueSoon(signal).catch(() => null);
+    if (soon) {
+      checks.push({
+        id: "images.bb-update",
+        name: "Refresh after a BB update",
+        status: "ok",
+        detail: `BB was updated: ${soon.names.join(", ")} ${soon.names.length === 1 ? "has" : "have"} another build of BB's app than BB's server gives. A refresh of ${soon.names.length === 1 ? "it" : "them"} starts by ${new Date(soon.at).toISOString().slice(11, 16)} UTC.`,
+        fix: null,
+      });
+    }
     for (const view of views) {
       if (!view.last || view.last.ok) continue;
       const when = new Date(view.last.at).toISOString().slice(0, 10);

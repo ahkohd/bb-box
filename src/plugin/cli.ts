@@ -355,7 +355,14 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               }
               if (!views.length) return out("No backend that is on has images bb-box rebuilds.");
               const running = app.imageJobs.running();
-              return out([...(running ? [`A run has gone on since ${new Date(running).toISOString()}.`] : []), ...views.map(imageLine)].join("\n"));
+              const soon = await app.imageJobs.dueSoon(ctx.signal).catch(() => null);
+              return out(
+                [
+                  ...(running ? [`A run has gone on since ${new Date(running).toISOString()}.`] : []),
+                  ...(soon ? [`BB was updated: a refresh of ${soon.names.join(", ")} starts by ${new Date(soon.at).toISOString()}, as ${soon.names.length === 1 ? "it has" : "they have"} another build of BB's app than BB's server gives.`] : []),
+                  ...views.map(imageLine),
+                ].join("\n"),
+              );
             }),
         }),
         "images refresh": cliCommand({
