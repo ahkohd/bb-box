@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parseImageRecord, pinsDigest } from "../src/backends/images.ts";
-import { compareVersions, resolveVersions, stageSetup, type FetchText } from "../src/backends/versions.ts";
+import { compareVersions, gpgvVerify, resolveVersions, SignatureError, stageSetup, type FetchText, type Verify } from "../src/backends/versions.ts";
 import { versionsText } from "../src/plugin/views.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -42,23 +43,35 @@ function upstream(override: Record<string, string | null> = {}): { fetch: FetchT
     "https://api.github.com/repos/earendil-works/pi/releases/latest": release("pi", (version) => `v${version}`),
     "https://api.github.com/repos/cli/cli/releases/latest": release("gh", (version) => `v${version}`),
   };
+  answers[`${base}/${NEXT}/manifest.json.sig`] = "a detached signature";
   for (const arch of ["amd64", "arm64"]) {
     answers[`https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-${arch}/Packages`] = [
       `Package: google-chrome-beta\nVersion: 1000.0.0.0-1\nFilename: pool/main/g/google-chrome-beta/beta_${arch}.deb\nSHA256: ${digest("0")}\n`,
       `Package: google-chrome-stable\nVersion: ${CHROME_NEXT}\nArchitecture: ${arch}\nFilename: pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_NEXT}_${arch}.deb\nSize: 1\nSHA256: ${digest(arch === "amd64" ? "e" : "f")}\n`,
     ].join("\n");
   }
+  // Google's InRelease, which a trusting verify takes as it is, with each index's SHA-256.
+  const index = (arch: string) => {
+    const url = `https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-${arch}/Packages`;
+    const key = Object.keys(override).find((part) => url.includes(part));
+    return (key !== undefined ? override[key] : answers[url]) ?? "";
+  };
+  answers["https://dl.google.com/linux/chrome/deb/dists/stable/InRelease"] =
+    `Origin: Google LLC\nSHA256:\n${["amd64", "arm64"].map((arch) => ` ${createHash("sha256").update(index(arch)).digest("hex")} ${index(arch).length} main/binary-${arch}/Packages`).join("\n")}\n`;
   return {
     asked,
     fetch: async (url) => {
       asked.push(url);
       const key = Object.keys(override).find((part) => url.includes(part));
       const body = key !== undefined ? override[key] : answers[url];
-      if (body === null || body === undefined) return { ok: false, status: body === null ? 403 : 404, text: async () => "" };
-      return { ok: true, status: 200, text: async () => body };
+      if (body === null || body === undefined) return { ok: false, status: body === null ? 403 : 404, text: async () => "", arrayBuffer: async () => new ArrayBuffer(0) };
+      return { ok: true, status: 200, text: async () => body, arrayBuffer: async () => new TextEncoder().encode(body).buffer as ArrayBuffer };
     },
   };
 }
+
+/** Takes every signature as good: the signed text, as gpgv gives it. */
+const trusting: Verify = async (_signer, signed) => new TextDecoder().decode(signed);
 
 test("versions compare by their numbers", () => {
   assert.equal(compareVersions("2.1.288", "2.1.283"), 1);
@@ -71,7 +84,7 @@ test("versions compare by their numbers", () => {
 
 test("a rebuild takes upstream's latest of the tools that follow it, each with its published SHA-256, and the day's apt snapshot (049)", async () => {
   const { fetch, asked } = upstream();
-  const versions = await resolveVersions(SETUP, { fetch, now: NOW });
+  const versions = await resolveVersions(SETUP, { fetch, now: NOW, verify: trusting });
   assert.equal(versions.following, true);
   assert.deepEqual(
     versions.tools.map((tool) => [tool.name, tool.arch, tool.version, tool.kept]),
@@ -130,7 +143,7 @@ test("a tool keeps its pin when upstream has nothing newer, or cannot be read, s
     "claude-code-releases/latest": "<html>not a version</html>",
     "binary-arm64/Packages": `Package: google-chrome-stable\nVersion: 1.0.0.0-1\nFilename: pool/x.deb\nSHA256: ${digest("9")}\n`,
   });
-  const versions = await resolveVersions(SETUP, { fetch, now: NOW });
+  const versions = await resolveVersions(SETUP, { fetch, now: NOW, verify: trusting });
   const of = (name: string, arch = "x86_64") => versions.tools.find((tool) => tool.name === name && tool.arch === arch)!;
   assert.deepEqual([of("pi").version, of("pi").kept], [pinOf("pi").version, null], "nothing newer");
   assert.equal(of("gh").version, pinOf("gh").version);
@@ -143,6 +156,58 @@ test("a tool keeps its pin when upstream has nothing newer, or cannot be read, s
   for (const name of ["pi", "gh", "codex", "claude-code"]) assert.deepEqual(resolved.tools.find((tool) => tool.name === name && tool.arch === "x86_64"), pinOf(name), name);
 });
 
+test("a tool keeps its pin when its signature does not verify, or its index is not the signed one, saying so (#424)", async () => {
+  const refusing: Verify = async (signer) => {
+    throw new SignatureError(`gpgv did not accept it: BAD signature from ${signer}`);
+  };
+  const refused = await resolveVersions(SETUP, { fetch: upstream().fetch, now: NOW, verify: refusing });
+  const of = (versions: typeof refused, name: string, arch = "x86_64") => versions.tools.find((tool) => tool.name === name && tool.arch === arch)!;
+  assert.deepEqual([of(refused, "claude-code").version, of(refused, "claude-code").kept], [pinOf("claude-code").version, `its signature did not verify: manifest.json of ${NEXT}: gpgv did not accept it: BAD signature from claude-code`]);
+  assert.equal(of(refused, "chrome").kept, "its signature did not verify: Google's InRelease: gpgv did not accept it: BAD signature from chrome");
+  assert.equal(of(refused, "gh").version, NEXT, "a tool upstream does not sign follows as before");
+  // An index other than the one the signed InRelease names: the pin stays.
+  const { fetch } = upstream();
+  const tampered: FetchText = async (url, init) => (url.endsWith("binary-amd64/Packages") ? { ok: true, status: 200, text: async () => "Package: google-chrome-stable\n", arrayBuffer: async () => new ArrayBuffer(0) } : fetch(url, init));
+  const swapped = await resolveVersions(SETUP, { fetch: tampered, now: NOW, verify: trusting });
+  assert.equal(of(swapped, "chrome").kept, "its signature did not verify: main/binary-amd64/Packages is not the index Google's signed InRelease gives");
+  assert.equal(of(swapped, "chrome", "arm64").version, "999.0.0.1");
+});
+
+test("gpgv checks a signature against the pinned key, the clear-signed text too, refuses another key's or a changed text, and says when it is not installed (#424)", { skip: spawnSync("gpg", ["--version"]).status !== 0 || spawnSync("gpgv", ["--version"]).status !== 0 }, async () => {
+  const dir = tempDir("gpgv");
+  const home = join(dir, "gnupg");
+  mkdirSync(home, { mode: 0o700 });
+  const gpg = (...args: string[]) => spawnSync("gpg", ["--homedir", home, "--batch", "--pinentry-mode", "loopback", "--passphrase", "", ...args], { encoding: "utf8" });
+  for (const name of ["Signer", "Other"]) assert.equal(gpg("--quick-gen-key", `${name} <${name.toLowerCase()}@example.com>`, "ed25519", "sign", "never").status, 0);
+  const fingerprint = (name: string) => /^fpr:+([0-9A-F]{40}):/m.exec(gpg("--with-colons", "--fingerprint", name).stdout)![1]!;
+  mkdirSync(join(dir, "keys"));
+  writeFileSync(join(dir, "keys", "signer.asc"), gpg("--armor", "--export", "Signer").stdout);
+  const signers = { "claude-code": { file: "signer.asc", fingerprint: fingerprint("Signer") }, chrome: { file: "signer.asc", fingerprint: fingerprint("Signer") } };
+  const verify = gpgvVerify(dir, signers);
+  const text = '{"version":"1.0.0"}';
+  writeFileSync(join(dir, "manifest.json"), text);
+  const sign = (key: string, ...args: string[]) => (gpg("--local-user", key, ...args, "--output", join(dir, "out"), join(dir, "manifest.json")), readFileSync(join(dir, "out")));
+  assert.equal(await verify("claude-code", new TextEncoder().encode(text), sign("Signer", "--detach-sign")), text);
+  assert.equal((await verify("chrome", sign("Signer", "--clearsign"), null)).trim(), text, "the clear-signed text");
+  await assert.rejects(verify("claude-code", new TextEncoder().encode(`${text} `), sign("Signer", "--detach-sign")), /gpgv did not accept it: .*BAD signature/);
+  await assert.rejects(verify("claude-code", new TextEncoder().encode(text), sign("Other", "--detach-sign")), (error: Error) => error instanceof SignatureError && /gpgv did not accept it/.test(error.message));
+  // On a host without gpgv the pin stays, saying what to install.
+  const path = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  try {
+    await assert.rejects(verify("claude-code", new TextEncoder().encode(text), sign("Signer", "--detach-sign")), /^SignatureError: gpgv is not installed here to check it: install GnuPG's gpgv$/);
+  } finally {
+    process.env.PATH = path;
+  }
+});
+
+test("setup/keys holds the keys SIGNERS pins, by their primary fingerprints (#424)", { skip: spawnSync("gpg", ["--version"]).status !== 0 }, () => {
+  for (const [file, fingerprint] of [["claude-code.asc", "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"], ["google-linux.asc", "EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796"]]) {
+    const shown = spawnSync("gpg", ["--with-colons", "--show-keys", join(SETUP, "keys", file!)], { encoding: "utf8" }).stdout;
+    assert.equal(/^fpr:+([0-9A-F]{40}):/m.exec(shown)?.[1], fingerprint, file);
+  }
+});
+
 test("with --pinned a rebuild takes the repository's pins alone, and asks no upstream", async () => {
   const { fetch, asked } = upstream();
   const versions = await resolveVersions(SETUP, { fetch, now: NOW, pinned: true });
@@ -153,7 +218,7 @@ test("with --pinned a rebuild takes the repository's pins alone, and asks no ups
 });
 
 test("a staged setup builds with the versions, and its image's record keeps the repository's pins (049)", { skip: spawnSync("jq", ["--version"]).status !== 0 || !existsSync("/etc/os-release") }, async () => {
-  const versions = await resolveVersions(SETUP, { fetch: upstream().fetch, now: NOW });
+  const versions = await resolveVersions(SETUP, { fetch: upstream().fetch, now: NOW, verify: trusting });
   const staged = join(tempDir("staged"), "setup");
   await stageSetup(SETUP, staged, versions);
   const template = join(staged, "proxmox-lxc", "template");

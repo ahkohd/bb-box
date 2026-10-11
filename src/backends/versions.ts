@@ -6,8 +6,18 @@
  * as setup/proxmox-lxc/template pins it, and changes with bb-box releases.
  * A tool keeps its pin when its upstream cannot be read, or has nothing
  * newer, so a build never takes a version older than the pin.
+ *
+ * Where upstream signs what it publishes, the signature is checked too
+ * (#424): Claude Code's manifest.json against its detached
+ * manifest.json.sig, and Chrome's Packages index against the SHA-256 that
+ * Google's signed InRelease gives it. gpgv checks each against the key in
+ * setup/keys whose primary fingerprint SIGNERS pins. A signature that does
+ * not verify, or a host without gpgv, keeps the tool's pin and says why.
  */
-import { cp, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pinsDigest } from "./images.ts";
 
@@ -15,7 +25,67 @@ import { pinsDigest } from "./images.ts";
 export type FetchText = (
   url: string,
   init: { readonly headers?: Readonly<Record<string, string>>; readonly signal?: AbortSignal },
-) => Promise<{ readonly ok: boolean; readonly status: number; text(): Promise<string> }>;
+) => Promise<{ readonly ok: boolean; readonly status: number; text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer> }>;
+
+/**
+ * The keys that sign what the resolver follows, in setup/keys, by the
+ * fingerprint of the primary key a signature must be by (#424).
+ */
+export const SIGNERS = {
+  // Anthropic Claude Code Release Signing, from https://downloads.claude.ai/keys/claude-code.asc.
+  "claude-code": { file: "claude-code.asc", fingerprint: "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE" },
+  // Google Inc. (Linux Packages Signing Authority), from https://dl.google.com/linux/linux_signing_key.pub.
+  chrome: { file: "google-linux.asc", fingerprint: "EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796" },
+} as const;
+export type Signer = keyof typeof SIGNERS;
+
+/** A signature that did not verify, or could not be checked. */
+export class SignatureError extends Error {}
+
+/**
+ * Checks a signature by a signer's pinned key, and gives the signed text:
+ * `signed` with a detached `signature`, or the text a clear-signed
+ * `signed` holds when `signature` is null.
+ */
+export type Verify = (signer: Signer, signed: Uint8Array, signature: Uint8Array | null) => Promise<string>;
+
+/** An armored OpenPGP key's packets, so that gpgv alone checks with it, without gpg to dearmor it. */
+function dearmor(armored: string): Buffer {
+  const block = armored.split(/-----BEGIN PGP PUBLIC KEY BLOCK-----/)[1]?.split(/-----END PGP PUBLIC KEY BLOCK-----/)[0] ?? "";
+  // Armor headers have a colon, and the checksum starts with "=": base64 lines have neither.
+  return Buffer.from(block.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.includes(":") && !line.startsWith("=")).join(""), "base64");
+}
+
+/** Verify with gpgv and the keys in `setup`/keys, or `signers` in tests. */
+export function gpgvVerify(setup: string, signers: Readonly<Record<Signer, { readonly file: string; readonly fingerprint: string }>> = SIGNERS): Verify {
+  return async (signer, signed, signature) => {
+    const { file, fingerprint } = signers[signer];
+    const dir = await mkdtemp(join(tmpdir(), "bbbox-gpgv-"));
+    try {
+      await writeFile(join(dir, "key.gpg"), dearmor(await readFile(join(setup, "keys", file), "utf8")));
+      await writeFile(join(dir, "signed"), signed);
+      const args = ["--homedir", dir, "--status-fd", "1", "--keyring", join(dir, "key.gpg")];
+      if (signature) {
+        await writeFile(join(dir, "signed.sig"), signature);
+        args.push(join(dir, "signed.sig"), join(dir, "signed"));
+      } else args.push("--output", join(dir, "text"), join(dir, "signed"));
+      const status = await new Promise<string>((resolve, reject) =>
+        execFile("gpgv", args, { timeout: 30_000 }, (error, stdout, stderr) => {
+          if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") reject(new SignatureError("gpgv is not installed here to check it: install GnuPG's gpgv"));
+          else if (error) reject(new SignatureError(`gpgv did not accept it: ${stderr.trim().split("\n").at(-1) || error.message}`));
+          else resolve(stdout);
+        }),
+      );
+      // VALIDSIG's last field is the signing key's primary fingerprint.
+      if (/^\[GNUPG:\] VALIDSIG .* ([0-9A-F]{40})$/m.exec(status)?.[1] !== fingerprint) throw new SignatureError(`it is not signed by the pinned key ${fingerprint}`);
+      return signature ? new TextDecoder().decode(signed) : await readFile(join(dir, "text"), "utf8");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+}
+
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /** The tools that follow upstream, by their names in the pins. */
 export const FOLLOWED = ["claude-code", "codex", "pi", "gh", "chrome"] as const;
@@ -99,13 +169,21 @@ class Upstream {
     return got;
   }
 
+  /** A URL's bytes, as a detached signature is. */
+  async bytes(url: string): Promise<Uint8Array> {
+    const timeout = AbortSignal.timeout(30_000);
+    const response = await this.#fetch(url, { headers: { "User-Agent": "bb-box" }, signal: this.#signal ? AbortSignal.any([this.#signal, timeout]) : timeout });
+    if (!response.ok) throw new Error(`${url} answered HTTP ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   json<T>(url: string, headers?: Readonly<Record<string, string>>): Promise<T> {
     return this.text(url, headers).then((text) => JSON.parse(text) as T);
   }
 }
 
 /** A newer release of a tool in pins.json, or null when the pin stays: Claude Code's latest channel, or a GitHub release. */
-async function newerTool(upstream: Upstream, pin: ToolPin): Promise<{ pin: ToolPin; source: string } | { kept: string; source: string }> {
+async function newerTool(upstream: Upstream, pin: ToolPin, verify: Verify): Promise<{ pin: ToolPin; source: string } | { kept: string; source: string }> {
   const swap = (version: string, url: string, sha256: string, source: string): { pin: ToolPin; source: string } => ({
     pin: {
       ...pin,
@@ -125,11 +203,15 @@ async function newerTool(upstream: Upstream, pin: ToolPin): Promise<{ pin: ToolP
     const latest = (await upstream.text(`${base}/latest`)).trim();
     if (!VERSION.test(latest)) throw new Error(`the latest channel names "${latest.slice(0, 40)}", not a version`);
     if (compareVersions(latest, pin.version) <= 0) return { kept: "", source: pin.source ?? "" };
-    const manifest = await upstream.json<{ platforms?: Record<string, { checksum?: unknown }> }>(`${base}/${latest}/manifest.json`);
+    const text = await upstream.text(`${base}/${latest}/manifest.json`);
+    await verify("claude-code", new TextEncoder().encode(text), await upstream.bytes(`${base}/${latest}/manifest.json.sig`)).catch((error: unknown) => {
+      throw error instanceof SignatureError ? new SignatureError(`manifest.json of ${latest}: ${error.message}`) : error;
+    });
+    const manifest = JSON.parse(text) as { platforms?: Record<string, { checksum?: unknown }> };
     const platform = `linux-${pin.arch === "x86_64" ? "x64" : "arm64"}`;
     const checksum = manifest.platforms?.[platform]?.checksum;
     if (typeof checksum !== "string" || !SHA256.test(checksum)) throw new Error(`manifest.json of ${latest} has no SHA-256 for ${platform}`);
-    return swap(latest, pin.url.replaceAll(`/${pin.version}/`, `/${latest}/`), checksum, `latest channel; manifest.json SHA-256 of ${latest}`);
+    return swap(latest, pin.url.replaceAll(`/${pin.version}/`, `/${latest}/`), checksum, `latest channel; signed manifest.json SHA-256 of ${latest}`);
   }
   const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\/([^/]+)$/.exec(pin.url);
   if (!github) return { kept: "its pinned URL is not a GitHub release's", source: pin.source ?? "" };
@@ -151,8 +233,18 @@ async function newerTool(upstream: Upstream, pin: ToolPin): Promise<{ pin: ToolP
 }
 
 /** Google's stable Chrome for an architecture, from its apt repository's Packages index: version, file and SHA-256. */
-async function latestChrome(upstream: Upstream, arch: string): Promise<{ version: string; filename: string; sha256: string }> {
-  const index = await upstream.text(`${CHROME_REPO}/dists/stable/main/binary-${DEB_ARCH[arch]}/Packages`);
+async function latestChrome(upstream: Upstream, arch: string, verify: Verify): Promise<{ version: string; filename: string; sha256: string }> {
+  const path = `main/binary-${DEB_ARCH[arch]}/Packages`;
+  const [release, index] = await Promise.all([
+    upstream.text(`${CHROME_REPO}/dists/stable/InRelease`).then((text) => verify("chrome", new TextEncoder().encode(text), null)),
+    upstream.text(`${CHROME_REPO}/dists/stable/${path}`),
+  ]).catch((error: unknown) => {
+    throw error instanceof SignatureError ? new SignatureError(`Google's InRelease: ${error.message}`) : error;
+  });
+  // The index must be the one Google's signed InRelease lists.
+  const listed = new RegExp(`^ ([0-9a-f]{64}) +\\d+ ${path}$`, "m").exec(release.split(/^SHA256:$/m)[1] ?? "")?.[1];
+  if (!listed) throw new SignatureError(`Google's signed InRelease gives no SHA-256 for ${path}`);
+  if (sha256(index) !== listed) throw new SignatureError(`${path} is not the index Google's signed InRelease gives`);
   let best: { version: string; filename: string; sha256: string } | null = null;
   for (const stanza of index.split(/\n\s*\n/)) {
     const field = (name: string) => new RegExp(`^${name}: *(.+)$`, "m").exec(stanza)?.[1]?.trim() ?? "";
@@ -179,7 +271,7 @@ const plain = (version: string) => version.replace(/-\d+$/, "");
  */
 export async function resolveVersions(
   setup: string,
-  options: { readonly fetch?: FetchText; readonly now?: number; readonly signal?: AbortSignal; readonly pinned?: boolean } = {},
+  options: { readonly fetch?: FetchText; readonly now?: number; readonly signal?: AbortSignal; readonly pinned?: boolean; readonly verify?: Verify } = {},
 ): Promise<Versions> {
   const dir = join(setup, TEMPLATE);
   const [pinsText, desktopText, snapshotText] = await Promise.all(["pins.json", "desktop-pins.tsv", "apt-snapshot"].map((file) => readFile(join(dir, file), "utf8")));
@@ -188,6 +280,9 @@ export async function resolveVersions(
   const pins = JSON.parse(pinsText!) as { tools: ToolPin[]; [key: string]: unknown };
   const snapshot = snapshotText!.trim();
   const upstream = new Upstream(options.fetch ?? (fetch as unknown as FetchText), options.signal);
+  const verify = options.verify ?? gpgvVerify(setup);
+  const unread = (error: unknown) =>
+    error instanceof SignatureError ? `its signature did not verify: ${error.message}` : `upstream could not be read: ${error instanceof Error ? error.message : String(error)}`;
   const tools: ToolVersion[] = [];
   const keep = (name: string, arch: string, pinned: string, source: string, kept: string | null) =>
     tools.push({ name, arch, pinned: plain(pinned), version: plain(pinned), source, kept });
@@ -201,7 +296,7 @@ export async function resolveVersions(
     pins.tools.map(async (pin) => {
       if (!(FOLLOWED as readonly string[]).includes(pin.name)) return pin;
       try {
-        const newer = await newerTool(upstream, pin);
+        const newer = await newerTool(upstream, pin, verify);
         if ("kept" in newer) {
           keep(pin.name, pin.arch, pin.version, newer.source, newer.kept || null);
           return pin;
@@ -209,7 +304,7 @@ export async function resolveVersions(
         tools.push({ name: pin.name, arch: pin.arch, pinned: pin.version, version: newer.pin.version, source: newer.source, kept: null });
         return newer.pin;
       } catch (error) {
-        keep(pin.name, pin.arch, pin.version, pin.source ?? "", `upstream could not be read: ${error instanceof Error ? error.message : String(error)}`);
+        keep(pin.name, pin.arch, pin.version, pin.source ?? "", unread(error));
         return pin;
       }
     }),
@@ -221,16 +316,16 @@ export async function resolveVersions(
       if (name !== "chrome" || !DEB_ARCH[arch]) return line;
       const pinned = chromeVersion(file);
       try {
-        const latest = await latestChrome(upstream, arch);
+        const latest = await latestChrome(upstream, arch, verify);
         if (compareVersions(latest.version, pinned) <= 0) {
           keep("chrome", arch, pinned, "Google's stable Packages index", null);
           return line;
         }
-        tools.push({ name: "chrome", arch, pinned: plain(pinned), version: plain(latest.version), source: `Google's stable Packages index, SHA256 of ${latest.version}`, kept: null });
+        tools.push({ name: "chrome", arch, pinned: plain(pinned), version: plain(latest.version), source: `Google's stable Packages index, signed by its InRelease, SHA256 of ${latest.version}`, kept: null });
         const filename = latest.filename.split("/").at(-1)!;
         return [name, filename, `${CHROME_REPO}/${latest.filename}`, latest.sha256, arch].join("\t");
       } catch (error) {
-        keep("chrome", arch, pinned, "Google's stable Packages index", `upstream could not be read: ${error instanceof Error ? error.message : String(error)}`);
+        keep("chrome", arch, pinned, "Google's stable Packages index", unread(error));
         return line;
       }
     }),
