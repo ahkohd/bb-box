@@ -30,6 +30,8 @@ export interface QemuConfig {
   readonly proxmox: ProxmoxConnection;
   /** VMIDs of the Windows templates, in the order the settings list them. */
   readonly templates: readonly number[];
+  /** VMIDs of the Linux templates, for linux boxes as VMs (057). None by default. */
+  readonly linuxTemplates: readonly number[];
   readonly vmids: VmidRange;
   readonly network: ProxmoxNetwork;
   /** A null key means bb-box generates one and shows its public key. */
@@ -63,6 +65,7 @@ export const QEMU_KEYS = {
   node: "node",
   pool: "pool",
   templates: "windows-templates",
+  linuxTemplates: "linux-templates",
   vmidFirst: "vmid-first",
   vmidLast: "vmid-last",
   bridge: "bridge",
@@ -138,6 +141,14 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
       "VMIDs of the Windows templates windows-desktop boxes are linked clones of, separated by spaces or commas. setup/proxmox-qemu/build.sh builds one. A new box is cloned from the least used.",
     group: "boxes",
     default: String(QEMU_DEFAULTS.windowsTemplate),
+  },
+  [QEMU_KEYS.linuxTemplates]: {
+    type: "string",
+    label: "Linux templates",
+    description:
+      "VMIDs of the Linux templates that linux boxes as VMs are linked clones of, separated by spaces or commas, for a box with its own kernel. setup/proxmox-qemu/build.sh linux builds one. Empty offers no Linux VMs.",
+    group: "boxes",
+    default: "",
   },
   [QEMU_KEYS.enrol]: {
     type: "boolean",
@@ -218,17 +229,16 @@ export const QEMU_INHERITS: NonNullable<BackendDriver["inherits"]> = {
 };
 
 /** The template list: VMIDs separated by spaces or commas. A settings file may give a lone VMID as a number. */
-function templateList(values: Readonly<Record<string, unknown>>, problem: Problem): number[] {
-  const raw = values[QEMU_KEYS.templates];
-  const listed = typeof raw === "number" ? (raw > 0 ? String(raw) : "") : text(values, QEMU_KEYS.templates, String(QEMU_DEFAULTS.windowsTemplate));
+function templateList(values: Readonly<Record<string, unknown>>, problem: Problem, key: string, what: string, fallback: string, taken: readonly number[] = []): number[] {
+  const raw = values[key];
+  const listed = typeof raw === "number" ? (raw > 0 ? String(raw) : "") : text(values, key, fallback);
   const templates: number[] = [];
   for (const entry of listed.split(/[\s,]+/).filter(Boolean)) {
     const vmid = Number(entry);
-    if (!wholeInRange(vmid, 100, 999_999_999)) problem(QEMU_KEYS.templates, `Use VMIDs from 100 for the Windows templates. "${entry}" is not one.`);
-    else if (templates.includes(vmid)) problem(QEMU_KEYS.templates, `Template ${vmid} is listed more than once. List each template once.`);
+    if (!wholeInRange(vmid, 100, 999_999_999)) problem(key, `Use VMIDs from 100 for the ${what} templates. "${entry}" is not one.`);
+    else if (templates.includes(vmid) || taken.includes(vmid)) problem(key, `Template ${vmid} is listed more than once. List each template once.`);
     else templates.push(vmid);
   }
-  if (!listed.trim()) problem(QEMU_KEYS.templates, "Set the VMID of at least one Windows template.");
   return templates;
 }
 
@@ -239,12 +249,14 @@ export function parseQemuPart(part: BackendPart): ParsedBackend<QemuConfig> {
   const problem: Problem = (path, message) => problems.push({ path, message });
 
   const proxmox = checkConnection(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
-  const templates = templateList(values, problem);
-  const vmids = checkVmids(values, QEMU_KEYS, QEMU_DEFAULTS, templates, problem);
+  const templates = templateList(values, problem, QEMU_KEYS.templates, "Windows", String(QEMU_DEFAULTS.windowsTemplate));
+  const linuxTemplates = templateList(values, problem, QEMU_KEYS.linuxTemplates, "Linux", "", templates);
+  if (!templates.length && !linuxTemplates.length) problem(QEMU_KEYS.templates, "Set the VMID of at least one Windows or Linux template.");
+  const vmids = checkVmids(values, QEMU_KEYS, QEMU_DEFAULTS, [...templates, ...linuxTemplates], problem);
   const network = checkNetwork(values, QEMU_KEYS, QEMU_DEFAULTS, vmids, problem);
   const ssh = checkSsh(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
   const reserve = checkReserve(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { proxmox, templates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false } };
+  return { ok: true, config: { proxmox, templates, linuxTemplates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false } };
 }

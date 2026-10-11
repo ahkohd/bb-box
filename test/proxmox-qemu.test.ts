@@ -127,14 +127,18 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   assert.deepEqual(kind!.capabilities.computerUse, { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" });
 });
 
-test("the settings list Windows templates by VMID", () => {
+test("the settings list Windows and Linux templates by VMID", () => {
   assert.deepEqual(qemuConfig({ "windows-templates": "9104, 9105" }).templates, [9104, 9105]);
   assert.deepEqual(qemuConfig({ "windows-templates": 9104 }).templates, [9104], "a settings file may give one VMID as a number");
   const problems = (values: Record<string, unknown>) => {
     const parsed = parse(values);
     return parsed.ok ? [] : parsed.problems;
   };
-  assert.deepEqual(problems({ "windows-templates": "" }), [{ path: "windows-templates", message: "Set the VMID of at least one Windows template." }]);
+  assert.deepEqual(problems({ "windows-templates": "" }), [{ path: "windows-templates", message: "Set the VMID of at least one Windows or Linux template." }]);
+  // Linux templates (057): none by default, alone or beside Windows', never the same VMID.
+  assert.deepEqual(qemuConfig({}).linuxTemplates, []);
+  assert.deepEqual(qemuConfig({ "windows-templates": "", "linux-templates": "9120" }).linuxTemplates, [9120]);
+  assert.deepEqual(problems({ "linux-templates": "9104" }), [{ path: "linux-templates", message: "Template 9104 is listed more than once. List each template once." }]);
   assert.deepEqual(problems({ "windows-templates": "9104 win" }), [{ path: "windows-templates", message: 'Use VMIDs from 100 for the Windows templates. "win" is not one.' }]);
   assert.deepEqual(problems({ "windows-templates": "9104 9104" }), [{ path: "windows-templates", message: "Template 9104 is listed more than once. List each template once." }]);
   assert.deepEqual(problems({ "windows-templates": "9701" }), [{ path: "vmid-first", message: "Move template 9701 out of the box VMID range." }]);
@@ -301,6 +305,42 @@ test("acquire claims the VMID before it clones, then configures and starts the b
     transports.displays.map(({ open: _, resize: __, ...display }) => display),
     [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", minSize: { width: 800, height: 600 } }],
   );
+});
+
+test("with Linux templates, linux boxes are VMs from them, with their own kernel, run in sh, with no Windows steps (057)", async () => {
+  const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
+  proxmox.addVmTemplate(9120);
+  // The box's address answers as Linux does.
+  rmSync(join(ssh.dir, "windows", "192.0.2.150"));
+  const linux = backend.kinds().find((kind) => kind.id === "linux");
+  assert.ok(linux, "offered beside windows-desktop");
+  assert.deepEqual(linux.capabilities.features, ["docker", "kernel"]);
+  assert.equal(linux.capabilities.os, "linux");
+  assert.equal(linux.capabilities.enrol, true, "it joins BB as other Linux boxes do");
+  assert.equal((await backend.capacity("linux", sized(), [])).ok, true);
+  const report = await backend.doctor();
+  assert.equal(report.checks.find((check) => check.id === "template.9120")?.status, "ok", "the doctor checks the Linux template");
+  assert.ok(!report.checks.some((check) => check.id === "template.9120.image"), "its image record comes with its refresh");
+
+  const box = identity(sized(), "linux");
+  const hook = hooks();
+  const guest = await backend.acquire(box, null, hook.value, signal());
+  assert.deepEqual(guest.data, { template: 9120, box: box.boxId });
+  assert.equal(proxmox.calls.find((call) => call.path.endsWith("/clone"))!.path, "/nodes/pve/qemu/9120/clone", "a clone of the Linux template");
+  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags"], "no warm pool, clock or display");
+  assert.equal(parseTags(proxmox.guests.get(9700)!.config.tags).at(-1), "template.9120");
+
+  const transports = await backend.transports(guest);
+  assert.deepEqual(transports.displays, []);
+  const result = await transports.command!.run("echo hi from $USER", { timeoutMs: 10_000 });
+  assert.equal(result.stdout, "hi from box\n");
+  assert.doesNotMatch(ssh.log().at(-1)!.command, /FromBase64String/, "commands go to sh");
+
+  // A stop hibernates it, and a start resumes it with no clock to set.
+  await backend.stop!(guest, signal());
+  const timings: Record<string, number> = {};
+  await backend.start!(guest, signal(), (step, ms) => void (timings[step] = ms));
+  assert.ok(!("clock" in timings), JSON.stringify(timings));
 });
 
 test("the desktop resizes to the viewer's size, else to the listed mode that best covers it, set by Windows in the box user's session, and gives Windows' reason when it cannot", async () => {
