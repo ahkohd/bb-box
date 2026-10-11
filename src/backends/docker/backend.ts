@@ -284,8 +284,17 @@ function dataOf(container: ContainerInfo): Record<string, string> {
  * before #283 cannot.
  */
 export function dockerKinds(config: DockerConfig, rootless = false, gpuDocker = true): BoxKind[] {
-  const docker = config.docker && !rootless ? ["docker"] : [];
-  const kinds: Record<DockerKind, BoxKind> = {
+  const kinds = kindTable(config.docker && !rootless ? ["docker"] : [], gpuDocker);
+  return DOCKER_KINDS.filter((kind) => config.images[kind]).map((kind) => kinds[kind]);
+}
+
+/** Kind `id` as a Docker backend offers it once its image is set, with Docker in its boxes or not: for a desktop built on demand. */
+export function dockerKind(id: DockerKind, docker: boolean): BoxKind {
+  return kindTable(docker ? ["docker"] : [], true)[id];
+}
+
+function kindTable(docker: string[], gpuDocker: boolean): Record<DockerKind, BoxKind> {
+  return {
     linux: {
       id: "linux",
       label: "Linux",
@@ -361,7 +370,6 @@ export function dockerKinds(config: DockerConfig, rootless = false, gpuDocker = 
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
   };
-  return DOCKER_KINDS.filter((kind) => config.images[kind]).map((kind) => kinds[kind]);
 }
 
 /** Where the docker CLI goes, for people: the host of an ssh:// address, a BB machine's name, or the local daemon. */

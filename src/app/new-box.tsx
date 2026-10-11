@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import type { ImageOptionView, KindView, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
+import { DESKTOP_BUILD_WORDS } from "./first-run.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
@@ -107,8 +108,9 @@ export function nameProblem(name: string): string | null {
 }
 
 export function NewBox({
-  kinds,
+  kinds: offeredKinds,
   make,
+  onDemand,
   machine = false,
   primary = false,
   profile,
@@ -128,7 +130,15 @@ export function NewBox({
   profile?: (backend: string) => Promise<ProviderProfile>;
   /** Asks an agent to make the project a box image (049), when it has none. */
   askForImage?: () => void;
+  /**
+   * A desktop whose image is not built yet (the setup plan's PR 4): the form offers it, saying it builds first, and
+   * Create asks `build`, which resolves with the refusal to show, or null once the build has started.
+   */
+  onDemand?: { readonly kind: KindView; readonly machine: string; readonly build: (size?: SizeRequest) => Promise<string | null> } | null;
 }) {
+  // The desktop to build is offered only where no desktop of its system is: once one is, it is that.
+  const added = !!onDemand && !offeredKinds.some((offered) => offered.os === onDemand.kind.os && offered.arch === onDemand.kind.arch && offered.desktop);
+  const kinds = added ? [...offeredKinds, onDemand!.kind] : offeredKinds;
   const pluginId = experimental_usePluginId();
   const [open, setOpen] = useState(false);
   useEscapeCloses(open, setOpen);
@@ -190,6 +200,8 @@ export function NewBox({
   // Every step shows what exists; a choice snaps to the nearest that does.
   const picked = nearest(kinds, wanted);
   const kind = kindFor(kinds, picked);
+  /** The chosen kind is the desktop to build first. */
+  const buildsFirst = added && kind?.id === onDemand!.kind.id;
   // The images covering the chosen kind (049): the choice shows only where there is one. The state lists this project's first.
   const covering = kind ? images.filter((candidate) => candidate.kinds.includes(kind.id)) : [];
   const imageChoice = covering.length > 0;
@@ -283,7 +295,7 @@ export function NewBox({
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage);
+      const refused = buildsFirst ? await onDemand!.build(request) : await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -316,7 +328,9 @@ export function NewBox({
   const kindOptions = FORM_FILTERS.map((option) => ({ value: option.id, label: option.label, disabled: option.id !== "all" && !offers.some((offer) => formFilterOf(offer) === option.id) }));
   const runsOnChoiceList = [{ value: "any", label: "Any machine" }, ...runsOnChoices.map((os) => ({ value: os, label: RUNS_ON_WORDS[os] }))];
   // The footer says what stands in the way: a refusal, or filters that leave no provider.
-  const standing = problem ?? (noMatch ? "No provider matches these filters." : null);
+  const standing =
+    problem ??
+    (noMatch ? "No provider matches these filters." : buildsFirst ? `BB Box builds the desktop image on ${onDemand!.machine} first, ${DESKTOP_BUILD_WORDS}, then makes the box.` : null);
   const rowClass = (selected: boolean) =>
     cn(
       "flex w-full flex-col items-start rounded-md border px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
@@ -379,7 +393,7 @@ export function NewBox({
           <FormSection title="Type">
             <div role="radiogroup" aria-label="Type" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, 2, picked.desktop ? 1 : 0, (position) => pick({ desktop: position === 1 }))}>
               <OptionCard title="Server" words="Terminal" glyph={TYPE_GLYPHS.server} selected={!picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, false)} onClick={() => pick({ desktop: false })} />
-              <OptionCard title="Desktop" words="Screen · Terminal · Computer use" glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
+              <OptionCard title="Desktop" words={added && picked.os === onDemand!.kind.os && picked.arch === onDemand!.kind.arch ? `Builds first, ${DESKTOP_BUILD_WORDS}` : "Screen · Terminal · Computer use"} glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
             </div>
             {displayChoice ? (
               // The windowing is a detail of a desktop, as a GPU is of its resources (the operator's notes of 3 October 2026): a dim sub-label under
@@ -561,7 +575,7 @@ export function NewBox({
             )}
             <Button type="submit" size="sm" className="shrink-0" disabled={!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong !== null}>
               {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-              {machine && !primary ? "Add machine" : "Create box"}
+              {machine && !primary ? "Add machine" : buildsFirst ? "Build and create" : "Create box"}
             </Button>
           </div>
         </form>

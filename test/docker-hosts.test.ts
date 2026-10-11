@@ -11,7 +11,8 @@ import type { DockerInfo } from "../src/backends/docker/cli.ts";
 import { DRIVERS } from "../src/backends/index.ts";
 import { checkDocument, emptyDocument, type ConfigDocument } from "../src/core/document.ts";
 import { hostEntry } from "../src/host/entry.ts";
-import { DockerHosts, MachinePlatforms, SILENT_MS, machineHosts, machineOffline, withDockerHost, type MachineRecord } from "../src/plugin/docker-hosts.ts";
+import { DockerHosts, MachinePlatforms, SILENT_MS, desktopsOnDemand, machineHosts, machineOffline, withDesktopImage, withDockerHost, type MachineRecord } from "../src/plugin/docker-hosts.ts";
+import { dockerKind, dockerKinds } from "../src/backends/docker/backend.ts";
 import { MemoryStorage } from "./helpers.ts";
 import { tempDir } from "./helpers.ts";
 import { machinePlatform } from "../src/host/relay.ts";
@@ -224,4 +225,27 @@ test("a BB machine's OS is kept in storage at the host entry's answer, so a rest
   assert.equal(await restarted.learn("host_m1", "linux"), true);
   assert.equal(restarted.get("host_m1"), "linux");
   assert.equal(restarted.get("host_m2"), null);
+});
+
+test("a desktop builds on demand where first-run setup left Docker's desktop image off, and stops being on demand once the image is set again", () => {
+  const document = emptyDocument();
+  const linuxOnly = withDockerHost(document, { id: "host_a", name: "devpc" }, true, 0, true);
+  const [backend] = linuxOnly.backends;
+  assert.deepEqual(desktopsOnDemand(linuxOnly), [{ hostId: "host_a", backend: backend!.id }]);
+  // Turned on in full, or with the desktop kind off, or with Docker off, there is nothing to build on demand.
+  assert.deepEqual(desktopsOnDemand(withDockerHost(document, { id: "host_a", name: "devpc" }, true, 0)), []);
+  assert.deepEqual(desktopsOnDemand({ ...linuxOnly, kinds: { "linux-desktop-cpu": { enabled: false } } } as ConfigDocument), []);
+  assert.deepEqual(desktopsOnDemand(withDockerHost(linuxOnly, { id: "host_a", name: "devpc" }, false, 1)), []);
+  // Set again, the image is at its default, the Wayland one stays off, and the configuration still checks.
+  const set = withDesktopImage(linuxOnly, backend!.id);
+  assert.equal("desktop-image" in set.backends[0]!.fields, false);
+  assert.equal(set.backends[0]!.fields["wayland-desktop-image"], "");
+  assert.deepEqual(desktopsOnDemand(set), []);
+  assert.deepEqual(checkDocument(set, {}, DRIVERS), []);
+});
+
+test("the desktop built on demand is the kind the Docker backend offers once its image is set", () => {
+  const offered = dockerKinds({ images: { linux: "a", "linux-desktop-cpu": "b", "linux-desktop": null, "linux-desktop-wayland-cpu": null }, docker: true } as never).find((kind) => kind.id === "linux-desktop-cpu");
+  assert.deepEqual(dockerKind("linux-desktop-cpu", true), offered);
+  assert.deepEqual(dockerKind("linux-desktop-cpu", false).capabilities.features, []);
 });

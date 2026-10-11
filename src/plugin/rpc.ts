@@ -42,7 +42,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
 
   bb.rpc.register(contract, {
     async state({ threadId }) {
-      const [list, kinds, machine, project] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId), app.projectOf(threadId).catch(() => null)]);
+      const [list, kinds, machine, project, desktopOnDemand] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId), app.projectOf(threadId).catch(() => null), app.desktopOnDemand().catch(() => null)]);
       const imageOffer = !!project && !Object.values(app.configuration.exported().images ?? {}).some((image) => image.projects.includes(project));
       const images = await app.imageOptions(project).catch(() => []);
       const yours = machine !== null && (machine.threadId === OPERATOR || machine.threadId === SPARES);
@@ -50,7 +50,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         machine && !list.some((box) => box.id === machine.id)
           ? { box: app.view(machine), owner: yours ? ("yours" as const) : ("thread" as const), threadId: yours ? null : machine.threadId }
           : null;
-      return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer, images };
+      return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer, images, desktopOnDemand };
     },
     acquire: ({ threadId, kind, size, on, image }) =>
       change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}) })),
@@ -134,6 +134,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     "config.apply": ({ draft, revision }) => app.configuration.apply(draft, revision),
     "docker.hosts": async () => ({ hosts: await app.dockerHosts.list() }),
     "setup.offer": async () => ({ machines: await app.setups(), access: await app.machineAccess() }),
+    "setup.desktop": async ({ threadId, hostId, size }) => ({ result: await app.buildDesktop({ threadId, hostId, ...(size ? { size } : {}) }) }),
     "setup.docker": async ({ hostId }) => {
       const result = await app.setDockerHost(hostId, true, true);
       return { result, machines: await app.setups() };

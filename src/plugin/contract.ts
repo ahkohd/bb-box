@@ -26,6 +26,15 @@ export interface PanelState {
   readonly imageOffer: boolean;
   /** The projects' images a box of the thread can choose (049), the project's own marked `mine`. "standard" is a choice too. */
   readonly images: readonly ImageOptionView[];
+  /** A BB machine whose Docker desktop image is off, which New box can build first (the setup plan's PR 4). Absent or null for none. */
+  readonly desktopOnDemand?: DesktopOnDemandView | null;
+}
+
+/** A desktop New box can build first: the BB machine whose Docker builds its image, and the kind as it will be offered. */
+export interface DesktopOnDemandView {
+  readonly hostId: string;
+  readonly name: string;
+  readonly kind: KindView;
 }
 
 /** One box's desktop or terminal, for its tab. */
@@ -165,6 +174,8 @@ export const contract = defineRpcContract({
   "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
   /** What each BB machine offers first-run setup, the server's first, and what stands in the way of boxes joining BB, if anything. */
   "setup.offer": { input: z.null(), output: z.custom<{ machines: MachineSetup[]; access: MachineAccessProblem | null }>() },
+  /** Builds the desktop image on BB machine `hostId`, then makes a desktop box of `size` for the thread. */
+  "setup.desktop": { input: thread.extend({ hostId: z.string().min(1), size: size.optional() }), output: z.custom<{ result: ApplyResult }>() },
   /** First-run setup: turns on Docker on BB machine `hostId` with the Linux image alone, which then builds. */
   "setup.docker": { input: z.object({ hostId: z.string().min(1) }), output: z.custom<{ result: ApplyResult; machines: MachineSetup[] }>() },
   /**

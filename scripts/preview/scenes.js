@@ -369,7 +369,7 @@ function rpc(boxes, options = {}) {
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
-    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
+    state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null }),
     desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
     ping: () => null,
     allBoxes: () => [
@@ -488,6 +488,29 @@ export const scenes = {
     chrome: boxesChrome,
     height: 300,
     rpc: rpc([box({ id: "box_j", name: "silver-harbor", timings: { total: 422 }, enrol: { state: "failed", hostId: null, error: "Enrolling box silver-harbor failed: Sign in to your bb account to use bb connect" } })]),
+  },
+  // A desktop whose image builds first (the setup plan's PR 4): the form says so, and the panel shows the build.
+  "desktop-on-demand-form": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    width: 720,
+    height: 760,
+    rpc: rpc([], {
+      kinds: [{ ...KINDS[0], forms: ["Docker"], admin: true, docker: true, offers: [offer("docker:devpc", "Docker", ["devpc"], "Docker", { typicalReadyMs: 400 })] }],
+      desktopOnDemand: { hostId: "host_bb", name: "devpc", kind: { ...KINDS[2], forms: ["Docker"], offers: [offer("docker:devpc", "Docker", ["devpc"], "Docker", { resizable: true })] } },
+    }),
+    after: async (root) => {
+      click(root, "button", "New box");
+      await wait(300);
+      pick("radio", "Desktop");
+      await wait(200);
+    },
+  },
+  "desktop-on-demand-building": {
+    slot: "boxes",
+    chrome: boxesChrome,
+    height: 360,
+    rpc: rpc([box({ id: "box_d", name: "warm-dune" })], { setups: [setupOf({ state: "on", build: { state: "building", targets: ["desktop"], detail: "#9 [desktop 3/9] RUN apt-get install", step: { at: 3, of: 9 }, startedAt: now - 125_000, endedAt: null } })] }),
   },
   "panel-list": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting, desktop, stopped]) },
   "panel-runs-on": { slot: "boxes", chrome: boxesChrome, rpc: rpc([starting], { runsOn: { box: MACHINES[0].box, owner: "yours", threadId: null } }) },

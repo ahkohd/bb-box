@@ -14,7 +14,7 @@
 
 import { DOCKER_KEYS } from "../backends/docker/config.ts";
 import type { BackendStorage, GuestOs } from "../backends/types.ts";
-import type { BackendConfig, ConfigDocument } from "../core/document.ts";
+import { kindOn, type BackendConfig, type ConfigDocument } from "../core/document.ts";
 import type { DockerInfo } from "../backends/docker/cli.ts";
 import type { ImageBuild } from "./docker-images.ts";
 
@@ -205,6 +205,40 @@ export function withDockerHost(document: ConfigDocument, machine: { readonly id:
   if (!existing) return document;
   if (boxes > 0) return { ...document, backends: document.backends.map((backend) => (backend === existing ? { ...backend, enabled: false } : backend)) };
   return { ...document, backends: document.backends.filter((backend) => backend !== existing) };
+}
+
+/** The desktop kind a Docker machine's desktop image serves, built on demand (the setup plan's PR 4). */
+export const DESKTOP_ON_DEMAND = "linux-desktop-cpu";
+
+/** A BB machine whose Docker is on, with the desktop image first-run setup left off, so the New box form can build it. */
+export interface DesktopOnDemand {
+  readonly hostId: string;
+  readonly backend: string;
+}
+
+/**
+ * The BB machines whose desktop image can be built when a desktop is first asked for: Docker there is on, its desktop
+ * image is turned off, as first-run setup leaves it, and the desktop kind is on. An image set to another reference, or
+ * left at its default, is not this: it is offered, or not, as configured.
+ */
+export function desktopsOnDemand(document: ConfigDocument): DesktopOnDemand[] {
+  if (!kindOn(document, DESKTOP_ON_DEMAND)) return [];
+  return document.backends.flatMap((backend) => {
+    const host = typeof backend.fields.host === "string" ? /^bb:(.+)$/.exec(backend.fields.host)?.[1] : undefined;
+    return backend.type === "docker" && backend.enabled && host && backend.fields[DOCKER_KEYS.desktopImage] === "" ? [{ hostId: host, backend: backend.id }] : [];
+  });
+}
+
+/** The configuration with backend `id`'s desktop image back at its default, so it builds and its desktops are offered. */
+export function withDesktopImage(document: ConfigDocument, id: string): ConfigDocument {
+  return {
+    ...document,
+    backends: document.backends.map((backend) => {
+      if (backend.id !== id) return backend;
+      const { [DOCKER_KEYS.desktopImage]: _, ...fields } = backend.fields;
+      return { ...backend, fields };
+    }),
+  };
 }
 
 const PLATFORMS_KEY = "machine-platforms";

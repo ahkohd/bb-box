@@ -56,6 +56,24 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   };
   // The size key is left out for the kind's default: RPC input must be JSON.
   const make = (kind: string, size?: SizeRequest, _name?: string, on?: string | string[], image?: string) => settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}), ...(on ? { on } : {}), ...(image ? { image } : {}) }));
+  // A desktop whose image builds first (the setup plan's PR 4): the panel then shows the build, and the box follows it.
+  const onDemand = state?.desktopOnDemand
+    ? {
+        kind: state.desktopOnDemand.kind,
+        machine: state.desktopOnDemand.name,
+        build: async (size?: SizeRequest): Promise<string | null> => {
+          const hostId = state.desktopOnDemand!.hostId;
+          try {
+            const { result } = await rpc.call("setup.desktop", { threadId, hostId, ...(size ? { size } : {}) });
+            await refresh();
+            if (result.ok) return null;
+            return result.reason === "problems" ? result.problems.map((item) => item.message).join(" ") : "Someone else saved BB Box's settings at the same moment. Try again.";
+          } catch (caught) {
+            return message(caught);
+          }
+        },
+      }
+    : null;
   const act = async (method: BoxAction, box: BoxView, force = false) => {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && force ? { force: true } : {}) };
@@ -118,6 +136,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
             profile={(backend) => rpc.call("provider", { backend })}
             askForImage={state.imageOffer ? () => navigate.toCompose({ initialPrompt: IMAGE_REQUEST, focusPrompt: true }) : undefined}
             images={state.images}
+            onDemand={onDemand}
           />
         ) : null}
       </div>
