@@ -15,34 +15,13 @@ bb-box assumes one trusted user. It is not a sandbox for code you do not trust.
 
 ## Quick start
 
-This takes about 10 minutes, most of it building the Linux image, with Docker on the machine that runs BB. You need:
+You need a Linux machine that runs BB and Docker, with about 10 GB free.
 
-- a Linux machine that runs BB and Docker Engine
-- about 10 GB of free disk and 8 GiB of memory
+1. In BB, open Settings, then Installed plugins, then **New plugin**, then **Install from source**, and enter `git:https://github.com/moonstead/bb-box.git@main`. With BB's command line: `bb plugin install git:https://github.com/moonstead/bb-box.git@main`.
+2. Open a thread's **Box** panel and select **Use Docker on this machine**. The Linux image builds in 4 to 8 minutes.
+3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
 
-1. Install the plugin. In BB, open Settings, then Installed plugins. Select **New plugin**, then **Install from source**, and enter:
-
-   ```text
-   git:https://github.com/moonstead/bb-box.git@main
-   ```
-
-   Select **Install plugin**. It takes under a minute. If you have BB's command line, this does the same:
-
-   ```sh
-   bb plugin install git:https://github.com/moonstead/bb-box.git@main
-   ```
-
-2. Turn on Docker. Open a thread and select the **Box** tab in its right panel. Select **Use Docker on this machine**. BB Box builds the Linux image, which takes 4 to 8 minutes, and the panel shows how far it is. If BB's user cannot use Docker, the panel gives the line that fixes it instead.
-
-3. Make a box. Select the plus, choose **Linux** and **Server**, then select **Create box**. The box is ready in about a second, and joins BB a few seconds later.
-
-4. Use it. Select **Open terminal** on the box's row. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
-
-When you are done, select **Release…** in the box's menu. A box also goes when its thread is archived or deleted.
-
-If something is wrong, run `bb box doctor`. It checks the setup and says what to fix. For desktops, see the [Docker guide](setup/docker/README.md).
-
-Boxes join BB through BB's Machine access, in BB's settings under Machines. bb connect, the desktop app's default, needs you signed in to your bb account; Manual needs an address boxes can reach. If a box says 'Could not join BB', the line under it says why. See [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb). Boxes still work without joining, but do not get the thread's Git credentials and variables.
+`bb box doctor` checks the setup. If a box says 'Could not join BB', see [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
 
 ## Backends and boxes
 
