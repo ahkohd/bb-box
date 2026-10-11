@@ -147,6 +147,7 @@ class Upstream {
   readonly #fetch: FetchText;
   readonly #signal: AbortSignal | undefined;
   readonly #cache = new Map<string, Promise<string>>();
+  readonly #bytes = new Map<string, Promise<Uint8Array>>();
 
   constructor(fetch: FetchText, signal?: AbortSignal) {
     this.#fetch = fetch;
@@ -169,12 +170,18 @@ class Upstream {
     return got;
   }
 
-  /** A URL's bytes, as a detached signature is. */
-  async bytes(url: string): Promise<Uint8Array> {
-    const timeout = AbortSignal.timeout(30_000);
-    const response = await this.#fetch(url, { headers: { "User-Agent": "bb-box" }, signal: this.#signal ? AbortSignal.any([this.#signal, timeout]) : timeout });
-    if (!response.ok) throw new Error(`${url} answered HTTP ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
+  /** A URL's bytes, as a detached signature is, each fetched once. */
+  bytes(url: string): Promise<Uint8Array> {
+    let got = this.#bytes.get(url);
+    if (!got) {
+      const timeout = AbortSignal.timeout(30_000);
+      got = this.#fetch(url, { headers: { "User-Agent": "bb-box" }, signal: this.#signal ? AbortSignal.any([this.#signal, timeout]) : timeout }).then(async (response) => {
+        if (!response.ok) throw new Error(`${url} answered HTTP ${response.status}`);
+        return new Uint8Array(await response.arrayBuffer());
+      });
+      this.#bytes.set(url, got);
+    }
+    return got;
   }
 
   json<T>(url: string, headers?: Readonly<Record<string, string>>): Promise<T> {

@@ -177,7 +177,7 @@ test("gpgv checks a signature against the pinned key, the clear-signed text too,
   const dir = tempDir("gpgv");
   const home = join(dir, "gnupg");
   mkdirSync(home, { mode: 0o700 });
-  const gpg = (...args: string[]) => spawnSync("gpg", ["--homedir", home, "--batch", "--pinentry-mode", "loopback", "--passphrase", "", ...args], { encoding: "utf8" });
+  const gpg = (...args: string[]) => spawnSync("gpg", ["--homedir", home, "--batch", "--yes", "--pinentry-mode", "loopback", "--passphrase", "", ...args], { encoding: "utf8" });
   for (const name of ["Signer", "Other"]) assert.equal(gpg("--quick-gen-key", `${name} <${name.toLowerCase()}@example.com>`, "ed25519", "sign", "never").status, 0);
   const fingerprint = (name: string) => /^fpr:+([0-9A-F]{40}):/m.exec(gpg("--with-colons", "--fingerprint", name).stdout)![1]!;
   mkdirSync(join(dir, "keys"));
