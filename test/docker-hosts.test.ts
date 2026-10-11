@@ -164,20 +164,31 @@ test("turning a machine on adds a Docker backend on it, last, named after it; of
   assert.deepEqual(withDockerHost(held, { id: "host_b", name: "Dev PC" }, true, 2).backends.at(-1), added, "and on again is the same backend");
 });
 
+/** The host entry's docker answer without its setup facts, which vary by machine. */
+function answer<T extends { setup?: unknown }>(full: T): Omit<T, "setup"> {
+  const { setup: _, ...rest } = full;
+  return rest;
+}
+
 test("the host entry's docker check finds Docker or says why, with no lease, and starts nothing (042)", async (t) => {
   const dir = tempDir("docker-check");
   const socket = join(dir, "docker.sock");
   const present = experimental_createHostEntryHarness(hostEntry({ relay: { endpoint: async () => ({ path: socket }) } }));
   t.after(() => present.experimental_dispose());
-  assert.deepEqual(await present.experimental_call("docker", {}), { endpoint: socket, found: false, reason: `${socket}: connect ENOENT ${socket}`, platform: machinePlatform() });
+  assert.deepEqual(answer(await present.experimental_call("docker", {})), { endpoint: socket, found: false, reason: `${socket}: connect ENOENT ${socket}`, platform: machinePlatform() });
   const server = createServer((connection) => connection.end());
   await new Promise<void>((resolve) => server.listen(socket, () => resolve()));
   t.after(() => server.close());
-  assert.deepEqual(await present.experimental_call("docker", {}), { endpoint: socket, found: true, reason: null, platform: machinePlatform() });
+  const found = await present.experimental_call("docker", {});
+  assert.deepEqual(answer(found), { endpoint: socket, found: true, reason: null, platform: machinePlatform() });
+  // With it, what first-run setup needs: who BB's daemon runs as, and whether it has the socket's group.
+  assert.equal(found.setup?.user, userInfo().username);
+  assert.equal(found.setup?.inSocketGroup, process.platform === "linux" ? true : found.setup?.inSocketGroup);
+  assert.ok(["ok", "denied", "absent"].includes(found.setup!.kvm));
   assert.equal(present.experimental_getRetainedWorkerLeaseCount(), 0, "the worker is left to its idle timer");
   const unset = experimental_createHostEntryHarness(hostEntry({ relay: { endpoint: async () => Promise.reject(new Error("DOCKER_HOST is ssh://me@x, which the relay cannot reach")) } }));
   t.after(() => unset.experimental_dispose());
-  assert.deepEqual(await unset.experimental_call("docker", {}), { endpoint: "", found: false, reason: "DOCKER_HOST is ssh://me@x, which the relay cannot reach", platform: machinePlatform() });
+  assert.deepEqual(answer(await unset.experimental_call("docker", {})), { endpoint: "", found: false, reason: "DOCKER_HOST is ssh://me@x, which the relay cannot reach", platform: machinePlatform() });
 });
 
 test("a Docker socket that refuses BB's daemon is Docker to fix, and the host entry's check says how (042)", { skip: process.platform !== "linux" || process.getuid?.() === 0 ? "needs Linux and a user other than root" : false }, async (t) => {
@@ -190,7 +201,7 @@ test("a Docker socket that refuses BB's daemon is Docker to fix, and the host en
   const worker = experimental_createHostEntryHarness(hostEntry({ relay: { endpoint: async () => ({ path: socket }) } }));
   t.after(() => worker.experimental_dispose());
   const { username, uid } = userInfo();
-  assert.deepEqual(await worker.experimental_call("docker", {}), {
+  assert.deepEqual(answer(await worker.experimental_call("docker", {})), {
     endpoint: socket,
     found: false,
     reason: `${username} may not use Docker's socket ${socket}. Add ${username} to its group, usually docker, then restart ${username}'s services so BB's daemon has the group: sudo systemctl restart user@${uid}.service.`,

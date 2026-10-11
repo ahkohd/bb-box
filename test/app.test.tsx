@@ -12,6 +12,7 @@ import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
+import type { MachineSetup } from "../src/plugin/setup-offer.ts";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { CLIPBOARD_MAX_BYTES, SelkiesSession } from "../src/app/selkies.ts";
@@ -415,7 +416,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; video?: boolean } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; video?: boolean } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -440,6 +441,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
     profile: async () => ({ lines: [] }),
+    "setup.offer": () => ({ machines: options.setups ?? [] }),
     ping: async () => {
       return null;
     },
