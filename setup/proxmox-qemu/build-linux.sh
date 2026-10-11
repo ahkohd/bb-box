@@ -201,10 +201,13 @@ ssh_box 'bash -lc bb-box-check-headless' </dev/null | tee "$stage/check.txt"
 ! grep -q '^[^ ].* FAIL ' "$stage/check.txt" || die "checks failed (above)"
 
 log "finalizing the build VM"
-ssh_box "sudo bash $in_vm/guest/finalize.sh $in_vm linux" </dev/null
 # The image's record (049), which the template's description carries for the
-# plugin's doctor, as its second line.
-record=$(ssh_box 'cat /usr/share/bb-box/image.json' </dev/null | jq -c .) || die "the template has no image record"
+# plugin's doctor, as its second line. It is read in finalize.sh's session:
+# finalize.sh removes the SSH host keys, so no new connection can be made.
+# Its own output goes to stderr, so the record is all there is on stdout.
+record=$(ssh_box "sudo bash $in_vm/guest/finalize.sh $in_vm linux >&2 && cat /usr/share/bb-box/image.json" </dev/null | jq -c .) ||
+  die "finalizing failed, or the template has no image record"
+[ -n "$record" ] || die "the template has no image record"
 qm shutdown "$vm" --timeout 120
 # Clones get their address from the backend's serial; the template has none.
 qm set "$vm" --delete ide2,ciuser,sshkeys,ipconfig0,nameserver,serial0 --cores "$cores" --memory "$memory" \
