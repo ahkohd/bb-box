@@ -319,7 +319,10 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   assert.equal(linux.capabilities.enrol, true, "it joins BB as other Linux boxes do");
   assert.equal((await backend.capacity("linux", sized(), [])).ok, true);
   const report = await backend.doctor();
-  assert.equal(report.checks.find((check) => check.id === "template.9120")?.status, "ok", "the doctor checks the Linux template");
+  const check = report.checks.find((one) => one.id === "template.9120");
+  assert.equal(check?.status, "ok", "the doctor checks the Linux template");
+  assert.equal(check?.name, "Linux template 9120", "and names it as Linux");
+  assert.equal(report.checks.find((one) => one.id === "template.9104")?.name, "Windows template 9104");
   assert.ok(!report.checks.some((check) => check.id === "template.9120.image"), "its image record comes with its refresh");
 
   const box = identity(sized(), "linux");
