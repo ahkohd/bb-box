@@ -1238,6 +1238,23 @@ test("an enrolment fails, and says why, when BB does not show the machine connec
   assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "failed", hostId: `host-${box.id}`, error: reason });
 });
 
+test("the nightly rebuilds run on bb-box's own schedule at 03:00 while General's switch is on, and not while it is off", async (t) => {
+  const { harness, app } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  assert.deepEqual(
+    harness.inspection.registrations.schedules.filter((schedule) => schedule.name === "nightly-images").map((schedule) => schedule.cron),
+    ["0 3 * * *"],
+  );
+  const started = () => harness.inspection.logEntries.filter((entry) => entry.message.startsWith("Rebuilding the standard images that are due")).length;
+  await harness.runSchedule("nightly-images");
+  assert.equal(started(), 0, "off unless set");
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, general: { ...rest.general, nightlyImages: true } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  await harness.runSchedule("nightly-images");
+  assert.equal(started(), 1);
+});
+
 test("a box BB could not add as a machine says why, after BB removes the machine (the newcomer check: bb connect without a sign-in)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());

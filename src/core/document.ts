@@ -101,6 +101,11 @@ export interface GeneralSettings {
    * off: an install with no value takes the default.
    */
   readonly video?: boolean;
+  /**
+   * Whether bb-box rebuilds the standard images that are due each night (049), on a schedule of its own at 03:00 on
+   * BB's server. Off unless set; first-run setup turns it on.
+   */
+  readonly nightlyImages?: boolean;
 }
 
 export interface ConfigDocument {
@@ -126,7 +131,7 @@ export interface Problem {
   readonly message: string;
 }
 
-export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true } as const;
+export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false } as const;
 
 export const MAX_WARM = 20;
 export const MAX_SPARES = 10;
@@ -262,7 +267,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files and video.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video and nightlyImages.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -281,7 +286,10 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "video") {
           if (typeof value === "boolean") general[key] = value;
           else problem("general.video", "video is true or false.");
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files and video.`);
+        } else if (key === "nightlyImages") {
+          if (typeof value === "boolean") general[key] = value;
+          else problem("general.nightlyImages", "nightlyImages is true or false.");
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video and nightlyImages.`);
       }
     }
   }

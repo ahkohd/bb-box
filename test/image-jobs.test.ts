@@ -207,7 +207,7 @@ test("the doctor's checks: Nightly rebuilds, and each image whose last rebuild f
   const { job, clock } = jobs([lxc.backend], { fail: ["9101"] });
   const before = await job.checks();
   assert.deepEqual([before[0]!.name, before[0]!.status], ["Nightly rebuilds", "warn"]);
-  assert.equal(before[0]!.fix, `Have a BB script automation run it each night: ${AUTOMATION}`);
+  assert.equal(before[0]!.fix, `Turn on Rebuild images each night under General in BB Box's settings, or have a BB script automation run it each night: ${AUTOMATION}`);
   await job.refreshAll();
   const after = await job.checks();
   assert.deepEqual([after[0]!.status, after[0]!.detail], ["ok", "The last run ended today, with a failure."]);

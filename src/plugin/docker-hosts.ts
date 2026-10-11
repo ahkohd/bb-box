@@ -200,7 +200,9 @@ export function withDockerHost(document: ConfigDocument, machine: { readonly id:
     for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
     const fields = { host: machineHost(machine.id), privileged: true, ...(linuxOnly ? { [DOCKER_KEYS.desktopImage]: "", [DOCKER_KEYS.waylandImage]: "" } : {}) };
     const backend: BackendConfig = { id, type: "docker", label: `Docker on ${machine.name}`.slice(0, 64), enabled: true, fields };
-    return { ...document, backends: [...document.backends, backend] };
+    // First-run setup also keeps the images current each night, unless the switch was set already.
+    const general = linuxOnly && document.general.nightlyImages === undefined ? { ...document.general, nightlyImages: true } : document.general;
+    return { ...document, general, backends: [...document.backends, backend] };
   }
   if (!existing) return document;
   if (boxes > 0) return { ...document, backends: document.backends.map((backend) => (backend === existing ? { ...backend, enabled: false } : backend)) };

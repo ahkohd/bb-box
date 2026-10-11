@@ -241,6 +241,14 @@ export function SettingsSection() {
         >
           <Switch aria-label="Linux desktops as video" checked={general.video} disabled={busy === "general"} onCheckedChange={(video) => void applyNow("general", withGeneral(document, { video: video === state.defaults.general.video ? undefined : video }))} />
         </GeneralRow>
+        <GeneralRow label="Rebuild images each night" description="At 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates.">
+          <Switch
+            aria-label="Rebuild images each night"
+            checked={general.nightlyImages}
+            disabled={busy === "general"}
+            onCheckedChange={(nightlyImages) => void applyNow("general", withGeneral(document, { nightlyImages: nightlyImages === state.defaults.general.nightlyImages ? undefined : nightlyImages }))}
+          />
+        </GeneralRow>
       </Section>
       <BoxFilesSection
         files={document.general.files ?? []}

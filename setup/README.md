@@ -36,7 +36,11 @@ Each thread then has a Box panel, and agents have the `box_` tools.
 
 ## Rebuild images each night
 
-bb-box rebuilds its standard Linux, macOS and Windows images itself, so new boxes have current agent tools, gh and Chrome, and Windows boxes have Windows' updates. To turn this on, have a BB automation run the job each night, in a project of yours:
+bb-box rebuilds its standard Linux, macOS and Windows images itself, so new boxes have current agent tools, gh and Chrome, and Windows boxes have Windows' updates. Turn on **Rebuild images each night** under General in BB Box's settings: bb-box then starts a run at 03:00 on BB's server, on a schedule of its own, while it is loaded. Setting up Docker from the Box panel turns it on.
+
+A run starts no image after 4 hours, and goes on in the background. To see what the last run did, run `bb box images list`. `bb box doctor` warns when no run has finished for 8 days. What is rebuilt and when is in the [user guide's images page](../docs/guide/images.md), and every `bb box images` command is in the [command-line reference](../docs/reference/cli.md).
+
+If you want another time, or a run with other options, leave the switch off and have a BB automation run the job instead, in a project of yours:
 
 ```sh
 bb automation create --project <project> --name "bb-box images" \
@@ -44,9 +48,7 @@ bb automation create --project <project> --name "bb-box images" \
   --script "bb box images refresh" --timeout 900000
 ```
 
-A BB automation waits at most 15 minutes, but a run can take hours. When the automation stops waiting, the run goes on inside bb-box.
-
-To see what the last run did, run `bb box images list`. `bb box doctor` warns when no run has finished for 8 days. What is rebuilt and when is in the [user guide's images page](../docs/guide/images.md), and every `bb box images` command is in the [command-line reference](../docs/reference/cli.md).
+A BB automation waits at most 15 minutes, but a run can take hours. When the automation stops waiting, the run goes on inside bb-box. Use one or the other: a run that starts while another goes on joins it.
 
 ## Upgrade
 
