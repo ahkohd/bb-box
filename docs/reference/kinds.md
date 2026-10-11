@@ -26,6 +26,7 @@ An alias asks for a kind with features, from the offers that have them (041).
 | `linux-docker` | `linux` | docker |
 | `linux-arm64-docker` | `linux-arm64` | docker |
 | `linux-vm` | `linux` | kernel |
+| `linux-kvm` | `linux` | kvm |
 
 ## Sizes
 

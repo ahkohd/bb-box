@@ -1703,6 +1703,18 @@ test("a plain linux acquire takes a VM's offer last, whatever the backends' orde
   await world.boxes.idle();
 });
 
+test("linux-kvm asks for a VM with KVM, and is refused, naming KVM, where no VM has it (057)", async () => {
+  const vm: BoxKind = { ...FAKE_KINDS[0]!, capabilities: { ...FAKE_KINDS[0]!.capabilities, features: ["docker", "kernel"] } };
+  const without = setup({ kinds: [vm] });
+  await assert.rejects(without.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-kvm" }), /have no KVM\. Ask for linux if the box can do without it\./);
+  const kvm: BoxKind = { ...vm, capabilities: { ...vm.capabilities, features: ["docker", "kernel", "kvm"] } };
+  const world = setup({ kinds: [kvm] });
+  const plain = new FakeBackend({ root: tempDir("boxes-plain-kvm"), storage: scopedStorage(world.kv, "backend/fake:plain/"), id: "fake:plain", hosts: ["devpc"] }) as unknown as Backend;
+  world.others = [plain];
+  assert.equal((await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-kvm" })).backend, world.backend.id, "the VM, though it comes last");
+  await world.boxes.idle();
+});
+
 test("an acquire may name several providers: the first with room among them in acquire order, strict, a list with a mistake refused whole (044)", async () => {
   const world = setup();
   const other = new FakeBackend({ root: tempDir("boxes-list-other"), storage: scopedStorage(world.kv, "backend/fake:second/"), id: "fake:second", hosts: ["devpc"] }) as unknown as Backend;

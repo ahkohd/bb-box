@@ -137,6 +137,7 @@ Fields left empty take proxmox-lxc's, a set at a time: `url`, `token-id`, `token
 | `windows-templates` | Windows templates | string | boxes | `9104` | VMIDs of the Windows templates windows-desktop boxes are linked clones of, separated by spaces or commas. setup/proxmox-qemu/build.sh builds one. A new box is cloned from the least used. |
 | `linux-templates` | Linux templates | string | boxes |  | VMIDs of the Linux templates that linux boxes as VMs are linked clones of, separated by spaces or commas, for a box with its own kernel. setup/proxmox-qemu/build.sh linux builds one. Empty offers no Linux VMs. |
 | `windows-enrol` | Windows boxes as BB machines | boolean | boxes | `true` | Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only. |
+| `linux-kvm` | KVM in Linux VM boxes | boolean | boxes | `false` | Linux VM boxes can run VMs of their own through /dev/kvm, and linux-kvm asks for one. Turn it on when the host allows nested virtualization: build.sh linux says whether /dev/kvm works in a clone. |
 | `bridge` | Network bridge | string | advanced | `vmbr200` | The bridge boxes attach to. |
 | `subnet` | Subnet | string | advanced | `10.200.0.0/24` | The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP. |
 | `gateway` | Gateway | string | advanced | `10.200.0.1` | The host's address on the bridge. |

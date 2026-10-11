@@ -39,6 +39,8 @@ export interface QemuConfig {
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
   /** Windows boxes join BB as machines, unless set off (#539). */
   readonly enrol: boolean;
+  /** Linux VM boxes have KVM, where the host allows nested virtualization (057). Off by default. */
+  readonly kvm: boolean;
 }
 
 export const QEMU_DEFAULTS = {
@@ -77,6 +79,7 @@ export const QEMU_KEYS = {
   reserveMemoryMiB: "reserve-memory-mib",
   reserveDiskGiB: "reserve-disk-gib",
   enrol: "windows-enrol",
+  kvm: "linux-kvm",
 } as const;
 
 export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
@@ -156,6 +159,14 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     description: "Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only.",
     group: "boxes",
     default: true,
+  },
+  [QEMU_KEYS.kvm]: {
+    type: "boolean",
+    label: "KVM in Linux VM boxes",
+    description:
+      "Linux VM boxes can run VMs of their own through /dev/kvm, and linux-kvm asks for one. Turn it on when the host allows nested virtualization: build.sh linux says whether /dev/kvm works in a clone.",
+    group: "boxes",
+    default: false,
   },
   [QEMU_KEYS.bridge]: {
     type: "string",
@@ -258,5 +269,5 @@ export function parseQemuPart(part: BackendPart): ParsedBackend<QemuConfig> {
   const reserve = checkReserve(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { proxmox, templates, linuxTemplates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false } };
+  return { ok: true, config: { proxmox, templates, linuxTemplates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false, kvm: values[QEMU_KEYS.kvm] === true } };
 }

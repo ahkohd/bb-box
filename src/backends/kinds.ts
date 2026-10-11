@@ -23,10 +23,12 @@ const ALIASES: ReadonlyMap<string, KindAlias> = new Map([
   ["linux-arm64-docker", { kind: "linux-arm64", features: ["docker"] }],
   // A Linux VM, with its own kernel (057).
   ["linux-vm", { kind: "linux", features: ["kernel"] }],
+  // A Linux VM that can run VMs of its own, through /dev/kvm (057).
+  ["linux-kvm", { kind: "linux", features: ["kvm"] }],
 ]);
 
 /** Features only a VM's offer has (057): its offers come after the others', unless the request asks for one. */
-export const VM_FEATURES: readonly string[] = ["kernel"];
+export const VM_FEATURES: readonly string[] = ["kernel", "kvm"];
 
 /** Offers with VMs' after the others', each part in its order (057): the order acquire tries them in. */
 export function vmOffersLast<T extends { readonly kind: { readonly capabilities: { readonly features: readonly string[] } } }>(offers: readonly T[]): T[] {
@@ -57,7 +59,7 @@ export function kindAliases(): readonly (KindAlias & { readonly id: string })[] 
 
 /** How the panel and agents name a feature. */
 export function featureWord(feature: string): string {
-  return feature === "docker" ? "Docker" : feature;
+  return feature === "docker" ? "Docker" : feature === "kvm" ? "KVM" : feature;
 }
 
 /** What a kind is, in words, for the settings page, which lists kinds no backend offers now. */
