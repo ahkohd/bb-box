@@ -180,9 +180,16 @@ ssh_box "sudo bash $in_vm/linux/customize-vm.sh $in_vm" </dev/null
 # as the box user.
 log "booting the build VM again, as a box would, and checking it as the box user"
 down() { ! ssh_box exit; }
+# The guest scripts change SSH's units and settings under the running
+# server, which can reset a connection for a while, so wait for it first.
+wait_for "the build VM answers SSH before its reboot" 120 2 ssh_box true ||
+  die "the build VM stopped answering SSH after its guest scripts"
 # The guest reboots a moment after SSH returns, so the command cannot hang
-# on a connection the reboot drops.
-ssh_box 'sudo systemd-run --quiet --on-active=2 systemctl reboot' </dev/null
+# on a connection the reboot drops. SSH's 255 means the connection went,
+# which the reboot may have done already.
+code=0
+ssh_box 'sudo systemd-run --quiet --on-active=2 systemctl reboot' </dev/null || code=$?
+[ "$code" = 0 ] || [ "$code" = 255 ] || die "the build VM refused to reboot (exit $code)"
 wait_for "the build VM to go down" 120 1 down || die "the build VM did not reboot"
 wait_for "the build VM answers SSH again" 300 2 ssh_box exit || die "the build VM did not come back after its reboot"
 ssh_box 'timeout 120 systemctl is-system-running --wait' >/dev/null </dev/null || true
