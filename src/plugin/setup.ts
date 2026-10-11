@@ -626,6 +626,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     bootstrap: (request) => bb.experimental_machines.bootstrap(request),
     logError,
     log: (message) => bb.log.info(message),
+    bbUrl: () => bb.server.experimental_appUrl,
     variablesWaitMs: options.variablesWaitMs,
     providerRetryMs: options.providerRetryMs,
     manualRemoveMs: options.manualRemoveMs,

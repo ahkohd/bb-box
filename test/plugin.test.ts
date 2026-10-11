@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
@@ -15,7 +16,7 @@ import type { BackendDriver, BoxKind } from "../src/backends/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
-import { Phases } from "../src/plugin/enrol.ts";
+import { Phases, removeStaleApp } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
@@ -3879,4 +3880,28 @@ test("a provider's profile for the form's (i): its technology, hosts, kinds, roo
   const again = (await harness.behavior.callRpc("provider", { backend: offer.backend })) as { boxes: number };
   assert.equal(again.boxes, 1);
   await assert.rejects(harness.behavior.callRpc("provider", { backend: "elsewhere" }), /No provider has the ID elsewhere/);
+});
+
+test("before BB's installer, a box on an overlay root drops a pre-installed BB app of another build than the server's, and keeps the server's (#701)", () => {
+  const root = join(tmpdir(), `bb-box-stale-${randomBytes(4).toString("hex")}`);
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  const server = "a".repeat(64);
+  // stat says the root is an overlay, and curl gives the package's headers, as BB's server does.
+  writeFileSync(join(bin, "stat"), `#!/bin/sh\necho "\${FAKE_FS:-overlayfs}"\n`);
+  writeFileSync(join(bin, "curl"), `#!/bin/sh\nprintf 'HTTP/1.1 200 OK\\r\\nx-bb-artifact-sha256: ${server}\\r\\n\\r\\n'\n`);
+  chmodSync(join(bin, "stat"), 0o755);
+  chmodSync(join(bin, "curl"), 0o755);
+  const app = (dir: string, digest: string) => {
+    mkdirSync(join(root, ".bb-machines", dir, "npm/lib/node_modules/bb-app"), { recursive: true });
+    writeFileSync(join(root, ".bb-machines", dir, "host-artifact.sha256"), `${digest}\n`);
+  };
+  const run = (fs?: string) => execFileSync("/bin/sh", ["-c", removeStaleApp("https://bb.example.com/")], { env: { HOME: root, PATH: `${bin}:/usr/bin:/bin`, ...(fs ? { FAKE_FS: fs } : {}) } });
+  const has = (dir: string) => existsSync(join(root, ".bb-machines", dir, "npm/lib/node_modules/bb-app"));
+  app("old", "b".repeat(64));
+  app("current", server);
+  run("ext2/ext3");
+  assert.ok(has("old"), "a box whose root is not an overlay replaces its app in place, quickly");
+  run();
+  assert.deepEqual([has("old"), has("current")], [false, true]);
 });
