@@ -52,11 +52,14 @@ Notes:
 
 ## Documentation
 
-- [User guide](docs/guide/README.md): the Box panel, making a box, spares, desktops and video, the terminal, images and their nightly rebuild, jobs, files and settings
-- [Setting up bb-box](setup/README.md): choose a backend, install, rebuild images each night, upgrade and remove; each backend's guide is linked from the table above
-- [Reference](docs/reference/README.md): the command line, agent tools, configuration, kinds and health checks, made from the code
-- [Architecture](docs/architecture.md), and [developing bb-box and writing a backend](docs/development.md)
-- [Decision records](docs/decisions), [research notes](docs/research) and [design specs](docs/design)
+- [User guide](docs/guide/README.md)
+- [Setting up bb-box](setup/README.md)
+- [Reference](docs/reference/README.md)
+- [Architecture](docs/architecture.md)
+- [Developing bb-box and writing a backend](docs/development.md)
+- [Decision records](docs/decisions)
+- [Research notes](docs/research)
+- [Design specs](docs/design)
 - [What bb-box asks of BB](docs/bb-requests.md)
 
 ## Develop
