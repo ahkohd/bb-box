@@ -74,7 +74,7 @@ When you are done, select **Release…** in the box's menu. A box also goes when
 
 If something is wrong, run `bb box doctor`. It checks the setup and says what to fix. For desktops, see the [Docker guide](setup/docker/README.md).
 
-If a box says 'Could not join BB', it cannot reach BB's address from inside its container. Make BB listen on an address the containers can reach, or turn off **Enrol boxes as BB machines** under General in BB Box's settings. Boxes still work without it, but do not get the thread's Git credentials and variables.
+Boxes join BB through BB's Machine access, in BB's settings under Machines. bb connect, the desktop app's default, needs you signed in to your bb account; Manual needs an address boxes can reach. If a box says 'Could not join BB', the line under it says why. See [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb). Boxes still work without joining, but do not get the thread's Git credentials and variables.
 
 ## Documentation
 

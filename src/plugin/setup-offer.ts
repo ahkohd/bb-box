@@ -79,3 +79,40 @@ export function machineSetups(hosts: readonly DockerHostView[], facts: ReadonlyM
     })
     .sort((a, b) => Number(b.here) - Number(a.here) || ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name));
 }
+
+/** Why BB's machine access will not let boxes join BB, as BB's Machines settings would say it. */
+export interface MachineAccessProblem {
+  /** The way of access BB uses, such as "bb connect". */
+  readonly provider: string;
+  /** BB's own words, such as "Sign in to your bb account to use bb connect". */
+  readonly message: string;
+}
+
+/** The parts of BB's system configuration that say how machines reach BB. */
+export interface AccessConfig {
+  readonly generalSettings?: { readonly defaultMachineAccess?: string | null };
+  readonly serverAccess?: {
+    readonly defaultProviderId: string;
+    readonly providers: readonly { readonly id: string; readonly displayName: string; readonly availability: { readonly status: string; readonly message?: string } | null }[];
+  };
+}
+
+/**
+ * What stands in the way of boxes joining BB: the way of access BB uses, unless it is available. Null where it is, or
+ * where bb-box cannot tell. A box joins BB through it, so without it every box's enrolment fails (the newcomer check:
+ * BB's desktop app starts with bb connect, which needs a sign-in).
+ */
+export function machineAccessProblem(config: AccessConfig | null): MachineAccessProblem | null {
+  const access = config?.serverAccess;
+  if (!access) return null;
+  const id = config.generalSettings?.defaultMachineAccess ?? access.defaultProviderId;
+  const provider = access.providers.find((candidate) => candidate.id === id);
+  const availability = provider?.availability;
+  if (!provider || !availability || availability.status === "available") return null;
+  return { provider: provider.displayName, message: availability.message ?? `${provider.displayName} is not set up.` };
+}
+
+/** Whether BB's words say its machine access needs a sign-in to the user's bb account, as bb connect does. */
+export function needsSignIn(words: string | null): boolean {
+  return !!words && /sign in to your bb account/i.test(words);
+}

@@ -162,6 +162,11 @@ function lowMemory(box: BoxRecord): string {
   return ` The box has ${formatMiB(memoryMiB)} memory: with less than ${LINUX_LEAST_MEMORY_GIB} GiB it can run out of memory as it becomes a BB machine.`;
 }
 
+/** A box's enrolment once its machine is gone: off, unless it failed to join, which keeps its reason. */
+function gone(enrol: BoxRecord["enrol"]): BoxRecord["enrol"] {
+  return enrol.state === "failed" ? { state: "failed", hostId: null, error: enrol.error } : { state: "off", hostId: null, error: null };
+}
+
 function sh(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -354,7 +359,10 @@ export class Enrolment {
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
-          return { status: "failed", message: describeError(error, `Enrolling box ${box.name}`) };
+          const message = describeError(error, `Enrolling box ${box.name}`);
+          // Kept on the box, so its row says why: BB removes the machine next, and that removal must not leave the box looking fine.
+          await boxes.update(box, (current) => ({ enrol: { state: "failed", hostId: current.enrol.hostId, error: message } })).catch(() => null);
+          return { status: "failed", message };
         }
       },
       // The box is bb-box's, and outlives its machine: removing the machine leaves the box running.
@@ -448,9 +456,10 @@ export class Enrolment {
     return command;
   }
 
+  /** The box's machine went: it is no longer enrolled, but one that failed to join still says why (the newcomer check, 11 October 2026). */
   async #off(boxId: string): Promise<void> {
     const box = await this.#deps.boxes.find(boxId);
-    if (box) await this.#deps.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
+    if (box) await this.#deps.boxes.update(box, (current) => ({ enrol: gone(current.enrol) }));
   }
 
   /**
@@ -497,7 +506,9 @@ export class Enrolment {
       const manual = box.capabilities.os === "windows" ? (await this.#deps.boxes.find(box.id))?.enrol.hostId : null;
       if (manual) await this.#remove(manual).catch((removal) => this.#deps.logError("enrol", removal));
       await this.#deps.boxes
-        .update(box, (current) => ({ enrol: { ...current.enrol, ...(manual ? { hostId: null } : {}), state: "failed", error: describeError(error, "Enrolling the box") } }))
+        .update(box, (current) => ({
+          enrol: { ...current.enrol, ...(manual ? { hostId: null } : {}), state: "failed", error: current.enrol.state === "failed" && current.enrol.error ? current.enrol.error : describeError(error, "Enrolling the box") },
+        }))
         .catch(() => null);
     } finally {
       this.#phases.delete(box.id);
@@ -541,7 +552,7 @@ export class Enrolment {
     let waitsEnded: number | undefined;
     for (;;) {
       const current = await this.#deps.boxes.find(box.id);
-      if (!current || current.state === "releasing" || current.enrol.hostId !== hostId) return;
+      if (!current || current.state === "releasing" || current.enrol.hostId !== hostId || current.enrol.state === "failed") return;
       const host = await this.#deps.hosts().get({ hostId });
       const phase = host.lifecycle.phase;
       if (phase === "active" && host.status === "connected" && waitsEnded === undefined) {
@@ -867,7 +878,7 @@ export class Enrolment {
   async forgetHost(hostId: string): Promise<void> {
     await this.#deps.kv.delete(`${MANUAL_PREFIX}${hostId}`);
     for (const box of await this.#deps.boxes.all()) {
-      if (box.enrol.hostId === hostId) await this.#deps.boxes.update(box, () => ({ enrol: { state: "off", hostId: null, error: null } }));
+      if (box.enrol.hostId === hostId) await this.#deps.boxes.update(box, (current) => ({ enrol: gone(current.enrol) }));
     }
   }
 

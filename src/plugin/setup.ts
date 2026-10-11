@@ -3,7 +3,7 @@
 // them. server.ts calls setup with the built-in drivers; tests pass fakes.
 
 import { hostname } from "node:os";
-import { machineSetups, type MachineSetup } from "./setup-offer.ts";
+import { machineAccessProblem, machineSetups, type AccessConfig, type MachineAccessProblem, type MachineSetup } from "./setup-offer.ts";
 import type { SetupFacts } from "../host/relay.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
@@ -104,6 +104,8 @@ export interface BbBox {
   readonly dockerImages: DockerImages;
   /** What each BB machine offers first-run setup: its Docker, and the one line that fixes what stands in the way. */
   setups(): Promise<MachineSetup[]>;
+  /** What stands in the way of boxes joining BB through its machine access, or null. */
+  machineAccess(): Promise<MachineAccessProblem | null>;
   /** BB machine `machine`, by ID or name, and its Docker backend, from BB's record and the configuration, with no call to it. */
   dockerHostOf(machine: string): Promise<{ hostId: string; name: string; backend: BackendConfig | null } | null>;
   /** Turns a BB machine on or off as a Docker host (042), through the configuration. */
@@ -795,6 +797,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     dockerHosts,
     dockerImages,
     setups: async () => machineSetups(await dockerHosts.list(), setupFactsOf, hostname()),
+    machineAccess: async () => machineAccessProblem((await bb.sdk.system.config().catch(() => null)) as AccessConfig | null),
     async dockerHostOf(machine) {
       const hosts = (await bb.sdk.hosts.list({ includeCreating: true })) as readonly { id: string; name: string }[];
       const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);

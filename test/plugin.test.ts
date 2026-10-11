@@ -132,6 +132,8 @@ async function start(
     projectKind: "standard" as "standard" | "personal",
     /** How long after bootstrap returns BB shows a machine it has connected again, or null for never, nor a new one. */
     connectAfterMs: 0 as number | null,
+    /** What BB's bootstrap throws before it runs anything, as for bb connect without a sign-in, or null. */
+    bootstrapError: null as string | null,
     /** How many threads run on each machine, by host ID. */
     hostThreads: new Map<string, number>(),
     /** BB's terminal sessions, by ID. */
@@ -331,6 +333,7 @@ async function start(
     machineBootstrap: {
       async bootstrap({ key, executor, signal }) {
         world.bootstraps.push(key);
+        if (world.bootstrapError) throw new Error(world.bootstrapError);
         let output = "";
         const { exitCode } = await executor.exec({ command: ["sh", "-c", world.installer], timeoutMs: 10_000, signal, stdin: "", onOutput: (text) => (output += text) });
         // As BB reports it, with the installer's output.
@@ -1233,6 +1236,28 @@ test("an enrolment fails, and says why, when BB does not show the machine connec
   const reason = `BB's daemon in box ${box.name} started, but BB did not show the machine connected within 0.3 s.`;
   assert.ok(result.includes(`BB machine: enrolment failed: ${reason}\n`), result);
   assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "failed", hostId: `host-${box.id}`, error: reason });
+});
+
+test("a box BB could not add as a machine says why, after BB removes the machine (the newcomer check: bb connect without a sign-in)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.bootstrapError = "Sign in to your bb account to use bb connect";
+
+  const acquired = tool("box_acquire", { kind: "linux" });
+  const box = await until("BB to give up on the machine", async () => {
+    const [current] = await app.boxes.list(THREAD);
+    return current && world.hosts.get(`host-${current.id}`)?.lifecycle.phase === "destroyed" ? current : null;
+  });
+  // As BB does then: it removes the machine through bb-box's provider, and says it is deleted.
+  const hostId = `host-${box.id}`;
+  const host = world.hosts.get(hostId)!;
+  await harness.inspection.registrations.machineProviders.get("bb-box")!.remove({ hostId, resource: { boxId: box.id } } as never);
+  world.hosts.delete(hostId);
+  await app.enrolment.forgetHost(host.id);
+
+  const reason = `Enrolling box ${box.name} failed: Sign in to your bb account to use bb connect`;
+  assert.match(text(await acquired), /BB machine: enrolment failed: .*Sign in to your bb account to use bb connect/);
+  assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "failed", hostId: null, error: reason });
 });
 
 test("the enrolment's log lists its steps in the order they started, with the access setup's parts", () => {

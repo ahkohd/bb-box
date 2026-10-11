@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { restartFor, type SetupFacts } from "../src/host/relay.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
-import { machineSetups } from "../src/plugin/setup-offer.ts";
+import { machineAccessProblem, machineSetups, needsSignIn } from "../src/plugin/setup-offer.ts";
 
 function host(overrides: Partial<DockerHostView> = {}): DockerHostView {
   return { hostId: "host_a", name: "devpc", connected: true, docker: { version: "29.8.1", os: "Ubuntu 24.04", arch: "x86_64", cpus: 16, memoryMiB: 65536 }, problem: null, absent: false, backend: null, images: null, ...overrides };
@@ -56,4 +56,19 @@ test("a machine with too little disk for the Linux image is a fix, with no line 
   assert.equal(setup!.state, "fix");
   assert.equal(setup!.fix, null);
   assert.match(setup!.problem!, /needs about 10 GB free to build, and devpc has 6 GB/);
+});
+
+test("BB's machine access stands in the way of boxes joining when the way BB uses is not available, in BB's words", () => {
+  const providers = [
+    { id: "bb-connect", displayName: "bb connect", availability: { status: "setup-required", message: "Sign in to your bb account to use bb connect" } },
+    { id: "manual", displayName: "Manual", availability: { status: "available", serverUrl: "http://10.0.0.2:41820" } },
+  ];
+  assert.deepEqual(machineAccessProblem({ generalSettings: { defaultMachineAccess: null }, serverAccess: { defaultProviderId: "bb-connect", providers } }), {
+    provider: "bb connect",
+    message: "Sign in to your bb account to use bb connect",
+  });
+  assert.equal(machineAccessProblem({ generalSettings: { defaultMachineAccess: "manual" }, serverAccess: { defaultProviderId: "bb-connect", providers } }), null);
+  assert.equal(machineAccessProblem(null), null, "bb-box cannot tell");
+  assert.equal(needsSignIn("Enrolling box calm-otter failed: Sign in to your bb account to use bb connect"), true);
+  assert.equal(needsSignIn("BB removed the machine before it connected"), false);
 });
