@@ -43,7 +43,7 @@ With **Rebuild images each night** on, under General in [settings](settings.md#g
 - a macOS image is due after a month
 - a Windows image is due after a month
 
-A Windows image is refreshed in a box of its current build, which installs Windows' updates and the pinned tools. The build before stays as a rollback until the next refresh succeeds. How to go back to it is in the [Proxmox QEMU](../../setup/proxmox-qemu/README.md#update) and [Tart](../../setup/tart/README.md#update) guides.
+A Windows image is refreshed in a box of its current build, which installs Windows' updates and the pinned tools. The build before stays as a rollback until the next refresh succeeds. How to go back to it is in the [Proxmox QEMU](../../setup/proxmox-qemu/README.md#update) and [Tart](../../setup/tart/README.md#update) guides. Proxmox QEMU's Linux images are refreshed the same way, in a box, with the build before kept as a rollback.
 
 BB Box rebuilds one image at a time, the most needed first, and starts none after 4 hours. Each new build is tried in a box first. It replaces the old one only if the box passes its checks. A project's image is then built again on the new standard image.
 

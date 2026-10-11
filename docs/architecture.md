@@ -105,7 +105,7 @@ backends, and the first with room takes the box.
 
 | Kind | Promises | Offered by |
 | --- | --- | --- |
-| `linux` | Linux on x86_64, no GPU | Proxmox LXC, Docker, an SSH pool's Linux machines |
+| `linux` | Linux on x86_64, no GPU | Proxmox LXC, Docker, microsandbox, an SSH pool's Linux machines, Proxmox QEMU as VMs |
 | `linux-desktop` | a Linux desktop on a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
 | `linux-desktop-cpu` | a Linux desktop drawn by the CPU | Proxmox LXC, Docker |
 | `linux-desktop-wayland-cpu` | a Linux desktop on Wayland, drawn by the CPU; X11-only apps do not run | Proxmox LXC, Docker |
@@ -130,6 +130,13 @@ backends, and the first with room takes the box.
   GPU desktop has it when its image was built after #283. An SSH pool has
   it only when every machine has a whole-machine reset. An offer or box
   without it says "No Docker".
+- **VMs.** `linux-vm` and `linux-kvm` are aliases of `linux` that take
+  only a VM's offer, Proxmox QEMU's, with the feature `kernel` or `kvm`
+  ([057](decisions/057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md)).
+  A plain `linux` acquire tries a VM's offer last, as it starts slower and
+  holds its memory, and `box_list` lists it last. `kvm` is offered only
+  when the backend's `linux-kvm` setting says the host allows nested
+  virtualization.
 - **Agreement.** Offers of one kind agree on what the agent relies on:
   `os`, `arch`, `gpu`, the computer-use driver, `enrol`, whether there is a
   desktop, and the features the kind requires. An offer may add features,
@@ -760,6 +767,7 @@ What runs where:
 | Linux, Windows (WSL 2, Docker Desktop) | Linux | container | Docker, local, over `ssh://` or a BB machine's | `linux`, `linux-desktop`, `linux-desktop-cpu`, `linux-desktop-wayland-cpu` |
 | Linux | Linux | microVM | microsandbox, local, over `ssh://` or a BB machine's | `linux`, `linux-desktop-cpu` |
 | Linux | Linux | physical | SSH host pool | `linux` |
+| Linux | Linux | VM | Proxmox QEMU | `linux` |
 | Linux | Windows | VM | Proxmox QEMU | `windows-desktop` |
 | Mac | macOS | VM | Tart | `macos`, `macos-desktop` |
 | Mac | macOS | physical | SSH host pool ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)) | `macos`, `macos-desktop` |
@@ -771,11 +779,11 @@ What runs where:
 | Nature | virtual | virtual | virtual | virtual | real | virtual |
 | Acquire | linked clone, start | resume a hibernated warm VM, or a linked clone | create and start a container | `msb create` | claim a machine | `tart clone`, `tart run`; QEMU for Windows |
 | Release | delete | delete | remove the container | `msb remove` | reset the machine | `tart delete` |
-| Commands | SSH | OpenSSH with PowerShell 7 | `docker exec` | `msb exec` | SSH as the box user | SSH through the Mac |
+| Commands | SSH | SSH; OpenSSH with PowerShell 7 on Windows | `docker exec` | `msb exec` | SSH as the box user | SSH through the Mac |
 | Ownership | tags and description | tags and description | labels set at creation | labels set at creation | a marker on the machine | an owner file per VM on the Mac |
 | Capacity | memory, disk, VMIDs, GPU | memory, disk, VMIDs | memory, a container budget, desktops per GPU | memory, cores, a microVM budget | machines | macOS VM slots, memory, disk |
 | Stop and start | yes | yes, by hibernating | yes | yes | no | yes, by suspending or saving |
-| Warm guests | started clones | hibernated clones | none: a box is ready in about a second | none: a box is ready in under half a second | free machines | suspended macOS VMs, saved Windows VMs |
+| Warm guests | started clones | hibernated clones; Linux has spares only | none: a box is ready in about a second | none: a box is ready in under half a second | free machines | suspended macOS VMs, saved Windows VMs |
 
 ### Proxmox LXC
 
@@ -827,6 +835,14 @@ Proxmox LXC.
   its apps open, then sets Windows' clock. Warm VMs are hibernated clones,
   tagged `warm`, as Proxmox refuses a hibernated VM's config changes; a
   claim resumes one, then gives it the box's tags.
+- A `linux` box is a linked clone of a Linux template that `build.sh
+  linux` makes from Ubuntu 24.04's cloud image with Proxmox LXC's guest
+  scripts
+  ([057](decisions/057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md)).
+  Its `bb-box-boot` unit reads the address from the SMBIOS serial before
+  the network starts, and grows the root over a larger disk. Commands run
+  in sh as `box`, and it joins BB as other Linux boxes do. It has no warm
+  pool: its spares wait hibernated, as Windows' do. A stop hibernates it.
 
 ### Docker
 
