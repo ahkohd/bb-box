@@ -165,6 +165,8 @@ export const contract = defineRpcContract({
   "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
   /** What each BB machine offers first-run setup, the server's first. */
   "setup.offer": { input: z.null(), output: z.custom<{ machines: MachineSetup[] }>() },
+  /** First-run setup: turns on Docker on BB machine `hostId` with the Linux image alone, which then builds. */
+  "setup.docker": { input: z.object({ hostId: z.string().min(1) }), output: z.custom<{ result: ApplyResult; machines: MachineSetup[] }>() },
   /**
    * Turns a BB machine on or off as a Docker host: on adds a Docker backend
    * on it, last in acquire order; off removes it, or turns it off while it

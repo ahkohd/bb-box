@@ -107,7 +107,7 @@ export interface BbBox {
   /** BB machine `machine`, by ID or name, and its Docker backend, from BB's record and the configuration, with no call to it. */
   dockerHostOf(machine: string): Promise<{ hostId: string; name: string; backend: BackendConfig | null } | null>;
   /** Turns a BB machine on or off as a Docker host (042), through the configuration. */
-  setDockerHost(hostId: string, enabled: boolean): Promise<ApplyResult>;
+  setDockerHost(hostId: string, enabled: boolean, linuxOnly?: boolean): Promise<ApplyResult>;
   /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
   dockerCheck(machine: string, signal?: AbortSignal): Promise<{ hostId: string; name: string; endpoint: string; info: DockerInfo; firstMs: number; againMs: number }>;
   /** What a rebuild of the standard Linux images would take now (049): upstream's latest of the tools that follow it, or with `pinned` the pins alone. */
@@ -800,13 +800,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const found = hosts.find((candidate) => candidate.id === machine) ?? hosts.find((candidate) => candidate.name === machine);
       return found ? { hostId: found.id, name: found.name, backend: backendOn(configuration.document, found.id) } : null;
     },
-    async setDockerHost(hostId, enabled) {
+    async setDockerHost(hostId, enabled, linuxOnly = false) {
       const machine = (await dockerHosts.list()).find((candidate) => candidate.hostId === hostId);
       if (!machine) throw new BoxError("not_found", `BB machine ${hostId} cannot host boxes: it is not a connected, persistent machine of BB's that bb-box did not make.`);
       if (enabled && !machine.docker) throw new BoxError("unsupported", `${machine.name} cannot host boxes yet. ${machine.problem ?? ""}`.trim());
       const document = configuration.document;
       dockerHosts.forget(hostId);
-      const result = await configuration.apply(withDockerHost(document, { id: hostId, name: machine.name }, enabled, machine.backend?.boxes ?? 0), document.revision);
+      const result = await configuration.apply(withDockerHost(document, { id: hostId, name: machine.name }, enabled, machine.backend?.boxes ?? 0, linuxOnly), document.revision);
       // Turned on, it builds the images it lacks there; the row shows the build until it ends.
       if (result.ok && enabled) void dockerImages.ensure(hostId);
       return result;

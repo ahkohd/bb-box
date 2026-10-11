@@ -1,5 +1,6 @@
 // The Box panel: a thread's boxes as rows, "New box", and the empty states.
 
+import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -89,7 +90,10 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     );
   }
   if (!state.kinds.length && !rows.length) {
+    // First run: one action on a BB machine that can take it, or the empty state as before where none can (the setup job).
     return (
+      <FirstRun
+        fallback={
       <EmptyPanel title="BB Box is not set up yet">
         <p className="mt-1">Set a backend up in its settings and turn it on.</p>
         <Button asChild variant="outline" size="sm" className="mt-3">
@@ -99,10 +103,13 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
           </UrlLink>
         </Button>
       </EmptyPanel>
+        }
+      />
     );
   }
   return (
     <div className="space-y-3">
+      <SetupProgress />
       <div className="flex items-center justify-end gap-2">
         {state.kinds.length ? (
           <NewBox
