@@ -446,7 +446,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     "setup.offer": () => ({ machines: setups }),
     "setup.docker": ({ hostId }) => {
       changes.push(`setup.docker ${hostId}`);
-      setups = setups.map((setup) => (setup.hostId === hostId ? { ...setup, state: "on" as const, build: { state: "building" as const, targets: ["linux"], detail: "#14 [linux 7/12] RUN /tmp/install-tools.sh", startedAt: Date.now() - 75_000, endedAt: null } } : setup));
+      setups = setups.map((setup) => (setup.hostId === hostId ? { ...setup, state: "on" as const, build: { state: "building" as const, targets: ["linux"], detail: "#14 12.3 Setting up git (1:2.43.0) ...", step: { at: 7, of: 12 }, startedAt: Date.now() - 75_000, endedAt: null } } : setup));
       return { result: { ok: true, state: {} as ConfigState, problems: [] }, machines: setups };
     },
     ping: async () => {
@@ -1213,13 +1213,14 @@ test("first run: the panel offers Docker on the machine that runs BB, and one cl
   const { handlers, changes } = server([], { kinds: [], setups: [setup({ hostId: "host_far", name: "far", here: false }), setup()] });
   const slot = panel(handlers);
   expect(await slot.findByText("This machine has Docker 29.8.1. BB Box can make Linux boxes there.")).toBeTruthy();
-  expect(slot.getByText("Builds the Linux image first, about 4 min.")).toBeTruthy();
+  expect(slot.getByText("Builds the Linux image first, about 5 to 8 min.")).toBeTruthy();
   expect(slot.getByRole("link", { name: "Other backends" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
   fireEvent.click(slot.getByRole("button", { name: "Use Docker on this machine" }));
   await waitFor(() => expect(changes).toEqual(["setup.docker host_bb"]));
   expect(await slot.findByText("Setting up Docker on this machine")).toBeTruthy();
-  expect(slot.getByText(/^Building the Linux image · about 3 min left$/)).toBeTruthy();
-  expect(slot.getByText(/^Step 7 of 12 · Started 1 min ago\. It goes on if you close this panel\.$/)).toBeTruthy();
+  // The step is the one the build kept, not its last line; the time is what it usually takes, as it varies with the host.
+  expect(slot.getByText("Building the Linux image · Step 7 of 12")).toBeTruthy();
+  expect(slot.getByText("Started 1 min ago. It usually takes 5 to 8 min, and goes on if you close this panel.")).toBeTruthy();
   expect(slot.getByRole("progressbar", { name: "Building the Linux image" })).toBeTruthy();
 });
 
@@ -1238,6 +1239,17 @@ test("first run: where BB's user cannot use Docker, the panel gives that machine
   const words = panel(server([], { kinds: [], setups: [{ ...fix, restart: null }] }).handlers);
   expect(await words.findByText("Then restart BB there, or log out and in again, or reboot. That ends the turns of threads running there.")).toBeTruthy();
   expect(words.queryByText(/systemctl/)).toBeNull();
+});
+
+test("once the Linux image is built, the panel says it is ready until the thread has a box", async () => {
+  const built = setup({ state: "on", build: { state: "built", targets: ["linux"], detail: null, startedAt: Date.now() - 400_000, endedAt: Date.now() - 5_000 } });
+  const slot = panel(server([], { setups: [built] }).handlers);
+  expect(await slot.findByText("The Linux image is ready")).toBeTruthy();
+  expect(slot.getByText("Make a box with the plus.")).toBeTruthy();
+  cleanup();
+  const withBox = panel(server([box()], { setups: [built] }).handlers);
+  await withBox.findByText("calm-otter");
+  expect(withBox.queryByText("The Linux image is ready")).toBeNull();
 });
 
 test("first run: with no machine to set up, the panel says BB Box is not set up yet, as before", async () => {

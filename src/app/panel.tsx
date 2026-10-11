@@ -109,7 +109,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   }
   return (
     <div className="space-y-3">
-      <SetupProgress />
+      <SetupProgress empty={!rows.length} />
       <div className="flex items-center justify-end gap-2">
         {state.kinds.length ? (
           <NewBox

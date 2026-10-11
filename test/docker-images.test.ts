@@ -52,6 +52,7 @@ test("a machine with every image it needs builds nothing, and one that lacks one
   await new Promise((r) => setImmediate(r));
   assert.equal(lacking.images.state("host_a")?.state, "building");
   assert.equal(lacking.images.state("host_a")?.detail, "built bbbox/linux:1", "the last line, without its colours");
+  assert.deepEqual(lacking.images.state("host_a")?.step, { at: 2, of: 9 }, "the last step Docker started, kept past its output");
   lacking.release();
   const done = await first;
   assert.equal(await second, done, "one build at a time per machine");

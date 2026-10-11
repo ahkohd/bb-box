@@ -13,8 +13,10 @@ import type { Contract } from "../plugin/contract.ts";
 import type { MachineSetup } from "../plugin/setup-offer.ts";
 import { forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 
-/** How long the Linux image usually takes to build from an empty cache. */
-export const LINUX_BUILD_MS = 4 * 60_000;
+/** How long the Linux image usually takes to build from an empty cache: 7 min on 8 cores in the newcomer check, 4 on a fast host. */
+export const LINUX_BUILD_WORDS = "5 to 8 min";
+/** How long the panel says the Linux image is ready, while the thread has no box yet. */
+const READY_MS = 60 * 60_000;
 
 /** "1 min", "4 min", or seconds without a decimal under a minute. */
 export function roughly(ms: number): string {
@@ -53,30 +55,41 @@ function Progress({ setup }: { setup: MachineSetup }) {
   const now = useNow(true, 1000);
   const build = setup.build!;
   const elapsed = Math.max(0, now - build.startedAt);
-  const step = buildStep(build.detail);
-  const share = Math.min(0.95, Math.max(elapsed / LINUX_BUILD_MS, step ? (step.step - 1) / step.of : 0));
-  const left = LINUX_BUILD_MS - elapsed;
+  // The step from the build when it kept one, else from its last line; the bar follows the steps, as the time varies with the host.
+  const step = build.step ? { step: build.step.at, of: build.step.of } : buildStep(build.detail);
+  const share = step ? Math.min(0.97, Math.max(0.03, (step.step - 1) / step.of)) : 0.03;
   return (
     <div className={CARD}>
       <p className="text-sm font-medium text-foreground">Setting up Docker on {whose(setup)}</p>
-      <p className="mt-1 text-xs leading-snug text-muted-foreground">
-        Building the Linux image · {left > 30_000 ? `about ${roughly(left)} left` : "almost done"}
-      </p>
+      <p className="mt-1 text-xs leading-snug text-muted-foreground">Building the Linux image · {step ? `Step ${step.step} of ${step.of}` : "starting"}</p>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Building the Linux image" aria-valuenow={Math.round(share * 100)} aria-valuemin={0} aria-valuemax={100}>
         <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${Math.round(share * 100)}%` }} />
       </div>
       <p className="mt-2 text-xs text-subtle-foreground">
-        {step ? `Step ${step.step} of ${step.of} · ` : ""}Started {roughly(elapsed)} ago. It goes on if you close this panel.
+        Started {roughly(elapsed)} ago. It usually takes {LINUX_BUILD_WORDS}, and goes on if you close this panel.
       </p>
     </div>
   );
 }
 
-/** The build's progress above the panel's list, while Docker set up from here builds its image. */
-export function SetupProgress() {
+/**
+ * Above the panel's list: the build's progress while Docker set up from here builds its image, then, while the thread has
+ * no box yet, that the image is ready (the newcomer check: the card had just gone, with nothing to say what next).
+ */
+export function SetupProgress({ empty }: { empty: boolean }) {
   const { value } = useSetups();
-  const target = value ? value.machines.find(building) : undefined;
-  return target ? <Progress setup={target} /> : null;
+  const now = useNow(false);
+  if (!value) return null;
+  const target = value.machines.find(building);
+  if (target) return <Progress setup={target} />;
+  const ready = empty ? value.machines.find((setup) => setup.build?.state === "built" && setup.build.endedAt !== null && now - setup.build.endedAt < READY_MS) : undefined;
+  if (!ready) return null;
+  return (
+    <div className={CARD}>
+      <p className="text-sm font-medium text-foreground">The Linux image is ready</p>
+      <p className="mt-1 text-xs leading-snug text-muted-foreground">Make a box with the plus.</p>
+    </div>
+  );
 }
 
 export function FirstRun({ fallback }: { fallback: ReactNode }) {
@@ -146,7 +159,7 @@ export function FirstRun({ fallback }: { fallback: ReactNode }) {
         {other}
       </div>
       <p className={problem || failed ? "mt-2 text-xs leading-snug text-destructive-text" : "mt-2 text-xs text-subtle-foreground"} role={problem || failed ? "alert" : undefined}>
-        {problem ?? (failed ? `The Linux image did not build: ${failed}` : `Builds the Linux image first, about ${roughly(LINUX_BUILD_MS)}.`)}
+        {problem ?? (failed ? `The Linux image did not build: ${failed}` : `Builds the Linux image first, about ${LINUX_BUILD_WORDS}.`)}
       </p>
     </div>
   );
