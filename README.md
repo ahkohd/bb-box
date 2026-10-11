@@ -46,9 +46,8 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
 
 Notes:
 
-- Windows boxes join BB as machines, as Linux and macOS boxes do, on Proxmox and on a Mac. Each backend's Windows enrolment setting turns this off. A thread cannot yet start on a new Windows box from BB's new-thread screen ([BB requests](docs/bb-requests.md)).
-- Most Linux boxes have Docker. One that does not says No Docker.
-- Macs in the SSH host pool are built, but not yet checked on a real Mac.
+- Windows boxes join BB as machines too. A thread cannot yet start on a new Windows box from BB's new-thread screen ([BB requests](docs/bb-requests.md)).
+- macOS in the SSH host pool is not yet tested on a real Mac.
 
 Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md).
 
