@@ -1,6 +1,6 @@
 # Images
 
-Every box starts from an image. A standard image has the system and the tools most work needs. A project's image adds what one project needs, so its boxes start ready for it. BB Box rebuilds the standard Linux and macOS images each night, so they stay up to date.
+Every box starts from an image. A standard image has the system and the tools most work needs. A project's image adds what one project needs, so its boxes start ready for it. BB Box rebuilds the standard Linux, macOS and Windows images as they come due, so they stay up to date.
 
 ## Project images
 
@@ -41,8 +41,9 @@ Once it is set up, a BB automation runs `bb box images refresh` each night. To s
 
 - a Linux image is due after a week
 - a macOS image is due after a month
+- a Windows image is due after a month
 
-Windows images are not rebuilt yet. A Windows box starts from the image its setup guide made.
+A Windows image is refreshed in a box of its current build, which installs Windows' updates and the pinned tools. The build before stays as a rollback until the next refresh succeeds. How to go back to it is in the [Proxmox QEMU](../../setup/proxmox-qemu/README.md#update) and [Tart](../../setup/tart/README.md#update) guides.
 
 BB Box rebuilds one image at a time, the most needed first, and starts none after 4 hours. Each new build is tried in a box first. It replaces the old one only if the box passes its checks. A project's image is then built again on the new standard image.
 
