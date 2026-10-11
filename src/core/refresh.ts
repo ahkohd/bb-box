@@ -101,8 +101,11 @@ export function buildScript(kind: string, bbUrl: string | null, buildId: string)
     // As the image has them: bb-box's key, which its box user accepts, and its DNS servers.
     `awk '$1 == "ssh-ed25519" { print; exit }' ~/.ssh/authorized_keys | sudo tee ${src}/plugin-key.pub >/dev/null`,
     'dns=$(sed -n "s/^DNS=//p" /etc/systemd/resolved.conf.d/10-bb-box.conf 2>/dev/null || true)',
+    // A VM's image, as Proxmox QEMU's Linux template (057), keeps its kernel and network: customize-base.sh's vm runtime.
+    "runtime=lxc; [ \"$(systemd-detect-virt --container 2>/dev/null)\" != none ] || runtime=vm",
     `sudo tee ${src}/build.env >/dev/null <<EOF`,
     "BOX_USER=box",
+    "BOX_RUNTIME=$runtime",
     'BOX_DNS="$dns"',
     `BB_URL=${quote(bbUrl ?? "")}`,
     ...(build.gpu ? [`DESKTOP_GPU=${build.gpu}`] : []),
@@ -112,6 +115,7 @@ export function buildScript(kind: string, bbUrl: string | null, buildId: string)
     'arch=x86_64; [ "$(uname -m)" = x86_64 ] || arch=arm64',
     `sudo env BBBOX_ENV=/nonexistent BBBOX_BB_URL=${quote(bbUrl ?? "")} bash ${src}/fetch-artifacts.sh ${src}/artifacts ${build.artifacts} "$arch"`,
     `sudo bash ${src}/guest/customize-base.sh ${src}`,
+    `[ "$runtime" != vm ] || sudo bash ${BUILD_DIR}/proxmox-qemu/linux/customize-vm.sh ${src}`,
     ...(build.finalize === "desktop" ? [`sudo bash ${src}/guest/customize-desktop.sh ${src}`] : []),
     `sudo bash ${src}/guest/finalize.sh ${src} ${build.finalize}`,
   ].join("\n");
@@ -338,7 +342,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       captured = await images.build(current, join(staged, "setup"), { bbUrl: options.bbUrl, log: say, signal });
       made.push(captured.ref);
     } else {
-      const tar = spawnSync("tar", ["-C", join(staged, "setup"), "-czf", "-", "proxmox-lxc/template", "proxmox-lxc/host/common.sh"], { maxBuffer: 64 * 1024 * 1024 });
+      const tar = spawnSync("tar", ["-C", join(staged, "setup"), "-czf", "-", "proxmox-lxc/template", "proxmox-lxc/host/common.sh", "proxmox-qemu/linux"], { maxBuffer: 64 * 1024 * 1024 });
       if (tar.status !== 0) return end(false, null, `tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
 
       // The build, in a box of the image.
