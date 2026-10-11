@@ -13,6 +13,8 @@ A box belongs to a thread. It stays until you release it, or until its thread is
 - [Images](images.md): project images, and how standard images stay up to date
 - [Long commands and jobs](jobs.md): what happens when an agent's command runs for minutes
 - [Files](files.md): copy files to and from a box, and put files in every box
+- [Spare boxes](spares.md): boxes made ahead, so a thread has one at once
+- [Sound and the microphone on Mac boxes](mac-sound.md): feed speech to an app, and what agents' apps may use
 - [Settings](settings.md): set up backends, choose the kinds and sizes on offer, and the general settings
 
 ## Reference
