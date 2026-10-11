@@ -205,6 +205,10 @@ checks, the replace and the rollback are as for Windows: to go back, list
 the rollback's VMID as the Linux template. For a new Ubuntu cloud image,
 change its pin lines in `build-linux.sh` (`IMAGE_RELEASE=` and
 `IMAGE_SHA256=`) and build it again with `./build.sh linux 9106 --replace`.
+The image must be older than the apt snapshot in
+`../proxmox-lxc/template/apt-snapshot`, and the build refuses one that is
+not: a newer image has libraries the snapshot's -dev packages cannot
+match, which the desktop template installs.
 
 ## Remove
 

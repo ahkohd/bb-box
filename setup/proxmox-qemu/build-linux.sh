@@ -45,9 +45,12 @@ while [ $# -gt 0 ]; do
 done
 [[ "$vmid" =~ ^[0-9]+$ ]] || die "VMID must be a number"
 
-# The base: Ubuntu 24.04's cloud image, pinned by release and SHA-256.
-IMAGE_RELEASE=20260926
-IMAGE_SHA256=6a81c37564db9b1ee84e141922625e1d7c5b389b99bb3c572e0243607d5bb4d2
+# The base: Ubuntu 24.04's cloud image, pinned by release and SHA-256. It
+# must be older than the apt snapshot the guest scripts install from, whose
+# packages then are as new as the image's or newer. A newer image has
+# libraries the snapshot's -dev packages cannot match.
+IMAGE_RELEASE=20260911
+IMAGE_SHA256=612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
 IMAGE_URL=https://cloud-images.ubuntu.com/releases/noble/release-$IMAGE_RELEASE/ubuntu-24.04-server-cloudimg-amd64.img
 # The template waits at its kind's default size (028), on the LXC
 # template's disk. Each kind's artifacts, finalize.sh's kind and check.
@@ -60,6 +63,9 @@ name=bb-box-$kind
 
 for tool in curl jq ssh sha256sum; do command -v "$tool" >/dev/null || die "$tool is required"; done
 template=$here/../proxmox-lxc/template
+snapshot=$(cut -c1-8 "$template/apt-snapshot")
+[ "$IMAGE_RELEASE" -lt "$snapshot" ] ||
+  die "the cloud image ($IMAGE_RELEASE) is not older than the apt snapshot ($snapshot): pin an older image release"
 log() { echo "$(date -u +%H:%M:%S) $*"; }
 # The build ID: a tag of its own on the template, which it keeps through
 # --replace. Warm boxes copy it, and the plugin retires those whose template
