@@ -43,32 +43,28 @@ Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.m
 
 ## Quick start
 
-This takes about 5 minutes, with Docker on the machine that runs BB. You need:
+This takes about 10 minutes, most of it building the Linux image, with Docker on the machine that runs BB. You need:
 
-- a Linux machine that runs BB and Docker Engine, with BB's user in the `docker` group
-- Node 22.18 or later, and npm
+- a Linux machine that runs BB and Docker Engine
 - about 10 GB of free disk and 8 GiB of memory
 
-1. Install the plugin on the machine that runs BB:
+1. Install the plugin. In BB, open Settings, then Installed plugins. Select **New plugin**, then **Install from source**, and enter:
 
-   ```sh
-   git clone https://github.com/moonstead/bb-box.git && cd bb-box
-   npm install
-   bb plugin build
-   bb plugin install .
+   ```text
+   git:https://github.com/moonstead/bb-box.git@main
    ```
 
-2. Build the Linux image. This takes a few minutes:
+   Select **Install plugin**. It takes under a minute. If you have BB's command line, this does the same:
 
    ```sh
-   setup/docker/build.sh linux
+   bb plugin install git:https://github.com/moonstead/bb-box.git@main
    ```
 
-3. Turn on the Docker backend. In BB, open Settings, Plugins, BB Box. Under Backends, select **Set up** on Docker. Leave the host empty. Empty **Desktop image** and **Wayland desktop image**, as you have not built them. Select **Check**, then **Save and turn on**.
+2. Turn on Docker. Open a thread and select the **Box** tab in its right panel. Select **Use Docker on this machine**. BB Box builds the Linux image, which takes 4 to 8 minutes, and the panel shows how far it is. If BB's user cannot use Docker, the panel gives the line that fixes it instead.
 
-4. Make a box. Open a thread and select the **Box** tab in its right panel. Select the plus, choose **Linux** and **Server**, then select **Create box**. The box is ready in about a second, and joins BB a few seconds later.
+3. Make a box. Select the plus, choose **Linux** and **Server**, then select **Create box**. The box is ready in about a second, and joins BB a few seconds later.
 
-5. Use it. Select **Open terminal** on the box's row. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
+4. Use it. Select **Open terminal** on the box's row. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
 
 When you are done, select **Release…** in the box's menu. A box also goes when its thread is archived or deleted.
 

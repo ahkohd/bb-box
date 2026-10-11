@@ -34,6 +34,7 @@ is a log: bb-box does not file these with BB.
 | [Install commands for the machine's OS](#23-install-commands-for-the-machines-os) | not met | BB's install action for Cursor's CLI on a Windows machine is a bash script, which Windows cannot run (#561) |
 | [End a thread's processes before removing its worktree on Windows](#24-end-a-threads-processes-before-removing-its-worktree-on-windows) | not met | bb-box ends the processes working in BB's worktrees in a Windows box before it asks BB to remove the box's machine, or BB's teardown fails with EBUSY and the machine stays "removing" (#539) |
 | [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met | BB's server stops for up to 1.2 s, 10 to 16 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
+| [Say what uninstalling a plugin keeps](#26-say-what-uninstalling-a-plugin-keeps) | not met | after an uninstall in BB's settings and a fresh install, bb-box came back with its old box records and its Docker backend on, though the dialog says it deletes the plugin's settings |
 
 ## 1. BB's host app on Windows
 
@@ -199,6 +200,10 @@ schedules and storage stay, and so do the boxes its storage records.
   schedules, and the new install starts with empty storage.
 - Only a local path moves in place: `bb plugin install path:<new dir>` keeps
   the plugin's configuration.
+
+In BB's desktop app 0.46.0, on 11 October 2026, **Install from source** in
+Installed plugins with the same repository on another branch said nothing
+and kept the old branch. Only **Uninstall** and a fresh install moved it.
 
 Moving bb-box from a pinned commit to a branch this way on 30 September cost
 a running box: the new install had no box records, and its sweep released a
@@ -958,6 +963,33 @@ bb-box's own code had about 21 ms of its own in those 20 s.
 **Until then.** Drags in a desktop lag in bursts, video or VNC. bb-box logs
 each minute in which the loop stood still for 250 ms or more, and the
 `profile` RPC names the code.
+
+## 26. Say what uninstalling a plugin keeps
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** An uninstall that does what its dialog says, or a
+dialog that says what stays. A person who uninstalls bb-box to start again,
+or to change its source ([4](#4-change-a-plugins-source-and-keep-its-state)),
+should know whether its boxes' records and its configuration stay.
+
+**What BB does now.** In BB's desktop app 0.46.0, on 11 October 2026, the
+plugin's **Uninstall** asked: 'Uninstall "bb-box" and delete its managed
+files, settings, secrets, and schedules?' After it, a fresh install of
+bb-box from another branch still had its box records, so the Box panel
+listed the old box, and still had its configuration, so Docker on the
+machine was on. Both are in the plugin's storage, which the dialog does not
+name. In BB 0.44.0, `bb plugin remove` and a fresh install started with
+empty storage (see 4).
+
+**What we ask.** Either of:
+
+1. The dialog says the plugin's storage stays, and how to delete it.
+2. The dialog offers to delete the storage too, and does so when asked.
+
+**Until then.** The [setup guide](../setup/README.md#remove-bb-box) says to
+release the boxes before removing bb-box. A box whose container went
+meanwhile shows as Gone.
 
 ## Checked, no request needed
 

@@ -17,16 +17,15 @@ A backend is where boxes come from. You can turn on several, and a new box goes 
 
 ## Install the plugin
 
-On the machine that runs BB:
+In BB, open Settings, then Installed plugins. Select **New plugin**, then **Install from source**, enter `git:https://github.com/moonstead/bb-box.git@main`, and select **Install plugin**. Or, with BB's command line:
 
 ```sh
-git clone https://github.com/moonstead/bb-box.git && cd bb-box
-npm install
-bb plugin build
-bb plugin install .
+bb plugin install git:https://github.com/moonstead/bb-box.git@main
 ```
 
-Then follow your backend's guide. It says what to prepare, such as an image or a template, and what to enter on BB Box's settings page: in BB, open Settings, Plugins, BB Box. For each backend, select **Set up**, enter the values, select **Check**, then **Save and turn on**. The [user guide's settings page](../docs/guide/settings.md) explains the page.
+BB fetches and builds it, so you need no clone. To change bb-box itself, clone it, run `npm install` and `bb plugin build`, then `bb plugin install .` in the clone.
+
+For Docker on the machine that runs BB, the Box panel can do the rest: select **Use Docker on this machine**. Otherwise, follow your backend's guide. It says what to prepare, such as an image or a template, and what to enter on BB Box's settings page: in BB, open Settings, Plugins, BB Box. For each backend, select **Set up**, enter the values, select **Check**, then **Save and turn on**. The [user guide's settings page](../docs/guide/settings.md) explains the page.
 
 From a terminal:
 
@@ -53,8 +52,8 @@ To see what the last run did, run `bb box images list`. `bb box doctor` warns wh
 
 Do not remove bb-box to upgrade it: `bb plugin remove` deletes its configuration, secrets and storage. `bb plugin source bb-box` shows what it was installed from.
 
-- Installed from a path, as above: pull, run `npm install` and `bb plugin build`, then `bb plugin reload bb-box`.
-- Installed from a branch, with `bb plugin install git:<bb-box repository>@<branch>`: `bb plugin update bb-box` moves it to the branch's newest commit and keeps its settings and storage. `bb plugin outdated` shows whether there is one.
+- Installed from a branch, as above: `bb plugin update bb-box` moves it to the branch's newest commit and keeps its settings and storage. `bb plugin outdated` shows whether there is one.
+- Installed from a path: pull, run `npm install` and `bb plugin build`, then `bb plugin reload bb-box`.
 - Installed from a commit or a tag: BB pins it, and `bb plugin update` refuses. Only a remove and an install move it, so install from a branch instead.
 
 After an upgrade, run `bb box doctor`. Your backend's guide says, under **Update**, when its host needs a step too, such as running a setup script again.
