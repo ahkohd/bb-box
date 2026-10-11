@@ -3,8 +3,9 @@
 #
 #   build.sh windows <vmid> [--replace] [--keep] [--sata]
 #
-# build.sh linux <vmid> [--replace] [--keep] builds the Linux VM template
-# instead, with build-linux.sh, which says how at its top (057).
+# build.sh linux <vmid> and build.sh linux-desktop <vmid>, each with
+# [--replace] [--keep], build the Linux VM templates instead, with
+# build-linux.sh, which says how at its top (057).
 #
 # Installs Windows 11 unattended from BBBOX_WINDOWS_ISO with the answer file in
 # answer/, in a VM on the box bridge: the VirtIO drivers and the QEMU guest
@@ -32,8 +33,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../proxmox-lxc/host/common.sh
 . "$here/../proxmox-lxc/host/common.sh"
 
-usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
-[ "${1:-}" != linux ] || exec bash "$here/build-linux.sh" "${@:2}"
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+case "${1:-}" in linux | linux-desktop) exec bash "$here/build-linux.sh" "$@" ;; esac
 [ "${1:-}" = windows ] && [ $# -ge 2 ] || usage
 vmid=$2
 shift 2

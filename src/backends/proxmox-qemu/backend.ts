@@ -79,6 +79,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription } from "../images.ts";
+import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
@@ -162,6 +163,35 @@ const LINUX_KIND: BoxKind = {
   },
   readyTimeoutMs: READY_TIMEOUT_MS,
 };
+
+/**
+ * Linux desktops as VMs (057): a linked clone of a Linux desktop template,
+ * the Linux one with the CPU desktop of Proxmox LXC's, drawn by the CPU. Its
+ * desktop is the guest's own VNC server and Selkies, as in an LXC box, not
+ * the VM's console.
+ */
+/** Cua Driver in a Linux desktop, as in Proxmox LXC's. */
+const LINUX_CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socket: "/home/box/.cache/cua-driver/cua-driver.sock" };
+const LINUX_DESKTOP_KIND: BoxKind = {
+  id: "linux-desktop-cpu",
+  label: "Linux desktop",
+  description:
+    "A Linux desktop VM drawn by the CPU, with its own kernel, for computer use and browsers where the box needs kernel modules or systemd as on a machine. It starts slower and holds its memory while it runs, so ask for it by its provider; a linux-desktop-cpu box elsewhere starts sooner.",
+  requires: [],
+  capabilities: {
+    ...LINUX_KIND.capabilities,
+    displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
+    computerUse: LINUX_CUA_DRIVER,
+  },
+  readyTimeoutMs: READY_TIMEOUT_MS,
+};
+/** The Linux kinds, each with its templates' setting. */
+const LINUX_KINDS: readonly BoxKind[] = [LINUX_KIND, LINUX_DESKTOP_KIND];
+/** The guest's VNC server, as in Proxmox LXC's desktops, and the password its desktop writes at boot. */
+const LINUX_VNC_PORT = 5900;
+const LINUX_VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
+/** What the desktop's display service writes once it is up: cpu here. */
+const LINUX_DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
 
 /** A doctor check's stable ID and its name. */
 type Check = readonly [id: CheckId, name: string];
@@ -364,30 +394,45 @@ export class ProxmoxQemuBackend implements Backend {
     // Windows boxes join BB unless the switch is set off (#539).
     if (this.#config.templates.length) kinds.push(this.#config.enrol ? { ...KIND, capabilities: { ...KIND.capabilities, enrol: true } } : KIND);
     // KVM where the settings say the host allows nested virtualization (057).
-    if (this.#config.linuxTemplates.length) {
-      kinds.push(this.#config.kvm ? { ...LINUX_KIND, capabilities: { ...LINUX_KIND.capabilities, features: [...LINUX_KIND.capabilities.features, "kvm"] } } : LINUX_KIND);
+    for (const kind of LINUX_KINDS) {
+      if (!this.#templatesOf(kind.id).length) continue;
+      kinds.push(this.#config.kvm ? { ...kind, capabilities: { ...kind.capabilities, features: [...kind.capabilities.features, "kvm"] } } : kind);
     }
     return kinds;
   }
 
   /** The templates of a kind's boxes. */
   #templatesOf(kind: string): readonly number[] {
-    return kind === LINUX_KIND.id ? this.#config.linuxTemplates : this.#config.templates;
+    if (kind === LINUX_KIND.id) return this.#config.linuxTemplates;
+    return kind === LINUX_DESKTOP_KIND.id ? this.#config.linuxDesktopTemplates : this.#config.templates;
   }
 
   /** Every template, Windows' and Linux'. */
   #allTemplates(): readonly number[] {
-    return [...this.#config.templates, ...this.#config.linuxTemplates];
+    return [...this.#config.templates, ...this.#config.linuxTemplates, ...this.#config.linuxDesktopTemplates];
   }
 
   /** A template as messages name it: "Linux template 9106" or "Windows template 9104". */
   #templateName(template: number): string {
-    return `${this.#osOf(template) === "linux" ? "Linux" : "Windows"} template ${template}`;
+    const kind = this.#kindOf(template);
+    return `${kind === LINUX_DESKTOP_KIND ? "Linux desktop" : kind === LINUX_KIND ? "Linux" : "Windows"} template ${template}`;
   }
 
   /** The OS of a guest from its template: Linux for a Linux template's clone, Windows otherwise. */
   #osOf(template: unknown): GuestOs {
-    return typeof template === "number" && this.#config.linuxTemplates.includes(template) ? "linux" : "windows";
+    return this.#kindOf(template).capabilities.os;
+  }
+
+  /** build.sh's word for a template's kind: windows, linux or linux-desktop. */
+  #buildWord(template: number): string {
+    const kind = this.#kindOf(template);
+    return kind === LINUX_DESKTOP_KIND ? "linux-desktop" : kind.capabilities.os;
+  }
+
+  /** The kind of a template's boxes: Windows' unless it is a Linux or Linux desktop template. */
+  #kindOf(template: unknown): BoxKind {
+    if (typeof template !== "number") return KIND;
+    return LINUX_KINDS.find((kind) => this.#templatesOf(kind.id).includes(template)) ?? KIND;
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
@@ -395,7 +440,7 @@ export class ProxmoxQemuBackend implements Backend {
     const api = await this.client();
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
     // Linux boxes have no warm pool here: their spares wait hibernated (#612).
-    if (kind === LINUX_KIND.id) return this.#room(api, size, guests, pending, { ready: 0, target: 0 }, false, signal, kind);
+    if (LINUX_KINDS.some((linux) => linux.id === kind)) return this.#room(api, size, guests, pending, { ready: 0, target: 0 }, false, signal, kind);
     const ready = await this.#ready(api, guests, signal);
     // Acquires here that hold a warm VM need no other.
     const waiting = Math.max(0, pending.length - this.#claimed.size);
@@ -495,7 +540,7 @@ export class ProxmoxQemuBackend implements Backend {
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     this.#offer(box.kind);
-    const linux = box.kind === LINUX_KIND.id;
+    const linux = LINUX_KINDS.some((kind) => kind.id === box.kind);
     const os: GuestOs = linux ? "linux" : "windows";
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs);
     const api = await this.client();
@@ -583,7 +628,10 @@ export class ProxmoxQemuBackend implements Backend {
       // Read while the box comes up: the size it has, as Proxmox gives it.
       const size = api.config(id, signal).then(sizeOf, () => null);
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step, os);
-      // A Linux template's cloud-init grows its root filesystem at each boot.
+      // A Linux template's bb-box-boot grows its root filesystem at each boot. Its desktop starts after SSH, as in Proxmox LXC.
+      if (linux && this.#kindOf(template).capabilities.displays.length) {
+        await step("display", () => this.#linuxDisplay(id, Math.max(1_000, deadline - Date.now()), signal));
+      }
       if (!linux) {
         // A resumed acquire may have grown the disk before it stopped.
         if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
@@ -691,9 +739,30 @@ export class ProxmoxQemuBackend implements Backend {
 
   async transports(guest: Guest): Promise<BoxTransports> {
     const vmid = this.#vmid(guest);
-    const os = this.#osOf(guest.data?.template);
+    const kind = this.#kindOf(guest.data?.template);
+    const os = kind.capabilities.os;
     const command = await this.#command(vmid, os);
-    if (os === "linux") return { command, displays: [], access: { ssh: this.#access(vmid), dockerHost: null } };
+    if (os === "linux") {
+      const access = this.#access(vmid);
+      // A desktop's own VNC server and Selkies, as in Proxmox LXC's CPU desktops.
+      const displays = kind.capabilities.displays.map(
+        (display): Display =>
+          display.protocol === "selkies"
+            ? selkiesDisplay((port) => command.route(port))
+            : {
+                ...display,
+                label: "Desktop",
+                open: async (signal) => {
+                  const read = await command.run(`cat ${LINUX_VNC_PASSWORD_FILE} 2>/dev/null || :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
+                  if (read.exitCode !== 0) throw new Error(`Cannot read the desktop's VNC password over SSH: ${read.stderr.trim() || `exit code ${read.exitCode}`}.`);
+                  const password = read.stdout.trim();
+                  return { route: { type: "tcp", host: access.host, port: LINUX_VNC_PORT }, auth: password ? { type: "vnc-password", password } : { type: "none" } };
+                },
+                minSize: MIN_DESKTOP,
+              },
+      );
+      return { command, displays, access: { ssh: access, dockerHost: `ssh://${access.user}@${access.host}` } };
+    }
     const desktop: Display = {
       ...KIND.capabilities.displays[0]!,
       label: "Desktop",
@@ -795,8 +864,10 @@ export class ProxmoxQemuBackend implements Backend {
 
       // What images are judged by (049), read while the templates are.
       const pins = (this.#context.images?.pins("windows") ?? Promise.resolve(null)).catch(() => null);
+      const linux = this.#config.linuxTemplates.length + this.#config.linuxDesktopTemplates.length > 0;
       const linuxPins = this.#config.linuxTemplates.length ? (this.#context.images?.pins("linux") ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
-      const bbApp = this.#config.linuxTemplates.length ? (this.#context.images?.bbApp(signal) ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
+      const desktopPins = this.#config.linuxDesktopTemplates.length ? (this.#context.images?.pins("linux-desktop") ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
+      const bbApp = linux ? (this.#context.images?.bbApp(signal) ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
       for (const template of this.#allTemplates()) {
         const name = templateCheck(template);
         const os = this.#osOf(template);
@@ -818,8 +889,10 @@ export class ProxmoxQemuBackend implements Backend {
               // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB. A Linux one does (057).
               const judged = judgeImage(
                 recordInDescription(String(config.description ?? "")),
-                os === "linux" ? { os, pins: await linuxPins, bbApp: await bbApp } : { os, pins: await pins, bbApp: null, joins: this.#config.enrol },
-                `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh ${os} ${template} --replace.`,
+                os === "linux"
+                  ? { os, pins: await (this.#kindOf(template) === LINUX_DESKTOP_KIND ? desktopPins : linuxPins), bbApp: await bbApp }
+                  : { os, pins: await pins, bbApp: null, joins: this.#config.enrol },
+                `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh ${this.#buildWord(template)} ${template} --replace.`,
               );
               checks.push({ id: `template.${template}.image`, name: `Image of ${name[1]}`, ...judged });
             }
@@ -830,7 +903,7 @@ export class ProxmoxQemuBackend implements Backend {
             name,
             missing ? `VM ${template} does not exist on ${node}, or is not in pool ${pool}.` : message(error),
             missing
-              ? `Build it with setup/proxmox-qemu/build.sh, or remove it from the ${os === "linux" ? "Linux" : "Windows"} templates in bb-box's settings.`
+              ? `Build it with setup/proxmox-qemu/build.sh, or remove it from the ${name[1].replace(/ template \d+$/, "")} templates in bb-box's settings.`
               : audit(error, `Give the token VM.Audit and VM.Clone on /vms/${template}.`),
           );
         }
@@ -855,7 +928,7 @@ export class ProxmoxQemuBackend implements Backend {
         const install = installTag(this.#context.installId);
         for (const guest of guests.filter((one) => this.#inRange(one.vmid) && one.tags.includes(install) && one.tags.includes(`${IMAGE_TAG}${ROLLBACK}`))) {
           const target = templateFromTags(guest.tags);
-          const os = guest.tags.includes(`${KIND_TAG}${LINUX_KIND.id}`) ? "Linux" : "Windows";
+          const os = guest.tags.includes(`${KIND_TAG}${LINUX_DESKTOP_KIND.id}`) ? "Linux desktop" : guest.tags.includes(`${KIND_TAG}${LINUX_KIND.id}`) ? "Linux" : "Windows";
           const build = buildFromTags(guest.tags);
           notes.push(
             `VMID ${guest.vmid} is the rollback of ${os} template ${target ?? "unknown"}${build ? `, ${BUILD}${build}` : ""}. It holds a box's VMID and address until the template's next refresh replaces it. To go back to it, list ${guest.vmid} as the ${os} template in bb-box's settings.`,
@@ -1230,6 +1303,21 @@ export class ProxmoxQemuBackend implements Backend {
     }
   }
 
+  /** Waits for a Linux desktop's display service to say its mode, as Proxmox LXC's desktops do. */
+  async #linuxDisplay(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const command = await this.#command(vmid, "linux");
+    const sleep = this.#options.sleep ?? pause;
+    for (;;) {
+      const result = await command.run(`cat ${LINUX_DISPLAY_MODE_FILE} 2>/dev/null; :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
+      if (result.stdout.trim()) return;
+      if (Date.now() >= deadline) {
+        throw new Error(`The box's desktop did not start: ${LINUX_DISPLAY_MODE_FILE} is missing after ${Math.round(timeoutMs / 1000)} s. Check bb-box-display.service in the Linux desktop template.`);
+      }
+      await sleep(200, signal);
+    }
+  }
+
   /** Sets Windows' clock from BB's server's. */
   async #setClock(vmid: number, signal?: AbortSignal): Promise<void> {
     await setClock(await this.#command(vmid), signal);
@@ -1442,7 +1530,7 @@ export class ProxmoxQemuBackend implements Backend {
     const builds: ImageBuild[] = [];
     for (const vmid of this.#allTemplates()) {
       const config = await api.config(vmid, signal).catch(() => null);
-      if (config && isTemplate(config)) builds.push(this.#imageBuild(vmid, this.#osOf(vmid) === "linux" ? LINUX_KIND.id : KIND.id, "standard", config, true));
+      if (config && isTemplate(config)) builds.push(this.#imageBuild(vmid, this.#kindOf(vmid).id, "standard", config, true));
     }
     const boxes: string[] = [];
     for (const guest of await api.listPool(this.#config.proxmox.pool, signal)) {
@@ -1472,7 +1560,7 @@ export class ProxmoxQemuBackend implements Backend {
   async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
     const api = await this.client();
     const template = Number(build.ref);
-    const kind = build.kind === LINUX_KIND.id ? LINUX_KIND : KIND;
+    const kind = LINUX_KINDS.find((linux) => linux.id === build.kind) ?? KIND;
     const os = kind.capabilities.os;
     let vmid: number | null = null;
     try {
@@ -1489,6 +1577,9 @@ export class ProxmoxQemuBackend implements Backend {
         await this.#setClock(id, signal);
         // The kind's check runs in the desktop session, which comes up soon after SSH.
         await this.#desktopUp(id, timeoutMs, signal);
+      } else if (kind.capabilities.displays.length) {
+        // As does a Linux desktop's check, once its display service is up.
+        await this.#linuxDisplay(id, timeoutMs, signal);
       }
       return { ref: String(id), command: await this.#command(id, os) };
     } catch (error) {
@@ -1510,7 +1601,7 @@ export class ProxmoxQemuBackend implements Backend {
   async #capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
     const api = await this.client();
     const vmid = Number(box.ref);
-    const linux = from.kind === LINUX_KIND.id;
+    const linux = LINUX_KINDS.some((kind) => kind.id === from.kind);
     // Where the refresh writes the record: finalize.sh's on Linux (049), refresh.ps1's on Windows (054).
     const at = linux ? "/usr/share/bb-box/image.json" : "C:\\bb-box\\image.json";
     const read = await box.command.run(linux ? `cat ${at}` : `Get-Content ${at} -Raw`, { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
@@ -1561,10 +1652,10 @@ export class ProxmoxQemuBackend implements Backend {
     const disk = bootDisk(old);
     const storage = disk ? (String(old[disk]).split(":")[0] ?? "") : "";
     const os = this.#osOf(target);
-    const Os = os === "linux" ? "Linux" : "Windows";
+    const Os = this.#templateName(target).replace(/ template \d+$/, "");
     if (!storage) throw new Error(`${Os} template ${target} has no boot disk.`);
     const thin = (await api.storageStatus(storage, signal)).type === "lvmthin";
-    const name = typeof old.name === "string" ? old.name : `bb-box-${os}`;
+    const name = typeof old.name === "string" ? old.name : this.#kindOf(target) === LINUX_DESKTOP_KIND ? "bb-box-linux-desktop" : `bb-box-${os}`;
     const pool = this.#config.proxmox.pool;
     const install = installTag(this.#context.installId);
     const guests = await api.listPool(pool, signal);

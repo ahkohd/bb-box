@@ -130,6 +130,18 @@ the new template: its address, its disk grown, the box user's tools, and a
 hibernate and resume. `--replace` and `--keep` work as for Windows.
 
 Then add the template's VMID to `linux-templates` in Proxmox QEMU's setup.
+
+For `linux-desktop-cpu` boxes as VMs, build the desktop template too, and
+add its VMID to `linux-desktop-templates`:
+
+```sh
+./build.sh linux-desktop 9107
+```
+
+It is the Linux template with the Proxmox LXC desktop-cpu template's
+desktop, drawn by the CPU, on a 24 GiB disk. Its boxes show their desktop
+through the guest's own VNC server and Selkies, as Proxmox LXC's desktops
+do, not the VM's console.
 A `linux` acquire chooses a VM only when it asks for one, with `on` or the
 `linux-vm` kind, or when the other backends have no room.
 

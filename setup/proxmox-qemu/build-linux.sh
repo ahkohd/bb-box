@@ -1,7 +1,10 @@
 #!/bin/bash
-# Builds bb-box's Linux VM template on a Proxmox host, as root (057).
+# Builds bb-box's Linux VM templates on a Proxmox host, as root (057).
 #
 #   build.sh linux <vmid> [--replace] [--keep]
+#   build.sh linux-desktop <vmid> [--replace] [--keep]
+#       the Linux desktop template, for linux-desktop-cpu boxes: the Linux
+#       one with the CPU desktop of Proxmox LXC's desktop-cpu template
 #
 # Imports Ubuntu 24.04's cloud image, pinned by its SHA-256, as a VM on the
 # box bridge, and boots it once with cloud-init, which gives it the build
@@ -12,10 +15,10 @@
 # over SSH: its address from the SMBIOS serial, its root grown over a bigger
 # disk, and a hibernate and resume.
 #
-# Options: --replace  <vmid> may be a bb-box Linux VM template already. The
-#                     new one is built and checked in another VM
-#                     (BBBOX_BUILD_VMID, or the next free VMID) and only then
-#                     takes its place.
+# Options: --replace  <vmid> may be a bb-box Linux VM template of the same
+#                     kind already. The new one is built and checked in
+#                     another VM (BBBOX_BUILD_VMID, or the next free VMID)
+#                     and only then takes its place.
 #          --keep     leave the build VM when the build fails, to look at it.
 # Settings: /etc/bb-box/bb-box.env (see
 # ../proxmox-lxc/host/bb-box.env.example), and BBBOX_CHECK_VMID, the clone
@@ -25,10 +28,13 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../proxmox-lxc/host/common.sh
 . "$here/../proxmox-lxc/host/common.sh"
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
-[ $# -ge 1 ] || usage
-vmid=$1
-shift
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+# build.sh hands over "linux <vmid>" or "linux-desktop <vmid>".
+kind=${1:-}
+case "$kind" in linux | linux-desktop) ;; *) usage ;; esac
+[ $# -ge 2 ] || usage
+vmid=$2
+shift 2
 replace='' keep=''
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,9 +49,14 @@ done
 IMAGE_RELEASE=20260926
 IMAGE_SHA256=6a81c37564db9b1ee84e141922625e1d7c5b389b99bb3c572e0243607d5bb4d2
 IMAGE_URL=https://cloud-images.ubuntu.com/releases/noble/release-$IMAGE_RELEASE/ubuntu-24.04-server-cloudimg-amd64.img
-# The template waits at the linux kind's default size (028), on the LXC
-# template's disk.
-cores=2 memory=4096 disk=16
+# The template waits at its kind's default size (028), on the LXC
+# template's disk. Each kind's artifacts, finalize.sh's kind and check.
+if [ "$kind" = linux ]; then
+  cores=2 memory=4096 disk=16 artifacts=linux finalize=linux check=bb-box-check-headless
+else
+  cores=4 memory=8192 disk=24 artifacts=desktop-cpu finalize=desktop check=bb-box-check-desktop
+fi
+name=bb-box-$kind
 
 for tool in curl jq ssh sha256sum; do command -v "$tool" >/dev/null || die "$tool is required"; done
 template=$here/../proxmox-lxc/template
@@ -73,15 +84,16 @@ wait_for() { # what seconds interval command...
   done
 }
 
-# With --replace, an existing <vmid> must be a Linux VM template this script
-# made that no box needs. The build then goes to another VM ($vm), which
-# replaces <vmid> only once it is checked, so a failure leaves the old one.
+# With --replace, an existing <vmid> must be a VM template this script made,
+# of the same kind, that no box needs. The build then goes to another VM
+# ($vm), which replaces <vmid> only once it is checked, so a failure leaves
+# the old one.
 vm=$vmid
 if in_use "$vmid"; then
-  [ -n "$replace" ] || die "VMID $vmid is already in use (--replace replaces a bb-box Linux VM template)"
+  [ -n "$replace" ] || die "VMID $vmid is already in use (--replace replaces a bb-box $kind VM template)"
   config=$(qm config "$vmid" 2>/dev/null || true)
-  grep -q '^template: 1' <<<"$config" && grep -q '^description: bb-box linux vm template' <<<"$config" ||
-    die "$vmid is not a bb-box Linux VM template; --replace replaces only those"
+  grep -q '^template: 1' <<<"$config" && grep -q "^description: bb-box $kind vm template" <<<"$config" ||
+    die "$vmid is not a bb-box $kind VM template; --replace replaces only those"
   clones=$(linked_clones "$vmid")
   [ -z "$clones" ] || die "boxes are linked clones of template $vmid and need it ($clones); release them first"
   vm=${BBBOX_BUILD_VMID:-$(pvesh get /cluster/nextid)}
@@ -111,7 +123,7 @@ fi
 cache=/var/cache/bb-box/artifacts
 stage=$(mktemp -d /var/tmp/bb-box-linux-vm-XXXXXX)
 in_vm=/var/tmp/bb-box-build
-bash "$template/fetch-artifacts.sh" "$cache" linux
+bash "$template/fetch-artifacts.sh" "$cache" "$artifacts"
 install -d -m 0700 "$stage/artifacts"
 cp -r "$template/guest" "$template/pins.json" "$template/desktop-pins.tsv" "$template/baseline-packages.txt" "$template/apt-snapshot" "$here/linux" "$stage/"
 cp "$BBBOX_SSH_KEY.pub" "$stage/plugin-key.pub"
@@ -124,7 +136,7 @@ DESKTOP_GPU=none
 BUILD_ID=$build
 EOF
 for f in "$cache"/*; do
-  case "${f##*/}" in *.run | *.run.sha256sum | *.deb | cua-driver-* | rustup-init) continue ;; esac
+  case "${f##*/}" in *.run | *.run.sha256sum | *.deb | cua-driver-* | rustup-init) [ "$kind" = linux-desktop ] || continue ;; esac
   ln "$f" "$stage/artifacts/" 2>/dev/null || cp "$f" "$stage/artifacts/"
 done
 
@@ -156,7 +168,7 @@ trap 'exit 1' INT TERM
 serial=$(printf '%s/%s %s' "$BBBOX_BUILD_ADDRESS" "$BBBOX_PREFIX" "$BBBOX_GATEWAY" | base64 -w0)
 log "creating build VM $vm from the cloud image"
 created=1
-qm create "$vm" --name bb-box-linux-build --pool "$BBBOX_POOL" --ostype l26 --machine q35 --cpu host \
+qm create "$vm" --name "$name-build" --pool "$BBBOX_POOL" --ostype l26 --machine q35 --cpu host \
   --cores 16 --memory 16384 --balloon 0 --scsihw virtio-scsi-single --agent enabled=1 \
   --scsi0 "$BBBOX_STORAGE:0,import-from=$image,discard=on,iothread=1,ssd=1" --boot order=scsi0 \
   --ide2 "$BBBOX_STORAGE:cloudinit" --serial0 socket --net0 "virtio,bridge=$BBBOX_BRIDGE" \
@@ -175,6 +187,7 @@ push
 log "customising the build VM (the Linux template's customize-base.sh)"
 ssh_box "sudo bash $in_vm/guest/customize-base.sh $in_vm" </dev/null
 ssh_box "sudo bash $in_vm/linux/customize-vm.sh $in_vm" </dev/null
+[ "$kind" = linux ] || ssh_box "sudo bash $in_vm/guest/customize-desktop.sh $in_vm" </dev/null
 
 # Boot it again as a box would, with its address from the serial, and check it
 # as the box user.
@@ -197,7 +210,7 @@ ssh_box 'sudo systemd-run --quiet --on-active=2 systemctl reboot' </dev/null || 
 wait_for "the build VM answers SSH from a new boot" 300 2 booted_since "$before" ||
   die "the build VM did not come back after its reboot"
 ssh_box 'timeout 120 systemctl is-system-running --wait' >/dev/null </dev/null || true
-ssh_box 'bash -lc bb-box-check-headless' </dev/null | tee "$stage/check.txt"
+ssh_box "bash -lc $check" </dev/null | tee "$stage/check.txt"
 ! grep -q '^[^ ].* FAIL ' "$stage/check.txt" || die "checks failed (above)"
 
 log "finalizing the build VM"
@@ -205,7 +218,7 @@ log "finalizing the build VM"
 # plugin's doctor, as its second line. It is read in finalize.sh's session:
 # finalize.sh removes the SSH host keys, so no new connection can be made.
 # Its own output goes to stderr, so the record is all there is on stdout.
-record=$(ssh_box "sudo bash $in_vm/guest/finalize.sh $in_vm linux >&2 && cat /usr/share/bb-box/image.json" </dev/null | jq -c .) ||
+record=$(ssh_box "sudo bash $in_vm/guest/finalize.sh $in_vm $finalize >&2 && cat /usr/share/bb-box/image.json" </dev/null | jq -c .) ||
   die "finalizing failed, or the template has no image record"
 [ -n "$record" ] || die "the template has no image record"
 qm shutdown "$vm" --timeout 120
@@ -219,7 +232,7 @@ log "VM $vm is a template; checking a linked clone of it"
 # disk, reached over SSH as the backend reaches a box.
 check_vm=${BBBOX_CHECK_VMID:-$(pvesh get /cluster/nextid)}
 if in_use "$check_vm"; then taken=$check_vm check_vm=; die "VMID $taken for the check is already in use; set BBBOX_CHECK_VMID to a free one"; fi
-qm clone "$vm" "$check_vm" --name bb-box-linux-check --pool "$BBBOX_POOL" >/dev/null
+qm clone "$vm" "$check_vm" --name "$name-check" --pool "$BBBOX_POOL" >/dev/null
 qm set "$check_vm" --smbios1 "base64=1,uuid=$(cat /proc/sys/kernel/random/uuid),serial=$serial" >/dev/null
 qm resize "$check_vm" scsi0 "$((disk + 4))G" >/dev/null
 start=$(date +%s%N)
@@ -230,7 +243,7 @@ checked=0
 root_gib=$(ssh_box 'df -BG --output=size / | tail -1' </dev/null | tr -dc 0-9)
 log "a clone's root is ${root_gib:-?} GiB on a $((disk + 4)) GiB disk"
 [ "${root_gib:-0}" -gt "$disk" ] || { log "the clone's root did not grow over its disk"; checked=1; }
-ssh_box 'bash -lc bb-box-check-headless' </dev/null | tee "$stage/check.txt" || checked=1
+ssh_box "bash -lc $check" </dev/null | tee "$stage/check.txt" || checked=1
 ! grep -q '^[^ ].* FAIL ' "$stage/check.txt" || checked=1
 # KVM in the box, as the box user: where it works, the backend's linux-kvm
 # setting can offer it. Not a failure: the host may not allow nested
@@ -259,13 +272,13 @@ qm destroy "$check_vm" --purge 1 >/dev/null
 check_vm=
 [ "$checked" = 0 ] || die "the check failed (above)"
 
-description="bb-box linux vm template, built $(date -u +%F) from Ubuntu 24.04's cloud image $IMAGE_RELEASE.
+description="bb-box $kind vm template, built $(date -u +%F) from Ubuntu 24.04's cloud image $IMAGE_RELEASE.
 $record"
 # The pool's ACL lets the plugin's token delete guests in it; protection keeps
 # it from deleting templates. Clones inherit the flag, so the plugin clears it
 # on each box (delete=protection) when it configures the box.
 if [ "$vm" = "$vmid" ]; then
-  qm set "$vmid" --name bb-box-linux --description "$description" --tags "bbbox;linux;$build" --protection 1 >/dev/null
+  qm set "$vmid" --name "$name" --description "$description" --tags "bbbox;$kind;$build" --protection 1 >/dev/null
 else
   # Puts the checked template in <vmid>'s place. On LVM-thin the new one is a
   # linked clone of the build, which takes seconds; elsewhere a full copy.
@@ -274,14 +287,14 @@ else
   start=$(date +%s%N)
   qm destroy "$vmid" || { qm set "$vmid" --protection 1 >/dev/null; die "could not remove template $vmid"; }
   if [ -n "$thin" ]; then
-    qm clone "$vm" "$vmid" --name bb-box-linux --pool "$BBBOX_POOL" >/dev/null
+    qm clone "$vm" "$vmid" --name "$name" --pool "$BBBOX_POOL" >/dev/null
   else
-    qm clone "$vm" "$vmid" --name bb-box-linux --pool "$BBBOX_POOL" --full 1 --storage "$BBBOX_STORAGE" >/dev/null
+    qm clone "$vm" "$vmid" --name "$name" --pool "$BBBOX_POOL" --full 1 --storage "$BBBOX_STORAGE" >/dev/null
   fi
   qm template "$vmid"
   echo "template $vmid was missing for $((($(date +%s%N) - start) / 1000000)) ms"
-  qm set "$vmid" --description "$description" --tags "bbbox;linux;$build" --protection 1 >/dev/null
+  qm set "$vmid" --description "$description" --tags "bbbox;$kind;$build" --protection 1 >/dev/null
   qm destroy "$vm" --purge 1 >/dev/null
 fi
 done_ok=1
-log "Linux VM template $vmid ready ($build)"
+log "$kind VM template $vmid ready ($build)"

@@ -138,6 +138,10 @@ test("the settings list Windows and Linux templates by VMID", () => {
   // Linux templates (057): none by default, alone or beside Windows', never the same VMID.
   assert.deepEqual(qemuConfig({}).linuxTemplates, []);
   assert.deepEqual(qemuConfig({ "windows-templates": "", "linux-templates": "9120" }).linuxTemplates, [9120]);
+  // Linux desktop templates (057): none by default, alone or beside the others, never one of theirs.
+  assert.deepEqual(qemuConfig({}).linuxDesktopTemplates, []);
+  assert.deepEqual(qemuConfig({ "windows-templates": "", "linux-desktop-templates": "9121" }).linuxDesktopTemplates, [9121]);
+  assert.deepEqual(problems({ "linux-templates": "9120", "linux-desktop-templates": "9120" }), [{ path: "linux-desktop-templates", message: "Template 9120 is listed more than once. List each template once." }]);
   // KVM in Linux VM boxes (057): off unless set.
   assert.equal(qemuConfig({}).kvm, false);
   assert.equal(qemuConfig({ "linux-kvm": true }).kvm, true);
@@ -1021,6 +1025,37 @@ function imageSetup(record: Record<string, unknown>) {
   }
   return env;
 }
+
+test("with Linux desktop templates, linux-desktop-cpu boxes are VMs whose desktop is the guest's VNC server and Selkies, ready once its display is up (057)", async () => {
+  const { backend, proxmox, ssh } = setup({ "linux-desktop-templates": "9121" });
+  proxmox.addVmTemplate(9121);
+  rmSync(join(ssh.dir, "windows", "192.0.2.150"));
+  const desktop = backend.kinds().find((kind) => kind.id === "linux-desktop-cpu");
+  assert.ok(desktop, "offered beside windows-desktop");
+  assert.ok(!backend.kinds().some((kind) => kind.id === "linux"), "no linux kind without Linux templates");
+  assert.deepEqual(desktop.capabilities.features, ["docker", "kernel"]);
+  assert.deepEqual(desktop.capabilities.displays.map((display) => display.protocol), ["rfb", "selkies"]);
+  assert.equal(desktop.capabilities.computerUse?.driver, "cua");
+  const report = await backend.doctor();
+  assert.equal(report.checks.find((check) => check.id === "template.9121")?.name, "Linux desktop template 9121");
+  assert.match(report.checks.find((check) => check.id === "template.9121.image")!.fix!, /build\.sh linux-desktop 9121 --replace\.$/);
+
+  // The display service says its mode once the desktop is up.
+  const run = join(ssh.home("192.0.2.150"), "run", "bb-box");
+  mkdirSync(run, { recursive: true });
+  writeFileSync(join(run, "display-mode"), "cpu\n");
+  const box = identity(sized(), "linux-desktop-cpu");
+  const hook = hooks();
+  const guest = await backend.acquire(box, null, hook.value, signal());
+  assert.deepEqual(guest.data, { template: 9121, box: box.boxId });
+  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "display", "network", "ssh", "start", "tags"]);
+
+  const transports = await backend.transports(guest);
+  assert.deepEqual(transports.displays.map((display) => [display.id, display.protocol]), [["desktop", "rfb"], ["selkies", "selkies"]]);
+  const opened = await transports.displays[0]!.open(signal());
+  assert.deepEqual(opened.route, { type: "tcp", host: "192.0.2.150", port: 5900 }, "the guest's own VNC server, not the VM's console");
+  assert.equal(transports.access?.dockerHost, "ssh://box@192.0.2.150");
+});
 
 test("image operations on a Linux template: its build box has no Windows steps, its capture reads the record finalize.sh wrote, and its rollback says Linux (057)", async () => {
   const record = { contract: 1, image: "standard", kind: "linux", arch: "x86_64", build: "build.20261012-030000-1a2b", built: "2026-10-12T03:00:00Z", os: "Ubuntu 24.04", pins: "p".repeat(64), tools: { node: "24.21.0" } };
