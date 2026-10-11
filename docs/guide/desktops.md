@@ -13,6 +13,8 @@ You can open a box's desktop from:
 
 The thread's Desktop tab counts the machine the thread runs on, if it is a desktop.
 
+![A desktop box in the thread's right panel](../media/desktop-box.png)
+
 When you switch to another tab and back, the desktop is still there, with no wait. A desktop you have not looked at for 10 minutes disconnects, and connects again when you come back.
 
 ## Taking and handing back control

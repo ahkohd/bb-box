@@ -1,5 +1,7 @@
 # bb-box
 
+[![A person makes a desktop box and a server box in a BB thread, then runs a command in the terminal](docs/media/demo.webp)](docs/media/demo.mp4)
+
 Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own: Linux, macOS or Windows, virtual or physical, with or without a desktop. You and the thread's agent both use them from BB.
 
 ## Why bb-box
