@@ -2,8 +2,6 @@
 
 Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own: Linux, macOS or Windows, virtual or physical, with or without a desktop. You and the thread's agent both use them from BB.
 
-bb-box is a BB plugin, which shows in BB as BB Box. It is for people who run BB for themselves and want their agents to have real machines. A desktop lets an agent build and test apps in a real browser or native interface. A plain machine runs Docker, services and builds. Either way, the work runs on a box and not on your own computer.
-
 ## Why bb-box
 
 - A box belongs to its thread. It has what the thread has: its Git credentials, its machine variables, BB itself, and the same network reach.
