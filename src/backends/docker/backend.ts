@@ -57,6 +57,7 @@ import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type Docker
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
+import { restartWayvnc } from "../wayvnc.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
 const READY_TIMEOUT_MS = 60_000;
@@ -825,7 +826,7 @@ export class DockerBackend implements Backend {
                 };
               },
               ...(kind === "linux-desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
-              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal) } : {}),
+              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal) } : {}),
               minSize: MIN_DESKTOP,
             },
     );

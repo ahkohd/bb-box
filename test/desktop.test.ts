@@ -5,7 +5,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Control, ControlError, type KeptControl, type ViewerConnection } from "../src/core/control.ts";
-import { RfbRelay, restoreSize, type OpenDisplay, type RelayOptions } from "../src/core/relay.ts";
+import type { ByteChannel } from "../src/transports/types.ts";
+import { connectBox, RfbRelay, restoreSize, type OpenDisplay, type RelayOptions } from "../src/core/relay.ts";
 import {
   ClientParser,
   RfbError,
@@ -396,6 +397,29 @@ test("the box closing its desktop closes the viewer", async () => {
   await until("the viewer to close", () => relay.viewer.closed !== null);
   assert.deepEqual(relay.viewer.closed, { code: 1000, reason: "The box's desktop closed the connection." });
   assert.deepEqual(relay.ends, ["box"]);
+});
+
+test("a sign-in that hangs has a display that can restart its server restart it, once, and sign in again (#411)", async () => {
+  const server = new FakeRfb({ password: "secret12" });
+  const auth = { type: "vnc-password", password: "secret12" } as const;
+  // A server frozen at a viewer's sign-in, as wayvnc 0.7.2 can be after a restart: it never answers.
+  const hung = (): ByteChannel => {
+    const toBox = new TransformStream<Uint8Array, Uint8Array>();
+    const fromBox = new TransformStream<Uint8Array, Uint8Array>();
+    return { readable: fromBox.readable, writable: toBox.writable, close: async () => void (await toBox.writable.abort().catch(() => undefined)) };
+  };
+  let opens = 0;
+  let restarts = 0;
+  const open: OpenDisplay = async () => ({ channel: opens++ === 0 ? hung() : server.channel(), auth, restart: async () => void restarts++ });
+  const connection = await connectBox(open, 2_000, 50);
+  assert.deepEqual([opens, restarts], [2, 1]);
+  await connection.channel.close();
+  // A display that cannot restart its server waits out the whole time, as before.
+  await assert.rejects(connectBox(async () => ({ channel: hung(), auth }), 200, 50), /did not finish its handshake in time/);
+  // A server that hangs again after its restart is not restarted twice.
+  let again = 0;
+  await assert.rejects(connectBox(async () => ({ channel: hung(), auth, restart: async () => void again++ }), 300, 50), /did not finish its handshake in time/);
+  assert.equal(again, 1);
 });
 
 test("restoring the size sets the desktop back over a connection of its own", async () => {
