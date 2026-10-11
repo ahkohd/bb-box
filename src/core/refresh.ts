@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { IMAGE_CONTRACT, parseImageRecord, pinsDigest, type ImageRecord } from "../backends/images.ts";
 import { KIND_INFO } from "../backends/kinds.ts";
-import type { BackendImages, ImageBox, ImageBuild } from "../backends/types.ts";
+import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../backends/types.ts";
 import { compareVersions, resolveVersions, stageSetup } from "../backends/versions.ts";
 import { quote } from "../transports/process.ts";
 import type { CommandTransport } from "../transports/types.ts";
@@ -31,6 +31,8 @@ const BUILDS: Readonly<Record<string, { readonly artifacts: string; readonly fin
 const KEPT_LINES = 200;
 /** How much slower than a box of the old build a box of the new one may answer (049). */
 const SLOWER_MS = 5_000;
+/** How long a refresh waits for room for one of its boxes, as while threads' boxes take a Mac's two macOS slots (#650), and how often it asks. */
+const ROOM = { waitMs: 60 * 60_000, pollMs: 30_000 };
 /** Where the build's files go in the box, as build.sh puts them in its CT. */
 const BUILD_DIR = "/var/tmp/bb-box-build";
 /** Where a Windows refresh's files go in the box (054). */
@@ -63,6 +65,8 @@ export interface RefreshOptions {
   readonly versions?: typeof resolveVersions;
   /** Replaces the clock, for tests. */
   readonly now?: () => number;
+  /** How long to wait for room for a box when the backend has none, and how often to ask (#650). */
+  readonly room?: { readonly waitMs: number; readonly pollMs: number };
   /** How long a Windows box may take to come back after a restart, and how often to ask. */
   readonly restart?: { readonly timeoutMs: number; readonly pollMs: number };
 }
@@ -259,6 +263,25 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
   };
   const checks: RefreshCheck[] = [];
   const made: string[] = [];
+  // A box of a build, once the backend has room for it (#650). Only the attempt that made it is timed.
+  const boxOf = async (build: ImageBuild, label: string): Promise<{ box: ImageBox; ms: number }> => {
+    const room = options.room ?? ROOM;
+    const until = Date.now() + room.waitMs;
+    for (let told = 0; ; ) {
+      const at = now();
+      try {
+        const box = await images.box(build, label, signal);
+        return { box, ms: now() - at };
+      } catch (error) {
+        if (!(error instanceof BackendError && error.code === "no_capacity") || Date.now() >= until) throw error;
+        if (Date.now() >= told) {
+          say(`no room for the ${label} box: ${error.message} Waiting for room, up to ${Math.ceil((until - Date.now()) / 60_000)} more minutes.`);
+          told = Date.now() + 5 * 60_000;
+        }
+        await sleep(room.pollMs, undefined, { signal });
+      }
+    }
+  };
   const end = (ok: boolean, build: ImageBuild | null, reason: string | null): RefreshResult => ({
     ok,
     build,
@@ -295,7 +318,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
         ["image.json", `${JSON.stringify(windowsRecord(current, pins, buildId, now(), digest))}\n`],
       ];
       say(`building ${buildId} in a box of ${current.ref}`);
-      const box: ImageBox = await images.box(current, `refresh of ${current.ref}`, signal);
+      const { box } = await boxOf(current, `refresh of ${current.ref}`);
       made.push(box.ref);
       for (const [name, text] of files) await box.command.writeFile(`${WINDOWS_DIR}\\${name}`, new TextEncoder().encode(text), { signal });
       for (let round = 1; ; round++) {
@@ -321,7 +344,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       // The build, in a box of the image.
       const buildId = newBuildId(now());
       say(`building ${buildId} in a box of ${current.ref}`);
-      const box: ImageBox = await images.box(current, `refresh of ${current.ref}`, signal);
+      const { box } = await boxOf(current, `refresh of ${current.ref}`);
       made.push(box.ref);
       await box.command.writeFile("bb-box-setup.tgz", tar.stdout, { signal });
       const built = await streamLines(box.command, buildScript(kind, options.bbUrl, buildId), options.buildTimeoutMs ?? 90 * 60_000, signal, say);
@@ -335,10 +358,9 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
 
     // The checks before replacing (049), on a trial box, against a box of the old build.
     const timed = async (build: ImageBuild, label: string) => {
-      const at = now();
-      const trial = await images.box(build, label, signal);
+      const { box: trial, ms } = await boxOf(build, label);
       made.push(trial.ref);
-      return { trial, ms: now() - at };
+      return { trial, ms };
     };
     const baseline = await timed(current, `answer time of ${current.build ?? current.ref}`);
     await images.remove(baseline.trial.ref, signal);

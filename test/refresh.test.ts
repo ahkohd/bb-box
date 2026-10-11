@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { pinsDigest, type ImageRecord } from "../src/backends/images.ts";
-import type { BackendImages, ImageBox, ImageBuild } from "../src/backends/types.ts";
+import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../src/backends/types.ts";
 import { buildScript, recordChecks, refreshImage } from "../src/core/refresh.ts";
 import type { CommandTransport, RunResult } from "../src/transports/types.ts";
 
@@ -37,7 +37,8 @@ const CURRENT: ImageBuild = { ref: "9100", image: "standard", kind: "linux", bui
  * that answer the build script, the kind's check and BB's app, and a clock
  * that a box from the new build moves on by `slowerMs` more.
  */
-function fake(options: { buildExit?: number; check?: string; app?: string; captured?: ImageRecord; slowerMs?: number } = {}) {
+function fake(options: { buildExit?: number; check?: string; app?: string; captured?: ImageRecord; slowerMs?: number; full?: number } = {}) {
+  let full = options.full ?? 0;
   const events: string[] = [];
   let clock = 0;
   let next = 7000;
@@ -67,6 +68,8 @@ function fake(options: { buildExit?: number; check?: string; app?: string; captu
   const images: BackendImages = {
     list: async () => ({ builds: [CURRENT], boxes: [] }),
     box: async (build, label) => {
+      // The backend has no room for its first `full` boxes, as when threads' boxes take a Mac's two macOS slots.
+      if (full-- > 0) throw new BackendError("no_capacity", "mac1 already runs as many VMs as macOS allows, two.");
       const ref = String(next++);
       events.push(`box ${ref} from ${build.ref}: ${label}`);
       clock += build.ref === CURRENT.ref ? 1_000 : 1_000 + (options.slowerMs ?? 0);
@@ -86,7 +89,7 @@ function fake(options: { buildExit?: number; check?: string; app?: string; captu
   return { images, events, written, now: () => clock };
 }
 
-const refresh = (made: ReturnType<typeof fake>, extra: { replace?: boolean } = {}) =>
+const refresh = (made: ReturnType<typeof fake>, extra: { replace?: boolean; room?: { waitMs: number; pollMs: number } } = {}) =>
   refreshImage({ images: made.images, current: CURRENT, setup: SETUP, bbUrl: "https://bb.example.com", bbApp: APP, pinned: true, signal: AbortSignal.timeout(60_000), now: made.now, ...extra });
 
 test("a refresh builds in a box of the image, captures it, checks a trial box against a box of the old build, and replaces the image (049)", async () => {
@@ -118,6 +121,24 @@ test("a refresh builds in a box of the image, captures it, checks a trial box ag
   assert.ok(result.output.includes("installed claude-code 2.1.288 in /opt/bb-box-tools/claude-code-2.1.288"));
   assert.ok(result.output.includes("finalize: done (linux)"), "the last line, without a newline");
   assert.equal(result.output.at(-1), "replaced 9100 with build.20261003-021500-3f9c");
+});
+
+test("a refresh waits for room for its boxes, saying so, and times only the box that came; with no room in time it fails, and the image stays (#650)", async () => {
+  const waited = fake({ full: 3 });
+  const result = await refresh(waited, { room: { waitMs: 60_000, pollMs: 1 } });
+  assert.equal(result.ok, true, result.reason ?? "");
+  assert.equal(waited.events[0], "box 7000 from 9100: refresh of 9100");
+  assert.deepEqual(
+    result.output.filter((line) => line.startsWith("no room")),
+    ["no room for the refresh of 9100 box: mac1 already runs as many VMs as macOS allows, two. Waiting for room, up to 1 more minutes."],
+  );
+  assert.equal(result.checks.find((check) => check.name === "answers as quickly")?.ok, true);
+
+  const full = fake({ full: 1000 });
+  const failed = await refresh(full, { room: { waitMs: 50, pollMs: 1 } });
+  assert.equal(failed.ok, false);
+  assert.match(failed.reason ?? "", /mac1 already runs as many VMs as macOS allows, two\./);
+  assert.deepEqual(full.events, [], "no box was made, and nothing was replaced");
 });
 
 test("a try builds and checks, then removes the build, and the image stays", async () => {

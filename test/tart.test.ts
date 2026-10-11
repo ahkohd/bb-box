@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -820,4 +820,39 @@ test("a refresh's base is pulled when the registry has moved its tag, room allow
   assert.match(pruned.stdout, /base: removed the old cached ghcr\.io\/acme\/macos-xcode@sha256:old/);
   assert.deepEqual([existsSync(join(cache, "sha256:old")), existsSync(join(cache, "sha256:new"))], [false, true]);
   assert.match(run(baseScript("bb-box-macos", 60), "0").stdout, /base: bb-box-macos is a local VM/);
+});
+
+test("prepare-image.sh's boot waits while macOS's two VM slots are taken, saying so, and boots once one is free; with no slot in time it stops (#650)", async () => {
+  const home = mkdtempSync(join(tmpdir(), "bbbox-slot-"));
+  after(() => rmSync(home, { recursive: true, force: true }));
+  fakeMacTools(home);
+  addImage(home, "bb-box-macos-build");
+  const source = readFileSync(new URL("../setup/tart/prepare-image.sh", import.meta.url), "utf8");
+  const line = (pattern: RegExp) => source.match(pattern)![0];
+  const start = source.indexOf("boot() {");
+  const boot = source.slice(start, source.indexOf("\n}\n", start) + 2);
+  const script = (minutes: number) =>
+    ["set -eu", line(/^die\(\).*$/m), line(/^step\(\).*$/m), `SLOT_WAIT_MINUTES=${minutes}`, "SLOT_POLL_SECONDS=1", boot, "build=bb-box-macos-build; work=$(mktemp -d)", "boot", "echo booted", 'tart stop "$build"'].join("\n");
+  const run = (minutes: number) =>
+    new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
+      const child = spawn("/bin/sh", ["-c", script(minutes)], { env: { HOME: home, PATH: `${join(home, ".nix-profile", "bin")}:/usr/bin:/bin` } });
+      let [out, err] = ["", ""];
+      child.stdout.on("data", (data) => (out += data));
+      child.stderr.on("data", (data) => (err += data));
+      child.on("exit", (code) => resolve({ code, out, err }));
+    });
+  // Both slots are taken elsewhere: the boot waits, then boots once one is free.
+  writeFileSync(join(home, ".fake-other-macos-vms"), "2");
+  const waiting = run(1);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  rmSync(join(home, ".fake-other-macos-vms"));
+  const booted = await waiting;
+  assert.equal(booted.code, 0, booted.err);
+  assert.match(booted.out, /no macOS VM slot is free for bb-box-macos-build \(The number of VMs exceeds the system limit \(other running VMs: another app's\)\): waiting for one, up to 1 more minutes\n/);
+  assert.match(booted.out, /booted\n$/);
+  // No slot within the time: it stops, saying why.
+  writeFileSync(join(home, ".fake-other-macos-vms"), "2");
+  const stopped = await run(0);
+  assert.equal(stopped.code, 1);
+  assert.match(stopped.err, /^prepare-image: no macOS VM slot was free for bb-box-macos-build within 0 minutes: The number of VMs exceeds the system limit/m);
 });

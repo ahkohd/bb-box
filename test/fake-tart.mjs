@@ -106,6 +106,12 @@ function tart() {
       }, 20);
       return;
     }
+    case "exec": {
+      // Answers while the VM runs, as its guest agent does.
+      const name = rest.find((arg) => !arg.startsWith("-"));
+      if (!running(name)) fail(`the VM "${name}" is not running`);
+      process.exit(0);
+    }
     case "ip": {
       const [name] = rest;
       if (!existsSync(dir(name))) fail(`the specified VM "${name}" does not exist`);

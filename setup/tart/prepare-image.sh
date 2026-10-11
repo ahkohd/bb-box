@@ -65,15 +65,33 @@ cleanup() {
 trap cleanup EXIT
 step() { printf '%s  %s\n' "$(date +%H:%M:%S)" "$*"; }
 
+# macOS runs two macOS VMs at most. While others, such as threads' boxes, take
+# both, a boot waits for one to go, saying so every 5 minutes, up to
+# SLOT_WAIT_MINUTES, rather than failing (#650).
+SLOT_WAIT_MINUTES=60
+SLOT_POLL_SECONDS=30
 boot() {
-  tart run --no-graphics "$build" >"$work/run.log" 2>&1 &
-  pid=$!
-  i=0
-  until tart exec "$build" true >/dev/null 2>&1; do
-    kill -0 "$pid" 2>/dev/null || { cat "$work/run.log" >&2; die "$build stopped while booting"; }
-    i=$((i + 1))
-    [ "$i" -lt 300 ] || die "$build's guest agent did not answer within 5 minutes"
-    sleep 1
+  waited=0
+  while :; do
+    tart run --no-graphics "$build" >"$work/run.log" 2>&1 &
+    pid=$!
+    i=0
+    until tart exec "$build" true >/dev/null 2>&1; do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        full=$(grep -m 1 'exceeds the system limit' "$work/run.log" || :)
+        [ -n "$full" ] || { cat "$work/run.log" >&2; die "$build stopped while booting"; }
+        [ "$waited" -lt $((SLOT_WAIT_MINUTES * 60)) ] || die "no macOS VM slot was free for $build within $SLOT_WAIT_MINUTES minutes: $full"
+        [ $((waited % 300)) -ge "$SLOT_POLL_SECONDS" ] ||
+          step "no macOS VM slot is free for $build ($full): waiting for one, up to $((SLOT_WAIT_MINUTES - waited / 60)) more minutes"
+        sleep "$SLOT_POLL_SECONDS"
+        waited=$((waited + SLOT_POLL_SECONDS))
+        continue 2
+      fi
+      i=$((i + 1))
+      [ "$i" -lt 300 ] || die "$build's guest agent did not answer within 5 minutes"
+      sleep 1
+    done
+    return 0
   done
 }
 # Writes the guest's file systems out, then stops the VM and waits for Tart
