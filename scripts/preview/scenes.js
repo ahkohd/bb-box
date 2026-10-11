@@ -294,7 +294,7 @@ function configState(options = {}) {
     revision: 4,
     backends: [
       { id: "proxmox-lxc", type: "proxmox-lxc", enabled: true, fields: { url: "https://192.0.2.10:8006", node: "pve", "tls-fingerprint": "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89", "token-id": "bbbox@pve!plugin", "token-secret": { set: options.tokenSet ?? true }, "ssh-private-key": { set: true }, "linux-templates": "9800", "desktop-templates": "9801 GPU-0a1b2c3d" }, warm: { linux: 1, "linux-desktop": 1 } },
-      { id: "tart", type: "tart", enabled: false, fields: { "ssh-private-key": { set: false } }, hosts: [{ name: "studio", enabled: true, fields: { address: "192.0.2.20", user: "var" } }] },
+      { id: "tart", type: "tart", enabled: false, fields: { "ssh-private-key": { set: false } }, hosts: [{ name: "studio", enabled: true, fields: { address: "192.0.2.20", user: "admin" } }] },
     ],
     kinds: { "linux-desktop-cpu": { enabled: false }, linux: { default: "medium" } },
     general: {},
@@ -901,6 +901,14 @@ export const scenes = {
   },
   "boxes-page-starting": { slot: "boxes-page", width: 900, props: { subPath: "" }, rpc: rpc([starting, desktop]), threads: { [THREAD]: "Add dark mode" } },
   "settings": { slot: "settings", width: 860, props: {}, rpc: rpc([], { machines: MACHINES }) },
+  // First run in settings (the setup job): no backend on, so the Box panel's offer leads the page.
+  "settings-first-run": {
+    slot: "settings",
+    width: 860,
+    height: 640,
+    props: {},
+    rpc: rpc([], { setups: [setupOf()], config: { document: { schema: 1, revision: 1, backends: [], kinds: {}, general: {} } } }),
+  },
   // The General section, with the video switch, on by default (056).
   "settings-general": {
     slot: "settings",

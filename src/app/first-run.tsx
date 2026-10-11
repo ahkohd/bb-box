@@ -92,7 +92,8 @@ export function SetupProgress({ empty }: { empty: boolean }) {
   );
 }
 
-export function FirstRun({ fallback }: { fallback: ReactNode }) {
+/** `others`: the link to settings for other backends, which settings itself leaves out, as the backends are under it. */
+export function FirstRun({ fallback, others = true }: { fallback: ReactNode; others?: boolean }) {
   const rpc = useRpc<Contract>();
   const { value, refresh } = useSetups();
   const [busy, setBusy] = useState(false);
@@ -100,11 +101,11 @@ export function FirstRun({ fallback }: { fallback: ReactNode }) {
   const target = value ? setupTarget(value.machines) : null;
   if (!target) return <>{fallback}</>;
   if (building(target)) return <Progress setup={target} />;
-  const other = (
+  const other = others ? (
     <UrlLink href={SETTINGS_PATH} className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
       Other backends
     </UrlLink>
-  );
+  ) : null;
   const failed = target.build?.state === "failed" ? target.build.detail : null;
   if (target.state === "fix") {
     const check = async () => {
