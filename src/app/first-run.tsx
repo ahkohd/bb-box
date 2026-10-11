@@ -16,6 +16,8 @@ import { REPOSITORY_URL } from "./settings-backends.tsx";
 
 /** How long the Linux image usually takes to build from an empty cache: 7 min on 8 cores in the newcomer check, 4 on a fast host. */
 export const LINUX_BUILD_WORDS = "5 to 8 min";
+/** How long the desktop image usually takes to build on a machine that has built the Linux image, which it starts from (the setup plan's PR 4). */
+export const DESKTOP_BUILD_WORDS = "about 8 min";
 /** How long the panel says the Linux image is ready, while the thread has no box yet. */
 const READY_MS = 60 * 60_000;
 
@@ -31,6 +33,8 @@ export function buildStep(line: string | null): { readonly step: number; readonl
   return found ? { step: Number(found[1]), of: Number(found[2]) } : null;
 }
 
+/** A build of desktop images alone, as when a desktop was first asked for. */
+const isDesktopBuild = (build: NonNullable<MachineSetup["build"]>) => build.targets.length > 0 && build.targets.every((target) => target.startsWith("desktop"));
 const building = (setup: MachineSetup) => setup.build?.state === "checking" || setup.build?.state === "building";
 const whose = (setup: MachineSetup) => (setup.here ? "this machine" : setup.name);
 
@@ -59,15 +63,21 @@ function Progress({ setup }: { setup: MachineSetup }) {
   // The step from the build when it kept one, else from its last line; the bar follows the steps, as the time varies with the host.
   const step = build.step ? { step: build.step.at, of: build.step.of } : buildStep(build.detail);
   const share = step ? Math.min(0.97, Math.max(0.03, (step.step - 1) / step.of)) : 0.03;
+  // A desktop's image alone, built when a desktop was first asked for, rather than first-run setup's Linux image.
+  const desktop = isDesktopBuild(build);
+  const what = desktop ? "the desktop image" : "the Linux image";
   return (
     <div className={CARD}>
-      <p className="text-sm font-medium text-foreground">Setting up Docker on {whose(setup)}</p>
-      <p className="mt-1 text-xs leading-snug text-muted-foreground">Building the Linux image · {step ? `Step ${step.step} of ${step.of}` : "starting"}</p>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Building the Linux image" aria-valuenow={Math.round(share * 100)} aria-valuemin={0} aria-valuemax={100}>
+      <p className="text-sm font-medium text-foreground">{desktop ? `Building the desktop image on ${whose(setup)}` : `Setting up Docker on ${whose(setup)}`}</p>
+      <p className="mt-1 text-xs leading-snug text-muted-foreground">
+        {desktop ? (step ? `Step ${step.step} of ${step.of}` : "Starting") : `Building ${what} · ${step ? `Step ${step.step} of ${step.of}` : "starting"}`}
+      </p>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`Building ${what}`} aria-valuenow={Math.round(share * 100)} aria-valuemin={0} aria-valuemax={100}>
         <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${Math.round(share * 100)}%` }} />
       </div>
       <p className="mt-2 text-xs text-subtle-foreground">
-        Started {roughly(elapsed)} ago. It usually takes {LINUX_BUILD_WORDS}, and goes on if you close this panel.
+        Started {roughly(elapsed)} ago. It usually takes {desktop ? DESKTOP_BUILD_WORDS.replace(/^about /, "") : LINUX_BUILD_WORDS}, and goes on if you close this panel.
+        {desktop ? " The desktop box that was asked for follows." : ""}
       </p>
     </div>
   );
@@ -83,6 +93,17 @@ export function SetupProgress({ empty }: { empty: boolean }) {
   if (!value) return null;
   const target = value.machines.find(building);
   if (target) return <Progress setup={target} />;
+  // A desktop's image that did not build says why, for an hour; its box was not made.
+  const failed = value.machines.find((setup) => setup.build?.state === "failed" && isDesktopBuild(setup.build) && setup.build.endedAt !== null && now - setup.build.endedAt < READY_MS);
+  if (failed) {
+    return (
+      <div className={CARD} role="alert">
+        <p className="text-sm font-medium text-foreground">The desktop image did not build</p>
+        <p className="mt-1 text-xs leading-snug text-destructive-text">{failed.build!.detail}</p>
+        <p className="mt-2 text-xs text-subtle-foreground">So the desktop box was not made. To try again, choose Desktop in New box.</p>
+      </div>
+    );
+  }
   const ready = empty ? value.machines.find((setup) => setup.build?.state === "built" && setup.build.endedAt !== null && now - setup.build.endedAt < READY_MS) : undefined;
   if (!ready) return null;
   return (

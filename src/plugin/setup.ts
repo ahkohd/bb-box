@@ -18,6 +18,7 @@ import { BoxFiles } from "./box-files.ts";
 import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
+import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
@@ -46,11 +47,13 @@ import { FILE_ROUTE, FileRelay } from "../relay/files.ts";
 import { MSB_ROUTE, msbClientArgv, refuseMsb } from "../relay/msb.ts";
 import { NAME_WINDOWS_SCRIPT, parseNamed } from "../backends/windows.ts";
 import { abortable } from "../core/abortable.ts";
-import { DockerHosts, backendOn, machineOffline, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
+import { DESKTOP_ON_DEMAND, DockerHosts, backendOn, desktopsOnDemand, machineOffline, withDesktopImage, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
 import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
-import type { ThreadOnBox } from "./contract.ts";
+import type { DesktopOnDemandView, ThreadOnBox } from "./contract.ts";
+import { dockerKind } from "../backends/docker/backend.ts";
+import { DOCKER_KEYS } from "../backends/docker/config.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { registerTools } from "./tools.ts";
@@ -110,6 +113,13 @@ export interface BbBox {
   dockerHostOf(machine: string): Promise<{ hostId: string; name: string; backend: BackendConfig | null } | null>;
   /** Turns a BB machine on or off as a Docker host (042), through the configuration. */
   setDockerHost(hostId: string, enabled: boolean, linuxOnly?: boolean): Promise<ApplyResult>;
+  /** The BB machine whose desktop image the New box form can build, with its name, or null for none (the setup plan's PR 4). */
+  desktopOnDemand(): Promise<DesktopOnDemandView | null>;
+  /**
+   * Turns on the desktop image of BB machine `hostId`'s Docker and builds it, then makes a desktop box for the thread
+   * once it is built. Returns once the configuration is saved; the panel shows the build.
+   */
+  buildDesktop(input: { threadId: string; hostId: string; size?: SizeRequest }): Promise<ApplyResult>;
   /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
   dockerCheck(machine: string, signal?: AbortSignal): Promise<{ hostId: string; name: string; endpoint: string; info: DockerInfo; firstMs: number; againMs: number }>;
   /** What a rebuild of the standard Linux images would take now (049): upstream's latest of the tools that follow it, or with `pinned` the pins alone. */
@@ -812,6 +822,45 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const result = await configuration.apply(withDockerHost(document, { id: hostId, name: machine.name }, enabled, machine.backend?.boxes ?? 0, linuxOnly), document.revision);
       // Turned on, it builds the images it lacks there; the row shows the build until it ends.
       if (result.ok && enabled) void dockerImages.ensure(hostId);
+      return result;
+    },
+    async desktopOnDemand() {
+      const [first] = desktopsOnDemand(configuration.document);
+      const backend = first ? backends.get(first.backend) : undefined;
+      if (!first || !backend) return null;
+      const machine = (await dockerHosts.list()).find((candidate) => candidate.hostId === first.hostId);
+      if (!machine?.connected || dockerImages.state(first.hostId)?.state === "building") return null;
+      // The desktop as the backend will offer it once its image is set: with Docker in it when its Linux boxes have it.
+      const docker = backends.kinds().some((offered) => offered.backend === backend && offered.kind.capabilities.features.includes("docker"));
+      const config = await general();
+      const [kind] = kindViews([{ kind: dockerKind(DESKTOP_ON_DEMAND, docker), backend }], config.sizes, {}, {}, {}, {}, (id) => backends.driverLabel(id));
+      return kind ? { hostId: first.hostId, name: machine.name, kind } : null;
+    },
+    async buildDesktop({ threadId, hostId, size }) {
+      const document = configuration.document;
+      const found = desktopsOnDemand(document).find((candidate) => candidate.hostId === hostId);
+      if (!found) throw new BoxError("not_found", `BB machine ${hostId} has no Docker desktop image to build: its Docker is off, or its desktop image is set already.`);
+      const result = await configuration.apply(withDesktopImage(document, found.backend), document.revision);
+      if (!result.ok) return result;
+      const projectId = await api.projectOf(threadId).catch(() => null);
+      // The box is made once the image is built; the panel shows the build until then, and a failed build says why.
+      void dockerImages
+        .ensure(hostId)
+        .then(async (build) => {
+          if (build.state === "built") {
+            await boxes.acquire({ threadId, projectId, kind: DESKTOP_ON_DEMAND, ...(size ? { size } : {}), on: found.backend });
+            return;
+          }
+          // Not built: the desktop goes back to building first, so the form offers it again rather than a desktop with no image.
+          const now = configuration.document;
+          const backend = now.backends.find((candidate) => candidate.id === found.backend);
+          if (!backend || DOCKER_KEYS.desktopImage in backend.fields) return;
+          await configuration.apply(
+            { ...now, backends: now.backends.map((candidate) => (candidate === backend ? { ...candidate, fields: { ...candidate.fields, [DOCKER_KEYS.desktopImage]: "" } } : candidate)) },
+            now.revision,
+          );
+        })
+        .catch((error) => logError("desktop on demand", error));
       return result;
     },
     imageVersions: ({ pinned, signal }) => resolveVersions(pins, { pinned: !!pinned, ...(signal ? { signal } : {}) }),

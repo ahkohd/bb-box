@@ -417,7 +417,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; video?: boolean } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; video?: boolean } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -440,10 +440,14 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   let boxClipboard: { text: string; serial: number } | null = null;
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
-    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [] }),
+    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
+    "setup.desktop": ({ hostId, size }) => {
+      changes.push(`setup.desktop ${hostId}${size ? ` ${JSON.stringify(size)}` : ""}`);
+      return { result: { ok: true, state: {} as ConfigState, problems: [] } };
+    },
     "setup.docker": ({ hostId }) => {
       changes.push(`setup.docker ${hostId}`);
       setups = setups.map((setup) => (setup.hostId === hostId ? { ...setup, state: "on" as const, build: { state: "building" as const, targets: ["linux"], detail: "#14 12.3 Setting up git (1:2.43.0) ...", step: { at: 7, of: 12 }, startedAt: Date.now() - 75_000, endedAt: null } } : setup));
@@ -825,6 +829,37 @@ test("the panel makes a box by steps, System, Architecture, Type and Resources, 
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Small/ }));
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes).toEqual(['acquire linux-desktop {"preset":"large"}', "acquire linux-desktop"]));
+});
+
+test("New box offers a desktop whose image is not built yet: it says it builds first and how long, and Create builds it, then the box follows", async () => {
+  const desktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
+  const { handlers, changes } = server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kind: desktop } });
+  const slot = panel(handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "New box" }));
+  const types = await screen.findByRole("radiogroup", { name: "Type" });
+  expect(within(types).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-disabled")}`)).toEqual(["ServerTerminal:null", "DesktopBuilds first, about 8 min:null"]);
+  // A server is made as ever.
+  expect(screen.getByRole("button", { name: "Create box" })).toBeTruthy();
+  fireEvent.click(within(types).getByRole("radio", { name: /^Desktop/ }));
+  expect(screen.getByText("BB Box builds the desktop image on devpc first, about 8 min, then makes the box.")).toBeTruthy();
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Large/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Build and create" }));
+  await waitFor(() => expect(changes).toEqual(['setup.desktop host_bb {"preset":"large"}']));
+  await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
+});
+
+test("while a desktop's image builds, the panel says so with its step and time; a failed one says why and how to try again", async () => {
+  const building = setup({ state: "on", build: { state: "building", targets: ["desktop"], detail: "#9 [desktop 3/9] RUN apt-get install", step: { at: 3, of: 9 }, startedAt: Date.now() - 125_000, endedAt: null } });
+  const slot = panel(server([box()], { setups: [building] }).handlers);
+  expect(await slot.findByText("Building the desktop image on this machine")).toBeTruthy();
+  expect(slot.getByText("Step 3 of 9")).toBeTruthy();
+  expect(slot.getByText("Started 2 min ago. It usually takes 8 min, and goes on if you close this panel. The desktop box that was asked for follows.")).toBeTruthy();
+  cleanup();
+  const failed = setup({ state: "on", build: { state: "failed", targets: ["desktop"], detail: "build.sh exited with 1: no space left on device", startedAt: Date.now() - 300_000, endedAt: Date.now() - 5_000 } });
+  const after = panel(server([box()], { setups: [failed] }).handlers);
+  expect(await after.findByText("The desktop image did not build")).toBeTruthy();
+  expect(after.getByText("build.sh exited with 1: no space left on device")).toBeTruthy();
+  expect(after.getByText("So the desktop box was not made. To try again, choose Desktop in New box.")).toBeTruthy();
 });
 
 test("New box offers to ask an agent to make the project a box image when it has none, in a new thread's composer (049)", async () => {
