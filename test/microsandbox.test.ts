@@ -556,6 +556,14 @@ test("on a host without Docker, the nightly refresh's image operations build wit
   assert.equal(JSON.parse(fake.images()["bbbox/linux:1-arm64"]!["bbbox.image-record"]!).build, "build.builder");
   await assert.rejects(images.remove("bbbox/linux:1-arm64", signal()), /is not a refresh's build, so bb-box leaves it/);
 
+  // A failed build says what the builder's msb log ended with, which goes with the builder.
+  fake.set({ failBuild: true });
+  const failed: string[] = [];
+  await assert.rejects(images.build!(builds[0]!, setupCopy, { bbUrl: null, log: (line) => failed.push(line), signal: signal() }), /msb exec failed: .*The builder's msb log ended: .*agent relay: client disconnected/);
+  assert.ok(failed.some((line) => /^msb: .*unexpected EOF/.test(line)));
+  assert.ok(!fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")), "the builder is removed");
+  fake.set({ failBuild: false });
+
   // Room: the volume msb keeps its images and build files on, through any link.
   assert.equal(await images.room!(builds[0]!, signal()), null);
   fake.facts({ free_kib: String(37 * 1024 * 1024) });

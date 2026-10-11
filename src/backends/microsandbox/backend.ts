@@ -585,9 +585,26 @@ export class MsbBackend implements Backend {
       }
       const moved = await this.#cli.script("transfer", [name, tag], signal);
       if (moved.exitCode !== 0) throw this.#cli.error(`Moving ${tag} from the builder into msb on ${this.#host}`, moved);
+    } catch (error) {
+      throw await this.#withBuilderLog(name, error, options.log);
     } finally {
       await this.#cli.run(["remove", "--force", "--quiet", name], { timeoutMs: 120_000 }).catch(() => undefined);
     }
+  }
+
+  /**
+   * A failed build's error with the builder's last msb system log lines: its
+   * runtime's, its agent relay's and its guest kernel's, which say why a
+   * builder or its agent died mid-build and go when the builder is removed.
+   * `log` gets them all, and the error the last few.
+   */
+  async #withBuilderLog(name: string, error: unknown, log?: (line: string) => void): Promise<unknown> {
+    const result = await this.#cli.run(["logs", "--source", "system", "--info", "--tail", "40", "--no-color", name], { timeoutMs: 30_000 }).catch(() => null);
+    const lines = result?.exitCode === 0 ? result.stdout.split("\n").filter((line) => line.trim()) : [];
+    if (!lines.length || !(error instanceof Error)) return error;
+    for (const line of lines) log?.(`msb: ${line}`);
+    error.message += ` The builder's msb log ended: ${lines.slice(-3).join(" | ").slice(-600)}`;
+    return error;
   }
 
   /**

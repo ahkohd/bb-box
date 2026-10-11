@@ -234,6 +234,11 @@ switch (command) {
   case "exec":
     exec(rest);
     break;
+  case "logs":
+    // Its runtime's system log, as a builder that died mid-build would leave.
+    found(rest.at(-1));
+    console.log("INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=0 error=agent relay: unexpected EOF");
+    break;
   case "image": {
     const images = read("images.json", {});
     if (rest[0] === "remove") {
