@@ -179,19 +179,23 @@ ssh_box "sudo bash $in_vm/linux/customize-vm.sh $in_vm" </dev/null
 # Boot it again as a box would, with its address from the serial, and check it
 # as the box user.
 log "booting the build VM again, as a box would, and checking it as the box user"
-down() { ! ssh_box exit; }
+# Which boot the VM is in. The reboot is done once SSH answers from another
+# boot: SSH can refuse, or still answer, while the old boot stops.
+boot_id() { ssh_box 'cat /proc/sys/kernel/random/boot_id' </dev/null 2>/dev/null; }
+booted_since() { local id; id=$(boot_id) && [ -n "$id" ] && [ "$id" != "$1" ]; }
 # The guest scripts change SSH's units and settings under the running
 # server, which can reset a connection for a while, so wait for it first.
 wait_for "the build VM answers SSH before its reboot" 120 2 ssh_box true ||
   die "the build VM stopped answering SSH after its guest scripts"
+before=$(boot_id) && [ -n "$before" ] || die "could not read the build VM's boot ID"
 # The guest reboots a moment after SSH returns, so the command cannot hang
 # on a connection the reboot drops. SSH's 255 means the connection went,
 # which the reboot may have done already.
 code=0
 ssh_box 'sudo systemd-run --quiet --on-active=2 systemctl reboot' </dev/null || code=$?
 [ "$code" = 0 ] || [ "$code" = 255 ] || die "the build VM refused to reboot (exit $code)"
-wait_for "the build VM to go down" 120 1 down || die "the build VM did not reboot"
-wait_for "the build VM answers SSH again" 300 2 ssh_box exit || die "the build VM did not come back after its reboot"
+wait_for "the build VM answers SSH from a new boot" 300 2 booted_since "$before" ||
+  die "the build VM did not come back after its reboot"
 ssh_box 'timeout 120 systemctl is-system-running --wait' >/dev/null </dev/null || true
 ssh_box 'bash -lc bb-box-check-headless' </dev/null | tee "$stage/check.txt"
 ! grep -q '^[^ ].* FAIL ' "$stage/check.txt" || die "checks failed (above)"
@@ -227,6 +231,7 @@ ssh_box 'bash -lc bb-box-check-headless' </dev/null | tee "$stage/check.txt" || 
 ! grep -q '^[^ ].* FAIL ' "$stage/check.txt" || checked=1
 # Spares wait hibernated (#612), so the clone must hibernate and resume.
 if [ "$checked" = 0 ]; then
+  clone_boot=$(boot_id)
   start=$(date +%s%N)
   qm suspend "$check_vm" --todisk 1 >/dev/null
   log "the clone hibernated in $((($(date +%s%N) - start) / 1000000)) ms"
@@ -235,6 +240,8 @@ if [ "$checked" = 0 ]; then
   qm start "$check_vm" >/dev/null
   wait_for "the resumed clone answers SSH" 120 1 ssh_box exit || checked=1
   log "the clone resumed and answered SSH in $((($(date +%s%N) - start) / 1000000)) ms"
+  # A resume keeps the boot; another boot ID means the clone booted afresh.
+  [ "$(boot_id)" = "$clone_boot" ] || { log "the clone booted again instead of resuming"; checked=1; }
 fi
 qm stop "$check_vm" >/dev/null
 qm destroy "$check_vm" --purge 1 >/dev/null
