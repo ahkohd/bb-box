@@ -14,12 +14,20 @@ import { needsSignIn, type MachineAccessProblem, type MachineSetup } from "../pl
 import { forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { REPOSITORY_URL } from "./settings-backends.tsx";
 
-/** How long the Linux image usually takes to build from an empty cache: 7 min on 8 cores in the newcomer check, 4 on a fast host. */
-export const LINUX_BUILD_WORDS = "5 to 8 min";
-/** How long the desktop image usually takes to build on a machine that has built the Linux image, which it starts from (the setup plan's PR 4). */
-export const DESKTOP_BUILD_WORDS = "about 8 min";
+/**
+ * How long the Linux image usually takes to build from an empty cache: 4 to 11 min in the newcomer checks, as it varies
+ * with the host. A host that has built it says its own last time instead (`estimate`).
+ */
+export const LINUX_BUILD_WORDS = "5 to 12 min";
+/** How long the desktop image usually takes, on a host that has the Linux image it starts from: 8 min where the Linux one took 11. */
+export const DESKTOP_BUILD_WORDS = "4 to 10 min";
 /** How long the panel says the Linux image is ready, while the thread has no box yet. */
 const READY_MS = 60 * 60_000;
+
+/** A build's estimate: this host's last time when it has one, as "about 8 min", else the usual range, as "usually 4 to 10 min". */
+export function estimate(took: number | null | undefined, range: string): string {
+  return took ? `about ${roughly(took)}` : `usually ${range}`;
+}
 
 /** "1 min", "4 min", or seconds without a decimal under a minute. */
 export function roughly(ms: number): string {
@@ -66,6 +74,7 @@ function Progress({ setup }: { setup: MachineSetup }) {
   // A desktop's image alone, built when a desktop was first asked for, rather than first-run setup's Linux image.
   const desktop = isDesktopBuild(build);
   const what = desktop ? "the desktop image" : "the Linux image";
+  const took = setup.took[desktop ? "desktop" : "linux"];
   return (
     <div className={CARD}>
       <p className="text-sm font-medium text-foreground">{desktop ? `Building the desktop image on ${whose(setup)}` : `Setting up Docker on ${whose(setup)}`}</p>
@@ -76,7 +85,7 @@ function Progress({ setup }: { setup: MachineSetup }) {
         <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${Math.round(share * 100)}%` }} />
       </div>
       <p className="mt-2 text-xs text-subtle-foreground">
-        Started {roughly(elapsed)} ago. It usually takes {desktop ? DESKTOP_BUILD_WORDS.replace(/^about /, "") : LINUX_BUILD_WORDS}, and goes on if you close this panel.
+        Started {roughly(elapsed)} ago. {took ? `It took ${roughly(took)} last time here` : `It usually takes ${desktop ? DESKTOP_BUILD_WORDS : LINUX_BUILD_WORDS}`}, and goes on if you close this panel.
         {desktop ? " The desktop box that was asked for follows." : ""}
       </p>
     </div>
@@ -182,7 +191,7 @@ export function FirstRun({ fallback, others = true }: { fallback: ReactNode; oth
         {other}
       </div>
       <p className={problem || failed ? "mt-2 text-xs leading-snug text-destructive-text" : "mt-2 text-xs text-subtle-foreground"} role={problem || failed ? "alert" : undefined}>
-        {problem ?? (failed ? `The Linux image did not build: ${failed}` : `Builds the Linux image first, about ${LINUX_BUILD_WORDS}.`)}
+        {problem ?? (failed ? `The Linux image did not build: ${failed}` : `Builds the Linux image first, ${estimate(target.took.linux, LINUX_BUILD_WORDS)}.`)}
       </p>
       {value?.access ? (
         <p className="mt-2 text-xs leading-snug text-warning-text">

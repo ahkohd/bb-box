@@ -34,12 +34,19 @@ export interface MachineSetup {
   readonly freeGb: number | null;
   /** The machine's image build, running or last. */
   readonly build: ImageBuild | null;
+  /** How long each image last took to build alone there, in ms, by build target ("linux", "desktop"): its next estimate. */
+  readonly took: Readonly<Record<string, number>>;
 }
 
 const ORDER: Record<MachineSetup["state"], number> = { on: 0, ready: 1, fix: 2, none: 3, offline: 4 };
 
 /** Each BB machine's setup, the server's first, then those that can be set up now. */
-export function machineSetups(hosts: readonly DockerHostView[], facts: ReadonlyMap<string, SetupFacts>, serverHostname: string): MachineSetup[] {
+export function machineSetups(
+  hosts: readonly DockerHostView[],
+  facts: ReadonlyMap<string, SetupFacts>,
+  serverHostname: string,
+  took: ReadonlyMap<string, Readonly<Record<string, number>>> = new Map(),
+): MachineSetup[] {
   return hosts
     .map((host): MachineSetup => {
       const known = facts.get(host.hostId) ?? null;
@@ -54,6 +61,7 @@ export function machineSetups(hosts: readonly DockerHostView[], facts: ReadonlyM
         kvm: known?.kvm ?? null,
         freeGb: known?.freeGb ?? null,
         build: host.images,
+        took: took.get(host.hostId) ?? {},
       };
       if (!host.connected) return { ...base, state: "offline", problem: host.problem };
       if (host.backend?.enabled) return { ...base, state: "on" };

@@ -28,6 +28,8 @@ export interface PanelState {
   readonly images: readonly ImageOptionView[];
   /** A BB machine whose Docker desktop image is off, which New box can build first (the setup plan's PR 4). Absent or null for none. */
   readonly desktopOnDemand?: DesktopOnDemandView | null;
+  /** Why the desktop box this thread asked to build first was not made once its image was built, and when; absent or null for none. */
+  readonly desktopProblem?: { readonly message: string; readonly at: number } | null;
 }
 
 /** A desktop New box can build first: the BB machine whose Docker builds its image, and the kind as it will be offered. */
@@ -35,6 +37,8 @@ export interface DesktopOnDemandView {
   readonly hostId: string;
   readonly name: string;
   readonly kind: KindView;
+  /** How long the desktop image last took to build there, in ms, or null when it has not: its estimate. */
+  readonly took: number | null;
 }
 
 /** One box's desktop or terminal, for its tab. */

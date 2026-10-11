@@ -31,7 +31,7 @@ Choose x86_64, for 64-bit Intel and AMD processors, or arm64, for 64-bit ARM pro
 
 Choose Server, which you reach through a terminal, or Desktop, which also has a screen you can see and that agents can use.
 
-Where Docker was set up from the Box panel, its desktop image is not built until you first ask for a desktop. Desktop then says 'Builds first, about 8 min', and the button says **Build and create**: it builds the image, the panel shows how far it is, and the box is made once it is built.
+Where Docker was set up from the Box panel, its desktop image is not built until you first ask for a desktop. Desktop then says how long it takes, for example 'Builds first, usually 4 to 10 min', or the machine's own last time once it has built one, and the button says **Build and create**: it builds the image, the panel shows how far it is, and the box is made once it is built.
 
 For a Linux desktop, you may also see Display, with X11 and Wayland. It shows only where both are on offer. X11 is chosen at first. Apps built only for X11 do not run on a Wayland desktop.
 

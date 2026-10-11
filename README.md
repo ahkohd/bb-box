@@ -28,7 +28,7 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
    bb plugin install git:https://github.com/moonstead/bb-box.git@main
    ```
 
-2. Open a thread's **Box** panel and select **Use Docker on this machine**. The Linux image builds in 4 to 8 minutes.
+2. Open a thread's **Box** panel and select **Use Docker on this machine**. The Linux image usually builds in 5 to 12 minutes, depending on the machine.
 3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
 
 `bb box doctor` checks the setup. If a box says 'Could not join BB', see [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).

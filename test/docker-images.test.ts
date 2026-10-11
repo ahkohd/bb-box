@@ -297,3 +297,24 @@ test("build.sh --arch arm64 builds the arm64 linux and desktop images for linux/
   assert.deepEqual([wayland.status, wayland.stderr, wayland.built], [2, "There is no Wayland desktop for arm64 yet: build linux or desktop.\n", []]);
   assert.equal(buildWith(BUILD_FREE_GB, ["--arch", "riscv64"]).status, 2);
 });
+
+test("a build of one image alone keeps how long it took on that machine, in storage, as its next estimate; one of several does not", async () => {
+  const stored = new Map<string, unknown>();
+  const storage = { get: async <T,>(key: string) => stored.get(key) as T | undefined, set: async (key: string, value: unknown) => void stored.set(key, value) };
+  let clock = 1_000;
+  const one = world({ staleImages: ["bbbox/linux-desktop:1"], storage, now: () => clock });
+  const built = one.images.ensure("host_a");
+  clock += 480_000;
+  one.release();
+  assert.equal((await built).state, "built");
+  assert.deepEqual(await one.images.took("host_a"), { desktop: 480_000 });
+  // A restart reads it back.
+  const again = world({ storage });
+  assert.deepEqual(await again.images.took("host_a"), { desktop: 480_000 });
+  assert.deepEqual(await again.images.took("host_b"), {});
+  // Two images at once say nothing of either's time.
+  const both = world({ staleImages: ["bbbox/linux:1", "bbbox/linux-desktop:1"], storage: { get: async () => undefined, set: async () => {} } });
+  both.release();
+  await both.images.ensure("host_c");
+  assert.deepEqual(await both.images.took("host_c"), {});
+});

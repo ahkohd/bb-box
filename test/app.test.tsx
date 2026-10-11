@@ -417,7 +417,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; video?: boolean } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; video?: boolean } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -440,7 +440,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   let boxClipboard: { text: string; serial: number } | null = null;
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
-    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null }),
+    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
@@ -833,19 +833,39 @@ test("the panel makes a box by steps, System, Architecture, Type and Resources, 
 
 test("New box offers a desktop whose image is not built yet: it says it builds first and how long, and Create builds it, then the box follows", async () => {
   const desktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
-  const { handlers, changes } = server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kind: desktop } });
+  const { handlers, changes } = server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kind: desktop, took: null } });
   const slot = panel(handlers);
   fireEvent.click(await slot.findByRole("button", { name: "New box" }));
   const types = await screen.findByRole("radiogroup", { name: "Type" });
-  expect(within(types).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-disabled")}`)).toEqual(["ServerTerminal:null", "DesktopBuilds first, about 8 min:null"]);
+  expect(within(types).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-disabled")}`)).toEqual(["ServerTerminal:null", "DesktopBuilds first, usually 4 to 10 min:null"]);
   // A server is made as ever.
   expect(screen.getByRole("button", { name: "Create box" })).toBeTruthy();
   fireEvent.click(within(types).getByRole("radio", { name: /^Desktop/ }));
-  expect(screen.getByText("BB Box builds the desktop image on devpc first, about 8 min, then makes the box.")).toBeTruthy();
+  expect(screen.getByText("BB Box builds the desktop image on devpc first, usually 4 to 10 min, then makes the box.")).toBeTruthy();
   fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Large/ }));
   fireEvent.click(screen.getByRole("button", { name: "Build and create" }));
   await waitFor(() => expect(changes).toEqual(['setup.desktop host_bb {"preset":"large"}']));
   await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
+});
+
+test("a host that has built an image before gives its own last time as the estimate, in the offer, the form and the build's card", async () => {
+  const slot = panel(server([], { kinds: [], setups: [setup({ took: { linux: 540_000 } })] }).handlers);
+  expect(await slot.findByText("Builds the Linux image first, about 9 min.")).toBeTruthy();
+  cleanup();
+  const building = setup({ state: "on", took: { desktop: 480_000 }, build: { state: "building", targets: ["desktop"], detail: null, step: { at: 2, of: 5 }, startedAt: Date.now() - 60_000, endedAt: null } });
+  const card = panel(server([box()], { setups: [building] }).handlers);
+  expect(await card.findByText(/It took 8 min last time here, and goes on if you close this panel\./)).toBeTruthy();
+  cleanup();
+  const desktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
+  const form = panel(server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kind: desktop, took: 480_000 } }).handlers);
+  fireEvent.click(await form.findByRole("button", { name: "New box" }));
+  expect(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }).textContent).toBe("DesktopBuilds first, about 8 min");
+});
+
+test("a desktop box not made after its image was built shows in the panel with its reason, as a refused box does", async () => {
+  const message = "The desktop image is built, but the box was not made: No room on devpc for 16 cores.";
+  const slot = panel(server([box()], { desktopProblem: { message, at: 1 } }).handlers);
+  expect(await slot.findByText(message)).toBeTruthy();
 });
 
 test("while a desktop's image builds, the panel says so with its step and time; a failed one says why and how to try again", async () => {
@@ -853,7 +873,7 @@ test("while a desktop's image builds, the panel says so with its step and time; 
   const slot = panel(server([box()], { setups: [building] }).handlers);
   expect(await slot.findByText("Building the desktop image on this machine")).toBeTruthy();
   expect(slot.getByText("Step 3 of 9")).toBeTruthy();
-  expect(slot.getByText("Started 2 min ago. It usually takes 8 min, and goes on if you close this panel. The desktop box that was asked for follows.")).toBeTruthy();
+  expect(slot.getByText("Started 2 min ago. It usually takes 4 to 10 min, and goes on if you close this panel. The desktop box that was asked for follows.")).toBeTruthy();
   cleanup();
   const failed = setup({ state: "on", build: { state: "failed", targets: ["desktop"], detail: "build.sh exited with 1: no space left on device", startedAt: Date.now() - 300_000, endedAt: Date.now() - 5_000 } });
   const after = panel(server([box()], { setups: [failed] }).handlers);
@@ -1241,21 +1261,21 @@ test("the panel says so when no backend is on, and links the settings", async ()
 });
 
 function setup(overrides: Partial<MachineSetup> = {}): MachineSetup {
-  return { hostId: "host_bb", name: "bb", here: true, state: "ready", docker: "29.8.1", problem: null, fix: null, restart: null, kvm: "ok", freeGb: 120, build: null, ...overrides };
+  return { hostId: "host_bb", name: "bb", here: true, state: "ready", docker: "29.8.1", problem: null, fix: null, restart: null, kvm: "ok", freeGb: 120, build: null, took: {}, ...overrides };
 }
 
 test("first run: the panel offers Docker on the machine that runs BB, and one click turns it on and shows the Linux image's build", async () => {
   const { handlers, changes } = server([], { kinds: [], setups: [setup({ hostId: "host_far", name: "far", here: false }), setup()] });
   const slot = panel(handlers);
   expect(await slot.findByText("This machine has Docker 29.8.1. BB Box can make Linux boxes there.")).toBeTruthy();
-  expect(slot.getByText("Builds the Linux image first, about 5 to 8 min.")).toBeTruthy();
+  expect(slot.getByText("Builds the Linux image first, usually 5 to 12 min.")).toBeTruthy();
   expect(slot.getByRole("link", { name: "Other backends" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
   fireEvent.click(slot.getByRole("button", { name: "Use Docker on this machine" }));
   await waitFor(() => expect(changes).toEqual(["setup.docker host_bb"]));
   expect(await slot.findByText("Setting up Docker on this machine")).toBeTruthy();
   // The step is the one the build kept, not its last line; the time is what it usually takes, as it varies with the host.
   expect(slot.getByText("Building the Linux image · Step 7 of 12")).toBeTruthy();
-  expect(slot.getByText("Started 1 min ago. It usually takes 5 to 8 min, and goes on if you close this panel.")).toBeTruthy();
+  expect(slot.getByText("Started 1 min ago. It usually takes 5 to 12 min, and goes on if you close this panel.")).toBeTruthy();
   expect(slot.getByRole("progressbar", { name: "Building the Linux image" })).toBeTruthy();
 });
 
