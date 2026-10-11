@@ -103,6 +103,4 @@ The tests need Node 22.18 or later, which runs TypeScript directly. They use fak
 
 ## Third-party code
 
-The desktop viewer bundles noVNC 1.7.0 from npm (`@novnc/novnc`), unchanged. Its core library is under the Mozilla Public License 2.0, and the pako code it includes is under the MIT licence. Their source and licence texts are in the package, in `node_modules/@novnc/novnc` after `npm install`. The video viewer is bb-box's own code, which uses noVNC's keyboard handling.
-
-The terminal bundles xterm.js and its fit add-on (`@xterm/xterm`, `@xterm/addon-fit`), under the MIT licence. `src/app/xterm-css.ts` is a copy of xterm.js's stylesheet, with its notice. bb-box also bundles `zod`, `undici` and `@radix-ui/react-slot`, under the MIT licence. Their licence texts are in their packages in `node_modules` after `npm install`.
+What bb-box bundles, and what its images install, is in [third-party software](THIRD-PARTY.md), with each licence.
