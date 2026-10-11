@@ -6,7 +6,7 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 
 - **Each thread gets its own computers.** Boxes have the thread's Git access, its variables and BB itself.
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
-- **Any provider.** Docker, Proxmox, Micro Sandbox, Macs with Tart, or your own machines.
+- **Any provider.** Docker, Proxmox, Micro Sandbox, Macs with Tart, or your own machines over SSH.
 - **Ready in seconds.** A warm box is ready at once.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
 
@@ -16,7 +16,18 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 
 You need a Linux machine that runs BB and Docker, with about 10 GB free.
 
-1. In BB, open Settings, then Installed plugins, then **New plugin**, then **Install from source**, and enter `git:https://github.com/moonstead/bb-box.git@main`. With BB's command line: `bb plugin install git:https://github.com/moonstead/bb-box.git@main`.
+1. In BB, open Settings, then Installed plugins, then **New plugin**, then **Install from source**, and enter:
+
+   ```text
+   git:https://github.com/moonstead/bb-box.git@main
+   ```
+
+   Or with BB's command line:
+
+   ```sh
+   bb plugin install git:https://github.com/moonstead/bb-box.git@main
+   ```
+
 2. Open a thread's **Box** panel and select **Use Docker on this machine**. The Linux image builds in 4 to 8 minutes.
 3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
 
