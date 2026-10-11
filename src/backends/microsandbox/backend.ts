@@ -378,6 +378,8 @@ export class MsbBackend implements Backend {
   #templating: Promise<void> | null = null;
   /** A build of an image in a builder microVM (#build), while one runs. */
   #building: { readonly image: string; readonly since: number; readonly work: Promise<void> } | null = null;
+  /** The builder microVMs a build is using now, a refresh's included, which the sweep leaves. */
+  readonly #builders = new Set<string>();
   /** The host's facts, as the status script last gave them, and when. */
   #facts: { at: number; facts: HostFacts } | null = null;
   /** msb installed at the pinned release, once checked or done this run. */
@@ -554,6 +556,7 @@ export class MsbBackend implements Backend {
     const short = this.#buildShort(facts);
     if (short) throw new Error(short);
     const name = `bb-box-builder-${randomBytes(4).toString("hex")}`;
+    this.#builders.add(name);
     const exec = (script: string, options: { stdin?: string; timeoutMs?: number } = {}) =>
       this.#cli.ok(["exec", "--stream", name, "--", "/bin/sh", "-c", script], { timeoutMs: options.timeoutMs ?? 10 * 60_000, signal, stdin: options.stdin });
     try {
@@ -599,6 +602,7 @@ export class MsbBackend implements Backend {
       throw await this.#withBuilderLog(name, error, options.log);
     } finally {
       await this.#cli.run(["remove", "--force", "--quiet", name], { timeoutMs: 120_000 }).catch(() => undefined);
+      this.#builders.delete(name);
     }
   }
 
@@ -769,6 +773,7 @@ export class MsbBackend implements Backend {
   async #sweepBuilders(signal?: AbortSignal): Promise<void> {
     if (this.#building || this.#templating) return;
     for (const builder of await this.#cli.list({ [LABELS.builder]: this.#context.installId }, signal)) {
+      if (this.#builders.has(builder.name)) continue;
       await this.#cli.run(["remove", "--force", "--quiet", builder.name], { timeoutMs: 120_000, signal });
     }
   }
