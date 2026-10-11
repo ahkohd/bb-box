@@ -62,3 +62,4 @@ which records still stand as written. The current design as a whole is in
 | [054](054-windows-images-are-refreshed-in-a-box-of-the-current-build.md) | Windows images are refreshed in a box of the current build | Being built |
 | [055](055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md) | Cloud boxes run on cloud hosts first, and a cloud VM per box later | Not built yet |
 | [056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) | Linux X11 desktops add a Selkies stream, and RFB stays for the rest, tuned | Current, amended: video for every viewer, on by default |
+| [057](057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md) | Linux boxes can be Proxmox VMs, for their own kernel | Proposed |
