@@ -188,3 +188,7 @@ Against real hosts:
   npm run conformance -- --backend ssh-pool --settings /tmp/bbbox-rig/settings.json
   SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.ts
   ```
+
+## Recording the demo
+
+[Recording the demo](demo.md) says how to record the README's demo video and the guide's screenshots again, with the scripts in [scripts/demo](../scripts/demo).
