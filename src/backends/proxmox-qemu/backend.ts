@@ -851,6 +851,16 @@ export class ProxmoxQemuBackend implements Backend {
         const total = last - first + 1;
         if (used < total) pass(VMIDS, `${total - used} of ${total} VMIDs from ${first} to ${last} are free.`);
         else warn(VMIDS, `All ${total} VMIDs from ${first} to ${last} are in use.`, "Release boxes, or widen the VMID range.");
+        // Each refresh's rollback (054, 057): a template in the range, which holds a box's VMID and address until the next refresh.
+        const install = installTag(this.#context.installId);
+        for (const guest of guests.filter((one) => this.#inRange(one.vmid) && one.tags.includes(install) && one.tags.includes(`${IMAGE_TAG}${ROLLBACK}`))) {
+          const target = templateFromTags(guest.tags);
+          const os = guest.tags.includes(`${KIND_TAG}${LINUX_KIND.id}`) ? "Linux" : "Windows";
+          const build = buildFromTags(guest.tags);
+          notes.push(
+            `VMID ${guest.vmid} is the rollback of ${os} template ${target ?? "unknown"}${build ? `, ${BUILD}${build}` : ""}. It holds a box's VMID and address until the template's next refresh replaces it. To go back to it, list ${guest.vmid} as the ${os} template in bb-box's settings.`,
+          );
+        }
       } catch (error) {
         fail(VMIDS, message(error), audit(error, `Give the token VM.Audit on /pool/${pool}.`));
       }
