@@ -530,6 +530,12 @@ route and carries messages, not bytes:
 | macOS on Tart | the Virtualization framework's VNC, through a holder on the Mac | VNC password | none |
 | macOS on a pool's Mac | Screen Sharing, through SSH as the box user | type 30, as the box user | none |
 
+- **A frozen sign-in.** wayvnc 0.7.2 can freeze at a viewer's sign-in
+  right after a resize with no viewer has restarted it, until it crashes
+  seconds later (#411, about 0.7% of such resizes). A display that can
+  restart its server, as a Wayland desktop's can, gets 4 s for the
+  sign-in; then bb-box kills its wayvnc, the desktop starts the next, and
+  the sign-in is tried again once, within the usual 20 s.
 - **The picture.** The viewer asks a display for JPEG quality 2, or the
   quality the display names, and keeps noVNC's compression level, 2
   ([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md),

@@ -113,6 +113,12 @@ export interface Display {
    */
   resize?(size: DisplaySize, signal?: AbortSignal): Promise<void>;
   /**
+   * Starts the display's server again, for one that stopped answering a
+   * viewer's sign-in: wayvnc 0.7.2 can freeze there (#411). A sign-in that
+   * hangs for a few seconds has it called once, then tries again.
+   */
+  restartServer?(signal?: AbortSignal): Promise<void>;
+  /**
    * The smallest size a viewer may set. Core raises a smaller SetDesktopSize
    * to it, and the viewer scales the desktop down to fit its pane. Xvnc sets
    * the raised size and says so, and noVNC asks again while that differs

@@ -37,6 +37,8 @@ import {
 
 /** How long opening the box's display and its handshake may take. */
 const CONNECT_TIMEOUT_MS = 20_000;
+/** How long a sign-in may hang before a display that can restart its server has it restarted, once, and is tried again (#411). */
+export const STALL_MS = 4_000;
 /** How long closing waits for the box to take the releases of held keys and buttons. */
 const RELEASE_TIMEOUT_MS = 2_000;
 const CLIENT_CUT_TEXT = 6;
@@ -53,7 +55,9 @@ export interface Viewer {
 }
 
 /** Opens a connection to the box's display, with the authentication it expects. */
-export type OpenDisplay = (signal: AbortSignal) => Promise<{ readonly channel: ByteChannel; readonly auth: DisplayAuth; readonly input?: DisplayOpened["input"] }>;
+export type OpenDisplay = (
+  signal: AbortSignal,
+) => Promise<{ readonly channel: ByteChannel; readonly auth: DisplayAuth; readonly input?: DisplayOpened["input"]; readonly restart?: (signal: AbortSignal) => Promise<void> }>;
 
 export interface Size {
   readonly width: number;
@@ -87,24 +91,37 @@ interface BoxConnection {
   readonly input?: DisplayOpened["input"];
 }
 
-/** Opens the box's display and does its security handshake. Closes the channel if that fails. */
-export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_MS): Promise<BoxConnection> {
+/**
+ * Opens the box's display and does its security handshake. Closes the
+ * channel if that fails. A display that can restart its server gets
+ * STALL_MS for the sign-in; then its server is restarted, once, and the
+ * sign-in tried again, all within `timeoutMs`.
+ */
+export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_MS, stallMs = STALL_MS): Promise<BoxConnection> {
   const signal = AbortSignal.timeout(timeoutMs);
-  const { channel, auth, input } = await open(signal);
-  const reader = new StreamReader(channel.readable);
-  const writer = channel.writable.getWriter();
-  const timedOut = new Promise<never>((_, reject) => {
-    signal.addEventListener("abort", () => reject(new RfbError("The box's desktop did not finish its handshake in time.")), { once: true });
-  });
-  try {
-    if (signal.aborted) throw new RfbError("The box's desktop did not finish its handshake in time.");
-    await Promise.race([boxHandshake(reader, (bytes) => writer.write(bytes), auth), timedOut]);
-    return { channel, reader, writer, input };
-  } catch (error) {
+  for (let restarted = false; ; restarted = true) {
+    const { channel, auth, input, restart } = await open(signal);
+    const reader = new StreamReader(channel.readable);
+    const writer = channel.writable.getWriter();
+    let stall: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<"stalled">((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new RfbError("The box's desktop did not finish its handshake in time.")), { once: true });
+      if (restart && !restarted) stall = setTimeout(() => resolve("stalled"), stallMs);
+    });
+    const handshake = boxHandshake(reader, (bytes) => writer.write(bytes), auth).then(() => "done" as const);
+    handshake.catch(() => undefined);
+    try {
+      if (signal.aborted) throw new RfbError("The box's desktop did not finish its handshake in time.");
+      if ((await Promise.race([handshake, timedOut])) === "done") return { channel, reader, writer, input };
+    } catch (error) {
+      await channel.close().catch(() => undefined);
+      throw error;
+    } finally {
+      clearTimeout(stall);
+      timedOut.catch(() => undefined);
+    }
     await channel.close().catch(() => undefined);
-    throw error;
-  } finally {
-    timedOut.catch(() => undefined);
+    await restart!(signal);
   }
 }
 
@@ -385,7 +402,7 @@ export class RfbRelay {
 export function displayOpener(display: Display): OpenDisplay {
   return async (signal) => {
     const { route, auth, input } = await display.open(signal);
-    return { channel: await openRoute(route, signal), auth, input };
+    return { channel: await openRoute(route, signal), auth, input, ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}) };
   };
 }
 
