@@ -3,7 +3,7 @@
 
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
-import { kindAliases, kindInfo } from "../backends/kinds.ts";
+import { kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GpuRoom, GuestOs, Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
@@ -226,7 +226,11 @@ export function kindViews(
   gpus: Readonly<Record<string, GpuRoom>> = {},
 ): KindView[] {
   const views = new Map<string, KindView>();
-  for (const { kind, backend } of offered) {
+  // Each kind's offers in the order a plain acquire tries them (057), the kinds where they first come.
+  const first = new Map<string, number>();
+  offered.forEach(({ kind }, index) => first.has(kind.id) || first.set(kind.id, index));
+  const ordered = vmOffersLast(offered).sort((a, b) => first.get(a.kind.id)! - first.get(b.kind.id)!);
+  for (const { kind, backend } of ordered) {
     const existing = views.get(kind.id);
     const admin = kind.capabilities.command?.admin ?? false;
     const docker = kind.capabilities.features.includes("docker");

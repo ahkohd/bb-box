@@ -540,6 +540,19 @@ test("box details and kind lists say whether the box user can become root", asyn
     ],
   );
   assert.equal(linux!.computerUse, false);
+  // A VM's offer comes last, as a plain acquire tries it (057), and its kind keeps its place.
+  const qemu = { ...world.backend, id: "proxmox-qemu", label: "Proxmox QEMU", hosts: ["pve"] } as unknown as Backend;
+  const vm = { ...FAKE_KINDS[0]!, capabilities: { ...FAKE_KINDS[0]!.capabilities, features: ["docker", "kernel"] } };
+  const ordered = kindViews(
+    [
+      { kind: vm, backend: qemu },
+      { kind: FAKE_KINDS[1]!, backend: lxc },
+      { kind: dockered, backend: lxc },
+    ],
+    {},
+  );
+  assert.deepEqual(ordered.map((view) => view.id), [FAKE_KINDS[0]!.id, FAKE_KINDS[1]!.id]);
+  assert.deepEqual(ordered[0]!.offers.map((offer) => offer.type), ["proxmox-lxc", "proxmox-qemu"]);
   const [desktop] = kindViews([{ kind: FAKE_KINDS[1]!, backend: lxc }], {});
   assert.deepEqual([desktop!.computerUse, desktop!.offers[0]!.resizable], [true, true]);
 });
