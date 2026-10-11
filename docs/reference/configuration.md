@@ -24,6 +24,7 @@ bb-box's configuration is one document (029): `bb box config show --json` prints
 | `defaultKind` | `string` | `"linux"` | The kind a thread gets when it asks for none. |
 | `files` | `readonly BoxFileSetting[]` |  | Files for every box (#455): paths under the box user's home, whose contents are secrets. |
 | `video` | `boolean` | `true` | Whether viewers of a Linux X11 desktop on the CPU show it as video, through Selkies (056), unless one chose VNC in its menu. On unless set off: an install with no value takes the default. |
+| `nightlyImages` | `boolean` | `false` | Whether bb-box rebuilds the standard images that are due each night (049), on a schedule of its own at 03:00 on BB's server. Off unless set; first-run setup turns it on. |
 
 ## kinds
 

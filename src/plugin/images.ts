@@ -325,7 +325,7 @@ export class ImageJobs {
             name: "Nightly rebuilds",
             status: "warn",
             detail: days === null ? "No run of bb box images refresh has ended yet, so images are rebuilt only by hand." : `No run of bb box images refresh has ended for ${Math.floor(days)} days.`,
-            fix: `Have a BB script automation run it each night: ${AUTOMATION}`,
+            fix: `Turn on Rebuild images each night under General in BB Box's settings, or have a BB script automation run it each night: ${AUTOMATION}`,
           },
     );
     for (const view of views) {

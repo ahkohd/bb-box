@@ -249,3 +249,10 @@ test("the desktop built on demand is the kind the Docker backend offers once its
   assert.deepEqual(dockerKind("linux-desktop-cpu", true), offered);
   assert.deepEqual(dockerKind("linux-desktop-cpu", false).capabilities.features, []);
 });
+
+test("first-run setup turns on the nightly rebuilds unless they were set, and turning a machine on by hand leaves them alone", () => {
+  assert.equal(withDockerHost(emptyDocument(), { id: "host_a", name: "devpc" }, true, 0, true).general.nightlyImages, true);
+  const off: ConfigDocument = { ...emptyDocument(), general: { nightlyImages: false } };
+  assert.equal(withDockerHost(off, { id: "host_a", name: "devpc" }, true, 0, true).general.nightlyImages, false);
+  assert.equal(withDockerHost(emptyDocument(), { id: "host_a", name: "devpc" }, true, 0).general.nightlyImages, undefined);
+});

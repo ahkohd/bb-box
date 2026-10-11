@@ -37,7 +37,7 @@ To see which image a box has, run `bb box status` for the box. It says, for exam
 
 ## Standard images stay up to date
 
-Once it is set up, a BB automation runs `bb box images refresh` each night. To set it up, see [rebuild images each night](../../setup/README.md#rebuild-images-each-night). It rebuilds the standard images that are due:
+With **Rebuild images each night** on, under General in [settings](settings.md#general), BB Box runs the rebuilds at 03:00 on BB's server. Setting up Docker from the Box panel turns it on. Another way to run them is a BB automation: see [rebuild images each night](../../setup/README.md#rebuild-images-each-night). It rebuilds the standard images that are due:
 
 - a Linux image is due after a week
 - a macOS image is due after a month

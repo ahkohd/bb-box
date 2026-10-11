@@ -577,7 +577,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
     document,
     revision: document.revision,
     defaults: {
-      general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true },
+      general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false },
       kinds: {
         linux: { enabled: true, presets: { small: size(2, 4), medium: size(4, 8), large: size(8, 16) }, default: "small", largest: size(16, 32, 256) },
         "linux-desktop": { enabled: true, presets: { small: size(4, 8), medium: size(8, 16), large: size(16, 32) }, default: "small", largest: size(32, 64, 256) },
@@ -1564,6 +1564,12 @@ test("the general settings save at once, leaving out a value at its default", as
   fireEvent.click(slot.getByRole("switch", { name: "Enrol boxes as BB machines" }));
   await waitFor(() => expect(changes).toHaveLength(2));
   expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3, enrol: false });
+  // The nightly rebuilds are off unless set; on saves true, and off again leaves the value out.
+  const nightly = slot.getByRole("switch", { name: "Rebuild images each night" });
+  expect(nightly.getAttribute("aria-checked")).toBe("false");
+  fireEvent.click(nightly);
+  await waitFor(() => expect(changes).toHaveLength(3));
+  expect(JSON.parse(changes[2]!.slice(changes[2]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3, enrol: false, nightlyImages: true });
 });
 
 test("files for every box show each path and whether it is set, never a content, and save at once, sending a kept file's path alone (#455)", async () => {

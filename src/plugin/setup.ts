@@ -22,7 +22,7 @@ import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
-import { emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
+import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
 import { LINUX_LEAST_MEMORY_GIB, presetMemoryChecks } from "../core/sizes.ts";
@@ -65,6 +65,10 @@ export const CHANGED = "changed";
 /** In a box that is a BB machine, the program of the process whose workers carry BB's variables. */
 const DAEMON_PARENT = "host-daemon/dist/daemon-bundle";
 const SWEEP_EVERY_MS = 3 * 60_000;
+/** The nightly rebuilds' schedule (049): its name in BB, its time on BB's server, and the hours after which no image starts, as bb box images refresh's default. */
+const NIGHTLY_SCHEDULE = "nightly-images";
+const NIGHTLY_CRON = "0 3 * * *";
+const NIGHTLY_HOURS = 4;
 const DOCTOR_TIMEOUT_MS = 30_000;
 /**
  * What BB's daemon gives its workers besides the machine variables: the
@@ -715,6 +719,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.events.on("experimental_host.deleted", ({ host }) => {
     holders.forget(host.id);
     void enrolment.forgetHost(host.id).catch((error) => logError("host deleted", error));
+  });
+
+  // The nightly rebuilds (049) behind General's switch: BB runs this schedule while bb-box is loaded, and a run goes on
+  // after it returns, as one that bb box images refresh starts does. A run already going is not started again.
+  bb.background.schedule(NIGHTLY_SCHEDULE, NIGHTLY_CRON, () => {
+    if (!(configuration.document.general.nightlyImages ?? GENERAL_DEFAULTS.nightlyImages)) return;
+    if (imageJobs.running()) return;
+    bb.log.info("Rebuilding the standard images that are due, as General's Rebuild images each night is on.");
+    void imageJobs.refreshAll({ limitMs: NIGHTLY_HOURS * 60 * 60_000 }).catch((error) => logError("nightly images", error));
   });
 
   bb.background.service("sweeper", {
