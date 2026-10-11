@@ -1044,11 +1044,15 @@ test("with Linux desktop templates, linux-desktop-cpu boxes are VMs whose deskto
   const run = join(ssh.home("192.0.2.150"), "run", "bb-box");
   mkdirSync(run, { recursive: true });
   writeFileSync(join(run, "display-mode"), "cpu\n");
+  writeFileSync(join(run, "display-reason"), "DISPLAY_MODE=cpu\n");
   const box = identity(sized(), "linux-desktop-cpu");
   const hook = hooks();
   const guest = await backend.acquire(box, null, hook.value, signal());
   assert.deepEqual(guest.data, { template: 9121, box: box.boxId });
   assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "display", "network", "ssh", "start", "tags"]);
+  // Its display mode and why, as box_status shows them for Proxmox LXC's desktops.
+  assert.deepEqual(guest.facts?.map((fact) => fact.label), ["Display mode", "Display reason"]);
+  assert.equal(guest.facts?.[0]?.value, "CPU");
 
   const transports = await backend.transports(guest);
   assert.deepEqual(transports.displays.map((display) => [display.id, display.protocol]), [["desktop", "rfb"], ["selkies", "selkies"]]);
