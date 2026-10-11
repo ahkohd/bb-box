@@ -16,6 +16,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `sizes.<kind>.<preset>` | Box sizes | A Linux preset with less than 2 GiB memory, so its boxes can run out of memory as they become BB machines. |
 | `box-files` | Files for every box | The files bb-box writes into each box as it joins BB, and whether the last write worked. |
 | `images.nightly` | Nightly rebuilds | When bb box images refresh last ended. It warns when no run ended for 8 days. |
+| `images.bb-update` | Refresh after a BB update | After a BB update, which Linux images have another build of BB's app than BB's server gives, and when their refresh starts. Only while Rebuild images each night is on. |
 | `images.<backend>/<ref>` | Rebuild of <backend>/<ref> | A standard image whose last rebuild failed, or waits for room. |
 | `images.bake.<image>.<backend>.<kind>` | Build of <image> for <kind> on <backend> | A project image whose last build failed. Its boxes run its script as they start meanwhile. |
 | `spares.image.<image>.<backend>.<kind>` | Spare of <image> for <kind> on <backend> | A project image's spare whose build failed to start a box, so bb-box makes none of that build for a day. Its boxes start from the build meanwhile. |
