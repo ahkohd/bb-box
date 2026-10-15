@@ -13,6 +13,7 @@
 #   again                      each user loginwindow signed in again as it was logged out
 #   ipc                        "<type> <id> <owner>" lines
 #   clock                      what date +%s says, when it exists
+#   sunlnk                     paths on the Mac's disk that stat -f %Sf says have the sunlnk flag
 #   flags/<name>               changes a tool, as each tool below says
 #   calls                      each tool and its arguments, one a line
 
@@ -295,6 +296,11 @@ case $tool in
 
   stat)
     # stat -f %Su <path>: the console's user, or flags/owner's for any other path.
+    # stat -f %Sf <path>: sunlnk for a path sunlnk lists, as macOS 27 marks a user's /private/var/folders folders.
+    if [ "$2" = %Sf ]; then
+      grep -qxF "$3" "$F/sunlnk" 2>/dev/null && echo sunlnk || echo -
+      exit 0
+    fi
     case $3 in
       /dev/console) cat "$F/console" ;;
       *) cat "$F/flags/owner" 2>/dev/null || echo root ;;

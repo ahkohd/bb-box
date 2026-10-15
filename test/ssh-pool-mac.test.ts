@@ -325,6 +325,39 @@ test("a release that cannot remove a file the old user owned fails, naming Full 
   assert.deepEqual(mac.users(), ["bbx-1", "person"]);
 });
 
+test("a release empties the old user's /private/var/folders folders that macOS 27 marks sunlnk, and leaves them, but fails on anything else left there", { skip: process.getuid?.() === 0 && "root removes any file" }, () => {
+  // As on macOS 27: the user's folder holds 0, C, T and X, each sunlnk, which not even root can remove.
+  const folder = (mac: FakeMacos, extra: string[] = []) => {
+    const top = join(mac.data, "private/var/folders/sf/user70000");
+    for (const name of ["0", "C", "T", "X", ...extra]) mkdirSync(join(top, name), { recursive: true });
+    writeFileSync(join(top, "T", "left"), "box\n");
+    mac.own("/private/var/folders/sf/user70000", 70000);
+    for (const name of ["0", "C", "T", "X"]) mac.add("sunlnk", join(top, name));
+    chmodSync(top, 0o555);
+    return top;
+  };
+  const mac = lentMac();
+  const top = folder(mac);
+  try {
+    assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: 0, stdout: "generation=1\nreleased=yes\n", stderr: "" });
+    assert.deepEqual(readdirSync(top).sort(), ["0", "C", "T", "X"], "the sunlnk folders stay");
+    assert.deepEqual(readdirSync(join(top, "T")), [], "emptied");
+    assert.deepEqual(mac.users(), ["bbx-1", "person"]);
+  } finally {
+    chmodSync(top, 0o755);
+  }
+
+  // A folder there without the flag is not macOS's to keep: the release fails, naming the user's folder.
+  const other = lentMac();
+  const left = folder(other, ["Y"]);
+  try {
+    const failed = other.helper(["release", "0"], RELEASE());
+    assert.deepEqual([failed.status, failed.stderr], [1, "Could not remove /private/var/folders/sf/user70000, which bbx-0 owned.\n"]);
+  } finally {
+    chmodSync(left, 0o755);
+  }
+});
+
 test("a process Spotlight starts as the old user during the sweep is ended, and the temporary folders it makes are swept", () => {
   const mac = lentMac();
   mac.flag("mds");

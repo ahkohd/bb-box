@@ -12,6 +12,10 @@ next user in. What a real Mac must still confirm is under
 [the live check](#the-live-check). Amended 3 October 2026: Screen Sharing
 ignores the viewer's keyboard and pointer, so a helper in the box user's
 session posts them (#406), with one more grant per Mac at setup.
+Amended 15 October 2026: on the dedicated Mac, the first reset could not
+remove the old user's folder in `/private/var/folders`, as macOS 27 marks
+the user's `0`, `C`, `T` and `X` folders there `sunlnk`. The reset now
+empties those and leaves them (step 4).
 
 ## Context
 
@@ -145,7 +149,11 @@ Where it fits:
      `/Users/Shared` and `/private/var/folders`; then the user with its
      home. Spotlight can start the user's processes again during the
      sweep, so the helper logs it out and sweeps `/private/var/folders`
-     again;
+     again. macOS 27 marks the user's `0`, `C`, `T` and `X` folders there
+     `sunlnk`, System Integrity Protection's "system no-unlink", which not
+     even root can clear while SIP is on. So the sweep empties them and
+     leaves them, and the clean check allows only those, empty. A later
+     user gets another folder there, and cannot read `C` or `T`;
   5. the clean check: no process or file of the old user, and the next
      user at the console. While a restart signs the user in, the helper
      reports the reset as still running, as for the pool's whole-machine

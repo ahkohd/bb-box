@@ -568,6 +568,21 @@ sweep() {
   return 0
 }
 
+# Whether all that is left of folder $1, under /private/var/folders, is
+# folders macOS marks sunlnk, with nothing in them. macOS 27 sets the flag,
+# System Integrity Protection's "system no-unlink", on a user's 0, C, T and
+# X folders there. Not even root can clear it while SIP is on, so the reset
+# empties them and leaves them: a later user has another folder there.
+only_sunlnk() {
+  case $1 in "$DATA/private/var/folders/"*) ;; *) return 1 ;; esac
+  [ -d "$1" ] || return 1
+  find "$1" -mindepth 1 | while IFS= read -r path; do
+    if [ ! -d "$path" ] || [ -L "$path" ]; then echo "$path"; break; fi
+    case $(stat -f %Sf "$path" 2>/dev/null) in *sunlnk*) ;; *) echo "$path"; break ;; esac
+  done | grep -q . && return 1
+  return 0
+}
+
 # Removes a box user and everything it left.
 remove_user() {
   user=$1 uid=${2:-}
@@ -599,7 +614,9 @@ remove_user() {
     left=$({
       printf '%s\n' "$left"
       sweep "$uid" "$DATA/private/var/folders"
-    } | while IFS= read -r path; do if [ -e "$path" ] || [ -L "$path" ]; then printf '%s\n' "$path"; fi; done | head -n 1)
+    } | while IFS= read -r path; do
+      if [ -e "$path" ] || [ -L "$path" ]; then only_sunlnk "$path" || printf '%s\n' "$path"; fi
+    done | head -n 1)
     if [ -n "$left" ]; then
       full_disk || fail "Could not remove ${left#"$DATA"}, which $user owned. The helper has no Full Disk Access: on the Mac, in System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users."
       fail "Could not remove ${left#"$DATA"}, which $user owned."
