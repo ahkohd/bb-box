@@ -87,6 +87,12 @@ export interface MacStatus {
    * status gives the runtimes it last found. Null from a helper too old to say.
    */
   readonly xcode: Xcode | null;
+  /**
+   * The folders old box users left in /private/var/folders, which macOS 27
+   * keeps (047), and the KiB root can see in them. Only the doctor's status
+   * calls, with grants or xcode, count them; null otherwise.
+   */
+  readonly leftovers: { readonly count: number; readonly kib: number } | null;
 }
 
 /** The Xcode xcode-select chooses on a Mac (047). */
@@ -189,6 +195,7 @@ export function parseStatus(stdout: string): MachineStatus {
               ? { accessibility: granted(values.get("accessibility")), screenRecording: granted(values.get("screenrecording")), input: granted(values.get("input")) }
               : null,
             xcode: values.has("xcode") ? { version: values.get("xcode") || null, runtimes: listed(values.get("runtimes")) } : null,
+            leftovers: values.has("leftovers") ? { count: whole(values.get("leftovers")) ?? 0, kib: whole(values.get("leftovers_kib")) ?? 0 } : null,
           }
         : null,
   };

@@ -364,6 +364,12 @@ status() {
     *) known_xcode ;;
   esac
   [ "${1:-}" != grants ] || grants
+  # For the doctor alone, as du may take a moment.
+  if [ -n "${1:-}" ]; then
+    left=$(leftovers)
+    echo "leftovers=${left%% *}"
+    echo "leftovers_kib=${left#* }"
+  fi
 }
 
 # Makes box user $1 with UID $2 and a random password, from macOS's home
@@ -568,19 +574,30 @@ sweep() {
   return 0
 }
 
-# Whether all that is left of folder $1, under /private/var/folders, is
-# folders macOS marks sunlnk, with nothing in them. macOS 27 sets the flag,
-# System Integrity Protection's "system no-unlink", on a user's 0, C, T and
-# X folders there. Not even root can clear it while SIP is on, so the reset
-# empties them and leaves them: a later user has another folder there.
-only_sunlnk() {
+# Whether what is left of folder $1, under /private/var/folders, is what
+# macOS keeps there, for user ID $2. macOS 27 marks a user's 0, C, T and X
+# folders there sunlnk, System Integrity Protection's "system no-unlink",
+# and keeps its daemons' folders in them, such as
+# 0/com.apple.ScreenTimeAgent, which root cannot even list, Full Disk
+# Access or not. So it counts as removed when root sees only folders left
+# in it, whether it can enter them or not, each the old user's or root's.
+# A file, or anything of another user, such as the next box's, fails.
+kept_by_macos() {
   case $1 in "$DATA/private/var/folders/"*) ;; *) return 1 ;; esac
-  [ -d "$1" ] || return 1
-  find "$1" -mindepth 1 | while IFS= read -r path; do
-    if [ ! -d "$path" ] || [ -L "$path" ]; then echo "$path"; break; fi
-    case $(stat -f %Sf "$path" 2>/dev/null) in *sunlnk*) ;; *) echo "$path"; break ;; esac
-  done | grep -q . && return 1
-  return 0
+  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  [ -z "$(find "$1" ! -type d 2>/dev/null | head -n 1)" ] || return 1
+  [ -z "$(find "$1" ! -uid "$2" ! -uid 0 2>/dev/null | head -n 1)" ]
+}
+
+# The folders old box users left under /private/var/folders, which macOS
+# keeps (kept_by_macos), and the KiB root can see in them: "<count> <KiB>".
+leftovers() {
+  current_uid=$(attribute "$PREFIX$(generation)" UniqueID)
+  find "$DATA/private/var/folders" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | while IFS= read -r path; do
+    uid=$(stat -f %u "$path" 2>/dev/null)
+    number "$uid" && [ "$uid" -ge "$ID_BASE" ] && [ "$uid" -lt "$((ID_BASE + ID_SPAN))" ] && [ "$uid" != "$current_uid" ] || continue
+    du -sk "$path" 2>/dev/null | awk '{ print $1 }'
+  done | awk '{ n++; k += $1 } END { printf "%d %d\n", n, k }'
 }
 
 # Removes a box user and everything it left.
@@ -615,7 +632,7 @@ remove_user() {
       printf '%s\n' "$left"
       sweep "$uid" "$DATA/private/var/folders"
     } | while IFS= read -r path; do
-      if [ -e "$path" ] || [ -L "$path" ]; then only_sunlnk "$path" || printf '%s\n' "$path"; fi
+      if [ -e "$path" ] || [ -L "$path" ]; then kept_by_macos "$path" "$uid" || printf '%s\n' "$path"; fi
     done | head -n 1)
     if [ -n "$left" ]; then
       full_disk || fail "Could not remove ${left#"$DATA"}, which $user owned. The helper has no Full Disk Access: on the Mac, in System Settings, General, Sharing, select the (i) beside Remote Login, and turn on Allow full disk access for remote users."
