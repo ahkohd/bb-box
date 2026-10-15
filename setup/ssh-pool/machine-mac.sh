@@ -73,6 +73,8 @@ ROOT=
 VERSION=1
 STATE=$ROOT/var/db/bb-box
 TEMPLATE=$ROOT/usr/local/share/bb-box/home
+# Cua Driver's bundle ID, which macOS keys its screen-capture approval by.
+CUA_BUNDLE=com.trycua.driver
 # The Data volume, where everything a box can write is. /Users, /private and the like are firmlinks to it.
 DATA=$ROOT/System/Volumes/Data
 LOGINWINDOW=/Library/Preferences/com.apple.loginwindow
@@ -423,6 +425,21 @@ make_user() {
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
     "<plist version=\"1.0\"><dict><key>SystemVersionStampAsString</key><string>$version</string><key>BuildVersionStampAsString</key><string>$build</string></dict></plist>" \
     >"$home/Library/Preferences/loginwindow.plist" || return 1
+  # Cua's screen capture approved for the user (047). macOS 27 asks each
+  # user once whether Cua may "bypass the system private window picker",
+  # and a box has nobody to answer. replayd keeps the answer in the user's
+  # home, keyed by Cua's bundle ID, and asks again only after
+  # kScreenCapturePrivacyHintDate, so an entry with that date years ahead
+  # keeps the prompt away. The Mac's operator granted Cua Screen Recording
+  # at setup; this is the per-user notice on top of that grant.
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ) year=$(date -u +%Y)
+  replayd="$home/Library/Group Containers/group.com.apple.replayd"
+  mkdir -p "$replayd" && chmod 700 "$replayd" || return 1
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    "<plist version=\"1.0\"><dict><key>$CUA_BUNDLE</key><dict><key>kScreenCaptureAlertableUsageCount</key><integer>1</integer><key>kScreenCaptureApprovalLastAlerted</key><date>$now</date><key>kScreenCaptureApprovalLastUsed</key><date>$now</date><key>kScreenCapturePrivacyHintDate</key><date>$((year + 5))-01-01T00:00:00Z</date><key>kScreenCapturePrivacyHintPolicy</key><integer>2592000</integer></dict></dict></plist>" \
+    >"$replayd/ScreenCaptureApprovals.plist" || return 1
+  chmod 600 "$replayd/ScreenCaptureApprovals.plist" || return 1
   chown -R "$uid:20" "$home" || return 1
   # No notices that background items were added, such as Cua's and BB's daemons, as in Tart's image.
   launchctl disable "gui/$uid/com.apple.backgroundtaskmanagement.agent" >/dev/null 2>&1

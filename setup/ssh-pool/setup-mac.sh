@@ -125,6 +125,11 @@ mkdir -p "$ROOT$LIBEXEC" "$ROOT$SHARE/home"
 chmod 0755 "$ROOT$LIBEXEC"
 install -m 0755 "$here/machine-mac.sh" "$ROOT$LIBEXEC/machine.new"
 mv -f "$ROOT$LIBEXEC/machine.new" "$ROOT$LIBEXEC/machine"
+# A screen-capture approval placed in the template by hand, before the helper
+# wrote one for each user (047): each user now gets its own, of its own date.
+replayd="$ROOT$SHARE/home/Library/Group Containers/group.com.apple.replayd"
+rm -f "$replayd/ScreenCaptureApprovals.plist"
+rmdir "$replayd" "$ROOT$SHARE/home/Library/Group Containers" 2>/dev/null || true
 cp -R "$here/mac-home/." "$ROOT$SHARE/home/"
 
 # The admin user may run the helper as root, and nothing else.

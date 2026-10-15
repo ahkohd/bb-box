@@ -17,6 +17,9 @@ remove the old user's folder in `/private/var/folders`, as macOS 27 marks
 the user's `0`, `C`, `T` and `X` folders there `sunlnk`, and keeps its
 daemons' folders in them, which root cannot list. The reset now empties
 what it can there and leaves the rest (step 4), and the doctor counts it.
+Amended 16 October 2026: each new box user starts with Cua's screen
+capture approved, as macOS 27 otherwise asks every new user (computer
+use).
 
 ## Context
 
@@ -269,12 +272,24 @@ Boxes are not a security boundary between each other or from the Mac.
   asked on Cua's first capture:
   - under MDM, Apple's `forceBypassScreenCaptureAlert` restriction (macOS
     15.1 and later, from an MDM server only) turns it off;
-  - otherwise a person answers it in the box's viewer, once per box.
+  - otherwise each new box user starts with it answered (amended 16
+    October 2026, as the operator decided). macOS 27 keeps it outside the
+    system's database, in the user's home:
+    `~/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist`,
+    keyed by Cua's bundle ID, `com.trycua.driver`. replayd writes the
+    entry when it asks, and asks again only after its
+    `kScreenCapturePrivacyHintDate`. So the helper writes that entry as it
+    makes each user, asked at that moment and due again 5 years on, and
+    the user is never asked: a box has nobody to answer.
 
-  The stand-in's check did not capture the screen through Cua, so a real
-  Mac's check measures when it shows. Whether a reset may carry a
-  person's answer on to the next box's user is for the operator to decide;
-  this decision does not.
+  On the dedicated Mac, a new user without the entry was asked on Cua's
+  first capture, within a second. One with it went 4 minutes of computer
+  use, with its use count rising, and replayd kept the entry's dates and
+  never asked. macOS took the folder as the user's group container,
+  writing its own metadata beside the file. The person still grants Cua
+  Screen Recording once per Mac; the entry only spares each box user the
+  notice on top of that grant. `setup-mac.sh` removes a copy placed in the
+  home template by hand.
 - SSH gets Accessibility, for the viewer's input, and no Screen Recording.
   A person allows `/usr/bin/osascript`, which runs the input helper, and
   `/usr/libexec/sshd-keygen-wrapper`, the SSH process it runs under, in
@@ -540,6 +555,22 @@ What #406 tried, in the order this record had set:
 4. **A VNC server of our own: not needed.** It stays the way to resize
    the desktop later, at the cost of Screen Recording, a LaunchAgent and
    each new user's 30-day confirmation.
+
+### On the Mac set aside
+
+A Mac Studio, M5 Max, 32 GB, on macOS 27.0.1, ran the check from 15
+October 2026 (#47), with no display attached.
+
+- One reset in the conformance run ended in a kernel panic, and the Mac
+  restarted: "DCPEXT0 PANIC - power_down_M3: auto_mode_change failed",
+  the display coprocessor of the external display port failing a mode
+  change as it powered down, likely in the userspace restart's display
+  change with nothing attached. 13 resets after it did not panic. An HDMI
+  dummy plug may prevent it: once one is in, a batch of resets counts the
+  panics.
+- A restart takes the Mac off its network for about a minute. A release
+  whose first reset call lost SSH then put the Mac out of service at once,
+  so the pool is to wait for such a Mac before it calls it out of service.
 
 ## Plan
 
