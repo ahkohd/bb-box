@@ -424,12 +424,16 @@ case $tool in
   ipconfig) [ "$2" = en0 ] && echo 192.0.2.30 ;;
   # curl -o <file> fetches Cua Driver's archive, from flags/cua.tgz; without -o, Homebrew's installer, from flags/install.sh.
   curl)
-    out=''
+    # A download is flags/<the URL's file name> when there is one, else Cua's archive.
+    out='' url=''
     while [ $# -gt 0 ]; do
       [ "$1" != -o ] || out=$2
+      case $1 in https://*) url=$1 ;; esac
       shift
     done
-    if [ -n "$out" ]; then cp "$F/flags/cua.tgz" "$out"; else cat "$F/flags/install.sh"; fi
+    fixture=$F/flags/${url##*/}
+    [ -n "$url" ] && [ -f "$fixture" ] || fixture=$F/flags/cua.tgz
+    if [ -n "$out" ]; then cp "$fixture" "$out"; else cat "$F/flags/install.sh"; fi
     ;;
   shasum)
     cat >/dev/null

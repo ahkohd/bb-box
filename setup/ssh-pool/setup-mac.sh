@@ -15,6 +15,8 @@
 #   and the box users' home template, mac-home, as /usr/local/share/bb-box/home
 # - installs Homebrew if it is missing, as the administrator who ran sudo,
 #   then Git, GitHub CLI and Node.js with it, and Cua Driver
+# - installs the agent CLIs BB runs threads with, Claude Code, Codex and Pi,
+#   pinned as the Linux images pin them (#561)
 # - clears BB's daemon lock and PID file in box homes at boot (017)
 # - keeps the Mac awake, starts it after a power failure, and turns off
 #   automatic macOS updates, which would restart a box, automatic App Store
@@ -45,6 +47,16 @@ ROOT=
 # Cua Driver, as Tart's image pins it in setup/tart/prepare-image.sh.
 CUA_VERSION=0.30.4
 CUA_SHA256=e270ea67388d794505031b0a15d8b58994c67e18e754a43634d7732251f595df
+# The agent CLIs BB runs threads with, at the versions the Linux images pin
+# in setup/proxmox-lxc/template/pins.json (#561), for darwin-arm64. A test
+# keeps the versions equal. Claude Code's SHA-256 is from its release
+# manifest, Codex's and Pi's from GitHub's asset digests.
+CLAUDE_VERSION=2.1.283
+CLAUDE_SHA256=d8cb1e5c79684cc12a8bfc813e3a2073406921b6245744b3009be3ab5651d21e
+CODEX_VERSION=0.157.1
+CODEX_SHA256=3c45b162b7a76f51325015b1d0a8112c73219b7a9b59cd5762c37c9ba55894fa
+PI_VERSION=0.87.1
+PI_SHA256=4f8d288b78c9768d3a4ac6f61f06cd34394b82ac17d5b42d1e44a437add401b7
 
 LIBEXEC=/usr/local/libexec/bb-box
 SHARE=/usr/local/share/bb-box
@@ -169,6 +181,38 @@ if [ "$(cat "$ROOT$SHARE/cua-driver" 2>/dev/null)" != "$CUA_VERSION" ] || [ ! -e
 fi
 mkdir -p "$ROOT/usr/local/bin"
 ln -sf "$CUA_APP/Contents/MacOS/cua-driver" "$ROOT/usr/local/bin/cua-driver"
+
+# The agent CLIs, so threads on a box can run (#561): each pinned by
+# version and SHA-256, in /usr/local/lib/bb-box/<name>-<version>, linked
+# from /usr/local/bin, which box users' PATH has. An earlier version goes.
+TOOLS=/usr/local/lib/bb-box
+tool() { # name version sha256 url strip command path
+  dest=$TOOLS/$1-$2
+  if [ ! -x "$ROOT$dest/$7" ]; then
+    tmp=$(mktemp -d)
+    curl -fsSL --retry 3 -o "$tmp/download" "$4" || die "Could not download $1 $2."
+    echo "$3  $tmp/download" | shasum -a 256 -c --quiet - >/dev/null 2>&1 || die "$1's download does not match its pin."
+    rm -rf "$ROOT$dest.partial"
+    mkdir -p "$ROOT$dest.partial"
+    case $4 in
+      *.tar.gz) tar -xzf "$tmp/download" -C "$ROOT$dest.partial" --strip-components "$5" ;;
+      *) install -m 0755 "$tmp/download" "$ROOT$dest.partial/$7" ;;
+    esac
+    rm -rf "$tmp"
+    [ -x "$ROOT$dest.partial/$7" ] || die "$1 $2 has no $7."
+    chown -R root:wheel "$ROOT$dest.partial" && chmod -R go-w "$ROOT$dest.partial"
+    rm -rf "$ROOT$dest" && mv "$ROOT$dest.partial" "$ROOT$dest"
+  fi
+  ln -sfn "$dest/$7" "$ROOT/usr/local/bin/$6"
+  for old in "$ROOT$TOOLS/$1"-[0-9]*; do [ "$old" = "$ROOT$dest" ] || [ ! -d "$old" ] || rm -rf "$old"; done
+}
+mkdir -p "$ROOT$TOOLS"
+tool claude-code "$CLAUDE_VERSION" "$CLAUDE_SHA256" \
+  "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/darwin-arm64/claude" 0 claude claude
+tool codex "$CODEX_VERSION" "$CODEX_SHA256" \
+  "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-aarch64-apple-darwin.tar.gz" 0 codex codex-aarch64-apple-darwin
+tool pi "$PI_VERSION" "$PI_SHA256" \
+  "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-darwin-arm64.tar.gz" 1 pi pi
 
 # 017: a box's BB daemon leaves its lock and PID file after a hard stop. Clear them at boot.
 daemon=$ROOT/Library/LaunchDaemons/dev.bb-box.clear-bb-state.plist
