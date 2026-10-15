@@ -61,6 +61,15 @@ test("init makes the first box user, hidden and in _developer, from the home tem
     /<key>idleTime<\/key><integer>0<\/integer>/,
   );
   assert.ok(mac.lines("owners").some((line) => line === `70000 ${mac.data}/Users/bbx-0/.zshenv`), "the home is the user's");
+  // Cua's screen capture approved for the user, so macOS 27 does not ask a box nobody answers (047): asked now, again in years.
+  const approvals = "/Users/bbx-0/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist";
+  const approval = mac.file(approvals)!;
+  const year = new Date().getUTCFullYear();
+  assert.match(approval, /<key>com\.trycua\.driver<\/key><dict>/);
+  assert.match(approval, /<key>kScreenCaptureApprovalLastAlerted<\/key><date>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z<\/date>/);
+  assert.match(approval, new RegExp(`<key>kScreenCapturePrivacyHintDate</key><date>${year + 5}-01-01T00:00:00Z</date>`));
+  assert.equal(statSync(join(mac.root, approvals)).mode & 0o777, 0o600);
+  assert.equal(statSync(join(mac.root, "/Users/bbx-0/Library/Group Containers/group.com.apple.replayd")).mode & 0o777, 0o700);
 
   const password = mac.file("/var/db/bb-box/passwords/bbx-0")!;
   assert.match(password, /^[A-Za-z0-9]{24}\n$/);
@@ -638,6 +647,10 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   mkdirSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info"), { recursive: true });
   writeFileSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info/CFBundleShortVersionString"), "26.0\n");
   mac.setConsole("person");
+  // An approval placed in the template by hand before the helper wrote one per user (047): setup removes it.
+  const placed = join(mac.root, "usr/local/share/bb-box/home/Library/Group Containers/group.com.apple.replayd");
+  mkdirSync(placed, { recursive: true });
+  writeFileSync(join(placed, "ScreenCaptureApprovals.plist"), "<plist/>\n");
   const again = mac.setup(["--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box", "--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherInstall bb-box", "--name", "studio"]);
   assert.equal(again.status, 0, again.stderr);
   assert.ok(again.stdout.includes("\n  studio bbbox-admin@192.0.2.30 macos,macos-desktop\n"));
@@ -651,6 +664,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(mac.file("/var/db/bb-box/xcode"), "xcode=26.0\nruntimes=iOS 26.0,watchOS 26.0\n", "what the pool's offers follow");
   assert.equal(count(mac, "sudo -u person open x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"), 1);
   assert.equal(mac.file("/var/db/bb-box/generation"), "0\n");
+  assert.equal(existsSync(join(mac.root, "usr/local/share/bb-box/home/Library/Group Containers")), false, "the hand-placed approval is gone");
 });
 
 test("setup-mac.sh refuses a Mac with FileVault on or Remote Login off, no key, someone else's admin user, or a Cua Driver that is not the pinned one", () => {
