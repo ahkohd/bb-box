@@ -992,7 +992,7 @@ export class SshPoolBackend implements Backend {
         warn(STATE, `Out of service: ${view.reason}`, `Fix the cause on ${name}, then reset it there with ${reset}. bb-box lends it again once it is clean.`);
       } else if (view.state === "resetting" && status.owner && !install) {
         warn(STATE, "An operator's reset on the machine has not finished.", `If it is not still running, run ${reset} on ${name} again. bb-box lends it again once it is clean.`);
-      } else pass(STATE, this.#describe(view));
+      } else pass(STATE, `${this.#describe(view)}${leftoverWords(xcodes.get(machine)?.status?.mac?.leftovers ?? null)}`);
       // A machine shows 90% of its memory, as fits() allows.
       const has = machineSize(status);
       const largest = has && { ...has, memoryMiB: has.memoryMiB / 0.9, diskGiB: status.diskGiB ?? 0 };
@@ -1364,4 +1364,11 @@ export class SshPoolBackend implements Backend {
     }
     return this.#ssh;
   }
+}
+
+/** What old box users left in a Mac's /private/var/folders, which macOS 27 keeps (047), for the doctor's state check; nothing when none. */
+export function leftoverWords(left: { readonly count: number; readonly kib: number } | null): string {
+  if (!left?.count) return "";
+  const size = left.kib >= 1024 * 1024 ? `${(left.kib / 1024 / 1024).toFixed(1)} GiB` : `${Math.round(left.kib / 1024)} MiB`;
+  return ` Old box users left ${left.count === 1 ? "1 folder" : `${left.count} folders`} in /private/var/folders, which macOS keeps, with ${size} that root can see.`;
 }

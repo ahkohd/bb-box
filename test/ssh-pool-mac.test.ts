@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { EXIT, fields, parseStatus } from "../src/backends/ssh-pool/protocol.ts";
+import { leftoverWords } from "../src/backends/ssh-pool/backend.ts";
 import { fakeMacos, type FakeMacos } from "./fake-macos.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -97,7 +98,7 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
     {
       helper: 1, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
-      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] } },
+      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null },
     },
   );
   const values = fields(result.stdout);
@@ -325,36 +326,85 @@ test("a release that cannot remove a file the old user owned fails, naming Full 
   assert.deepEqual(mac.users(), ["bbx-1", "person"]);
 });
 
-test("a release empties the old user's /private/var/folders folders that macOS 27 marks sunlnk, and leaves them, but fails on anything else left there", { skip: process.getuid?.() === 0 && "root removes any file" }, () => {
-  // As on macOS 27: the user's folder holds 0, C, T and X, each sunlnk, which not even root can remove.
-  const folder = (mac: FakeMacos, extra: string[] = []) => {
-    const top = join(mac.data, "private/var/folders/sf/user70000");
-    for (const name of ["0", "C", "T", "X", ...extra]) mkdirSync(join(top, name), { recursive: true });
-    writeFileSync(join(top, "T", "left"), "box\n");
-    mac.own("/private/var/folders/sf/user70000", 70000);
-    for (const name of ["0", "C", "T", "X"]) mac.add("sunlnk", join(top, name));
-    chmodSync(top, 0o555);
-    return top;
+test("a release leaves what macOS 27 keeps of the old user's /private/var/folders folder, only folders of its own, and fails on a file, or on anything of another user", { skip: process.getuid?.() === 0 && "root removes any file" }, () => {
+  // As on macOS 27: 0, C, T and X are sunlnk, which not even root can remove, and C holds a daemon's folder root cannot enter.
+  const top = (mac: FakeMacos) => join(mac.data, "private/var/folders/sf/user70000");
+  const folder = (mac: FakeMacos, extra: (dir: string) => void = () => {}) => {
+    const dir = top(mac);
+    for (const name of ["0", "C", "T", "X", "C/vault"]) mkdirSync(join(dir, name), { recursive: true });
+    writeFileSync(join(dir, "T", "left"), "box\n");
+    writeFileSync(join(dir, "C/vault", "kept"), "macOS's\n");
+    extra(dir);
+    for (const name of ["", "0", "C", "T", "X", "C/vault"]) mac.own(join("/private/var/folders/sf/user70000", name), 70000);
+    for (const name of ["0", "C", "T", "X"]) mac.add("sunlnk", join(dir, name));
+    chmodSync(join(dir, "C/vault"), 0o000);
+    chmodSync(dir, 0o555);
   };
+  const open = (mac: FakeMacos) => {
+    for (const path of [top(mac), join(top(mac), "C/vault"), join(top(mac), "X")]) if (existsSync(path)) chmodSync(path, 0o755);
+  };
+
   const mac = lentMac();
-  const top = folder(mac);
+  folder(mac);
   try {
     assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: 0, stdout: "generation=1\nreleased=yes\n", stderr: "" });
-    assert.deepEqual(readdirSync(top).sort(), ["0", "C", "T", "X"], "the sunlnk folders stay");
-    assert.deepEqual(readdirSync(join(top, "T")), [], "emptied");
+    assert.deepEqual(readdirSync(top(mac)).sort(), ["0", "C", "T", "X"], "the sunlnk folders stay");
+    assert.deepEqual(readdirSync(join(top(mac), "T")), [], "emptied");
     assert.deepEqual(mac.users(), ["bbx-1", "person"]);
+    // The doctor's status counts the old users' folders left there, and what root can see in them.
+    const status = fields(mac.helper(["status", "xcode"]).stdout);
+    assert.equal(status.get("leftovers"), "1");
+    assert.match(status.get("leftovers_kib") ?? "", /^\d+$/);
+    assert.equal(fields(mac.helper(["status"]).stdout).get("leftovers"), undefined, "not in an ordinary status");
+    // bb-box reads them, and the doctor's state check says so.
+    const parsed = parseStatus(mac.helper(["status", "xcode"]).stdout).mac?.leftovers;
+    assert.equal(parsed?.count, 1);
+    assert.equal(parseStatus(mac.helper(["status"]).stdout).mac?.leftovers, null);
+    assert.equal(leftoverWords({ count: 3, kib: 2560 }), " Old box users left 3 folders in /private/var/folders, which macOS keeps, with 3 MiB that root can see.");
+    assert.equal(leftoverWords({ count: 0, kib: 0 }), "");
   } finally {
-    chmodSync(top, 0o755);
+    open(mac);
   }
 
-  // A folder there without the flag is not macOS's to keep: the release fails, naming the user's folder.
-  const other = lentMac();
-  const left = folder(other, ["Y"]);
+  // A file root can see but not remove is not macOS's to keep.
+  const file = lentMac();
+  folder(file, (dir) => {
+    writeFileSync(join(dir, "X", "stuck"), "box\n");
+    chmodSync(join(dir, "X"), 0o555);
+  });
   try {
-    const failed = other.helper(["release", "0"], RELEASE());
+    const failed = file.helper(["release", "0"], RELEASE());
     assert.deepEqual([failed.status, failed.stderr], [1, "Could not remove /private/var/folders/sf/user70000, which bbx-0 owned.\n"]);
   } finally {
-    chmodSync(left, 0o755);
+    open(file);
+  }
+
+  // Nor is a folder of another user there, such as the next box's.
+  const next = lentMac();
+  folder(next, (dir) => {
+    mkdirSync(join(dir, "X", "next"));
+    chmodSync(join(dir, "X"), 0o555);
+  });
+  next.own("/private/var/folders/sf/user70000/X/next", 70001);
+  try {
+    const failed = next.helper(["release", "0"], RELEASE());
+    assert.deepEqual([failed.status, failed.stderr], [1, "Could not remove /private/var/folders/sf/user70000, which bbx-0 owned.\n"]);
+  } finally {
+    open(next);
+  }
+});
+
+test("an empty folder the old user left outside /private/var/folders, in /Users/Shared, still fails the reset: macOS keeps folders only there", { skip: process.getuid?.() === 0 && "root removes any file" }, () => {
+  const mac = lentMac();
+  const shared = join(mac.data, "Users/Shared");
+  mkdirSync(join(shared, "box-empty"), { recursive: true });
+  mac.own("/Users/Shared/box-empty", 70000);
+  chmodSync(shared, 0o555);
+  try {
+    const failed = mac.helper(["release", "0"], RELEASE());
+    assert.deepEqual([failed.status, failed.stderr], [1, "Could not remove /Users/Shared/box-empty, which bbx-0 owned.\n"]);
+  } finally {
+    chmodSync(shared, 0o755);
   }
 });
 

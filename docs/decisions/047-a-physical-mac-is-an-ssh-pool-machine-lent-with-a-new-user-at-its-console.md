@@ -14,8 +14,9 @@ ignores the viewer's keyboard and pointer, so a helper in the box user's
 session posts them (#406), with one more grant per Mac at setup.
 Amended 15 October 2026: on the dedicated Mac, the first reset could not
 remove the old user's folder in `/private/var/folders`, as macOS 27 marks
-the user's `0`, `C`, `T` and `X` folders there `sunlnk`. The reset now
-empties those and leaves them (step 4).
+the user's `0`, `C`, `T` and `X` folders there `sunlnk`, and keeps its
+daemons' folders in them, which root cannot list. The reset now empties
+what it can there and leaves the rest (step 4), and the doctor counts it.
 
 ## Context
 
@@ -151,9 +152,19 @@ Where it fits:
      sweep, so the helper logs it out and sweeps `/private/var/folders`
      again. macOS 27 marks the user's `0`, `C`, `T` and `X` folders there
      `sunlnk`, System Integrity Protection's "system no-unlink", which not
-     even root can clear while SIP is on. So the sweep empties them and
-     leaves them, and the clean check allows only those, empty. A later
-     user gets another folder there, and cannot read `C` or `T`;
+     even root can clear while SIP is on, and keeps folders of its daemons
+     in `0` and `C`, such as `com.apple.ScreenTimeAgent` and
+     `com.apple.QuickLook.thumbnailcache`, which root cannot even list,
+     Full Disk Access or not. So the sweep empties what it can there, and
+     the clean check takes the user's folder as removed when root sees
+     only folders left in it, each the old user's or root's: a file, or
+     anything of another user, such as the next box's, fails the reset. A
+     later user gets another folder there, and cannot read the old one's
+     `C` or `T`. The cost: what a box's use left in those daemons' folders,
+     such as QuickLook's thumbnails, stays on the Mac, unreadable to later
+     box users, until macOS clears it. The doctor's state check counts the
+     old users' folders left there and what root can see in them, so a
+     slow build-up shows;
   5. the clean check: no process or file of the old user, and the next
      user at the console. While a restart signs the user in, the helper
      reports the reset as still running, as for the pool's whole-machine

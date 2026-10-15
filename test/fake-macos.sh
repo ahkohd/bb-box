@@ -301,6 +301,12 @@ case $tool in
       grep -qxF "$3" "$F/sunlnk" 2>/dev/null && echo sunlnk || echo -
       exit 0
     fi
+    # stat -f %u <path>: the UID owners says owns it, else root's.
+    if [ "$2" = %u ]; then
+      real=$(readlink -f "$3")
+      awk -v p="$real" '{ q = substr($0, index($0, " ") + 1); if (q == p) o = $1 } END { print (o == "" ? 0 : o) }' "$F/owners" 2>/dev/null || echo 0
+      exit 0
+    fi
     case $3 in
       /dev/console) cat "$F/console" ;;
       *) cat "$F/flags/owner" 2>/dev/null || echo root ;;
