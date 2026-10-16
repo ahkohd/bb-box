@@ -684,6 +684,69 @@ old_leftovers() {
   done
 }
 
+# The box user's own code-signing identity (058): a self-signed certificate
+# in a keychain of its own with an empty password, imported for all apps and
+# with codesign in its partition list, so codesign and Xcode sign with it
+# with no prompt. A program signed with it keeps its code requirement, and
+# so its grants, across rebuilds. The login keychain would ask for a password
+# the box user does not know. A restart locks the keychain, so each claim
+# unlocks it again.
+SIGNING="bb-box local code signing"
+signing_identity() { # user uid
+  user=$1 uid=$2
+  home=$(attribute "$user" NFSHomeDirectory)
+  [ -n "$home" ] && number "$uid" || return 1
+  keychain=$home/Library/Keychains/bb-box-signing.keychain-db
+  run() { launchctl asuser "$uid" /usr/bin/sudo -n -H -u "$user" -- "$@"; }
+  if [ ! -f "$ROOT$keychain" ]; then
+    work=$(mktemp -d) || return 1
+    secret=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)
+    printf '%s\n' '[req]' 'distinguished_name = dn' 'prompt = no' 'x509_extensions = ext' '[dn]' "CN = $SIGNING" '[ext]' \
+      'basicConstraints = critical,CA:false' 'keyUsage = critical,digitalSignature' 'extendedKeyUsage = critical,codeSigning' >"$work/cert.cnf"
+    # The PBE and MAC macOS's security tool can read.
+    if /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/key.pem" -out "$work/cert.pem" -days 3650 -config "$work/cert.cnf" >/dev/null 2>&1 &&
+      /usr/bin/openssl pkcs12 -export -inkey "$work/key.pem" -in "$work/cert.pem" -out "$work/id.p12" -passout "pass:$secret" -name "$SIGNING" \
+        -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 >/dev/null 2>&1; then
+      chown "$uid" "$work" "$work/id.p12" && mkdir -p "$ROOT$home/Library/Keychains" && chown "$uid:20" "$ROOT$home/Library/Keychains" &&
+        run security create-keychain -p "" "$keychain" >/dev/null 2>&1 &&
+        run security set-keychain-settings "$keychain" >/dev/null 2>&1 &&
+        run security unlock-keychain -p "" "$keychain" >/dev/null 2>&1 &&
+        run security import "$work/id.p12" -k "$keychain" -P "$secret" -A >/dev/null 2>&1 &&
+        run security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$keychain" >/dev/null 2>&1
+      made=$?
+    else
+      made=1
+    fi
+    rm -rf "$work"
+    [ "$made" = 0 ] || { rm -f "$ROOT$keychain"; return 1; }
+  fi
+  run security unlock-keychain -p "" "$keychain" >/dev/null 2>&1 || return 1
+  # On the user's search list, so codesign and Xcode find the identity.
+  listed=$(run security list-keychains -d user 2>/dev/null | sed 's/^ *"//; s/"$//')
+  printf '%s\n' "$listed" | grep -qxF "$keychain" ||
+    run security list-keychains -d user -s $listed "$keychain" >/dev/null 2>&1
+}
+
+# The microphone and the camera for box_run's commands, by default (058), in
+# box user $1's own TCC database: those commands are charged to
+# sshd-keygen-wrapper. The Mac has no microphone of its own: setup-mac.sh
+# installs BlackHole as its input. It has a camera only if one is attached.
+default_grants() { # user
+  sip_off || return 0
+  db=$(user_tcc "$1") && [ -n "$db" ] && tcc_known "$db" || return 1
+  wrapper=/usr/libexec/sshd-keygen-wrapper
+  requirement=$(codesign -d -r- "$ROOT$wrapper" 2>&1 | sed -n 's/^designated => //p' | head -n 1)
+  [ -n "$requirement" ] || return 1
+  blob=$(printf '%s' "$requirement" | csreq -r- -b /dev/stdout | xxd -p | tr -d '\n')
+  [ -n "$blob" ] || return 1
+  now=$(now)
+  for service in kTCCServiceMicrophone kTCCServiceCamera; do
+    sqlite3 "$db" "DELETE FROM access WHERE service = '$service' AND client = '$wrapper';
+      INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded)
+      VALUES ('$service', '$wrapper', 1, 2, 4, 1, X'$blob', NULL, 0, 'UNUSED', NULL, 0, $now, NULL, NULL, 'UNUSED', $now);" 2>/dev/null || return 1
+  done
+}
+
 # The TCC service and database of each permission a grant may give: s for the
 # system's, u for the box user's.
 service_of() {
@@ -867,7 +930,9 @@ claim() {
     quit 3 "Another box holds the Mac."
   fi
   rm -f "$STATE/owner.new.$$"
+  default_grants "$user" || :
   tcc_snapshot
+  signing_identity "$user" "$uid" || :
   # The box's key, and 030's sudo rule, which lets the user run desktop commands in its own session and nothing else.
   home=$ROOT/Users/$user
   rule=$ROOT/etc/sudoers.d/$user
@@ -952,6 +1017,9 @@ finish() {
   problem=$(dirt "$next_user" | head -n 1)
   [ -z "$problem" ] || fail "The reset left $problem."
   sign_in "$next_user"
+  # Made now the user is signed in, so a claim has only to unlock it.
+  signing_identity "$next_user" "$next_uid" || :
+  default_grants "$next_user" || :
   echo "$next" | put "$STATE/generation"
   rm -f "$STATE/resetting"
   echo "generation=$next"

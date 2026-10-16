@@ -227,6 +227,7 @@ It takes the same options as `setup.sh`, except `--reset-hook`.
 - installs Homebrew if it is missing, as the administrator who ran sudo,
   then Git, GitHub CLI and Node.js with it
 - installs Cua Driver in `/Applications`
+- installs BlackHole 2ch, pinned, as the Mac's audio input
 - installs the agent CLIs BB runs threads with, Claude Code, Codex and Pi,
   in `/usr/local/lib/bb-box`, linked from `/usr/local/bin`, pinned as the
   Linux images pin them
@@ -596,6 +597,14 @@ system settings.
 So `brew install` fails in a box. Installs into its home work, such as npm,
 pip, cargo and apps in `~/Applications`. Install what every box needs with
 Homebrew as the Mac's administrator.
+
+On a Mac with System Integrity Protection off, a box's commands may use the
+microphone and the camera with no prompt
+([058](../../docs/decisions/058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md)).
+A Mac mini has no microphone of its own: its input is BlackHole 2ch, a
+virtual device that plays back what is sent to it. A box records through it,
+and `say -a BlackHole` feeds it speech. A box has a camera only if one is
+attached to the Mac, such as a USB webcam.
 
 ### What a Mac's reset does
 
