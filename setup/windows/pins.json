@@ -171,9 +171,9 @@
     {
       "name": "ffmpeg",
       "arch": "arm64",
-      "version": "9.0.2",
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-winarm64-gpl-9.0.zip",
-      "sha256": "6DCD0626F9F6D6C7323565E57410E9F37ED14A85946EC9EA9CAFF294CA32F5C0"
+      "version": "9.0.1",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-winarm64-gpl-9.0.zip",
+      "sha256": "7E6142AE4D04B35123EBA48D91BB2C559EF43B49A6B3857F7324BBCF7266D18B"
     }
   ]
 }

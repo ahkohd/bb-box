@@ -98,9 +98,11 @@ CODEX_SHA256=04CB2F6143DA840F33F0061ED9E13FCB0F4D7CD9BFCE27299C456A6BC47B410D
 PI_VERSION=0.87.1
 PI_SHA256=2E0D544999A765018EE5C2FF1A8B1A7E0F5D5B6B1E00B32D8C025D6C1DBCC833
 # box_record's recorder (059): a month's last build, which BtbN keeps.
-FFMPEG_VERSION=9.0.2
-FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-winarm64-gpl-9.0.zip
-FFMPEG_SHA256=6DCD0626F9F6D6C7323565E57410E9F37ED14A85946EC9EA9CAFF294CA32F5C0
+# BtbN's arm64 and x64 builds from 30 September 2026 on crash at start on
+# this image, with an access violation, and those to 31 August run (#707).
+FFMPEG_VERSION=9.0.1
+FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-winarm64-gpl-9.0.zip
+FFMPEG_SHA256=7E6142AE4D04B35123EBA48D91BB2C559EF43B49A6B3857F7324BBCF7266D18B
 # The drivers Setup needs for the disk, and Windows for the network and display.
 VIRTIO_VERSION=0.1.302
 VIRTIO_SHA256=303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d
