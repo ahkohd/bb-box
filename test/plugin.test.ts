@@ -707,7 +707,7 @@ test("box_copy takes relative paths under the workspace and the box user's home,
   assert.equal(readFileSync(join(world.root, "outside.txt"), "utf8"), "notes\nnotes\n");
 });
 
-test("box_record records a Linux desktop, and stop puts the clip and a page that plays it in the thread's storage, with the line to show it (059)", { skip: process.platform !== "linux" && "needs GNU stat" }, async (t) => {
+test("box_record records a Linux desktop, and stop puts the clip and a page that plays it beside it in the thread's storage, with the line to show it (059)", { skip: process.platform !== "linux" && "needs GNU stat" }, async (t) => {
   const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
   t.after(() => harness.lifecycle.dispose());
   const saved = process.env.PATH;
@@ -739,7 +739,7 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 1\.6 s of still stretches cut, played 2x, 1280x720, 1 KB\. It reached the 5-minute limit/);
   assert.ok(said.includes(`::inline-vis{source="thread-storage" file="${name}.html" height="368"}`), said);
   assert.equal(readFileSync(join(world.storage, `${name}.mp4`), "utf8"), "mp4data");
-  assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`data:video/mp4;base64,${Buffer.from("mp4data").toString("base64")}`));
+  assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`<video src="${name.split("/").pop()}.mp4"`));
 });
 
 test("box_copy takes files in the thread's storage folder both ways, by its variable or its path (#482)", async (t) => {

@@ -12,7 +12,7 @@ import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
-import { PREVIEW_MAX_BYTES, RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STOP_EXITS, parseRecordResult, previewHeight, recordPreview, recordStartScript, recordStopScript } from "../core/record.ts";
+import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STOP_EXITS, parseRecordResult, previewHeight, recordPage, recordStartScript, recordStopScript } from "../core/record.ts";
 import { GRANT_PERMISSIONS, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
@@ -237,6 +237,44 @@ export function grantsText(grants: BoxGrants): string {
 export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number; runWaitMs?: number } = {}): void {
   const runWaitMs = options.runWaitMs ?? RUN_WAIT_MS;
   const { boxes } = app;
+
+  /**
+   * Copies a file from a box to the thread's workspace or storage folder:
+   * whole through BB's file API up to COPY_MAX_BYTES, else streamed through
+   * the thread's machine, which keeps it only if its size and SHA-256 match
+   * the box's (#492).
+   */
+  const fromBox = async (owner: string, boxId: string, from: string, target: ThreadFile, signal: AbortSignal): Promise<{ box: BoxRecord; bytes: number; sum: FileSum | null }> => {
+    const small = await boxes.readFile(owner, boxId, from, { maxBytes: COPY_MAX_BYTES, signal }).catch((error: unknown) => {
+      if (error instanceof Error && /is larger than \d+ bytes/.test(error.message)) return null;
+      throw error;
+    });
+    if (!small) {
+      const { box, result } = await boxes.reach(
+        owner,
+        boxId,
+        async (transport, box) => {
+          const os = box.capabilities.os;
+          const sum = await boxFileSum(transport, os, from, signal);
+          const send = (channel: NodeJS.WritableStream) =>
+            readStream(transport, os, from, (data) => pipeline(Readable.fromWeb(data as NodeReadableStream<Uint8Array>), channel), signal);
+          await app.files.copy(target.hostId, { file: target.path, root: target.rootPath, direction: "receive", expect: sum }, send, signal);
+          return sum;
+        },
+        signal,
+      );
+      return { box, bytes: result.bytes, sum: result };
+    }
+    await bb.sdk.files.write({
+      hostId: target.hostId,
+      path: target.path,
+      rootPath: target.rootPath,
+      content: Buffer.from(small.data).toString("base64"),
+      contentEncoding: "base64",
+      createParents: true,
+    });
+    return { box: small.box, bytes: small.data.byteLength, sum: null };
+  };
   // Registered after the core's hooks, so it runs first, while boxes and
   // backends still work (#405).
   const drain = new Drain();
@@ -569,37 +607,11 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           return `Copied ${source.path} (${summed(result)}) to ${target} in box ${box.name}, streamed through the thread's machine.${next(`Use it with box_run (box "${box.name}").`)}`;
         }
         const target = await local(to ?? (found.capabilities.os === "windows" ? win32 : posix).basename(from));
-        const small = await boxes.readFile(owner, found.id, boxPath(from), { maxBytes: COPY_MAX_BYTES, signal }).catch((error: unknown) => {
-          if (error instanceof Error && /is larger than \d+ bytes/.test(error.message)) return null;
-          throw error;
-        });
-        if (!small) {
-          // Too large for BB's file API: the box gives the file's size and SHA-256, then streams it to the worker on the target's machine, which keeps it only if they match (#492).
-          const { box, result } = await boxes.reach(
-            owner,
-            found.id,
-            async (transport, box) => {
-              const os = box.capabilities.os;
-              const sum = await boxFileSum(transport, os, boxPath(from), signal);
-              const send = (channel: NodeJS.WritableStream) =>
-                readStream(transport, os, boxPath(from), (data) => pipeline(Readable.fromWeb(data as NodeReadableStream<Uint8Array>), channel), signal);
-              await app.files.copy(target.hostId, { file: target.path, root: target.rootPath, direction: "receive", expect: sum }, send, signal);
-              return sum;
-            },
-            signal,
-          );
-          return `Copied ${from} (${summed(result)}) from box ${box.name} to ${target.path} in ${target.stored ? "this thread's storage folder" : "the workspace"}, streamed through the thread's machine.${next("Read it with your usual file tools.")}`;
-        }
-        const { box, data } = small;
-        await bb.sdk.files.write({
-          hostId: target.hostId,
-          path: target.path,
-          rootPath: target.rootPath,
-          content: Buffer.from(data).toString("base64"),
-          contentEncoding: "base64",
-          createParents: true,
-        });
-        return `Copied ${from} (${data.byteLength} bytes) from box ${box.name} to ${target.path} in ${target.stored ? "this thread's storage folder" : "the workspace"}.${next("Read it with your usual file tools.")}`;
+        const { box, bytes: size, sum } = await fromBox(owner, found.id, boxPath(from), target, signal);
+        const folder = target.stored ? "this thread's storage folder" : "the workspace";
+        return sum
+          ? `Copied ${from} (${summed(sum)}) from box ${box.name} to ${target.path} in ${folder}, streamed through the thread's machine.${next("Read it with your usual file tools.")}`
+          : `Copied ${from} (${size} bytes) from box ${box.name} to ${target.path} in ${folder}.${next("Read it with your usual file tools.")}`;
       } catch (error) {
         return failure(error, "Copying the file");
       }
@@ -653,15 +665,15 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         }
         const made = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
         if (!made) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
-        const { data } = await boxes.readFile(owner, found.id, `${RECORD_DIR}/clip.mp4`, { maxBytes: COPY_MAX_BYTES, signal });
         const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
         const name = `recordings/${found.name}-${stamp}`;
         const paths = pathsOf(storage.path);
-        const write = (file: string, content: Uint8Array | string) =>
-          bb.sdk.files.write({ hostId: storage.hostId, path: paths.join(storage.path, file), rootPath: storage.path, content: Buffer.from(content).toString("base64"), contentEncoding: "base64", createParents: true });
-        await write(`${name}.mp4`, data);
-        const shown = data.byteLength <= PREVIEW_MAX_BYTES;
-        if (shown) await write(`${name}.html`, recordPreview(`Box ${found.name}`, data));
+        const file = (path: string): ThreadFile => ({ hostId: storage.hostId, path: paths.join(storage.path, path), rootPath: storage.path, stored: true });
+        await fromBox(owner, found.id, `${RECORD_DIR}/clip.mp4`, file(`${name}.mp4`), signal);
+        // The page loads the clip beside it, so a clip of any size plays in the thread.
+        const page = file(`${name}.html`);
+        const html = recordPage(`Box ${found.name}`, paths.basename(`${name}.mp4`));
+        await bb.sdk.files.write({ hostId: page.hostId, path: page.path, rootPath: page.rootPath, content: Buffer.from(html).toString("base64"), contentEncoding: "base64", createParents: true });
         const cut = stills === "keep" ? 0 : Math.max(0, made.recorded - made.clip * times);
         const parts = [
           `a ${made.clip.toFixed(1)} s clip of ${made.recorded.toFixed(1)} s recorded`,
@@ -671,9 +683,6 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         ];
         const limit = made.ended === "limit" ? ` It reached the ${RECORD_LIMIT_S / 60}-minute limit and ended by itself.` : "";
         const where = `The MP4 is in this thread's storage folder: $BB_THREAD_STORAGE/${name}.mp4.`;
-        if (!shown) {
-          return `Recorded box ${found.name}: ${parts.join(", ")}.${limit} ${where} It is too large for the thread's preview, so link it instead.${next("Record a shorter stretch for a clip that plays in the thread.")}`;
-        }
         const directive = `::inline-vis{source="thread-storage" file="${name}.html" height="${previewHeight(made.size)}"}`;
         return `Recorded box ${found.name}: ${parts.join(", ")}.${limit} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block:\n${directive}`)}`;
       } catch (error) {
