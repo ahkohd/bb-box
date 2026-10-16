@@ -43,6 +43,13 @@ const LAUNCH_POLL_MS = 250;
  */
 const COMPOSITOR_WAIT_MS = 2_000;
 /**
+ * How long a launch by an app's name asks again while Windows' shell cannot
+ * look the name up yet, as just after a box starts: Cua gives up on the
+ * shell:AppsFolder query after 4 s, launches nothing, and says to retry.
+ */
+const LOOKUP_WAIT_MS = 20_000;
+const LOOKUP_POLL_MS = 2_000;
+/**
  * After an action on a window that changed nothing in it, how long bb-box
  * waits before it looks once more whether the window has gone, as a dialog
  * closes a moment after its button is pressed.
@@ -119,6 +126,8 @@ export interface ComputerDeps {
   readonly pauseWaitMs?: number;
   readonly callTimeoutMs?: number;
   readonly launchWaitMs?: number;
+  /** How long a launch asks again while Windows cannot look an app's name up yet. */
+  readonly lookupWaitMs?: number;
   readonly pageWaitMs?: number;
   readonly desktopWaitMs?: number;
   readonly smallTree?: number;
@@ -499,6 +508,15 @@ function refusedInBackground(result: McpResult): boolean {
   if (code === "background_unavailable" || code === "background_pointer_failed") return true;
   if (str(obj(structured.escalation).recommended) === "foreground") return true;
   return /^Background delivery is not available/.test(rawText(result));
+}
+
+/**
+ * Cua on Windows could not look an app's name up in the shell for now, and
+ * launched nothing: the shell did not answer in time, or an earlier lookup
+ * still runs or cools down. Asking again later works.
+ */
+function lookupBusy(result: McpResult): boolean {
+  return !!result.isError && /\bApp name lookup for .* is temporarily unavailable\b[\s\S]*\bNo app was launched\b/i.test(rawText(result));
 }
 
 /**
@@ -1074,7 +1092,12 @@ export class Computer {
       const what = input.url ?? input.app!;
       const before = await this.#listWindows(use);
       const args = launchArgs(box.capabilities.os, input);
-      const { result } = await this.#call(use, "launch_app", args, { readOnly: false });
+      let { result } = await this.#call(use, "launch_app", args, { readOnly: false });
+      const lookupUntil = Date.now() + (this.#deps.lookupWaitMs ?? LOOKUP_WAIT_MS);
+      while (lookupBusy(result) && Date.now() < lookupUntil) {
+        await sleep(Math.min(LOOKUP_POLL_MS, Math.max(0, lookupUntil - Date.now())), use.signal);
+        ({ result } = await this.#call(use, "launch_app", args, { readOnly: false }));
+      }
       if (input.app !== undefined && handedOff(result)) {
         const open = await this.#alreadyOpen(use, input.app, before);
         if (open) return open;

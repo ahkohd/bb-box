@@ -100,6 +100,8 @@ export interface FakeDesktop {
   menusInWindow?: boolean;
   /** Cua is on Wayland. */
   wayland?: boolean;
+  /** How many more launches by name Windows' shell cannot look up yet, as just after a box starts. */
+  lookupBusy?: number;
   /** As Cua on Windows: a window with no title is neither listed nor read (#365). */
   untitledUnlisted?: boolean;
   /** A dialog's button closes it 100 ms after the click, as a GTK dialog does, not at once. */
@@ -739,6 +741,10 @@ export class FakeCua {
       );
     }
     return this.#change((desktop) => {
+      if (desktop.lookupBusy) {
+        desktop.lookupBusy--;
+        return text(`App name lookup for '${name}' is temporarily unavailable: Windows did not respond to the shell:AppsFolder query within 4s. No app was launched; retry after the shell recovers, or pass an explicit path or aumid.`, undefined, true);
+      }
       if (name === "tasks") {
         const window = openTasks(desktop, []);
         return text("Launched tasks.", { pid: window.pid, running: true, windows: [this.#windowJson(window)] });
