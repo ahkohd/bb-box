@@ -14,6 +14,8 @@
 #   ipc                        "<type> <id> <owner>" lines
 #   clock                      what date +%s says, when it exists
 #   sunlnk                     paths on the Mac's disk that stat -f %Sf says have the sunlnk flag
+#   openfiles/<pid>            the files lsof says process <pid> has open
+#   flags/sip-off              csrutil says System Integrity Protection is disabled
 #   flags/<name>               changes a tool, as each tool below says
 #   calls                      each tool and its arguments, one a line
 
@@ -394,14 +396,41 @@ case $tool in
   ipcrm) edit "$F/ipc" awk -v t="${1#-}" -v id="$2" '!($1 == t && $2 == id)' ;;
 
   pgrep)
-    # pgrep [-l] -u <uid>
-    long=no
-    [ "$1" != -l ] || {
-      long=yes
+    # pgrep [-l] -u <uid or user> [-x <name>]
+    long=no who='' name=''
+    while [ $# -gt 0 ]; do
+      case $1 in -l) long=yes ;; -u) who=$(uid_of "$2"); shift ;; -x) name=$2; shift ;; esac
       shift
-    }
+    done
     [ -e "$F/processes" ] || exit 1
-    awk -v u="$2" -v l="$long" '$2 == u { print (l == "yes" ? $1 " " $3 : $1); found = 1 } END { exit !found }' "$F/processes"
+    awk -v u="$who" -v n="$name" -v l="$long" '$2 == u && (n == "" || $3 == n) { print (l == "yes" ? $1 " " $3 : $1); found = 1 } END { exit !found }' "$F/processes"
+    ;;
+  csrutil)
+    # csrutil status: flags/sip-off says it is disabled.
+    if flag sip-off; then echo "System Integrity Protection status: disabled."; else echo "System Integrity Protection status: enabled."; fi
+    ;;
+  lsof)
+    # lsof -p <pid> -Fn: the files openfiles/<pid> lists, as n lines.
+    [ -f "$F/openfiles/$2" ] && sed 's/^/n/' "$F/openfiles/$2"
+    ;;
+  plutil)
+    # plutil -extract <key> raw <plist>: a <key>'s <string> in an XML plist.
+    sed -n "s:.*<key>$2</key><string>\([^<]*\)</string>.*:\1:p" "$4" | head -n 1
+    ;;
+  codesign)
+    # codesign -dv <path> or codesign -d -r- <path>: from a signature file
+    # beside the program, <path>.sig, with lines identifier= and requirement=.
+    path=$(eval "echo \${$#}")
+    sig=$path.sig
+    [ -f "$sig" ] || { echo "$path: code object is not signed at all" >&2; exit 1; }
+    case $2 in
+      -r-) echo "designated => $(sed -n 's/^requirement=//p' "$sig")" >&2 ;;
+      *) echo "Identifier=$(sed -n 's/^identifier=//p' "$sig")" >&2 ;;
+    esac
+    ;;
+  csreq)
+    # csreq -r- -b <out>: the requirement's text, as its compiled form.
+    cat
     ;;
   pkill)
     # pkill -KILL -u <uid>: each process loses a kill.

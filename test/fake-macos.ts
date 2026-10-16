@@ -16,7 +16,7 @@ const TOOL_NAMES = [
   "uname", "fdesetup", "ioreg", "visudo", "chflags", "chown", "find", "crontab", "ipcs", "ipcrm", "pgrep",
   "pkill", "date", "shutdown", "node", "npm", "git", "gh", "brew", "pmset", "softwareupdate", "mdutil", "xcode-select",
   "xcodebuild", "xcrun", "DevToolsSecurity", "open", "scutil", "ipconfig", "curl", "shasum", "osascript",
-  "dsmemberutil",
+  "dsmemberutil", "csrutil", "lsof", "plutil", "codesign", "csreq",
 ];
 /** Where the Data volume's folders appear at the top of a Mac's disk. */
 const FIRMLINKS = ["Users", "private", "Library", "Applications", "opt", "usr"];

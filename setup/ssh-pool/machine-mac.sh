@@ -380,6 +380,8 @@ status() {
   if fdesetup status 2>/dev/null | grep -qx 'FileVault is Off\.'; then echo filevault=0; else echo filevault=1; fi
   if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then echo screensharing=1; else echo screensharing=0; fi
   if full_disk; then echo fulldisk=1; else echo fulldisk=0; fi
+  # System Integrity Protection: off lets the helper grant permissions (058).
+  case $(csrutil status 2>/dev/null) in *disabled*) echo sip=0 ;; *enabled*) echo sip=1 ;; *) echo sip= ;; esac
   case ${1:-} in
     xcode) xcode ;;
     *) known_xcode ;;
@@ -637,6 +639,153 @@ leftovers() {
   done | awk '{ n++; k += $1 } END { printf "%d %d\n", n, k }'
 }
 
+# 058: on a Mac whose owner turned System Integrity Protection off, TCC's
+# databases can be written, so the helper grants the box user's programs
+# what macOS would ask a person for, and the reset removes it again.
+sip_off() { csrutil status 2>/dev/null | grep -q 'status: disabled'; }
+# The columns of TCC's access table that this helper writes, as on macOS 27.
+TCC_COLUMNS="service client client_type auth_value auth_reason auth_version csreq policy_id indirect_object_identifier_type indirect_object_identifier indirect_object_code_identity flags last_modified pid pid_version boot_uuid last_reminded one_time_reprompt_eligible reminder_count"
+tcc_known() { [ "$(sqlite3 "$1" 'PRAGMA table_info(access);' 2>/dev/null | cut -d '|' -f 2 | paste -sd ' ' -)" = "$TCC_COLUMNS" ]; }
+# User $1's TCC.db, which macOS 27 keeps outside the home: its tccd has it open.
+user_tcc() {
+  pid=$(pgrep -u "$1" -x tccd 2>/dev/null | head -n 1)
+  [ -n "$pid" ] || return 1
+  lsof -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/com\.apple\.TCC/TCC\.db$' | head -n 1
+}
+sql() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
+# Each row of TCC database $1 as service, client, type and indirect object, a line each.
+tcc_keys() { sqlite3 "$1" "select service || char(9) || client || char(9) || client_type || char(9) || indirect_object_identifier from access order by 1;" 2>/dev/null; }
+# What the claim saw of the system database, so the reset removes every row
+# added while the box had the Mac: the helper's grants, and the denied rows
+# macOS writes when a program asks.
+tcc_snapshot() {
+  sip_off && tcc_known "$ROOT$TCC" || return 0
+  tcc_keys "$ROOT$TCC" | sort | put "$STATE/tcc-before"
+}
+tcc_restore() {
+  [ -f "$STATE/tcc-before" ] && sip_off && tcc_known "$ROOT$TCC" || { rm -f "$STATE/tcc-before" "$STATE/grants"; return 0; }
+  tcc_keys "$ROOT$TCC" | sort | comm -23 - "$STATE/tcc-before" | while IFS="$(printf '\t')" read -r service client type object; do
+    sqlite3 "$ROOT$TCC" "DELETE FROM access WHERE service = $(sql "$service") AND client = $(sql "$client") AND client_type = $type AND indirect_object_identifier = $(sql "$object");"
+  done
+  rm -f "$STATE/tcc-before" "$STATE/grants"
+}
+# With SIP off the sweep removes an old user's ProtectedSystem container
+# (its TCC.db) and /private/var/folders entry. Those of users reset while SIP
+# was on stay, and go here, once their UID has no user.
+old_leftovers() {
+  sip_off || return 0
+  for dir in "$DATA/private/var/containers/Data/ProtectedSystem"/* "$DATA/private/var/folders"/*/*; do
+    [ -d "$dir" ] || continue
+    uid=$(stat -f %u "$dir" 2>/dev/null)
+    number "$uid" && [ "$uid" -ge "$ID_BASE" ] && [ "$uid" -lt "$((ID_BASE + ID_SPAN))" ] || continue
+    dscl . -list /Users UniqueID 2>/dev/null | awk -v id="$uid" '$2 == id { found = 1 } END { exit !found }' && continue
+    chflags -R nouchg,nouappnd,noschg "$dir" 2>/dev/null
+    rm -rf "$dir" 2>/dev/null
+  done
+}
+
+# The TCC service and database of each permission a grant may give: s for the
+# system's, u for the box user's.
+service_of() {
+  case $1 in
+    accessibility) echo "kTCCServiceAccessibility s" ;;
+    screen-recording) echo "kTCCServiceScreenCapture s" ;;
+    input-monitoring) echo "kTCCServiceListenEvent s" ;;
+    microphone) echo "kTCCServiceMicrophone u" ;;
+    camera) echo "kTCCServiceCamera u" ;;
+    automation) echo "kTCCServiceAppleEvents u" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Grants the box user's program the permissions asked for (058): an app (a
+# bundle) by its bundle ID, any other program by its path, each with its code
+# requirement, but a program signed only ad hoc by its path alone, so that a
+# rebuild keeps the grant. Input: install=, box=, program=<path>,
+# permission=<name> lines, and target=<bundle ID> for automation. It says
+# granted=<permission> or refused=<permission> <why> for each.
+grant() {
+  install='' box='' program='' permissions='' target=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in
+      install=*) install=${line#install=} ;;
+      box=*) box=${line#box=} ;;
+      program=*) program=${line#program=} ;;
+      permission=*) permissions="$permissions ${line#permission=}" ;;
+      target=*) target=${line#target=} ;;
+      '') ;;
+      *) quit 2 "Unknown input: ${line%%=*}." ;;
+    esac
+  done
+  [ -n "$install" ] && [ -n "$box" ] && [ -n "$program" ] && [ -n "$permissions" ] || quit 2 "The grant needs install=, box=, program= and permission=."
+  lock 60
+  [ -e "$STATE/owner" ] && [ "$(field "$STATE/owner" install)" = "$install" ] && [ "$(field "$STATE/owner" box)" = "$box" ] || quit 4 "Box $box does not hold the Mac."
+  sip_off || quit 7 "System Integrity Protection is on, so macOS lets no program grant permissions. A person grants them in System Settings, or the Mac's owner turns SIP off in recovery (058)."
+  tcc_known "$ROOT$TCC" || fail "TCC's database is not as bb-box knows it on macOS 27, so it writes nothing there."
+  user=$(field "$STATE/owner" user)
+  home=$(attribute "$user" NFSHomeDirectory)
+  [ -n "$home" ] || fail "Box user $user has no home."
+  case $program in
+    "$home"/* | /Applications/*) ;;
+    *) quit 8 "$program is not in $home or /Applications. bb-box grants permissions only to the box user's programs and to apps in /Applications." ;;
+  esac
+  path=$ROOT$program
+  [ -e "$path" ] || quit 8 "There is no $program."
+  case $program in
+    *.app | *.app/) app=${program%/} type=0 ;;
+    *) app='' type=1 ;;
+  esac
+  if [ -n "$app" ]; then
+    client=$(plutil -extract CFBundleIdentifier raw "$path/Contents/Info.plist" 2>/dev/null)
+    [ -n "$client" ] || quit 8 "$program has no bundle ID."
+  else
+    [ -f "$path" ] && [ -x "$path" ] || quit 8 "$program is not an app or a program."
+    client=$program
+  fi
+  identifier=$(codesign -dv "$path" 2>&1 | sed -n 's/^Identifier=//p')
+  [ -n "$identifier" ] || quit 8 "$program is not signed. Sign it, with the box's identity: codesign -s \"bb-box local code signing\" --identifier <id> <program>."
+  case "$client $identifier" in
+    com.apple.* | *" com.apple."*) quit 8 "$program is Apple's. bb-box grants nothing to Apple's programs." ;;
+  esac
+  case $(basename "$program") in
+    Terminal.app | iTerm.app | sh | bash | zsh | dash | ksh | fish | python* | ruby | perl* | node | osascript)
+      quit 8 "$program runs any script, so a grant would reach every script. bb-box grants nothing to shells, terminals or interpreters." ;;
+  esac
+  requirement=$(codesign -d -r- "$path" 2>&1 | sed -n 's/^designated => //p;s/^# designated => //p' | head -n 1)
+  [ -n "$requirement" ] || quit 8 "$program has no code requirement."
+  blob=NULL
+  case $requirement in
+    # Signed only ad hoc: a program by path alone, which a rebuild keeps.
+    cdhash*) [ "$type" = 1 ] || blob="X'$(printf '%s' "$requirement" | csreq -r- -b /dev/stdout | xxd -p | tr -d '\n')'" ;;
+    *) blob="X'$(printf '%s' "$requirement" | csreq -r- -b /dev/stdout | xxd -p | tr -d '\n')'" ;;
+  esac
+  [ "$blob" != "X''" ] || fail "csreq could not compile $program's requirement."
+  user_db=$(user_tcc "$user")
+  now=$(now)
+  for permission in $permissions; do
+    entry=$(service_of "$permission") || { echo "refused=$permission bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera and automation."; continue; }
+    service=${entry% *} where=${entry#* }
+    db=$ROOT$TCC object=UNUSED object_type=0
+    if [ "$where" = u ]; then
+      if [ -z "$user_db" ] || ! tcc_known "$user_db"; then echo "refused=$permission the box user's TCC database is not open: sign the box user in first."; continue; fi
+      db=$user_db
+    fi
+    if [ "$permission" = automation ]; then
+      [ -n "$target" ] || { echo "refused=$permission it needs target=, the bundle ID of the app to send Apple events to."; continue; }
+      object=$target
+    fi
+    if sqlite3 "$db" "DELETE FROM access WHERE service = $(sql "$service") AND client = $(sql "$client") AND indirect_object_identifier = $(sql "$object");
+      INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded)
+      VALUES ($(sql "$service"), $(sql "$client"), $type, 2, 4, 1, $blob, NULL, $object_type, $(sql "$object"), NULL, 0, $now, NULL, NULL, 'UNUSED', $now);" 2>/dev/null; then
+      printf '%s\t%s\t%s\n' "$permission" "$client" "$object" >>"$STATE/grants"
+      echo "granted=$permission"
+    else
+      echo "refused=$permission sqlite3 could not write TCC's database."
+    fi
+  done
+  echo "client=$client"
+}
+
 # Removes a box user and everything it left.
 remove_user() {
   user=$1 uid=${2:-}
@@ -718,6 +867,7 @@ claim() {
     quit 3 "Another box holds the Mac."
   fi
   rm -f "$STATE/owner.new.$$"
+  tcc_snapshot
   # The box's key, and 030's sudo rule, which lets the user run desktop commands in its own session and nothing else.
   home=$ROOT/Users/$user
   rule=$ROOT/etc/sudoers.d/$user
@@ -794,6 +944,9 @@ finish() {
     for other in $(box_names); do [ "$other" = "$next_user" ] || remove_user "$other"; done
     for other in $(ipc_orphans); do remove_ipc "$other" "$other"; done
   fi
+  # The permissions granted, or asked for, while the box had the Mac (058).
+  tcc_restore
+  old_leftovers
 
   # 5. Check that nothing of theirs is left, and that the next user is at the console.
   problem=$(dirt "$next_user" | head -n 1)
@@ -904,10 +1057,11 @@ verb=${1:-}
 case $verb in
   status) status "$@" ;;
   claim) claim "$@" ;;
+  grant) grant "$@" ;;
   release) release "$@" ;;
   reset) reset "$@" ;;
   display) display "$@" ;;
   init) init ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: machine status [grants] | claim | release | reset | display | init | version" ;;
+  *) quit 2 "usage: machine status [grants] | claim | grant | release | reset | display | init | version" ;;
 esac

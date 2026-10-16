@@ -110,7 +110,7 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
     {
       helper: 1, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
-      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null, openHomes: null },
+      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null, openHomes: null, sip: true },
     },
   );
   const values = fields(result.stdout);
@@ -758,4 +758,93 @@ test("the doctor's status names the people whose homes box users can enter, as m
   chmodSync(home, 0o755);
   writeFileSync(join(mac.state, "users", "person", "UserShell"), "/usr/bin/false\n");
   assert.equal(fields(mac.helper(["status", "xcode"]).stdout).get("openhomes"), "");
+});
+
+/** macOS 27's TCC access table, as a Mac with SIP off showed it (058). */
+const TCC_SCHEMA = `CREATE TABLE access (service TEXT NOT NULL, client TEXT NOT NULL, client_type INTEGER NOT NULL, auth_value INTEGER NOT NULL, auth_reason INTEGER NOT NULL, auth_version INTEGER NOT NULL, csreq BLOB, policy_id INTEGER, indirect_object_identifier_type INTEGER, indirect_object_identifier TEXT NOT NULL DEFAULT 'UNUSED', indirect_object_code_identity BLOB, flags INTEGER, last_modified INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)), pid INTEGER, pid_version INTEGER, boot_uuid TEXT NOT NULL DEFAULT 'UNUSED', last_reminded INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)), one_time_reprompt_eligible INTEGER, reminder_count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (service, client, client_type, indirect_object_identifier));`;
+const sqlite = (db: string, sql: string) => {
+  const run = spawnSync("sqlite3", [db, sql], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout.trim();
+};
+
+test("with SIP off, the helper grants the box user's programs their permissions, by bundle ID or path with their requirement, and the reset removes every row added since the claim (058)", () => {
+  const mac = readyMac();
+  mac.flag("sip-off");
+  // The system database, with Cua's grant from before the box, and the box user's, which macOS 27 keeps outside the home.
+  const system = join(mac.root, TCC);
+  rmSync(system, { force: true });
+  sqlite(system, `${TCC_SCHEMA} INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version) VALUES ('kTCCServiceAccessibility', 'com.trycua.driver', 0, 2, 4, 1);`);
+  const container = join(mac.data, "private/var/containers/Data/ProtectedSystem/U1/Data/Library/Application Support/com.apple.TCC");
+  mkdirSync(container, { recursive: true });
+  const user = join(container, "TCC.db");
+  sqlite(user, TCC_SCHEMA);
+  mac.add("processes", "500 70000 tccd 1");
+  mkdirSync(join(mac.state, "openfiles"), { recursive: true });
+  writeFileSync(join(mac.state, "openfiles", "500"), `${user}\n`);
+  assert.equal(fields(mac.helper(["status"]).stdout).get("sip"), "0", "status says SIP is off");
+  assert.equal(mac.helper(["claim", "0"], CLAIM()).status, 0);
+
+  // An app the agent built, signed by the box's identity, and a program cargo built, signed only ad hoc.
+  const home = join(mac.data, "Users/bbx-0");
+  const app = join(home, "Applications/Probe.app");
+  mkdirSync(join(app, "Contents"), { recursive: true });
+  writeFileSync(join(app, "Contents/Info.plist"), "<plist><dict><key>CFBundleIdentifier</key><string>dev.example.probe</string></dict></plist>\n");
+  writeFileSync(`${app}.sig`, 'identifier=dev.example.probe\nrequirement=identifier "dev.example.probe" and certificate leaf = H"ab"\n');
+  const tool = join(home, "project/target/release/tool");
+  mkdirSync(join(home, "project/target/release"), { recursive: true });
+  writeFileSync(tool, "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(`${tool}.sig`, 'identifier=tool\nrequirement=cdhash H"12"\n');
+  const grant = (program: string, permissions: string[], box = "box_a") =>
+    mac.helper(["grant"], `install=inst_a\nbox=${box}\nprogram=${program}\n${permissions.map((permission) => `permission=${permission}\n`).join("")}`);
+
+  const granted = grant("/Users/bbx-0/Applications/Probe.app", ["accessibility", "screen-recording", "microphone", "telepathy"]);
+  assert.equal(granted.status, 0, granted.stderr);
+  assert.deepEqual(granted.stdout.split("\n").filter(Boolean), [
+    "granted=accessibility",
+    "granted=screen-recording",
+    "granted=microphone",
+    "refused=telepathy bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera and automation.",
+    "client=dev.example.probe",
+  ]);
+  assert.equal(
+    sqlite(system, "select service || '|' || client_type || '|' || auth_value || '|' || cast(csreq as text) from access where client = 'dev.example.probe' order by service;"),
+    'kTCCServiceAccessibility|0|2|identifier "dev.example.probe" and certificate leaf = H"ab"\nkTCCServiceScreenCapture|0|2|identifier "dev.example.probe" and certificate leaf = H"ab"',
+    "an app by bundle ID, with its requirement",
+  );
+  assert.equal(sqlite(user, "select service || '|' || auth_value from access where client = 'dev.example.probe';"), "kTCCServiceMicrophone|2", "the microphone in the box user's database");
+  // A program signed only ad hoc, by its path alone, which a rebuild keeps.
+  assert.equal(grant("/Users/bbx-0/project/target/release/tool", ["accessibility"]).stdout.split("\n")[0], "granted=accessibility");
+  assert.equal(sqlite(system, "select client_type || '|' || ifnull(csreq, 'none') from access where client = '/Users/bbx-0/project/target/release/tool';"), "1|none");
+  // A denied row macOS wrote while the box had the Mac.
+  sqlite(system, "INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version) VALUES ('kTCCServiceAccessibility', 'dev.example.asked', 0, 0, 4, 1);");
+
+  // Refusals: Apple's, a shell, outside the box user's folders, another box, and SIP on.
+  writeFileSync(`${tool}.sig`, 'identifier=com.apple.tool\nrequirement=identifier "com.apple.tool"\n');
+  assert.match(grant("/Users/bbx-0/project/target/release/tool", ["accessibility"]).stderr, /is Apple's\. bb-box grants nothing to Apple's programs\./);
+  writeFileSync(join(home, "zsh"), "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(join(home, "zsh.sig"), 'identifier=zsh\nrequirement=cdhash H"34"\n');
+  assert.match(grant("/Users/bbx-0/zsh", ["accessibility"]).stderr, /runs any script/);
+  assert.equal(grant("/usr/local/bin/cua-driver", ["accessibility"]).status, 8);
+  assert.equal(grant("/Users/bbx-0/Applications/Probe.app", ["accessibility"], "box_b").status, EXIT.notOurs);
+  mac.flag("sip-off", false);
+  const protectedMac = grant("/Users/bbx-0/Applications/Probe.app", ["accessibility"]);
+  assert.equal(protectedMac.status, 7);
+  assert.match(protectedMac.stderr, /^System Integrity Protection is on/);
+  mac.flag("sip-off");
+
+  // What a user reset while SIP was on left: its container and its temporary folder, and a person's, which stays.
+  const protectedSystem = join(mac.data, "private/var/containers/Data/ProtectedSystem");
+  for (const [dir, uid] of [["U5", 70005], ["U501", 501]] as const) {
+    mkdirSync(join(protectedSystem, dir, "Data"), { recursive: true });
+    mac.own(`/private/var/containers/Data/ProtectedSystem/${dir}`, uid);
+  }
+  mkdirSync(join(mac.data, "private/var/folders/zz/old70005/T"), { recursive: true });
+  mac.own("/private/var/folders/zz/old70005", 70005);
+
+  // The reset removes every row added since the claim, the helper's and macOS's, and leaves Cua's.
+  assert.equal(mac.helper(["release", "0"], RELEASE()).status, 0);
+  assert.equal(sqlite(system, "select client from access order by client;"), "com.trycua.driver");
+  assert.deepEqual([existsSync(join(protectedSystem, "U5")), existsSync(join(protectedSystem, "U501"))], [false, true], "an old box user's container goes, a person's stays");
+  assert.equal(existsSync(join(mac.data, "private/var/folders/zz/old70005")), false);
 });

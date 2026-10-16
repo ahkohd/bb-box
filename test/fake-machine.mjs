@@ -30,6 +30,7 @@
 //   no-status-xcode  status says nothing of Xcode, and `status xcode` is a usage error, as in an older helper
 //   password         the password display gives instead of a made-up one
 //   open-homes       the people whose homes box users can enter, for `status xcode`, instead of none
+//   sip-off          status says System Integrity Protection is off (058)
 //   display-user     the user display gives instead of the box user
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -89,7 +90,7 @@ function macLines(extra) {
     console = "root";
   }
   const lines = ["os=macos", "macos=26.0", `user=${user}`, `console=${console}`, `autologin=${flag("autologin") ?? user}`];
-  lines.push(`filevault=${flag("filevault-on") !== null ? 1 : 0}`, `screensharing=${flag("no-screensharing") !== null ? 0 : 1}`, `fulldisk=${flag("no-fulldisk") !== null ? 0 : 1}`);
+  lines.push(`filevault=${flag("filevault-on") !== null ? 1 : 0}`, `screensharing=${flag("no-screensharing") !== null ? 0 : 1}`, `fulldisk=${flag("no-fulldisk") !== null ? 0 : 1}`, `sip=${flag("sip-off") !== null ? 0 : 1}`);
   if (flag("no-status-xcode") === null) lines.push(...(extra === "xcode" ? foundXcode() : knownXcode()));
   if (extra === "grants") {
     const [accessibility, screenRecording, input = "1"] = (flag("grants") ?? "1,1,1").split(",");
