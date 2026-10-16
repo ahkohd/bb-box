@@ -241,7 +241,8 @@ The host's Proxmox LXC parts stay until you remove that backend too.
   The time zone and the VM's clock are UTC.
 - User `box`, an administrator, logged on to the console automatically, with
   no lock screen, sleep, screen saver or UAC prompt. Its password is random
-  per build and kept nowhere else.
+  per build and kept nowhere else. OneDrive is off by policy, so it does not
+  start at sign-in or ask to back the box up.
 - OpenSSH Server with PowerShell 7 as its shell, bb-box's key, and its
   firewall rule open on every network profile. SSH sessions are elevated.
 - UTF-8 as the system code page.

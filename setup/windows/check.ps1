@@ -96,6 +96,12 @@ Check 'automatic logon' {
   $e = Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0 | Select-Object -First 1
   if (-not $e) { throw 'no desktop session' }; "$($e.UserName), session $($e.SessionId)"
 }
+Check 'no OneDrive' {
+  $p = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive' -ErrorAction SilentlyContinue).DisableFileSyncNGSC
+  if ($p -ne 1) { throw 'the policy is not set' }
+  if (Get-Process OneDrive -ErrorAction SilentlyContinue) { throw 'OneDrive is running' }
+  'not running, by policy'
+}
 Check 'Cua daemon in the desktop session' {
   $p = Get-Process cua-driver -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0 | Select-Object -First 1
   if (-not $p) { throw 'not running in a desktop session' }
