@@ -643,7 +643,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           const { result } = await boxes.run(owner, found.id, recordStartScript(), { timeoutMs: 30_000, signal, waitForEnrolment: false });
           const refused: Partial<Record<number, string>> = {
             [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
-            [RECORD_START_EXITS.noRecorder]: `Box ${found.name} has no ${result.stderr.trim() || "recorder"} yet, which box_record needs there. It comes with the image's next rebuild, as a new box of the kind will have it.`,
+            [RECORD_START_EXITS.noRecorder]: `Box ${found.name} has no ${result.stderr.trim() || "recorder"} yet, which box_record needs there. It comes with the image's next rebuild, or on a Mac of the SSH host pool when its owner runs setup-mac.sh again.`,
             [RECORD_START_EXITS.noDisplay]: `Box ${found.name}'s desktop is not running.${next(`Call box_status with box "${found.name}" to see why.`)}`,
           };
           const said = refused[result.exitCode ?? -1];

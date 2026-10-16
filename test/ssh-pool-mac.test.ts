@@ -662,7 +662,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(readlinkSync(join(mac.root, "usr/local/bin/cua-driver")), "/Applications/CuaDriver.app/Contents/MacOS/cua-driver");
   assert.match(mac.file("/Library/LaunchDaemons/dev.bb-box.clear-bb-state.plist")!, /rm -rf \/Users\/bbx-\*\/\.bb-machines\/\*\/daemon\.lock\.lock /);
   assert.equal(count(mac, "sudo -u person -H env NONINTERACTIVE=1 /bin/bash -c mkdir"), 1, "Homebrew's installer, as the person who ran sudo");
-  assert.equal(count(mac, "brew install git gh node"), 1);
+  assert.equal(count(mac, "brew install git gh node ffmpeg"), 1);
   assert.equal(count(mac, "pmset -a sleep 0 displaysleep 0 disksleep 0 autorestart 1"), 1);
   for (const call of [
     "defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false",
