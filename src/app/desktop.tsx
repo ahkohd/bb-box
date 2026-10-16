@@ -258,6 +258,12 @@ export class DesktopSession implements Kept {
   #settle: ReturnType<typeof setTimeout> | undefined;
   /** The viewer's size as last observed, so the first observation, at mount, is not taken for a move. */
   #lastSize: string | null = null;
+  /**
+   * Whether the desktop follows this tab's size: only once the tab's size changes while it has control. Taking control,
+   * connecting again or reloading leave the desktop's size as it is, so the picture stays as it was (the owner's note
+   * of 16 October 2026: taking control changes who drives the desktop, not what the person sees).
+   */
+  #follow = false;
   /** The box's OS: the paste chord is Cmd+V on macOS and Ctrl+V elsewhere, and a Mac browser's Cmd stands for Ctrl there. */
   guestOs = "linux";
   /** The box's clipboard text as its desktop sent it (ServerCutText), which noVNC gives only to the viewer with control. */
@@ -298,6 +304,7 @@ export class DesktopSession implements Kept {
             const key = `${Math.round(size.width)}x${Math.round(size.height)}`;
             const moved = this.#lastSize !== null && this.#lastSize !== key;
             this.#lastSize = key;
+            if (moved && this.#mine) this.#follow = true;
             if (moved && this.#client) this.#client.resizeSession = false;
             this.#settle = setTimeout(() => this.#nudge(), SETTLE_MS);
           });
@@ -328,7 +335,7 @@ export class DesktopSession implements Kept {
     if (this.#viewerRefresh) client.refreshLosslessly();
     client.scaleViewport = true;
     client.viewOnly = !this.#mine;
-    client.resizeSession = this.#mine && this.#resizable;
+    client.resizeSession = this.#mine && this.#resizable && this.#follow;
     client.commandAsControl = macBrowser() && this.guestOs !== "macos";
     client.addEventListener("clipboard", (event: Event) => {
       if (this.#client !== client) return;
@@ -372,6 +379,8 @@ export class DesktopSession implements Kept {
 
   /** Input and resizing follow control. The relay drops input from a viewer without control anyway; this keeps noVNC from sending it. */
   setControl(mine: boolean, resizable: boolean): void {
+    // Control taken, or lost: the desktop keeps its size until this tab's size changes while it has control.
+    if (mine !== this.#mine) this.#follow = false;
     this.#mine = mine;
     this.#resizable = resizable;
     this.#apply();
@@ -381,7 +390,7 @@ export class DesktopSession implements Kept {
     const client = this.#client;
     if (!client || this.connection.state !== "connected") return;
     client.viewOnly = !this.#mine;
-    client.resizeSession = this.#mine && this.#resizable;
+    client.resizeSession = this.#mine && this.#resizable && this.#follow;
     client.commandAsControl = macBrowser() && this.guestOs !== "macos";
     client.refreshCursor();
     if (this.#mine) client.focus({ preventScroll: true });
@@ -480,7 +489,7 @@ export class DesktopSession implements Kept {
   /** The viewer's size has held: noVNC asks for it once, if the desktop differs and this viewer may resize it. */
   #nudge(): void {
     const client = this.#client;
-    if (client && this.connection.state === "connected" && this.#mine && this.#resizable) client.resizeSession = true;
+    if (client && this.connection.state === "connected" && this.#mine && this.#resizable && this.#follow) client.resizeSession = true;
   }
 
   dispose(): void {
@@ -499,12 +508,12 @@ export class DesktopSession implements Kept {
   }
 }
 
-/** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038); `resizable` says the desktop follows this tab's size while it holds control. */
+/** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038); `resizable` says resizing this tab resizes the desktop while it holds control. */
 function controlText(box: BoxView, mine: boolean, taken: boolean, resizable: boolean): string {
   switch (box.control?.owner) {
     case "human":
       if (!mine) return "Another viewer has control.";
-      return resizable ? "You have control. The desktop follows this tab's size." : "You have control.";
+      return resizable ? "You have control. Resizing this tab resizes the desktop." : "You have control.";
     case "none":
       return "Control is changing hands…";
     default:
