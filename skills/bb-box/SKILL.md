@@ -143,6 +143,17 @@ Open an app or a URL with `computer_launch`, then read a window with
   itself, such as a GPUI app, has no accessibility tree: drive it with
   `computer_screenshot` and pixel actions.
 
+## Recording a desktop
+
+`box_record` records a Linux desktop box's screen, so you can show your
+work in the thread rather than describe it. Start it, do what the video
+should show, then stop it. Its answer gives a line that plays the clip in
+the thread: put it on its own in your reply. Still stretches are cut by
+default, so a long session makes a short clip.
+
+- Before you start a recording, clear or dismiss notifications, and close
+  windows that do not belong in the video.
+
 ## BB machines
 
 A box joins BB as a machine a few seconds after it is ready, or a minute or
