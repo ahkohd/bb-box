@@ -91,7 +91,7 @@ test("maintain fills a pool with suspended clones at the default size, which hel
   for (const vm of warmVms()) {
     assert.ok(suspended(vm), `${vm} is suspended`);
     assert.match(owner(vm), /^state=warm$/m);
-    assert.match(owner(vm), /^grants=ready$/m, "its fill made its signing identity and default grants (058)");
+    assert.match(owner(vm), /^grants=[0-9a-f]{16}$/m, "its fill made its signing identity and default grants with this helper (058)");
     assert.match(owner(vm), new RegExp(`^image=${FAKE_IMAGE}$`, "m"));
     assert.doesNotMatch(owner(vm), /^box=/m);
   }
@@ -138,6 +138,20 @@ test("a box at the default size takes a warm VM, and the pool fills again", asyn
   assert.equal((await backend.held()).find((held) => held.ref === warm)?.owner?.boxId, box.boxId);
   await backend.maintain();
   assert.equal(warmVms().filter((vm) => vm !== warm).length, 1, "the pool fills again");
+  await backend.release(guest, releasing);
+});
+
+test("a warm VM filled with another Mac helper gets its grants again at its claim (058)", async () => {
+  const { owners, make, warmVms, owner } = setup();
+  const backend = make();
+  await backend.maintain();
+  const [warm] = warmVms();
+  // As a fill under an earlier build left it.
+  writeFileSync(join(owners, warm!), owner(warm!).replace(/^grants=.*$/m, "grants=ready"));
+  const recorded = hooks();
+  const guest = await backend.acquire(identity(), null, recorded.hooks, signal());
+  assert.equal(guest.ref, warm);
+  assert.ok("grants" in recorded.timings, JSON.stringify(recorded.timings));
   await backend.release(guest, releasing);
 });
 
