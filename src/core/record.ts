@@ -1,7 +1,9 @@
 // A desktop box records its own screen, for an agent to show its work in the
 // thread (059). On X11, ffmpeg's x11grab, with the ffmpeg the desktop images
 // have; on Wayland, wf-recorder, which the Wayland images have from their
-// rebuild after #707. A recording runs in a session of its
+// rebuild after #707; on macOS, ffmpeg's avfoundation, with the Homebrew
+// ffmpeg the Tart images have from their rebuild after #707. A recording
+// runs in a session of its
 // own, so it outlives the command that started it, and ends by itself at
 // RECORD_LIMIT_S. Stopping it makes the clip in the box: still stretches cut
 // to a short pause, an optional speed, and an H.264 MP4, which a small page
@@ -27,15 +29,23 @@ export type RecordSpeed = 1 | 2 | 4;
  * damage, it records no frame while the screen is still, and does not see
  * a stop until the screen changes. It copies frames all the while, about
  * two thirds of a core, against a tenth for x11grab. timeout ends it at
- * the limit, and passes a stop's SIGTERM on to it.
+ * the limit, and passes a stop's SIGTERM on to it. macOS has no setsid
+ * command, so Perl's starts ffmpeg's session there. A missing recorder is
+ * named on stderr.
  */
 export function recordStartScript(): string {
   return String.raw`d="$HOME/${RECORD_DIR}"; mkdir -p "$d"
 if [ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then exit ${RECORD_START_EXITS.running}; fi
 set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
 rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log"
-if [ -n "${"$"}{WAYLAND_DISPLAY:-}" ]; then
-  command -v wf-recorder >/dev/null || exit ${RECORD_START_EXITS.noRecorder}
+if [ "$(uname)" = Darwin ]; then
+  command -v ffmpeg >/dev/null || { echo ffmpeg >&2; exit ${RECORD_START_EXITS.noRecorder}; }
+  screen=$(ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 | sed -n 's/.*\[\([0-9]*\)\] Capture screen 0.*/\1/p' | head -n 1)
+  [ -n "$screen" ] || exit ${RECORD_START_EXITS.noDisplay}
+  perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' nohup ffmpeg -nostdin -loglevel error -y -f avfoundation -capture_cursor 1 \
+    -framerate ${RECORD_FPS} -i "$screen:none" -t ${RECORD_LIMIT_S} -c:v libx264 -preset ultrafast -crf 0 "$d/capture.mkv" >"$d/log" 2>&1 </dev/null &
+elif [ -n "${"$"}{WAYLAND_DISPLAY:-}" ]; then
+  command -v wf-recorder >/dev/null || { echo wf-recorder >&2; exit ${RECORD_START_EXITS.noRecorder}; }
   setsid nohup timeout -s TERM ${RECORD_LIMIT_S} wf-recorder --no-dmabuf --no-damage -r ${RECORD_FPS} \
     -c libx264 -p preset=ultrafast -p crf=0 -f "$d/capture.mkv" >"$d/log" 2>&1 </dev/null &
 elif [ -n "${"$"}{DISPLAY:-}" ]; then
@@ -93,7 +103,7 @@ make || exit ${RECORD_STOP_EXITS.failed}
 size=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d/clip.mp4")
 rm -f "$d/capture.mkv"
 printf '{"ended":"%s","recorded":%s,"clip":%s,"bytes":%s,"size":"%s"}\n' \
-  "$ended" "$recorded" "$(seconds "$d/clip.mp4")" "$(stat -c %s "$d/clip.mp4")" "$size"
+  "$ended" "$recorded" "$(seconds "$d/clip.mp4")" "$(wc -c <"$d/clip.mp4" | tr -d ' ')" "$size"
 `;
 }
 

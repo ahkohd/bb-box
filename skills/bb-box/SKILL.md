@@ -145,11 +145,11 @@ Open an app or a URL with `computer_launch`, then read a window with
 
 ## Recording a desktop
 
-`box_record` records a Linux desktop box's screen, so you can show your
-work in the thread rather than describe it. Start it, do what the video
-should show, then stop it. Its answer gives a line that plays the clip in
-the thread: put it on its own in your reply. Still stretches are cut by
-default, so a long session makes a short clip.
+`box_record` records a Linux or macOS desktop box's screen, so you can
+show your work in the thread rather than describe it. Start it, do what the
+video should show, then stop it. Its answer gives a line that plays the
+clip in the thread: put it on its own in your reply. Still stretches are
+cut by default, so a long session makes a short clip.
 
 - Before you start a recording, clear or dismiss notifications, and close
   windows that do not belong in the video.

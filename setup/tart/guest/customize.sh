@@ -103,6 +103,11 @@ sudo installer -pkg "$tmp/blackhole.pkg" -target / >/dev/null
 rm -rf "$tmp"
 sudo killall coreaudiod 2>/dev/null || :
 
+# ffmpeg, for box_record (059): its avfoundation records the screen, from an
+# SSH command too, with no dialog. Cirrus Labs' image has Homebrew and most
+# of what ffmpeg needs, so it installs in seconds.
+HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 /opt/homebrew/bin/brew install --quiet ffmpeg >/dev/null || die "Homebrew could not install ffmpeg"
+
 # Screen capture without a person. On macOS 26 and later, an app's first
 # capture that bypasses the system's window picker raises a consent dialog,
 # and again after 30 days; replayd records when it last alerted. An entry
