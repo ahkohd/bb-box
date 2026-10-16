@@ -20,8 +20,9 @@ What is there today:
   such as `wf-recorder`, which the images lack.
 - BB shows a file inline in a thread through the inline-vis directive:
   HTML or Markdown only, at most 5 MiB, in an opaque-origin iframe. A
-  video shows inline only inside an HTML file, so the video goes in it as
-  a `data:` URI.
+  video shows inline only inside an HTML file. The owner checked that BB
+  plays an MP4 there both as a `data:` URI and by a relative path to a
+  file beside the page.
 - The README demo settled a lossless animated WebP for GitHub, which plays
   images but not videos in a README, and an H.264 MP4 for viewing.
 
@@ -85,15 +86,13 @@ both on a longer session.
   box. It costs about a tenth of a core.
 - **Clip**: H.264 MP4, scaled down to 1280 wide at most, 15 fps, CRF 28,
   `-tune animation`, yuv420p, faststart.
-- **In the thread**: an HTML file holding the MP4 as a `data:` URI in a
-  `<video autoplay muted loop controls>`, shown with inline-vis, beside the
-  MP4 itself. Base64 makes it a third larger, so the MP4 may be 3.5 MB for
-  the 5 MiB preview. A larger clip is made again at 960 wide and 10 fps.
-  If it is still too large, the answer links the MP4 and says why there
-  is no preview.
-- **WebP** only if BB's preview does not play the MP4. Then it is a lossy
-  WebP at 960 wide and 10 fps in an `<img>`: about ten times the MP4's size,
-  but it plays anywhere an image does.
+- **In the thread**: a tiny HTML page beside the MP4, whose
+  `<video autoplay muted loop controls>` loads the MP4 by its name, shown
+  with inline-vis. The page stays far under the preview's 5 MiB whatever
+  the clip's size, so no clip is capped or made again smaller. (Amended:
+  the first build held the MP4 as a `data:` URI, which capped it at
+  3.5 MB.)
+- **No WebP**: BB's preview plays the MP4.
 
 ### Where it goes
 

@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { RECORD_DIR, RECORD_START_EXITS, RECORD_STOP_EXITS, parseRecordResult, previewHeight, recordPreview, recordStartScript, recordStopScript } from "../src/core/record.ts";
+import { RECORD_DIR, RECORD_START_EXITS, RECORD_STOP_EXITS, parseRecordResult, previewHeight, recordPage, recordStartScript, recordStopScript } from "../src/core/record.ts";
 import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
@@ -31,7 +31,7 @@ test("box_record starts once, refuses Wayland and no display, and stop makes the
 
   const stopped = run(recordStopScript({ speed: 2, stills: "cut" }), home);
   assert.equal(stopped.status, RECORD_STOP_EXITS.made, stopped.stderr);
-  assert.deepEqual(parseRecordResult(stopped.stdout), { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720", smaller: false });
+  assert.deepEqual(parseRecordResult(stopped.stdout), { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720" });
   const made = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
   // Each still stretch keeps its first half second; the last runs to the end.
   assert.match(made, /select='not\(between\(t,1\.500,6\.000\)\+between\(t,8\.500,10\.000\)\)',setpts=N\/\(15\*2\)\/TB,fps=15,scale='min\(1280,iw\)':-2/);
@@ -48,9 +48,10 @@ test("box_record starts once, refuses Wayland and no display, and stop makes the
   assert.doesNotMatch(readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!, /select=|freezedetect/);
 });
 
-test("box_record's page plays the clip as a data: URI, and its height follows the clip's shape (059)", () => {
-  const page = recordPreview(`Box "a" <b>`, new TextEncoder().encode("mp4data"));
-  assert.ok(page.includes(`src="data:video/mp4;base64,${Buffer.from("mp4data").toString("base64")}" autoplay muted loop controls playsinline`));
+test("box_record's page plays the clip beside it by its name, and its height follows the clip's shape (059)", () => {
+  const page = recordPage(`Box "a" <b>`, "box a&b.mp4");
+  assert.ok(page.includes(`<video src="box%20a%26b.mp4" autoplay muted loop controls playsinline`), page);
+  assert.ok(page.length < 400, "a tiny page");
   assert.ok(page.includes("<title>Box &#34;a&#34; &#60;b&#62;</title>"));
   assert.equal(previewHeight("1280x720"), 368);
   assert.equal(previewHeight("960x1600"), 1075);
