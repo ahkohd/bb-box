@@ -1,0 +1,144 @@
+# 059: Agents record their desktop box with box_record
+
+Status: accepted, 16 October 2026 (#707). Linux X11 desktops first, then
+Wayland, then macOS on Tart; Windows later.
+
+## Context
+
+An agent that builds an app in a desktop box can only describe what it
+did. A short video of the app working says more, and costs the person
+watching the thread less. Everything needed is in the box already: its
+display, Chrome and computer use. Recording the box's own screen captures
+nothing outside it, unlike recording BB's UI on a person's computer
+([demo.md](../demo.md)).
+
+What is there today:
+
+- ffmpeg is in the Linux X11 and Wayland desktop images
+  (`customize-desktop.sh`, `customize-desktop-wayland.sh`). On X11 its
+  `x11grab` reads the display. Sway on Wayland needs a wlroots recorder,
+  such as `wf-recorder`, which the images lack.
+- BB shows a file inline in a thread through the inline-vis directive:
+  HTML or Markdown only, at most 5 MiB, in an opaque-origin iframe. A
+  video shows inline only inside an HTML file, so the video goes in it as
+  a `data:` URI.
+- The README demo settled a lossless animated WebP for GitHub, which plays
+  images but not videos in a README, and an H.264 MP4 for viewing.
+
+Measured in a Proxmox LXC desktop (1920x1080, 4 cores), 10 s of an agent
+typing into Mousepad:
+
+| What | Size | Length | Time to make |
+| --- | --- | --- | --- |
+| Capture: x11grab, 15 fps, lossless x264 ultrafast | 1.6 MB | 10 s | 11% of a core while recording; 21% at 30 fps |
+| MP4: 1280 wide, 15 fps, CRF 28, `-tune animation` | 22 KB | 10 s | 0.7 s |
+| The same, stills cut (`mpdecimate=max=7`) | 17 KB | 4.2 s | 0.5 s |
+| The same at 2x | 14 KB | 2.1 s | 0.5 s |
+| Animated WebP, lossy q70, 960 wide, 10 fps | 198 KB | 4.2 s | 0.9 s |
+| Animated WebP, lossless, 960 wide, 10 fps | 616 KB | 4.2 s | 3.3 s |
+
+A desktop compresses very well, and an MP4 is about a tenth of the size of
+a lossy WebP of the same clip.
+
+## Decision
+
+### A tool, box_record, with start and stop
+
+`box_record` takes a box and `action`: `start` or `stop`.
+
+- `start` begins recording the box's desktop and returns at once. The agent
+  then works with the computer tools and box_run as usual.
+- `stop` ends the recording, makes the clip in the box, copies it into the
+  thread's storage and answers with the line that shows it in the thread.
+- A recording ends by itself after 5 minutes, so one an agent forgets cannot
+  run on. A `stop` after that still delivers it. A box's release ends its
+  recording.
+- Two optional parameters, which an agent need not set:
+  - `speed`: 1 (the default), 2 or 4, applied as the clip is made;
+  - `stills`: `cut` (the default) or `keep`.
+
+A fixed length would not do: a tool call blocks the agent, so it could not
+act while it recorded. A command in the skill was the fallback. But an
+agent would then have to start ffmpeg in the desktop session with the
+display's flags for each OS, stop it so the file is whole, encode it, copy
+it out and wrap it in HTML: six steps, with as many ways to leave a
+recording running or a file broken. The tool makes it two calls.
+
+What the person sees: a clip in the thread that plays at once, muted and
+looping, with controls, where the agent posts it, and the MP4 in the
+thread's storage to open full size.
+
+### Still stretches are cut, keeping a short pause
+
+Agent work has long still stretches: builds, waits and thinking. By
+default bb-box finds every stretch with no change for over 1 s
+(ffmpeg's `freezedetect`) and keeps 0.5 s of it, so a 5-minute session
+becomes a short clip and a pause still reads as a pause.
+`mpdecimate` with `setpts` is simpler, but shrinks each still stretch by a
+fixed factor rather than to a fixed pause: with `max=7`, 10 s became 4.2 s
+above, and a 2-minute build would still last 15 s. The live checks measure
+both on a longer session.
+
+### Formats, size and the inline preview
+
+- **Capture**: 15 fps, the display's size, lossless x264 ultrafast, in the
+  box. It costs about a tenth of a core.
+- **Clip**: H.264 MP4, scaled down to 1280 wide at most, 15 fps, CRF 28,
+  `-tune animation`, yuv420p, faststart.
+- **In the thread**: an HTML file holding the MP4 as a `data:` URI in a
+  `<video autoplay muted loop controls>`, shown with inline-vis, beside the
+  MP4 itself. Base64 makes it a third larger, so the MP4 may be 3.5 MB for
+  the 5 MiB preview. A larger clip is made again at 960 wide and 10 fps.
+  If it is still too large, the answer links the MP4 and says why there
+  is no preview.
+- **WebP** only if BB's preview does not play the MP4. Then it is a lossy
+  WebP at 960 wide and 10 fps in an `<img>`: about ten times the MP4's size,
+  but it plays anywhere an image does.
+
+### Where it goes
+
+`recordings/<box>-<date>-<time>.mp4` and `.html` in the thread's storage,
+written as box_copy writes there (#487). The answer gives the inline-vis
+line to post, the MP4's path, the clip's length and size, and how much
+time was cut.
+
+### Order, and what the images need
+
+1. **Linux X11 desktops**, on Proxmox LXC, Docker and microsandbox:
+   `x11grab`, with the ffmpeg the images have. Nothing to add.
+2. **Linux Wayland desktops**: `wf-recorder` from Ubuntu 24.04, added to
+   the Wayland image builds, which the nightly refresh rolls out. It stops
+   cleanly on SIGINT.
+3. **macOS on Tart**, then pool Macs: ffmpeg's `avfoundation`, which stops
+   cleanly on `q`, with ffmpeg added to the macOS image. `screencapture -v`
+   records a fixed length only, and exits without a file if stopped by a
+   signal ([demo.md](../demo.md)). ffmpeg, run over SSH, needs Screen
+   Recording: granted in the image offline on Tart (#628), and on pool
+   Macs as 058 allows.
+4. **Windows** later: ffmpeg's `ddagrab` in the desktop session, with
+   ffmpeg added to the Windows images.
+
+### Notifications are the agent's
+
+bb-box does not manage notifications. The skill says, in one line: clear
+or dismiss notifications, and close windows that do not belong in the
+video, before starting a recording.
+
+## Rejected
+
+- **Recording through the display stream bb-box already reads** (RFB or
+  Selkies) would cover every OS at once. But it moves full-frame traffic
+  and encoding onto BB's server for the whole recording, and the frame
+  rate would follow the stream, not the work.
+- **A lossless WebP as the clip**, as the README has: thirty times the
+  MP4's size for a desktop, for a thread that needs none of GitHub's
+  limits.
+
+## Consequences
+
+- An agent shows its work in two calls, and the person sees it play in the
+  thread.
+- Each OS needs its own capture command in bb-box, and macOS and Windows
+  need ffmpeg in their images.
+- A recording uses about a tenth of the box's core while it runs, and its
+  capture file stays in the box until the clip is made.

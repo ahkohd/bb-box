@@ -64,3 +64,4 @@ which records still stand as written. The current design as a whole is in
 | [056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) | Linux X11 desktops add a Selkies stream, and RFB stays for the rest, tuned | Current, amended: video for every viewer, on by default |
 | [057](057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md) | Linux boxes can be Proxmox VMs, for their own kernel | Proposed |
 | [058](058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md) | A Mac with SIP off grants its box users macOS permissions | Current |
+| [059](059-agents-record-their-desktop-box-with-box-record.md) | Agents record their desktop box with box_record | Accepted |
