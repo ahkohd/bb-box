@@ -835,6 +835,51 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.ok(calls.every((call) => !/\b(machine|docker)\b/.test(call)), calls.join("; "));
   });
 
+  it("waits for a Mac that drops SSH as its release restarts it, and takes out of service only a Mac silent past the limit (047)", async () => {
+    // Dropped once, as macOS restarting in the reset: asked again, it finishes, and the Mac is free.
+    const host = "192.0.2.87";
+    mac(host);
+    const { backend } = pool("m 192.0.2.87 macos");
+    const { guest } = await acquire(backend, "macos");
+    setFlag(host, "cut-reset");
+    await backend.release(guest, releaseHooks().hooks);
+    assert.deepEqual([(await member(backend, "m")).state, (await member(backend, "m")).generation], ["free", 1]);
+
+    // Silent for a while, between its tries: the pool says resetting, not out of service, then finishes.
+    const quiet = "192.0.2.88";
+    mac(quiet);
+    let silent: SshPoolBackend | null = null;
+    const seen: string[] = [];
+    let tries = 0;
+    silent = pool("q 192.0.2.88 macos", new MemoryStorage(), "test", {
+      macSilenceMs: 60_000,
+      sleep: async () => {
+        tries += 1;
+        if (tries === 1) {
+          fake.down(quiet);
+          seen.push((await member(silent!, "q")).state);
+        } else if (tries === 2) rmSync(join(fake.dir, "down", quiet));
+      },
+    }).backend;
+    const held = await acquire(silent, "macos");
+    setFlag(quiet, "cut-reset");
+    await silent.release(held.guest, releaseHooks().hooks);
+    assert.deepEqual(seen, ["resetting"], "while it does not answer");
+    assert.deepEqual([(await member(silent, "q")).state, (await member(silent, "q")).generation], ["free", 1]);
+
+    // Silent past the limit: out of service, saying so.
+    const gone = "192.0.2.89";
+    mac(gone);
+    const limited = pool("g 192.0.2.89 macos", new MemoryStorage(), "test", { macSilenceMs: 0 }).backend;
+    const lost = await acquire(limited, "macos");
+    setFlag(gone, "cut-reset");
+    await limited.release(lost.guest, releaseHooks().hooks);
+    const state = await member(limited, "g");
+    assert.equal(state.state, "out-of-service");
+    assert.match(state.reason ?? "", /^It did not answer over SSH for 0 minutes during its reset/);
+    await Promise.all([backend.dispose(), silent.dispose(), limited.dispose()]);
+  });
+
   it("does not lend a Mac its box user cannot use, and says why", async () => {
     mac("192.0.2.85", { "filevault-on": "" });
     mac("192.0.2.86", { "no-fulldisk": "" });

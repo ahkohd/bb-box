@@ -78,6 +78,13 @@ const CLAIM_TIMEOUT_MS = 60_000;
 /** The helper waits this long for its lock, and a whole-machine reset may take as long. */
 const RESET_TIMEOUT_MS = 15 * 60_000;
 const RESET_POLL_MS = 2_000;
+/**
+ * How long a Mac in a reset may not answer before the pool takes it out of
+ * service. Its reset restarts userspace, and macOS 27 can panic and restart
+ * the whole Mac then, which keeps it off its network for about a minute
+ * (047's live check).
+ */
+const MAC_SILENCE_MS = 5 * 60_000;
 /** A Mac's claim waits for SSH, the box user at the console and, for a desktop, Cua's socket (047). */
 const MAC_READY_TIMEOUT_MS = 3 * 60_000;
 const MAC_READY_POLL_MS = 1_000;
@@ -148,6 +155,8 @@ export interface SshPoolBackendOptions {
   /** How long a reset may take, and how often a whole-machine reset is checked. For tests. */
   readonly resetTimeoutMs?: number;
   readonly resetPollMs?: number;
+  /** How long a Mac in a reset may not answer before it goes out of service (MAC_SILENCE_MS). */
+  readonly macSilenceMs?: number;
 }
 
 /** What bb-box keeps about a machine. The machine's markers say the rest. */
@@ -671,9 +680,20 @@ export class SshPoolBackend implements Backend {
     const deadline = Date.now() + timeoutMs;
     const sleep = this.#options.sleep ?? pause;
     let restoring = false;
+    let silentSince: number | null = null;
     for (;;) {
       const result = await this.#helper(machine, args, input, Math.max(1_000, deadline - Date.now()), signal);
       signal?.throwIfAborted();
+      // A Mac that drops SSH mid-reset is restarting: ask again until it answers, within a limit.
+      if (machine.os === "macos" && (result.exitCode === 255 || result.timedOut)) {
+        silentSince ??= Date.now();
+        if (Date.now() - silentSince >= (this.#options.macSilenceMs ?? MAC_SILENCE_MS)) {
+          return { generation: null, reason: `It did not answer over SSH for ${Math.round((this.#options.macSilenceMs ?? MAC_SILENCE_MS) / 60_000)} minutes during its reset: ${said(result)}` };
+        }
+        await sleep(this.#options.resetPollMs ?? RESET_POLL_MS, signal);
+        continue;
+      }
+      silentSince = null;
       if (result.exitCode === EXIT.ok) {
         const generation = Number(fields(result.stdout).get("generation"));
         if (Number.isInteger(generation)) return { generation, reason: null };
@@ -1294,7 +1314,12 @@ export class SshPoolBackend implements Backend {
     const out = (reason: string) => ({ state: "out-of-service" as const, reason });
     const { status } = probe;
     const setup = `${setupWords(machine)} on it ${setupAs(machine)}`;
-    if (probe.unreachable) return record?.state === "out-of-service" ? out(record.reason ?? "A reset failed.") : out(`It does not answer over SSH: ${probe.problem}`);
+    if (probe.unreachable) {
+      if (record?.state === "out-of-service") return out(record.reason ?? "A reset failed.");
+      // A Mac restarting in its reset, for a while.
+      if (machine.os === "macos" && record?.state === "resetting" && Date.now() - record.since < (this.#options.macSilenceMs ?? MAC_SILENCE_MS)) return { state: "resetting", reason: null };
+      return out(`It does not answer over SSH: ${probe.problem}`);
+    }
     if (!status) return out(`bb-box's helper did not run: ${probe.problem} Run ${setup}.`);
     // Whatever else is wrong, a box holds it: an old helper only stops new claims.
     if (status.marker === "owner") return { state: "held", reason: null };

@@ -569,8 +569,10 @@ October 2026 (#47), with no display attached.
   dummy plug may prevent it: once one is in, a batch of resets counts the
   panics.
 - A restart takes the Mac off its network for about a minute. A release
-  whose first reset call lost SSH then put the Mac out of service at once,
-  so the pool is to wait for such a Mac before it calls it out of service.
+  whose first reset call lost SSH then put the Mac out of service at once.
+  So the pool now asks such a Mac again until it answers, and shows it as
+  resetting meanwhile. Only a Mac silent for 5 minutes in its reset goes
+  out of service.
 
 ## Plan
 
